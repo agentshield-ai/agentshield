@@ -13,21 +13,23 @@ AgentShield monitors AI agent tool calls, evaluates them against Sigma detection
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  OpenClaw    │────▶│  AgentShield     │────▶│  Sigma Rules    │
-│  Plugin (TS) │◀────│  Engine (Go)     │     │  (YAML)         │
-└─────────────┘     └──────────────────┘     └─────────────────┘
-                            │
-                            ▼
-                    ┌──────────────────┐
-                    │  LLM Triage      │
-                    │  (via OpenClaw)  │
-                    └──────────────────┘
+┌─────────────────┐
+│  OpenClaw       │──┐
+│  agentshield-oc │  │     ┌──────────────────┐     ┌─────────────────┐
+├─────────────────┤  ├────▶│  AgentShield     │────▶│  Sigma Rules    │
+│  Claude Code    │  │     │  Engine (Go)     │     │  (YAML)         │
+│  agentshield-cc │──┘     └──────────────────┘     └─────────────────┘
+├─────────────────┤                │
+│  Cursor, Codex  │                ▼
+│  (coming soon)  │        ┌──────────────────┐
+└─────────────────┘        │  LLM Triage      │
+                           │  (via OpenClaw)  │
+                           └──────────────────┘
 ```
 
-The AgentShield architecture consists of three main components working together:
+AgentShield is **platform-agnostic** — one engine and one rule set, multiple integrations:
 
-1. **OpenClaw Plugin** captures AI agent activity and tool calls
+1. **Platform extensions** capture AI agent tool calls (OpenClaw, Claude Code, more coming)
 2. **AgentShield Engine** evaluates events against Sigma rules in real-time  
 3. **Sigma Rules** define detection patterns for AI-specific threats
 4. **LLM Triage** automatically classifies alerts using OpenClaw loopback (no extra API keys required)
@@ -128,13 +130,21 @@ AgentShield includes comprehensive detection across all AI agent attack vectors:
 This organization contains three repositories that work together:
 
 ### 🛡️ [agentshield](https://github.com/agentshield-ai/agentshield) (This Repository)
-Main project page containing documentation, OpenClaw plugin, and integration guides. This is the central hub and first point of contact for new users.
+Main project page — documentation, architecture, blog, and integration guides.
 
 ### ⚡ [agentshield-engine](https://github.com/agentshield-ai/agentshield-engine)  
-High-performance Go detection engine built on a fork of RunReveal's sigmalite. Provides HTTP API, CLI tools, triage system, and rule management. Single binary with zero dependencies.
+Go detection engine built on a fork of RunReveal's sigmalite. HTTP API, CLI, LLM triage, feedback loop. Single binary, zero dependencies.
 
 ### 📋 [agentshield-rules](https://github.com/agentshield-ai/agentshield-rules)
-Comprehensive collection of 36+ Sigma rules for AI agent threat detection. Organized by MITRE ATT&CK tactics, covering everything from prompt injection to data exfiltration.
+39 Sigma detection rules across 12 MITRE ATT&CK categories.
+
+### 🔌 Platform Extensions
+| Repo | Platform | Status |
+|------|----------|--------|
+| [agentshield-openclaw](https://github.com/agentshield-ai/agentshield-openclaw) | OpenClaw | ✅ Production |
+| [agentshield-claude](https://github.com/agentshield-ai/agentshield-claude) | Claude Code | 🚧 In Development |
+| agentshield-cursor | Cursor | 📋 Planned |
+| agentshield-codex | Codex | 📋 Planned |
 
 ## Getting Help
 
