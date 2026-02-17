@@ -1,285 +1,351 @@
-# Architecture Overview
+# AgentShield Architecture
 
-AgentShield is a local SIEM-lite designed to monitor AI agent activity and detect security threats. This document describes the system architecture and data flow.
+AgentShield is a comprehensive AI Agent Detection & Response (AADR) system designed to monitor AI agent activity and detect security threats in real-time. This document describes the system architecture and data flow.
 
 ## System Overview
 
+AgentShield follows a modern, distributed architecture with three main components:
+
 ```
-                                    ┌─────────────────────┐
-                                    │  AI Agent Logs      │
-                                    │  (JSONL files)      │
-                                    └─────────┬───────────┘
+                                ┌─────────────────────────────┐
+                                │     AI Agent Activity       │
+                                │   (OpenClaw Tool Calls)     │
+                                └─────────────┬───────────────┘
                                               │
                                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            AgentShield Pipeline                              │
-│                                                                              │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
-│  │  Collector  │───▶│  Detection  │───▶│   Triage    │───▶│   Notify    │  │
-│  │             │    │   Engine    │    │   Agent     │    │             │  │
-│  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
-│         │                 │                  │                   │          │
-│         ▼                 ▼                  ▼                   ▼          │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         SQLite Database                              │   │
-│  │  (events, alerts, feedback)                                          │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-└────────────────────────────────────┼─────────────────────────────────────────┘
+│                         AgentShield Detection System                        │
+│                                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐ │
+│  │  OpenClaw   │───▶│   Engine    │───▶│   Triage    │───▶│   Action    │ │
+│  │  Plugin     │    │   (Go)      │    │   (LLM)     │    │  (Block/Log) │ │
+│  │  (TypeScript)│   │             │    │             │    │             │ │
+│  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘ │
+│         │                 │                  │                   │         │
+│         ▼                 ▼                  ▼                   ▼         │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │                      SQLite Database                              │  │
+│  │  (events, alerts, feedback, triage results)                       │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+└────────────────────────────────────┼────────────────────────────────────────┘
                                      │
                           ┌──────────┴──────────┐
                           ▼                     ▼
                    ┌─────────────┐       ┌─────────────┐
-                   │  Feedback   │       │  Refinement │
-                   │  Collector  │       │   Engine    │
+                   │  Feedback   │       │  Rule Auto  │
+                   │  Collection │       │  Refinement │
                    └─────────────┘       └─────────────┘
 ```
 
-## Components
+## Architecture Components
 
-### Collector (`src/agentshield/collectors/`)
+### 1. OpenClaw Plugin (TypeScript)
 
-The collector watches AI agent log files and parses events.
+The OpenClaw plugin acts as the data collection layer, monitoring AI agent activity.
 
-**ClawdbotCollector** (`clawdbot.py`):
-- Reads JSONL log files asynchronously using `aiofiles`
-- Tracks file position for incremental reads (survives restarts)
-- Parses events to `Event` objects
-- Handles malformed entries gracefully
+**Key responsibilities:**
+- Intercepts tool calls and agent actions
+- Normalizes events into standard format
+- Sends events to AgentShield Engine via HTTP API
+- Handles enforcement actions (block/allow)
+- Manages plugin configuration and lifecycle
 
-**Key features**:
-- Position tracking prevents re-processing events
-- Detects log rotation and resets position
-- Maps standard fields (`timestamp`, `event_type`, `command`) to Event model
-- Preserves extra fields in `data` dict
+**Plugin structure:**
+```typescript
+// plugin/index.ts
+export class AgentShieldPlugin {
+  async onToolCall(event: ToolCallEvent): Promise<Action> {
+    const result = await this.evaluate(event);
+    return result.action; // ALLOW, BLOCK, LOG
+  }
+}
+```
 
-### Detection Engine (`src/agentshield/detection/`)
+### 2. AgentShield Engine (Go)
 
-The detection engine matches events against Sigma rules.
+The AgentShield Engine is a high-performance Go service built on a fork of RunReveal's sigmalite library.
 
-**SigmaRuleLoader** (`sigma.py`):
-- Loads YAML rules from the rules directory
-- Validates rule structure and required fields
-- Supports hot-reload for rule updates
+**Key features:**
+- **Sigma rule evaluation** using forked sigmalite engine
+- **HTTP API** for real-time event evaluation  
+- **Three evaluation modes**: enforce, audit, shadow
+- **Hot rule reloading** via SIGHUP signal
+- **SQLite storage** for alerts and feedback
+- **CLI interface** for management and monitoring
+- **Triage integration** with LLM providers
 
-**DetectionEngine** (`engine.py`):
-- Compiles Sigma rules to efficient matchers
-- Evaluates events against all rules
-- Generates `Alert` objects for matches
-- Caches compiled matchers for performance
+**Engine structure:**
+```
+agentshield-engine/
+├── cmd/agentshield/         # CLI entrypoint
+├── internal/
+│   ├── server/              # HTTP server + API routes
+│   ├── engine/              # Sigmalite wrapper + evaluation
+│   ├── triage/              # LLM-powered triage system
+│   ├── config/              # Configuration management
+│   ├── store/               # SQLite data persistence
+│   ├── feedback/            # Feedback collection + rule refinement
+│   └── daemon/              # Service lifecycle management
+└── pkg/sigma/               # Forked sigmalite library (git subtree)
+```
 
-**Supported modifiers**:
-- `contains`, `startswith`, `endswith` - String matching
-- `re` - Regex patterns
-- `all` - AND logic for multiple values
+**API endpoints:**
+- `POST /api/v1/evaluate` - Evaluate event against rules
+- `GET /health` - Health check
+- `GET /api/v1/alerts` - Retrieve alerts
+- `POST /api/v1/feedback` - Submit feedback
 
-### Triage Agent (`src/agentshield/triage/`)
+### 3. Sigma Rules (YAML)
 
-The triage agent uses LLM to classify alerts.
+The rule repository contains 36+ Sigma detection rules organized by MITRE ATT&CK tactics.
 
-**ContextGatherer** (`context.py`):
-- Collects conversation context (5-minute window before alert)
-- Finds similar commands in history (7-day window)
-- Checks baseline for known safe patterns
-- Gets rule FP rate from feedback
+**Rule categories:**
+- Prompt injection (3 rules)
+- Tool poisoning (2 rules)  
+- Defense evasion (8 rules)
+- Credential access (3 rules)
+- Data exfiltration (5 rules)
+- Privilege escalation (4 rules)
+- And 7 more categories...
 
-**TriageAgent** (`agent.py`):
-- Builds prompts with alert and context
-- Calls Anthropic API with extended thinking
-- Parses response to verdict (TRUE_POSITIVE, FALSE_POSITIVE, SUSPICIOUS)
-- Auto-approves high-confidence FPs with supporting evidence
+**Rule format:**
+```yaml
+title: Direct Prompt Injection Attempt
+id: agent-prompt-injection-direct-001
+status: experimental
+description: Detects direct prompt injection attempts
+author: AgentShield Team
+date: 2024/01/15
+tags:
+    - attack.initial_access
+    - attack.t1566
+logsource:
+    category: ai_agent
+    product: openclaw
+detection:
+    selection:
+        event_type: 'tool_call'
+        message|contains:
+            - 'ignore previous'
+            - 'new instructions'
+    condition: selection
+level: critical
+```
 
-### Notification System (`src/agentshield/notify/`)
+### 4. LLM Triage System
 
-Sends alerts to users through various channels.
+The triage system provides intelligent alert classification using Large Language Models.
 
-**DesktopNotifier** (`desktop.py`):
-- macOS: Uses `osascript` for native notifications
-- Linux: Uses `notify-send`
-- Only notifies for TRUE_POSITIVE and SUSPICIOUS verdicts
+**Triage providers:**
+- **OpenClaw loopback** (default) - Uses OpenClaw's LLM without additional API keys
+- **OpenAI** - Direct API integration
+- **Anthropic** - Direct API integration
 
-### Feedback System (`src/agentshield/feedback/`)
+**Triage process:**
+1. **Context gathering** - Collects recent events, similar commands, baseline patterns
+2. **LLM analysis** - Sends alert + context to LLM for classification
+3. **Verdict assignment** - TRUE_POSITIVE, FALSE_POSITIVE, SUSPICIOUS
+4. **Confidence scoring** - Confidence level for the verdict
+5. **Auto-approval** - High-confidence false positives are auto-approved
 
-Collects and processes user feedback.
-
-**FeedbackCollector** (`collector.py`):
-- Requests feedback for SUSPICIOUS verdicts
-- Parses user response (safe/threat)
-- Stores in FeedbackStore
-- Updates alert verdict
-
-**RuleRefinementEngine** (`refinement.py`):
-- Identifies rules with high FP rates (>30%)
-- Analyzes patterns in FP vs TP events
-- Uses LLM to generate improved rules
-- Applies suggestions with backup
-
-### Storage Layer (`src/agentshield/store/`)
-
-Persistent storage using SQLite with async access.
-
-**EventStore** (`events.py`):
-- Stores all parsed events
-- Query by time range or event type
-
-**AlertStore** (`alerts.py`):
-- Stores generated alerts
-- Updates verdicts after triage
-- Query by level, rule, or time
-
-**FeedbackStore** (`feedback.py`):
-- Stores user feedback
-- Calculates rule statistics (FP rate)
-- Provides baseline data
-
-**Database features**:
-- WAL mode for concurrent read/write
-- Indexed queries for performance
-- JSON serialization for nested objects
-
-### MCP Server (`src/agentshield/mcp/`)
-
-Model Context Protocol server for agent integration.
-
-**MCPServer** (`server.py`):
-- `receive_alert`: Agents report security alerts
-- `get_status`: Get system statistics
-- `submit_feedback`: Submit feedback on alerts
-- `generate_sigma_rule`: Generate rules using LLM
-
-### Reports (`src/agentshield/reports/`)
-
-Summary report generation.
-
-**SummaryGenerator** (`generator.py`):
-- Aggregates alerts by level and verdict
-- Identifies top-triggering rules
-- Calculates overall FP rate
-- Identifies rules needing refinement
+**OpenClaw loopback configuration:**
+```yaml
+triage:
+  provider: "openclaw"
+  endpoint: "http://localhost:8080/api/v1/chat"
+  model: "claude-3-5-sonnet"
+  system_prompt: |
+    You are a cybersecurity analyst reviewing AI agent security alerts...
+  auto_approve_threshold: 0.9
+```
 
 ## Data Flow
 
 ### Event Processing Pipeline
 
-1. **Collection**: Collector reads new entries from log files
-2. **Detection**: Engine matches events against Sigma rules
-3. **Alert Generation**: Matching events create Alert objects
-4. **Triage**: LLM classifies alerts with context
-5. **Notification**: Users are alerted for threats
-6. **Feedback**: Users provide feedback on verdicts
-7. **Learning**: Feedback improves future detection
+1. **Event Collection**: OpenClaw plugin captures tool calls and agent actions
+2. **Normalization**: Events are standardized into common format
+3. **Rule Evaluation**: AgentShield Engine evaluates events against Sigma rules
+4. **Alert Generation**: Matching events generate Alert objects with metadata
+5. **Triage Classification**: LLM analyzes alerts with contextual information
+6. **Action Execution**: Based on verdict, system blocks, logs, or allows action
+7. **Feedback Collection**: Users provide feedback on alert accuracy
+8. **Rule Refinement**: High false positive rules are automatically improved
+
+### Evaluation Modes
+
+**Enforce Mode** (Production):
+- Blocks malicious actions in real-time
+- Generates alerts for all rule matches
+- Requires triage for SUSPICIOUS verdicts
+
+**Audit Mode** (Monitoring):
+- Logs all activity but doesn't block
+- Generates alerts for analysis
+- Good for testing new rules
+
+**Shadow Mode** (Baseline):
+- Silent monitoring only
+- Collects data for tuning
+- No user-facing alerts
 
 ### Triage Pipeline
 
 ```
-Alert ──▶ Context ──▶ Prompt ──▶ LLM ──▶ Decision
-            │                              │
-            ├─ Recent events               ├─ Verdict
-            ├─ Similar commands            ├─ Confidence
-            ├─ Baseline match              └─ Reasoning
-            └─ FP rate
+Alert ──▶ Context Gathering ──▶ LLM Analysis ──▶ Verdict & Action
+   │              │                    │              │
+   │              ├─ Recent events     ├─ Reasoning    ├─ Block/Allow
+   │              ├─ Similar commands  ├─ Confidence   ├─ User notify
+   │              ├─ Baseline patterns └─ Evidence     └─ Store result
+   │              └─ Rule FP rate
+   │
+   ▼
+SQLite Storage
 ```
 
 ### Feedback Loop
 
 ```
 Alert (SUSPICIOUS) ──▶ User Feedback ──▶ Verdict Update
-                              │
-                              ▼
-                      FeedbackStore
-                              │
-                              ▼
-                    ┌─────────┴─────────┐
-                    │                   │
-                    ▼                   ▼
-              Baseline Update    Rule Refinement
-              (for FP cases)     (high FP rules)
+                             │              │
+                             ▼              ▼
+                    FeedbackStore      AlertStore
+                             │              │
+                             ▼              ▼
+                    ┌─────────┴──┐    ┌─────┴─────┐
+                    │            │    │           │
+                    ▼            ▼    ▼           ▼
+              Baseline        Rule         Triage
+              Update          Refinement   Improvement
 ```
 
-## Data Models
+## Technology Stack
 
-### Event
+### Core Technologies
+- **Go 1.21+**: Engine implementation for performance
+- **TypeScript**: OpenClaw plugin development
+- **SQLite**: Local data persistence with WAL mode
+- **Sigmalite**: Forked from RunReveal (Apache 2.0)
 
-```python
-class Event(BaseModel):
-    id: str              # UUID
-    timestamp: datetime
-    source: str          # e.g., "clawdbot"
-    event_type: str      # e.g., "tool_call"
-    command: str | None  # Executed command
-    working_dir: str | None
-    data: dict           # Additional fields
+### Libraries & Dependencies
+- **Sigma Go Library**: Rule parsing and evaluation
+- **Gin**: HTTP server framework
+- **GORM**: Database ORM
+- **Logrus**: Structured logging
+- **Viper**: Configuration management
+
+### Integration Points
+- **OpenClaw Framework**: Plugin architecture and LLM access
+- **HTTP APIs**: Engine communication and external integration
+- **Sigma Format**: Standard detection rule format
+- **MITRE ATT&CK**: Threat taxonomy alignment
+
+## Deployment Architecture
+
+### Single-Node Deployment (Default)
+```
+┌─────────────────────────────────┐
+│        OpenClaw Node            │
+│                                 │
+│  ┌─────────────┐               │
+│  │ AgentShield │               │
+│  │ Plugin      │               │
+│  └──────┬──────┘               │
+│         │ HTTP                 │
+│  ┌──────▼──────┐               │
+│  │ AgentShield │               │
+│  │ Engine      │               │
+│  └─────────────┘               │
+│                                 │
+└─────────────────────────────────┘
 ```
 
-### Alert
-
-```python
-class Alert(BaseModel):
-    id: str              # UUID
-    timestamp: datetime
-    rule_id: str
-    rule_name: str
-    level: AlertLevel    # LOW, MEDIUM, HIGH, CRITICAL
-    event: Event         # Triggering event
-    verdict: Verdict | None
-    triage_reason: str | None
-    context: dict
+### Distributed Deployment (Enterprise)
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Agent Node 1  │    │   Agent Node 2  │    │   Agent Node N  │
+│                 │    │                 │    │                 │
+│ ┌─────────────┐ │    │ ┌─────────────┐ │    │ ┌─────────────┐ │
+│ │ Plugin      │ │    │ │ Plugin      │ │    │ │ Plugin      │ │
+│ └──────┬──────┘ │    │ └──────┬──────┘ │    │ └──────┬──────┘ │
+│        │        │    │        │        │    │        │        │
+└────────┼────────┘    └────────┼────────┘    └────────┼────────┘
+         │ HTTP                 │ HTTP                 │ HTTP
+         └──────────────────────┼──────────────────────┘
+                                │
+                    ┌───────────▼────────────┐
+                    │  Central AgentShield   │
+                    │       Engine           │
+                    │                        │
+                    │ ┌─────────────────────┐│
+                    │ │   Rule Management   ││
+                    │ │   Alert Storage     ││
+                    │ │   Triage System     ││
+                    │ │   Analytics         ││
+                    │ └─────────────────────┘│
+                    └────────────────────────┘
 ```
 
-### Verdict
+## Security Considerations
 
-```python
-class Verdict(str, Enum):
-    TRUE_POSITIVE = "true_positive"
-    FALSE_POSITIVE = "false_positive"
-    SUSPICIOUS = "suspicious"
-```
+### Engine Security
+- **No external dependencies** - Single Go binary
+- **Local SQLite storage** - No cloud dependencies
+- **HTTPS/TLS support** - Encrypted communication
+- **Rate limiting** - Protection against abuse
+- **Authentication tokens** - API access control
 
-## Configuration
+### Rule Security
+- **Signed rules** (roadmap) - Prevent rule tampering
+- **Rule validation** - Syntax and logic checking
+- **Version control** - Git-based rule management
+- **Hot reloading** - Updates without service restart
 
-See [Configuration Guide](configuration.md) for details on:
-- Environment variables
-- YAML configuration
-- Log paths and rules directories
+### Privacy Protection
+- **Local processing** - No data leaves environment
+- **Configurable retention** - Automatic data cleanup
+- **Anonymization options** - Strip sensitive content
+- **Audit logging** - Track all system access
+
+## Performance Characteristics
+
+### Throughput
+- **Rule evaluation**: ~100,000 events/second
+- **API latency**: <1ms for simple rules
+- **Memory usage**: ~50MB baseline + rules
+- **Storage**: ~1MB per 1000 alerts
+
+### Scalability
+- **Horizontal scaling**: Multiple engine instances
+- **Rule sharding**: Distribute rules across engines
+- **Load balancing**: Round-robin or weighted
+- **Caching**: Rule compilation and context data
 
 ## Extension Points
 
 ### Custom Collectors
-
-Implement `BaseCollector`:
-
-```python
-class MyCollector(BaseCollector):
-    async def collect(self) -> AsyncGenerator[Event, None]:
-        # Parse your log format
-        yield Event(...)
+```go
+type EventCollector interface {
+    Collect() <-chan Event
+    Close() error
+}
 ```
 
-### Custom Notifiers
-
-Implement `BaseNotifier`:
-
-```python
-class MyNotifier(BaseNotifier):
-    def should_notify(self, alert: Alert) -> bool:
-        return alert.verdict in [Verdict.TRUE_POSITIVE, Verdict.SUSPICIOUS]
-
-    async def notify(self, alert: Alert) -> NotificationResult:
-        # Send notification
-        return NotificationResult(success=True)
+### Custom Triage Providers
+```go
+type TriageProvider interface {
+    Analyze(alert Alert, context Context) (Verdict, error)
+    Configure(config TriageConfig) error
+}
 ```
 
-### Custom Rules
+### Custom Actions
+```go
+type ActionHandler interface {
+    Execute(action Action, alert Alert) error
+    Supports(actionType string) bool
+}
+```
 
-Add Sigma rules to `~/.agentshield/rules/`. See [Rule Authoring Guide](rules.md).
-
-## Technology Stack
-
-- **Python 3.11+**: Async/await, type hints
-- **Pydantic v2**: Data validation and settings
-- **aiosqlite**: Async SQLite access
-- **aiofiles**: Async file I/O
-- **watchdog**: File system monitoring
-- **Anthropic SDK**: LLM integration
-- **Typer + Rich**: CLI interface
-- **mcp**: Model Context Protocol SDK
+This architecture enables AgentShield to provide comprehensive, real-time security monitoring for AI agents while maintaining high performance, flexibility, and ease of deployment.

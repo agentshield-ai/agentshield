@@ -1,157 +1,151 @@
-# AgentShield
+# AgentShield — AI Agent Detection & Response (AADR)
 
-**AI Agent Detection & Response** - A comprehensive security framework for monitoring and protecting AI agents against adversarial attacks.
+Real-time security monitoring for AI agents using Sigma rules
 
-![AgentShield Architecture](https://img.shields.io/badge/Architecture-Plugin%20%E2%86%92%20Engine%20%E2%86%92%20Rules-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)
+![Rules](https://img.shields.io/badge/Rules-36+-blue)
 
-## 🛡️ What is AgentShield?
+## What is AgentShield?
 
-AgentShield is a real-time security monitoring and detection system specifically designed for AI agents. It provides:
+AgentShield monitors AI agent tool calls, evaluates them against Sigma detection rules, blocks malicious activity, and provides LLM-powered triage. It's the first comprehensive security framework designed specifically for AI agents, protecting against prompt injection, tool poisoning, credential theft, data exfiltration, and other AI-specific threats.
 
-- **Real-time threat detection** using Sigma rules
-- **Behavioral monitoring** of agent actions and tool usage  
-- **Prompt injection detection** for both direct and indirect attacks
-- **Tool poisoning prevention** and MCP security monitoring
-- **Credential access protection** and data exfiltration detection
-- **Integration with OpenClaw** for seamless agent security
-
-## 🏗️ Architecture
-
-AgentShield follows a modular architecture with three main components:
+## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   AgentShield   │───▶│ AgentShield      │───▶│ AgentShield     │
-│   Plugin        │    │ Engine           │    │ Rules           │
-│                 │    │                  │    │                 │
-│ • OpenClaw      │    │ • Sigma Runtime  │    │ • 36+ Rules     │
-│   Integration   │    │ • HTTP API       │    │ • MITRE ATT&CK  │
-│ • Event         │    │ • Rule Engine    │    │ • AI-Specific   │
-│   Collection    │    │ • Go Performance │    │   Detections    │
-│ • Skill System  │    │ • Real-time Eval │    │ • Categories    │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  OpenClaw    │────▶│  AgentShield     │────▶│  Sigma Rules    │
+│  Plugin (TS) │◀────│  Engine (Go)     │     │  (YAML)         │
+└─────────────┘     └──────────────────┘     └─────────────────┘
+                            │
+                            ▼
+                    ┌──────────────────┐
+                    │  LLM Triage      │
+                    │  (via OpenClaw)  │
+                    └──────────────────┘
 ```
 
-### Components
+The AgentShield architecture consists of three main components working together:
 
-1. **[AgentShield Plugin](./plugin/)** - OpenClaw integration and event collection
-2. **[AgentShield Engine](https://github.com/agentshield-ai/agentshield-engine)** - High-performance Go detection engine
-3. **[AgentShield Rules](https://github.com/agentshield-ai/agentshield-rules)** - Sigma rules for AI agent threats
+1. **OpenClaw Plugin** captures AI agent activity and tool calls
+2. **AgentShield Engine** evaluates events against Sigma rules in real-time  
+3. **Sigma Rules** define detection patterns for AI-specific threats
+4. **LLM Triage** automatically classifies alerts using OpenClaw loopback (no extra API keys required)
 
-## 🚀 Quick Start
+## Key Features
+
+- **36+ Sigma detection rules** for AI agent threats across 12 MITRE ATT&CK categories
+- **Single Go binary** — zero dependencies, easy deployment
+- **Three evaluation modes**: enforce (block), audit (log), shadow (silent)
+- **LLM-powered triage** via OpenClaw loopback (no extra API keys needed)
+- **Feedback loop** with automatic rule refinement based on false positives
+- **Hot rule reload** (SIGHUP signal) without service restart
+- **SQLite alert storage** for persistence and analysis
+- **CLI for management** (status, alerts, refine commands)
+- **Real-time detection** with microsecond latency
+- **HTTP API** for integration with external systems
+
+## Quick Start
 
 ### Install via OpenClaw
 
 ```bash
-# Install the AgentShield plugin
-openclaw plugin install agentshield
-
-# Add the skill to your agent
-openclaw skill add agentshield
+# Install AgentShield plugin
+/agentshield install
 ```
 
 ### Manual Installation
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/agentshield-ai/agentshield.git
-   cd agentshield
-   ```
-
-2. **Install the plugin:**
-   ```bash
-   # Copy plugin to OpenClaw plugins directory
-   cp -r plugin/ ~/.openclaw/plugins/agentshield/
-   
-   # Install the skill
-   cp -r skill/ ~/.openclaw/skills/agentshield/
-   ```
-
-3. **Start the detection engine:**
-   ```bash
-   # Get the engine and rules
-   git clone https://github.com/agentshield-ai/agentshield-engine.git
-   git clone https://github.com/agentshield-ai/agentshield-rules.git
-   
-   # Build and run
-   cd agentshield-engine
-   make build
-   ./bin/agentshield -rules ../agentshield-rules/rules
-   ```
-
-## 📊 Detection Capabilities
-
-AgentShield detects 36+ different attack patterns across 12 MITRE ATT&CK categories:
-
-| Category | Examples | Rule Count |
-|----------|----------|------------|
-| **Prompt Injection** | Direct jailbreaks, indirect manipulation | 3 |
-| **Tool Poisoning** | MCP manipulation, skill tampering | 2 |  
-| **Credential Access** | SSH keys, cloud credentials, env files | 3 |
-| **Data Exfiltration** | Steganographic, DNS tunneling, network | 5 |
-| **Privilege Escalation** | Container escape, IAM escalation | 4 |
-| **Defense Evasion** | Memory poisoning, config manipulation | 7 |
-| **Execution** | RCE attempts, dangerous commands | 3 |
-| **Persistence** | Backdoors, rule tampering | 3 |
-| **Discovery** | Network recon, DNS enumeration | 2 |
-| **Lateral Movement** | Credential stuffing, pivot attempts | 1 |
-| **Collection** | Suspicious file operations | 1 |
-| **Initial Access** | Untrusted skill installation | 1 |
-
-## 📖 Documentation
-
-### Getting Started
-- [Installation Guide](./docs/installation.md)
-- [Configuration](./docs/configuration.md) 
-- [Quick Start Tutorial](./docs/quickstart.md)
-
-### Architecture & Design
-- [System Architecture](./docs/architecture.md)
-- [Plugin Development](./docs/plugin-development.md)
-- [Rule Creation](./docs/rule-creation.md)
-
-### Advanced Usage
-- [API Reference](./docs/api-reference.md)
-- [Custom Rules](./docs/custom-rules.md)
-- [Integration Guide](./docs/integration.md)
-
-## 🔗 Related Repositories
-
-| Repository | Description | Language |
-|------------|-------------|----------|
-| **[agentshield](https://github.com/agentshield-ai/agentshield)** | Main plugin and documentation | Python |
-| **[agentshield-engine](https://github.com/agentshield-ai/agentshield-engine)** | High-performance detection engine | Go |
-| **[agentshield-rules](https://github.com/agentshield-ai/agentshield-rules)** | Sigma rules for AI agent threats | YAML |
-
-## 🛠️ Development
-
-### Prerequisites
-- Python 3.8+
-- Go 1.21+ (for engine development)
-- OpenClaw framework
-- Docker (optional)
-
-### Local Development
-
 ```bash
-# Clone all repositories
+# 1. Clone the main repository
 git clone https://github.com/agentshield-ai/agentshield.git
-git clone https://github.com/agentshield-ai/agentshield-engine.git  
+cd agentshield
+
+# 2. Get the engine and rules
+git clone https://github.com/agentshield-ai/agentshield-engine.git
 git clone https://github.com/agentshield-ai/agentshield-rules.git
 
-# Set up development environment
-cd agentshield
-python -m venv venv
-source venv/bin/activate
-pip install -r plugin/requirements.txt
+# 3. Build the engine
+cd agentshield-engine
+go build ./cmd/agentshield/
 
-# Run tests
-python -m pytest plugin/tests/
+# 4. Start the engine
+./agentshield serve -rules ../agentshield-rules/rules -port 8432
+
+# 5. Install the OpenClaw plugin
+cd ../plugin
+cp -r . ~/.openclaw/plugins/agentshield/
 ```
 
-### Contributing
+## Configuration Example
+
+```yaml
+# ~/.agentshield/config.yaml
+engine:
+  host: "localhost"
+  port: 8432
+  mode: "audit"  # enforce, audit, shadow
+
+rules:
+  path: "~/.agentshield/rules"
+  auto_reload: true
+
+triage:
+  provider: "openclaw"  # openclaw, openai, anthropic
+  model: "claude-3-5-sonnet"
+  auto_approve_threshold: 0.9
+
+storage:
+  path: "~/.agentshield/alerts.db"
+  retention_days: 30
+
+notifications:
+  enabled: true
+  channels: ["desktop"]
+```
+
+## Detection Categories
+
+AgentShield includes comprehensive detection across all AI agent attack vectors:
+
+| Category | Rules | Examples |
+|----------|--------|----------|
+| **Prompt Injection** | 3 | Direct jailbreaks, indirect manipulation |
+| **Tool Poisoning** | 2 | MCP manipulation, skill tampering |  
+| **Defense Evasion** | 8 | Memory poisoning, config manipulation |
+| **Credential Access** | 3 | SSH keys, cloud credentials, env files |
+| **Exfiltration** | 5 | Steganographic, DNS tunneling, network |
+| **Privilege Escalation** | 4 | Container escape, IAM escalation |
+| **Execution** | 3 | RCE attempts, dangerous commands |
+| **Persistence** | 3 | Backdoors, rule tampering |
+| **Discovery** | 2 | Network recon, DNS enumeration |
+| **Lateral Movement** | 1 | Credential stuffing, pivot attempts |
+| **Collection** | 1 | Suspicious file operations |
+| **Initial Access** | 1 | Untrusted skill installation |
+
+## Repository Structure
+
+This organization contains three repositories that work together:
+
+### 🛡️ [agentshield](https://github.com/agentshield-ai/agentshield) (This Repository)
+Main project page containing documentation, OpenClaw plugin, and integration guides. This is the central hub and first point of contact for new users.
+
+### ⚡ [agentshield-engine](https://github.com/agentshield-ai/agentshield-engine)  
+High-performance Go detection engine built on a fork of RunReveal's sigmalite. Provides HTTP API, CLI tools, triage system, and rule management. Single binary with zero dependencies.
+
+### 📋 [agentshield-rules](https://github.com/agentshield-ai/agentshield-rules)
+Comprehensive collection of 36+ Sigma rules for AI agent threat detection. Organized by MITRE ATT&CK tactics, covering everything from prompt injection to data exfiltration.
+
+## Getting Help
+
+- **Documentation**: [docs/](./docs/) directory
+- **Bug Reports**: [GitHub Issues](https://github.com/agentshield-ai/agentshield/issues)
+- **Feature Requests**: [Discussions](https://github.com/agentshield-ai/agentshield/discussions)
+- **Security Issues**: security@agentshield.ai
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](./docs/contributing.md) for details.
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -159,27 +153,26 @@ python -m pytest plugin/tests/
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 Blog & Research
+## Business Model
 
-Read our launch blog post: [Introducing AgentShield](./blog_post.md)
+AgentShield follows an **open core model**:
 
-## 🐛 Issues & Support
+- **Open Source**: Detection engine, rules, and core functionality (Apache 2.0)
+- **Pro Tier** (Optional): AgentShield Foundation Model for advanced threat intelligence, rule generation, and enterprise features
 
-- **Bug Reports**: [GitHub Issues](https://github.com/agentshield-ai/agentshield/issues)
-- **Feature Requests**: [Discussions](https://github.com/agentshield-ai/agentshield/discussions)
-- **Security Issues**: security@agentshield.ai
+The entire core platform remains free and open source. Pro features enhance but never replace the open source functionality.
 
-## 📜 License
+## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Apache 2.0 - See [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [OpenClaw](https://github.com/openclaw-ai/openclaw) - AI agent framework
 - [Sigma](https://github.com/SigmaHQ/sigma) - Detection rule format
-- [Sigmalite](https://github.com/runreveal/sigmalite) - Go Sigma engine
+- [Sigmalite](https://github.com/runreveal/sigmalite) - Go Sigma engine (Apache 2.0)
 - MITRE ATT&CK - Threat taxonomy
 
 ---
 
-**AgentShield** - Protecting AI agents from adversarial attacks, one rule at a time.
+**Protecting AI agents from adversarial attacks, one rule at a time.**
