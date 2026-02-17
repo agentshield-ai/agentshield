@@ -1,0 +1,24 @@
+# AgentShield Configuration Example
+# Copy this file to ~/.agentshield/config.yaml
+
+# Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+log_level: INFO
+
+# Data directory for AgentShield files
+# data_dir: ~/.agentshield
+
+# Directory containing Sigma detection rules
+# rules_dir: ~/.agentshield/rules
+
+# SQLite database path
+# db_path: ~/.agentshield/agentshield.db
+
+# Log files to monitor (list of paths)
+log_paths:
+  - ~/.clawdbot/logs/agent.jsonl
+  # Add more log files if needed:
+  # - ~/.claude-code/logs/agent.jsonl
+  # - /var/log/ai-agent/events.jsonl
+
+# Note: ANTHROPIC_API_KEY should be set as an environment variable:
+# export ANTHROPIC_API_KEY=sk-ant-...
