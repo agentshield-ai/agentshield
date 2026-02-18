@@ -146,7 +146,7 @@ export class AgentShieldClient {
       "X-AgentShield-Version": CONTRACT_VERSION,
     };
     if (this.authToken) {
-      headers["X-AgentShield-Auth"] = this.authToken;
+      headers["Authorization"] = `Bearer ${this.authToken}`;
     }
     return headers;
   }
