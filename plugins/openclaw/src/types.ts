@@ -7,6 +7,7 @@ export type AgentShieldConfig = {
   timeout_policy: "allow" | "block" | "log";
   intercept: string[];
   skip: string[];
+  notify: "all" | "high" | "critical" | "none";
   circuit_breaker: {
     failure_threshold: number;
     recovery_interval_ms: number;

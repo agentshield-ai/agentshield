@@ -11,6 +11,7 @@
       "auth_token": { "type": "string" },
       "timeout_ms": { "type": "number", "default": 50, "minimum": 5, "maximum": 5000 },
       "timeout_policy": { "type": "string", "enum": ["allow", "block", "log"], "default": "allow" },
+      "notify": { "type": "string", "enum": ["all", "high", "critical", "none"], "default": "high", "description": "Minimum severity level for user notifications" },
       "intercept": {
         "type": "array",
         "items": { "type": "string" },

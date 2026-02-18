@@ -9,8 +9,84 @@ import {
   buildLifecycleEvent,
 } from "./src/event-builder.js";
 
+import type { EvaluationResponse } from "./src/types.js";
+
 /** Max age (ms) for entries in the pending evaluations correlation map. */
 const CORRELATION_TTL_MS = 60_000;
+
+/** Severity emoji mapping */
+const SEVERITY_EMOJI: Record<string, string> = {
+  critical: "🔴",
+  high: "🟠",
+  medium: "🟡",
+  low: "🔵",
+};
+
+/**
+ * Send a security alert notification as a system event.
+ * The agent will see this and relay it to the user naturally.
+ */
+const SEVERITY_ORDER: Record<string, number> = {
+  low: 0, medium: 1, high: 2, critical: 3,
+};
+const NOTIFY_THRESHOLD: Record<string, number> = {
+  all: 0, high: 2, critical: 3, none: 999,
+};
+
+function notifyAlert(
+  api: OpenClawPluginApi,
+  response: EvaluationResponse,
+  toolName: string,
+  action: "blocked" | "logged",
+  notifyLevel: string = "high",
+): void {
+  try {
+    const alerts = response.alerts ?? [];
+    if (alerts.length === 0) return;
+
+    // Check if any alert meets the notification threshold
+    const threshold = NOTIFY_THRESHOLD[notifyLevel] ?? 2;
+    const meetsThreshold = alerts.some(
+      (a) => (SEVERITY_ORDER[a.severity] ?? 0) >= threshold,
+    );
+    if (!meetsThreshold) return;
+
+    const topAlert = alerts[0];
+    const emoji = SEVERITY_EMOJI[topAlert.severity] ?? "⚪";
+    const triage = response.triage_results?.[0];
+
+    const parts: string[] = [
+      `🛡️ AgentShield Alert — ${action} (${topAlert.severity})`,
+      `${emoji} ${topAlert.rule_name}`,
+      `Tool: ${toolName}`,
+    ];
+
+    // Include matched command if available
+    const command = topAlert.matched_fields?.command;
+    if (command && typeof command === "string") {
+      const truncated = command.length > 200 ? command.slice(0, 200) + "..." : command;
+      parts.push(`Command: ${truncated}`);
+    }
+
+    if (triage) {
+      parts.push(
+        `Triage: ${triage.verdict} (confidence: ${triage.confidence})`,
+        `Reasoning: ${triage.reasoning}`,
+      );
+    }
+
+    if (alerts.length > 1) {
+      parts.push(`(+${alerts.length - 1} more alert${alerts.length > 2 ? "s" : ""})`);
+    }
+
+    const message = parts.join("\n");
+
+    // Inject as system event — agent sees this and can relay to user
+    api.runtime.system.enqueueSystemEvent(message);
+  } catch (err) {
+    api.logger.warn(`AgentShield notification failed: ${String(err)}`);
+  }
+}
 
 /** Apply the configured timeout/failure policy. */
 function applyTimeoutPolicy(
@@ -148,6 +224,10 @@ const plugin = {
             api.logger.warn(
               `AgentShield blocked ${event.toolName}: ${blockReason}`,
             );
+
+            // Notify user via system event for blocks
+            notifyAlert(api, response, event.toolName, "blocked", config.notify);
+
             return {
               block: true,
               blockReason,
@@ -166,6 +246,8 @@ const plugin = {
             api.logger.info(
               `AgentShield logged ${response.alerts.length} alert(s) for ${event.toolName}`,
             );
+            // Notify user based on configured severity threshold
+            notifyAlert(api, response, event.toolName, "logged", config.notify);
           }
 
           return undefined; // allow

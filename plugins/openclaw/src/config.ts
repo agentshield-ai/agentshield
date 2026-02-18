@@ -8,6 +8,7 @@ const DEFAULTS: AgentShieldConfig = {
   timeout_policy: "allow",
   intercept: ["exec", "write", "edit", "browser", "message", "sessions_spawn"],
   skip: ["read", "session_status"],
+  notify: "high",
   circuit_breaker: {
     failure_threshold: 3,
     recovery_interval_ms: 30_000,
@@ -15,6 +16,7 @@ const DEFAULTS: AgentShieldConfig = {
 };
 
 const VALID_TIMEOUT_POLICIES = new Set(["allow", "block", "log"]);
+const VALID_NOTIFY_LEVELS = new Set(["all", "high", "critical", "none"]);
 
 export function parseConfig(
   raw: Record<string, unknown> | undefined,
@@ -53,6 +55,12 @@ export function parseConfig(
       )
     : DEFAULTS.intercept;
 
+  const notify =
+    typeof raw.notify === "string" &&
+    VALID_NOTIFY_LEVELS.has(raw.notify)
+      ? (raw.notify as AgentShieldConfig["notify"])
+      : DEFAULTS.notify;
+
   const skip = Array.isArray(raw.skip)
     ? raw.skip.filter(
         (v): v is string => typeof v === "string" && v.trim().length > 0,
@@ -87,6 +95,7 @@ export function parseConfig(
     timeout_policy,
     intercept,
     skip,
+    notify,
     circuit_breaker,
   };
 }
