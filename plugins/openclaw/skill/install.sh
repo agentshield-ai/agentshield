@@ -107,9 +107,14 @@ EOF
     log "Configuration created"
 }
 
-# Setup systemd
+# Setup service (systemd on Linux, launchd on macOS)
+setup_service() {
+    if [ "$OS" = "darwin" ]; then setup_launchd
+    elif command -v systemctl >/dev/null 2>&1; then setup_systemd
+    else warn "No service manager found — you'll need to start the engine manually"; fi
+}
+
 setup_systemd() {
-    command -v systemctl >/dev/null 2>&1 || { warn "systemd not available"; return; }
     log "Creating systemd service..."
     mkdir -p "$HOME/.config/systemd/user"
     cat > "$HOME/.config/systemd/user/$SERVICE_NAME.service" << EOF
@@ -127,6 +132,39 @@ EOF
     systemctl --user daemon-reload
     systemctl --user enable "$SERVICE_NAME" >/dev/null 2>&1 || warn "Failed to enable service"
     log "Systemd service configured"
+}
+
+setup_launchd() {
+    log "Creating launchd service..."
+    PLIST_DIR="$HOME/Library/LaunchAgents"
+    PLIST_FILE="$PLIST_DIR/ai.agentshield.engine.plist"
+    mkdir -p "$PLIST_DIR"
+    cat > "$PLIST_FILE" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.agentshield.engine</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$INSTALL_DIR/$BINARY_NAME</string>
+        <string>serve</string>
+        <string>--config</string>
+        <string>$CONFIG_FILE</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$INSTALL_DIR/engine.log</string>
+    <key>StandardErrorPath</key>
+    <string>$INSTALL_DIR/engine.log</string>
+</dict>
+</plist>
+EOF
+    log "Launchd service configured at $PLIST_FILE"
 }
 
 # Patch OpenClaw
@@ -148,7 +186,10 @@ patch_openclaw_config() {
 # Start and check
 start_and_check() {
     log "Starting AgentShield..."
-    if command -v systemctl >/dev/null 2>&1; then
+    if [ "$OS" = "darwin" ]; then
+        launchctl load "$HOME/Library/LaunchAgents/ai.agentshield.engine.plist" 2>/dev/null || warn "Failed to load launchd service"
+        sleep 2
+    elif command -v systemctl >/dev/null 2>&1; then
         systemctl --user start "$SERVICE_NAME" || warn "Failed to start service"; sleep 2
     else "$INSTALL_DIR/$BINARY_NAME" serve --config "$CONFIG_FILE" --daemon & sleep 3; fi
     
@@ -166,15 +207,23 @@ start_and_check() {
 # Main
 main() {
     log "Starting AgentShield installation..."
-    detect_platform; download_binary; setup_files; create_config; setup_systemd; patch_openclaw_config; start_and_check
+    detect_platform; download_binary; setup_files; create_config; setup_service; patch_openclaw_config; start_and_check
     
     log "✅ Installation complete!"
     echo -e "\n📋 Next Steps:"
     echo "  • Check status: $INSTALL_DIR/$BINARY_NAME status"
-    echo "  • View logs: journalctl --user -u $SERVICE_NAME -f"
+    if [ "$OS" = "darwin" ]; then
+        echo "  • View logs: tail -f $INSTALL_DIR/engine.log"
+        echo "  • Stop:  launchctl unload ~/Library/LaunchAgents/ai.agentshield.engine.plist"
+        echo "  • Start: launchctl load ~/Library/LaunchAgents/ai.agentshield.engine.plist"
+    elif command -v systemctl >/dev/null 2>&1; then
+        echo "  • View logs: journalctl --user -u $SERVICE_NAME -f"
+        echo "  • Stop:  systemctl --user stop $SERVICE_NAME"
+        echo "  • Start: systemctl --user start $SERVICE_NAME"
+    fi
     echo "  • Edit config: $CONFIG_FILE"
     echo "  • Add rules: $INSTALL_DIR/rules/"
-    echo -e "\n🔒 Auth token is in config - keep it secure!"
+    echo -e "\n🔒 Auth token is in config — keep it secure!"
 }
 
 main "$@"

@@ -37,21 +37,25 @@ confirm_removal() {
     fi
 }
 
-# Stop and disable systemd service
+# Stop and disable service (systemd on Linux, launchd on macOS)
 stop_service() {
-    if command -v systemctl >/dev/null 2>&1; then
-        log "Stopping AgentShield service..."
-        
+    local os
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+    if [ "$os" = "darwin" ]; then
+        log "Stopping AgentShield launchd service..."
+        PLIST="$HOME/Library/LaunchAgents/ai.agentshield.engine.plist"
+        launchctl unload "$PLIST" 2>/dev/null || true
+        rm -f "$PLIST"
+        log "Launchd service stopped and removed"
+    elif command -v systemctl >/dev/null 2>&1; then
+        log "Stopping AgentShield systemd service..."
         systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
         systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
-        
-        # Remove service file
         rm -f "$HOME/.config/systemd/user/$SERVICE_NAME.service"
         systemctl --user daemon-reload 2>/dev/null || true
-        
         log "Systemd service stopped and disabled"
     else
-        # Try to kill any running processes
         pkill -f "agentshield.*serve" 2>/dev/null || true
         log "Stopped AgentShield processes"
     fi
@@ -98,7 +102,7 @@ main() {
     log "AgentShield Uninstaller"
     
     # Check if AgentShield is installed
-    if [ ! -d "$INSTALL_DIR" ] && [ ! -f "$HOME/.config/systemd/user/$SERVICE_NAME.service" ]; then
+    if [ ! -d "$INSTALL_DIR" ] && [ ! -f "$HOME/.config/systemd/user/$SERVICE_NAME.service" ] && [ ! -f "$HOME/Library/LaunchAgents/ai.agentshield.engine.plist" ]; then
         log "AgentShield doesn't appear to be installed"
         exit 0
     fi
