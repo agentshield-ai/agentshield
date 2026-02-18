@@ -1,0 +1,56 @@
+{
+  "name": "agentshield",
+  "version": "1.0.0",
+  "description": "Local SIEM-lite for AI agent security monitoring. Detects threats using Sigma rules and provides real-time security evaluation.",
+  "author": "AgentShield Team",
+  "license": "MIT",
+  "homepage": "https://github.com/markbriers/agentshield",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/markbriers/agentshield.git"
+  },
+  "keywords": ["security", "siem", "ai-agents", "monitoring", "sigma"],
+  "category": "security",
+  "requirements": {
+    "openclaw": ">=1.0.0",
+    "python": ">=3.11",
+    "go": ">=1.21"
+  },
+  "services": [
+    {
+      "name": "agentshield-monitor",
+      "description": "AgentShield monitoring daemon",
+      "type": "systemd",
+      "enabled": true
+    },
+    {
+      "name": "agentshield-realtime",
+      "description": "AgentShield real-time evaluation server",
+      "type": "systemd", 
+      "enabled": true,
+      "port": 8432
+    },
+    {
+      "name": "agentshield-sidecar",
+      "description": "Sigmalite sidecar for high-performance rule evaluation",
+      "type": "systemd",
+      "enabled": false,
+      "port": 8433
+    }
+  ],
+  "plugin": {
+    "path": "openclaw-plugin/",
+    "config": {
+      "enabled": true,
+      "endpoint": "http://127.0.0.1:8432/api/v1/evaluate",
+      "timeout_ms": 50,
+      "timeout_policy": "allow"
+    }
+  },
+  "install": {
+    "script": "install.sh",
+    "uninstall": "uninstall.sh"
+  },
+  "platforms": ["linux", "darwin"],
+  "architectures": ["amd64", "arm64"]
+}

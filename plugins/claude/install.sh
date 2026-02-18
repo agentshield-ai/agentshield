@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Install AgentShield hooks for Claude Code
+set -euo pipefail
+
+INSTALL_DIR="${HOME}/.agentshield"
+HOOK_PATH="${INSTALL_DIR}/agentshield-hook.sh"
+SETTINGS_FILE="${HOME}/.claude/settings.json"
+
+echo "Installing AgentShield for Claude Code..."
+
+# Copy hook script
+mkdir -p "$INSTALL_DIR"
+cp "$(dirname "$0")/agentshield-hook.sh" "$HOOK_PATH"
+chmod +x "$HOOK_PATH"
+
+# Check if engine is running
+if curl -s --max-time 2 http://127.0.0.1:8432/api/v1/health >/dev/null 2>&1; then
+  echo "✅ AgentShield engine detected"
+else
+  echo "⚠️  AgentShield engine not running on port 8432"
+  echo "   Start it with: agentshield serve --config ~/.agentshield/config.yaml"
+fi
+
+# Generate Claude Code settings snippet
+HOOK_CONFIG=$(cat <<EOF
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HOOK_PATH}"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+
+# Check if settings file exists
+if [ -f "$SETTINGS_FILE" ]; then
+  echo ""
+  echo "Add this to your ${SETTINGS_FILE}:"
+  echo ""
+  echo "$HOOK_CONFIG"
+  echo ""
+  echo "Or run: claude /hooks to configure interactively"
+else
+  echo ""
+  echo "Create ${SETTINGS_FILE} with:"
+  echo ""
+  echo "$HOOK_CONFIG"
+fi
+
+echo ""
+echo "✅ AgentShield hook installed to ${HOOK_PATH}"
+echo ""
+echo "Test it with:"
+echo "  echo '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls /tmp\"}}' | ${HOOK_PATH}"
+echo "  echo '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"sudo rm -rf /\"}}' | ${HOOK_PATH}"

@@ -1,177 +1,480 @@
-# Configuration Guide
+# Configuration Reference
 
-AgentShield can be configured via environment variables, a YAML configuration file, or a combination of both.
+Complete configuration reference for AgentShield Engine with all fields, defaults, and environment variable overrides.
 
-## Configuration Priority
+## Configuration File
 
-Settings are applied in this order (highest to lowest priority):
+The engine uses YAML configuration with environment variable substitution. Default locations:
+- `./config.yaml` (working directory)
+- `~/.agentshield/config.yaml` (user config)
+- `/etc/agentshield/config.yaml` (system config)
 
-1. **Environment variables** (e.g., `AGENTSHIELD_LOG_LEVEL`)
-2. **YAML config file** (`~/.agentshield/config.yaml`)
-3. **Default values**
-
-## Environment Variables
-
-### Required
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | API key for Claude LLM triage | `sk-ant-api03-...` |
-
-Note: `ANTHROPIC_API_KEY` uses the standard Anthropic SDK environment variable name (not `AGENTSHIELD_ANTHROPIC_API_KEY`).
-
-### Optional
-
-All optional environment variables use the `AGENTSHIELD_` prefix:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AGENTSHIELD_LOG_LEVEL` | Log verbosity (DEBUG, INFO, WARNING, ERROR, CRITICAL) | `INFO` |
-| `AGENTSHIELD_DATA_DIR` | Base data directory | `~/.agentshield` |
-| `AGENTSHIELD_RULES_DIR` | Directory containing Sigma rules | `~/.agentshield/rules` |
-| `AGENTSHIELD_DB_PATH` | SQLite database file path | `~/.agentshield/agentshield.db` |
-| `AGENTSHIELD_CONFIG_PATH` | Custom config file path | `~/.agentshield/config.yaml` |
-
-## YAML Configuration File
-
-Create `~/.agentshield/config.yaml`:
+## Full Example Configuration
 
 ```yaml
-# Logging configuration
-log_level: INFO
+# HTTP Server Configuration
+server:
+  addr: "0.0.0.0"                    # Bind address (default: "0.0.0.0")
+  port: 8433                         # HTTP port (default: 8433)
 
-# Path settings
-data_dir: ~/.agentshield
-rules_dir: ~/.agentshield/rules
-db_path: ~/.agentshield/agentshield.db
+# Authentication Configuration
+auth:
+  token: "${AGENTSHIELD_AUTH_TOKEN}" # API authentication token (optional)
 
-# Log paths to monitor (list of paths)
-log_paths:
-  - ~/.clawdbot/logs/agent.jsonl
-  - ~/.claude-code/logs/agent.jsonl
+# Rules Configuration
+rules:
+  dir: "./rules"                     # Rules directory (default: "./rules")
+  hot_reload: true                   # Enable hot reload on SIGHUP (default: true)
+
+# Storage Configuration
+store:
+  sqlite_path: "./agentshield.db"    # SQLite database path (default: "./agentshield.db")
+
+# Evaluation Configuration
+evaluation_mode: "audit"             # Mode: enforce, audit, shadow (default: "enforce")
+
+# Logging Configuration
+log_level: "info"                    # Level: debug, info, warn, error (default: "info")
+
+# Fast Triage Configuration (synchronous, ~4 seconds)
+triage:
+  enabled: true                      # Enable fast triage (default: false)
+  provider: "openai"                 # Provider: openai, anthropic, openclaw (default: "openai")
+  model: "gpt-4o-mini"              # Model name (default: "gpt-4o-mini")
+  api_key: "${OPENAI_API_KEY}"      # API key (env override available)
+  base_url: ""                      # Custom base URL for OpenRouter, etc (optional)
+  max_tokens: 500                   # Max response tokens (default: 500)
+  timeout_sec: 10                   # Request timeout seconds (default: 10)
+
+# Deep Triage Configuration (async OpenClaw sub-agent)
+deep_triage:
+  enabled: true                      # Enable deep triage (default: false)
+  gateway_url: "http://127.0.0.1:18789" # OpenClaw gateway URL (default: "http://127.0.0.1:18789")
+  gateway_token: "${OPENCLAW_GATEWAY_TOKEN}" # Gateway auth token (env override available)
+  min_severity: "critical"           # Minimum severity to trigger: low, medium, high, critical (default: "critical")
+  webhook: ""                       # Optional webhook URL for results (optional)
+  
+  # Agent Configuration
+  agent:
+    system_prompt: |                 # Custom SOC analyst prompt (default: built-in)
+      You are an expert cybersecurity analyst specializing in AI agent security.
+      
+      Your task is to analyze security alerts and determine if they represent 
+      true threats or false positives. Consider:
+      
+      1. Context: Recent events and patterns
+      2. Intent: Whether the action appears malicious or legitimate
+      3. Impact: Potential damage if the alert is a true positive
+      4. Environment: Normal vs. suspicious behavior patterns
+      
+      Use available tools to gather additional context when needed.
+      Provide clear reasoning for your verdict with confidence score.
+    
+    model: "anthropic/claude-sonnet-4-20250514" # Model for agent (optional override)
+    thinking: "low"                  # Thinking mode: off, low, high (default: "off")
+    tools:                          # Available tools (default: basic set)
+      - "web_search"                # Web search capability
+      - "web_fetch"                 # Fetch web content
+      - "memory_search"             # Search agent memory
+    timeout_sec: 60                 # Agent timeout seconds (default: 60)
 ```
 
-## Configuration Settings
+## Configuration Sections
 
-### log_level
-
-Controls the verbosity of AgentShield's logging output.
-
-Valid values: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+### Server Configuration
 
 ```yaml
-log_level: DEBUG  # Show all log messages
+server:
+  addr: "0.0.0.0"    # Bind address
+  port: 8433         # HTTP port
 ```
 
-### data_dir
+**Fields:**
+- `addr` (string): IP address to bind to. Use "0.0.0.0" for all interfaces, "127.0.0.1" for localhost only
+- `port` (int): HTTP port number. Avoid privileged ports (<1024) unless running as root
 
-Base directory for AgentShield's data files (database, position tracking, etc.).
+**Environment Overrides:**
+- `AGENTSHIELD_SERVER_ADDR`
+- `AGENTSHIELD_SERVER_PORT`
+
+**Defaults:**
+- `addr`: "0.0.0.0"
+- `port`: 8433
+
+### Authentication Configuration
 
 ```yaml
-data_dir: /var/lib/agentshield
+auth:
+  token: "your-secret-token"
 ```
 
-### rules_dir
+**Fields:**
+- `token` (string): Bearer token for API authentication. If empty, authentication is disabled
 
-Directory containing Sigma detection rules. AgentShield loads all `.yml` and `.yaml` files from this directory.
+**Environment Overrides:**
+- `AGENTSHIELD_AUTH_TOKEN`
+
+**Defaults:**
+- `token`: "" (authentication disabled)
+
+**Security Note:** Always use strong, randomly generated tokens in production. Consider rotating tokens regularly.
+
+### Rules Configuration
 
 ```yaml
-rules_dir: /etc/agentshield/rules
+rules:
+  dir: "./rules"
+  hot_reload: true
 ```
 
-### db_path
+**Fields:**
+- `dir` (string): Directory containing Sigma rule files (.yml/.yaml)
+- `hot_reload` (bool): Enable automatic rule reloading on SIGHUP signal
 
-Path to the SQLite database file. This stores events, alerts, and feedback.
+**Environment Overrides:**
+- `AGENTSHIELD_RULES_DIR`
+- `AGENTSHIELD_RULES_HOT_RELOAD`
+
+**Defaults:**
+- `dir`: "./rules"
+- `hot_reload`: true
+
+### Storage Configuration
 
 ```yaml
-db_path: /var/lib/agentshield/data.db
+store:
+  sqlite_path: "./agentshield.db"
 ```
 
-### log_paths
+**Fields:**
+- `sqlite_path` (string): Path to SQLite database file. Will be created if it doesn't exist
 
-List of log file paths to monitor. AgentShield watches these files for new events.
+**Environment Overrides:**
+- `AGENTSHIELD_STORE_SQLITE_PATH`
+
+**Defaults:**
+- `sqlite_path`: "./agentshield.db"
+
+**Note:** The engine automatically creates tables and handles migrations. Ensure the directory is writable.
+
+### Evaluation Mode Configuration
 
 ```yaml
-log_paths:
-  - ~/.clawdbot/logs/agent.jsonl
-  - /var/log/ai-agent/events.jsonl
+evaluation_mode: "audit"
 ```
 
-Default: `~/.clawdbot/logs/agent.jsonl`
+**Values:**
+- `enforce`: Block matching events and return action: "block"
+- `audit`: Log matching events but don't block, return action: "log"  
+- `shadow`: Silent monitoring, process events but don't affect response
 
-## Example Configurations
+**Environment Overrides:**
+- `AGENTSHIELD_EVALUATION_MODE`
 
-### Minimal Configuration (Development)
+**Defaults:**
+- `evaluation_mode`: "enforce"
+
+### Logging Configuration
 
 ```yaml
-log_level: DEBUG
-log_paths:
-  - ~/.clawdbot/logs/agent.jsonl
+log_level: "info"
+```
+
+**Values:**
+- `debug`: Verbose debug information
+- `info`: General information messages
+- `warn`: Warning conditions
+- `error`: Error conditions only
+
+**Environment Overrides:**
+- `AGENTSHIELD_LOG_LEVEL`
+
+**Defaults:**
+- `log_level`: "info"
+
+### Fast Triage Configuration
+
+Fast triage provides synchronous LLM analysis (~4 seconds) for high-priority alerts.
+
+```yaml
+triage:
+  enabled: true
+  provider: "openai"
+  model: "gpt-4o-mini"
+  api_key: "${OPENAI_API_KEY}"
+  base_url: "https://openrouter.ai/api/v1"
+  max_tokens: 500
+  timeout_sec: 10
+```
+
+**Fields:**
+- `enabled` (bool): Enable fast triage system
+- `provider` (string): LLM provider - "openai", "anthropic", or "openclaw"
+- `model` (string): Model name (provider-specific)
+- `api_key` (string): API key for external providers
+- `base_url` (string): Custom API base URL (useful for OpenRouter)
+- `max_tokens` (int): Maximum response tokens
+- `timeout_sec` (int): Request timeout in seconds
+
+**Provider Models:**
+- **OpenAI**: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo"
+- **Anthropic**: "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"
+- **OpenClaw**: Any model supported by your OpenClaw instance
+
+**Environment Overrides:**
+- `AGENTSHIELD_TRIAGE_ENABLED`
+- `AGENTSHIELD_TRIAGE_PROVIDER`
+- `AGENTSHIELD_TRIAGE_MODEL`
+- `AGENTSHIELD_TRIAGE_API_KEY`
+- `AGENTSHIELD_TRIAGE_BASE_URL`
+- `AGENTSHIELD_TRIAGE_MAX_TOKENS`
+- `AGENTSHIELD_TRIAGE_TIMEOUT_SEC`
+
+**Defaults:**
+- `enabled`: false
+- `provider`: "openai"
+- `model`: "gpt-4o-mini"
+- `max_tokens`: 500
+- `timeout_sec`: 10
+
+### Deep Triage Configuration
+
+Deep triage uses async OpenClaw sub-agents with tool access for comprehensive analysis.
+
+```yaml
+deep_triage:
+  enabled: true
+  gateway_url: "http://127.0.0.1:18789"
+  gateway_token: "${OPENCLAW_GATEWAY_TOKEN}"
+  min_severity: "critical"
+  webhook: "https://your-soc.com/webhook"
+  
+  agent:
+    system_prompt: |
+      Your custom SOC analyst prompt here...
+    model: "anthropic/claude-sonnet-4-20250514"
+    thinking: "low"
+    tools:
+      - "web_search"
+      - "web_fetch"
+      - "memory_search"
+    timeout_sec: 60
+```
+
+**Fields:**
+- `enabled` (bool): Enable deep triage system
+- `gateway_url` (string): OpenClaw gateway endpoint URL
+- `gateway_token` (string): Gateway authentication token
+- `min_severity` (string): Minimum alert severity to trigger deep triage
+- `webhook` (string): Optional webhook URL for async result delivery
+
+**Agent Fields:**
+- `system_prompt` (string): Custom system prompt for the analysis agent
+- `model` (string): Model override for the agent (OpenClaw format)
+- `thinking` (string): Thinking mode - "off", "low", "high"
+- `tools` ([]string): Available tools for the agent
+- `timeout_sec` (int): Agent session timeout
+
+**Severity Levels:**
+- `low`: All alerts trigger deep triage
+- `medium`: Medium and higher alerts
+- `high`: High and critical alerts only  
+- `critical`: Critical alerts only
+
+**Available Tools:**
+- `web_search`: Web search via Brave API
+- `web_fetch`: Fetch and parse web content
+- `memory_search`: Search through agent memory/context
+
+**Environment Overrides:**
+- `AGENTSHIELD_DEEP_TRIAGE_ENABLED`
+- `AGENTSHIELD_DEEP_TRIAGE_GATEWAY_URL`
+- `OPENCLAW_GATEWAY_TOKEN`
+- `AGENTSHIELD_DEEP_TRIAGE_MIN_SEVERITY`
+- `AGENTSHIELD_DEEP_TRIAGE_WEBHOOK`
+
+**Defaults:**
+- `enabled`: false
+- `gateway_url`: "http://127.0.0.1:18789"
+- `min_severity`: "critical"
+- `agent.thinking`: "off"
+- `agent.timeout_sec`: 60
+
+## Configuration Examples
+
+### Minimal Configuration
+
+```yaml
+# Minimal config for basic rule evaluation
+server:
+  port: 8433
+rules:
+  dir: "./rules"
+evaluation_mode: "audit"
+```
+
+### OpenRouter Integration
+
+```yaml
+# Use OpenRouter for cost-effective LLM access
+triage:
+  enabled: true
+  provider: "openai"
+  model: "anthropic/claude-3.5-sonnet"
+  api_key: "${OPENROUTER_API_KEY}"
+  base_url: "https://openrouter.ai/api/v1"
 ```
 
 ### Production Configuration
 
 ```yaml
-log_level: WARNING
-data_dir: /var/lib/agentshield
-rules_dir: /etc/agentshield/rules
-db_path: /var/lib/agentshield/agentshield.db
-log_paths:
-  - /var/log/clawdbot/agent.jsonl
-  - /var/log/claude-code/agent.jsonl
+# Production-ready configuration
+server:
+  addr: "0.0.0.0"
+  port: 8433
+
+auth:
+  token: "${AGENTSHIELD_AUTH_TOKEN}"
+
+rules:
+  dir: "/etc/agentshield/rules"
+  hot_reload: true
+
+store:
+  sqlite_path: "/var/lib/agentshield/alerts.db"
+
+evaluation_mode: "enforce"
+log_level: "warn"
+
+triage:
+  enabled: true
+  provider: "openai"
+  model: "gpt-4o-mini"
+  api_key: "${OPENAI_API_KEY}"
+  timeout_sec: 15
+
+deep_triage:
+  enabled: true
+  gateway_token: "${OPENCLAW_GATEWAY_TOKEN}"
+  min_severity: "high"
+  webhook: "https://soc.company.com/webhooks/agentshield"
+  
+  agent:
+    thinking: "low"
+    tools: ["web_search", "web_fetch"]
+    timeout_sec: 120
 ```
 
-## Directory Structure
-
-After installation, AgentShield uses this directory structure:
-
-```
-~/.agentshield/
-├── config.yaml         # Configuration file
-├── agentshield.db      # SQLite database
-├── .positions.json     # Log file position tracking
-└── rules/              # Sigma detection rules
-    ├── agent_rce_injection.yml
-    ├── agent_credential_access.yml
-    └── ...
-```
-
-## Validating Configuration
-
-Test your configuration by running:
-
-```bash
-agentshield status
-```
-
-This will load the configuration and show any errors.
-
-## Troubleshooting
-
-### "ANTHROPIC_API_KEY not set"
-
-LLM triage requires an Anthropic API key. Set it:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Without an API key, alerts will be marked as `SUSPICIOUS` instead of being triaged by the LLM.
-
-### "Invalid log level"
-
-Ensure `log_level` is one of: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
+### Development Configuration
 
 ```yaml
-log_level: INFO  # Correct
-log_level: VERBOSE  # Invalid
+# Development configuration with debug logging
+server:
+  addr: "127.0.0.1"
+  port: 8434
+
+rules:
+  dir: "./test-rules"
+  hot_reload: true
+
+store:
+  sqlite_path: "./dev-alerts.db"
+
+evaluation_mode: "shadow"
+log_level: "debug"
+
+triage:
+  enabled: true
+  provider: "openclaw"
+  model: "anthropic/claude-sonnet-4-20250514"
 ```
 
-### "Rules directory not found"
+## Environment Variable Reference
 
-Create the rules directory and copy rules:
+All configuration values can be overridden with environment variables:
+
+| Environment Variable | Configuration Path | Type | Description |
+|---------------------|-------------------|------|-------------|
+| `AGENTSHIELD_SERVER_ADDR` | `server.addr` | string | Server bind address |
+| `AGENTSHIELD_SERVER_PORT` | `server.port` | int | Server port |
+| `AGENTSHIELD_AUTH_TOKEN` | `auth.token` | string | API auth token |
+| `AGENTSHIELD_RULES_DIR` | `rules.dir` | string | Rules directory |
+| `AGENTSHIELD_RULES_HOT_RELOAD` | `rules.hot_reload` | bool | Hot reload enabled |
+| `AGENTSHIELD_STORE_SQLITE_PATH` | `store.sqlite_path` | string | SQLite path |
+| `AGENTSHIELD_EVALUATION_MODE` | `evaluation_mode` | string | Evaluation mode |
+| `AGENTSHIELD_LOG_LEVEL` | `log_level` | string | Log level |
+| `AGENTSHIELD_TRIAGE_ENABLED` | `triage.enabled` | bool | Fast triage enabled |
+| `AGENTSHIELD_TRIAGE_PROVIDER` | `triage.provider` | string | Triage provider |
+| `AGENTSHIELD_TRIAGE_MODEL` | `triage.model` | string | Triage model |
+| `AGENTSHIELD_TRIAGE_API_KEY` | `triage.api_key` | string | Triage API key |
+| `AGENTSHIELD_TRIAGE_BASE_URL` | `triage.base_url` | string | Triage base URL |
+| `AGENTSHIELD_TRIAGE_MAX_TOKENS` | `triage.max_tokens` | int | Max tokens |
+| `AGENTSHIELD_TRIAGE_TIMEOUT_SEC` | `triage.timeout_sec` | int | Triage timeout |
+| `AGENTSHIELD_DEEP_TRIAGE_ENABLED` | `deep_triage.enabled` | bool | Deep triage enabled |
+| `AGENTSHIELD_DEEP_TRIAGE_GATEWAY_URL` | `deep_triage.gateway_url` | string | Gateway URL |
+| `OPENCLAW_GATEWAY_TOKEN` | `deep_triage.gateway_token` | string | Gateway token |
+| `AGENTSHIELD_DEEP_TRIAGE_MIN_SEVERITY` | `deep_triage.min_severity` | string | Min severity |
+| `AGENTSHIELD_DEEP_TRIAGE_WEBHOOK` | `deep_triage.webhook` | string | Webhook URL |
+
+## Validation
+
+The engine validates configuration on startup:
 
 ```bash
-mkdir -p ~/.agentshield/rules
-cp -r rules/* ~/.agentshield/rules/
+# Validate configuration without starting
+./agentshield config validate -config config.yaml
+
+# Check configuration in server logs
+./agentshield serve -config config.yaml -log-level debug
+```
+
+**Common Validation Errors:**
+- Invalid evaluation mode
+- Missing rules directory
+- Invalid log level
+- Missing API keys when triage is enabled
+- Invalid webhook URLs
+- Port conflicts
+
+## Configuration Management
+
+### Hot Reloading
+
+Rules can be reloaded without restarting:
+
+```bash
+# Send SIGHUP signal for rule reload
+kill -HUP $(cat /var/run/agentshield.pid)
+
+# Or use CLI
+./agentshield rules reload
+```
+
+**Note:** Only rules are hot-reloadable. Server configuration changes require a restart.
+
+### Multiple Environments
+
+Use environment-specific configuration files:
+
+```bash
+# Development
+./agentshield serve -config configs/development.yaml
+
+# Production
+./agentshield serve -config configs/production.yaml
+
+# With environment overrides
+AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve -config production.yaml
+```
+
+### Docker Configuration
+
+```dockerfile
+# Mount configuration as volume
+COPY config.yaml /etc/agentshield/config.yaml
+VOLUME ["/etc/agentshield/rules"]
+
+# Use environment variables
+ENV AGENTSHIELD_AUTH_TOKEN=${AUTH_TOKEN}
+ENV AGENTSHIELD_LOG_LEVEL=info
 ```
