@@ -6,9 +6,12 @@ type EvaluationRequest struct {
 	EventID   string            `json:"event_id"`
 	SessionID string            `json:"session_id,omitempty"`
 	Tool      string            `json:"tool,omitempty"`
+	ToolName  string            `json:"tool_name,omitempty"`  // Plugin compat alias for Tool
+	Command   string            `json:"command,omitempty"`    // Plugin compat: top-level command
 	Args      map[string]string `json:"args,omitempty"`
 	Fields    map[string]string `json:"fields"`
-	Mode      string            `json:"mode,omitempty"` // Mode override (can only downgrade)
+	Params    map[string]string `json:"params,omitempty"`     // Plugin compat alias for Args
+	Mode      string            `json:"mode,omitempty"`       // Mode override (can only downgrade)
 }
 
 // Action represents the action to take based on evaluation

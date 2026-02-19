@@ -278,6 +278,22 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-build fields from plugin format if fields map is empty.
+	// Normalise plugin compat aliases before field mapping
+	if req.Tool == "" && req.ToolName != "" {
+		req.Tool = req.ToolName
+	}
+	if req.Args == nil && req.Params != nil {
+		req.Args = req.Params
+	}
+	if req.Command != "" {
+		if req.Args == nil {
+			req.Args = make(map[string]string)
+		}
+		if _, ok := req.Args["command"]; !ok {
+			req.Args["command"] = req.Command
+		}
+	}
+
 	// The OpenClaw plugin sends: event_type, command, tool_name, params, etc.
 	// as top-level JSON fields. The rule engine expects a flat "fields" map.
 	if req.Fields == nil {
