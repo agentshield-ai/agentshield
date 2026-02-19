@@ -282,8 +282,27 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	if req.Tool == "" && req.ToolName != "" {
 		req.Tool = req.ToolName
 	}
-	if req.Args == nil && req.Params != nil {
-		req.Args = req.Params
+	if req.Args == nil && req.RawParams != nil {
+		req.Args = make(map[string]string, len(req.RawParams))
+		for k, v := range req.RawParams {
+			switch val := v.(type) {
+			case string:
+				req.Args[k] = val
+			case float64:
+				if val == float64(int64(val)) {
+					req.Args[k] = fmt.Sprintf("%d", int64(val))
+				} else {
+					req.Args[k] = fmt.Sprintf("%g", val)
+				}
+			case bool:
+				req.Args[k] = fmt.Sprintf("%t", val)
+			default:
+				// For complex types, marshal to JSON string
+				if b, err := json.Marshal(v); err == nil {
+					req.Args[k] = string(b)
+				}
+			}
+		}
 	}
 	if req.Command != "" {
 		if req.Args == nil {
