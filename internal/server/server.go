@@ -295,6 +295,12 @@ func normalizePluginRequest(req *models.EvaluationRequest) {
 		}
 	}
 
+	if req.Context == "" {
+		if ctx, ok := req.Args["context"]; ok && ctx != "" {
+			req.Context = ctx
+		}
+	}
+
 	// Build flat fields map for rule engine
 	if req.Fields == nil {
 		req.Fields = make(map[string]string)
@@ -306,6 +312,11 @@ func normalizePluginRequest(req *models.EvaluationRequest) {
 	}
 	if _, ok := req.Fields["event_type"]; !ok {
 		req.Fields["event_type"] = "tool_call"
+	}
+	if req.Context != "" {
+		if _, ok := req.Fields["context"]; !ok {
+			req.Fields["context"] = req.Context
+		}
 	}
 	if _, ok := req.Fields["command"]; !ok {
 		if cmd, ok := req.Args["command"]; ok {

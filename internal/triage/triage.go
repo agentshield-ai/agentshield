@@ -287,6 +287,15 @@ func scoreCorrelation(c config.CorrelationConfig, current engine.RuleResult, req
 	if !c.Enabled {
 		return CorrelationSummary{}
 	}
+	if req != nil && strings.EqualFold(req.Context, "test") {
+		return CorrelationSummary{
+			Score:                  0,
+			Factors:                []string{"test_context"},
+			RecentCount:            len(recent),
+			WindowSec:              c.WindowSec,
+			EscalatedByCorrelation: false,
+		}
+	}
 	c = effectiveCorrelationConfig(c)
 
 	now := time.Now()
@@ -365,6 +374,10 @@ func buildTriagePrompt(triageCtx *TriageContext) string {
 	ruleName := sanitizeInput(triageCtx.Alert.RuleName)
 	description := sanitizeInput(triageCtx.Alert.Description)
 	tool := sanitizeInput(triageCtx.Request.Tool)
+	contextLabel := sanitizeInput(triageCtx.Request.Context)
+	if contextLabel == "" {
+		contextLabel = "prod"
+	}
 
 	// Mask sensitive data in arguments
 	args := maskSensitiveData(triageCtx.Request.Args)
@@ -392,6 +405,7 @@ func buildTriagePrompt(triageCtx *TriageContext) string {
 Alert: %s (%s)
 Rule description: %s
 Tool called: %s
+Execution context: %s
 Arguments: %s
 Recent context: %s
 Correlation score: %.2f
@@ -412,11 +426,13 @@ Guidelines:
 - confidence: 0.0-1.0 (higher = more certain)
 - Keep reasoning under 200 characters
 - Correlation is supporting context, not sole proof
-- If current command appears benign but correlation is high, prefer "investigate" over "block" unless direct malicious indicators are present`,
+- If current command appears benign but correlation is high, prefer "investigate" over "block" unless direct malicious indicators are present
+- If Execution context is "test", do not recommend incident-response language unless there is direct harmful execution evidence`,
 		ruleName,
 		string(triageCtx.Alert.Severity),
 		description,
 		tool,
+		contextLabel,
 		string(argsJSON),
 		recentContext.String(),
 		triageCtx.Correlation.Score,

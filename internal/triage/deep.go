@@ -25,7 +25,7 @@ type openclawToolsInvokeRequest struct {
 
 // openclawToolsInvokeResponse matches the OpenClaw /tools/invoke response
 type openclawToolsInvokeResponse struct {
-	OK     bool                `json:"ok"`
+	OK     bool                 `json:"ok"`
 	Result *openclawToolsResult `json:"result,omitempty"`
 	Error  *openclawToolsError  `json:"error,omitempty"`
 }
@@ -289,8 +289,13 @@ func (d *DeepTriager) buildTask(alerts []engine.RuleResult, req *models.Evaluati
 
 	// Request context
 	b.WriteString("### Request Context\n")
+	ctxLabel := sanitizeInput(req.Context)
+	if ctxLabel == "" {
+		ctxLabel = "prod"
+	}
 	b.WriteString(fmt.Sprintf("- Tool: %s\n", sanitizeInput(req.Tool)))
 	b.WriteString(fmt.Sprintf("- Session: %s\n", sanitizeInput(req.SessionID)))
+	b.WriteString(fmt.Sprintf("- Execution context: %s\n", ctxLabel))
 	maskedArgs := maskSensitiveData(req.Args)
 	argsJSON, _ := json.Marshal(maskedArgs)
 	b.WriteString(fmt.Sprintf("- Arguments: %s\n\n", string(argsJSON)))
@@ -313,6 +318,9 @@ func (d *DeepTriager) buildTask(alerts []engine.RuleResult, req *models.Evaluati
 
 	b.WriteString("If fast triage already provided a high-confidence block and you do not find concrete contradictory evidence, keep the final verdict as CONFIRM_BLOCK.\n")
 	b.WriteString("If you find clear evidence the activity is explicit testing/demo content (e.g., obvious test payload markers) and no harmful execution occurred, you may return FALSE_POSITIVE.\n")
+	if strings.EqualFold(ctxLabel, "test") {
+		b.WriteString("Execution context is test: prioritize plain language, avoid incident-response escalation wording, and prefer INVESTIGATE/FALSE_POSITIVE unless direct harmful execution evidence exists.\n")
+	}
 	b.WriteString("This report will be user-visible, so keep it decisive, concise, and free of speculative threat-actor attribution unless evidence is concrete.\n")
 
 	return b.String()
