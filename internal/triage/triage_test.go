@@ -14,7 +14,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/store"
-	
+
 	_ "modernc.org/sqlite" // Import SQLite driver
 )
 
@@ -45,10 +45,10 @@ func TestSanitizeInput(t *testing.T) {
 
 func TestMaskSensitiveData(t *testing.T) {
 	input := map[string]string{
-		"username":   "john",
-		"api_key":    "secret123",
-		"token":      "bearer xyz",
-		"password":   "mypass",
+		"username":    "john",
+		"api_key":     "secret123",
+		"token":       "bearer xyz",
+		"password":    "mypass",
 		"normalfield": "normalvalue",
 	}
 
@@ -136,7 +136,7 @@ func TestParseTriageResponse(t *testing.T) {
 				Reasoning:       "Looks safe",
 				SuggestedAction: "Monitor",
 				Provider:        "test",
-				Model:          "test-model",
+				Model:           "test-model",
 			},
 		},
 		{
@@ -148,7 +148,7 @@ func TestParseTriageResponse(t *testing.T) {
 				Reasoning:       "Suspicious",
 				SuggestedAction: "Block",
 				Provider:        "test",
-				Model:          "test-model",
+				Model:           "test-model",
 			},
 		},
 		{
@@ -1182,7 +1182,7 @@ func TestNewDeepTriager(t *testing.T) {
 				if triager == nil {
 					t.Error("Expected non-nil triager")
 				}
-				
+
 				// Just verify triager was created successfully
 				// (defaults are applied internally but not to the original config)
 			}
@@ -1291,13 +1291,13 @@ func TestInvestigateAsync(t *testing.T) {
 
 	// Should return quickly without doing anything
 	triager.InvestigateAsync(lowSeverityAlerts, req, nil)
-	
+
 	// Test with alerts that need deep triage
 	criticalAlerts := []engine.RuleResult{
 		{
-			RuleName: "critical-alert",
-			RuleID:   "rule-001",
-			Severity: engine.SeverityCritical,
+			RuleName:    "critical-alert",
+			RuleID:      "rule-001",
+			Severity:    engine.SeverityCritical,
 			Description: "Critical test alert",
 		},
 	}
@@ -1305,7 +1305,7 @@ func TestInvestigateAsync(t *testing.T) {
 	// This will spawn a goroutine that will likely fail (no real gateway)
 	// but it tests the code path
 	triager.InvestigateAsync(criticalAlerts, req, nil)
-	
+
 	// Give the goroutine a moment to start
 	time.Sleep(10 * time.Millisecond)
 }
@@ -1485,16 +1485,338 @@ func TestInvestigateErrors(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests for helper functions: filterRecentAlertsForCurrent, scoreCorrelation,
+// looksLikeChain, dedupeStrings
+// ---------------------------------------------------------------------------
+
+func TestFilterRecentAlertsForCurrent(t *testing.T) {
+	alerts := []store.Alert{
+		{RuleName: "r1", Tool: "file_read", Severity: "high", Timestamp: time.Now()},
+		{RuleName: "r2", Tool: "bash", Severity: "critical", Timestamp: time.Now()},
+		{RuleName: "r3", Tool: "file_read", Severity: "medium", Timestamp: time.Now()},
+	}
+
+	t.Run("empty alerts returns as-is", func(t *testing.T) {
+		c := config.CorrelationConfig{RequireSameTool: true}
+		req := &models.EvaluationRequest{Tool: "file_read"}
+		got := filterRecentAlertsForCurrent(c, req, nil)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+		got = filterRecentAlertsForCurrent(c, req, []store.Alert{})
+		if len(got) != 0 {
+			t.Errorf("expected empty slice, got %v", got)
+		}
+	})
+
+	t.Run("RequireSameTool false returns all", func(t *testing.T) {
+		c := config.CorrelationConfig{RequireSameTool: false}
+		req := &models.EvaluationRequest{Tool: "file_read"}
+		got := filterRecentAlertsForCurrent(c, req, alerts)
+		if len(got) != 3 {
+			t.Errorf("expected 3 alerts, got %d", len(got))
+		}
+	})
+
+	t.Run("nil request returns all", func(t *testing.T) {
+		c := config.CorrelationConfig{RequireSameTool: true}
+		got := filterRecentAlertsForCurrent(c, nil, alerts)
+		if len(got) != 3 {
+			t.Errorf("expected 3 alerts, got %d", len(got))
+		}
+	})
+
+	t.Run("empty tool in request returns all", func(t *testing.T) {
+		c := config.CorrelationConfig{RequireSameTool: true}
+		req := &models.EvaluationRequest{Tool: ""}
+		got := filterRecentAlertsForCurrent(c, req, alerts)
+		if len(got) != 3 {
+			t.Errorf("expected 3 alerts, got %d", len(got))
+		}
+	})
+
+	t.Run("filters by matching tool", func(t *testing.T) {
+		c := config.CorrelationConfig{RequireSameTool: true}
+		req := &models.EvaluationRequest{Tool: "file_read"}
+		got := filterRecentAlertsForCurrent(c, req, alerts)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 alerts, got %d", len(got))
+		}
+		for _, a := range got {
+			if a.Tool != "file_read" {
+				t.Errorf("unexpected tool %q in filtered results", a.Tool)
+			}
+		}
+	})
+
+	t.Run("no matches returns empty", func(t *testing.T) {
+		c := config.CorrelationConfig{RequireSameTool: true}
+		req := &models.EvaluationRequest{Tool: "web_search"}
+		got := filterRecentAlertsForCurrent(c, req, alerts)
+		if len(got) != 0 {
+			t.Errorf("expected 0 alerts, got %d", len(got))
+		}
+	})
+}
+
+func TestScoreCorrelation(t *testing.T) {
+	baseCfg := config.CorrelationConfig{
+		Enabled:              true,
+		WindowSec:            900,
+		WeightCritical:       0.6,
+		WeightHigh:           0.35,
+		WeightChainBonus:     0.4,
+		WeightRepeatBonus:    0.2,
+		TimeDecayHalfLifeSec: 300,
+		EscalateThreshold:    0.8,
+	}
+
+	t.Run("disabled returns zero summary", func(t *testing.T) {
+		c := config.CorrelationConfig{Enabled: false}
+		got := scoreCorrelation(c, engine.RuleResult{}, nil, nil)
+		if got.Score != 0 || got.EscalatedByCorrelation {
+			t.Errorf("expected zero summary, got %+v", got)
+		}
+	})
+
+	t.Run("no recent alerts yields zero score", func(t *testing.T) {
+		current := engine.RuleResult{RuleName: "rce_attempt", Severity: engine.SeverityHigh}
+		got := scoreCorrelation(baseCfg, current, nil, nil)
+		if got.Score != 0 {
+			t.Errorf("expected 0 score, got %f", got.Score)
+		}
+		if got.RecentCount != 0 {
+			t.Errorf("expected 0 recent, got %d", got.RecentCount)
+		}
+	})
+
+	t.Run("critical recent alert adds weight with decay", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "critical", Tool: "bash", Timestamp: time.Now()},
+		}
+		current := engine.RuleResult{RuleName: "something", Severity: engine.SeverityHigh}
+		got := scoreCorrelation(baseCfg, current, nil, recent)
+		// Decay for ~0 seconds should be ~1.0, so score ≈ 0.6
+		if got.Score < 0.55 || got.Score > 0.65 {
+			t.Errorf("expected score ~0.6, got %f", got.Score)
+		}
+		if got.RecentCount != 1 {
+			t.Errorf("expected 1 recent, got %d", got.RecentCount)
+		}
+	})
+
+	t.Run("high recent alert adds weight", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "high", Tool: "bash", Timestamp: time.Now()},
+		}
+		current := engine.RuleResult{RuleName: "something", Severity: engine.SeverityHigh}
+		got := scoreCorrelation(baseCfg, current, nil, recent)
+		if got.Score < 0.30 || got.Score > 0.40 {
+			t.Errorf("expected score ~0.35, got %f", got.Score)
+		}
+	})
+
+	t.Run("same tool repeat bonus", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "high", Tool: "file_read", Timestamp: time.Now()},
+		}
+		current := engine.RuleResult{RuleName: "something", Severity: engine.SeverityHigh}
+		req := &models.EvaluationRequest{Tool: "file_read"}
+		got := scoreCorrelation(baseCfg, current, req, recent)
+		// Should include WeightHigh(0.35) + WeightRepeatBonus(0.2) ≈ 0.55
+		if got.Score < 0.50 || got.Score > 0.60 {
+			t.Errorf("expected score ~0.55, got %f", got.Score)
+		}
+		found := false
+		for _, f := range got.Factors {
+			if f == "same_tool_repeat" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'same_tool_repeat' factor, got %v", got.Factors)
+		}
+	})
+
+	t.Run("attack chain bonus", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "rce_detected", Severity: "high", Tool: "bash", Timestamp: time.Now()},
+		}
+		current := engine.RuleResult{RuleName: "persistence_install", Severity: engine.SeverityHigh}
+		got := scoreCorrelation(baseCfg, current, nil, recent)
+		// Should include WeightHigh(0.35) + WeightChainBonus(0.4) ≈ 0.75
+		if got.Score < 0.70 || got.Score > 0.80 {
+			t.Errorf("expected score ~0.75, got %f", got.Score)
+		}
+		found := false
+		for _, f := range got.Factors {
+			if f == "attack_chain_pattern" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 'attack_chain_pattern' factor, got %v", got.Factors)
+		}
+	})
+
+	t.Run("escalation above threshold", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "rce_exploit", Severity: "critical", Tool: "file_read", Timestamp: time.Now()},
+		}
+		current := engine.RuleResult{RuleName: "persistence_cron", Severity: engine.SeverityCritical}
+		req := &models.EvaluationRequest{Tool: "file_read"}
+		got := scoreCorrelation(baseCfg, current, req, recent)
+		// critical(0.6) + repeat(0.2) + chain(0.4) ≈ 1.2 ≥ 0.8
+		if !got.EscalatedByCorrelation {
+			t.Errorf("expected escalation, score=%f", got.Score)
+		}
+	})
+
+	t.Run("default half-life when zero", func(t *testing.T) {
+		c := baseCfg
+		c.TimeDecayHalfLifeSec = 0
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "critical", Tool: "bash", Timestamp: time.Now()},
+		}
+		got := scoreCorrelation(c, engine.RuleResult{RuleName: "x"}, nil, recent)
+		if got.Score < 0.55 {
+			t.Errorf("expected score ~0.6 with default half-life, got %f", got.Score)
+		}
+	})
+
+	t.Run("default threshold when zero", func(t *testing.T) {
+		c := baseCfg
+		c.EscalateThreshold = 0
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "critical", Tool: "bash", Timestamp: time.Now()},
+		}
+		got := scoreCorrelation(c, engine.RuleResult{RuleName: "x"}, nil, recent)
+		// Default threshold is 0.8; score ≈ 0.6, so should not escalate
+		if got.EscalatedByCorrelation {
+			t.Errorf("expected no escalation with default threshold, score=%f", got.Score)
+		}
+	})
+
+	t.Run("time decay reduces score for old alerts", func(t *testing.T) {
+		old := time.Now().Add(-600 * time.Second) // 2 half-lives
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "critical", Tool: "bash", Timestamp: old},
+		}
+		got := scoreCorrelation(baseCfg, engine.RuleResult{RuleName: "x"}, nil, recent)
+		// After 2 half-lives: 0.6 * 0.25 = 0.15
+		if got.Score < 0.10 || got.Score > 0.20 {
+			t.Errorf("expected decayed score ~0.15, got %f", got.Score)
+		}
+	})
+
+	t.Run("factors are deduped", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "a", Severity: "critical", Tool: "bash", Timestamp: time.Now()},
+			{RuleName: "b", Severity: "critical", Tool: "bash", Timestamp: time.Now()},
+		}
+		got := scoreCorrelation(baseCfg, engine.RuleResult{RuleName: "x"}, nil, recent)
+		count := 0
+		for _, f := range got.Factors {
+			if f == "recent_critical" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected deduped 'recent_critical' (1), got %d in %v", count, got.Factors)
+		}
+	})
+
+	t.Run("medium and low severity alerts add no weight", func(t *testing.T) {
+		recent := []store.Alert{
+			{RuleName: "other", Severity: "medium", Tool: "bash", Timestamp: time.Now()},
+			{RuleName: "other2", Severity: "low", Tool: "bash", Timestamp: time.Now()},
+		}
+		got := scoreCorrelation(baseCfg, engine.RuleResult{RuleName: "x"}, nil, recent)
+		if got.Score != 0 {
+			t.Errorf("expected 0 score for medium/low, got %f", got.Score)
+		}
+		if got.RecentCount != 2 {
+			t.Errorf("expected 2 recent, got %d", got.RecentCount)
+		}
+	})
+}
+
+func TestLooksLikeChain(t *testing.T) {
+	tests := []struct {
+		name     string
+		prev     string
+		current  string
+		expected bool
+	}{
+		{"empty prev", "", "persistence", false},
+		{"empty current", "rce_exploit", "", false},
+		{"both empty", "", "", false},
+		{"rce then persistence", "rce_exploit", "persistence_cron", true},
+		{"execution then persistence", "code_execution", "persistence_install", true},
+		{"persistence then exfil", "persistence_cron", "exfil_data", true},
+		{"persistence then dns", "persistence_cron", "dns_tunnel", true},
+		{"no chain rce then exfil", "rce_exploit", "exfil_data", false},
+		{"no chain unrelated", "sql_injection", "xss_attack", false},
+		{"case insensitive check (already lower)", "rce", "persistence", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := looksLikeChain(tt.prev, tt.current)
+			if got != tt.expected {
+				t.Errorf("looksLikeChain(%q, %q) = %t, want %t", tt.prev, tt.current, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDedupeStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{"nil input", nil, nil},
+		{"empty input", []string{}, []string{}},
+		{"no duplicates", []string{"a", "b", "c"}, []string{"a", "b", "c"}},
+		{"all duplicates", []string{"x", "x", "x"}, []string{"x"}},
+		{"mixed", []string{"a", "b", "a", "c", "b"}, []string{"a", "b", "c"}},
+		{"single element", []string{"only"}, []string{"only"}},
+		{"preserves order", []string{"z", "a", "z", "m"}, []string{"z", "a", "m"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dedupeStrings(tt.input)
+			if tt.expected == nil {
+				if got != nil {
+					t.Errorf("expected nil, got %v", got)
+				}
+				return
+			}
+			if len(got) != len(tt.expected) {
+				t.Fatalf("length mismatch: got %v, want %v", got, tt.expected)
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("index %d: got %q, want %q", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
 // Helper function
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-		   (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || 
-		   func() bool {
-		       for i := 0; i <= len(s)-len(substr); i++ {
-		           if s[i:i+len(substr)] == substr {
-		               return true
-		           }
-		       }
-		       return false
-		   }()))
+	return len(s) >= len(substr) &&
+		(s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+			func() bool {
+				for i := 0; i <= len(s)-len(substr); i++ {
+					if s[i:i+len(substr)] == substr {
+						return true
+					}
+				}
+				return false
+			}()))
 }

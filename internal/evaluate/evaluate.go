@@ -16,7 +16,7 @@ type RuleEvaluator interface {
 	Evaluate(fields map[string]string) []engine.RuleResult
 }
 
-// TriageService is the interface for triage services  
+// TriageService is the interface for triage services
 type TriageService interface {
 	ShouldTriage(alert engine.RuleResult) bool
 	TriageAlerts(ctx context.Context, alerts []engine.RuleResult, req *models.EvaluationRequest) ([]triage.TriageResult, error)
@@ -84,7 +84,7 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 	var triageResults []triage.TriageResult
 	if e.triager != nil && len(alerts) > 0 {
 		ctx := context.Background() // TODO: Pass context from caller
-		
+
 		triageRes, err := e.triager.TriageAlerts(ctx, alerts, req)
 		if err != nil {
 			// Log error but don't fail the evaluation
@@ -216,17 +216,21 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 	if baseAction == models.ActionBlock {
 		allowCount := 0
 		blockCount := 0
-		
+
+		investigateCount := 0
 		for _, result := range triageResults {
 			switch result.Verdict {
 			case "allow":
 				allowCount++
 			case "block":
 				blockCount++
-			// "investigate" is treated as block for safety
 			case "investigate":
-				blockCount++
+				investigateCount++
 			}
+		}
+		// If nothing is explicitly blocked and triage is uncertain, downgrade to log for human follow-up.
+		if blockCount == 0 && investigateCount > 0 {
+			return models.ActionLog, true
 		}
 
 		// If triage analysis suggests more allows than blocks, and confidence is high
@@ -237,7 +241,7 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 					highConfidenceAllows++
 				}
 			}
-			
+
 			// If majority are high-confidence allows, downgrade to log
 			if highConfidenceAllows > len(triageResults)/2 {
 				return models.ActionLog, true // Still overridable
@@ -256,7 +260,7 @@ func GetModeInfo() map[string]interface{} {
 			"audit":   "Log all alerts, never block",
 			"shadow":  "Allow everything silently, evaluate in background",
 		},
-		"downgrade_policy": "Clients can only request less restrictive modes (enforce->audit->shadow)",
+		"downgrade_policy":    "Clients can only request less restrictive modes (enforce->audit->shadow)",
 		"blocking_severities": []string{"critical", "high"},
 	}
 }

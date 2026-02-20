@@ -15,7 +15,7 @@ type ServerConfig struct {
 	Port int    `yaml:"port" json:"port"`
 }
 
-// AuthConfig holds authentication configuration  
+// AuthConfig holds authentication configuration
 type AuthConfig struct {
 	Token string `yaml:"token" json:"token"`
 }
@@ -51,25 +51,41 @@ type TriageAgentConfig struct {
 	TimeoutSec   int      `yaml:"timeout_sec"`   // Agent session timeout (default: 60)
 }
 
+// CorrelationConfig controls deterministic, short-window alert correlation used by triage.
+type CorrelationConfig struct {
+	Enabled              bool    `yaml:"enabled"`
+	WindowSec            int     `yaml:"window_sec"`
+	MaxAlerts            int     `yaml:"max_alerts"`
+	RequireSameSession   bool    `yaml:"require_same_session"`
+	RequireSameTool      bool    `yaml:"require_same_tool"`
+	WeightCritical       float64 `yaml:"weight_critical"`
+	WeightHigh           float64 `yaml:"weight_high"`
+	WeightChainBonus     float64 `yaml:"weight_chain_bonus"`
+	WeightRepeatBonus    float64 `yaml:"weight_repeat_bonus"`
+	TimeDecayHalfLifeSec int     `yaml:"time_decay_half_life_sec"`
+	EscalateThreshold    float64 `yaml:"escalate_threshold"`
+}
+
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
-	Enabled              bool              `yaml:"enabled"`
-	Provider             string            `yaml:"provider"`               // "openai", "anthropic", or "openclaw"
-	Model      string `yaml:"model"`       // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-	APIKey     string `yaml:"api_key"`     // env: AGENTSHIELD_TRIAGE_API_KEY
-	BaseURL    string `yaml:"base_url"`    // custom base URL (e.g. https://openrouter.ai/api/v1)
-	MaxTokens  int    `yaml:"max_tokens"`  // default 500
-	TimeoutSec int    `yaml:"timeout_sec"` // default 10
+	Enabled     bool              `yaml:"enabled"`
+	Provider    string            `yaml:"provider"` // "openai", "anthropic", or "openclaw"
+	Model       string            `yaml:"model"`    // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
+	APIKey      string            `yaml:"api_key"`  // env: AGENTSHIELD_TRIAGE_API_KEY
+	BaseURL     string            `yaml:"base_url"` // custom base URL (e.g. https://openrouter.ai/api/v1)
+	MaxTokens   int               `yaml:"max_tokens"`
+	TimeoutSec  int               `yaml:"timeout_sec"`
+	Correlation CorrelationConfig `yaml:"correlation"`
 }
 
 // DeepTriageConfig holds deep triage configuration (async, OpenClaw sub-agent with tools)
 type DeepTriageConfig struct {
-	Enabled    bool              `yaml:"enabled"`
-	GatewayURL string            `yaml:"gateway_url"`  // default: http://127.0.0.1:18789
-	GatewayToken string          `yaml:"gateway_token"` // env: OPENCLAW_GATEWAY_TOKEN
-	Agent      TriageAgentConfig `yaml:"agent"`         // Agent personality, model, tools
-	MinSeverity string           `yaml:"min_severity"`  // Minimum severity to trigger deep triage (default: critical)
-	Webhook    string            `yaml:"webhook"`       // Optional webhook URL for deep triage results
+	Enabled      bool              `yaml:"enabled"`
+	GatewayURL   string            `yaml:"gateway_url"`   // default: http://127.0.0.1:18789
+	GatewayToken string            `yaml:"gateway_token"` // env: OPENCLAW_GATEWAY_TOKEN
+	Agent        TriageAgentConfig `yaml:"agent"`         // Agent personality, model, tools
+	MinSeverity  string            `yaml:"min_severity"`  // Minimum severity to trigger deep triage (default: critical)
+	Webhook      string            `yaml:"webhook"`       // Optional webhook URL for deep triage results
 }
 
 // IsValid checks if the evaluation mode is valid
@@ -84,14 +100,14 @@ func (m EvaluationMode) IsValid() bool {
 
 // Config holds the complete application configuration
 type Config struct {
-	Server         ServerConfig   `yaml:"server" json:"server"`
-	Auth           AuthConfig     `yaml:"auth" json:"auth"`
-	Rules          RulesConfig    `yaml:"rules" json:"rules"`
-	Store          StoreConfig    `yaml:"store" json:"store"`
+	Server         ServerConfig     `yaml:"server" json:"server"`
+	Auth           AuthConfig       `yaml:"auth" json:"auth"`
+	Rules          RulesConfig      `yaml:"rules" json:"rules"`
+	Store          StoreConfig      `yaml:"store" json:"store"`
 	Triage         TriageConfig     `yaml:"triage" json:"triage"`
 	DeepTriage     DeepTriageConfig `yaml:"deep_triage" json:"deep_triage"`
 	EvaluationMode EvaluationMode   `yaml:"evaluation_mode" json:"evaluation_mode"`
-	LogLevel       string         `yaml:"log_level" json:"log_level"`
+	LogLevel       string           `yaml:"log_level" json:"log_level"`
 }
 
 // LoadConfig loads configuration from file with environment variable overrides
@@ -119,6 +135,19 @@ func LoadConfig(path string) (*Config, error) {
 			APIKey:     "",
 			MaxTokens:  500,
 			TimeoutSec: 10,
+			Correlation: CorrelationConfig{
+				Enabled:              true,
+				WindowSec:            900,
+				MaxAlerts:            5,
+				RequireSameSession:   true,
+				RequireSameTool:      false,
+				WeightCritical:       0.6,
+				WeightHigh:           0.35,
+				WeightChainBonus:     0.4,
+				WeightRepeatBonus:    0.2,
+				TimeDecayHalfLifeSec: 300,
+				EscalateThreshold:    0.8,
+			},
 		},
 		EvaluationMode: ModeEnforce,
 		LogLevel:       "info",
@@ -200,7 +229,7 @@ func validateConfig(cfg *Config) error {
 	if cfg.Auth.Token == "" {
 		return fmt.Errorf("auth token is required - set AGENTSHIELD_AUTH_TOKEN environment variable or configure auth.token in config file")
 	}
-	
+
 	if len(cfg.Auth.Token) < 32 {
 		return fmt.Errorf("auth token must be at least 32 characters long for security")
 	}
@@ -219,7 +248,7 @@ func validateConfig(cfg *Config) error {
 	if strings.Contains(cfg.Rules.Dir, "..") {
 		return fmt.Errorf("rules directory path contains suspicious characters (..)")
 	}
-	
+
 	if strings.Contains(cfg.Store.SQLitePath, "..") {
 		return fmt.Errorf("sqlite path contains suspicious characters (..)")
 	}
@@ -230,12 +259,28 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("triage base_url must use HTTPS for security")
 		}
 		// Prevent internal network access
-		if strings.Contains(cfg.Triage.BaseURL, "localhost") || 
-		   strings.Contains(cfg.Triage.BaseURL, "127.0.0.1") ||
-		   strings.Contains(cfg.Triage.BaseURL, "192.168.") ||
-		   strings.Contains(cfg.Triage.BaseURL, "10.") ||
-		   strings.Contains(cfg.Triage.BaseURL, "172.") {
+		if strings.Contains(cfg.Triage.BaseURL, "localhost") ||
+			strings.Contains(cfg.Triage.BaseURL, "127.0.0.1") ||
+			strings.Contains(cfg.Triage.BaseURL, "192.168.") ||
+			strings.Contains(cfg.Triage.BaseURL, "10.") ||
+			strings.Contains(cfg.Triage.BaseURL, "172.") {
 			return fmt.Errorf("triage base_url cannot target internal/private networks")
+		}
+	}
+
+	// Validate correlation settings
+	if cfg.Triage.Correlation.Enabled {
+		if cfg.Triage.Correlation.WindowSec < 60 || cfg.Triage.Correlation.WindowSec > 86400 {
+			return fmt.Errorf("triage correlation window_sec must be between 60 and 86400")
+		}
+		if cfg.Triage.Correlation.MaxAlerts < 1 || cfg.Triage.Correlation.MaxAlerts > 100 {
+			return fmt.Errorf("triage correlation max_alerts must be between 1 and 100")
+		}
+		if cfg.Triage.Correlation.TimeDecayHalfLifeSec < 30 || cfg.Triage.Correlation.TimeDecayHalfLifeSec > 86400 {
+			return fmt.Errorf("triage correlation time_decay_half_life_sec must be between 30 and 86400")
+		}
+		if cfg.Triage.Correlation.EscalateThreshold < 0 || cfg.Triage.Correlation.EscalateThreshold > 10 {
+			return fmt.Errorf("triage correlation escalate_threshold must be between 0 and 10")
 		}
 	}
 

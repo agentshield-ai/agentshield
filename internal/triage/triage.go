@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -35,11 +36,21 @@ type TriageResult struct {
 	ProcessingTime  int64   `json:"processing_time"`  // Time in milliseconds
 }
 
+// CorrelationSummary contains deterministic correlation metadata used by triage.
+type CorrelationSummary struct {
+	Score                  float64  `json:"score"`
+	Factors                []string `json:"factors"`
+	RecentCount            int      `json:"recent_count"`
+	WindowSec              int      `json:"window_sec"`
+	EscalatedByCorrelation bool     `json:"escalated_by_correlation"`
+}
+
 // TriageContext provides context for triage analysis
 type TriageContext struct {
-	Alert        engine.RuleResult          `json:"alert"`
-	Request      *models.EvaluationRequest  `json:"request"`
-	RecentAlerts []store.Alert              `json:"recent_alerts"`
+	Alert        engine.RuleResult         `json:"alert"`
+	Request      *models.EvaluationRequest `json:"request"`
+	RecentAlerts []store.Alert             `json:"recent_alerts"`
+	Correlation  CorrelationSummary        `json:"correlation"`
 }
 
 // Provider interface for LLM triage providers
@@ -104,12 +115,25 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 
 	var results []TriageResult
 
-	// Get recent context from store (last 5 alerts)
-	recentQuery := &store.AlertQuery{
-		SessionID: req.SessionID,
-		Limit:     5,
+	// Get recent context from store (time-windowed + bounded count)
+	windowSec := t.config.Correlation.WindowSec
+	if windowSec <= 0 {
+		windowSec = 900
 	}
-	
+	maxAlerts := t.config.Correlation.MaxAlerts
+	if maxAlerts <= 0 {
+		maxAlerts = 5
+	}
+
+	since := time.Now().Add(-time.Duration(windowSec) * time.Second)
+	recentQuery := &store.AlertQuery{
+		Since: &since,
+		Limit: maxAlerts,
+	}
+	if t.config.Correlation.RequireSameSession {
+		recentQuery.SessionID = req.SessionID
+	}
+
 	recentAlerts, err := t.store.QueryAlerts(recentQuery)
 	if err != nil {
 		// Log error but don't fail triage
@@ -122,10 +146,14 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 			continue
 		}
 
+		filteredRecent := filterRecentAlertsForCurrent(t.config.Correlation, req, recentAlerts)
+		correlation := scoreCorrelation(t.config.Correlation, alert, req, filteredRecent)
+
 		triageCtx := &TriageContext{
 			Alert:        alert,
 			Request:      req,
-			RecentAlerts: recentAlerts,
+			RecentAlerts: filteredRecent,
+			Correlation:  correlation,
 		}
 
 		result, err := t.provider.Triage(ctx, triageCtx)
@@ -226,13 +254,116 @@ func maskSensitiveData(data map[string]string) map[string]string {
 	return masked
 }
 
+func filterRecentAlertsForCurrent(c config.CorrelationConfig, req *models.EvaluationRequest, recent []store.Alert) []store.Alert {
+	if len(recent) == 0 {
+		return recent
+	}
+	if !c.RequireSameTool {
+		return recent
+	}
+	if req == nil || req.Tool == "" {
+		return recent
+	}
+
+	filtered := make([]store.Alert, 0, len(recent))
+	for _, a := range recent {
+		if a.Tool == req.Tool {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
+func scoreCorrelation(c config.CorrelationConfig, current engine.RuleResult, req *models.EvaluationRequest, recent []store.Alert) CorrelationSummary {
+	if !c.Enabled {
+		return CorrelationSummary{}
+	}
+	halfLife := c.TimeDecayHalfLifeSec
+	if halfLife <= 0 {
+		halfLife = 300
+	}
+	threshold := c.EscalateThreshold
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+
+	now := time.Now()
+	score := 0.0
+	factors := make([]string, 0, 8)
+	currentRule := strings.ToLower(current.RuleName)
+
+	for _, a := range recent {
+		ageSec := now.Sub(a.Timestamp).Seconds()
+		if ageSec < 0 {
+			ageSec = 0
+		}
+		decay := math.Pow(0.5, ageSec/float64(halfLife))
+
+		switch strings.ToLower(a.Severity) {
+		case "critical":
+			score += c.WeightCritical * decay
+			factors = append(factors, "recent_critical")
+		case "high":
+			score += c.WeightHigh * decay
+			factors = append(factors, "recent_high")
+		}
+
+		if req != nil && req.Tool != "" && a.Tool == req.Tool {
+			score += c.WeightRepeatBonus * decay
+			factors = append(factors, "same_tool_repeat")
+		}
+
+		if looksLikeChain(strings.ToLower(a.RuleName), currentRule) {
+			score += c.WeightChainBonus * decay
+			factors = append(factors, "attack_chain_pattern")
+		}
+	}
+
+	return CorrelationSummary{
+		Score:                  score,
+		Factors:                dedupeStrings(factors),
+		RecentCount:            len(recent),
+		WindowSec:              c.WindowSec,
+		EscalatedByCorrelation: score >= threshold,
+	}
+}
+
+func looksLikeChain(prevRule, currentRule string) bool {
+	if prevRule == "" || currentRule == "" {
+		return false
+	}
+	if (strings.Contains(prevRule, "rce") || strings.Contains(prevRule, "execution")) && strings.Contains(currentRule, "persistence") {
+		return true
+	}
+	if strings.Contains(prevRule, "persistence") && (strings.Contains(currentRule, "exfil") || strings.Contains(currentRule, "dns")) {
+		return true
+	}
+	return false
+}
+
+func dedupeStrings(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 // buildTriagePrompt builds the prompt for LLM triage
 func buildTriagePrompt(triageCtx *TriageContext) string {
 	// Sanitize all inputs
 	ruleName := sanitizeInput(triageCtx.Alert.RuleName)
 	description := sanitizeInput(triageCtx.Alert.Description)
 	tool := sanitizeInput(triageCtx.Request.Tool)
-	
+
 	// Mask sensitive data in arguments
 	args := maskSensitiveData(triageCtx.Request.Args)
 	argsJSON, _ := json.Marshal(args)
@@ -245,8 +376,8 @@ func buildTriagePrompt(triageCtx *TriageContext) string {
 			if i >= 5 {
 				break
 			}
-			recentContext.WriteString(fmt.Sprintf("- %s (%s) at %s\n", 
-				sanitizeInput(alert.RuleName), 
+			recentContext.WriteString(fmt.Sprintf("- %s (%s) at %s\n",
+				sanitizeInput(alert.RuleName),
 				sanitizeInput(alert.Severity),
 				alert.Timestamp.Format("15:04:05")))
 		}
@@ -261,6 +392,9 @@ Rule description: %s
 Tool called: %s
 Arguments: %s
 Recent context: %s
+Correlation score: %.2f
+Correlation factors: %v
+Correlation window: %ds, recent alerts: %d
 
 Determine if this is:
 1. A true positive (genuine security concern that should be blocked)
@@ -270,18 +404,23 @@ Respond in JSON format only:
 {"verdict": "block"|"allow"|"investigate", "confidence": 0.95, "reasoning": "Brief explanation of your analysis", "suggested_action": "Specific recommendation"}
 
 Guidelines:
-- "block": Clear security risk, should prevent execution
-- "allow": False positive, safe to proceed  
+- "block": Clear direct security risk in the current event
+- "allow": False positive, safe to proceed
 - "investigate": Uncertain, needs human review
 - confidence: 0.0-1.0 (higher = more certain)
 - Keep reasoning under 200 characters
-- Focus on actual security risk vs rule noise`, 
-		ruleName, 
+- Correlation is supporting context, not sole proof
+- If current command appears benign but correlation is high, prefer "investigate" over "block" unless direct malicious indicators are present`,
+		ruleName,
 		string(triageCtx.Alert.Severity),
 		description,
 		tool,
 		string(argsJSON),
-		recentContext.String())
+		recentContext.String(),
+		triageCtx.Correlation.Score,
+		triageCtx.Correlation.Factors,
+		triageCtx.Correlation.WindowSec,
+		triageCtx.Correlation.RecentCount)
 
 	return prompt
 }
@@ -291,7 +430,7 @@ func parseTriageResponse(response string, provider, model string, processingTime
 	// Try to extract JSON from response (some models wrap it)
 	jsonStart := strings.Index(response, "{")
 	jsonEnd := strings.LastIndex(response, "}")
-	
+
 	if jsonStart == -1 || jsonEnd == -1 || jsonEnd <= jsonStart {
 		return nil, fmt.Errorf("no valid JSON found in response")
 	}
@@ -337,25 +476,25 @@ func parseTriageResponse(response string, provider, model string, processingTime
 func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 	// Create a retryable HTTP client with configured retry policy
 	client := retryablehttp.NewClient()
-	
+
 	// Configure retry policy: 3 retries, exponential backoff
 	client.RetryMax = 3
 	client.RetryWaitMin = 1 * time.Second
 	client.RetryWaitMax = 30 * time.Second
-	
+
 	// Retry on 429 (rate limit) and 500-level errors
 	client.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
 		if err != nil {
 			return true, err
 		}
 		// Retry on 429, 500, 502, 503, 504
-		return resp.StatusCode == 429 || 
-			   resp.StatusCode == 500 || 
-			   resp.StatusCode == 502 || 
-			   resp.StatusCode == 503 || 
-			   resp.StatusCode == 504, nil
+		return resp.StatusCode == 429 ||
+			resp.StatusCode == 500 ||
+			resp.StatusCode == 502 ||
+			resp.StatusCode == 503 ||
+			resp.StatusCode == 504, nil
 	}
-	
+
 	// Configure the underlying HTTP client
 	client.HTTPClient = &http.Client{
 		Timeout: timeout,
@@ -368,6 +507,6 @@ func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 			// This would need a custom DialContext in production for full SSRF protection
 		},
 	}
-	
+
 	return client
 }
