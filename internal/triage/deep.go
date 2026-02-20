@@ -301,8 +301,19 @@ func (d *DeepTriager) buildTask(alerts []engine.RuleResult, req *models.Evaluati
 	b.WriteString("2. Check if the domains/IPs/commands are associated with known threats\n")
 	b.WriteString("3. Correlate with any recent alert patterns\n")
 	b.WriteString("4. Assess the full attack chain and potential impact\n")
-	b.WriteString("5. Provide a detailed report with concrete recommendations\n\n")
-	b.WriteString("Write your findings as a clear, concise security report. This will be delivered to the security team.\n")
+	b.WriteString("5. Provide concrete recommendations\n\n")
+
+	b.WriteString("### Output Contract (Mandatory)\n")
+	b.WriteString("Return one report with exactly ONE final verdict. Do not provide conflicting alternate conclusions.\n")
+	b.WriteString("Use this exact structure at the end of your report:\n")
+	b.WriteString("- Final Verdict: CONFIRM_BLOCK | INVESTIGATE | FALSE_POSITIVE\n")
+	b.WriteString("- Confidence: <0-100>%\n")
+	b.WriteString("- Primary Reason: <one sentence>\n")
+	b.WriteString("- Recommended Action: <one sentence>\n\n")
+
+	b.WriteString("If fast triage already provided a high-confidence block and you do not find concrete contradictory evidence, keep the final verdict as CONFIRM_BLOCK.\n")
+	b.WriteString("If you find clear evidence the activity is explicit testing/demo content (e.g., obvious test payload markers) and no harmful execution occurred, you may return FALSE_POSITIVE.\n")
+	b.WriteString("This report will be user-visible, so keep it decisive, concise, and free of speculative threat-actor attribution unless evidence is concrete.\n")
 
 	return b.String()
 }
