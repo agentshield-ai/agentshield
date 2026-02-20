@@ -27,6 +27,10 @@ import (
 var (
 	// Compile regex once at package level for better performance
 	controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`)
+
+	// Allowed enum values, allocated once at package level
+	validSeverities    = []string{"low", "medium", "high", "critical"}
+	validFeedbackTypes = []string{"false_positive", "true_positive", "improvement"}
 )
 
 const (
@@ -466,7 +470,6 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 
 	// Parse severity filter with validation
 	if severity := r.URL.Query().Get("severity"); severity != "" {
-		validSeverities := []string{"low", "medium", "high", "critical"}
 		validSev := false
 		for _, vs := range validSeverities {
 			if severity == vs {
@@ -557,7 +560,6 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	validFeedbackTypes := []string{"false_positive", "true_positive", "improvement"}
 	validType := false
 	for _, vt := range validFeedbackTypes {
 		if req.FeedbackType == vt {

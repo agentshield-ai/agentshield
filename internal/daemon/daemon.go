@@ -132,8 +132,9 @@ func (d *Daemon) Start() error {
 	}
 }
 
-// Stop stops a running daemon by sending SIGTERM
-func (d *Daemon) Stop() error {
+// sendSignal reads the PID file, locates the process, and delivers the given
+// signal. sigName is used in log/error messages to preserve readable output.
+func (d *Daemon) sendSignal(sig syscall.Signal, sigName string) error {
 	pid, err := d.readPIDFile()
 	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
@@ -144,34 +145,22 @@ func (d *Daemon) Stop() error {
 		return fmt.Errorf("finding process %d: %w", pid, err)
 	}
 
-	// Send SIGTERM
-	if err := process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("sending SIGTERM to process %d: %w", pid, err)
+	if err := process.Signal(sig); err != nil {
+		return fmt.Errorf("sending %s to process %d: %w", sigName, pid, err)
 	}
 
-	d.logger.Info("Sent SIGTERM to process", "pid", pid)
+	d.logger.Info("Sent "+sigName+" to process", "pid", pid)
 	return nil
+}
+
+// Stop stops a running daemon by sending SIGTERM
+func (d *Daemon) Stop() error {
+	return d.sendSignal(syscall.SIGTERM, "SIGTERM")
 }
 
 // Reload sends SIGHUP to reload rules
 func (d *Daemon) Reload() error {
-	pid, err := d.readPIDFile()
-	if err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
-	}
-
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("finding process %d: %w", pid, err)
-	}
-
-	// Send SIGHUP
-	if err := process.Signal(syscall.SIGHUP); err != nil {
-		return fmt.Errorf("sending SIGHUP to process %d: %w", pid, err)
-	}
-
-	d.logger.Info("Sent SIGHUP to process", "pid", pid)
-	return nil
+	return d.sendSignal(syscall.SIGHUP, "SIGHUP")
 }
 
 // Status checks if the daemon is running
@@ -310,7 +299,7 @@ func (d *Daemon) isRunning() bool {
 // writePIDFile writes the current process ID to the PID file
 func (d *Daemon) writePIDFile() error {
 	pid := os.Getpid()
-	
+
 	// Ensure directory exists
 	dir := filepath.Dir(d.pidFile)
 	if err := os.MkdirAll(dir, 0755); err != nil {
