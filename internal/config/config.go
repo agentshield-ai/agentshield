@@ -99,15 +99,21 @@ func (m EvaluationMode) IsValid() bool {
 }
 
 // Config holds the complete application configuration
+type TestContextConfig struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Token   string `yaml:"token" json:"token"`
+}
+
 type Config struct {
-	Server         ServerConfig     `yaml:"server" json:"server"`
-	Auth           AuthConfig       `yaml:"auth" json:"auth"`
-	Rules          RulesConfig      `yaml:"rules" json:"rules"`
-	Store          StoreConfig      `yaml:"store" json:"store"`
-	Triage         TriageConfig     `yaml:"triage" json:"triage"`
-	DeepTriage     DeepTriageConfig `yaml:"deep_triage" json:"deep_triage"`
-	EvaluationMode EvaluationMode   `yaml:"evaluation_mode" json:"evaluation_mode"`
-	LogLevel       string           `yaml:"log_level" json:"log_level"`
+	Server         ServerConfig      `yaml:"server" json:"server"`
+	Auth           AuthConfig        `yaml:"auth" json:"auth"`
+	Rules          RulesConfig       `yaml:"rules" json:"rules"`
+	Store          StoreConfig       `yaml:"store" json:"store"`
+	Triage         TriageConfig      `yaml:"triage" json:"triage"`
+	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
+	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
+	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
+	LogLevel       string            `yaml:"log_level" json:"log_level"`
 }
 
 // LoadConfig loads configuration from file with environment variable overrides
@@ -148,6 +154,10 @@ func LoadConfig(path string) (*Config, error) {
 				TimeDecayHalfLifeSec: 300,
 				EscalateThreshold:    0.8,
 			},
+		},
+		TestContext: TestContextConfig{
+			Enabled: false,
+			Token:   "",
 		},
 		EvaluationMode: ModeEnforce,
 		LogLevel:       "info",
@@ -276,6 +286,12 @@ func validateConfig(cfg *Config) error {
 		}
 		if cfg.Triage.Correlation.EscalateThreshold < 0 || cfg.Triage.Correlation.EscalateThreshold > 10 {
 			return fmt.Errorf("triage correlation escalate_threshold must be between 0 and 10")
+		}
+	}
+
+	if cfg.TestContext.Enabled {
+		if len(cfg.TestContext.Token) < 32 {
+			return fmt.Errorf("test_context.token must be at least 32 characters when test_context.enabled=true")
 		}
 	}
 

@@ -114,6 +114,12 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 		}
 	}
 
+	if req.Context != "" {
+		if req.Context != "prod" && req.Context != "test" {
+			return fmt.Errorf("context must be 'prod' or 'test'")
+		}
+	}
+
 	// Validate Args map
 	if req.Args != nil {
 		if len(req.Args) > MaxFieldsCount {
@@ -259,7 +265,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // flat fields map that the rule engine expects. This handles requests coming
 // from the OpenClaw plugin (tool_name, command, params) as well as the
 // canonical format (tool, args, fields).
-func normalizePluginRequest(req *models.EvaluationRequest) {
+func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg *config.Config) {
 	// Normalise plugin compat aliases before field mapping
 	if req.Tool == "" && req.ToolName != "" {
 		req.Tool = req.ToolName
@@ -295,11 +301,8 @@ func normalizePluginRequest(req *models.EvaluationRequest) {
 		}
 	}
 
-	if req.Context == "" {
-		if ctx, ok := req.Args["context"]; ok && ctx != "" {
-			req.Context = ctx
-		}
-	}
+	// SECURITY: only allow test context from trusted headers; never from request body/args.
+	req.Context = resolveExecutionContext(r, cfg)
 
 	// Build flat fields map for rule engine
 	if req.Fields == nil {
@@ -328,6 +331,27 @@ func normalizePluginRequest(req *models.EvaluationRequest) {
 			req.Fields[k] = v
 		}
 	}
+}
+
+func resolveExecutionContext(r *http.Request, cfg *config.Config) string {
+	if r == nil || cfg == nil {
+		return "prod"
+	}
+	if !cfg.TestContext.Enabled {
+		return "prod"
+	}
+
+	requested := strings.ToLower(strings.TrimSpace(r.Header.Get("X-AgentShield-Context")))
+	if requested != "test" {
+		return "prod"
+	}
+	token := strings.TrimSpace(r.Header.Get("X-AgentShield-Context-Token"))
+	if token == "" || token != cfg.TestContext.Token {
+		slog.Warn("Rejected untrusted test context request", "remote_addr", r.RemoteAddr)
+		return "prod"
+	}
+
+	return "test"
 }
 
 // storeMatchedAlerts persists matched alerts to the database. Storage failures
@@ -386,7 +410,7 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalizePluginRequest(&req)
+	normalizePluginRequest(&req, r, s.config)
 
 	// Evaluate the request
 	response, err := s.evaluator.Evaluate(&req)
