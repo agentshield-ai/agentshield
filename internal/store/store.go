@@ -16,7 +16,7 @@ type Alert struct {
 	RuleName    string    `json:"rule_name"`
 	Severity    string    `json:"severity"`
 	Tool        string    `json:"tool"`
-	Args        string    `json:"args"`        // JSON string
+	Args        string    `json:"args"` // JSON string
 	ActionTaken string    `json:"action_taken"`
 	Timestamp   time.Time `json:"timestamp"`
 	SessionID   string    `json:"session_id"`
@@ -154,12 +154,12 @@ func (s *Store) InsertAlert(alert *Alert) error {
 	return nil
 }
 
-// QueryAlerts queries alerts based on the provided criteria
-func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
+// buildWhereClause builds parameterized WHERE conditions from an AlertQuery.
+// It returns the SQL clause (empty string if no conditions) and the bind args.
+func buildWhereClause(query *AlertQuery) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
 
-	// Build WHERE conditions using proper parameterized queries
 	if query.Since != nil {
 		conditions = append(conditions, "timestamp >= ?")
 		args = append(args, query.Since)
@@ -190,12 +190,18 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 		args = append(args, query.EventID)
 	}
 
-	// Build SQL query with parameterized LIMIT/OFFSET
-	query_sql := "SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id FROM alerts"
-
-	if len(conditions) > 0 {
-		query_sql += " WHERE " + strings.Join(conditions, " AND ")
+	if len(conditions) == 0 {
+		return "", args
 	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
+// QueryAlerts queries alerts based on the provided criteria
+func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
+	whereClause, args := buildWhereClause(query)
+
+	// Build SQL query with parameterized LIMIT/OFFSET
+	query_sql := "SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id FROM alerts" + whereClause
 
 	query_sql += " ORDER BY timestamp DESC"
 
@@ -259,46 +265,9 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 
 // CountAlerts returns the count of alerts matching the query criteria
 func (s *Store) CountAlerts(query *AlertQuery) (int64, error) {
-	var conditions []string
-	var args []interface{}
+	whereClause, args := buildWhereClause(query)
 
-	// Build WHERE conditions using proper parameterized queries (same logic as QueryAlerts)
-	if query.Since != nil {
-		conditions = append(conditions, "timestamp >= ?")
-		args = append(args, query.Since)
-	}
-
-	if query.Until != nil {
-		conditions = append(conditions, "timestamp <= ?")
-		args = append(args, query.Until)
-	}
-
-	if query.Severity != "" {
-		conditions = append(conditions, "severity = ?")
-		args = append(args, query.Severity)
-	}
-
-	if query.Rule != "" {
-		conditions = append(conditions, "rule_name = ?")
-		args = append(args, query.Rule)
-	}
-
-	if query.SessionID != "" {
-		conditions = append(conditions, "session_id = ?")
-		args = append(args, query.SessionID)
-	}
-
-	if query.EventID != "" {
-		conditions = append(conditions, "event_id = ?")
-		args = append(args, query.EventID)
-	}
-
-	// Build SQL query
-	query_sql := "SELECT COUNT(*) FROM alerts"
-
-	if len(conditions) > 0 {
-		query_sql += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	query_sql := "SELECT COUNT(*) FROM alerts" + whereClause
 
 	var count int64
 	err := s.db.QueryRow(query_sql, args...).Scan(&count)

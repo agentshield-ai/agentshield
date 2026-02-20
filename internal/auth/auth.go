@@ -18,7 +18,7 @@ func NewMiddleware(token string) (*Middleware, error) {
 	if token == "" {
 		return nil, fmt.Errorf("auth token cannot be empty - refusing to create middleware that would allow all requests")
 	}
-	
+
 	return &Middleware{
 		token: token,
 	}, nil
@@ -48,7 +48,7 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		}
 
 		token := strings.TrimPrefix(authHeader, bearerPrefix)
-		
+
 		// Validate token using constant-time comparison to prevent timing attacks
 		if !m.validateToken(token) {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
@@ -66,40 +66,10 @@ func (m *Middleware) validateToken(provided string) bool {
 	return subtle.ConstantTimeCompare([]byte(m.token), []byte(provided)) == 1
 }
 
-// ChiMiddleware provides Chi-style middleware function
+// ChiMiddleware provides Chi-style middleware function.
+// It delegates to Handler, which has the same signature.
 func (m *Middleware) ChiMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health endpoint
-		if r.URL.Path == "/health" || r.URL.Path == "/api/v1/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Get authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
-			return
-		}
-
-		// Check Bearer token format
-		const bearerPrefix = "Bearer "
-		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			http.Error(w, "Authorization header must use Bearer token", http.StatusUnauthorized)
-			return
-		}
-
-		token := strings.TrimPrefix(authHeader, bearerPrefix)
-		
-		// Validate token using constant-time comparison to prevent timing attacks
-		if !m.validateToken(token) {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		// Authentication successful, proceed
-		next.ServeHTTP(w, r)
-	})
+	return m.Handler(next)
 }
 
 // RequireAuth wraps a handler function with authentication

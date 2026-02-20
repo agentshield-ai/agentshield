@@ -175,13 +175,13 @@ func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.S
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		
+
 		// Create a response writer wrapper to capture status code
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-		
+
 		// Process request
 		next.ServeHTTP(ww, r)
-		
+
 		// Log request details
 		duration := time.Since(start)
 		slog.Info("HTTP request",
@@ -201,10 +201,10 @@ func (s *Server) Start() error {
 	r := chi.NewRouter()
 
 	// Add Chi middleware chain
-	r.Use(middleware.Recoverer)     // Panic recovery
-	r.Use(middleware.RealIP)        // Real IP detection
-	r.Use(middleware.RequestID)     // Request ID generation
-	r.Use(s.requestLogger)          // Custom request logging
+	r.Use(middleware.Recoverer)                 // Panic recovery
+	r.Use(middleware.RealIP)                    // Real IP detection
+	r.Use(middleware.RequestID)                 // Request ID generation
+	r.Use(s.requestLogger)                      // Custom request logging
 	r.Use(middleware.Timeout(30 * time.Second)) // Request timeout
 
 	// Apply auth middleware if configured, but skip health endpoints
@@ -251,33 +251,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// handleEvaluate handles the main evaluation endpoint
-func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
-
-	// Limit request body size
-	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
-
-	var req models.EvaluationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// SECURITY: Don't leak internal error details
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
-		} else {
-			http.Error(w, "Invalid request format", http.StatusBadRequest)
-		}
-		slog.Warn("JSON decode error", "error", err, "remote_addr", r.RemoteAddr)
-		return
-	}
-
-	// SECURITY: Validate all input fields
-	if err := validateEvaluationRequest(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
-		slog.Warn("Input validation failed", "error", err, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
-		return
-	}
-
-	// Auto-build fields from plugin format if fields map is empty.
+// normalizePluginRequest normalises plugin-format aliases and populates the
+// flat fields map that the rule engine expects. This handles requests coming
+// from the OpenClaw plugin (tool_name, command, params) as well as the
+// canonical format (tool, args, fields).
+func normalizePluginRequest(req *models.EvaluationRequest) {
 	// Normalise plugin compat aliases before field mapping
 	if req.Tool == "" && req.ToolName != "" {
 		req.Tool = req.ToolName
@@ -313,12 +291,10 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The OpenClaw plugin sends: event_type, command, tool_name, params, etc.
-	// as top-level JSON fields. The rule engine expects a flat "fields" map.
+	// Build flat fields map for rule engine
 	if req.Fields == nil {
 		req.Fields = make(map[string]string)
 	}
-	// Always populate fields from top-level request data if not already present
 	if req.Tool != "" {
 		if _, ok := req.Fields["tool"]; !ok {
 			req.Fields["tool"] = req.Tool
@@ -327,18 +303,75 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := req.Fields["event_type"]; !ok {
 		req.Fields["event_type"] = "tool_call"
 	}
-	// Extract command from args if not in fields
 	if _, ok := req.Fields["command"]; !ok {
 		if cmd, ok := req.Args["command"]; ok {
 			req.Fields["command"] = cmd
 		}
 	}
-	// Copy all args into fields for broad rule matching
 	for k, v := range req.Args {
 		if _, exists := req.Fields[k]; !exists {
 			req.Fields[k] = v
 		}
 	}
+}
+
+// storeMatchedAlerts persists matched alerts to the database. Storage failures
+// are logged but do not cause the request to fail.
+func (s *Server) storeMatchedAlerts(response *evaluate.EvaluationResponse, req *models.EvaluationRequest) {
+	for _, alert := range response.Alerts {
+		if !alert.Matched {
+			continue
+		}
+		argsJSON := ""
+		if req.Args != nil {
+			argsBytes, _ := json.Marshal(req.Args)
+			argsJSON = string(argsBytes)
+		}
+
+		dbAlert := &store.Alert{
+			RuleName:    alert.RuleName,
+			Severity:    string(alert.Severity),
+			Tool:        req.Tool,
+			Args:        argsJSON,
+			ActionTaken: string(response.Action),
+			Timestamp:   response.Timestamp,
+			SessionID:   req.SessionID,
+			EventID:     req.EventID,
+		}
+
+		if err := s.store.InsertAlert(dbAlert); err != nil {
+			slog.Error("Failed to store alert", "event_id", req.EventID, "error", err)
+		}
+	}
+}
+
+// handleEvaluate handles the main evaluation endpoint
+func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
+
+	// Limit request body size
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+
+	var req models.EvaluationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// SECURITY: Don't leak internal error details
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+		}
+		slog.Warn("JSON decode error", "error", err, "remote_addr", r.RemoteAddr)
+		return
+	}
+
+	// SECURITY: Validate all input fields
+	if err := validateEvaluationRequest(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
+		slog.Warn("Input validation failed", "error", err, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
+		return
+	}
+
+	normalizePluginRequest(&req)
 
 	// Evaluate the request
 	response, err := s.evaluator.Evaluate(&req)
@@ -348,33 +381,9 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store alerts in database
+	// Store alerts in database (non-fatal on failure)
 	if len(response.Alerts) > 0 {
-		for _, alert := range response.Alerts {
-			if alert.Matched {
-				argsJSON := ""
-				if req.Args != nil {
-					argsBytes, _ := json.Marshal(req.Args)
-					argsJSON = string(argsBytes)
-				}
-
-				dbAlert := &store.Alert{
-					RuleName:    alert.RuleName,
-					Severity:    string(alert.Severity),
-					Tool:        req.Tool,
-					Args:        argsJSON,
-					ActionTaken: string(response.Action),
-					Timestamp:   response.Timestamp,
-					SessionID:   req.SessionID,
-					EventID:     req.EventID,
-				}
-
-				if err := s.store.InsertAlert(dbAlert); err != nil {
-					slog.Error("Failed to store alert", "event_id", req.EventID, "error", err)
-					// Continue processing - don't fail the request due to storage issues
-				}
-			}
-		}
+		s.storeMatchedAlerts(response, &req)
 	}
 
 	// Return response
@@ -547,7 +556,7 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 		http.Error(w, fmt.Sprintf("Invalid event_id: %v", err), http.StatusBadRequest)
 		return
 	}
-	
+
 	validFeedbackTypes := []string{"false_positive", "true_positive", "improvement"}
 	validType := false
 	for _, vt := range validFeedbackTypes {
@@ -594,8 +603,8 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 	if err := s.feedbackManager.SubmitFeedback(fb); err != nil {
 		slog.Error("Failed to store feedback", "error", err)
 		if strings.Contains(err.Error(), "invalid feedback type") ||
-		   strings.Contains(err.Error(), "required") ||
-		   strings.Contains(err.Error(), "too long") {
+			strings.Contains(err.Error(), "required") ||
+			strings.Contains(err.Error(), "too long") {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
