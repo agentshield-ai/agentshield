@@ -96,13 +96,25 @@ create_config() {
     log "Creating configuration..."
     AUTH_TOKEN=$(generate_token)
     cat > "$CONFIG_FILE" << EOF
-server: {address: "127.0.0.1:8432"}
-auth: {token: "$AUTH_TOKEN"}
-rules_dir: "$INSTALL_DIR/rules"
-store: {path: "$INSTALL_DIR/agentshield.db"}
+server:
+  addr: "127.0.0.1"
+  port: 8432
+auth:
+  token: "$AUTH_TOKEN"
+rules:
+  dir: "$INSTALL_DIR/rules"
+  hot_reload: true
+store:
+  sqlite_path: "$INSTALL_DIR/agentshield.db"
 evaluation_mode: "enforce"
 log_level: "info"
-# triage: {enabled: true, provider: "openai", model: "gpt-4", api_key: "your-key"}
+# triage:
+#   enabled: true
+#   provider: "openai"
+#   model: "gpt-4o-mini"
+#   api_key: "your-key"
+#   max_tokens: 500
+#   timeout_sec: 10
 EOF
     log "Configuration created"
 }
@@ -172,11 +184,13 @@ patch_openclaw_config() {
     log "Configuring OpenClaw integration..."
     AUTH_TOKEN=$(grep "token:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
     if command -v openclaw >/dev/null 2>&1; then
-        openclaw config patch plugins.agentshield.enabled=true \
-                           plugins.agentshield.endpoint="http://127.0.0.1:8432/api/v1/evaluate" \
-                           plugins.agentshield.auth_token="$AUTH_TOKEN" \
-                           plugins.agentshield.timeout_ms=100 \
-                           plugins.agentshield.timeout_policy="allow" 2>/dev/null && {
+        openclaw config patch \
+            plugins.entries.agentshield.enabled=true \
+            plugins.entries.agentshield.config.enabled=true \
+            plugins.entries.agentshield.config.endpoint="http://127.0.0.1:8432/api/v1/evaluate" \
+            plugins.entries.agentshield.config.auth_token="$AUTH_TOKEN" \
+            plugins.entries.agentshield.config.timeout_ms=100 \
+            plugins.entries.agentshield.config.timeout_policy="allow" 2>/dev/null && {
             log "OpenClaw configuration updated"; return
         }
     fi
@@ -196,7 +210,7 @@ start_and_check() {
     log "Health check..."
     AUTH_TOKEN=$(grep token: "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"')
     for i in {1..10}; do
-        curl -s -H "Authorization: Bearer $AUTH_TOKEN" http://127.0.0.1:8432/api/v1/status >/dev/null 2>&1 && {
+        curl -s -H "Authorization: Bearer $AUTH_TOKEN" http://127.0.0.1:8432/api/v1/health >/dev/null 2>&1 && {
             log "✓ Engine is healthy"; return 0
         }
         sleep 1

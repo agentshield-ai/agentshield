@@ -65,20 +65,23 @@ Configuration file: `~/.agentshield/config.yaml`
 ```yaml
 # Server settings
 server:
-  address: "127.0.0.1:8432"
-  
+  addr: "127.0.0.1"
+  port: 8432
+
 # Authentication (MANDATORY)
 auth:
   token: "your-32-plus-character-secure-token-here"
-  
+
 # Rule settings
-rules_dir: "~/.agentshield/rules"
+rules:
+  dir: "~/.agentshield/rules"
+  hot_reload: true
 
 # Storage
 store:
-  path: "~/.agentshield/agentshield.db"
-  
-# Evaluation mode: enforce, monitor, disabled
+  sqlite_path: "~/.agentshield/agentshield.db"
+
+# Evaluation mode: enforce, audit, shadow
 evaluation_mode: "enforce"
 
 # Logging
@@ -87,12 +90,11 @@ log_level: "info"
 # LLM Triage (optional - requires API key)
 triage:
   enabled: true
-  provider: "openai"          # openai, anthropic, etc.
-  model: "gpt-4"
+  provider: "openai"          # openai, anthropic
+  model: "gpt-4o-mini"
   api_key: "your-api-key"
-  max_tokens: 150
-  temperature: 0.1
-  timeout: "10s"
+  max_tokens: 500
+  timeout_sec: 10
 ```
 
 ### Authentication
@@ -158,11 +160,10 @@ Example triage configuration:
 triage:
   enabled: true
   provider: "openai"
-  model: "gpt-4"
+  model: "gpt-4o-mini"
   api_key: "sk-your-openai-key-here"
-  max_tokens: 150
-  temperature: 0.1
-  system_prompt: "You are a security analyst. Evaluate this agent activity for threats."
+  max_tokens: 500
+  timeout_sec: 10
 ```
 
 ## Security Rules
@@ -209,12 +210,17 @@ AgentShield integrates with OpenClaw as a plugin. The installer automatically co
 ```json
 {
   "plugins": {
-    "agentshield": {
-      "enabled": true,
-      "endpoint": "http://127.0.0.1:8432/api/v1/evaluate",
-      "auth_token": "your-generated-token",
-      "timeout_ms": 100,
-      "timeout_policy": "allow"
+    "entries": {
+      "agentshield": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "endpoint": "http://127.0.0.1:8432/api/v1/evaluate",
+          "auth_token": "your-generated-token",
+          "timeout_ms": 100,
+          "timeout_policy": "allow"
+        }
+      }
     }
   }
 }
@@ -232,13 +238,13 @@ journalctl --user -u agentshield-engine -n 50
 agentshield serve --config ~/.agentshield/config.yaml --verbose
 
 # Test connectivity
-curl -H "Authorization: Bearer YOUR-TOKEN" http://127.0.0.1:8432/api/v1/status
+curl -H "Authorization: Bearer YOUR-TOKEN" http://127.0.0.1:8432/api/v1/health
 ```
 
 ### High False Positives
 
 1. **Tune Rules**: Edit rules in `~/.agentshield/rules/` to be more specific
-2. **Use Monitor Mode**: Set `evaluation_mode: "monitor"` to log without blocking
+2. **Use Audit Mode**: Set `evaluation_mode: "audit"` to log without blocking
 3. **Enable LLM Triage**: More context-aware decisions reduce false positives
 
 ### Performance Issues
