@@ -229,7 +229,7 @@ func TestOpenAIProvider(t *testing.T) {
 
 	provider := &OpenAIProvider{
 		config: cfg,
-		client: createHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
+		client: createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
 		apiURL: server.URL, // Use test server URL
 	}
 
@@ -298,7 +298,7 @@ func TestAnthropicProvider(t *testing.T) {
 
 	provider := &AnthropicProvider{
 		config: cfg,
-		client: createHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
+		client: createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
 		apiURL: server.URL, // Use test server URL
 	}
 
@@ -649,9 +649,10 @@ func TestTriagerHealthCheck(t *testing.T) {
 		t.Fatalf("Failed to create triager: %v", err)
 	}
 
-	// Update the provider's API URL to use our test server
+	// Update the provider's API URL and client to use our test server
 	if provider, ok := triager.provider.(*OpenAIProvider); ok {
 		provider.apiURL = server.URL
+		provider.client = createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second)
 	}
 
 	err = triager.HealthCheck(context.Background())
@@ -830,6 +831,7 @@ func TestProviderHealthChecks(t *testing.T) {
 				}
 
 				provider.apiURL = server.URL
+				provider.client = createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second)
 
 				err = provider.HealthCheck(context.Background())
 				if test.expectError && err == nil {
@@ -880,6 +882,7 @@ func TestProviderHealthChecks(t *testing.T) {
 				}
 
 				provider.apiURL = server.URL
+				provider.client = createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second)
 
 				err = provider.HealthCheck(context.Background())
 				if test.expectError && err == nil {

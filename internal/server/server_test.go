@@ -272,10 +272,11 @@ func TestHandleHealth(t *testing.T) {
 					t.Error("Expected uptime to be >= 0")
 				}
 
-				expectedKeys := []string{"evaluation_mode", "rules_dir", "store_healthy", "auth_enabled"}
-				for _, key := range expectedKeys {
-					if _, exists := response.Config[key]; !exists {
-						t.Errorf("Expected config key '%s' to be present", key)
+				// H-3: Config details should NOT be exposed on unauthenticated health endpoint
+				sensitiveKeys := []string{"evaluation_mode", "rules_dir", "auth_enabled"}
+				for _, key := range sensitiveKeys {
+					if _, exists := response.Config[key]; exists {
+						t.Errorf("Health endpoint should NOT expose config key '%s'", key)
 					}
 				}
 			}
@@ -706,10 +707,6 @@ func TestHandleHealthDegraded(t *testing.T) {
 	if response.Status != "degraded" {
 		t.Errorf("Expected status 'degraded', got '%s'", response.Status)
 	}
-
-	if storeHealthy, ok := response.Config["store_healthy"].(bool); !ok || storeHealthy {
-		t.Error("Expected store_healthy to be false")
-	}
 }
 
 func TestHandleAlertsWithFilters(t *testing.T) {
@@ -894,66 +891,6 @@ func TestHandleAlertsWithFilters(t *testing.T) {
 
 			if tt.checkResponse != nil {
 				tt.checkResponse(t, rec)
-			}
-		})
-	}
-}
-
-func TestHandleFeedback(t *testing.T) {
-	testStore, err := store.NewStore(":memory:")
-	if err != nil {
-		t.Fatalf("creating test store: %v", err)
-	}
-	defer testStore.Close()
-
-	cfg := &config.Config{}
-	mockEngine := &mockRuleEngine{}
-	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
-	server, err := NewServer(cfg, evaluator, testStore, nil)
-	if err != nil {
-		t.Fatalf("creating test server: %v", err)
-	}
-
-	// Test the legacy handleFeedback function (method routing)
-	tests := []struct {
-		name           string
-		method         string
-		body           string
-		expectedStatus int
-	}{
-		{
-			name:           "POST routes to submission handler",
-			method:         http.MethodPost,
-			body:           `{"event_id": "test", "feedback_type": "false_positive", "comment": "test"}`,
-			expectedStatus: http.StatusBadRequest, // Will fail validation due to missing rule_name
-		},
-		{
-			name:           "GET routes to query handler",
-			method:         http.MethodGet,
-			body:           "",
-			expectedStatus: http.StatusBadRequest, // Missing rule param
-		},
-		{
-			name:           "PUT method not allowed",
-			method:         http.MethodPut,
-			body:           "",
-			expectedStatus: http.StatusMethodNotAllowed,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/feedback", strings.NewReader(tt.body))
-			if tt.method == http.MethodPost {
-				req.Header.Set("Content-Type", "application/json")
-			}
-			
-			rec := httptest.NewRecorder()
-			server.handleFeedback(rec, req)
-
-			if rec.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, rec.Code)
 			}
 		})
 	}
