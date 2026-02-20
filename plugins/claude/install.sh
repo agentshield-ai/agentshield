@@ -8,6 +8,12 @@ SETTINGS_FILE="${HOME}/.claude/settings.json"
 
 echo "Installing AgentShield for Claude Code..."
 
+# Try to read auth token from local AgentShield config for convenience
+AGENTSHIELD_TOKEN=""
+if [ -f "${HOME}/.agentshield/config.yaml" ]; then
+  AGENTSHIELD_TOKEN=$(awk '/^[[:space:]]*token:[[:space:]]*/ {print $2}' "${HOME}/.agentshield/config.yaml" | tr -d '"' | head -n1 || true)
+fi
+
 # Copy hook script
 mkdir -p "$INSTALL_DIR"
 cp "$(dirname "$0")/agentshield-hook.sh" "$HOOK_PATH"
@@ -58,6 +64,15 @@ fi
 
 echo ""
 echo "✅ AgentShield hook installed to ${HOOK_PATH}"
+echo ""
+if [ -n "$AGENTSHIELD_TOKEN" ]; then
+  echo "Set this in your shell profile before using Claude Code hooks:"
+  echo "  export AGENTSHIELD_AUTH_TOKEN=${AGENTSHIELD_TOKEN}"
+else
+  echo "Set AGENTSHIELD_AUTH_TOKEN in your shell profile (required when engine auth is enabled)."
+  echo "Example:"
+  echo "  export AGENTSHIELD_AUTH_TOKEN=your-32-plus-char-token"
+fi
 echo ""
 echo "Test it with:"
 echo "  echo '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls /tmp\"}}' | ${HOOK_PATH}"

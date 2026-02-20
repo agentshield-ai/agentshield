@@ -63,8 +63,8 @@ func NewEvaluator(eng RuleEvaluator, defaultMode config.EvaluationMode, feedback
 
 // Evaluate processes an evaluation request and returns the appropriate response
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
-	// Determine effective evaluation mode
-	effectiveMode := e.determineEffectiveMode(req.Mode)
+	// Determine effective evaluation mode (server-side only)
+	effectiveMode := e.determineEffectiveMode()
 
 	// Run rule evaluation (engine now only returns matched rules)
 	alerts := e.engine.Evaluate(req.Fields)
@@ -137,42 +137,10 @@ func (e *Evaluator) fireDeepTriage(alerts []engine.RuleResult, req *models.Evalu
 	e.deepTriager.InvestigateAsync(alerts, req, fastResults)
 }
 
-// determineEffectiveMode determines the effective evaluation mode
-// Client can request mode override but only to downgrade security (never upgrade)
-func (e *Evaluator) determineEffectiveMode(requestedMode string) config.EvaluationMode {
-	if requestedMode == "" {
-		return e.defaultMode
-	}
-
-	requested := config.EvaluationMode(requestedMode)
-	if !requested.IsValid() {
-		return e.defaultMode
-	}
-
-	// Security policy: clients can only request less restrictive modes
-	// enforce -> audit -> shadow (cannot upgrade security level)
-	switch e.defaultMode {
-	case config.ModeEnforce:
-		// Can downgrade to audit or shadow
-		if requested == config.ModeAudit || requested == config.ModeShadow {
-			return requested
-		}
-		return e.defaultMode
-
-	case config.ModeAudit:
-		// Can only downgrade to shadow
-		if requested == config.ModeShadow {
-			return requested
-		}
-		return e.defaultMode
-
-	case config.ModeShadow:
-		// Already at lowest security level, no downgrade possible
-		return e.defaultMode
-
-	default:
-		return e.defaultMode
-	}
+// determineEffectiveMode determines the effective evaluation mode.
+// Security-critical: mode is server-side configuration only.
+func (e *Evaluator) determineEffectiveMode() config.EvaluationMode {
+	return e.defaultMode
 }
 
 // determineAction determines what action to take based on mode and alert severity
@@ -212,41 +180,9 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 		return baseAction, baseOverridable
 	}
 
-	// In enforce mode, check if triage suggests allowing
+	// Security-critical: triage must never downgrade a block in enforce mode.
 	if baseAction == models.ActionBlock {
-		allowCount := 0
-		blockCount := 0
-
-		investigateCount := 0
-		for _, result := range triageResults {
-			switch result.Verdict {
-			case "allow":
-				allowCount++
-			case "block":
-				blockCount++
-			case "investigate":
-				investigateCount++
-			}
-		}
-		// If nothing is explicitly blocked and triage is uncertain, downgrade to log for human follow-up.
-		if blockCount == 0 && investigateCount > 0 {
-			return models.ActionLog, true
-		}
-
-		// If triage analysis suggests more allows than blocks, and confidence is high
-		if allowCount > blockCount {
-			highConfidenceAllows := 0
-			for _, result := range triageResults {
-				if result.Verdict == "allow" && result.Confidence > 0.7 {
-					highConfidenceAllows++
-				}
-			}
-
-			// If majority are high-confidence allows, downgrade to log
-			if highConfidenceAllows > len(triageResults)/2 {
-				return models.ActionLog, true // Still overridable
-			}
-		}
+		return baseAction, baseOverridable
 	}
 
 	return baseAction, baseOverridable
@@ -260,7 +196,7 @@ func GetModeInfo() map[string]interface{} {
 			"audit":   "Log all alerts, never block",
 			"shadow":  "Allow everything silently, evaluate in background",
 		},
-		"downgrade_policy":    "Clients can only request less restrictive modes (enforce->audit->shadow)",
+		"downgrade_policy":    "Mode is server-side only (no client override)",
 		"blocking_severities": []string{"critical", "high"},
 	}
 }

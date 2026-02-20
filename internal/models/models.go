@@ -11,7 +11,6 @@ type EvaluationRequest struct {
 	Args      map[string]string      `json:"args,omitempty"`
 	Fields    map[string]string      `json:"fields"`
 	RawParams map[string]interface{} `json:"params,omitempty"`  // Plugin compat alias for Args (accepts any JSON value)
-	Mode      string                 `json:"mode,omitempty"`    // Mode override (can only downgrade)
 	Context   string                 `json:"context,omitempty"` // Optional execution context: prod|test
 }
 

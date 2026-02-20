@@ -76,51 +76,20 @@ func TestFireDeepTriage(t *testing.T) {
 
 // Test edge cases for determineEffectiveMode
 func TestDetermineEffectiveModeEdgeCases(t *testing.T) {
-	t.Run("invalid mode with different default modes", func(t *testing.T) {
+	t.Run("always returns configured default mode", func(t *testing.T) {
 		modes := []config.EvaluationMode{
 			config.ModeEnforce,
 			config.ModeAudit,
 			config.ModeShadow,
+			config.EvaluationMode("unknown"),
 		}
 
 		for _, defaultMode := range modes {
 			evaluator := &Evaluator{defaultMode: defaultMode}
-
-			// Test various invalid modes
-			invalidModes := []string{"invalid", "ENFORCE", "Audit", "123", "enforce_mode", ""}
-
-			for _, invalidMode := range invalidModes {
-				result := evaluator.determineEffectiveMode(invalidMode)
-				if result != defaultMode {
-					t.Errorf("With default %s and invalid mode '%s', expected %s, got %s",
-						defaultMode, invalidMode, defaultMode, result)
-				}
+			result := evaluator.determineEffectiveMode()
+			if result != defaultMode {
+				t.Errorf("With default %s, expected %s, got %s", defaultMode, defaultMode, result)
 			}
-		}
-	})
-
-	t.Run("unknown default mode fallback", func(t *testing.T) {
-		evaluator := &Evaluator{defaultMode: config.EvaluationMode("unknown")}
-
-		result := evaluator.determineEffectiveMode("")
-		if result != config.EvaluationMode("unknown") {
-			t.Errorf("Expected unknown mode to be returned as-is, got %s", result)
-		}
-
-		// Even with valid requested mode, should return default for unknown default
-		result = evaluator.determineEffectiveMode("audit")
-		if result != config.EvaluationMode("unknown") {
-			t.Errorf("Expected unknown default mode to be used, got %s", result)
-		}
-	})
-
-	t.Run("same mode request", func(t *testing.T) {
-		// Test requesting the same mode as default
-		evaluator := &Evaluator{defaultMode: config.ModeEnforce}
-
-		result := evaluator.determineEffectiveMode("enforce")
-		if result != config.ModeEnforce {
-			t.Errorf("Expected enforce mode, got %s", result)
 		}
 	})
 }
@@ -204,7 +173,7 @@ func TestIncorporateTriageResultsEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("investigate without explicit block downgrades to log", func(t *testing.T) {
+	t.Run("investigate without explicit block cannot downgrade block", func(t *testing.T) {
 		triageResults := []triage.TriageResult{
 			{Verdict: "investigate", Confidence: 0.9},
 			{Verdict: "allow", Confidence: 0.8},
@@ -212,9 +181,8 @@ func TestIncorporateTriageResultsEdgeCases(t *testing.T) {
 
 		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, triageResults)
 
-		// investigate-only (no explicit block verdict) should downgrade to log for human follow-up
-		if action != models.ActionLog || !overridable {
-			t.Errorf("Investigate verdict: expected log/overridable, got %s/%t", action, overridable)
+		if action != models.ActionBlock || !overridable {
+			t.Errorf("Investigate verdict: expected block/overridable, got %s/%t", action, overridable)
 		}
 	})
 
@@ -263,9 +231,9 @@ func TestIncorporateTriageResultsEdgeCases(t *testing.T) {
 		triageResults[0].Confidence = 0.71
 		action, _ = evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, triageResults)
 
-		// Should override since 0.71 > 0.7
-		if action != models.ActionLog {
-			t.Errorf("Above threshold confidence (0.71): expected log, got %s", action)
+		// Should still block: triage can no longer downgrade in enforce mode
+		if action != models.ActionBlock {
+			t.Errorf("Above threshold confidence (0.71): expected block, got %s", action)
 		}
 	})
 
@@ -280,9 +248,8 @@ func TestIncorporateTriageResultsEdgeCases(t *testing.T) {
 
 		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, triageResults)
 
-		// 3 high confidence allows > 5/2 = 2.5, so should downgrade to log
-		if action != models.ActionLog || !overridable {
-			t.Errorf("Complex scenario: expected log/overridable, got %s/%t", action, overridable)
+		if action != models.ActionBlock || !overridable {
+			t.Errorf("Complex scenario: expected block/overridable, got %s/%t", action, overridable)
 		}
 	})
 }

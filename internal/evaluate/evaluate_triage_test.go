@@ -51,7 +51,7 @@ func TestEvaluatorWithTriageIntegration(t *testing.T) {
 				Matched:     true,
 			},
 			{
-				RuleName:    "low-severity-rule", 
+				RuleName:    "low-severity-rule",
 				Description: "Low severity test rule",
 				Severity:    engine.SeverityLow,
 				Matched:     true,
@@ -112,9 +112,9 @@ func TestEvaluatorWithTriageIntegration(t *testing.T) {
 		t.Errorf("Expected triage confidence 0.85, got %f", triageResult.Confidence)
 	}
 
-	// In enforce mode with high confidence allow from triage, action should be adjusted
-	if response.Action != models.ActionLog {
-		t.Errorf("Expected action 'log' (downgraded by triage), got %s", response.Action)
+	// In enforce mode, triage must not downgrade blocking decisions.
+	if response.Action != models.ActionBlock {
+		t.Errorf("Expected action 'block', got %s", response.Action)
 	}
 }
 
@@ -207,12 +207,12 @@ func TestIncorporateTriageResults(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		mode            config.EvaluationMode
-		criticalCount   int
-		highCount       int
-		triageResults   []triage.TriageResult
-		expectedAction  models.Action
+		name                string
+		mode                config.EvaluationMode
+		criticalCount       int
+		highCount           int
+		triageResults       []triage.TriageResult
+		expectedAction      models.Action
 		expectedOverridable bool
 	}{
 		{
@@ -223,7 +223,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 			triageResults: []triage.TriageResult{
 				{Verdict: "allow", Confidence: 0.9},
 			},
-			expectedAction:      models.ActionLog,
+			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
 		{
@@ -236,7 +236,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 				{Verdict: "allow", Confidence: 0.9},
 				{Verdict: "block", Confidence: 0.7},
 			},
-			expectedAction:      models.ActionLog,
+			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
 		{
@@ -311,9 +311,9 @@ func TestEvaluatorDifferentModes(t *testing.T) {
 	mockEngine := &MockRuleEvaluator{
 		results: []engine.RuleResult{
 			{
-				RuleName:    "test-rule",
-				Severity:    engine.SeverityHigh,
-				Matched:     true,
+				RuleName: "test-rule",
+				Severity: engine.SeverityHigh,
+				Matched:  true,
 			},
 		},
 	}
@@ -334,7 +334,7 @@ func TestEvaluatorDifferentModes(t *testing.T) {
 	}
 
 	expectedActions := map[config.EvaluationMode]models.Action{
-		config.ModeEnforce: models.ActionLog,   // Triage downgrades from block to log
+		config.ModeEnforce: models.ActionBlock, // Enforce blocks on high/critical regardless of triage allow verdict
 		config.ModeAudit:   models.ActionLog,   // Audit always logs
 		config.ModeShadow:  models.ActionAllow, // Shadow always allows
 	}

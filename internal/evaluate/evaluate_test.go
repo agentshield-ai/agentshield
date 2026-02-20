@@ -19,68 +19,19 @@ func (m *mockEngine) Evaluate(fields map[string]string) []engine.RuleResult {
 
 func TestDetermineEffectiveMode(t *testing.T) {
 	tests := []struct {
-		name          string
-		defaultMode   config.EvaluationMode
-		requestedMode string
-		expected      config.EvaluationMode
+		name        string
+		defaultMode config.EvaluationMode
+		expected    config.EvaluationMode
 	}{
-		{
-			name:          "no override uses default",
-			defaultMode:   config.ModeEnforce,
-			requestedMode: "",
-			expected:      config.ModeEnforce,
-		},
-		{
-			name:          "invalid override uses default",
-			defaultMode:   config.ModeEnforce,
-			requestedMode: "invalid",
-			expected:      config.ModeEnforce,
-		},
-		{
-			name:          "enforce can downgrade to audit",
-			defaultMode:   config.ModeEnforce,
-			requestedMode: "audit",
-			expected:      config.ModeAudit,
-		},
-		{
-			name:          "enforce can downgrade to shadow",
-			defaultMode:   config.ModeEnforce,
-			requestedMode: "shadow",
-			expected:      config.ModeShadow,
-		},
-		{
-			name:          "audit can downgrade to shadow",
-			defaultMode:   config.ModeAudit,
-			requestedMode: "shadow",
-			expected:      config.ModeShadow,
-		},
-		{
-			name:          "audit cannot upgrade to enforce",
-			defaultMode:   config.ModeAudit,
-			requestedMode: "enforce",
-			expected:      config.ModeAudit,
-		},
-		{
-			name:          "shadow cannot upgrade",
-			defaultMode:   config.ModeShadow,
-			requestedMode: "enforce",
-			expected:      config.ModeShadow,
-		},
-		{
-			name:          "shadow cannot upgrade to audit",
-			defaultMode:   config.ModeShadow,
-			requestedMode: "audit",
-			expected:      config.ModeShadow,
-		},
+		{name: "enforce uses server default", defaultMode: config.ModeEnforce, expected: config.ModeEnforce},
+		{name: "audit uses server default", defaultMode: config.ModeAudit, expected: config.ModeAudit},
+		{name: "shadow uses server default", defaultMode: config.ModeShadow, expected: config.ModeShadow},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			evaluator := &Evaluator{
-				defaultMode: tt.defaultMode,
-			}
-
-			result := evaluator.determineEffectiveMode(tt.requestedMode)
+			evaluator := &Evaluator{defaultMode: tt.defaultMode}
+			result := evaluator.determineEffectiveMode()
 			if result != tt.expected {
 				t.Errorf("determineEffectiveMode() = %s, want %s", result, tt.expected)
 			}
@@ -90,11 +41,11 @@ func TestDetermineEffectiveMode(t *testing.T) {
 
 func TestDetermineAction(t *testing.T) {
 	tests := []struct {
-		name          string
-		mode          config.EvaluationMode
-		criticalCount int
-		highCount     int
-		expectedAction models.Action
+		name                string
+		mode                config.EvaluationMode
+		criticalCount       int
+		highCount           int
+		expectedAction      models.Action
 		expectedOverridable bool
 	}{
 		{
@@ -161,13 +112,12 @@ func TestEvaluate(t *testing.T) {
 		name           string
 		mockResults    []engine.RuleResult
 		defaultMode    config.EvaluationMode
-		requestedMode  string
 		expectedAction models.Action
 		expectedAlerts int
 	}{
 		{
-			name: "no matched rules allows",
-			mockResults: []engine.RuleResult{},
+			name:           "no matched rules allows",
+			mockResults:    []engine.RuleResult{},
 			defaultMode:    config.ModeEnforce,
 			expectedAction: models.ActionAllow,
 			expectedAlerts: 0,
@@ -214,21 +164,7 @@ func TestEvaluate(t *testing.T) {
 			expectedAction: models.ActionAllow,
 			expectedAlerts: 1,
 		},
-		{
-			name: "mode downgrade from enforce to audit",
-			mockResults: []engine.RuleResult{
-				{
-					RuleID:   "test-rule-critical",
-					RuleName: "Critical Test Rule",
-					Severity: engine.SeverityCritical,
-					Matched:  true,
-				},
-			},
-			defaultMode:    config.ModeEnforce,
-			requestedMode:  "audit",
-			expectedAction: models.ActionLog,
-			expectedAlerts: 1,
-		},
+		// client mode override removed: server-side mode only
 	}
 
 	for _, tt := range tests {
@@ -244,7 +180,6 @@ func TestEvaluate(t *testing.T) {
 				Fields: map[string]string{
 					"test": "value",
 				},
-				Mode: tt.requestedMode,
 			}
 
 			response, err := evaluator.Evaluate(req)

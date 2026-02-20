@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -346,7 +347,7 @@ func resolveExecutionContext(r *http.Request, cfg *config.Config) string {
 		return "prod"
 	}
 	token := strings.TrimSpace(r.Header.Get("X-AgentShield-Context-Token"))
-	if token == "" || token != cfg.TestContext.Token {
+	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(cfg.TestContext.Token)) != 1 {
 		slog.Warn("Rejected untrusted test context request", "remote_addr", r.RemoteAddr)
 		return "prod"
 	}

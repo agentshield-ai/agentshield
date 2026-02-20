@@ -10,13 +10,13 @@
 #   2 = block ({"decision":"block","reason":"..."})
 #
 # Environment:
-#   AGENTSHIELD_URL  - Engine URL (default: http://127.0.0.1:8432)
-#   AGENTSHIELD_MODE - Override mode: enforce, audit, shadow (default: use engine config)
+#   AGENTSHIELD_URL         - Engine URL (default: http://127.0.0.1:8432)
+#   AGENTSHIELD_AUTH_TOKEN  - Engine auth token (required when auth is enabled)
 
 set -euo pipefail
 
 AGENTSHIELD_URL="${AGENTSHIELD_URL:-http://127.0.0.1:8432}"
-AGENTSHIELD_MODE="${AGENTSHIELD_MODE:-}"
+AGENTSHIELD_AUTH_TOKEN="${AGENTSHIELD_AUTH_TOKEN:-}"
 
 # Read JSON input from stdin (Claude Code passes tool call context)
 INPUT=$(cat)
@@ -53,7 +53,6 @@ EVAL_REQUEST=$(jq -n \
   --arg tool "$TOOL_NAME" \
   --arg command "$COMMAND" \
   --arg content "${CONTENT:-}" \
-  --arg mode "$AGENTSHIELD_MODE" \
   '{
     event_id: $event_id,
     tool: $tool,
@@ -67,13 +66,19 @@ EVAL_REQUEST=$(jq -n \
       command: $command,
       content: $content
     }
-  } + (if $mode != "" then {mode: $mode} else {} end)'
+  }'
 )
 
 # Call AgentShield engine
+if [ -z "$AGENTSHIELD_AUTH_TOKEN" ]; then
+  # Missing auth token — fail open to avoid breaking workflows, but emit warning for operator.
+  >&2 echo "[AgentShield hook] AGENTSHIELD_AUTH_TOKEN is not set; request may be rejected by engine auth"
+fi
+
 RESPONSE=$(curl -s --max-time 2 \
   -X POST "${AGENTSHIELD_URL}/api/v1/evaluate" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${AGENTSHIELD_AUTH_TOKEN}" \
   -d "$EVAL_REQUEST" 2>/dev/null) || {
   # Engine unreachable — fail open (allow)
   exit 0
