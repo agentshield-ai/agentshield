@@ -56,9 +56,10 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
-	// Configure connection pool
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
+	// Configure connection pool — SQLite supports only one writer at a time.
+	// Using MaxOpenConns(1) serialises all writes to avoid SQLITE_BUSY errors.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	store := &Store{

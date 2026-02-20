@@ -337,7 +337,14 @@ func loadConfig() (*config.Config, error) {
 	}
 
 	if verbose {
-		fmt.Printf("Loaded config: %+v\n", cfg)
+		fmt.Printf("Loaded config: addr=%s, mode=%s, rules=%s, db=%s, auth=%t, triage=%t\n",
+			cfg.ListenAddr(),
+			cfg.EvaluationMode,
+			cfg.Rules.Dir,
+			cfg.Store.SQLitePath,
+			cfg.Auth.Token != "",
+			cfg.Triage.Enabled,
+		)
 	}
 
 	return cfg, nil

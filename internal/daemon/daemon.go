@@ -296,7 +296,8 @@ func (d *Daemon) isRunning() bool {
 	return err == nil
 }
 
-// writePIDFile writes the current process ID to the PID file
+// writePIDFile writes the current process ID to the PID file atomically.
+// Uses O_CREATE|O_EXCL to prevent TOCTOU race conditions.
 func (d *Daemon) writePIDFile() error {
 	pid := os.Getpid()
 
@@ -306,10 +307,24 @@ func (d *Daemon) writePIDFile() error {
 		return fmt.Errorf("creating PID directory: %w", err)
 	}
 
-	// Write PID to file
+	// Atomic create — fails if file already exists (prevents TOCTOU race)
+	f, err := os.OpenFile(d.pidFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("PID file already exists: %s (another instance may be running)", d.pidFile)
+		}
+		return fmt.Errorf("creating PID file: %w", err)
+	}
+
 	pidStr := strconv.Itoa(pid)
-	if err := os.WriteFile(d.pidFile, []byte(pidStr), 0644); err != nil {
+	if _, err := f.WriteString(pidStr); err != nil {
+		f.Close()
+		os.Remove(d.pidFile)
 		return fmt.Errorf("writing PID file: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing PID file: %w", err)
 	}
 
 	d.logger.Info("Written PID file", "pid", pid, "path", d.pidFile)

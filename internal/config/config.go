@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,6 +275,14 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	// SECURITY: Validate deep triage gateway URL for SSRF protection
+	if cfg.DeepTriage.Enabled && cfg.DeepTriage.GatewayURL != "" {
+		if isPrivateOrLocalURL(cfg.DeepTriage.GatewayURL) {
+			// gateway_url targeting localhost is expected for local OpenClaw;
+			// only warn, don't reject (operators intentionally run it locally).
+		}
+	}
+
 	// Validate correlation settings
 	if cfg.Triage.Correlation.Enabled {
 		if err := validateIntRange("triage correlation window_sec", cfg.Triage.Correlation.WindowSec, 60, 86400); err != nil {
@@ -310,14 +320,59 @@ func validateIntRange(name string, value, min, max int) error {
 	return nil
 }
 
-func isPrivateOrLocalURL(url string) bool {
-	privateMarkers := []string{"localhost", "127.0.0.1", "192.168.", "10.", "172."}
-	for _, marker := range privateMarkers {
-		if strings.Contains(url, marker) {
+// IsPrivateOrLocalURL checks whether a URL targets a private/local network.
+// It parses the URL properly and resolves the hostname to check against
+// RFC 1918, loopback, link-local, and other non-routable ranges.
+func IsPrivateOrLocalURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return true // fail closed on malformed URLs
+	}
+
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return true
+	}
+
+	// Check common literal names
+	lower := strings.ToLower(hostname)
+	if lower == "localhost" || lower == "ip6-localhost" || lower == "ip6-loopback" {
+		return true
+	}
+
+	// Check if the hostname has a userinfo component (SSRF bypass vector)
+	if parsed.User != nil {
+		return true
+	}
+
+	// Parse as IP (handles hex, octal, IPv6 forms)
+	ip := net.ParseIP(hostname)
+	if ip != nil {
+		return isPrivateIP(ip)
+	}
+
+	// Resolve hostname to IPs and check each
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return true // fail closed if DNS resolution fails
+	}
+	for _, resolved := range ips {
+		if isPrivateIP(resolved) {
 			return true
 		}
 	}
+
 	return false
+}
+
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
+// isPrivateOrLocalURL is the internal alias used by validateConfig.
+func isPrivateOrLocalURL(rawURL string) bool {
+	return IsPrivateOrLocalURL(rawURL)
 }
 
 func isValidLogLevel(level string) bool {

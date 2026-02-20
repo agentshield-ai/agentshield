@@ -4,6 +4,7 @@ package feedback
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/store"
@@ -172,13 +173,13 @@ func sanitizeComment(comment string) string {
 		return ""
 	}
 
-	// Basic sanitization - remove potential script tags
-	// In production, you might want to use a proper HTML sanitizer library
 	sanitized := comment
-	
-	// Remove potential HTML tags (very basic)
-	// TODO: Use a proper sanitization library in production
-	
+
+	// Strip HTML tags to prevent stored XSS
+	// Replace < and > to neutralize any HTML/script injection
+	sanitized = strings.ReplaceAll(sanitized, "<", "&lt;")
+	sanitized = strings.ReplaceAll(sanitized, ">", "&gt;")
+
 	return sanitized
 }
 

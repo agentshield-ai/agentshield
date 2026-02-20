@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -121,6 +122,20 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 		}
 	}
 
+	// Validate ToolName (plugin compat alias)
+	if req.ToolName != "" {
+		if err := validateStringInput(req.ToolName, 100, "tool_name"); err != nil {
+			return err
+		}
+	}
+
+	// Validate Command (plugin compat alias)
+	if req.Command != "" {
+		if err := validateStringInput(req.Command, MaxFieldValueLength, "command"); err != nil {
+			return err
+		}
+	}
+
 	// Validate Args map
 	if req.Args != nil {
 		if len(req.Args) > MaxFieldsCount {
@@ -207,6 +222,110 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
+// ipRateLimiter implements a simple per-IP token-bucket rate limiter.
+type ipRateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]*visitor
+	rate     int           // requests per window
+	window   time.Duration // time window
+}
+
+type visitor struct {
+	tokens   int
+	lastSeen time.Time
+}
+
+func newIPRateLimiter(rate int, window time.Duration) *ipRateLimiter {
+	rl := &ipRateLimiter{
+		visitors: make(map[string]*visitor),
+		rate:     rate,
+		window:   window,
+	}
+	// Periodically clean up stale entries
+	go func() {
+		for {
+			time.Sleep(window)
+			rl.cleanup()
+		}
+	}()
+	return rl
+}
+
+func (rl *ipRateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	v, exists := rl.visitors[ip]
+	now := time.Now()
+
+	if !exists {
+		rl.visitors[ip] = &visitor{tokens: rl.rate - 1, lastSeen: now}
+		return true
+	}
+
+	// Refill tokens based on elapsed time
+	elapsed := now.Sub(v.lastSeen)
+	refill := int(elapsed.Seconds() / rl.window.Seconds() * float64(rl.rate))
+	v.tokens += refill
+	if v.tokens > rl.rate {
+		v.tokens = rl.rate
+	}
+	v.lastSeen = now
+
+	if v.tokens <= 0 {
+		return false
+	}
+	v.tokens--
+	return true
+}
+
+func (rl *ipRateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	cutoff := time.Now().Add(-2 * rl.window)
+	for ip, v := range rl.visitors {
+		if v.lastSeen.Before(cutoff) {
+			delete(rl.visitors, ip)
+		}
+	}
+}
+
+// rateLimitMiddleware returns HTTP middleware that limits requests per IP.
+func rateLimitMiddleware(limiter *ipRateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := r.RemoteAddr
+			// Use X-Real-IP if set (behind reverse proxy)
+			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
+				ip = realIP
+			}
+			// Strip port
+			if idx := strings.LastIndex(ip, ":"); idx > 0 {
+				ip = ip[:idx]
+			}
+
+			if !limiter.allow(ip) {
+				slog.Warn("Rate limit exceeded", "remote_addr", ip)
+				http.Error(w, "Too many requests", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// securityHeaders adds standard security response headers to every response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	r := chi.NewRouter()
@@ -215,8 +334,10 @@ func (s *Server) Start() error {
 	r.Use(middleware.Recoverer)                 // Panic recovery
 	r.Use(middleware.RealIP)                    // Real IP detection
 	r.Use(middleware.RequestID)                 // Request ID generation
-	r.Use(s.requestLogger)                      // Custom request logging
-	r.Use(middleware.Timeout(30 * time.Second)) // Request timeout
+	r.Use(securityHeaders)                                         // Security response headers
+	r.Use(rateLimitMiddleware(newIPRateLimiter(100, time.Minute))) // Per-IP rate limit: 100 req/min
+	r.Use(s.requestLogger)                                         // Custom request logging
+	r.Use(middleware.Timeout(30 * time.Second))                    // Request timeout
 
 	// Apply auth middleware if configured, but skip health endpoints
 	if s.auth != nil {
@@ -404,14 +525,17 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SECURITY: Validate all input fields
+	// SECURITY: Normalize first so that plugin-compat aliases (params, tool_name,
+	// command) are merged into the canonical fields before validation runs.
+	// This prevents RawParams from bypassing field-level validation.
+	normalizePluginRequest(&req, r, s.config)
+
+	// SECURITY: Validate all input fields (after normalization)
 	if err := validateEvaluationRequest(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
 		slog.Warn("Input validation failed", "error", err, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
 		return
 	}
-
-	normalizePluginRequest(&req, r, s.config)
 
 	// Evaluate the request
 	response, err := s.evaluator.Evaluate(&req)
@@ -450,17 +574,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		statusCode = http.StatusServiceUnavailable
 	}
 
-	// SECURITY: Limit information disclosure in health endpoint
+	// SECURITY: Minimal information disclosure in unauthenticated health endpoint.
+	// Detailed config is not exposed — use an authenticated status endpoint instead.
 	response := HealthResponse{
 		Status:        status,
-		Version:       "1.0.0", // TODO: Get from build info
+		Version:       "1.0.0",
 		UptimeSeconds: time.Since(s.startTime).Seconds(),
-		Config: map[string]interface{}{
-			"evaluation_mode": s.config.EvaluationMode,
-			"rules_dir":       s.config.Rules.Dir,
-			"store_healthy":   storeHealthy,
-			"auth_enabled":    s.auth != nil,
-		},
+		Config:        map[string]interface{}{},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -564,18 +684,6 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
-}
-
-// handleFeedback handles feedback submission and retrieval (legacy, keeping for backward compatibility)
-func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		s.handleFeedbackSubmission(w, r)
-	case http.MethodGet:
-		s.handleFeedbackQuery(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
 }
 
 // handleFeedbackSubmission handles POST /api/v1/feedback

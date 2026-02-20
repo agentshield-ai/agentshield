@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -490,6 +491,32 @@ func parseTriageResponse(response string, provider, model string, processingTime
 	}, nil
 }
 
+// ssrfSafeDialContext returns a DialContext function that resolves DNS and
+// rejects connections to private/loopback/link-local IP ranges.
+func ssrfSafeDialContext(baseDialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("SSRF: invalid address %q: %w", addr, err)
+		}
+
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("SSRF: DNS resolution failed for %q: %w", host, err)
+		}
+
+		for _, ip := range ips {
+			if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() ||
+				ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
+				return nil, fmt.Errorf("SSRF: resolved %q to private/local IP %s", host, ip.IP)
+			}
+		}
+
+		// Dial only the validated addresses
+		return baseDialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+	}
+}
+
 // Common HTTP client with security settings
 func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 	// Create a retryable HTTP client with configured retry policy
@@ -513,7 +540,9 @@ func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 			resp.StatusCode == 504, nil
 	}
 
-	// Configure the underlying HTTP client
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+
+	// Configure the underlying HTTP client with SSRF protection
 	client.HTTPClient = &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
@@ -521,10 +550,27 @@ func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 			IdleConnTimeout:     30 * time.Second,
 			DisableKeepAlives:   false,
 			TLSHandshakeTimeout: 10 * time.Second,
-			// SECURITY: Prevent access to internal networks
-			// This would need a custom DialContext in production for full SSRF protection
+			DialContext:         ssrfSafeDialContext(dialer),
 		},
 	}
 
+	return client
+}
+
+// createLocalHTTPClient creates an HTTP client without SSRF protection,
+// for use with intentionally-local services like the OpenClaw gateway.
+func createLocalHTTPClient(timeout time.Duration) *retryablehttp.Client {
+	client := retryablehttp.NewClient()
+	client.RetryMax = 2
+	client.RetryWaitMin = 500 * time.Millisecond
+	client.RetryWaitMax = 5 * time.Second
+	client.HTTPClient = &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        5,
+			IdleConnTimeout:     30 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
 	return client
 }
