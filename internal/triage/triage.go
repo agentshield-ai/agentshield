@@ -116,21 +116,14 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 	var results []TriageResult
 
 	// Get recent context from store (time-windowed + bounded count)
-	windowSec := t.config.Correlation.WindowSec
-	if windowSec <= 0 {
-		windowSec = 900
-	}
-	maxAlerts := t.config.Correlation.MaxAlerts
-	if maxAlerts <= 0 {
-		maxAlerts = 5
-	}
+	corr := effectiveCorrelationConfig(t.config.Correlation)
 
-	since := time.Now().Add(-time.Duration(windowSec) * time.Second)
+	since := time.Now().Add(-time.Duration(corr.WindowSec) * time.Second)
 	recentQuery := &store.AlertQuery{
 		Since: &since,
-		Limit: maxAlerts,
+		Limit: corr.MaxAlerts,
 	}
-	if t.config.Correlation.RequireSameSession {
+	if corr.RequireSameSession {
 		recentQuery.SessionID = req.SessionID
 	}
 
@@ -146,8 +139,8 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 			continue
 		}
 
-		filteredRecent := filterRecentAlertsForCurrent(t.config.Correlation, req, recentAlerts)
-		correlation := scoreCorrelation(t.config.Correlation, alert, req, filteredRecent)
+		filteredRecent := filterRecentAlertsForCurrent(corr, req, recentAlerts)
+		correlation := scoreCorrelation(corr, alert, req, filteredRecent)
 
 		triageCtx := &TriageContext{
 			Alert:        alert,
@@ -254,6 +247,22 @@ func maskSensitiveData(data map[string]string) map[string]string {
 	return masked
 }
 
+func effectiveCorrelationConfig(c config.CorrelationConfig) config.CorrelationConfig {
+	if c.WindowSec <= 0 {
+		c.WindowSec = 900
+	}
+	if c.MaxAlerts <= 0 {
+		c.MaxAlerts = 5
+	}
+	if c.TimeDecayHalfLifeSec <= 0 {
+		c.TimeDecayHalfLifeSec = 300
+	}
+	if c.EscalateThreshold <= 0 {
+		c.EscalateThreshold = 0.8
+	}
+	return c
+}
+
 func filterRecentAlertsForCurrent(c config.CorrelationConfig, req *models.EvaluationRequest, recent []store.Alert) []store.Alert {
 	if len(recent) == 0 {
 		return recent
@@ -278,14 +287,7 @@ func scoreCorrelation(c config.CorrelationConfig, current engine.RuleResult, req
 	if !c.Enabled {
 		return CorrelationSummary{}
 	}
-	halfLife := c.TimeDecayHalfLifeSec
-	if halfLife <= 0 {
-		halfLife = 300
-	}
-	threshold := c.EscalateThreshold
-	if threshold <= 0 {
-		threshold = 0.8
-	}
+	c = effectiveCorrelationConfig(c)
 
 	now := time.Now()
 	score := 0.0
@@ -297,7 +299,7 @@ func scoreCorrelation(c config.CorrelationConfig, current engine.RuleResult, req
 		if ageSec < 0 {
 			ageSec = 0
 		}
-		decay := math.Pow(0.5, ageSec/float64(halfLife))
+		decay := math.Pow(0.5, ageSec/float64(c.TimeDecayHalfLifeSec))
 
 		switch strings.ToLower(a.Severity) {
 		case "critical":
@@ -324,7 +326,7 @@ func scoreCorrelation(c config.CorrelationConfig, current engine.RuleResult, req
 		Factors:                dedupeStrings(factors),
 		RecentCount:            len(recent),
 		WindowSec:              c.WindowSec,
-		EscalatedByCorrelation: score >= threshold,
+		EscalatedByCorrelation: score >= c.EscalateThreshold,
 	}
 }
 

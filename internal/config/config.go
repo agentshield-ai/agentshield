@@ -258,26 +258,21 @@ func validateConfig(cfg *Config) error {
 		if !strings.HasPrefix(cfg.Triage.BaseURL, "https://") {
 			return fmt.Errorf("triage base_url must use HTTPS for security")
 		}
-		// Prevent internal network access
-		if strings.Contains(cfg.Triage.BaseURL, "localhost") ||
-			strings.Contains(cfg.Triage.BaseURL, "127.0.0.1") ||
-			strings.Contains(cfg.Triage.BaseURL, "192.168.") ||
-			strings.Contains(cfg.Triage.BaseURL, "10.") ||
-			strings.Contains(cfg.Triage.BaseURL, "172.") {
+		if isPrivateOrLocalURL(cfg.Triage.BaseURL) {
 			return fmt.Errorf("triage base_url cannot target internal/private networks")
 		}
 	}
 
 	// Validate correlation settings
 	if cfg.Triage.Correlation.Enabled {
-		if cfg.Triage.Correlation.WindowSec < 60 || cfg.Triage.Correlation.WindowSec > 86400 {
-			return fmt.Errorf("triage correlation window_sec must be between 60 and 86400")
+		if err := validateIntRange("triage correlation window_sec", cfg.Triage.Correlation.WindowSec, 60, 86400); err != nil {
+			return err
 		}
-		if cfg.Triage.Correlation.MaxAlerts < 1 || cfg.Triage.Correlation.MaxAlerts > 100 {
-			return fmt.Errorf("triage correlation max_alerts must be between 1 and 100")
+		if err := validateIntRange("triage correlation max_alerts", cfg.Triage.Correlation.MaxAlerts, 1, 100); err != nil {
+			return err
 		}
-		if cfg.Triage.Correlation.TimeDecayHalfLifeSec < 30 || cfg.Triage.Correlation.TimeDecayHalfLifeSec > 86400 {
-			return fmt.Errorf("triage correlation time_decay_half_life_sec must be between 30 and 86400")
+		if err := validateIntRange("triage correlation time_decay_half_life_sec", cfg.Triage.Correlation.TimeDecayHalfLifeSec, 30, 86400); err != nil {
+			return err
 		}
 		if cfg.Triage.Correlation.EscalateThreshold < 0 || cfg.Triage.Correlation.EscalateThreshold > 10 {
 			return fmt.Errorf("triage correlation escalate_threshold must be between 0 and 10")
@@ -285,19 +280,37 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// Validate log level
-	validLogLevels := []string{"debug", "info", "warn", "error"}
-	logLevelValid := false
-	for _, level := range validLogLevels {
-		if strings.ToLower(cfg.LogLevel) == level {
-			logLevelValid = true
-			break
-		}
-	}
-	if !logLevelValid {
+	if !isValidLogLevel(cfg.LogLevel) {
 		return fmt.Errorf("invalid log level: %s (must be debug, info, warn, or error)", cfg.LogLevel)
 	}
 
 	return nil
+}
+
+func validateIntRange(name string, value, min, max int) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s must be between %d and %d", name, min, max)
+	}
+	return nil
+}
+
+func isPrivateOrLocalURL(url string) bool {
+	privateMarkers := []string{"localhost", "127.0.0.1", "192.168.", "10.", "172."}
+	for _, marker := range privateMarkers {
+		if strings.Contains(url, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidLogLevel(level string) bool {
+	switch strings.ToLower(level) {
+	case "debug", "info", "warn", "error":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveRelativePaths resolves relative paths in config relative to config file
