@@ -6,6 +6,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/triage"
 )
 
 // mockEngine implements a simple mock for testing
@@ -204,6 +205,69 @@ func TestEvaluate(t *testing.T) {
 				if !alert.Matched {
 					t.Errorf("Alert should only contain matched rules, got unmatched rule: %s", alert.RuleID)
 				}
+			}
+		})
+	}
+}
+
+func TestIncorporateTriageResultsEscalationPolicy(t *testing.T) {
+	evaluator := &Evaluator{}
+
+	tests := []struct {
+		name          string
+		mode          config.EvaluationMode
+		criticalCount int
+		highCount     int
+		triage        []triage.TriageResult
+		wantAction    models.Action
+		wantOverride  bool
+	}{
+		{
+			name:          "base block never downgraded",
+			mode:          config.ModeEnforce,
+			criticalCount: 1,
+			triage: []triage.TriageResult{{Verdict: "allow", Confidence: 0.99}},
+			wantAction:   models.ActionBlock,
+			wantOverride: true,
+		},
+		{
+			name:       "allow escalates to block on high confidence block verdict",
+			mode:       config.ModeEnforce,
+			triage:     []triage.TriageResult{{Verdict: "block", Confidence: 0.90}},
+			wantAction: models.ActionBlock,
+			wantOverride: true,
+		},
+		{
+			name:       "allow escalates to log on investigate threshold",
+			mode:       config.ModeEnforce,
+			triage:     []triage.TriageResult{{Verdict: "investigate", Confidence: 0.70}},
+			wantAction: models.ActionLog,
+			wantOverride: false,
+		},
+		{
+			name:       "below thresholds remains allow",
+			mode:       config.ModeEnforce,
+			triage:     []triage.TriageResult{{Verdict: "block", Confidence: 0.89}, {Verdict: "investigate", Confidence: 0.69}},
+			wantAction: models.ActionAllow,
+			wantOverride: false,
+		},
+		{
+			name:       "audit mode unaffected",
+			mode:       config.ModeAudit,
+			triage:     []triage.TriageResult{{Verdict: "block", Confidence: 0.99}},
+			wantAction: models.ActionLog,
+			wantOverride: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotAction, gotOverride := evaluator.incorporateTriageResults(tt.mode, tt.criticalCount, tt.highCount, tt.triage)
+			if gotAction != tt.wantAction {
+				t.Fatalf("action=%s want=%s", gotAction, tt.wantAction)
+			}
+			if gotOverride != tt.wantOverride {
+				t.Fatalf("overridable=%t want=%t", gotOverride, tt.wantOverride)
 			}
 		})
 	}

@@ -543,6 +543,46 @@ func TestGetRulesWithHighFPRate(t *testing.T) {
 	}
 }
 
+func TestGetRulesWithHighFPRateNoJoinMultiplication(t *testing.T) {
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer store.Close()
+
+	// 2 alerts for same rule
+	alerts := []*Alert{
+		{RuleName: "ruleA", Severity: "high", ActionTaken: "block", Timestamp: time.Now(), EventID: "a1"},
+		{RuleName: "ruleA", Severity: "high", ActionTaken: "block", Timestamp: time.Now(), EventID: "a2"},
+	}
+	for _, a := range alerts {
+		if err := store.InsertAlert(a); err != nil {
+			t.Fatalf("insert alert: %v", err)
+		}
+	}
+
+	// 3 false-positive feedback rows for same rule (can exceed alert count; should not multiply total alerts)
+	for i := range alerts {
+		id := alerts[i].ID
+		if err := store.InsertFeedback(alerts[i].EventID, &id, "false_positive", ""); err != nil {
+			t.Fatalf("insert feedback: %v", err)
+		}
+	}
+	id := alerts[0].ID
+	if err := store.InsertFeedback("a1", &id, "false_positive", "extra"); err != nil {
+		t.Fatalf("insert extra feedback: %v", err)
+	}
+
+	// threshold 1.1 should still include ruleA with correct math (3/2 = 1.5)
+	rules, err := store.GetRulesWithHighFPRate(1.1, 1)
+	if err != nil {
+		t.Fatalf("GetRulesWithHighFPRate failed: %v", err)
+	}
+	if len(rules) != 1 || rules[0] != "ruleA" {
+		t.Fatalf("expected [ruleA], got %#v", rules)
+	}
+}
+
 func TestGetStats(t *testing.T) {
 	store, err := NewStore(":memory:")
 	if err != nil {

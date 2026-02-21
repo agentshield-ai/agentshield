@@ -391,13 +391,21 @@ func (s *Store) GetRuleFPRate(ruleName string) (float64, error) {
 // GetRulesWithHighFPRate returns rules with false positive rate above threshold
 func (s *Store) GetRulesWithHighFPRate(threshold float64, minAlerts int) ([]string, error) {
 	query := `
-		SELECT a.rule_name, 
-			   COUNT(*) as total_alerts,
-			   COUNT(CASE WHEN f.feedback_type = 'false_positive' THEN 1 END) as fp_count
-		FROM alerts a
-		LEFT JOIN feedback f ON a.rule_name = f.rule_name
-		GROUP BY a.rule_name
-		HAVING total_alerts >= ?
+		WITH alert_counts AS (
+			SELECT rule_name, COUNT(*) AS total_alerts
+			FROM alerts
+			GROUP BY rule_name
+		),
+		fp_counts AS (
+			SELECT rule_name, COUNT(*) AS fp_count
+			FROM feedback
+			WHERE feedback_type = 'false_positive'
+			GROUP BY rule_name
+		)
+		SELECT a.rule_name, a.total_alerts, COALESCE(f.fp_count, 0) AS fp_count
+		FROM alert_counts a
+		LEFT JOIN fp_counts f ON a.rule_name = f.rule_name
+		WHERE a.total_alerts >= ?
 		ORDER BY a.rule_name
 	`
 

@@ -214,6 +214,22 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 		return baseAction, baseOverridable
 	}
 
+	// Base action is allow in enforce mode. Triage may only escalate:
+	// - block if any high-confidence block verdict
+	// - otherwise log if any medium-confidence investigate verdict
+	hasInvestigate := false
+	for _, tr := range triageResults {
+		if strings.EqualFold(tr.Verdict, "block") && tr.Confidence >= 0.90 {
+			return models.ActionBlock, true
+		}
+		if strings.EqualFold(tr.Verdict, "investigate") && tr.Confidence >= 0.70 {
+			hasInvestigate = true
+		}
+	}
+	if hasInvestigate {
+		return models.ActionLog, false
+	}
+
 	return baseAction, baseOverridable
 }
 

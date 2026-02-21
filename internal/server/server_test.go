@@ -622,6 +622,35 @@ func TestNewServerWithoutAuth(t *testing.T) {
 	}
 }
 
+func TestRateLimitMiddlewareIgnoresSpoofedXRealIP(t *testing.T) {
+	limiter := newIPRateLimiter(1, time.Minute)
+	mw := rateLimitMiddleware(limiter)
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// First request from IP A should pass.
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req1.RemoteAddr = "10.0.0.1:1234"
+	req1.Header.Set("X-Real-Ip", "198.51.100.9")
+	rec1 := httptest.NewRecorder()
+	h.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first request expected 200, got %d", rec1.Code)
+	}
+
+	// Second request from same remote should be limited even if spoofed header changes.
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.RemoteAddr = "10.0.0.1:5678"
+	req2.Header.Set("X-Real-Ip", "203.0.113.77")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request expected 429, got %d", rec2.Code)
+	}
+}
+
 func TestRequestLogger(t *testing.T) {
 	testStore, err := store.NewStore(":memory:")
 	if err != nil {

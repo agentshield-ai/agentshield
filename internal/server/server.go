@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -295,14 +296,11 @@ func (rl *ipRateLimiter) cleanup() {
 func rateLimitMiddleware(limiter *ipRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// SECURITY: Do not trust user-supplied forwarding headers here.
+			// middleware.RealIP normalizes RemoteAddr based on trusted proxy chain.
 			ip := r.RemoteAddr
-			// Use X-Real-IP if set (behind reverse proxy)
-			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
-				ip = realIP
-			}
-			// Strip port
-			if idx := strings.LastIndex(ip, ":"); idx > 0 {
-				ip = ip[:idx]
+			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				ip = host
 			}
 
 			if !limiter.allow(ip) {
