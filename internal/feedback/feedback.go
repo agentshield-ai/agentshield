@@ -4,7 +4,7 @@ package feedback
 
 import (
 	"fmt"
-	"strings"
+	"html"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/store"
@@ -173,14 +173,10 @@ func sanitizeComment(comment string) string {
 		return ""
 	}
 
-	sanitized := comment
-
-	// Strip HTML tags to prevent stored XSS
-	// Replace < and > to neutralize any HTML/script injection
-	sanitized = strings.ReplaceAll(sanitized, "<", "&lt;")
-	sanitized = strings.ReplaceAll(sanitized, ">", "&gt;")
-
-	return sanitized
+	// Use html.EscapeString from stdlib which encodes all five HTML special
+	// characters (<, >, &, ', ") preventing stored XSS via attribute injection
+	// and double-encoding edge cases that manual replacement can miss.
+	return html.EscapeString(comment)
 }
 
 func generateFeedbackID() string {

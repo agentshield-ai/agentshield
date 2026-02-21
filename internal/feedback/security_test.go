@@ -44,6 +44,31 @@ func TestSanitizeCommentXSS(t *testing.T) {
 			check: func(s string) bool { return s == "" },
 			desc:  "empty string should remain empty",
 		},
+		// New tests for enhanced html.EscapeString sanitization
+		{
+			name:  "ampersand encoded",
+			input: `a&b`,
+			check: func(s string) bool { return s == "a&amp;b" },
+			desc:  "ampersand should be encoded to prevent double-encoding attacks",
+		},
+		{
+			name:  "double quote encoded",
+			input: `"onclick="alert(1)`,
+			check: func(s string) bool { return !strings.Contains(s, `"onclick`) },
+			desc:  "double quotes should be encoded to prevent attribute injection",
+		},
+		{
+			name:  "single quote encoded",
+			input: `' onmouseover='alert(1)`,
+			check: func(s string) bool { return !strings.Contains(s, `'`) },
+			desc:  "single quotes should be encoded to prevent attribute injection",
+		},
+		{
+			name:  "combined XSS via attributes",
+			input: `" onfocus="alert(document.cookie)" autofocus="`,
+			check: func(s string) bool { return !strings.Contains(s, `onfocus="`) },
+			desc:  "attribute-based XSS vectors should be neutralized",
+		},
 	}
 
 	for _, tt := range tests {

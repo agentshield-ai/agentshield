@@ -146,6 +146,12 @@ func (re *RefinementEngine) ApplyRefinement(ruleName string, suggestion *Refinem
 		return fmt.Errorf("finding rule file: %w", err)
 	}
 
+	// SECURITY: Validate file path BEFORE any file I/O to prevent directory
+	// traversal attacks from reading or writing files outside the rules directory.
+	if err := re.validateRuleFilePath(ruleFile); err != nil {
+		return fmt.Errorf("invalid rule file path: %w", err)
+	}
+
 	// Read current rule file
 	content, err := os.ReadFile(ruleFile)
 	if err != nil {
@@ -155,7 +161,11 @@ func (re *RefinementEngine) ApplyRefinement(ruleName string, suggestion *Refinem
 	// Create backup if requested
 	if backup {
 		backupFile := fmt.Sprintf("%s.backup.%d", ruleFile, time.Now().Unix())
-		if err := os.WriteFile(backupFile, content, 0644); err != nil {
+		// Validate backup path is also within rules dir
+		if err := re.validateRuleFilePath(backupFile); err != nil {
+			return fmt.Errorf("invalid backup file path: %w", err)
+		}
+		if err := os.WriteFile(backupFile, content, 0600); err != nil {
 			return fmt.Errorf("creating backup: %w", err)
 		}
 	}
@@ -171,13 +181,8 @@ func (re *RefinementEngine) ApplyRefinement(ruleName string, suggestion *Refinem
 		return fmt.Errorf("validating refined rule: %w", err)
 	}
 
-	// Validate the file path to prevent directory traversal
-	if err := re.validateRuleFilePath(ruleFile); err != nil {
-		return fmt.Errorf("invalid rule file path: %w", err)
-	}
-
 	// Write the refined rule
-	if err := os.WriteFile(ruleFile, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(ruleFile, []byte(newContent), 0600); err != nil {
 		return fmt.Errorf("writing refined rule: %w", err)
 	}
 

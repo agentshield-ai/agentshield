@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/triage"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"golang.org/x/time/rate"
 )
 
 var (
@@ -222,72 +224,57 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// ipRateLimiter implements a simple per-IP token-bucket rate limiter.
+// ipRateLimiter provides per-IP rate limiting using golang.org/x/time/rate.
+// Each IP gets its own token-bucket limiter. Stale entries are cleaned up
+// periodically to prevent unbounded memory growth.
 type ipRateLimiter struct {
 	mu       sync.Mutex
-	visitors map[string]*visitor
-	rate     int           // requests per window
-	window   time.Duration // time window
+	visitors map[string]*ipVisitor
+	rps      rate.Limit // sustained requests per second
+	burst    int        // maximum burst size
 }
 
-type visitor struct {
-	tokens   int
+type ipVisitor struct {
+	limiter  *rate.Limiter
 	lastSeen time.Time
 }
 
-func newIPRateLimiter(rate int, window time.Duration) *ipRateLimiter {
+func newIPRateLimiter(rps rate.Limit, burst int) *ipRateLimiter {
 	rl := &ipRateLimiter{
-		visitors: make(map[string]*visitor),
-		rate:     rate,
-		window:   window,
+		visitors: make(map[string]*ipVisitor),
+		rps:      rps,
+		burst:    burst,
 	}
-	// Periodically clean up stale entries
-	go func() {
-		for {
-			time.Sleep(window)
-			rl.cleanup()
-		}
-	}()
+	go rl.cleanupLoop()
 	return rl
 }
 
-func (rl *ipRateLimiter) allow(ip string) bool {
+func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	v, exists := rl.visitors[ip]
-	now := time.Now()
-
 	if !exists {
-		rl.visitors[ip] = &visitor{tokens: rl.rate - 1, lastSeen: now}
-		return true
+		limiter := rate.NewLimiter(rl.rps, rl.burst)
+		rl.visitors[ip] = &ipVisitor{limiter: limiter, lastSeen: time.Now()}
+		return limiter
 	}
-
-	// Refill tokens based on elapsed time
-	elapsed := now.Sub(v.lastSeen)
-	refill := int(elapsed.Seconds() / rl.window.Seconds() * float64(rl.rate))
-	v.tokens += refill
-	if v.tokens > rl.rate {
-		v.tokens = rl.rate
-	}
-	v.lastSeen = now
-
-	if v.tokens <= 0 {
-		return false
-	}
-	v.tokens--
-	return true
+	v.lastSeen = time.Now()
+	return v.limiter
 }
 
-func (rl *ipRateLimiter) cleanup() {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	cutoff := time.Now().Add(-2 * rl.window)
-	for ip, v := range rl.visitors {
-		if v.lastSeen.Before(cutoff) {
-			delete(rl.visitors, ip)
+// cleanupLoop removes entries that haven't been seen in 3 minutes.
+func (rl *ipRateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(time.Minute)
+	for range ticker.C {
+		rl.mu.Lock()
+		cutoff := time.Now().Add(-3 * time.Minute)
+		for ip, v := range rl.visitors {
+			if v.lastSeen.Before(cutoff) {
+				delete(rl.visitors, ip)
+			}
 		}
+		rl.mu.Unlock()
 	}
 }
 
@@ -300,12 +287,13 @@ func rateLimitMiddleware(limiter *ipRateLimiter) func(http.Handler) http.Handler
 			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
 				ip = realIP
 			}
-			// Strip port
-			if idx := strings.LastIndex(ip, ":"); idx > 0 {
-				ip = ip[:idx]
+			// Strip port using net.SplitHostPort which correctly handles
+			// both IPv4 (1.2.3.4:8080) and IPv6 ([::1]:8080) addresses.
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
 			}
 
-			if !limiter.allow(ip) {
+			if !limiter.getLimiter(ip).Allow() {
 				slog.Warn("Rate limit exceeded", "remote_addr", ip)
 				http.Error(w, "Too many requests", http.StatusTooManyRequests)
 				return
@@ -335,7 +323,7 @@ func (s *Server) Start() error {
 	r.Use(middleware.RealIP)                    // Real IP detection
 	r.Use(middleware.RequestID)                 // Request ID generation
 	r.Use(securityHeaders)                                         // Security response headers
-	r.Use(rateLimitMiddleware(newIPRateLimiter(100, time.Minute))) // Per-IP rate limit: 100 req/min
+	r.Use(rateLimitMiddleware(newIPRateLimiter(rate.Every(600*time.Millisecond), 10))) // Per-IP rate limit: ~100 req/min, burst 10
 	r.Use(s.requestLogger)                                         // Custom request logging
 	r.Use(middleware.Timeout(30 * time.Second))                    // Request timeout
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1807,6 +1808,65 @@ func TestDedupeStrings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestIsSSRFBlockedIP verifies the SSRF IP check correctly handles
+// IPv4-mapped IPv6 bypass vectors via net/netip Unmap().
+func TestIsSSRFBlockedIP(t *testing.T) {
+	tests := []struct {
+		name     string
+		ip       net.IP
+		expected bool
+	}{
+		{"IPv4 loopback", net.ParseIP("127.0.0.1"), true},
+		{"IPv6 loopback", net.ParseIP("::1"), true},
+		{"IPv4 private 10.x", net.ParseIP("10.0.0.1"), true},
+		{"IPv4 private 192.168.x", net.ParseIP("192.168.1.1"), true},
+		{"IPv4 link-local", net.ParseIP("169.254.1.1"), true},
+		{"IPv4 public", net.ParseIP("8.8.8.8"), false},
+		{"IPv6 public", net.ParseIP("2001:4860:4860::8888"), false},
+		{"IPv4-mapped loopback", net.ParseIP("::ffff:127.0.0.1"), true},
+		{"IPv4-mapped private", net.ParseIP("::ffff:10.0.0.1"), true},
+		{"IPv4-mapped public", net.ParseIP("::ffff:8.8.8.8"), false},
+		{"unspecified v4", net.ParseIP("0.0.0.0"), true},
+		{"unspecified v6", net.ParseIP("::"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSSRFBlockedIP(tt.ip)
+			if result != tt.expected {
+				t.Errorf("isSSRFBlockedIP(%s) = %v, want %v", tt.ip, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestScoreCorrelationTestContext verifies that test context requests get a
+// zero correlation score to avoid false escalation in test harnesses.
+func TestScoreCorrelationTestContext(t *testing.T) {
+	cfg := config.CorrelationConfig{
+		Enabled:              true,
+		WindowSec:            900,
+		WeightCritical:       0.6,
+		WeightHigh:           0.35,
+		EscalateThreshold:    0.8,
+		TimeDecayHalfLifeSec: 300,
+	}
+
+	recent := []store.Alert{
+		{RuleName: "critical-alert", Severity: "critical", Tool: "bash", Timestamp: time.Now()},
+	}
+	req := &models.EvaluationRequest{Tool: "bash", Context: "test"}
+	current := engine.RuleResult{RuleName: "test-rule", Severity: engine.SeverityCritical}
+
+	summary := scoreCorrelation(cfg, current, req, recent)
+	if summary.Score != 0 {
+		t.Errorf("expected score 0 for test context, got %f", summary.Score)
+	}
+	if summary.EscalatedByCorrelation {
+		t.Error("expected no escalation for test context")
 	}
 }
 

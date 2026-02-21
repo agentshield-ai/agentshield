@@ -642,8 +642,17 @@ func appendQuoteMeta(sb *strings.Builder, s string) {
 	}
 }
 
+// regexpSpecial is a lookup table for regexp metacharacters.
+var regexpSpecial [256]bool
+
+func init() {
+	for _, c := range []byte(`\.+*?()|[]{}^$`) {
+		regexpSpecial[c] = true
+	}
+}
+
 func isRegexpSpecial(c byte) bool {
-	return strings.IndexByte(`\.+*?()|[]{}^$`, c) != -1
+	return regexpSpecial[c]
 }
 
 func windashpermute(input string) []string {

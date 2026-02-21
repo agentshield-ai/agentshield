@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
@@ -493,6 +494,8 @@ func parseTriageResponse(response string, provider, model string, processingTime
 
 // ssrfSafeDialContext returns a DialContext function that resolves DNS and
 // rejects connections to private/loopback/link-local IP ranges.
+// Uses net/netip with Unmap() to prevent IPv4-mapped IPv6 bypass vectors
+// (e.g., ::ffff:127.0.0.1 being treated as a non-loopback IPv6 address).
 func ssrfSafeDialContext(baseDialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
@@ -505,9 +508,12 @@ func ssrfSafeDialContext(baseDialer *net.Dialer) func(ctx context.Context, netwo
 			return nil, fmt.Errorf("SSRF: DNS resolution failed for %q: %w", host, err)
 		}
 
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("SSRF: no addresses resolved for %q", host)
+		}
+
 		for _, ip := range ips {
-			if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() ||
-				ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
+			if isSSRFBlockedIP(ip.IP) {
 				return nil, fmt.Errorf("SSRF: resolved %q to private/local IP %s", host, ip.IP)
 			}
 		}
@@ -515,6 +521,20 @@ func ssrfSafeDialContext(baseDialer *net.Dialer) func(ctx context.Context, netwo
 		// Dial only the validated addresses
 		return baseDialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}
+}
+
+// isSSRFBlockedIP checks if an IP is in a private/local range. Uses net/netip
+// with Unmap() to catch IPv4-mapped IPv6 bypass vectors.
+func isSSRFBlockedIP(ip net.IP) bool {
+	if addr, ok := netip.AddrFromSlice(ip); ok {
+		// Unmap IPv4-mapped IPv6 (::ffff:127.0.0.1 -> 127.0.0.1)
+		addr = addr.Unmap()
+		return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+			addr.IsLinkLocalMulticast() || addr.IsUnspecified()
+	}
+	// Fallback for unusual net.IP values
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 // Common HTTP client with security settings

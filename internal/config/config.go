@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -256,13 +257,14 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("invalid port: %d (must be 1-65535)", cfg.Server.Port)
 	}
 
-	// SECURITY: Validate paths for directory traversal
-	if strings.Contains(cfg.Rules.Dir, "..") {
-		return fmt.Errorf("rules directory path contains suspicious characters (..)")
+	// SECURITY: Validate paths for directory traversal. Use filepath.Clean to
+	// canonicalize, then reject if the cleaned path still contains "..".
+	if strings.Contains(filepath.Clean(cfg.Rules.Dir), "..") {
+		return fmt.Errorf("rules directory path contains directory traversal")
 	}
 
-	if strings.Contains(cfg.Store.SQLitePath, "..") {
-		return fmt.Errorf("sqlite path contains suspicious characters (..)")
+	if strings.Contains(filepath.Clean(cfg.Store.SQLitePath), "..") {
+		return fmt.Errorf("sqlite path contains directory traversal")
 	}
 
 	// SECURITY: Validate triage URLs for SSRF protection
@@ -323,6 +325,8 @@ func validateIntRange(name string, value, min, max int) error {
 // IsPrivateOrLocalURL checks whether a URL targets a private/local network.
 // It parses the URL properly and resolves the hostname to check against
 // RFC 1918, loopback, link-local, and other non-routable ranges.
+// Uses net/netip for stricter IP parsing that rejects ambiguous forms
+// (octal notation, IPv4-mapped IPv6 bypass vectors).
 func IsPrivateOrLocalURL(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -345,9 +349,14 @@ func IsPrivateOrLocalURL(rawURL string) bool {
 		return true
 	}
 
-	// Parse as IP (handles hex, octal, IPv6 forms)
-	ip := net.ParseIP(hostname)
-	if ip != nil {
+	// Try net/netip first — stricter than net.ParseIP, rejects ambiguous forms
+	if addr, err := netip.ParseAddr(hostname); err == nil {
+		return isPrivateAddr(addr)
+	}
+
+	// Fallback: try net.ParseIP for forms that netip rejects but are valid
+	// (e.g., some IPv6 zone-scoped addresses)
+	if ip := net.ParseIP(hostname); ip != nil {
 		return isPrivateIP(ip)
 	}
 
@@ -365,7 +374,21 @@ func IsPrivateOrLocalURL(rawURL string) bool {
 	return false
 }
 
+// isPrivateAddr checks if a netip.Addr is private/local. It handles
+// IPv4-mapped IPv6 addresses by unmapping before the check.
+func isPrivateAddr(addr netip.Addr) bool {
+	// Unmap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+	// to prevent bypass via IPv4-mapped IPv6 notation.
+	addr = addr.Unmap()
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsUnspecified()
+}
+
 func isPrivateIP(ip net.IP) bool {
+	// Also check via netip if possible, to catch IPv4-mapped IPv6 bypass
+	if addr, ok := netip.AddrFromSlice(ip); ok {
+		return isPrivateAddr(addr)
+	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }

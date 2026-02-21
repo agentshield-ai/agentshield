@@ -104,8 +104,8 @@ func (e *Engine) LoadRules() error {
 		}
 
 		// Only process YAML files
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".yml") && 
-		   !strings.HasSuffix(strings.ToLower(d.Name()), ".yaml") {
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if ext != ".yml" && ext != ".yaml" {
 			return nil
 		}
 
@@ -246,6 +246,20 @@ func (e *Engine) validateRuleRegexComplexity(rule *sigma.Rule) error {
 
 // mapSeverity maps Sigma severity levels to our AlertSeverity enum
 func (e *Engine) mapSeverity(level sigma.Level) AlertSeverity {
+	// Fast path: standard Sigma Level constants are already lowercase.
+	switch level {
+	case sigma.Informational:
+		return SeverityLow
+	case sigma.Low:
+		return SeverityLow
+	case sigma.Medium:
+		return SeverityMedium
+	case sigma.High:
+		return SeverityHigh
+	case sigma.Critical:
+		return SeverityCritical
+	}
+	// Slow path: handle non-standard casing or abbreviations.
 	switch strings.ToLower(string(level)) {
 	case "informational", "info", "low":
 		return SeverityLow
@@ -256,38 +270,33 @@ func (e *Engine) mapSeverity(level sigma.Level) AlertSeverity {
 	case "critical", "crit":
 		return SeverityCritical
 	default:
-		return SeverityMedium // Default fallback
+		return SeverityMedium
 	}
 }
 
-// Evaluate evaluates an event against all loaded rules
-// Returns only rules that matched the input fields
+// Evaluate evaluates an event against all loaded rules.
+// Returns only rules that matched the input fields.
 func (e *Engine) Evaluate(fields map[string]string) []RuleResult {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
+	rules := e.rules
+	e.mu.RUnlock()
 
-	var results []RuleResult
-
-	// Create log entry for sigma evaluation
+	// Create log entry once for all rules.
 	entry := &sigma.LogEntry{
 		Fields: fields,
 	}
 
-	// Evaluate against each rule and only append matches
-	for _, rule := range e.rules {
-		matched := rule.rule.Detection.Matches(entry, nil)
-		
-		// Only return matched rules
-		if matched {
-			result := RuleResult{
-				RuleID:        rule.id,
-				RuleName:      rule.title,
-				Severity:      rule.severity,
-				Description:   rule.description,
+	var results []RuleResult
+	for i := range rules {
+		if rules[i].rule.Detection.Matches(entry, nil) {
+			results = append(results, RuleResult{
+				RuleID:        rules[i].id,
+				RuleName:      rules[i].title,
+				Severity:      rules[i].severity,
+				Description:   rules[i].description,
 				Matched:       true,
-				MatchedFields: fields, // In a real implementation, you'd extract only the relevant fields
-			}
-			results = append(results, result)
+				MatchedFields: fields,
+			})
 		}
 	}
 

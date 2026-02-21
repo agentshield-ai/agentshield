@@ -4,13 +4,14 @@ go 1.24.0
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/runreveal/sigmalite v0.0.0-20250918190104-f180cb50a6a1
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/time v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.45.0
+	modernc.org/sqlite v1.46.1
 )
 
 require (
