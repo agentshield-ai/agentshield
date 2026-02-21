@@ -196,8 +196,9 @@ func (d *DeepTriager) investigate(alerts []engine.RuleResult, req *models.Evalua
 	}
 
 	reqBody := openclawToolsInvokeRequest{
-		Tool: "sessions_spawn",
-		Args: spawnArgs,
+		Tool:       "sessions_spawn",
+		Args:       spawnArgs,
+		SessionKey: req.SessionID,
 	}
 
 	body, err := json.Marshal(reqBody)
