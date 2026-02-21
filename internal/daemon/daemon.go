@@ -22,14 +22,15 @@ import (
 
 // Daemon manages the AgentShield server process
 type Daemon struct {
-	config    *config.Config
-	pidFile   string
-	logger    *slog.Logger
-	engine    *engine.Engine
-	store     *store.Store
-	triager   *triage.Triager
-	evaluator *evaluate.Evaluator
-	server    *server.Server
+	config          *config.Config
+	pidFile         string
+	logger          *slog.Logger
+	engine          *engine.Engine
+	store           *store.Store
+	triager         *triage.Triager
+	evaluator       *evaluate.Evaluator
+	server          *server.Server
+	retentionCancel context.CancelFunc
 }
 
 // NewDaemon creates a new daemon instance
@@ -198,6 +199,18 @@ func (d *Daemon) initComponents() error {
 	d.store = st
 	d.logger.Info("Store initialized", "path", d.config.Store.SQLitePath)
 
+	if d.config.Store.RetentionDays > 0 {
+		deleted, err := d.store.EnforceRetention(d.config.Store.RetentionDays)
+		if err != nil {
+			d.logger.Warn("Initial retention cleanup failed", "error", err)
+		} else {
+			d.logger.Info("Initial retention cleanup complete", "deleted_alerts", deleted, "retention_days", d.config.Store.RetentionDays)
+		}
+		d.startRetentionLoop()
+	} else {
+		d.logger.Info("Retention cleanup disabled", "retention_days", d.config.Store.RetentionDays)
+	}
+
 	// Initialize triage (if enabled)
 	var triager *triage.Triager
 	if d.config.Triage.Enabled {
@@ -248,6 +261,37 @@ func (d *Daemon) reloadRules() error {
 	return d.engine.LoadRules()
 }
 
+func (d *Daemon) startRetentionLoop() {
+	intervalHours := d.config.Store.CleanupIntervalHours
+	if intervalHours <= 0 {
+		intervalHours = 24
+	}
+	interval := time.Duration(intervalHours) * time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	d.retentionCancel = cancel
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				deleted, err := d.store.EnforceRetention(d.config.Store.RetentionDays)
+				if err != nil {
+					d.logger.Warn("Scheduled retention cleanup failed", "error", err)
+					continue
+				}
+				d.logger.Info("Scheduled retention cleanup complete", "deleted_alerts", deleted, "retention_days", d.config.Store.RetentionDays)
+			}
+		}
+	}()
+
+	d.logger.Info("Started retention cleanup loop", "interval_hours", intervalHours)
+}
+
 // shutdown gracefully shuts down all components
 func (d *Daemon) shutdown() error {
 	d.logger.Info("Starting graceful shutdown...")
@@ -263,6 +307,11 @@ func (d *Daemon) shutdown() error {
 		} else {
 			d.logger.Info("Server shut down successfully")
 		}
+	}
+
+	if d.retentionCancel != nil {
+		d.retentionCancel()
+		d.retentionCancel = nil
 	}
 
 	// Close store
@@ -361,11 +410,12 @@ func (d *Daemon) removePIDFile() {
 
 // logConfig returns a summary of the configuration for logging
 func (d *Daemon) logConfig() string {
-	return fmt.Sprintf("addr=%s, mode=%s, rules=%s, db=%s, auth=%t",
+	return fmt.Sprintf("addr=%s, mode=%s, rules=%s, db=%s, retention_days=%d, auth=%t",
 		d.config.ListenAddr(),
 		d.config.EvaluationMode,
 		d.config.Rules.Dir,
 		d.config.Store.SQLitePath,
+		d.config.Store.RetentionDays,
 		d.config.Auth.Token != "",
 	)
 }

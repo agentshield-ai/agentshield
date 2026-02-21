@@ -428,6 +428,47 @@ func (s *Store) GetRulesWithHighFPRate(threshold float64, minAlerts int) ([]stri
 }
 
 // GetStats returns database statistics
+// EnforceRetention deletes alerts/feedback older than maxAgeDays.
+// Returns number of alert rows deleted. maxAgeDays <= 0 disables cleanup.
+func (s *Store) EnforceRetention(maxAgeDays int) (int64, error) {
+	if maxAgeDays <= 0 {
+		return 0, nil
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -maxAgeDays)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("starting retention transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Keep feedback table bounded too.
+	if _, err := tx.Exec("DELETE FROM feedback WHERE created_at < ?", cutoff); err != nil {
+		return 0, fmt.Errorf("deleting old feedback: %w", err)
+	}
+
+	res, err := tx.Exec("DELETE FROM alerts WHERE timestamp < ?", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("deleting old alerts: %w", err)
+	}
+
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("getting deleted row count: %w", err)
+	}
+
+	if _, err := tx.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return 0, fmt.Errorf("checkpointing sqlite wal: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing retention transaction: %w", err)
+	}
+
+	return deleted, nil
+}
+
 func (s *Store) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 

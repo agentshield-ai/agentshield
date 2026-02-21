@@ -31,7 +31,9 @@ type RulesConfig struct {
 
 // StoreConfig holds store configuration
 type StoreConfig struct {
-	SQLitePath string `yaml:"sqlite_path" json:"sqlite_path"`
+	SQLitePath           string `yaml:"sqlite_path" json:"sqlite_path"`
+	RetentionDays        int    `yaml:"retention_days" json:"retention_days"`                 // 0 = disabled
+	CleanupIntervalHours int    `yaml:"cleanup_interval_hours" json:"cleanup_interval_hours"` // how often retention runs
 }
 
 // EvaluationMode defines how the engine evaluates events
@@ -135,7 +137,9 @@ func LoadConfig(path string) (*Config, error) {
 			HotReload: true,
 		},
 		Store: StoreConfig{
-			SQLitePath: "./agentshield.db",
+			SQLitePath:           "./agentshield.db",
+			RetentionDays:        90,
+			CleanupIntervalHours: 24,
 		},
 		Triage: TriageConfig{
 			Enabled:    false,
@@ -180,6 +184,11 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Apply environment variable overrides
 	applyEnvOverrides(cfg)
+
+	// Backward-compatible defaults for newly added fields
+	if cfg.Store.CleanupIntervalHours == 0 {
+		cfg.Store.CleanupIntervalHours = 24
+	}
 
 	// Validate configuration
 	if err := validateConfig(cfg); err != nil {
@@ -236,6 +245,12 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Store.SQLitePath == "" {
 		return fmt.Errorf("sqlite path cannot be empty")
+	}
+	if cfg.Store.RetentionDays < 0 || cfg.Store.RetentionDays > 3650 {
+		return fmt.Errorf("store retention_days must be between 0 and 3650")
+	}
+	if cfg.Store.CleanupIntervalHours != 0 && (cfg.Store.CleanupIntervalHours < 1 || cfg.Store.CleanupIntervalHours > 168) {
+		return fmt.Errorf("store cleanup_interval_hours must be between 1 and 168")
 	}
 
 	// SECURITY: Validate auth configuration
