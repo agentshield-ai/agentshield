@@ -191,6 +191,7 @@ func main() {
 	var suitePath string
 	var outputDir string
 	var benchRoot string
+	var authToken string
 
 	rootCmd := &cobra.Command{
 		Use:   "agentshieldbench",
@@ -201,7 +202,7 @@ func main() {
 		Use:   "run",
 		Short: "Run a benchmark suite against a running AgentShield engine",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSuite(endpoint, suitePath, outputDir, benchRoot)
+			return runSuite(endpoint, suitePath, outputDir, benchRoot, authToken)
 		},
 	}
 
@@ -209,19 +210,21 @@ func main() {
 	runCmd.Flags().StringVar(&suitePath, "suite", "", "Path to suite YAML file")
 	runCmd.Flags().StringVar(&outputDir, "output", "bench/results", "Output directory for results")
 	runCmd.Flags().StringVar(&benchRoot, "bench-root", "bench", "Root directory for bench testcases")
+	runCmd.Flags().StringVar(&authToken, "token", "", "Bearer auth token (or set AGENTSHIELD_AUTH_TOKEN)")
 	_ = runCmd.MarkFlagRequired("suite")
 
 	runAllCmd := &cobra.Command{
 		Use:   "run-all",
 		Short: "Run all suites in bench/suites/",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAllSuites(endpoint, outputDir, benchRoot)
+			return runAllSuites(endpoint, outputDir, benchRoot, authToken)
 		},
 	}
 
 	runAllCmd.Flags().StringVar(&endpoint, "endpoint", "http://localhost:8433", "AgentShield engine endpoint")
 	runAllCmd.Flags().StringVar(&outputDir, "output", "bench/results", "Output directory for results")
 	runAllCmd.Flags().StringVar(&benchRoot, "bench-root", "bench", "Root directory for bench testcases")
+	runAllCmd.Flags().StringVar(&authToken, "token", "", "Bearer auth token (or set AGENTSHIELD_AUTH_TOKEN)")
 
 	rootCmd.AddCommand(runCmd, runAllCmd)
 
@@ -230,7 +233,15 @@ func main() {
 	}
 }
 
-func runAllSuites(endpoint, outputDir, benchRoot string) error {
+func resolveToken(token string) string {
+	if token != "" {
+		return token
+	}
+	return os.Getenv("AGENTSHIELD_AUTH_TOKEN")
+}
+
+func runAllSuites(endpoint, outputDir, benchRoot, authToken string) error {
+	authToken = resolveToken(authToken)
 	suiteDir := filepath.Join(benchRoot, "suites")
 	entries, err := os.ReadDir(suiteDir)
 	if err != nil {
@@ -243,7 +254,7 @@ func runAllSuites(endpoint, outputDir, benchRoot string) error {
 			continue
 		}
 		suitePath := filepath.Join(suiteDir, e.Name())
-		m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot)
+		m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: suite %s failed: %v\n", e.Name(), err)
 			continue
@@ -255,8 +266,9 @@ func runAllSuites(endpoint, outputDir, benchRoot string) error {
 	return nil
 }
 
-func runSuite(endpoint, suitePath, outputDir, benchRoot string) error {
-	m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot)
+func runSuite(endpoint, suitePath, outputDir, benchRoot, authToken string) error {
+	authToken = resolveToken(authToken)
+	m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken)
 	if err != nil {
 		return err
 	}
@@ -264,7 +276,7 @@ func runSuite(endpoint, suitePath, outputDir, benchRoot string) error {
 	return nil
 }
 
-func runSuiteInner(endpoint, suitePath, outputDir, benchRoot string) (SuiteMetrics, error) {
+func runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken string) (SuiteMetrics, error) {
 	data, err := os.ReadFile(suitePath)
 	if err != nil {
 		return SuiteMetrics{}, fmt.Errorf("reading suite: %w", err)
@@ -299,9 +311,14 @@ func runSuiteInner(endpoint, suitePath, outputDir, benchRoot string) (SuiteMetri
 	client := &http.Client{Timeout: 30 * time.Second}
 	var results []ResultLine
 
-	for _, tc := range allTestcases {
-		for _, evt := range tc.Events {
-			result := executeEvent(client, endpoint, tc, &evt)
+	for i, tc := range allTestcases {
+		for j, evt := range tc.Events {
+			// Pace requests to stay within engine rate limits (~100 req/min, burst 10).
+			// 650ms between requests ensures we stay well within the ~600ms/request refill rate.
+			if i > 0 || j > 0 {
+				time.Sleep(650 * time.Millisecond)
+			}
+			result := executeEvent(client, endpoint, authToken, tc, &evt)
 			results = append(results, result)
 
 			status := "PASS"
@@ -341,7 +358,7 @@ func loadTestcase(path string) (*Testcase, error) {
 	return &tc, nil
 }
 
-func executeEvent(client *http.Client, endpoint string, tc *Testcase, evt *Event) ResultLine {
+func executeEvent(client *http.Client, endpoint, authToken string, tc *Testcase, evt *Event) ResultLine {
 	reqBody := EvalRequest{
 		EventID:   evt.EventID,
 		SessionID: tc.SessionID,
@@ -362,9 +379,25 @@ func executeEvent(client *http.Client, endpoint string, tc *Testcase, evt *Event
 		}
 	}
 
-	url := strings.TrimRight(endpoint, "/") + "/api/v1/evaluate"
+	evalURL := strings.TrimRight(endpoint, "/") + "/api/v1/evaluate"
+	req, err := http.NewRequest("POST", evalURL, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return ResultLine{
+			TestcaseID:     tc.ID,
+			EventID:        evt.EventID,
+			ExpectedAction: tc.Expected.Action,
+			ActualAction:   "ERROR",
+			Pass:           false,
+			Reason:         fmt.Sprintf("request error: %v", err),
+		}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+
 	start := time.Now()
-	resp, err := client.Post(url, "application/json", strings.NewReader(string(bodyBytes)))
+	resp, err := client.Do(req)
 	latency := time.Since(start).Seconds() * 1000
 
 	if err != nil {

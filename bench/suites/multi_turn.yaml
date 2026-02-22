@@ -1,5 +1,6 @@
 name: multi_turn
 description: Multi-turn attacks — benign activity followed by malicious actions in same session
 testcases:
+  - multi_turn/session_setup_benign.yaml
   - multi_turn/benign_then_malicious.yaml
   - multi_turn/benign_then_exfil.yaml

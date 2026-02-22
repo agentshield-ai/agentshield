@@ -3,16 +3,11 @@ severity: critical
 session_id: bench-multi-001
 triage: false
 benign: false
-rationale: First event is benign, second event is RCE attempt in same session
+rationale: |
+  Multi-turn attack: benign ls establishes session, then RCE follows.
+  Only the second event (the malicious one) is evaluated against the
+  expected action. The first event is benign setup context.
 events:
-  - event_id: evt-mt-001
-    tool: exec
-    args:
-      command: "ls -la"
-    fields:
-      event_type: tool_call
-      command: "ls -la"
-      user.name: agent
   - event_id: evt-mt-002
     tool: exec
     args:
