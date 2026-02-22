@@ -1,0 +1,31 @@
+:root { color-scheme: dark; --bg:#0b1220; --card:#121a2b; --muted:#93a4c3; --line:#24324d; --text:#e6eefc; }
+* { box-sizing: border-box; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+body { margin:0; background:var(--bg); color:var(--text); }
+.topbar { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--line); }
+.sub { margin:2px 0 0; color:var(--muted); font-size:12px; }
+.top-actions button { margin-left:8px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+.ingest { margin:14px 18px; }
+.ingest-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.file-input { background:#1a2540; padding:8px 10px; border-radius:8px; cursor:pointer; }
+.file-input input { display:none; }
+.hint { color:var(--muted); font-size:12px; }
+.layout { display:grid; grid-template-columns: 280px 1fr 320px; gap:12px; padding:0 18px 18px; }
+.filters .filter-group { margin:10px 0; }
+.filters label { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }
+.filters input, .filters select, textarea { width:100%; background:#0f1728; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; }
+.facets { display:flex; flex-wrap:wrap; gap:6px; }
+.facet { border:1px solid var(--line); border-radius:999px; padding:4px 8px; font-size:12px; cursor:pointer; }
+.facet.active { background:#27446e; border-color:#4d7fc2; }
+.stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:10px; }
+.stat span { color:var(--muted); font-size:12px; }
+.stat strong { display:block; font-size:24px; margin-top:4px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); }
+th { color:var(--muted); cursor:pointer; }
+tr:hover { background:#15203a; }
+.details pre { background:#0f1728; border:1px solid var(--line); border-radius:8px; padding:8px; max-height:300px; overflow:auto; font-size:11px; }
+textarea { min-height:100px; margin-bottom:8px; }
+button { background:#2a4e84; color:white; border:none; border-radius:8px; padding:8px 10px; cursor:pointer; }
+button.ghost { background:transparent; border:1px solid var(--line); }
+@media (max-width: 1200px){ .layout{ grid-template-columns:1fr; } }

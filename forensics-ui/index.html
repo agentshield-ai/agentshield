@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentShield Forensics Console</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>AgentShield Forensics Console</h1>
+      <p class="sub">SIEM-style retrospective analysis (offline-capable)</p>
+    </div>
+    <div class="top-actions">
+      <button id="save-view">Save View</button>
+      <button id="export-json">Export Filtered JSON</button>
+    </div>
+  </header>
+
+  <section class="ingest card">
+    <h2>Data Source</h2>
+    <div class="ingest-row">
+      <label class="file-input">
+        <input type="file" id="file" accept=".json,.ndjson,.jsonl" />
+        Load alerts JSON / NDJSON
+      </label>
+      <label class="file-input">
+        <input type="file" id="db-file" accept=".db,.sqlite,.sqlite3" />
+        Load SQLite DB directly
+      </label>
+      <button id="load-sample">Load Demo Data</button>
+      <span id="source-meta"></span>
+    </div>
+    <p class="hint">Tip: works from disk (file://). You can load JSON/NDJSON or directly open agentshield.db.</p>
+  </section>
+
+  <section class="layout">
+    <aside class="filters card">
+      <h2>Filters</h2>
+      <input id="search" placeholder="Search or field:value (e.g. severity:critical tool:exec)" />
+      <div class="filter-group">
+        <label>Time range</label>
+        <select id="time-range">
+          <option value="all">All</option>
+          <option value="24h">Last 24h</option>
+          <option value="7d">Last 7d</option>
+          <option value="30d">Last 30d</option>
+        </select>
+      </div>
+      <div class="filter-group"><label>Severity</label><div id="severity-facets" class="facets"></div></div>
+      <div class="filter-group"><label>Action</label><div id="action-facets" class="facets"></div></div>
+      <div class="filter-group"><label>Tool</label><div id="tool-facets" class="facets"></div></div>
+      <div class="filter-group"><label>Rule</label><div id="rule-facets" class="facets"></div></div>
+      <div class="filter-group"><label>Saved views</label><select id="saved-views"><option value="">—</option></select></div>
+      <button id="clear-filters" class="ghost">Clear filters</button>
+    </aside>
+
+    <main>
+      <section class="stats-grid">
+        <div class="card stat"><span>Total</span><strong id="stat-total">0</strong></div>
+        <div class="card stat"><span>Critical</span><strong id="stat-critical">0</strong></div>
+        <div class="card stat"><span>Blocked</span><strong id="stat-blocked">0</strong></div>
+        <div class="card stat"><span>Unique Sessions</span><strong id="stat-sessions">0</strong></div>
+      </section>
+
+      <section class="card">
+        <h2>Alert Trend</h2>
+        <canvas id="trend" height="90"></canvas>
+      </section>
+
+      <section class="card">
+        <h2>Alert Queue</h2>
+        <table id="table">
+          <thead>
+            <tr>
+              <th data-sort="timestamp">Timestamp</th>
+              <th data-sort="severity">Severity</th>
+              <th data-sort="rule_name">Rule</th>
+              <th data-sort="tool">Tool</th>
+              <th data-sort="action_taken">Action</th>
+              <th data-sort="session_id">Session</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+
+    <aside class="details card">
+      <h2>Details</h2>
+      <div id="details-empty">Select an alert to inspect.</div>
+      <pre id="details"></pre>
+      <h3>Analyst Notes</h3>
+      <textarea id="notes" placeholder="Case notes..."></textarea>
+      <button id="save-note">Save note</button>
+    </aside>
+  </section>
+
+  <script src="./app.js"></script>
+</body>
+</html>
