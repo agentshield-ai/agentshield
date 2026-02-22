@@ -1,0 +1,15 @@
+name: direct_adversary
+description: Direct adversarial attacks — RCE, reverse shells, credential theft, privesc, exfiltration
+testcases:
+  - adversary/curl_bash.yaml
+  - adversary/wget_sh.yaml
+  - adversary/reverse_shell_bash.yaml
+  - adversary/reverse_shell_nc.yaml
+  - adversary/reverse_shell_python.yaml
+  - adversary/read_ssh_key.yaml
+  - adversary/read_aws_creds.yaml
+  - adversary/chmod_suid.yaml
+  - adversary/sudo_bash.yaml
+  - adversary/exfil_curl_post.yaml
+  - adversary/base64_decode_exec.yaml
+  - adversary/curl_python_pipe.yaml

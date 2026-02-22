@@ -1,0 +1,6 @@
+name: encoding_obfuscation
+description: Encoding and obfuscation evasion attempts — base64, eval, python exec
+testcases:
+  - encoding/base64_decode_pipe.yaml
+  - encoding/python_exec_obfuscated.yaml
+  - encoding/benign_base64_usage.yaml

@@ -1,0 +1,5 @@
+name: tool_output_poison
+description: Tool output poisoning — compromised package registries, malicious tool responses
+testcases:
+  - tool_poison/tool_output_exec_instruction.yaml
+  - tool_poison/benign_tool_output.yaml
