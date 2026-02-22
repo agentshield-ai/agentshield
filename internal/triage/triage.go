@@ -271,11 +271,18 @@ Respond in JSON format only:
 
 Guidelines:
 - "block": Clear security risk, should prevent execution
-- "allow": False positive, safe to proceed  
+- "allow": False positive, safe to proceed
 - "investigate": Uncertain, needs human review
 - confidence: 0.0-1.0 (higher = more certain)
 - Keep reasoning under 200 characters
-- Focus on actual security risk vs rule noise`, 
+- Focus on actual security risk vs rule noise
+
+Blockchain/Smart Contract Context:
+- AI agents can autonomously exploit smart contract vulnerabilities (EVMBench research shows >70%% success on critical bugs)
+- Treat private key access, wallet credential reads, and mainnet transaction signing as high-risk
+- Flash loan patterns, reentrancy setups, and fund-draining function calls are strong indicators of exploitation
+- Distinguish between local devnet testing (lower risk) and mainnet interaction (higher risk)
+- Iterative forge/cast/hardhat commands targeting the same contract may indicate autonomous exploit development`, 
 		ruleName, 
 		string(triageCtx.Alert.Severity),
 		description,

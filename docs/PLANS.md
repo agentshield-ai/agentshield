@@ -1134,3 +1134,42 @@ detection:
 | 9 | **Plan 8: MCP Validation** | Low | Input safety at boundary |
 
 Plans 3, 5, 6, 8, and 10 are small, independent changes that can be done in parallel. Plans 1, 2, and 4 are larger architectural changes that should be done sequentially.
+
+---
+
+## EVMBench Alignment: Blockchain/Smart Contract Threat Surface
+
+### Context
+
+In February 2026, OpenAI and Paradigm published [EVMBench](https://openai.com/index/introducing-evmbench/), a benchmark evaluating AI agents' ability to detect, exploit, and patch smart contract vulnerabilities. Key findings:
+
+- **GPT-5.3-Codex exploits 72.2%** of critical fund-draining vulnerabilities autonomously
+- Agents improve from <20% to >70% exploit success through iterative refinement
+- The same capabilities used for defensive auditing enable offensive exploitation
+- Smart contracts secure $100B+ in open-source crypto assets
+
+This directly validates AgentShield's thesis: AI agents are autonomous actors capable of high-impact security-critical actions that require behavioral monitoring.
+
+### What We've Done
+
+1. **5 new Sigma detection rules** covering the blockchain threat surface:
+   - `agent_smart_contract_exploit.yml` — Foundry/Hardhat/Brownie exploit script execution
+   - `agent_blockchain_rpc_interaction.yml` — Unauthorized mainnet RPC interaction
+   - `agent_wallet_credential_access.yml` — Private key, keystore, and mnemonic access
+   - `agent_blockchain_fund_drain.yml` — Flash loan, reentrancy, and fund-draining patterns
+   - `agent_blockchain_recon.yml` — Contract reconnaissance via block explorers and decompilers
+
+2. **Triage prompts updated** with blockchain-specific context:
+   - Fast triage now considers mainnet vs devnet distinction
+   - Deep triage investigates contract vulnerability disclosures and on-chain fund status
+   - System prompts reference EVMBench findings on iterative agent exploitation
+
+### Future Work
+
+| Action | Priority | Effort |
+|--------|----------|--------|
+| Add Solidity/Vyper file-write rules detecting injected backdoors | Medium | Low |
+| Monitor for iterative exploit refinement (session-level correlation) | High | Medium |
+| Integrate with on-chain monitoring APIs (Forta, Tenderly) for real-time fund-at-risk assessment | Low | High |
+| Add DeFi protocol-specific rules (Uniswap, Aave, Compound function signatures) | Medium | Medium |
+| Develop test suite using EVMBench-style scenarios for rule validation | Medium | Medium |

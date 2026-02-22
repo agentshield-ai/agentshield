@@ -94,7 +94,7 @@ func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (
 		Messages: []OpenAIMessage{
 			{
 				Role:    "system",
-				Content: "You are a cybersecurity expert analyzing AI agent behavior. Respond only with the requested JSON format.",
+				Content: "You are a cybersecurity expert analyzing AI agent behavior, including blockchain and smart contract security threats. Respond only with the requested JSON format.",
 			},
 			{
 				Role:    "user",

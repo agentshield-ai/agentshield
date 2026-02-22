@@ -1,0 +1,66 @@
+id: agent-blockchain-recon-001
+title: Blockchain Contract Reconnaissance
+description: |
+  Detects AI agents performing reconnaissance on deployed smart contracts,
+  including reading contract source code from block explorers, decompiling
+  bytecode, or analyzing contract storage. While reading public contract
+  code is not inherently malicious, this activity may precede exploitation
+  attempts, particularly in light of EVMBench findings showing agents can
+  autonomously discover and exploit vulnerabilities.
+author: AgentShield
+date: "2026-02-22"
+status: production
+level: medium
+logsource:
+  product: agentshield
+  category: agent_events
+tags:
+  - attack.discovery
+  - attack.t1046
+  - attack.reconnaissance
+  - evmbench
+detection:
+  # Block explorer API access
+  selection_etherscan:
+    event_type: tool_call
+    command|contains:
+      - 'api.etherscan.io'
+      - 'api-goerli.etherscan.io'
+      - 'api-sepolia.etherscan.io'
+      - 'bscscan.com/api'
+      - 'polygonscan.com/api'
+      - 'arbiscan.io/api'
+      - 'optimistic.etherscan.io/api'
+  # Contract source/ABI fetching
+  selection_contract_source:
+    event_type: tool_call
+    command|contains:
+      - 'getabi'
+      - 'getsourcecode'
+      - 'getcontractcreation'
+      - 'contract_address'
+  # Bytecode decompilation
+  selection_decompile:
+    event_type: tool_call
+    command|contains:
+      - 'panoramix'
+      - 'heimdall'
+      - 'ethervm.io/decompile'
+      - 'dedaub.com'
+      - 'cast disassemble'
+      - 'cast 4byte'
+  # Storage slot reading (probing contract state)
+  selection_storage_read:
+    event_type: tool_call
+    command|contains:
+      - 'eth_getStorageAt'
+      - 'cast storage'
+      - 'getStorageAt'
+      - 'forge inspect'
+  condition: >
+    selection_etherscan or selection_contract_source
+    or selection_decompile or selection_storage_read
+falsepositives:
+  - Legitimate smart contract development and debugging
+  - Security auditors reviewing contract code
+  - Developers verifying deployed contract state

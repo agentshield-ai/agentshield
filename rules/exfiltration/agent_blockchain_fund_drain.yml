@@ -1,0 +1,89 @@
+id: agent-blockchain-fund-drain-001
+title: Blockchain Fund Draining Attempt
+description: |
+  Detects patterns consistent with AI agents attempting to drain funds from
+  smart contracts or wallets. EVMBench showed that GPT-5.3-Codex can exploit
+  72.2% of critical fund-draining vulnerabilities through iterative attempts.
+  This rule detects the characteristic patterns of fund-draining: repeated
+  transaction submission, flash loan execution, large value transfers, and
+  interaction with DeFi protocol withdrawal functions.
+author: AgentShield
+date: "2026-02-22"
+status: production
+level: critical
+logsource:
+  product: agentshield
+  category: agent_events
+tags:
+  - attack.exfiltration
+  - attack.t1048
+  - attack.impact
+  - attack.t1657
+  - evmbench
+detection:
+  # Flash loan patterns (common exploit vector)
+  selection_flashloan:
+    event_type: tool_call
+    command|contains:
+      - 'flashLoan'
+      - 'flashloan'
+      - 'flash_loan'
+      - 'FlashLoan'
+      - 'FLASHLOAN'
+  # Reentrancy attack patterns
+  selection_reentrancy:
+    event_type: tool_call
+    command|contains:
+      - 'reentrancy'
+      - 'reentrant'
+      - 'Reentrancy'
+      - 'fallback()'
+      - 'receive()'
+    command|contains:
+      - 'withdraw'
+      - 'call'
+      - 'transfer'
+      - 'send'
+  # Cast/forge with large ETH values
+  selection_large_value:
+    event_type: tool_call
+    command|contains:
+      - 'cast send'
+      - 'forge script'
+    command|contains:
+      - '--value'
+      - 'ether'
+      - 'msg.value'
+  # Direct withdrawal/drain function calls
+  selection_drain_functions:
+    event_type: tool_call
+    command|contains:
+      - 'emergencyWithdraw'
+      - 'rugPull'
+      - 'drainFunds'
+      - 'drain('
+      - 'sweepToken'
+      - 'rescueFunds'
+      - 'skim('
+  # Price manipulation patterns
+  selection_price_manipulation:
+    event_type: tool_call
+    command|contains:
+      - 'manipulatePrice'
+      - 'sandwichAttack'
+      - 'frontrun'
+      - 'backrun'
+      - 'priceOracle'
+    command|contains:
+      - 'exploit'
+      - 'attack'
+      - 'manipulate'
+      - 'drain'
+  condition: >
+    selection_flashloan or selection_reentrancy
+    or selection_large_value or selection_drain_functions
+    or selection_price_manipulation
+falsepositives:
+  - Legitimate flash loan usage in DeFi development
+  - Security audit testing with authorized test contracts
+  - Educational examples and CTF challenges

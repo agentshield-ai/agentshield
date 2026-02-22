@@ -1,0 +1,67 @@
+id: agent-blockchain-rpc-001
+title: Unauthorized Blockchain RPC Interaction
+description: |
+  Detects AI agents making direct JSON-RPC calls to blockchain nodes or
+  interacting with mainnet RPC endpoints. While local devnet interaction is
+  common during development, agents connecting to mainnet or forked mainnet
+  nodes to submit transactions may indicate exploitation or unauthorized
+  fund movement. Inspired by EVMBench's sandboxed blockchain evaluation
+  methodology, this rule flags when agents break out of expected dev patterns.
+author: AgentShield
+date: "2026-02-22"
+status: production
+level: high
+logsource:
+  product: agentshield
+  category: agent_events
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.lateral_movement
+  - evmbench
+detection:
+  # Direct curl/httpie calls to Ethereum JSON-RPC
+  selection_rpc_curl:
+    event_type: tool_call
+    command|contains:
+      - 'eth_sendTransaction'
+      - 'eth_sendRawTransaction'
+      - 'eth_signTransaction'
+      - 'personal_sendTransaction'
+      - 'personal_sign'
+      - 'eth_sign'
+  # Known mainnet RPC providers
+  selection_mainnet_rpc:
+    event_type: tool_call
+    command|contains:
+      - 'mainnet.infura.io'
+      - 'eth-mainnet.g.alchemy.com'
+      - 'rpc.ankr.com/eth'
+      - 'cloudflare-eth.com'
+      - 'eth.llamarpc.com'
+      - 'ethereum.publicnode.com'
+  # Foundry forking mainnet
+  selection_fork_mainnet:
+    event_type: tool_call
+    command|contains:
+      - '--fork-url'
+      - '--rpc-url'
+      - 'FORK_URL'
+      - 'RPC_URL'
+    command|contains:
+      - 'mainnet'
+      - 'infura.io'
+      - 'alchemy.com'
+  # Anvil forking (local node that forks mainnet state)
+  selection_anvil_fork:
+    event_type: tool_call
+    command|contains|all:
+      - 'anvil'
+      - '--fork-url'
+  condition: >
+    selection_rpc_curl or selection_mainnet_rpc
+    or selection_fork_mainnet or selection_anvil_fork
+falsepositives:
+  - Legitimate DeFi development with mainnet forking for testing
+  - Reading on-chain state for analytics
+  - Developers intentionally deploying to mainnet

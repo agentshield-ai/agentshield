@@ -82,6 +82,7 @@ Community-maintained Sigma rules for AI agent threats:
 - **Data Exfiltration**: Unauthorized data access attempts
 - **Privilege Escalation**: Unauthorized system access
 - **Credential Access**: Token theft and authentication bypass
+- **Blockchain/Smart Contract**: Autonomous exploit detection, wallet credential theft, fund draining, and unauthorized mainnet interaction (informed by [EVMBench](https://openai.com/index/introducing-evmbench/) research)
 
 Browse rules: [`rules/`](rules/)
 
