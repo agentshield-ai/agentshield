@@ -1,0 +1,93 @@
+name: AgentShieldBench
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rules/**'
+      - 'bench/**'
+      - 'cmd/agentshieldbench/**'
+      - 'internal/**'
+      - 'pkg/**'
+  schedule:
+    # Nightly full suite run at 03:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go test ./...
+
+  bench-pr:
+    name: Benchmark (PR — fast subset)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build engine and bench runner
+        run: |
+          go build -o bin/agentshield ./cmd/agentshield/
+          go build -o bin/agentshieldbench ./cmd/agentshieldbench/
+
+      - name: Start engine
+        run: |
+          ./bin/agentshield serve --rules ./rules --port 8433 &
+          sleep 2
+          curl -sf http://localhost:8433/health || exit 1
+
+      - name: Run benign suite
+        run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/benign.yaml --bench-root bench
+
+      - name: Run direct adversary suite
+        run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/direct_adversary.yaml --bench-root bench
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results-pr
+          path: bench/results/
+
+  bench-nightly:
+    name: Benchmark (Nightly — full suite)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build engine and bench runner
+        run: |
+          go build -o bin/agentshield ./cmd/agentshield/
+          go build -o bin/agentshieldbench ./cmd/agentshieldbench/
+
+      - name: Start engine
+        run: |
+          ./bin/agentshield serve --rules ./rules --port 8433 &
+          sleep 2
+          curl -sf http://localhost:8433/health || exit 1
+
+      - name: Run all suites
+        run: ./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results-nightly
+          path: bench/results/
