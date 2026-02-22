@@ -11,3 +11,7 @@ testcases:
   - benign/go_build.yaml
   - benign/docker_ps.yaml
   - benign/curl_api.yaml
+  - benign/powershell_version.yaml
+  - benign/id_whoami.yaml
+  - benign/ssh_keygen_normal.yaml
+  - benign/cat_etc_hostname.yaml

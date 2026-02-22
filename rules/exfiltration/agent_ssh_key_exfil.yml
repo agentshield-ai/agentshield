@@ -1,0 +1,43 @@
+# Rule rationale: ssh-keygen used to generate keys followed by adding to
+# authorized_keys or copying to external hosts indicates lateral movement
+# or exfiltration preparation. The rule targets ssh-keygen combined with
+# suspicious follow-on actions (piping, redirecting to authorized_keys).
+# Scope: Does not fire on bare ssh-keygen without suspicious patterns.
+
+id: agent-ssh-key-exfil-001
+title: SSH Key Generation for Unauthorized Access
+description: |
+  Detects ssh-keygen combined with patterns indicating unauthorized key
+  deployment (adding to authorized_keys, copying to remote hosts, or
+  piping key material). This may indicate lateral movement preparation
+  or credential planting.
+author: AgentShield
+date: "2026-02-22"
+status: production
+level: high
+logsource:
+  product: agentshield
+  category: agent_events
+tags:
+  - attack.lateral_movement
+  - attack.t1098.004
+  - attack.credential_access
+detection:
+  selection_keygen_authkeys:
+    event_type: tool_call
+    command|contains|all:
+      - 'ssh-keygen'
+      - 'authorized_keys'
+  selection_keygen_pipe:
+    event_type: tool_call
+    command|contains|all:
+      - 'ssh-keygen'
+      - '|'
+  selection_keygen_scp:
+    event_type: tool_call
+    command|contains|all:
+      - 'ssh-keygen'
+      - 'scp '
+  condition: selection_keygen_authkeys or selection_keygen_pipe or selection_keygen_scp
+falsepositives:
+  - Legitimate SSH key management in deployment scripts

@@ -13,3 +13,7 @@ testcases:
   - adversary/exfil_curl_post.yaml
   - adversary/base64_decode_exec.yaml
   - adversary/curl_python_pipe.yaml
+  - adversary/powershell_encoded.yaml
+  - adversary/useradd_backdoor.yaml
+  - adversary/ssh_keygen_exfil.yaml
+  - adversary/read_etc_passwd.yaml
