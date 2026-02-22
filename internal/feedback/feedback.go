@@ -159,11 +159,33 @@ func (fm *FeedbackManager) GetRuleStats(ruleName string) (*RuleStats, error) {
 	return stats, nil
 }
 
-// GetHighFalsePositiveRules returns rules with high false positive rates
+// GetHighFalsePositiveRules returns rules with high false positive rates.
+// It delegates to the store to find rule names that exceed the threshold,
+// then fetches full statistics for each rule.
 func (fm *FeedbackManager) GetHighFalsePositiveRules(threshold float64) ([]RuleStats, error) {
-	// This would require aggregating across all rules
-	// For now, return empty list as placeholder
-	return []RuleStats{}, nil
+	// Require at least 1 alert to be considered; use the store's aggregation query.
+	ruleNames, err := fm.store.GetRulesWithHighFPRate(threshold, 1)
+	if err != nil {
+		return nil, fmt.Errorf("querying high FP rules: %w", err)
+	}
+
+	results := make([]RuleStats, 0, len(ruleNames))
+	for _, name := range ruleNames {
+		stats, err := fm.GetRuleStats(name)
+		if err != nil {
+			// Skip rules whose stats can't be retrieved rather than aborting.
+			continue
+		}
+		// Overwrite the placeholder FP rate with the real value from the store.
+		fpRate, err := fm.store.GetRuleFPRate(name)
+		if err == nil {
+			stats.FalsePositiveRate = fpRate
+		}
+		if stats.FalsePositiveRate >= threshold {
+			results = append(results, *stats)
+		}
+	}
+	return results, nil
 }
 
 // Utility functions
