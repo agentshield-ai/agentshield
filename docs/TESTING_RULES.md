@@ -8,7 +8,7 @@ This guide shows how to test each Sigma rule by asking Clawdbot to execute comma
    ```bash
    cd /path/to/agentshield
    export ANTHROPIC_API_KEY=your-key-here  # For LLM triage
-   uv run agentshield start -f
+   agentshield serve --config config.yaml
    ```
 
 2. **Have Clawdbot running** and ready to accept commands
@@ -167,23 +167,20 @@ Watch the AgentShield terminal for notifications like:
 In another terminal:
 ```bash
 # List all alerts
-uv run agentshield alerts
+agentshield alerts
 
 # List only high/critical alerts
-uv run agentshield alerts --level high
-uv run agentshield alerts --level critical
+agentshield alerts --severity high
+agentshield alerts --severity critical
 
 # Show recent 20 alerts
-uv run agentshield alerts --limit 20
+agentshield alerts --limit 20
 ```
 
 ### Check alert details
 ```bash
-# Generate summary report
-uv run agentshield summary
-
-# Show rule statistics
-uv run agentshield rules --stats
+# List loaded rules
+agentshield rules list
 ```
 
 ## Triage Behavior
@@ -205,7 +202,7 @@ uv run agentshield rules --stats
    ```bash
    cd /path/to/agentshield
    export ANTHROPIC_API_KEY=sk-ant-...
-   uv run agentshield start -f
+   agentshield serve --config config.yaml
    ```
 
 2. **Clawdbot** - Send test prompt:
@@ -221,23 +218,22 @@ uv run agentshield rules --stats
 
 4. **Terminal 2** - Check alerts:
    ```bash
-   uv run agentshield alerts --limit 5
+   agentshield alerts --limit 5
    ```
 
 ## Safety Notes
 
 - All test commands are designed to be **safe** (read-only or echo)
 - **Don't actually execute** malicious commands
-- AgentShield **monitors and alerts** but doesn't block
+- In **audit** mode AgentShield logs alerts without blocking; in **enforce** mode it returns BLOCK actions
 - Test in a **safe environment** (e.g., not production)
 
 ## Troubleshooting
 
 **No alerts appearing:**
-- Check AgentShield is running: `uv run agentshield status`
-- Verify log paths in `~/.agentshield/config.yaml`
-- Check Clawdbot log file exists: `ls -la /tmp/clawdbot/`
-- Look for errors in AgentShield terminal
+- Check AgentShield is running: `curl http://localhost:8433/api/v1/health`
+- Verify configuration in `config.yaml`
+- Look for errors in AgentShield terminal output
 
 **Alerts marked as SUSPICIOUS:**
 - Set `ANTHROPIC_API_KEY` for LLM triage

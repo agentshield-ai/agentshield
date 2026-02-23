@@ -8,14 +8,14 @@ Default: `http://localhost:8433`
 
 ## Authentication
 
-The API supports Bearer token authentication when configured:
+The API requires Bearer token authentication. A token of at least 32 characters must be configured via `auth.token` in the YAML config or the `AGENTSHIELD_AUTH_TOKEN` environment variable.
 
 ```bash
 # Include Authorization header
 curl -H "Authorization: Bearer your-token" http://localhost:8433/api/v1/health
 ```
 
-If no token is configured, authentication is disabled and all requests are accepted.
+The engine will refuse to start if no auth token is configured.
 
 ## Content Types
 
@@ -90,44 +90,41 @@ The engine automatically maps common fields from the request:
 **Response Format:**
 ```json
 {
+  "event_id": "unique-event-identifier",
   "action": "BLOCK",
-  "evaluation_time_ms": 2.3,
-  "rule_count": 47,
   "alerts": [
     {
       "rule_id": "agent-dangerous-commands-001",
       "rule_name": "Dangerous File System Operations",
-      "rule_level": "high",
-      "severity": "high",
-      "verdict": "true_positive",
-      "confidence": 0.95,
-      "reasoning": "Command matches dangerous file deletion patterns"
+      "severity": "high"
     }
   ],
-  "triage_result": {
-    "verdict": "TRUE_POSITIVE",
-    "confidence": 0.95,
-    "reasoning": "High-risk file deletion command in sensitive location",
-    "suggested_action": "Block execution and alert security team",
-    "provider": "openai",
-    "model": "gpt-4o-mini",
-    "processing_time_ms": 4200
-  },
-  "metadata": {
-    "engine_version": "1.0.0",
-    "rules_loaded": 47,
-    "evaluation_mode": "enforce"
-  }
+  "triage_results": [
+    {
+      "verdict": "TRUE_POSITIVE",
+      "confidence": 0.95,
+      "reasoning": "High-risk file deletion command in sensitive location",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "processing_time_ms": 4200
+    }
+  ],
+  "overridable": false,
+  "effective_mode": "enforce",
+  "feedback_url": "/api/v1/feedback",
+  "timestamp": "2026-01-15T10:30:00Z"
 }
 ```
 
 **Response Fields:**
+- `event_id` (string): Echo of the submitted event ID
 - `action` (string): Action to take - "ALLOW", "BLOCK", "LOG"
-- `evaluation_time_ms` (float): Rule evaluation time in milliseconds
-- `rule_count` (int): Number of rules evaluated
-- `alerts` (array): Array of triggered alerts
-- `triage_result` (object): LLM triage analysis (if enabled)
-- `metadata` (object): Additional engine information
+- `alerts` (array): Array of triggered rule results
+- `triage_results` (array, optional): LLM triage analyses (if triage is enabled)
+- `overridable` (bool): Whether the action can be overridden by the caller
+- `effective_mode` (string): The evaluation mode applied ("enforce", "audit", "shadow")
+- `feedback_url` (string, optional): URL for submitting feedback on this evaluation
+- `timestamp` (string): ISO 8601 timestamp of the evaluation
 
 **Example Requests:**
 
@@ -181,33 +178,20 @@ Engine health check with detailed status information.
 **Response Format:**
 ```json
 {
-  "status": "healthy",
+  "status": "ok",
   "version": "1.0.0",
   "uptime_seconds": 3600.5,
-  "rules_loaded": 47,
-  "last_rule_reload": "2024-01-15T10:30:00Z",
-  "database_status": "connected",
-  "triage_status": "available",
-  "deep_triage_status": "available",
-  "performance": {
-    "avg_eval_time_ms": 1.2,
-    "events_processed": 10000,
-    "alerts_generated": 150,
-    "cache_hit_rate": 0.85
-  },
-  "configuration": {
-    "evaluation_mode": "audit",
-    "auth_enabled": true,
-    "triage_enabled": true,
-    "deep_triage_enabled": true
-  }
+  "config": {}
 }
 ```
 
+The health endpoint intentionally returns minimal information. Detailed configuration and performance data are not exposed for security reasons.
+
 **Status Values:**
-- `healthy` - All systems operational
-- `degraded` - Some features unavailable but core functionality works
-- `unhealthy` - Major issues affecting functionality
+- `ok` - All systems operational (HTTP 200)
+- `degraded` - Store health check failed (HTTP 503)
+
+**Note:** The health endpoint bypasses authentication and is accessible without a Bearer token.
 
 **Example Request:**
 ```bash
@@ -221,14 +205,13 @@ curl -X GET http://localhost:8433/api/v1/health
 List and filter alerts with pagination support.
 
 **Query Parameters:**
-- `limit` (int): Number of alerts to return (default: 50, max: 1000)
+- `limit` (int): Number of alerts to return (default: 100, max: 1000)
 - `offset` (int): Pagination offset (default: 0)
-- `since` (string): ISO timestamp or duration (e.g., "2024-01-15T10:00:00Z", "24h")
-- `until` (string): End time for date range queries
+- `since` (string): ISO 8601 timestamp (e.g., "2024-01-15T10:00:00Z")
+- `until` (string): End time for date range queries (ISO 8601)
 - `severity` (string): Filter by severity level (low, medium, high, critical)
 - `rule` (string): Filter by rule ID or name
 - `session_id` (string): Filter by agent session ID
-- `verdict` (string): Filter by triage verdict (true_positive, false_positive, unknown)
 
 **Response Format:**
 ```json
@@ -306,34 +289,21 @@ Submit feedback on alert classification to improve rule accuracy.
   "event_id": "evt-abc-123",
   "alert_id": 123,
   "feedback_type": "false_positive",
-  "comment": "This is legitimate security testing authorized by the security team",
-  "confidence": 0.9,
-  "metadata": {
-    "reviewer": "security-analyst",
-    "reviewed_at": "2024-01-15T11:00:00Z",
-    "ticket": "SEC-2024-001"
-  }
+  "comment": "This is legitimate security testing authorized by the security team"
 }
 ```
 
 **Field Descriptions:**
-- `event_id` (string, optional): Original event ID
-- `alert_id` (int, optional): Alert database ID (either event_id or alert_id required)
+- `event_id` (string): Original event ID (max 256 chars)
+- `alert_id` (int, optional): Alert database ID
 - `feedback_type` (string, required): "true_positive", "false_positive", or "improvement"
-- `comment` (string, optional): Human-readable feedback explanation
-- `confidence` (float, optional): Confidence in the feedback (0.0-1.0)
-- `metadata` (object, optional): Additional context
+- `comment` (string, optional): Human-readable feedback explanation (max 2000 chars)
 
 **Response Format:**
 ```json
 {
-  "success": true,
-  "feedback_id": 456,
-  "message": "Feedback recorded successfully",
-  "processing": {
-    "rule_refinement_queued": true,
-    "estimated_impact": "Rule accuracy may improve by ~5%"
-  }
+  "status": "received",
+  "message": "Thank you for your feedback"
 }
 ```
 
@@ -365,103 +335,59 @@ curl -X POST http://localhost:8433/api/v1/feedback \
 
 ### GET /api/v1/feedback
 
-Query feedback statistics and rule accuracy metrics.
+Query feedback for a specific rule.
 
 **Query Parameters:**
-- `rule` (string): Get feedback for specific rule ID or name
-- `feedback_type` (string): Filter by feedback type
-- `since` (string): Time range for feedback query
-- `limit` (int): Number of feedback records to return
+- `rule` (string, required): Rule name to query feedback for
+- `limit` (int): Number of feedback records to return (default: 100, max: 1000)
 
 **Response Format:**
 ```json
 {
-  "rule_id": "agent-dangerous-commands-001",
-  "rule_name": "Dangerous File System Operations",
-  "feedback_summary": {
-    "total_feedback": 45,
-    "true_positive": 38,
-    "false_positive": 7,
-    "improvement_suggestions": 3
-  },
-  "accuracy_metrics": {
-    "false_positive_rate": 0.16,
-    "precision": 0.84,
-    "feedback_trend": "improving",
-    "last_updated": "2024-01-15T12:00:00Z"
-  },
-  "recent_feedback": [
+  "rule_name": "agent-dangerous-commands-001",
+  "feedback": [
     {
-      "id": 456,
-      "feedback_type": "false_positive", 
+      "alert_id": "evt-abc-123",
+      "rule_name": "agent-dangerous-commands-001",
+      "verdict": "false_positive",
       "comment": "Authorized security testing",
-      "confidence": 0.95,
-      "submitted_at": "2024-01-15T11:30:00Z"
+      "timestamp": "2024-01-15T11:30:00Z"
     }
   ],
-  "refinement_status": {
-    "refinement_needed": true,
-    "reason": "FP rate above threshold (16% > 15%)",
-    "scheduled_refinement": "2024-01-16T02:00:00Z"
-  }
+  "false_positive_rate": 0.16,
+  "total_feedback": 45
 }
 ```
 
-**Example Requests:**
+**Example Request:**
 
 ```bash
 # Get feedback for specific rule
 curl "http://localhost:8433/api/v1/feedback?rule=agent-dangerous-commands-001"
-
-# Get recent false positive feedback
-curl "http://localhost:8433/api/v1/feedback?feedback_type=false_positive&since=7d&limit=20"
 ```
 
 ## Response Headers
 
-All API responses include standard headers:
+All API responses include security headers:
 
 ```http
-Content-Type: application/json; charset=utf-8
-X-Request-ID: req-123-abc-456
-X-Response-Time: 123.45ms
-X-Engine-Version: 1.0.0
-X-Rules-Count: 47
-Cache-Control: no-cache, no-store, must-revalidate
+Content-Type: application/json
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Cache-Control: no-store
+Content-Security-Policy: default-src 'none'
 ```
+
+A `X-Request-Id` header is generated per request by Chi middleware.
 
 ## Rate Limiting
 
-The API implements rate limiting to prevent abuse:
+The API implements per-IP token-bucket rate limiting:
 
-- **Default Limits**: 1000 requests/minute per IP
-- **Headers**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+- **Default Limits**: ~100 requests/minute per IP (one token every 600 ms, burst of 10)
 - **Status Code**: 429 when limits exceeded
 
-```http
-HTTP/1.1 429 Too Many Requests
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 0
-X-RateLimit-Reset: 1642176000
-
-{
-  "error": "rate_limit_exceeded",
-  "message": "Rate limit exceeded. Try again in 60 seconds."
-}
-```
-
-## WebSocket Support (Future)
-
-The engine will support WebSocket connections for real-time alert streaming:
-
-```javascript
-// Future WebSocket endpoint
-const ws = new WebSocket('ws://localhost:8433/api/v1/stream');
-ws.onmessage = (event) => {
-  const alert = JSON.parse(event.data);
-  console.log('New alert:', alert);
-};
-```
+Rate-limit headers (`X-RateLimit-*`) are not currently emitted.
 
 ## API Versioning
 
@@ -484,17 +410,6 @@ plugins:
     token: "${AGENTSHIELD_TOKEN}"
     timeout: 30
     retry_attempts: 3
-```
-
-### Claude Code Integration
-
-```bash
-# Environment setup
-export AGENTSHIELD_ENDPOINT="http://localhost:8433/api/v1/evaluate"
-export AGENTSHIELD_TOKEN="your-token"
-
-# Evaluation call
-claude-code eval-security --event-data event.json
 ```
 
 ### Custom Integration

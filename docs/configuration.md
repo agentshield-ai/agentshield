@@ -39,7 +39,7 @@ log_level: "info"                    # Level: debug, info, warn, error (default:
 # Fast Triage Configuration (synchronous, ~4 seconds)
 triage:
   enabled: true                      # Enable fast triage (default: false)
-  provider: "openai"                 # Provider: openai, anthropic, openclaw (default: "openai")
+  provider: "openai"                 # Provider: openai, anthropic (default: "openai")
   model: "gpt-4o-mini"              # Model name (default: "gpt-4o-mini")
   api_key: "${OPENAI_API_KEY}"      # API key (env override available)
   base_url: ""                      # Custom base URL for OpenRouter, etc (optional)
@@ -95,8 +95,8 @@ server:
 - `port` (int): HTTP port number. Avoid privileged ports (<1024) unless running as root
 
 **Environment Overrides:**
-- `AGENTSHIELD_SERVER_ADDR`
-- `AGENTSHIELD_SERVER_PORT`
+- `AGENTSHIELD_ADDR`
+- `AGENTSHIELD_PORT`
 
 **Defaults:**
 - `addr`: "127.0.0.1"
@@ -136,7 +136,6 @@ rules:
 
 **Environment Overrides:**
 - `AGENTSHIELD_RULES_DIR`
-- `AGENTSHIELD_RULES_HOT_RELOAD`
 
 **Defaults:**
 - `dir`: "./rules"
@@ -153,7 +152,7 @@ store:
 - `sqlite_path` (string): Path to SQLite database file. Will be created if it doesn't exist
 
 **Environment Overrides:**
-- `AGENTSHIELD_STORE_SQLITE_PATH`
+- `AGENTSHIELD_DB_PATH`
 
 **Defaults:**
 - `sqlite_path`: "./agentshield.db"
@@ -172,7 +171,7 @@ evaluation_mode: "audit"
 - `shadow`: Silent monitoring, process events but don't affect response
 
 **Environment Overrides:**
-- `AGENTSHIELD_EVALUATION_MODE`
+- `AGENTSHIELD_MODE`
 
 **Defaults:**
 - `evaluation_mode`: "enforce"
@@ -213,7 +212,7 @@ triage:
 
 **Fields:**
 - `enabled` (bool): Enable fast triage system
-- `provider` (string): LLM provider - "openai", "anthropic", or "openclaw"
+- `provider` (string): LLM provider - "openai" or "anthropic"
 - `model` (string): Model name (provider-specific)
 - `api_key` (string): API key for external providers
 - `base_url` (string): Custom API base URL (useful for OpenRouter)
@@ -230,16 +229,10 @@ Use `connectivity` mode in development or high-frequency health check scenarios 
 **Provider Models:**
 - **OpenAI**: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo"
 - **Anthropic**: "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"
-- **OpenClaw**: Any model supported by your OpenClaw instance
+- **OpenRouter**: Any model via OpenAI-compatible `base_url`
 
 **Environment Overrides:**
-- `AGENTSHIELD_TRIAGE_ENABLED`
-- `AGENTSHIELD_TRIAGE_PROVIDER`
-- `AGENTSHIELD_TRIAGE_MODEL`
-- `AGENTSHIELD_TRIAGE_API_KEY`
-- `AGENTSHIELD_TRIAGE_BASE_URL`
-- `AGENTSHIELD_TRIAGE_MAX_TOKENS`
-- `AGENTSHIELD_TRIAGE_TIMEOUT_SEC`
+- `AGENTSHIELD_TRIAGE_API_KEY` (only the API key is overridable via env; other triage fields require YAML config)
 
 **Defaults:**
 - `enabled`: false
@@ -299,11 +292,7 @@ deep_triage:
 - `memory_search`: Search through agent memory/context
 
 **Environment Overrides:**
-- `AGENTSHIELD_DEEP_TRIAGE_ENABLED`
-- `AGENTSHIELD_DEEP_TRIAGE_GATEWAY_URL`
-- `OPENCLAW_GATEWAY_TOKEN`
-- `AGENTSHIELD_DEEP_TRIAGE_MIN_SEVERITY`
-- `AGENTSHIELD_DEEP_TRIAGE_WEBHOOK`
+- `OPENCLAW_GATEWAY_TOKEN` (only the gateway token is overridable via env; other deep-triage fields require YAML config)
 
 **Defaults:**
 - `enabled`: false
@@ -397,47 +386,36 @@ log_level: "debug"
 
 triage:
   enabled: true
-  provider: "openclaw"
+  provider: "openai"
   model: "anthropic/claude-sonnet-4-20250514"
+  base_url: "https://openrouter.ai/api/v1"
+  api_key: "${OPENROUTER_API_KEY}"
 ```
 
 ## Environment Variable Reference
 
-All configuration values can be overridden with environment variables:
+The following environment variables are implemented as overrides in `applyEnvOverrides()`:
 
 | Environment Variable | Configuration Path | Type | Description |
 |---------------------|-------------------|------|-------------|
-| `AGENTSHIELD_SERVER_ADDR` | `server.addr` | string | Server bind address |
-| `AGENTSHIELD_SERVER_PORT` | `server.port` | int | Server port |
+| `AGENTSHIELD_ADDR` | `server.addr` | string | Server bind address |
+| `AGENTSHIELD_PORT` | `server.port` | int | Server port |
 | `AGENTSHIELD_AUTH_TOKEN` | `auth.token` | string | API auth token |
 | `AGENTSHIELD_RULES_DIR` | `rules.dir` | string | Rules directory |
-| `AGENTSHIELD_RULES_HOT_RELOAD` | `rules.hot_reload` | bool | Hot reload enabled |
-| `AGENTSHIELD_STORE_SQLITE_PATH` | `store.sqlite_path` | string | SQLite path |
-| `AGENTSHIELD_EVALUATION_MODE` | `evaluation_mode` | string | Evaluation mode |
+| `AGENTSHIELD_DB_PATH` | `store.sqlite_path` | string | SQLite path |
+| `AGENTSHIELD_MODE` | `evaluation_mode` | string | Evaluation mode |
 | `AGENTSHIELD_LOG_LEVEL` | `log_level` | string | Log level |
-| `AGENTSHIELD_TRIAGE_ENABLED` | `triage.enabled` | bool | Fast triage enabled |
-| `AGENTSHIELD_TRIAGE_PROVIDER` | `triage.provider` | string | Triage provider |
-| `AGENTSHIELD_TRIAGE_MODEL` | `triage.model` | string | Triage model |
 | `AGENTSHIELD_TRIAGE_API_KEY` | `triage.api_key` | string | Triage API key |
-| `AGENTSHIELD_TRIAGE_BASE_URL` | `triage.base_url` | string | Triage base URL |
-| `AGENTSHIELD_TRIAGE_MAX_TOKENS` | `triage.max_tokens` | int | Max tokens |
-| `AGENTSHIELD_TRIAGE_TIMEOUT_SEC` | `triage.timeout_sec` | int | Triage timeout |
-| `AGENTSHIELD_DEEP_TRIAGE_ENABLED` | `deep_triage.enabled` | bool | Deep triage enabled |
-| `AGENTSHIELD_DEEP_TRIAGE_GATEWAY_URL` | `deep_triage.gateway_url` | string | Gateway URL |
-| `OPENCLAW_GATEWAY_TOKEN` | `deep_triage.gateway_token` | string | Gateway token |
-| `AGENTSHIELD_DEEP_TRIAGE_MIN_SEVERITY` | `deep_triage.min_severity` | string | Min severity |
-| `AGENTSHIELD_DEEP_TRIAGE_WEBHOOK` | `deep_triage.webhook` | string | Webhook URL |
+| `OPENCLAW_GATEWAY_TOKEN` | `deep_triage.gateway_token` | string | Deep triage gateway token |
+
+Other triage and deep-triage fields (provider, model, base_url, etc.) are set only via the YAML config file.
 
 ## Validation
 
-The engine validates configuration on startup:
+The engine validates configuration on startup. To see validation errors, run with debug logging:
 
 ```bash
-# Validate configuration without starting
-./agentshield config validate -config config.yaml
-
-# Check configuration in server logs
-./agentshield serve -config config.yaml -log-level debug
+AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve ---config config.yaml
 ```
 
 **Common Validation Errors:**
@@ -456,7 +434,7 @@ Rules can be reloaded without restarting:
 
 ```bash
 # Send SIGHUP signal for rule reload
-kill -HUP $(cat /var/run/agentshield.pid)
+kill -HUP $(pgrep agentshield)
 
 # Or use CLI
 ./agentshield rules reload
@@ -470,13 +448,13 @@ Use environment-specific configuration files:
 
 ```bash
 # Development
-./agentshield serve -config configs/development.yaml
+./agentshield serve --config configs/development.yaml
 
 # Production
-./agentshield serve -config configs/production.yaml
+./agentshield serve --config configs/production.yaml
 
 # With environment overrides
-AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve -config production.yaml
+AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve --config production.yaml
 ```
 
 ### Docker Configuration

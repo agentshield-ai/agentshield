@@ -54,7 +54,8 @@ go build -o bin/agentshieldbench ./cmd/agentshieldbench/
 | `indirect_injection.yaml` | RAG/content injection patterns | 3 |
 | `encoding_obfuscation.yaml` | Base64, eval, obfuscated execution | 3 |
 | `tool_output_poison.yaml` | Compromised tool outputs | 2 |
-| `multi_turn.yaml` | Benign-then-malicious session patterns | 2 |
+| `multi_turn.yaml` | Benign-then-malicious session patterns | 3 |
+| `skills_abuse_eval.yaml` | Skill/plugin abuse TTPs (see SKILLS_ABUSE_EVAL.md) | 23 |
 
 ## Output Files
 

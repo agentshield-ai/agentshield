@@ -54,13 +54,31 @@ detection:
 
 ## Log Source
 
-For AgentShield, always use:
+Rules use one of the following logsource combinations:
 
 ```yaml
+# AgentShield-native rules (most common)
 logsource:
   product: agentshield
   category: agent_events
+
+# OpenClaw-specific rules
+logsource:
+  product: openclaw
+  category: agent_events
+
+# Generic AI-agent rules (engine-agnostic, from sigma-ai upstream)
+logsource:
+  product: ai_agent
+  category: agent_events
+
+# MCP-specific rules
+logsource:
+  product: agentshield
+  category: mcp_events
 ```
+
+When writing new rules for AgentShield, use `product: agentshield` and `category: agent_events` unless targeting a specific integration.
 
 ## Detection Section
 
@@ -306,11 +324,11 @@ detection:
 Reload rules and test:
 
 ```bash
-# View loaded rules
-agentshield rules
+# List loaded rules
+agentshield rules list
 
-# Monitor for alerts
-agentshield start -f
+# Reload rules on a running server
+agentshield rules reload
 ```
 
 ### Step 5: Iterate
@@ -318,10 +336,10 @@ agentshield start -f
 After gathering feedback, refine your rule:
 
 ```bash
-# Check FP rate
-agentshield rules --stats
+# Query feedback for a rule via the API
+curl "http://localhost:8433/api/v1/feedback?rule=my-custom-rule-001"
 
-# Get refinement suggestions
+# Use the refine command for LLM-assisted suggestions
 agentshield refine my-custom-rule-001
 ```
 
@@ -401,7 +419,7 @@ python -c "import yaml; yaml.safe_load(open('rules/my_rule.yml'))"
 1. Verify the event has the expected field values
 2. Check case sensitivity (matching is case-insensitive)
 3. Test individual selections separately
-4. Use `--stats` to check if the rule is being evaluated
+4. Use `agentshield rules list` to check if the rule is loaded
 
 ### High False Positive Rate
 

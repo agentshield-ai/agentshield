@@ -13,8 +13,13 @@ This directory intentionally keeps only operational and developer-facing docs ne
 - `rules.md` — rule model and authoring notes
 - `TESTING_RULES.md` — rule test strategy and workflow
 
+## Evaluation and benchmarks
+- `EVALUATION.md` — AgentShieldBench benchmark harness
+- `SKILLS_ABUSE_EVAL.md` — skills/plugin abuse evaluation suite
+- `RULES_SOURCE.md` — upstream sigma-ai rule strategy
+
 ## Ops docs
-- `log_rotation.md` — log retention/rotation guidance
+- `log_rotation.md` — log retention, database maintenance, structured logging
 - `architecture.md` — high-level engine architecture
 
 ---

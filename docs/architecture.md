@@ -92,22 +92,27 @@ agentshield-engine/
 
 **API endpoints:**
 - `POST /api/v1/evaluate` - Evaluate event against rules
-- `GET /health` - Health check
+- `GET /api/v1/health` - Health check (also aliased at `/health`)
 - `GET /api/v1/alerts` - Retrieve alerts
 - `POST /api/v1/feedback` - Submit feedback
 
 ### 3. Sigma Rules (YAML)
 
-The rule repository contains 36+ Sigma detection rules organized by MITRE ATT&CK tactics.
+The rule repository contains 44 Sigma detection rules organized by MITRE ATT&CK tactics across 12 categories.
 
 **Rule categories:**
-- Prompt injection (3 rules)
-- Tool poisoning (2 rules)  
+- Prompt injection (4 rules)
+- Tool poisoning (2 rules)
 - Defense evasion (8 rules)
-- Credential access (3 rules)
-- Data exfiltration (5 rules)
+- Credential access (5 rules)
+- Data exfiltration (6 rules)
 - Privilege escalation (4 rules)
-- And 7 more categories...
+- Execution (6 rules)
+- Persistence (4 rules)
+- Discovery (2 rules)
+- Collection (1 rule)
+- Initial access (1 rule)
+- Lateral movement (1 rule)
 
 **Rule format:**
 ```yaml
@@ -137,10 +142,12 @@ level: critical
 
 The triage system provides intelligent alert classification using Large Language Models.
 
-**Triage providers:**
-- **OpenClaw loopback** (default) - Uses OpenClaw's LLM without additional API keys
+**Fast triage providers (synchronous):**
 - **OpenAI** - Direct API integration
 - **Anthropic** - Direct API integration
+
+**Deep triage (asynchronous):**
+- **OpenClaw sub-agent** - Background investigation via OpenClaw gateway
 
 **Triage process:**
 1. **Context gathering** - Collects recent events, similar commands, baseline patterns
@@ -149,15 +156,14 @@ The triage system provides intelligent alert classification using Large Language
 4. **Confidence scoring** - Confidence level for the verdict
 5. **Auto-approval** - High-confidence false positives are auto-approved
 
-**OpenClaw loopback configuration:**
+**Example fast triage configuration:**
 ```yaml
 triage:
-  provider: "openclaw"
-  endpoint: "http://localhost:8080/api/v1/chat"
-  model: "claude-3-5-sonnet"
-  system_prompt: |
-    You are a cybersecurity analyst reviewing AI agent security alerts...
-  auto_approve_threshold: 0.9
+  enabled: true
+  provider: "openai"
+  model: "gpt-4o-mini"
+  api_key: "${OPENAI_API_KEY}"
+  timeout_sec: 10
 ```
 
 ## Data Flow
@@ -223,17 +229,18 @@ Alert (SUSPICIOUS) ──▶ User Feedback ──▶ Verdict Update
 ## Technology Stack
 
 ### Core Technologies
-- **Go 1.21+**: Engine implementation for performance
+- **Go 1.24+**: Engine implementation for performance
 - **TypeScript**: OpenClaw plugin development
-- **SQLite**: Local data persistence with WAL mode
+- **SQLite**: Local data persistence (modernc.org/sqlite, pure-Go driver)
 - **Sigmalite**: Forked from RunReveal (Apache 2.0)
 
 ### Libraries & Dependencies
-- **Sigma Go Library**: Rule parsing and evaluation
-- **Gin**: HTTP server framework
-- **GORM**: Database ORM
-- **Logrus**: Structured logging
-- **Viper**: Configuration management
+- **Sigmalite**: Rule parsing and evaluation (git subtree from RunReveal)
+- **Chi v5**: HTTP router (`github.com/go-chi/chi/v5`)
+- **database/sql + modernc.org/sqlite**: Direct SQL queries (no ORM)
+- **log/slog**: Structured logging (stdlib)
+- **gopkg.in/yaml.v3**: Configuration parsing
+- **spf13/cobra**: CLI framework
 
 ### Integration Points
 - **OpenClaw Framework**: Plugin architecture and LLM access
@@ -310,42 +317,20 @@ Alert (SUSPICIOUS) ──▶ User Feedback ──▶ Verdict Update
 
 ## Performance Characteristics
 
-### Throughput
-- **Rule evaluation**: ~100,000 events/second
-- **API latency**: <1ms for simple rules
-- **Memory usage**: ~50MB baseline + rules
-- **Storage**: ~1MB per 1000 alerts
-
-### Scalability
-- **Horizontal scaling**: Multiple engine instances
-- **Rule sharding**: Distribute rules across engines
-- **Load balancing**: Round-robin or weighted
-- **Caching**: Rule compilation and context data
+Rule evaluation is in-process and typically sub-millisecond per event for the current rule set. Actual throughput depends on rule count, complexity, and whether triage is enabled. The engine is a single-process, single-node service; horizontal scaling would require external load balancing across multiple instances.
 
 ## Extension Points
 
-### Custom Collectors
-```go
-type EventCollector interface {
-    Collect() <-chan Event
-    Close() error
-}
-```
-
 ### Custom Triage Providers
+
+The triage system uses a `Provider` interface (defined in `internal/triage/triage.go`):
+
 ```go
-type TriageProvider interface {
-    Analyze(alert Alert, context Context) (Verdict, error)
-    Configure(config TriageConfig) error
+type Provider interface {
+    Triage(ctx context.Context, triageCtx *TriageContext) (*TriageResult, error)
+    Name() string
+    HealthCheck(ctx context.Context) error
 }
 ```
 
-### Custom Actions
-```go
-type ActionHandler interface {
-    Execute(action Action, alert Alert) error
-    Supports(actionType string) bool
-}
-```
-
-This architecture enables AgentShield to provide comprehensive, real-time security monitoring for AI agents while maintaining high performance, flexibility, and ease of deployment.
+New LLM providers can be added by implementing this interface and registering them in `NewTriager`.

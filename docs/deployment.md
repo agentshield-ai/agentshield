@@ -17,7 +17,7 @@ agentshield version
 ```
 
 **Requirements:**
-- Go 1.21 or later
+- Go 1.24 or later
 - Git (for fetching dependencies)
 
 ### Build from Source
@@ -204,7 +204,7 @@ Wants=network.target
 Type=simple
 User=agentshield
 Group=agentshield
-ExecStart=/usr/local/bin/agentshield serve -config /etc/agentshield/config.yaml
+ExecStart=/usr/local/bin/agentshield serve --config /etc/agentshield/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 EnvironmentFile=-/etc/agentshield/environment
 Restart=always
@@ -266,7 +266,7 @@ sudo tee /Library/LaunchDaemons/com.agentshield.engine.plist << 'EOF'
     <array>
         <string>/usr/local/bin/agentshield</string>
         <string>serve</string>
-        <string>-config</string>
+        <string>--config</string>
         <string>/usr/local/etc/agentshield/config.yaml</string>
     </array>
     <key>EnvironmentVariables</key>
@@ -299,7 +299,7 @@ Create Windows service using NSSM or sc:
 REM Download NSSM (Non-Sucking Service Manager)
 REM Install as service
 nssm install AgentShield "C:\Program Files\AgentShield\agentshield.exe"
-nssm set AgentShield Parameters "serve -config C:\ProgramData\AgentShield\config.yaml"
+nssm set AgentShield Parameters "serve --config C:\ProgramData\AgentShield\config.yaml"
 nssm set AgentShield DisplayName "AgentShield Detection Engine"
 nssm set AgentShield Description "AI agent security monitoring service"
 nssm set AgentShield Start SERVICE_AUTO_START
@@ -314,7 +314,7 @@ Run manually with daemon features:
 
 ```bash
 # Start with PID file
-agentshield serve -config config.yaml -daemon -pidfile /var/run/agentshield.pid
+agentshield serve --config config.yaml --daemon --pid-file /var/run/agentshield.pid
 
 # Reload rules (SIGHUP)
 kill -HUP $(cat /var/run/agentshield.pid)
@@ -387,8 +387,10 @@ evaluation_mode: "audit"
 
 triage:
   enabled: true
-  provider: "openclaw"  # Use OpenClaw's own LLM
+  provider: "openai"
   model: "anthropic/claude-sonnet-4-20250514"
+  base_url: "https://openrouter.ai/api/v1"
+  api_key: "${OPENROUTER_API_KEY}"
 
 deep_triage:
   enabled: true
@@ -399,55 +401,14 @@ EOF
 git clone https://github.com/agentshield-ai/rules.git ~/.openclaw/plugins/agentshield/rules
 
 # Start engine
-agentshield serve -config ~/.openclaw/plugins/agentshield/config.yaml &
+agentshield serve --config ~/.openclaw/plugins/agentshield/config.yaml &
 
 echo "AgentShield engine running on port 8433"
 ```
 
-### Claude Code Integration
+### Claude Code / Other Agent Integration
 
-Set up AgentShield for Claude Code:
-
-```bash
-# Install engine
-curl -sSL https://install.agentshield.ai | bash
-
-# Create Claude Code config
-mkdir -p ~/.claude/security
-cat > ~/.claude/security/agentshield.yaml << 'EOF'
-endpoint: "http://localhost:8433/api/v1/evaluate"
-token: "${AGENTSHIELD_AUTH_TOKEN}"
-mode: "enforce"  # Block dangerous operations
-
-# Tool mapping
-tools:
-  exec:
-    severity: "high"
-    fields:
-      - "process.command_line"
-      - "process.name"
-      - "user.name"
-  
-  read:
-    severity: "medium"
-    fields:
-      - "file.path"
-      - "file.extension"
-  
-  web_fetch:
-    severity: "medium"
-    fields:
-      - "url.full"
-      - "url.domain"
-EOF
-
-# Set environment variable
-export AGENTSHIELD_AUTH_TOKEN=$(openssl rand -hex 32)
-echo "export AGENTSHIELD_AUTH_TOKEN=$AGENTSHIELD_AUTH_TOKEN" >> ~/.bashrc
-
-# Test integration
-claude --security-check "exec ls -la"
-```
+AgentShield exposes a standard HTTP API. Integrations submit events to `POST /api/v1/evaluate` and act on the returned `action` field. See [api.md](api.md) for the full contract.
 
 ### Codex Integration
 
@@ -470,20 +431,13 @@ evaluation_mode: "shadow"  # Monitor without blocking initially
 
 triage:
   enabled: true
-  provider: "openai"  # Use same provider as Codex
+  provider: "openai"
   model: "gpt-4o-mini"
   api_key: "${OPENAI_API_KEY}"
-
-# Focus on code generation security
-rule_categories:
-  - "code-injection"
-  - "dangerous-apis"
-  - "secrets-exposure"
-  - "file-system-access"
 EOF
 
 # Start monitoring
-agentshield serve -config ~/.codex/security/config.yaml &
+agentshield serve --config ~/.codex/security/config.yaml &
 ```
 
 ## Standalone Usage Scenarios
@@ -515,7 +469,7 @@ deep_triage:
 EOF
 
 # Start with verbose logging
-AGENTSHIELD_LOG_LEVEL=debug agentshield serve -config research-config.yaml
+AGENTSHIELD_LOG_LEVEL=debug agentshield serve --config research-config.yaml
 ```
 
 ### Production SOC Integration
@@ -549,7 +503,7 @@ deep_triage:
 EOF
 
 # Deploy with monitoring
-agentshield serve -config production-config.yaml 2>&1 | logger -t agentshield
+agentshield serve --config production-config.yaml 2>&1 | logger -t agentshield
 ```
 
 ## Environment Variables Reference
@@ -558,11 +512,10 @@ agentshield serve -config production-config.yaml 2>&1 | logger -t agentshield
 
 | Variable | Purpose | Default | Example |
 |----------|---------|---------|---------|
-| `AGENTSHIELD_CONFIG` | Config file path | `./config.yaml` | `/etc/agentshield/config.yaml` |
-| `AGENTSHIELD_AUTH_TOKEN` | API authentication | None | `abc123...` |
+| `AGENTSHIELD_AUTH_TOKEN` | API authentication | (required) | `abc123...` (min 32 chars) |
 | `AGENTSHIELD_LOG_LEVEL` | Logging level | `info` | `debug` |
-| `AGENTSHIELD_SERVER_ADDR` | Bind address | `0.0.0.0` | `127.0.0.1` |
-| `AGENTSHIELD_SERVER_PORT` | HTTP port | `8433` | `8080` |
+| `AGENTSHIELD_ADDR` | Bind address | `127.0.0.1` | `0.0.0.0` |
+| `AGENTSHIELD_PORT` | HTTP port | `8433` | `8080` |
 
 ### Triage Configuration
 
@@ -579,18 +532,16 @@ agentshield serve -config production-config.yaml 2>&1 | logger -t agentshield
 |----------|---------|---------|---------|
 | `AGENTSHIELD_RULES_DIR` | Rules directory | `./rules` | `/etc/agentshield/rules` |
 | `AGENTSHIELD_DB_PATH` | Database path | `./agentshield.db` | `/var/lib/agentshield/alerts.db` |
-| `AGENTSHIELD_PID_FILE` | PID file location | None | `/var/run/agentshield.pid` |
+| `AGENTSHIELD_MODE` | Evaluation mode | `enforce` | `audit` |
+| `AGENTSHIELD_TRIAGE_API_KEY` | Triage LLM API key | None | `sk-...` |
 
 ## Health Monitoring
 
 ### Basic Health Checks
 
 ```bash
-# HTTP health check
+# HTTP health check (no auth required)
 curl -f http://localhost:8433/api/v1/health
-
-# Command line health check
-agentshield status
 
 # Process check
 pgrep -f agentshield
@@ -681,16 +632,12 @@ ulimit -m 1048576  # 1GB memory
 ulimit -u 100      # 100 processes
 ```
 
-### Database Optimization
+### Database Maintenance
+
+SQLite WAL mode is used automatically. For periodic vacuuming, use the SQLite CLI directly:
 
 ```bash
-# Optimize SQLite for performance
-agentshield database optimize
-
-# Set up database maintenance
-crontab -e
-0 2 * * * /usr/local/bin/agentshield database vacuum
-0 3 * * 0 /usr/local/bin/agentshield database cleanup --days 30
+sqlite3 /var/lib/agentshield/alerts.db "VACUUM;"
 ```
 
 ### Network Performance
@@ -724,22 +671,16 @@ sudo lsof -i :8433
 ```bash
 # Fix: Check rules directory and permissions
 ls -la /etc/agentshield/rules/
-agentshield rules validate -path /etc/agentshield/rules
+# List rules that the engine can load
+agentshield rules list
 ```
 
 ### Debug Mode
 
-Enable comprehensive debugging:
+Enable debug logging:
 
 ```bash
-# Run with maximum debugging
-AGENTSHIELD_LOG_LEVEL=debug agentshield serve -config config.yaml
-
-# Profile performance
-AGENTSHIELD_PROFILE=true agentshield serve -config config.yaml
-
-# Enable request tracing
-AGENTSHIELD_TRACE_REQUESTS=true agentshield serve -config config.yaml
+AGENTSHIELD_LOG_LEVEL=debug agentshield serve --config config.yaml
 ```
 
 ### Log Analysis

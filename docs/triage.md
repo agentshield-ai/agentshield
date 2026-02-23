@@ -37,7 +37,7 @@ Event → Rule Engine → Alert Generated
 - **Speed**: ~4 seconds response time
 - **Scope**: In-request processing
 - **Triggers**: High and Critical severity alerts only
-- **Providers**: OpenAI, Anthropic, or OpenClaw APIs
+- **Providers**: OpenAI or Anthropic APIs
 - **Context**: Limited to alert data and recent events
 
 **When It Triggers**:
@@ -116,15 +116,6 @@ triage:
   api_key: "${OPENROUTER_API_KEY}"
   base_url: "https://openrouter.ai/api/v1"
   max_tokens: 500
-  timeout_sec: 15
-```
-
-#### OpenClaw Provider
-```yaml
-triage:
-  enabled: true
-  provider: "openclaw"
-  model: "anthropic/claude-sonnet-4-20250514"  # Any OpenClaw model
   timeout_sec: 15
 ```
 
@@ -437,12 +428,9 @@ deep_triage:
 # Monitor triage response times
 curl -s http://localhost:8433/api/v1/health | jq '.performance'
 
-# Check recent triage results
-./agentshield alerts list --limit 10 --format json | jq '.alerts[] | {
-  rule: .rule_id,
-  triage_time: .triage_result.processing_time_ms,
-  verdict: .triage_result.verdict
-}'
+# Check recent alerts via API
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8433/api/v1/alerts?limit=10" | jq '.alerts'
 ```
 
 ## Troubleshooting
@@ -483,14 +471,10 @@ deep_triage:
 
 ```bash
 # Enable debug logging
-export AGENTSHIELD_LOG_LEVEL=debug
-./agentshield serve -config config.yaml
+AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve --config config.yaml
 
 # Monitor triage performance
 tail -f /var/log/agentshield/engine.log | grep "triage"
-
-# Test triage configuration
-./agentshield triage test -config config.yaml -event test-event.json
 ```
 
 ## Best Practices
