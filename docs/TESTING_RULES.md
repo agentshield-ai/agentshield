@@ -6,7 +6,7 @@ This guide shows how to test each Sigma rule by asking Clawdbot to execute comma
 
 1. **Start AgentShield monitoring in a separate terminal:**
    ```bash
-   cd /Users/markbriers/Documents/Work/benchmark-ai/agentshield
+   cd /path/to/agentshield
    export ANTHROPIC_API_KEY=your-key-here  # For LLM triage
    uv run agentshield start -f
    ```
@@ -203,7 +203,7 @@ uv run agentshield rules --stats
 
 1. **Terminal 1** - Start AgentShield:
    ```bash
-   cd /Users/markbriers/Documents/Work/benchmark-ai/agentshield
+   cd /path/to/agentshield
    export ANTHROPIC_API_KEY=sk-ant-...
    uv run agentshield start -f
    ```

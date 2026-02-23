@@ -1,6 +1,55 @@
+# Build output
 agentshield-engine
+bin/
 
 # Benchmark results (generated at runtime)
 bench/results/**/*.jsonl
 bench/results/**/SUMMARY.md
 !bench/results/.gitkeep
+
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Go
+vendor/
+coverage.out
+*.coverprofile
+*.prof
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Node.js
+node_modules/
+dist/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp

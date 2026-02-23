@@ -3,7 +3,7 @@
 ## 🚀 Start Monitoring
 
 ```bash
-cd /Users/markbriers/Documents/Work/benchmark-ai/agentshield
+cd /path/to/agentshield
 uv run agentshield start -f
 ```
 
