@@ -147,9 +147,64 @@ func (p *AnthropicProvider) Triage(ctx context.Context, triageCtx *TriageContext
 	return parseTriageResponse(content, p.Name(), p.config.Model, processingTime)
 }
 
-// HealthCheck performs a health check against the Anthropic API
+// HealthCheck performs a health check against the Anthropic API.
+// When HealthCheckMode is "connectivity", it uses a minimal request (max_tokens=1,
+// single-char prompt) to minimize token cost. Otherwise (default "full"), it uses
+// the standard health check request.
 func (p *AnthropicProvider) HealthCheck(ctx context.Context) error {
-	// Simple health check - make a minimal request to verify API connectivity
+	if p.config.HealthCheckMode == "connectivity" {
+		return p.healthCheckConnectivity(ctx)
+	}
+	return p.healthCheckFull(ctx)
+}
+
+// healthCheckConnectivity validates API key and connectivity with a minimal
+// completion request. Anthropic has no free endpoint, so we minimize cost by
+// using max_tokens=1 and the shortest possible prompt (".").
+func (p *AnthropicProvider) healthCheckConnectivity(ctx context.Context) error {
+	reqBody := AnthropicRequest{
+		Model:     p.config.Model,
+		MaxTokens: 1,
+		Messages: []AnthropicMessage{
+			{
+				Role:    "user",
+				Content: ".",
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshaling connectivity check request: %w", err)
+	}
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", p.apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("creating connectivity check request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", p.config.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("User-Agent", "AgentShield/1.0")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("Anthropic connectivity check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("Anthropic API authentication failed - check API key")
+	}
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("Anthropic API server error: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// healthCheckFull makes a standard completion request to verify full API functionality.
+func (p *AnthropicProvider) healthCheckFull(ctx context.Context) error {
 	reqBody := AnthropicRequest{
 		Model:     p.config.Model,
 		MaxTokens: 5,

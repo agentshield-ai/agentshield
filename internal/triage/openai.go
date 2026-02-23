@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
@@ -159,9 +160,46 @@ func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (
 	return parseTriageResponse(content, p.Name(), p.config.Model, processingTime)
 }
 
-// HealthCheck performs a health check against the OpenAI API
+// HealthCheck performs a health check against the OpenAI API.
+// When HealthCheckMode is "connectivity", it uses the free /v1/models endpoint.
+// Otherwise (default "full"), it makes a minimal completion request.
 func (p *OpenAIProvider) HealthCheck(ctx context.Context) error {
-	// Simple health check - make a minimal request to verify API connectivity
+	if p.config.HealthCheckMode == "connectivity" {
+		return p.healthCheckConnectivity(ctx)
+	}
+	return p.healthCheckFull(ctx)
+}
+
+// healthCheckConnectivity validates API key and connectivity using the
+// free models list endpoint (GET /v1/models), which costs zero tokens.
+func (p *OpenAIProvider) healthCheckConnectivity(ctx context.Context) error {
+	modelsURL := strings.TrimSuffix(p.apiURL, "/chat/completions") + "/models"
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", modelsURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating connectivity check request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.config.APIKey))
+	req.Header.Set("User-Agent", "AgentShield/1.0")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("OpenAI connectivity check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("OpenAI API authentication failed - check API key")
+	}
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("OpenAI API server error: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// healthCheckFull makes a minimal completion request to verify full API functionality.
+func (p *OpenAIProvider) healthCheckFull(ctx context.Context) error {
 	reqBody := OpenAIRequest{
 		Model: p.config.Model,
 		Messages: []OpenAIMessage{

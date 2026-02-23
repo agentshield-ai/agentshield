@@ -72,6 +72,30 @@ docker run -d \
   agentshield/engine:latest
 ```
 
+## Transport Security (TLS)
+
+AgentShield does **not** handle TLS natively. Production deployments that expose AgentShield beyond localhost **must** use a TLS-terminating reverse proxy such as nginx, Caddy, or a cloud load balancer.
+
+### Example: nginx reverse proxy with TLS
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name agentshield.example.com;
+
+    ssl_certificate     /etc/ssl/certs/agentshield.pem;
+    ssl_certificate_key /etc/ssl/private/agentshield.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8433;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+When running behind a reverse proxy, bind AgentShield to `127.0.0.1` (the default) so it is not directly reachable from the network. The engine will log a warning at startup if a non-localhost bind address is detected.
+
 ## Configuration Setup
 
 ### Directory Structure

@@ -1870,6 +1870,267 @@ func TestScoreCorrelationTestContext(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests for HealthCheck connectivity mode
+// ---------------------------------------------------------------------------
+
+func TestHealthCheckConnectivityMode(t *testing.T) {
+	t.Run("OpenAI connectivity mode uses models endpoint", func(t *testing.T) {
+		var requestedPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPath = r.URL.Path
+			if r.Header.Get("Authorization") == "Bearer test-key" {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"data":[{"id":"gpt-4o-mini"}]}`))
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:          "test-key",
+			Model:           "gpt-4o-mini",
+			TimeoutSec:      10,
+			HealthCheckMode: "connectivity",
+		}
+
+		provider := &OpenAIProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL + "/chat/completions",
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if requestedPath != "/models" {
+			t.Errorf("expected /models path, got %s", requestedPath)
+		}
+	})
+
+	t.Run("OpenAI connectivity mode auth failure", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:          "bad-key",
+			Model:           "gpt-4o-mini",
+			TimeoutSec:      10,
+			HealthCheckMode: "connectivity",
+		}
+
+		provider := &OpenAIProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL + "/chat/completions",
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err == nil {
+			t.Error("expected error for auth failure")
+		}
+		if !contains(err.Error(), "authentication failed") {
+			t.Errorf("expected auth error, got: %v", err)
+		}
+	})
+
+	t.Run("OpenAI connectivity mode server error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:          "test-key",
+			Model:           "gpt-4o-mini",
+			TimeoutSec:      10,
+			HealthCheckMode: "connectivity",
+		}
+
+		provider := &OpenAIProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL + "/chat/completions",
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err == nil {
+			t.Error("expected error for server error")
+		}
+	})
+
+	t.Run("OpenAI default mode still uses completion endpoint", func(t *testing.T) {
+		var requestedPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedPath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:     "test-key",
+			Model:      "gpt-4o-mini",
+			TimeoutSec: 10,
+			// HealthCheckMode left empty = "full" mode
+		}
+
+		provider := &OpenAIProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL + "/chat/completions",
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if requestedPath != "/chat/completions" {
+			t.Errorf("expected /chat/completions path for full mode, got %s", requestedPath)
+		}
+	})
+
+	t.Run("Anthropic connectivity mode uses minimal request", func(t *testing.T) {
+		var receivedBody AnthropicRequest
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&receivedBody)
+			if r.Header.Get("x-api-key") == "test-key" {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"content":[{"type":"text","text":"."}]}`))
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:          "test-key",
+			Model:           "claude-sonnet-4-20250514",
+			TimeoutSec:      10,
+			HealthCheckMode: "connectivity",
+		}
+
+		provider := &AnthropicProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL,
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if receivedBody.MaxTokens != 1 {
+			t.Errorf("expected max_tokens=1 for connectivity mode, got %d", receivedBody.MaxTokens)
+		}
+		if len(receivedBody.Messages) != 1 || receivedBody.Messages[0].Content != "." {
+			t.Errorf("expected minimal prompt '.' for connectivity mode, got %+v", receivedBody.Messages)
+		}
+	})
+
+	t.Run("Anthropic connectivity mode auth failure", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:          "bad-key",
+			Model:           "claude-sonnet-4-20250514",
+			TimeoutSec:      10,
+			HealthCheckMode: "connectivity",
+		}
+
+		provider := &AnthropicProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL,
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err == nil {
+			t.Error("expected error for auth failure")
+		}
+		if !contains(err.Error(), "authentication failed") {
+			t.Errorf("expected auth error, got: %v", err)
+		}
+	})
+
+	t.Run("Anthropic default mode uses standard request", func(t *testing.T) {
+		var receivedBody AnthropicRequest
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&receivedBody)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"content":[{"type":"text","text":"Test"}]}`))
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:     "test-key",
+			Model:      "claude-sonnet-4-20250514",
+			TimeoutSec: 10,
+			// HealthCheckMode left empty = "full" mode
+		}
+
+		provider := &AnthropicProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL,
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if receivedBody.MaxTokens != 5 {
+			t.Errorf("expected max_tokens=5 for full mode, got %d", receivedBody.MaxTokens)
+		}
+		if len(receivedBody.Messages) != 1 || receivedBody.Messages[0].Content != "Test" {
+			t.Errorf("expected 'Test' prompt for full mode, got %+v", receivedBody.Messages)
+		}
+	})
+
+	t.Run("backward compat empty HealthCheckMode equals full", func(t *testing.T) {
+		var requestedMethod string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedMethod = r.Method
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
+		}))
+		defer server.Close()
+
+		cfg := &config.TriageConfig{
+			APIKey:          "test-key",
+			Model:           "gpt-4o-mini",
+			TimeoutSec:      10,
+			HealthCheckMode: "", // Explicitly empty
+		}
+
+		provider := &OpenAIProvider{
+			config: cfg,
+			client: createLocalHTTPClient(10 * time.Second),
+			apiURL: server.URL + "/chat/completions",
+		}
+
+		err := provider.HealthCheck(context.Background())
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if requestedMethod != "POST" {
+			t.Errorf("expected POST for full mode, got %s", requestedMethod)
+		}
+	})
+}
+
 // Helper function
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) &&

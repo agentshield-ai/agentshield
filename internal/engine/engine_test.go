@@ -119,40 +119,196 @@ func TestIsPathSafe(t *testing.T) {
 }
 
 func TestValidateRuleRegexComplexity(t *testing.T) {
-	// Create mock rule with potentially dangerous patterns
 	tests := []struct {
-		name        string
-		ruleContent string
-		expectError bool
+		name         string
+		ruleYAML     string
+		wantRejected bool // true means the rule should be rejected (not loaded)
 	}{
 		{
-			name:        "simple rule should pass",
-			ruleContent: "simple rule content",
-			expectError: false,
+			name: "safe regex rule loads successfully",
+			ruleYAML: `
+title: Safe Regex Rule
+id: safe-regex-1
+status: experimental
+logsource:
+  category: test
+detection:
+  selection:
+    field|re: "^https?://[a-zA-Z0-9.]+$"
+  condition: selection
+level: medium
+`,
+			wantRejected: false,
 		},
 		{
-			name:        "nested quantifiers should fail",
-			ruleContent: "contains (.*)*",
-			expectError: true,
+			name: "nested quantifier (.*) star rejected",
+			ruleYAML: `
+title: Evil Nested Star
+id: evil-nested-star
+status: experimental
+logsource:
+  category: test
+detection:
+  selection:
+    field|re: "(.*)*evil"
+  condition: selection
+level: medium
+`,
+			wantRejected: true,
 		},
 		{
-			name:        "plus quantifiers should fail",
-			ruleContent: "contains (.+)+",
-			expectError: true,
+			name: "nested quantifier (.+)+ rejected",
+			ruleYAML: `
+title: Evil Nested Plus
+id: evil-nested-plus
+status: experimental
+logsource:
+  category: test
+detection:
+  selection:
+    field|re: "(.+)+attack"
+  condition: selection
+level: medium
+`,
+			wantRejected: true,
 		},
 		{
-			name:        "very long rule should fail",
-			ruleContent: strings.Repeat("x", 15000),
-			expectError: true,
+			name: "very long regex pattern rejected",
+			ruleYAML: `
+title: Long Regex Rule
+id: long-regex-1
+status: experimental
+logsource:
+  category: test
+detection:
+  selection:
+    field|re: "` + strings.Repeat("a", 1001) + `"
+  condition: selection
+level: medium
+`,
+			wantRejected: true,
+		},
+		{
+			name: "rule without re modifier is unaffected",
+			ruleYAML: `
+title: Normal Contains Rule
+id: normal-contains-1
+status: experimental
+logsource:
+  category: test
+detection:
+  selection:
+    field|contains: "totally fine (.*)*"
+  condition: selection
+level: medium
+`,
+			wantRejected: false,
+		},
+		{
+			name: "valid regex with character class passes",
+			ruleYAML: `
+title: Valid Regex
+id: valid-regex-1
+status: experimental
+logsource:
+  category: test
+detection:
+  selection:
+    field|re: "[0-9]{1,5}\\.[0-9]{1,5}"
+  condition: selection
+level: medium
+`,
+			wantRejected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Since the actual validation depends on the rule structure,
-			// we'll test the basic length check
-			if len(tt.ruleContent) > 10000 && !tt.expectError {
-				t.Error("Expected error for very long rule content")
+			tmpDir, err := os.MkdirTemp("", "regex_complexity_test")
+			if err != nil {
+				t.Fatalf("creating temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			rulePath := filepath.Join(tmpDir, "rule.yml")
+			if err := os.WriteFile(rulePath, []byte(tt.ruleYAML), 0644); err != nil {
+				t.Fatalf("writing rule file: %v", err)
+			}
+
+			eng, engineErr := NewEngine(tmpDir)
+			if engineErr != nil {
+				t.Fatalf("NewEngine() unexpected error: %v", engineErr)
+			}
+
+			loaded := eng.GetLoadedRules()
+			if tt.wantRejected && len(loaded) != 0 {
+				t.Errorf("expected dangerous rule to be rejected, but %d rules loaded", len(loaded))
+			}
+			if !tt.wantRejected && len(loaded) != 1 {
+				t.Errorf("expected rule to be loaded, but %d rules loaded", len(loaded))
+			}
+		})
+	}
+}
+
+func TestExtractSearchAtoms(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     sigma.Expr
+		expected int
+	}{
+		{
+			name:     "single SearchAtom",
+			expr:     &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}},
+			expected: 1,
+		},
+		{
+			name: "AndExpr with two atoms",
+			expr: &sigma.AndExpr{X: []sigma.Expr{
+				&sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}},
+				&sigma.SearchAtom{Field: "f2", Patterns: []string{"v2"}},
+			}},
+			expected: 2,
+		},
+		{
+			name: "OrExpr with two atoms",
+			expr: &sigma.OrExpr{X: []sigma.Expr{
+				&sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}},
+				&sigma.SearchAtom{Field: "f2", Patterns: []string{"v2"}},
+			}},
+			expected: 2,
+		},
+		{
+			name: "NotExpr wrapping atom",
+			expr: &sigma.NotExpr{X: &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}}},
+			expected: 1,
+		},
+		{
+			name: "NamedExpr wrapping atom",
+			expr: &sigma.NamedExpr{Name: "selection", X: &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}}},
+			expected: 1,
+		},
+		{
+			name: "nested structure",
+			expr: &sigma.NamedExpr{
+				Name: "sel",
+				X: &sigma.AndExpr{X: []sigma.Expr{
+					&sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}},
+					&sigma.OrExpr{X: []sigma.Expr{
+						&sigma.SearchAtom{Field: "f2", Patterns: []string{"v2"}},
+						&sigma.NotExpr{X: &sigma.SearchAtom{Field: "f3", Patterns: []string{"v3"}}},
+					}},
+				}},
+			},
+			expected: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			atoms := extractSearchAtoms(tt.expr)
+			if len(atoms) != tt.expected {
+				t.Errorf("extractSearchAtoms() returned %d atoms, want %d", len(atoms), tt.expected)
 			}
 		})
 	}
