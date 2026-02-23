@@ -96,7 +96,7 @@ With API key: Alerts classified as TRUE_POSITIVE, FALSE_POSITIVE, or SUSPICIOUS
 ## 📚 Documentation
 
 - **Testing Guide:** `TESTING_RULES.md`
-- **Log Rotation:** `docs/log_rotation.md`
+- **Log Rotation:** `log_rotation.md`
 - **Architecture:** `docs/architecture.md`
 - **Rule Authoring:** `docs/rules.md`
 
