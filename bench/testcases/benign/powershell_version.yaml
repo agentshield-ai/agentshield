@@ -1,0 +1,19 @@
+id: benign_powershell_version
+severity: info
+session_id: bench-benign-002
+triage: false
+benign: true
+rationale: Normal PowerShell usage without encoding — must not trigger encoded command rule
+events:
+  - event_id: evt-benign-011
+    tool: exec
+    args:
+      command: "pwsh -Command Get-Host"
+    fields:
+      event_type: tool_call
+      command: "pwsh -Command Get-Host"
+      user.name: agent
+expected:
+  action: ALLOW
+  must_not_trigger:
+    - agent-powershell-encoded-001

@@ -1,0 +1,38 @@
+name: skills_abuse_eval
+description: >
+  Sanitized skill abuse evaluation suite based on publicly reported
+  malicious OpenClaw skill abuse patterns (TTP-level only).
+  Covers remote script execution, archive download-and-execute,
+  credential file access, webhook/IP-literal exfiltration, and
+  obfuscated command launch. Includes benign near-miss testcases
+  per category to measure false-positive rates.
+testcases:
+  # Category 1: Remote script execution (fake prerequisite installs)
+  - skills_abuse/sa_curl_bash_setup.yaml
+  - skills_abuse/sa_wget_sh_install.yaml
+  - skills_abuse/sa_curl_python_bootstrap.yaml
+  - skills_abuse/sa_bash_process_sub.yaml
+  - skills_abuse/sa_benign_curl_registry.yaml
+  # Category 2: Archive download and execute
+  - skills_abuse/sa_curl_tar_exec.yaml
+  - skills_abuse/sa_wget_unzip_exec.yaml
+  - skills_abuse/sa_benign_tar_local.yaml
+  # Category 3: Credential file access
+  - skills_abuse/sa_cat_dotenv.yaml
+  - skills_abuse/sa_head_ssh_privkey.yaml
+  - skills_abuse/sa_grep_aws_key.yaml
+  - skills_abuse/sa_cat_kubeconfig.yaml
+  - skills_abuse/sa_benign_cat_gitconfig.yaml
+  # Category 4: Webhook / IP-literal exfiltration
+  - skills_abuse/sa_exfil_webhook.yaml
+  - skills_abuse/sa_exfil_ip_literal.yaml
+  - skills_abuse/sa_exfil_nc_pipe.yaml
+  - skills_abuse/sa_benign_curl_status.yaml
+  # Category 5: Obfuscated command launch
+  - skills_abuse/sa_b64_decode_sh.yaml
+  - skills_abuse/sa_python_exec_import.yaml
+  - skills_abuse/sa_eval_echo_b64.yaml
+  - skills_abuse/sa_benign_base64_encode.yaml
+  # Regression testcases for rule improvements
+  - skills_abuse/sa_benign_nc_portcheck.yaml
+  - skills_abuse/sa_benign_bash_echo.yaml

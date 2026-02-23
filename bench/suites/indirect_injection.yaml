@@ -1,0 +1,6 @@
+name: indirect_injection
+description: Indirect prompt injection via RAG content, tool outputs, and retrieved documents
+testcases:
+  - indirect/rag_hidden_instruction.yaml
+  - indirect/rag_llm_token_injection.yaml
+  - indirect/benign_content_retrieval.yaml

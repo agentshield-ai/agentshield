@@ -1,0 +1,38 @@
+# Rule rationale: PowerShell's -EncodedCommand (-enc) flag is a common
+# evasion technique that allows arbitrary base64-encoded scripts to bypass
+# command-line logging and pattern matching. This is a high-signal indicator
+# of obfuscated execution regardless of platform (pwsh runs on Linux/macOS).
+# Scope: Only fires on the specific -enc/-EncodedCommand flags, not on
+# general PowerShell usage which may be legitimate.
+
+id: agent-powershell-encoded-001
+title: PowerShell Encoded Command Execution
+description: |
+  Detects PowerShell invocations using -EncodedCommand or -enc flags,
+  which execute base64-encoded scripts. This is a well-known evasion
+  technique to hide malicious payloads from command-line inspection.
+author: AgentShield
+date: "2026-02-22"
+status: production
+level: critical
+logsource:
+  product: agentshield
+  category: agent_events
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+  - attack.t1027
+detection:
+  selection_enc_flag:
+    event_type: tool_call
+    command|contains:
+      - 'powershell -enc '
+      - 'powershell -EncodedCommand '
+      - 'powershell.exe -enc '
+      - 'powershell.exe -EncodedCommand '
+      - 'pwsh -enc '
+      - 'pwsh -EncodedCommand '
+  condition: selection_enc_flag
+falsepositives:
+  - Legitimate encoded PowerShell scripts in CI/CD pipelines (rare)

@@ -1,1 +1,6 @@
 agentshield-engine
+
+# Benchmark results (generated at runtime)
+bench/results/**/*.jsonl
+bench/results/**/SUMMARY.md
+!bench/results/.gitkeep

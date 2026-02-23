@@ -1,0 +1,15 @@
+server:
+  addr: "127.0.0.1"
+  port: 18433
+auth:
+  token: "agentshieldbench-test-token-0123456789abcdef"
+rules:
+  dir: "/tmp/agentshieldbench/rules"
+  hot_reload: false
+store:
+  sqlite_path: "/tmp/agentshieldbench_test.db"
+mode: enforce
+triage:
+  enabled: false
+deep_triage:
+  enabled: false
