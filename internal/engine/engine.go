@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -208,38 +209,81 @@ func (e *Engine) loadRuleFile(filePath string) (*LoadedRule, error) {
 	}, nil
 }
 
-// validateRuleRegexComplexity validates regex patterns to prevent ReDoS attacks
+// extractSearchAtoms walks the expression tree and collects all SearchAtom nodes.
+func extractSearchAtoms(expr sigma.Expr) []*sigma.SearchAtom {
+	var atoms []*sigma.SearchAtom
+	switch e := expr.(type) {
+	case *sigma.SearchAtom:
+		atoms = append(atoms, e)
+	case *sigma.AndExpr:
+		for _, x := range e.X {
+			atoms = append(atoms, extractSearchAtoms(x)...)
+		}
+	case *sigma.OrExpr:
+		for _, x := range e.X {
+			atoms = append(atoms, extractSearchAtoms(x)...)
+		}
+	case *sigma.NotExpr:
+		atoms = append(atoms, extractSearchAtoms(e.X)...)
+	case *sigma.NamedExpr:
+		atoms = append(atoms, extractSearchAtoms(e.X)...)
+	}
+	return atoms
+}
+
+// validateRuleRegexComplexity validates regex patterns in |re modified atoms
+// to prevent ReDoS attacks. It walks the parsed detection expression tree
+// rather than relying on string-formatting the rule.
 func (e *Engine) validateRuleRegexComplexity(rule *sigma.Rule) error {
-	// This is a simplified ReDoS protection
-	// In practice, you'd want more sophisticated analysis
-	
-	// Convert rule to string to find potential regex patterns
-	ruleStr := fmt.Sprintf("%+v", rule)
-	
-	// Check for obvious ReDoS patterns
+	if rule.Detection == nil || rule.Detection.Expr == nil {
+		return nil
+	}
+
+	atoms := extractSearchAtoms(rule.Detection.Expr)
+
+	// Known dangerous nested-quantifier patterns.
 	dangerousPatterns := []string{
-		`(.*)*`,           // Nested quantifiers
-		`(.+)+`,           
+		`(.*)*`,
+		`(.+)+`,
 		`(.{0,})*`,
-		`(a|a)*`,          // Alternation with repetition
+		`(a|a)*`,
 		`(a*)*`,
 		`(a+)+`,
 		`(a{0,}){0,}`,
 	}
 
-	for _, pattern := range dangerousPatterns {
-		if strings.Contains(strings.ToLower(ruleStr), pattern) {
-			return fmt.Errorf("potentially dangerous regex pattern detected: %s", pattern)
+	for _, atom := range atoms {
+		hasRe := false
+		for _, mod := range atom.Modifiers {
+			if mod == "re" {
+				hasRe = true
+				break
+			}
+		}
+		if !hasRe {
+			continue
+		}
+
+		for _, pattern := range atom.Patterns {
+			// Check pattern length.
+			if len(pattern) > 1000 {
+				return fmt.Errorf("regex pattern too long (%d chars, max 1000)", len(pattern))
+			}
+
+			// Check for dangerous nested-quantifier patterns.
+			lower := strings.ToLower(pattern)
+			for _, dangerous := range dangerousPatterns {
+				if strings.Contains(lower, dangerous) {
+					return fmt.Errorf("potentially dangerous regex pattern detected: %s", dangerous)
+				}
+			}
+
+			// Verify the pattern compiles (Go's RE2 rejects some pathological patterns).
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("invalid regex pattern: %w", err)
+			}
 		}
 	}
-
-	// Check for excessive length (another ReDoS vector)
-	if len(ruleStr) > 10000 { // 10KB limit per rule
-		return fmt.Errorf("rule content too long (%d bytes, max 10KB)", len(ruleStr))
-	}
-
-	// Additional regex validation could be added here
-	// For example, actually parsing regex patterns and analyzing their complexity
 
 	return nil
 }

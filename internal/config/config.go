@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"net/url"
@@ -73,14 +74,15 @@ type CorrelationConfig struct {
 
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
-	Enabled     bool              `yaml:"enabled"`
-	Provider    string            `yaml:"provider"` // "openai", "anthropic", or "openclaw"
-	Model       string            `yaml:"model"`    // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-	APIKey      string            `yaml:"api_key"`  // env: AGENTSHIELD_TRIAGE_API_KEY
-	BaseURL     string            `yaml:"base_url"` // custom base URL (e.g. https://openrouter.ai/api/v1)
-	MaxTokens   int               `yaml:"max_tokens"`
-	TimeoutSec  int               `yaml:"timeout_sec"`
-	Correlation CorrelationConfig `yaml:"correlation"`
+	Enabled         bool              `yaml:"enabled"`
+	Provider        string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
+	Model           string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
+	APIKey          string            `yaml:"api_key"`           // env: AGENTSHIELD_TRIAGE_API_KEY
+	BaseURL         string            `yaml:"base_url"`          // custom base URL (e.g. https://openrouter.ai/api/v1)
+	MaxTokens       int               `yaml:"max_tokens"`
+	TimeoutSec      int               `yaml:"timeout_sec"`
+	HealthCheckMode string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
+	Correlation     CorrelationConfig `yaml:"correlation"`
 }
 
 // DeepTriageConfig holds deep triage configuration (async, OpenClaw sub-agent with tools)
@@ -263,8 +265,11 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// SECURITY: Validate bind address
-	if cfg.Server.Addr == "0.0.0.0" {
-		fmt.Printf("WARNING: Server binding to all interfaces (0.0.0.0). Consider using 127.0.0.1 for localhost only.\n")
+	if IsNonLocalhost(cfg.Server.Addr) {
+		slog.Warn("server binding to a non-localhost address; use a TLS-terminating reverse proxy in production",
+			"addr", cfg.Server.Addr,
+			"recommendation", "deploy behind nginx/Caddy with TLS or bind to 127.0.0.1",
+		)
 	}
 
 	// Validate port range
@@ -335,6 +340,18 @@ func validateIntRange(name string, value, min, max int) error {
 		return fmt.Errorf("%s must be between %d and %d", name, min, max)
 	}
 	return nil
+}
+
+// IsNonLocalhost reports whether addr is NOT a localhost address.
+// It returns true for addresses like "0.0.0.0", "192.168.1.1", or any
+// address that is not "127.0.0.1", "localhost", or "::1".
+func IsNonLocalhost(addr string) bool {
+	switch strings.ToLower(strings.TrimSpace(addr)) {
+	case "127.0.0.1", "localhost", "::1":
+		return false
+	default:
+		return true
+	}
 }
 
 // IsPrivateOrLocalURL checks whether a URL targets a private/local network.

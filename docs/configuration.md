@@ -14,7 +14,7 @@ The engine uses YAML configuration with environment variable substitution. Defau
 ```yaml
 # HTTP Server Configuration
 server:
-  addr: "0.0.0.0"                    # Bind address (default: "0.0.0.0")
+  addr: "0.0.0.0"                    # Bind address (default: "127.0.0.1")
   port: 8433                         # HTTP port (default: 8433)
 
 # Authentication Configuration
@@ -45,6 +45,7 @@ triage:
   base_url: ""                      # Custom base URL for OpenRouter, etc (optional)
   max_tokens: 500                   # Max response tokens (default: 500)
   timeout_sec: 10                   # Request timeout seconds (default: 10)
+  health_check_mode: "full"         # "full" (default) or "connectivity"
 
 # Deep Triage Configuration (async OpenClaw sub-agent)
 deep_triage:
@@ -98,8 +99,10 @@ server:
 - `AGENTSHIELD_SERVER_PORT`
 
 **Defaults:**
-- `addr`: "0.0.0.0"
+- `addr`: "127.0.0.1"
 - `port`: 8433
+
+**TLS Note:** AgentShield does not terminate TLS. When using a non-localhost bind address (anything other than `127.0.0.1`, `localhost`, or `::1`), you must place a TLS-terminating reverse proxy (e.g., nginx, Caddy) in front of the engine. See the [Deployment Guide](deployment.md#transport-security-tls) for details.
 
 ### Authentication Configuration
 
@@ -205,6 +208,7 @@ triage:
   base_url: "https://openrouter.ai/api/v1"
   max_tokens: 500
   timeout_sec: 10
+  health_check_mode: "connectivity"  # "full" (default) or "connectivity"
 ```
 
 **Fields:**
@@ -215,6 +219,13 @@ triage:
 - `base_url` (string): Custom API base URL (useful for OpenRouter)
 - `max_tokens` (int): Maximum response tokens
 - `timeout_sec` (int): Request timeout in seconds
+- `health_check_mode` (string): Health check strategy - "full" or "connectivity" (default: "full")
+
+**Health Check Modes:**
+- `full` (default): Makes a minimal completion API call to verify end-to-end functionality. Costs a small number of tokens per check.
+- `connectivity`: Validates API key and network connectivity without spending tokens. For OpenAI, uses the free `/v1/models` endpoint. For Anthropic, uses a minimal request (`max_tokens=1`, single-char prompt) since no free endpoint is available.
+
+Use `connectivity` mode in development or high-frequency health check scenarios to reduce token costs.
 
 **Provider Models:**
 - **OpenAI**: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo"
@@ -236,6 +247,7 @@ triage:
 - `model`: "gpt-4o-mini"
 - `max_tokens`: 500
 - `timeout_sec`: 10
+- `health_check_mode`: "full"
 
 ### Deep Triage Configuration
 
