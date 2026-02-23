@@ -1,0 +1,21 @@
+name: Sigma-AI Subtree Sync Check
+
+on:
+  pull_request:
+    paths:
+      - 'rules/upstream/sigma-ai/**'
+      - 'scripts/check_sigma_ai_sync.sh'
+      - '.github/workflows/sigma-ai-sync-check.yml'
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify vendored sigma-ai subtree matches upstream main
+        run: |
+          chmod +x scripts/check_sigma_ai_sync.sh
+          scripts/check_sigma_ai_sync.sh main

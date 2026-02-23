@@ -76,6 +76,8 @@ chmod +x ~/.claude-code/hooks/*
 ```
 
 ### 📊 Detection Rules ([`rules/`](rules/))
+AgentShield consumes engine-agnostic Sigma-AI rules from the upstream catalog (`agentshield-ai/sigma-ai`) vendored under [`rules/upstream/sigma-ai/`](rules/upstream/sigma-ai/).
+
 Community-maintained Sigma rules for AI agent threats:
 - **Prompt Injection**: Social engineering and manipulation detection
 - **Tool Poisoning**: Malicious tool usage patterns
@@ -172,7 +174,8 @@ git commit -m "feat: add custom threat detection"
 
 ## Community
 
-- **Rules Repository**: [sigma-rules](rules/) - Community threat patterns
+- **Canonical Rules Repository**: [sigma-ai](https://github.com/agentshield-ai/sigma-ai) - Engine-agnostic AI-agent Sigma rules
+- **Vendored Upstream Snapshot**: [`rules/upstream/sigma-ai/`](rules/upstream/sigma-ai/) - Imported into this engine repo via subtree
 - **Plugin Development**: [plugins/](plugins/) - Platform integrations
 - **Documentation**: [docs/](docs/) - Comprehensive guides
 
