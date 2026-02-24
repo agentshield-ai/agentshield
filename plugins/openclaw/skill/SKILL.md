@@ -1,25 +1,22 @@
 # AgentShield
 
-**AI Agent Detection & Response (AADR)** — Real-time security monitoring with Sigma rules and LLM-powered triage
+**AI Agent Detection & Response (AADR)** -- real-time security monitoring with Sigma rules and LLM-powered triage.
 
 ## What is AgentShield?
 
-AgentShield is a security engine that monitors AI agent activities in real-time. It intercepts tool calls, evaluates them against Sigma security rules, and optionally uses LLM triage to assess threats. Think of it as an EDR (Endpoint Detection & Response) system, but for AI agents.
+AgentShield is a Go security engine that monitors AI agent tool calls in real-time. It evaluates each call against Sigma security rules and optionally routes suspicious events through LLM triage for context-aware verdicts. It runs as a single binary with no external runtime dependencies.
 
 ## Architecture
 
-**Single Go Binary** — Zero dependencies, pure Go implementation:
-- **agentshield-engine**: HTTP server, rule engine, SQLite store, LLM triage — all in one
-- **No Python dependency** — unlike previous versions
-- **No sidecar processes** — everything runs in a single binary
-- **One systemd service** — `agentshield-engine.service`
+Single Go binary (`agentshield`) containing:
+- HTTP server (Chi router, `127.0.0.1:8433` by default)
+- Sigma rule engine (forked sigmalite in `pkg/sigma/`)
+- SQLite alert/feedback store
+- LLM triage (OpenAI or Anthropic provider, optional)
+- Bearer token authentication (constant-time comparison)
+- Per-IP rate limiting (~100 req/min, burst 10)
 
-## How It Works
-
-1. **Interception**: OpenClaw routes tool calls through AgentShield
-2. **Rule Evaluation**: Each call is evaluated against Sigma security rules
-3. **LLM Triage** (optional): Suspicious events are analyzed by LLM for context-aware decisions
-4. **Response**: Block, allow, or alert based on evaluation results
+One systemd user service: `agentshield-engine.service` (Linux) or one launchd agent: `ai.agentshield.engine` (macOS).
 
 ## Installation
 
@@ -29,153 +26,197 @@ AgentShield is a security engine that monitors AI agent activities in real-time.
 ./install.sh
 ```
 
-The installer will:
-- Download the latest binary for your platform (or compile with Go)
-- Set up `~/.agentshield/` directory structure
-- Generate a secure authentication token
-- Configure systemd service
-- Patch OpenClaw configuration
-- Start the engine
+The installer:
+1. Detects platform (linux/darwin) and architecture (amd64/arm64)
+2. Downloads binary from GitHub releases (falls back to `go install`)
+3. Creates `~/.agentshield/` directory (rules, config, database)
+4. Clones sigma-ai rules from `agentshield-ai/sigma-ai`
+5. Generates a 64-character auth token
+6. Writes `~/.agentshield/config.yaml`
+7. Creates a systemd user service (Linux) or launchd agent (macOS)
+8. Patches OpenClaw plugin configuration via `openclaw config patch`
+9. Starts the service and runs a health check
 
 ### Manual Installation
 
-If you prefer manual setup:
-
 ```bash
-# 1. Download binary
-curl -L -o agentshield-engine https://github.com/agentshield-ai/agentshield/releases/latest/download/agentshield-linux-amd64
-chmod +x agentshield-engine
-mv agentshield-engine ~/.agentshield/
+# Build from source
+go build ./cmd/agentshield/
 
-# 2. Create config (see Configuration section)
+# Create directory structure
 mkdir -p ~/.agentshield/rules
-# ... create config.yaml ...
 
-# 3. Download rules
-git clone https://github.com/agentshield-ai/sigma-ai.git ~/.agentshield/rules
+# Clone rules
+git clone --depth 1 https://github.com/agentshield-ai/sigma-ai.git ~/.agentshield/rules
 
-# 4. Start the engine
+# Generate auth token
+openssl rand -hex 32
+
+# Create config.yaml (see Configuration section)
+# Start the engine
 ~/.agentshield/agentshield-engine serve --config ~/.agentshield/config.yaml
 ```
 
 ## Configuration
 
-Configuration file: `~/.agentshield/config.yaml`
+Config file: `~/.agentshield/config.yaml`
 
 ```yaml
-# Server settings
 server:
   addr: "127.0.0.1"
   port: 8433
 
-# Authentication (MANDATORY)
 auth:
-  token: "your-32-plus-character-secure-token-here"
+  token: "your-64-char-token-here"
 
-# Rule settings
 rules:
   dir: "~/.agentshield/rules"
   hot_reload: true
 
-# Storage
 store:
   sqlite_path: "~/.agentshield/agentshield.db"
+  retention_days: 90
+  cleanup_interval_hours: 24
 
-# Evaluation mode: enforce, audit, shadow
-evaluation_mode: "enforce"
+evaluation_mode: "enforce"   # enforce | audit | shadow
 
-# Logging
 log_level: "info"
 
-# LLM Triage (optional - requires API key)
-triage:
-  enabled: true
-  provider: "openai"          # openai, anthropic
-  model: "gpt-4o-mini"
-  api_key: "your-api-key"
-  max_tokens: 500
-  timeout_sec: 10
+# triage:
+#   enabled: true
+#   provider: "openai"        # openai | anthropic
+#   model: "gpt-4o-mini"
+#   api_key: "sk-..."
+#   max_tokens: 500
+#   timeout_sec: 10
+#   health_check_mode: "full"  # full | connectivity
 ```
+
+### Environment Variable Overrides
+
+| Variable | Overrides |
+|----------|-----------|
+| `AGENTSHIELD_PORT` | `server.port` |
+| `AGENTSHIELD_ADDR` | `server.addr` |
+| `AGENTSHIELD_AUTH_TOKEN` | `auth.token` |
+| `AGENTSHIELD_RULES_DIR` | `rules.dir` |
+| `AGENTSHIELD_DB_PATH` | `store.sqlite_path` |
+| `AGENTSHIELD_MODE` | `evaluation_mode` |
+| `AGENTSHIELD_LOG_LEVEL` | `log_level` |
+| `AGENTSHIELD_TRIAGE_API_KEY` | `triage.api_key` |
 
 ### Authentication
 
-AgentShield requires a secure authentication token (32+ characters). The installer generates one automatically, but you can create your own:
+A 32+ character token is mandatory. Without it, the server refuses to start. The installer generates a 64-character hex token automatically.
 
 ```bash
-# Using openssl
+# Generate manually
 openssl rand -hex 32
 
-# Using Python
+# Or via Python
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
+
+### Evaluation Modes
+
+- **enforce**: Blocks tool calls matching rules. Use in production.
+- **audit**: Logs alerts without blocking. Default for testing.
+- **shadow**: Silent monitoring. No user-visible alerts.
 
 ## CLI Commands
 
 ```bash
-# Start the server (usually done via systemd)
-agentshield serve --config ~/.agentshield/config.yaml
+# Start the server
+agentshield serve --config ~/.agentshield/config.yaml [--daemon] [--verbose]
 
-# Check status
-agentshield status
+# Check server status (queries /api/v1/health)
+agentshield status [--verbose]
 
 # List recent alerts
-agentshield alerts
+agentshield alerts [-l LIMIT] [-s SEVERITY] [--since RFC3339] [-r RULE]
 
-# Manage rules
+# List loaded rules
 agentshield rules list
-agentshield rules validate /path/to/rule.yml
+
+# Reload rules (sends SIGHUP to running server)
 agentshield rules reload
 
-# Analyze and refine rules
-agentshield refine --rule-id suspicious-file-access
+# Analyze rule performance using feedback data
+agentshield refine [rule-name] [--apply] [--threshold FP_RATE]
 
-# Version info
+# Show version
 agentshield version
 ```
 
 ### Service Management
 
+**Linux (systemd user service):**
 ```bash
-# Systemd service (user level)
 systemctl --user status agentshield-engine
 systemctl --user start agentshield-engine
 systemctl --user stop agentshield-engine
 systemctl --user restart agentshield-engine
-
-# View logs
 journalctl --user -u agentshield-engine -f
 ```
 
-## Enabling LLM Triage
+**macOS (launchd):**
+```bash
+launchctl load ~/Library/LaunchAgents/ai.agentshield.engine.plist
+launchctl unload ~/Library/LaunchAgents/ai.agentshield.engine.plist
+tail -f ~/.agentshield/engine.log
+```
 
-LLM triage provides context-aware threat analysis by having an AI model evaluate suspicious events:
+## API Endpoints
 
-1. **Get API Key**: OpenAI, Anthropic, or your preferred provider
-2. **Edit Config**: Uncomment and configure the `triage` section in `~/.agentshield/config.yaml`
-3. **Restart Service**: `systemctl --user restart agentshield-engine`
+All endpoints are under `/api/v1/`. Authentication via `Authorization: Bearer <token>` header.
 
-Example triage configuration:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/evaluate` | POST | Evaluate a tool call against rules + triage |
+| `/api/v1/health` | GET | Health check (minimal info, works unauthenticated) |
+| `/api/v1/alerts` | GET | Query stored alerts (paginated, filterable) |
+| `/api/v1/feedback` | POST | Submit alert feedback (false_positive, true_positive, improvement) |
+| `/api/v1/feedback?rule=<name>` | GET | Query feedback + FP rate for a rule |
+
+### Server Limits
+
+- Max request body: 1 MB
+- Max field value: 10 KB
+- Max fields per request: 100
+- Rate limit: ~100 req/min per IP, burst 10
+- Request timeout: 30 seconds
+
+## LLM Triage
+
+Optional. When enabled, the engine sends suspicious events to an LLM for context-aware analysis.
+
+Supported providers: `openai`, `anthropic`.
 
 ```yaml
 triage:
   enabled: true
   provider: "openai"
   model: "gpt-4o-mini"
-  api_key: "sk-your-openai-key-here"
+  api_key: "sk-..."
   max_tokens: 500
   timeout_sec: 10
+  health_check_mode: "full"   # "full" runs a model call; "connectivity" just checks /v1/models
 ```
 
-## Security Rules
+Triage returns a verdict (`block`, `allow`, `investigate`), confidence (0-1), and reasoning. In the OpenClaw plugin, a high-confidence allow (>0.8) from triage overrides rule-based alerts.
 
-AgentShield uses Sigma rules adapted for AI agent monitoring. Rules are stored in `~/.agentshield/rules/`.
+## Sigma Rules
+
+Rules are stored in `~/.agentshield/rules/`. The engine loads all `.yml`/`.yaml` files from this directory.
 
 ### Rule Format
+
+Standard Sigma format adapted for agent tool monitoring:
 
 ```yaml
 title: Suspicious File Access
 id: file-access-monitor
-description: Monitor for suspicious file operations
+description: Monitor for access to sensitive system files
 logsource:
   category: agent-tool
 detection:
@@ -189,23 +230,16 @@ detection:
 level: medium
 ```
 
-### Adding Custom Rules
+### Managing Rules
 
-1. Create a `.yml` file in `~/.agentshield/rules/`
-2. Reload rules: `agentshield rules reload`
-3. Test: `agentshield rules validate your-rule.yml`
-
-### Rule Categories
-
-- **File Operations**: Monitor suspicious file access patterns
-- **Network Activity**: Detect unusual network connections
-- **System Commands**: Flag dangerous shell commands
-- **Data Exfiltration**: Watch for data theft patterns
-- **Privilege Escalation**: Detect attempts to gain higher privileges
+- Hot reload is enabled by default (`rules.hot_reload: true`)
+- Manual reload: `agentshield rules reload` (sends SIGHUP)
+- List loaded rules: `agentshield rules list`
+- Rules repository: `agentshield-ai/sigma-ai`
 
 ## OpenClaw Integration
 
-AgentShield integrates with OpenClaw as a plugin. The installer automatically configures:
+The plugin registers as `agentshield` in OpenClaw's plugin system. The installer patches OpenClaw config automatically:
 
 ```json
 {
@@ -216,7 +250,7 @@ AgentShield integrates with OpenClaw as a plugin. The installer automatically co
         "config": {
           "enabled": true,
           "endpoint": "http://127.0.0.1:8433/api/v1/evaluate",
-          "auth_token": "your-generated-token",
+          "auth_token": "<generated-token>",
           "timeout_ms": 100,
           "timeout_policy": "allow"
         }
@@ -226,100 +260,70 @@ AgentShield integrates with OpenClaw as a plugin. The installer automatically co
 }
 ```
 
+Plugin hooks registered:
+- `before_tool_call` (priority -100): Synchronous evaluation with timeout
+- `after_tool_call`: Fire-and-forget audit report
+- `session_start`, `session_end`, `before_agent_start`, `agent_end`: Lifecycle events
+
+See the [plugin README](../README.md) for full plugin documentation.
+
 ## Troubleshooting
 
-### Service Won't Start
+### Engine Won't Start
 
 ```bash
 # Check logs
 journalctl --user -u agentshield-engine -n 50
 
-# Check config syntax
+# Run with verbose output
 agentshield serve --config ~/.agentshield/config.yaml --verbose
 
-# Test connectivity
-curl -H "Authorization: Bearer YOUR-TOKEN" http://127.0.0.1:8433/api/v1/health
+# Test health endpoint
+curl -s -H "Authorization: Bearer YOUR_TOKEN" http://127.0.0.1:8433/api/v1/health
 ```
 
-### High False Positives
+### Common Issues
 
-1. **Tune Rules**: Edit rules in `~/.agentshield/rules/` to be more specific
-2. **Use Audit Mode**: Set `evaluation_mode: "audit"` to log without blocking
-3. **Enable LLM Triage**: More context-aware decisions reduce false positives
+- **Auth token too short**: Must be 32+ characters. Regenerate with `openssl rand -hex 32`.
+- **Port conflict**: Check `netstat -an | grep 8433`. Change `server.port` in config.
+- **Rules not loading**: Verify `rules.dir` path exists and contains `.yml` files.
+- **Triage timeouts**: Increase `triage.timeout_sec` or switch to `health_check_mode: "connectivity"`.
 
-### Performance Issues
-
-- **Reduce Timeout**: Lower `timeout_ms` in OpenClaw config
-- **Disable Triage**: Comment out triage config for faster evaluation
-- **Optimize Rules**: Remove overly broad rule patterns
-
-### Integration Issues
+### Testing the Engine Directly
 
 ```bash
-# Test AgentShield directly
 curl -X POST http://127.0.0.1:8433/api/v1/evaluate \
-  -H "Authorization: Bearer YOUR-TOKEN" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"tool": "test", "params": {}}'
-
-# Check OpenClaw plugin config
-openclaw config get plugins.agentshield
+  -d '{
+    "event_id": "test-001",
+    "tool_name": "exec",
+    "command": "ls -la",
+    "params": {"command": "ls -la"},
+    "fields": {"tool": "exec", "command": "ls -la"}
+  }'
 ```
 
 ## File Locations
 
-- **Binary**: `~/.agentshield/agentshield-engine`
-- **Config**: `~/.agentshield/config.yaml`
-- **Rules**: `~/.agentshield/rules/`
-- **Database**: `~/.agentshield/agentshield.db`
-- **PID File**: `~/.agentshield/agentshield.pid`
-- **Service**: `~/.config/systemd/user/agentshield-engine.service`
+| File | Path |
+|------|------|
+| Binary | `~/.agentshield/agentshield-engine` |
+| Config | `~/.agentshield/config.yaml` |
+| Rules | `~/.agentshield/rules/` |
+| Database | `~/.agentshield/agentshield.db` |
+| Systemd service | `~/.config/systemd/user/agentshield-engine.service` |
+| Launchd plist | `~/Library/LaunchAgents/ai.agentshield.engine.plist` |
 
 ## Uninstallation
 
 ```bash
+cd plugins/openclaw/skill
 ./uninstall.sh
 ```
 
-This will:
-- Stop and disable the systemd service
-- Remove all AgentShield files and configuration
-- Revert OpenClaw plugin settings
-- Clean up completely
-
-## Feedback & Support
-
-### Reporting Issues
-
-Found a bug or need help? Please open an issue:
-- **GitHub Issues**: https://github.com/agentshield-ai/agentshield/issues
-- **Rule Issues**: https://github.com/agentshield-ai/sigma-ai/issues
-
-When reporting issues, include:
-- AgentShield version (`agentshield version`)
-- Operating system and architecture
-- Configuration file (redact sensitive tokens)
-- Relevant log entries
-
-### Rule Contributions
-
-Help improve security rules:
-1. Fork the [sigma-ai](https://github.com/agentshield-ai/sigma-ai) repository
-2. Add or improve rules
-3. Test with `agentshield rules validate`
-4. Submit a pull request
-
-### Feature Requests
-
-Have an idea for AgentShield? Open a feature request on GitHub with:
-- Use case description
-- Expected behavior
-- Why it would be valuable
+This stops the service, removes `~/.agentshield/`, reverts OpenClaw plugin config, and cleans up PATH references.
 
 ## License
 
-AgentShield is open source under the Apache 2.0 License. See the full license in the [GitHub repository](https://github.com/agentshield-ai/agentshield).
-
----
-
-**AgentShield** — Protecting AI agents, one tool call at a time. 🛡️
+Apache 2.0
