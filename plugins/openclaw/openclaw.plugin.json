@@ -7,7 +7,7 @@
     "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean", "default": true },
-      "endpoint": { "type": "string", "default": "http://127.0.0.1:8432/api/v1/evaluate" },
+      "endpoint": { "type": "string", "default": "http://127.0.0.1:8433/api/v1/evaluate" },
       "auth_token": { "type": "string" },
       "timeout_ms": { "type": "number", "default": 50, "minimum": 5, "maximum": 5000 },
       "timeout_policy": { "type": "string", "enum": ["allow", "block", "log"], "default": "allow" },

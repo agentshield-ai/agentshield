@@ -28,6 +28,12 @@
   "peerDependencies": {
     "openclaw": ">=2026.2.0"
   },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
+  },
   "openclaw": {
     "extensions": ["./index.ts"]
   }

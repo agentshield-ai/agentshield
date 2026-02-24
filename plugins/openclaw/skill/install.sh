@@ -3,7 +3,7 @@ set -e
 
 # AgentShield Installer - v2.0.0
 REPO="agentshield-ai/agentshield"
-RULES_REPO="agentshield-ai/agentshield-rules"
+RULES_REPO="agentshield-ai/sigma-ai"
 BINARY_NAME="agentshield-engine"
 INSTALL_DIR="$HOME/.agentshield"
 CONFIG_FILE="$INSTALL_DIR/config.yaml"
@@ -98,7 +98,7 @@ create_config() {
     cat > "$CONFIG_FILE" << EOF
 server:
   addr: "127.0.0.1"
-  port: 8432
+  port: 8433
 auth:
   token: "$AUTH_TOKEN"
 rules:
@@ -187,7 +187,7 @@ patch_openclaw_config() {
         openclaw config patch \
             plugins.entries.agentshield.enabled=true \
             plugins.entries.agentshield.config.enabled=true \
-            plugins.entries.agentshield.config.endpoint="http://127.0.0.1:8432/api/v1/evaluate" \
+            plugins.entries.agentshield.config.endpoint="http://127.0.0.1:8433/api/v1/evaluate" \
             plugins.entries.agentshield.config.auth_token="$AUTH_TOKEN" \
             plugins.entries.agentshield.config.timeout_ms=100 \
             plugins.entries.agentshield.config.timeout_policy="allow" 2>/dev/null && {
@@ -210,7 +210,7 @@ start_and_check() {
     log "Health check..."
     AUTH_TOKEN=$(grep token: "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"')
     for i in {1..10}; do
-        curl -s -H "Authorization: Bearer $AUTH_TOKEN" http://127.0.0.1:8432/api/v1/health >/dev/null 2>&1 && {
+        curl -s -H "Authorization: Bearer $AUTH_TOKEN" http://127.0.0.1:8433/api/v1/health >/dev/null 2>&1 && {
             log "✓ Engine is healthy"; return 0
         }
         sleep 1

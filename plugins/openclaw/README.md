@@ -38,12 +38,12 @@ cd agentshield-engine
 
 # Build and start
 go build ./cmd/agentshield/
-./agentshield serve -port 8432
+./agentshield serve -port 8433
 ```
 
 3. Get the detection rules:
 ```bash
-git clone https://github.com/agentshield-ai/agentshield-rules.git
+git clone https://github.com/agentshield-ai/sigma-ai.git
 ```
 
 ## Configuration
@@ -54,7 +54,7 @@ The plugin automatically detects and connects to the AgentShield engine. Default
 {
   "engine": {
     "host": "localhost",
-    "port": 8432,
+    "port": 8433,
     "timeout": 5000
   },
   "mode": "audit",
@@ -71,7 +71,7 @@ The plugin automatically detects and connects to the AgentShield engine. Default
 |--------|---------|-------------|
 | `mode` | `audit` | Evaluation mode: `enforce`, `audit`, `shadow` |
 | `engine.host` | `localhost` | AgentShield engine hostname |
-| `engine.port` | `8432` | AgentShield engine port |
+| `engine.port` | `8433` | AgentShield engine port |
 | `engine.timeout` | `5000` | Request timeout in milliseconds |
 | `triage.enabled` | `true` | Enable LLM-powered triage |
 | `triage.auto_approve_threshold` | `0.9` | Auto-approve false positives above this confidence |
@@ -207,7 +207,7 @@ Content-Type: application/json
 
 2. **Verify port availability**:
 ```bash
-netstat -an | grep 8432
+netstat -an | grep 8433
 ```
 
 3. **Check logs**:

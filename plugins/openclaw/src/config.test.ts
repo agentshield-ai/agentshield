@@ -6,10 +6,10 @@ describe("parseConfig", () => {
   it("returns defaults when given undefined", () => {
     const config = parseConfig(undefined);
     expect(config.enabled).toBe(true);
-    expect(config.endpoint).toBe("http://127.0.0.1:8432/api/v1/evaluate");
+    expect(config.endpoint).toBe("http://127.0.0.1:8433/api/v1/evaluate");
     expect(config.auth_token).toBe("");
-    expect(config.timeout_ms).toBe(50);
-    expect(config.timeout_policy).toBe("allow");
+    expect(config.timeout_ms).toBe(200);
+    expect(config.timeout_policy).toBe("block");
     expect(config.intercept).toEqual([
       "exec",
       "write",
@@ -26,7 +26,7 @@ describe("parseConfig", () => {
   it("returns defaults when given empty object", () => {
     const config = parseConfig({});
     expect(config.enabled).toBe(true);
-    expect(config.timeout_ms).toBe(50);
+    expect(config.timeout_ms).toBe(200);
   });
 
   it("parses provided values", () => {
@@ -57,12 +57,12 @@ describe("parseConfig", () => {
 
   it("rejects invalid timeout_policy and uses default", () => {
     const config = parseConfig({ timeout_policy: "invalid" });
-    expect(config.timeout_policy).toBe("allow");
+    expect(config.timeout_policy).toBe("block");
   });
 
   it("clamps timeout_ms to valid range", () => {
-    expect(parseConfig({ timeout_ms: 1 }).timeout_ms).toBe(50); // Below min
-    expect(parseConfig({ timeout_ms: 10000 }).timeout_ms).toBe(50); // Above max
+    expect(parseConfig({ timeout_ms: 1 }).timeout_ms).toBe(200); // Below min
+    expect(parseConfig({ timeout_ms: 10000 }).timeout_ms).toBe(200); // Above max
     expect(parseConfig({ timeout_ms: 200 }).timeout_ms).toBe(200); // Valid
   });
 

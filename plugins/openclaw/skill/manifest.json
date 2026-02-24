@@ -12,7 +12,7 @@
   "keywords": ["security", "aadr", "ai-agents", "sigma", "detection", "triage"],
   "category": "security",
   "requirements": {
-    "openclaw": ">=2024.1.0"
+    "openclaw": ">=2026.2.0"
   },
   "services": [
     {
@@ -20,14 +20,14 @@
       "description": "AgentShield detection engine",
       "type": "systemd",
       "enabled": true,
-      "port": 8432
+      "port": 8433
     }
   ],
   "plugin": {
     "path": "../",
     "config": {
       "enabled": true,
-      "endpoint": "http://127.0.0.1:8432/api/v1/evaluate",
+      "endpoint": "http://127.0.0.1:8433/api/v1/evaluate",
       "timeout_ms": 100,
       "timeout_policy": "allow"
     }

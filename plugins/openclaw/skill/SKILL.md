@@ -52,7 +52,7 @@ mkdir -p ~/.agentshield/rules
 # ... create config.yaml ...
 
 # 3. Download rules
-git clone https://github.com/agentshield-ai/agentshield-rules.git ~/.agentshield/rules
+git clone https://github.com/agentshield-ai/sigma-ai.git ~/.agentshield/rules
 
 # 4. Start the engine
 ~/.agentshield/agentshield-engine serve --config ~/.agentshield/config.yaml
@@ -66,7 +66,7 @@ Configuration file: `~/.agentshield/config.yaml`
 # Server settings
 server:
   addr: "127.0.0.1"
-  port: 8432
+  port: 8433
 
 # Authentication (MANDATORY)
 auth:
@@ -215,7 +215,7 @@ AgentShield integrates with OpenClaw as a plugin. The installer automatically co
         "enabled": true,
         "config": {
           "enabled": true,
-          "endpoint": "http://127.0.0.1:8432/api/v1/evaluate",
+          "endpoint": "http://127.0.0.1:8433/api/v1/evaluate",
           "auth_token": "your-generated-token",
           "timeout_ms": 100,
           "timeout_policy": "allow"
@@ -238,7 +238,7 @@ journalctl --user -u agentshield-engine -n 50
 agentshield serve --config ~/.agentshield/config.yaml --verbose
 
 # Test connectivity
-curl -H "Authorization: Bearer YOUR-TOKEN" http://127.0.0.1:8432/api/v1/health
+curl -H "Authorization: Bearer YOUR-TOKEN" http://127.0.0.1:8433/api/v1/health
 ```
 
 ### High False Positives
@@ -257,7 +257,7 @@ curl -H "Authorization: Bearer YOUR-TOKEN" http://127.0.0.1:8432/api/v1/health
 
 ```bash
 # Test AgentShield directly
-curl -X POST http://127.0.0.1:8432/api/v1/evaluate \
+curl -X POST http://127.0.0.1:8433/api/v1/evaluate \
   -H "Authorization: Bearer YOUR-TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"tool": "test", "params": {}}'
@@ -293,7 +293,7 @@ This will:
 
 Found a bug or need help? Please open an issue:
 - **GitHub Issues**: https://github.com/agentshield-ai/agentshield/issues
-- **Rule Issues**: https://github.com/agentshield-ai/agentshield-rules/issues
+- **Rule Issues**: https://github.com/agentshield-ai/sigma-ai/issues
 
 When reporting issues, include:
 - AgentShield version (`agentshield version`)
@@ -304,7 +304,7 @@ When reporting issues, include:
 ### Rule Contributions
 
 Help improve security rules:
-1. Fork the [agentshield-rules](https://github.com/agentshield-ai/agentshield-rules) repository
+1. Fork the [sigma-ai](https://github.com/agentshield-ai/sigma-ai) repository
 2. Add or improve rules
 3. Test with `agentshield rules validate`
 4. Submit a pull request

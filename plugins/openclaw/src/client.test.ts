@@ -8,7 +8,7 @@ function makeConfig(
 ): AgentShieldConfig {
   return {
     enabled: true,
-    endpoint: "http://127.0.0.1:8432/api/v1/evaluate",
+    endpoint: "http://127.0.0.1:8433/api/v1/evaluate",
     auth_token: "test-token",
     timeout_ms: 50,
     timeout_policy: "allow",
@@ -70,13 +70,13 @@ describe("AgentShieldClient", () => {
 
       expect(fetchSpy).toHaveBeenCalledOnce();
       const [url, opts] = fetchSpy.mock.calls[0];
-      expect(url).toBe("http://127.0.0.1:8432/api/v1/evaluate");
+      expect(url).toBe("http://127.0.0.1:8433/api/v1/evaluate");
       expect(opts.method).toBe("POST");
       expect(opts.headers["Content-Type"]).toBe(
         "application/json; charset=utf-8",
       );
       expect(opts.headers["X-AgentShield-Version"]).toBe("1.0.0");
-      expect(opts.headers["X-AgentShield-Auth"]).toBe("test-token");
+      expect(opts.headers["Authorization"]).toBe("Bearer test-token");
       expect(JSON.parse(opts.body)).toEqual(request);
     });
 
@@ -124,7 +124,7 @@ describe("AgentShieldClient", () => {
           ],
           overridable: false,
           effective_mode: "enforce",
-          feedback_url: "http://127.0.0.1:8432/api/v1/feedback?event_id=test-id-001",
+          feedback_url: "http://127.0.0.1:8433/api/v1/feedback?event_id=test-id-001",
           timestamp: "2026-02-17T18:52:21Z",
         }),
       });
@@ -188,7 +188,7 @@ describe("AgentShieldClient", () => {
       await client.evaluate(makeRequest());
 
       const [, opts] = fetchSpy.mock.calls[0];
-      expect(opts.headers["X-AgentShield-Auth"]).toBeUndefined();
+      expect(opts.headers["Authorization"]).toBeUndefined();
     });
   });
 
@@ -217,7 +217,7 @@ describe("AgentShieldClient", () => {
       // Allow microtask to run
       await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
       const [url] = fetchSpy.mock.calls[0];
-      expect(url).toBe("http://127.0.0.1:8432/api/v1/audit");
+      expect(url).toBe("http://127.0.0.1:8433/api/v1/audit");
     });
 
     it("swallows errors silently", async () => {
@@ -255,7 +255,7 @@ describe("AgentShieldClient", () => {
       expect(result).toBe(true);
 
       const [url] = fetchSpy.mock.calls[0];
-      expect(url).toBe("http://127.0.0.1:8432/api/v1/health");
+      expect(url).toBe("http://127.0.0.1:8433/api/v1/health");
     });
 
     it("returns false when health endpoint fails", async () => {
@@ -286,7 +286,7 @@ describe("AgentShieldClient", () => {
       await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
       
       const [url, opts] = fetchSpy.mock.calls[0];
-      expect(url).toBe("http://127.0.0.1:8432/api/v1/feedback");
+      expect(url).toBe("http://127.0.0.1:8433/api/v1/feedback");
       expect(opts.method).toBe("POST");
       
       const body = JSON.parse(opts.body);

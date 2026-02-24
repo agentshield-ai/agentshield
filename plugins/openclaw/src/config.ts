@@ -2,7 +2,7 @@ import type { AgentShieldConfig } from "./types.js";
 
 const DEFAULTS: AgentShieldConfig = {
   enabled: true,
-  endpoint: "http://127.0.0.1:8432/api/v1/evaluate",
+  endpoint: "http://127.0.0.1:8433/api/v1/evaluate",
   auth_token: "",
   timeout_ms: 200,
   timeout_policy: "block",
