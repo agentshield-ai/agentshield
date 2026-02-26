@@ -137,9 +137,9 @@ func (fm *FeedbackManager) GetRuleStats(ruleName string) (*RuleStats, error) {
 	stats := &RuleStats{
 		RuleName:          ruleName,
 		TotalAlerts:       len(alerts),
-		FalsePositiveRate: 0.1, // Placeholder
-		TruePositiveRate:  0.8, // Placeholder
-		FeedbackCount:     0,   // Would count from feedback table
+		FalsePositiveRate: 0.1, // TODO: compute from store.GetRuleFPRate()
+		TruePositiveRate:  0.8, // TODO: compute from feedback data
+		FeedbackCount:     0,   // TODO: count from feedback table
 		RecommendedAction: "none",
 	}
 
@@ -150,10 +150,10 @@ func (fm *FeedbackManager) GetRuleStats(ruleName string) (*RuleStats, error) {
 	}
 
 	// Determine recommended action based on FP rate
-	if stats.FalsePositiveRate > 0.3 {
-		stats.RecommendedAction = "refine"
-	} else if stats.FalsePositiveRate > 0.5 {
+	if stats.FalsePositiveRate > 0.5 {
 		stats.RecommendedAction = "disable"
+	} else if stats.FalsePositiveRate > 0.3 {
+		stats.RecommendedAction = "refine"
 	}
 
 	return stats, nil
@@ -161,8 +161,7 @@ func (fm *FeedbackManager) GetRuleStats(ruleName string) (*RuleStats, error) {
 
 // GetHighFalsePositiveRules returns rules with high false positive rates
 func (fm *FeedbackManager) GetHighFalsePositiveRules(threshold float64) ([]RuleStats, error) {
-	// This would require aggregating across all rules
-	// For now, return empty list as placeholder
+	// TODO: implement using store.GetRulesWithHighFPRate(threshold)
 	return []RuleStats{}, nil
 }
 
