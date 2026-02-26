@@ -4,7 +4,7 @@ Modern AI agent security monitoring platform with real-time threat detection usi
 
 ![Go Version](https://img.shields.io/badge/Go-1.24+-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
-![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen)
+![Build Status](https://github.com/agentshield-ai/agentshield/actions/workflows/bench.yml/badge.svg)
 
 ## Overview
 

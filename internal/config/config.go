@@ -21,7 +21,7 @@ type ServerConfig struct {
 
 // AuthConfig holds authentication configuration
 type AuthConfig struct {
-	Token string `yaml:"token" json:"token"`
+	Token string `yaml:"token" json:"-"`
 }
 
 // RulesConfig holds rules configuration
@@ -74,10 +74,11 @@ type CorrelationConfig struct {
 
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
+<<<<<<< HEAD
 	Enabled         bool              `yaml:"enabled"`
 	Provider        string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
 	Model           string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-	APIKey          string            `yaml:"api_key"`           // env: AGENTSHIELD_TRIAGE_API_KEY
+	APIKey          string            `yaml:"api_key" json:"-"`  // env: AGENTSHIELD_TRIAGE_API_KEY
 	BaseURL         string            `yaml:"base_url"`          // custom base URL (e.g. https://openrouter.ai/api/v1)
 	MaxTokens       int               `yaml:"max_tokens"`
 	TimeoutSec      int               `yaml:"timeout_sec"`
@@ -89,7 +90,7 @@ type TriageConfig struct {
 type DeepTriageConfig struct {
 	Enabled      bool              `yaml:"enabled"`
 	GatewayURL   string            `yaml:"gateway_url"`   // default: http://127.0.0.1:18789
-	GatewayToken string            `yaml:"gateway_token"` // env: OPENCLAW_GATEWAY_TOKEN
+	GatewayToken string            `yaml:"gateway_token" json:"-"` // env: OPENCLAW_GATEWAY_TOKEN
 	Agent        TriageAgentConfig `yaml:"agent"`         // Agent personality, model, tools
 	MinSeverity  string            `yaml:"min_severity"`  // Minimum severity to trigger deep triage (default: critical)
 	Webhook      string            `yaml:"webhook"`       // Optional webhook URL for deep triage results
@@ -108,7 +109,7 @@ func (m EvaluationMode) IsValid() bool {
 // Config holds the complete application configuration
 type TestContextConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
-	Token   string `yaml:"token" json:"token"`
+	Token   string `yaml:"token" json:"-"`
 }
 
 type Config struct {
