@@ -29,6 +29,11 @@ AgentShield protects AI agents by:
       │                    │                   │
    Collect              Evaluate           Patterns
    Events               & Triage           & Logic
+                           │
+                    ┌──────┴──────┐
+                    │  Counters   │
+                    │ (Temporal)  │
+                    └─────────────┘
 ```
 
 ## Components
@@ -36,9 +41,11 @@ AgentShield protects AI agents by:
 ### 🔧 Go Engine ([`cmd/`](cmd/) • [`internal/`](internal/) • [`pkg/sigma/`](pkg/sigma/))
 High-performance detection engine built in Go with Chi HTTP server:
 - Real-time Sigma rule evaluation using forked sigmalite
-- Two-tier intelligent triage (fast + deep analysis)
+- Sliding-window event counters for temporal pattern detection (e.g., >20 tool calls in 5 minutes)
+- Two-tier intelligent triage (fast + deep analysis) with semantic reframing detection
+- Instruction-source awareness (`owner`, `user`, `agent`, `retrieved_content`, `system`)
 - Multiple evaluation modes (enforce/audit/shadow)
-- SQLite storage with automatic cleanup
+- SQLite storage with automatic cleanup and schema migrations
 - Hot rule reloading with zero downtime
 
 **Quick Start:**
@@ -50,7 +57,8 @@ go build ./cmd/agentshield/
 ### 🔌 OpenClaw Plugin ([`plugins/openclaw/`](plugins/openclaw/))
 TypeScript integration for OpenClaw agents:
 - Real-time tool monitoring and evaluation
-- Configurable enforcement modes
+- Configurable enforcement modes with per-severity fail-closed policy
+- Circuit breaker with severity-aware timeout behaviour
 - Seamless workflow integration
 - Event batching and async processing
 
@@ -65,7 +73,7 @@ openclaw plugin install ./dist/agentshield-plugin.js
 Bash scripts for Claude Code CLI integration:
 - Pre/post execution hooks
 - Command line analysis
-- Security policy enforcement
+- Security policy enforcement with configurable fail-closed policy (`AGENTSHIELD_FAIL_POLICY`)
 - Lightweight shell-based monitoring
 
 **Setup:**
@@ -84,6 +92,7 @@ Community-maintained Sigma rules for AI agent threats:
 - **Data Exfiltration**: Unauthorized data access attempts
 - **Privilege Escalation**: Unauthorized system access
 - **Credential Access**: Token theft and authentication bypass
+- **Multi-Agent Threats**: Runaway loops, cross-agent privilege escalation, shadow delegation (based on [Agents of Chaos](https://arxiv.org/abs/2602.20021) findings)
 
 Browse rules: [`rules/`](rules/)
 
@@ -135,11 +144,13 @@ curl http://localhost:8433/api/v1/alerts
 ## Key Features
 
 - **🚀 Microsecond Latency**: High-performance Go engine with Chi router
-- **🧠 Intelligent Triage**: AI-powered false positive reduction  
+- **🧠 Intelligent Triage**: AI-powered false positive reduction with semantic reframing detection
+- **⏱️ Temporal Detection**: Sliding-window counters detect high-frequency patterns across events
 - **🔄 Hot Reloading**: Update rules without downtime
 - **🌐 Multi-Platform**: OpenClaw, Claude Code, and extensible plugin system
 - **📈 Production Ready**: SQLite storage, structured logging, graceful shutdown
-- **🔒 Security First**: Token authentication, input validation, safe defaults
+- **🔒 Security First**: Token authentication, input validation, safe defaults, per-severity fail-closed policies
+- **🛡️ Deep Triage Hardening**: Domain-allowlisted web fetch, anti-prompt-injection guards, instruction-source tracking
 
 ## Configuration Example
 
@@ -156,6 +167,35 @@ triage:
   enabled: true
   provider: "openai"
   model: "gpt-4o-mini"
+deep_triage:
+  enabled: false
+  agent:
+    tools: ["web_search", "web_fetch", "memory_search", "read"]
+    web_fetch_allowed_domains: ["nvd.nist.gov", "cve.mitre.org"]  # required when web_fetch is enabled
+  min_severity: "critical"
+```
+
+### OpenClaw Plugin Configuration
+
+```yaml
+# In openclaw plugin config
+agentshield:
+  enabled: true
+  endpoint: "http://127.0.0.1:8433/api/v1/evaluate"
+  timeout_policy: "allow"
+  timeout_policy_by_severity:  # override per severity when engine is unreachable
+    critical: "block"
+    high: "block"
+    medium: "allow"
+    low: "allow"
+```
+
+### Claude Code Hook Environment
+
+```bash
+export AGENTSHIELD_URL="http://127.0.0.1:8432"
+export AGENTSHIELD_AUTH_TOKEN="your-token-here"
+export AGENTSHIELD_FAIL_POLICY="allow"  # "allow" or "block" when engine is unreachable
 ```
 
 ## Development
