@@ -114,7 +114,7 @@ func TestTriageEscalateAllowToBlock(t *testing.T) {
 	}
 }
 
-func TestSmokeTestPayloadDowngradedToLogInTrustedTestContext(t *testing.T) {
+func TestSmokeTestPayloadBlockedInTestContext(t *testing.T) {
 	mockEng := &mockEngine{mockResults: []engine.RuleResult{{
 		RuleID:   "agent-rce-injection-001",
 		RuleName: "Remote Code Execution via Piped Script Download",
@@ -138,8 +138,9 @@ func TestSmokeTestPayloadDowngradedToLogInTrustedTestContext(t *testing.T) {
 		t.Fatalf("Evaluate() error: %v", err)
 	}
 
-	if response.Action != models.ActionLog {
-		t.Fatalf("expected smoke payload in trusted test context to log, got %q", response.Action)
+	// Critical severity payloads must be blocked regardless of context
+	if response.Action != models.ActionBlock {
+		t.Fatalf("expected critical payload to be blocked even in test context, got %q", response.Action)
 	}
 }
 
