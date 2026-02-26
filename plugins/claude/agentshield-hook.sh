@@ -17,6 +17,7 @@ set -euo pipefail
 
 AGENTSHIELD_URL="${AGENTSHIELD_URL:-http://127.0.0.1:8432}"
 AGENTSHIELD_AUTH_TOKEN="${AGENTSHIELD_AUTH_TOKEN:-}"
+AGENTSHIELD_FAIL_POLICY="${AGENTSHIELD_FAIL_POLICY:-allow}"
 
 # Read JSON input from stdin (Claude Code passes tool call context)
 INPUT=$(cat)
@@ -80,7 +81,11 @@ RESPONSE=$(curl -s --max-time 2 \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${AGENTSHIELD_AUTH_TOKEN}" \
   -d "$EVAL_REQUEST" 2>/dev/null) || {
-  # Engine unreachable — fail open (allow)
+  # Engine unreachable — apply configured fail policy
+  if [ "$AGENTSHIELD_FAIL_POLICY" = "block" ]; then
+    jq -n '{"decision": "block", "reason": "AgentShield unavailable (fail-closed policy)"}'
+    exit 2
+  fi
   exit 0
 }
 

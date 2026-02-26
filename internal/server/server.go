@@ -33,8 +33,9 @@ var (
 	controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`)
 
 	// Allowed enum values, allocated once at package level
-	validSeverities    = []string{"low", "medium", "high", "critical"}
-	validFeedbackTypes = []string{"false_positive", "true_positive", "improvement"}
+	validSeverities        = []string{"low", "medium", "high", "critical"}
+	validFeedbackTypes     = []string{"false_positive", "true_positive", "improvement"}
+	validInstructionSources = []string{"owner", "user", "agent", "retrieved_content", "system"}
 )
 
 const (
@@ -121,6 +122,20 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 	if req.Context != "" {
 		if req.Context != "prod" && req.Context != "test" {
 			return fmt.Errorf("context must be 'prod' or 'test'")
+		}
+	}
+
+	// Validate InstructionSource enum
+	if req.InstructionSource != "" {
+		validSource := false
+		for _, vs := range validInstructionSources {
+			if req.InstructionSource == vs {
+				validSource = true
+				break
+			}
+		}
+		if !validSource {
+			return fmt.Errorf("invalid instruction_source: %s (must be owner, user, agent, retrieved_content, or system)", req.InstructionSource)
 		}
 	}
 
@@ -431,6 +446,11 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 			req.Fields["context"] = req.Context
 		}
 	}
+	if req.InstructionSource != "" {
+		if _, ok := req.Fields["instruction_source"]; !ok {
+			req.Fields["instruction_source"] = req.InstructionSource
+		}
+	}
 	if _, ok := req.Fields["command"]; !ok {
 		if cmd, ok := req.Args["command"]; ok {
 			req.Fields["command"] = cmd
@@ -478,14 +498,15 @@ func (s *Server) storeMatchedAlerts(response *evaluate.EvaluationResponse, req *
 		}
 
 		dbAlert := &store.Alert{
-			RuleName:    alert.RuleName,
-			Severity:    string(alert.Severity),
-			Tool:        req.Tool,
-			Args:        argsJSON,
-			ActionTaken: string(response.Action),
-			Timestamp:   response.Timestamp,
-			SessionID:   req.SessionID,
-			EventID:     req.EventID,
+			RuleName:          alert.RuleName,
+			Severity:          string(alert.Severity),
+			Tool:              req.Tool,
+			Args:              argsJSON,
+			ActionTaken:       string(response.Action),
+			Timestamp:         response.Timestamp,
+			SessionID:         req.SessionID,
+			EventID:           req.EventID,
+			InstructionSource: req.InstructionSource,
 		}
 
 		if err := s.store.InsertAlert(dbAlert); err != nil {

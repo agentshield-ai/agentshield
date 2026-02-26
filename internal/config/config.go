@@ -49,12 +49,13 @@ const (
 // TriageAgentConfig configures the OpenClaw triage agent's personality and capabilities.
 // Users can customise this to create a specialised security analyst agent.
 type TriageAgentConfig struct {
-	SystemPrompt string   `yaml:"system_prompt"` // Custom agent personality (default: SOC analyst)
-	Model        string   `yaml:"model"`         // Override model for triage agent
-	AgentID      string   `yaml:"agent_id"`      // OpenClaw agent ID (optional)
-	Thinking     string   `yaml:"thinking"`      // Thinking mode: "off", "low", "high"
-	Tools        []string `yaml:"tools"`         // Tools the agent can use: web_search, web_fetch, memory_search, read
-	TimeoutSec   int      `yaml:"timeout_sec"`   // Agent session timeout (default: 60)
+	SystemPrompt           string   `yaml:"system_prompt"`              // Custom agent personality (default: SOC analyst)
+	Model                  string   `yaml:"model"`                     // Override model for triage agent
+	AgentID                string   `yaml:"agent_id"`                  // OpenClaw agent ID (optional)
+	Thinking               string   `yaml:"thinking"`                  // Thinking mode: "off", "low", "high"
+	Tools                  []string `yaml:"tools"`                     // Tools the agent can use: web_search, web_fetch, memory_search, read
+	WebFetchAllowedDomains []string `yaml:"web_fetch_allowed_domains"` // Required when web_fetch is in tools
+	TimeoutSec             int      `yaml:"timeout_sec"`               // Agent session timeout (default: 60)
 }
 
 // CorrelationConfig controls deterministic, short-window alert correlation used by triage.
@@ -302,6 +303,23 @@ func validateConfig(cfg *Config) error {
 		if isPrivateOrLocalURL(cfg.DeepTriage.GatewayURL) {
 			// gateway_url targeting localhost is expected for local OpenClaw;
 			// only warn, don't reject (operators intentionally run it locally).
+		}
+	}
+
+	// SECURITY: Validate web_fetch domain allowlist for deep triage
+	if cfg.DeepTriage.Enabled {
+		for _, tool := range cfg.DeepTriage.Agent.Tools {
+			if tool == "web_fetch" {
+				if len(cfg.DeepTriage.Agent.WebFetchAllowedDomains) == 0 {
+					return fmt.Errorf("deep_triage.agent.web_fetch_allowed_domains is required when web_fetch is in the tools list")
+				}
+				for _, domain := range cfg.DeepTriage.Agent.WebFetchAllowedDomains {
+					if domain == "" || strings.Contains(domain, " ") {
+						return fmt.Errorf("invalid domain in web_fetch_allowed_domains: %q", domain)
+					}
+				}
+				break
+			}
 		}
 	}
 

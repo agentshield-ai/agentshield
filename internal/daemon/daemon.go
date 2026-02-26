@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
+	"github.com/agentshield-ai/agentshield/internal/counters"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/server"
@@ -31,6 +32,7 @@ type Daemon struct {
 	evaluator       *evaluate.Evaluator
 	server          *server.Server
 	retentionCancel context.CancelFunc
+	eventCounters   *counters.WindowCounter
 }
 
 // NewDaemon creates a new daemon instance
@@ -236,9 +238,14 @@ func (d *Daemon) initComponents() error {
 		}
 	}
 
+	// Initialize sliding-window event counters for temporal detection
+	d.eventCounters = counters.NewWindowCounter(counters.DefaultConfig())
+	d.logger.Info("Event counters initialized")
+
 	// Initialize evaluator
 	feedbackURL := fmt.Sprintf("http://%s/api/v1/feedback", d.config.ListenAddr())
 	d.evaluator = evaluate.NewEvaluator(d.engine, d.config.EvaluationMode, feedbackURL, triager, deepTriager)
+	d.evaluator.SetCounters(d.eventCounters)
 	d.logger.Info("Evaluator initialized", "mode", string(d.config.EvaluationMode))
 
 	// Initialize server
@@ -312,6 +319,12 @@ func (d *Daemon) shutdown() error {
 	if d.retentionCancel != nil {
 		d.retentionCancel()
 		d.retentionCancel = nil
+	}
+
+	// Stop event counters
+	if d.eventCounters != nil {
+		d.eventCounters.Stop()
+		d.logger.Info("Event counters stopped")
 	}
 
 	// Close store

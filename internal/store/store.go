@@ -12,15 +12,16 @@ import (
 
 // Alert represents an alert stored in the database
 type Alert struct {
-	ID          int64     `json:"id"`
-	RuleName    string    `json:"rule_name"`
-	Severity    string    `json:"severity"`
-	Tool        string    `json:"tool"`
-	Args        string    `json:"args"` // JSON string
-	ActionTaken string    `json:"action_taken"`
-	Timestamp   time.Time `json:"timestamp"`
-	SessionID   string    `json:"session_id"`
-	EventID     string    `json:"event_id"`
+	ID                int64     `json:"id"`
+	RuleName          string    `json:"rule_name"`
+	Severity          string    `json:"severity"`
+	Tool              string    `json:"tool"`
+	Args              string    `json:"args"` // JSON string
+	ActionTaken       string    `json:"action_taken"`
+	Timestamp         time.Time `json:"timestamp"`
+	SessionID         string    `json:"session_id"`
+	EventID           string    `json:"event_id"`
+	InstructionSource string    `json:"instruction_source,omitempty"`
 }
 
 // AlertQuery represents query parameters for fetching alerts
@@ -121,14 +122,25 @@ func (s *Store) initSchema() error {
 		return fmt.Errorf("creating schema: %w", err)
 	}
 
+	// Schema migrations — idempotent, ignore "duplicate column" errors.
+	migrations := []string{
+		"ALTER TABLE alerts ADD COLUMN instruction_source TEXT",
+	}
+	for _, m := range migrations {
+		_, err := s.db.Exec(m)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("running migration %q: %w", m, err)
+		}
+	}
+
 	return nil
 }
 
 // InsertAlert inserts a new alert into the database
 func (s *Store) InsertAlert(alert *Alert) error {
 	query := `
-		INSERT INTO alerts (rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO alerts (rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id, instruction_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.db.Exec(query,
@@ -140,6 +152,7 @@ func (s *Store) InsertAlert(alert *Alert) error {
 		alert.Timestamp,
 		alert.SessionID,
 		alert.EventID,
+		alert.InstructionSource,
 	)
 
 	if err != nil {
@@ -202,7 +215,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 	whereClause, args := buildWhereClause(query)
 
 	// Build SQL query with parameterized LIMIT/OFFSET
-	query_sql := "SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id FROM alerts" + whereClause
+	query_sql := "SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id, instruction_source FROM alerts" + whereClause
 
 	query_sql += " ORDER BY timestamp DESC"
 
@@ -231,7 +244,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 	var alerts []Alert
 	for rows.Next() {
 		var alert Alert
-		var tool, args, sessionID, eventID sql.NullString
+		var tool, args, sessionID, eventID, instructionSource sql.NullString
 
 		err := rows.Scan(
 			&alert.ID,
@@ -243,6 +256,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 			&alert.Timestamp,
 			&sessionID,
 			&eventID,
+			&instructionSource,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning alert row: %w", err)
@@ -253,6 +267,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 		alert.Args = args.String
 		alert.SessionID = sessionID.String
 		alert.EventID = eventID.String
+		alert.InstructionSource = instructionSource.String
 
 		alerts = append(alerts, alert)
 	}

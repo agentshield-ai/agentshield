@@ -1,3 +1,11 @@
+/** Per-severity timeout policy override. */
+export type TimeoutPolicyBySeverity = {
+  critical?: "allow" | "block" | "log";
+  high?: "allow" | "block" | "log";
+  medium?: "allow" | "block" | "log";
+  low?: "allow" | "block" | "log";
+};
+
 /** Plugin configuration parsed from api.pluginConfig. */
 export type AgentShieldConfig = {
   enabled: boolean;
@@ -5,6 +13,7 @@ export type AgentShieldConfig = {
   auth_token: string;
   timeout_ms: number;
   timeout_policy: "allow" | "block" | "log";
+  timeout_policy_by_severity?: TimeoutPolicyBySeverity;
   intercept: string[];
   skip: string[];
   notify: "all" | "high" | "critical" | "none";
@@ -27,6 +36,7 @@ export type EvaluationRequest = {
   session_id: string | null;
   working_dir: string | null;
   data: Record<string, unknown>;
+  instruction_source: string | null; // "owner" | "user" | "agent" | "retrieved_content" | "system"
 };
 
 /** Triage result from LLM analysis. */

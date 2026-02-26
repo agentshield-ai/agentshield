@@ -1,4 +1,4 @@
-import type { AgentShieldConfig } from "./types.js";
+import type { AgentShieldConfig, TimeoutPolicyBySeverity } from "./types.js";
 
 const DEFAULTS: AgentShieldConfig = {
   enabled: true,
@@ -87,15 +87,41 @@ export function parseConfig(
         : DEFAULTS.circuit_breaker.recovery_interval_ms,
   };
 
+  const timeout_policy_by_severity = parseTimeoutPolicyBySeverity(
+    raw.timeout_policy_by_severity,
+  );
+
   return {
     enabled,
     endpoint,
     auth_token,
     timeout_ms,
     timeout_policy,
+    ...(timeout_policy_by_severity && { timeout_policy_by_severity }),
     intercept,
     skip,
     notify,
     circuit_breaker,
   };
+}
+
+function parseTimeoutPolicyBySeverity(
+  raw: unknown,
+): TimeoutPolicyBySeverity | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const obj = raw as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  for (const sev of ["critical", "high", "medium", "low"]) {
+    if (
+      typeof obj[sev] === "string" &&
+      VALID_TIMEOUT_POLICIES.has(obj[sev] as string)
+    ) {
+      result[sev] = obj[sev] as string;
+    }
+  }
+  return Object.keys(result).length > 0
+    ? (result as TimeoutPolicyBySeverity)
+    : undefined;
 }

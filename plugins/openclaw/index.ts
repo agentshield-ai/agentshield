@@ -88,14 +88,24 @@ function notifyAlert(
   }
 }
 
-/** Apply the configured timeout/failure policy. */
+/** Apply the configured timeout/failure policy, with optional per-severity override. */
 function applyTimeoutPolicy(
-  policy: "allow" | "block" | "log",
+  globalPolicy: "allow" | "block" | "log",
+  perSeverity?: Record<string, string>,
+  lastSeverity?: string | null,
 ): { block: true; blockReason: string } | null {
-  if (policy === "block") {
+  let effectivePolicy: string = globalPolicy;
+
+  if (perSeverity && lastSeverity && perSeverity[lastSeverity]) {
+    effectivePolicy = perSeverity[lastSeverity];
+  }
+
+  if (effectivePolicy === "block") {
     return {
       block: true,
-      blockReason: "AgentShield unavailable (fail-closed policy)",
+      blockReason: lastSeverity
+        ? `AgentShield unavailable (fail-closed policy, last severity: ${lastSeverity})`
+        : "AgentShield unavailable (fail-closed policy)",
     };
   }
   return null; // "allow" and "log" both permit execution
@@ -161,6 +171,9 @@ const plugin = {
       { eventId: string; timestamp: number }
     >();
 
+    // Track the maximum severity from recent alerts for per-severity fail-closed policy
+    let lastKnownMaxSeverity: string | null = null;
+
     // ---- before_tool_call: synchronous evaluation ----
     api.on(
       "before_tool_call",
@@ -177,7 +190,7 @@ const plugin = {
           api.logger.warn(
             `AgentShield circuit breaker open, applying ${config.timeout_policy} policy`,
           );
-          return applyTimeoutPolicy(config.timeout_policy) ?? undefined;
+          return applyTimeoutPolicy(config.timeout_policy, config.timeout_policy_by_severity, lastKnownMaxSeverity) ?? undefined;
         }
 
         const request = buildEvaluationRequest(event, ctx);
@@ -186,6 +199,18 @@ const plugin = {
         try {
           const response = await client.evaluate(request);
           circuitBreaker.recordSuccess();
+
+          // Track maximum severity from alerts for per-severity fail-closed policy
+          if (response.alerts?.length) {
+            const maxSev = response.alerts.reduce(
+              (max, a) =>
+                (SEVERITY_ORDER[a.severity] ?? 0) > (SEVERITY_ORDER[max] ?? 0)
+                  ? a.severity
+                  : max,
+              response.alerts[0].severity,
+            );
+            lastKnownMaxSeverity = maxSev;
+          }
 
           // Store for audit correlation
           pendingEvaluations.set(correlationKey, {
@@ -256,7 +281,7 @@ const plugin = {
           api.logger.warn(
             `AgentShield evaluation failed: ${String(err)}`,
           );
-          return applyTimeoutPolicy(config.timeout_policy) ?? undefined;
+          return applyTimeoutPolicy(config.timeout_policy, config.timeout_policy_by_severity, lastKnownMaxSeverity) ?? undefined;
         }
       },
       { priority: -100 },

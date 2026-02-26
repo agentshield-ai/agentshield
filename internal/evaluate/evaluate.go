@@ -3,10 +3,12 @@ package evaluate
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
+	"github.com/agentshield-ai/agentshield/internal/counters"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/triage"
@@ -49,6 +51,7 @@ type Evaluator struct {
 	feedbackURLBase string
 	triager         TriageService
 	deepTriager     DeepTriageService
+	counters        *counters.WindowCounter
 }
 
 // NewEvaluator creates a new evaluator
@@ -62,10 +65,19 @@ func NewEvaluator(eng RuleEvaluator, defaultMode config.EvaluationMode, feedback
 	}
 }
 
+// SetCounters attaches a sliding-window counter to the evaluator.
+// When set, synthetic counter fields are injected into the Fields map before rule evaluation.
+func (e *Evaluator) SetCounters(c *counters.WindowCounter) {
+	e.counters = c
+}
+
 // Evaluate processes an evaluation request and returns the appropriate response
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
 	// Determine effective evaluation mode (server-side only)
 	effectiveMode := e.determineEffectiveMode()
+
+	// Inject synthetic counter fields for temporal detection
+	e.injectCounterFields(req)
 
 	// Run rule evaluation (engine now only returns matched rules)
 	alerts := e.engine.Evaluate(req.Fields)
@@ -80,6 +92,9 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 			highCount++
 		}
 	}
+
+	// Record alert hits for future temporal queries
+	e.recordAlertHits(req, alerts)
 
 	// Run triage analysis if enabled and we have alerts
 	var triageResults []triage.TriageResult
@@ -215,6 +230,65 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 	}
 
 	return baseAction, baseOverridable
+}
+
+// injectCounterFields records the current event and injects synthetic counter
+// fields into the request's Fields map before rule evaluation.
+func (e *Evaluator) injectCounterFields(req *models.EvaluationRequest) {
+	if e.counters == nil || req.SessionID == "" {
+		return
+	}
+
+	now := time.Now()
+
+	// Record per-session event
+	sessionKey := "session:" + req.SessionID
+	e.counters.Record(sessionKey, now)
+
+	// Record per-session+tool event
+	if req.Tool != "" {
+		toolKey := "session_tool:" + req.SessionID + ":" + req.Tool
+		e.counters.Record(toolKey, now)
+	}
+
+	// Inject synthetic fields for rule matching
+	req.Fields["session_event_count_5m"] = strconv.Itoa(
+		e.counters.Count(sessionKey, 5*time.Minute))
+	req.Fields["session_event_count_1h"] = strconv.Itoa(
+		e.counters.Count(sessionKey, 1*time.Hour))
+
+	if req.Tool != "" {
+		toolKey := "session_tool:" + req.SessionID + ":" + req.Tool
+		req.Fields["session_tool_count_5m"] = strconv.Itoa(
+			e.counters.Count(toolKey, 5*time.Minute))
+		req.Fields["session_tool_count_1h"] = strconv.Itoa(
+			e.counters.Count(toolKey, 1*time.Hour))
+	}
+
+	// Inject total alert hit count for the session
+	alertCountKey := "session_alerts:" + req.SessionID
+	req.Fields["session_alert_count_5m"] = strconv.Itoa(
+		e.counters.Count(alertCountKey, 5*time.Minute))
+}
+
+// recordAlertHits records matched alerts in the counter for future temporal queries.
+func (e *Evaluator) recordAlertHits(req *models.EvaluationRequest, alerts []engine.RuleResult) {
+	if e.counters == nil || req.SessionID == "" {
+		return
+	}
+
+	now := time.Now()
+	for _, alert := range alerts {
+		if alert.Matched {
+			// Record per-rule hit
+			ruleKey := "session_rule:" + req.SessionID + ":" + alert.RuleID
+			e.counters.Record(ruleKey, now)
+
+			// Record aggregate alert hit
+			alertCountKey := "session_alerts:" + req.SessionID
+			e.counters.Record(alertCountKey, now)
+		}
+	}
 }
 
 // GetModeInfo returns information about evaluation modes

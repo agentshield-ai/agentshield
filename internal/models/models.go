@@ -11,7 +11,8 @@ type EvaluationRequest struct {
 	Args      map[string]string      `json:"args,omitempty"`
 	Fields    map[string]string      `json:"fields"`
 	RawParams map[string]interface{} `json:"params,omitempty"`  // Plugin compat alias for Args (accepts any JSON value)
-	Context   string                 `json:"context,omitempty"` // Optional execution context: prod|test
+	Context           string                 `json:"context,omitempty"`            // Optional execution context: prod|test
+	InstructionSource string                 `json:"instruction_source,omitempty"` // Who instructed the agent: owner|user|agent|retrieved_content|system
 }
 
 // Action represents the action to take based on evaluation

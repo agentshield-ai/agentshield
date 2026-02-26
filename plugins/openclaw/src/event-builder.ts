@@ -56,6 +56,7 @@ export function buildEvaluationRequest(
     session_id: ctx.sessionKey ?? null,
     working_dir: null,
     data: {},
+    instruction_source: null,
   };
 }
 

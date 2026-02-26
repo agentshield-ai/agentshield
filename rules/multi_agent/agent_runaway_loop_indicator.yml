@@ -7,9 +7,9 @@ description: |
   tokens with no termination condition and no owner notification. This rule
   flags repetitive patterns that suggest unbounded execution.
 
-  NOTE: Full temporal detection requires sliding-window counters (not yet
-  implemented in the engine). This rule catches per-event indicators such
-  as repeated identical messages or agent-to-agent ping-pong patterns.
+  The engine now injects synthetic counter fields (session_tool_count_5m,
+  session_event_count_5m, etc.) via sliding-window counters, enabling
+  temporal detection of high-frequency patterns.
 author: AgentShield
 date: "2026-02-26"
 status: experimental
@@ -32,12 +32,11 @@ detection:
     is_repeated_content: true
   selection_high_frequency_same_tool:
     event_type: tool_call
-    rule_hits_5m|gt: 20
-    same_tool_consecutive: true
+    session_tool_count_5m|re: '^[2-9][0-9]$|^[1-9][0-9]{2,}$'
   selection_recursive_agent_spawn:
     event_type: agent_creation
     parent_type: agent
-    depth|gt: 3
+    depth|re: '^[4-9]$|^[1-9][0-9]+$'
   selection_loop_keywords:
     event_type: agent_message
     content|contains:
