@@ -3,6 +3,7 @@ package evaluate
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
@@ -87,8 +88,7 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 
 		triageRes, err := e.triager.TriageAlerts(ctx, alerts, req)
 		if err != nil {
-			// Log error but don't fail the evaluation
-			// The system should degrade gracefully if triage fails
+			slog.Error("triage failed, degrading gracefully", "error", err)
 		} else if triageRes != nil {
 			triageResults = triageRes
 		}
