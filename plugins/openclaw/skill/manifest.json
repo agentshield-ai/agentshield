@@ -28,8 +28,8 @@
     "config": {
       "enabled": true,
       "endpoint": "http://127.0.0.1:8433/api/v1/evaluate",
-      "timeout_ms": 100,
-      "timeout_policy": "allow"
+      "timeout_ms": 200,
+      "timeout_policy": "block"
     }
   },
   "install": {

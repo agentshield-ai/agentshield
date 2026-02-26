@@ -5,7 +5,7 @@ set -e
 REPO="agentshield-ai/agentshield"
 RULES_REPO="agentshield-ai/sigma-ai"
 BINARY_NAME="agentshield-engine"
-INSTALL_DIR="$HOME/.agentshield"
+INSTALL_DIR="${AGENTSHIELD_HOME:-$HOME/.agentshield}"
 CONFIG_FILE="$INSTALL_DIR/config.yaml"
 SERVICE_NAME="agentshield-engine"
 
@@ -36,6 +36,10 @@ install_via_go() {
 
 # Download binary
 download_binary() {
+    if [ -x "$INSTALL_DIR/$BINARY_NAME" ]; then
+        log "Binary already present at $INSTALL_DIR/$BINARY_NAME — skipping download"
+        return
+    fi
     log "Downloading AgentShield binary..."
     LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
     DOWNLOAD_URL=$(curl -s "$LATEST_URL" | grep "browser_download_url.*${PLATFORM}" | cut -d'"' -f4)
@@ -48,7 +52,7 @@ download_binary() {
     tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" --strip-components=1 2>/dev/null || 
         tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" 2>/dev/null || { warn "Extract failed"; rm -f "$TEMP_FILE"; install_via_go; return; }
     
-    chmod +x "$INSTALL_DIR/bin/"*
+    chmod +x "$INSTALL_DIR/bin/agentshield"
     ln -sf "$INSTALL_DIR/bin/"$(ls "$INSTALL_DIR/bin/" | head -1) "$INSTALL_DIR/$BINARY_NAME"
     rm -f "$TEMP_FILE"; log "Binary downloaded and installed"
 }
@@ -98,7 +102,7 @@ create_config() {
     cat > "$CONFIG_FILE" << EOF
 server:
   addr: "127.0.0.1"
-  port: 8433
+  port: ${AGENTSHIELD_PORT:-8433}
 auth:
   token: "$AUTH_TOKEN"
 rules:
@@ -121,6 +125,14 @@ EOF
 
 # Setup service (systemd on Linux, launchd on macOS)
 setup_service() {
+    if [ "${AGENTSHIELD_E2E_MODE:-0}" = "1" ]; then
+        log "E2E mode: skipping service registration, starting directly"
+        "$INSTALL_DIR/$BINARY_NAME" serve --config "$CONFIG_FILE" --daemon=false \
+            >"$INSTALL_DIR/engine.log" 2>&1 &
+        echo $! > "$INSTALL_DIR/agentshield-e2e.pid"
+        sleep 2
+        return
+    fi
     if [ "$OS" = "darwin" ]; then setup_launchd
     elif command -v systemctl >/dev/null 2>&1; then setup_systemd
     else warn "No service manager found — you'll need to start the engine manually"; fi
@@ -187,10 +199,10 @@ patch_openclaw_config() {
         openclaw config patch \
             plugins.entries.agentshield.enabled=true \
             plugins.entries.agentshield.config.enabled=true \
-            plugins.entries.agentshield.config.endpoint="http://127.0.0.1:8433/api/v1/evaluate" \
+            plugins.entries.agentshield.config.endpoint="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate" \
             plugins.entries.agentshield.config.auth_token="$AUTH_TOKEN" \
-            plugins.entries.agentshield.config.timeout_ms=100 \
-            plugins.entries.agentshield.config.timeout_policy="allow" 2>/dev/null && {
+            plugins.entries.agentshield.config.timeout_ms=200 \
+            plugins.entries.agentshield.config.timeout_policy="block" 2>/dev/null && {
             log "OpenClaw configuration updated"; return
         }
     fi
@@ -199,18 +211,20 @@ patch_openclaw_config() {
 
 # Start and check
 start_and_check() {
-    log "Starting AgentShield..."
-    if [ "$OS" = "darwin" ]; then
-        launchctl load "$HOME/Library/LaunchAgents/ai.agentshield.engine.plist" 2>/dev/null || warn "Failed to load launchd service"
-        sleep 2
-    elif command -v systemctl >/dev/null 2>&1; then
-        systemctl --user start "$SERVICE_NAME" || warn "Failed to start service"; sleep 2
-    else "$INSTALL_DIR/$BINARY_NAME" serve --config "$CONFIG_FILE" --daemon & sleep 3; fi
-    
+    if [ "${AGENTSHIELD_E2E_MODE:-0}" != "1" ]; then
+        log "Starting AgentShield..."
+        if [ "$OS" = "darwin" ]; then
+            launchctl load "$HOME/Library/LaunchAgents/ai.agentshield.engine.plist" 2>/dev/null || warn "Failed to load launchd service"
+            sleep 2
+        elif command -v systemctl >/dev/null 2>&1; then
+            systemctl --user start "$SERVICE_NAME" || warn "Failed to start service"; sleep 2
+        else "$INSTALL_DIR/$BINARY_NAME" serve --config "$CONFIG_FILE" --daemon & sleep 3; fi
+    fi
+
     log "Health check..."
     AUTH_TOKEN=$(grep token: "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"')
     for i in {1..10}; do
-        curl -s -H "Authorization: Bearer $AUTH_TOKEN" http://127.0.0.1:8433/api/v1/health >/dev/null 2>&1 && {
+        curl -s -H "Authorization: Bearer $AUTH_TOKEN" "http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/health" >/dev/null 2>&1 && {
             log "✓ Engine is healthy"; return 0
         }
         sleep 1

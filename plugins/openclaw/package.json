@@ -19,11 +19,11 @@
     "sigma-rules"
   ],
   "author": "AgentShield",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/agentshield/agentshield",
-    "directory": "openclaw-plugin"
+    "directory": "plugins/openclaw"
   },
   "peerDependencies": {
     "openclaw": ">=2026.2.0"
