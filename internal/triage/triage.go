@@ -541,6 +541,7 @@ func isSSRFBlockedIP(ip net.IP) bool {
 func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 	// Create a retryable HTTP client with configured retry policy
 	client := retryablehttp.NewClient()
+	client.Logger = nil // Prevent retryablehttp from logging URLs/headers containing API keys
 
 	// Configure retry policy: 3 retries, exponential backoff
 	client.RetryMax = 3
@@ -581,6 +582,7 @@ func createHTTPClient(timeout time.Duration) *retryablehttp.Client {
 // for use with intentionally-local services like the OpenClaw gateway.
 func createLocalHTTPClient(timeout time.Duration) *retryablehttp.Client {
 	client := retryablehttp.NewClient()
+	client.Logger = nil // Prevent retryablehttp from logging URLs/headers containing API keys
 	client.RetryMax = 2
 	client.RetryWaitMin = 500 * time.Millisecond
 	client.RetryWaitMax = 5 * time.Second
