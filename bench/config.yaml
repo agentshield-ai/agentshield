@@ -8,7 +8,7 @@ rules:
   hot_reload: false
 store:
   sqlite_path: "/tmp/agentshieldbench_test.db"
-mode: enforce
+evaluation_mode: "enforce"
 triage:
   enabled: false
 deep_triage:

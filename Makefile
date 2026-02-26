@@ -1,7 +1,7 @@
 .PHONY: build test clean run bench bench-all
 
 # Go binary path
-GO = /usr/local/go/bin/go
+GO ?= go
 
 # Binary name
 BINARY = agentshield
