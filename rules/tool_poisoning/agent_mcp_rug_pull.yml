@@ -10,7 +10,7 @@ date: "2026-02-16"
 status: production
 level: medium
 logsource:
-  product: ai_agent
+  product: agentshield
   category: mcp_events
 tags:
   - attack.defense_evasion

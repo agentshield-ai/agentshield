@@ -10,7 +10,7 @@ date: "2026-02-16"
 status: production
 level: critical
 logsource:
-  product: openclaw
+  product: agentshield
   category: agent_events
   source: openclaw
 tags:
