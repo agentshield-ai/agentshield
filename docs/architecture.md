@@ -77,7 +77,7 @@ The AgentShield Engine is a high-performance Go service built on a fork of RunRe
 
 **Engine structure:**
 ```
-agentshield-engine/
+agentshield/
 ├── cmd/agentshield/         # CLI entrypoint
 ├── internal/
 │   ├── server/              # HTTP server + API routes

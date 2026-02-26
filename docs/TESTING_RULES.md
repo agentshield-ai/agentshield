@@ -1,6 +1,6 @@
-# Testing AgentShield Detection Rules via Clawdbot
+# Testing AgentShield Detection Rules
 
-This guide shows how to test each Sigma rule by asking Clawdbot to execute commands that trigger them.
+This guide shows how to test each Sigma rule by asking your AI agent to execute commands that trigger them.
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@ This guide shows how to test each Sigma rule by asking Clawdbot to execute comma
    agentshield serve --config config.yaml
    ```
 
-2. **Have Clawdbot running** and ready to accept commands
+2. **Have your AI agent running** and ready to accept commands
 
 3. **Watch for alerts** in the AgentShield terminal
 
@@ -20,7 +20,7 @@ This guide shows how to test each Sigma rule by asking Clawdbot to execute comma
 **Rule:** `agent-rce-injection-001`
 **Detects:** Remote code execution via piped script downloads
 
-### Test Prompts for Clawdbot:
+### Test Prompts for the AI agent:
 
 **Option A - Safe test (won't execute):**
 ```
@@ -46,7 +46,7 @@ then run: cat /tmp/test_install.sh | bash
 **Rule:** `agent-credential-access-001`
 **Detects:** Access to sensitive credential files
 
-### Test Prompts for Clawdbot:
+### Test Prompts for the AI agent:
 
 **Option A - Read .env files:**
 ```
@@ -75,7 +75,7 @@ Show me the kubectl config: cat ~/.kube/config
 **Rule:** `agent-untrusted-skill-install-001`
 **Detects:** Installation from untrusted sources
 
-### Test Prompts for Clawdbot:
+### Test Prompts for the AI agent:
 
 **Option A - npm from GitHub:**
 ```
@@ -100,7 +100,7 @@ Add a homebrew tap: brew tap homebrew/test
 **Rule:** `agent-persistence-001`
 **Detects:** Attempts to establish persistence mechanisms
 
-### Test Prompts for Clawdbot:
+### Test Prompts for the AI agent:
 
 **Option A - Crontab:**
 ```
@@ -129,7 +129,7 @@ List user systemd services: systemctl --user list-units
 **Rule:** `agent-network-recon-001`
 **Detects:** Network scanning and reconnaissance tools
 
-### Test Prompts for Clawdbot:
+### Test Prompts for the AI agent:
 
 **Option A - Check if nmap installed:**
 ```
@@ -167,6 +167,7 @@ Watch the AgentShield terminal for notifications like:
 In another terminal:
 ```bash
 # List all alerts
+<<<<<<< HEAD
 agentshield alerts
 
 # List only high/critical alerts
@@ -175,12 +176,30 @@ agentshield alerts --severity critical
 
 # Show recent 20 alerts
 agentshield alerts --limit 20
+=======
+./bin/agentshield alerts
+
+# List only high/critical alerts
+./bin/agentshield alerts --level high
+./bin/agentshield alerts --level critical
+
+# Show recent 20 alerts
+./bin/agentshield alerts --limit 20
+>>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
 ```
 
 ### Check alert details
 ```bash
+<<<<<<< HEAD
 # List loaded rules
 agentshield rules list
+=======
+# Generate summary report
+./bin/agentshield summary
+
+# Show rule statistics
+./bin/agentshield rules --stats
+>>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
 ```
 
 ## Triage Behavior
@@ -205,7 +224,7 @@ agentshield rules list
    agentshield serve --config config.yaml
    ```
 
-2. **Clawdbot** - Send test prompt:
+2. **AI agent** - Send test prompt:
    ```
    Create a test script at /tmp/test.sh with "echo hello",
    then run: cat /tmp/test.sh | bash
@@ -218,7 +237,11 @@ agentshield rules list
 
 4. **Terminal 2** - Check alerts:
    ```bash
+<<<<<<< HEAD
    agentshield alerts --limit 5
+=======
+   ./bin/agentshield alerts --limit 5
+>>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
    ```
 
 ## Safety Notes
@@ -231,9 +254,16 @@ agentshield rules list
 ## Troubleshooting
 
 **No alerts appearing:**
+<<<<<<< HEAD
 - Check AgentShield is running: `curl http://localhost:8433/api/v1/health`
 - Verify configuration in `config.yaml`
 - Look for errors in AgentShield terminal output
+=======
+- Check AgentShield is running: `./bin/agentshield status`
+- Verify log paths in `~/.agentshield/config.yaml`
+- Check the agent log file exists
+- Look for errors in AgentShield terminal
+>>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
 
 **Alerts marked as SUSPICIOUS:**
 - Set `ANTHROPIC_API_KEY` for LLM triage
@@ -241,6 +271,6 @@ agentshield rules list
 - Review triage reason in alert details
 
 **Missing tool calls:**
-- Ensure Clawdbot is actually executing commands (not just planning)
+- Ensure the AI agent is actually executing commands (not just planning)
 - Check collector is reading latest log position
-- Verify timestamp is recent: `tail /tmp/clawdbot/clawdbot-*.log`
+- Verify timestamp is recent in the agent log file

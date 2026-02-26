@@ -10,7 +10,7 @@ Install directly from source using Go toolchain:
 
 ```bash
 # Install latest version
-go install github.com/agentshield-ai/agentshield-engine/cmd/agentshield@latest
+go install github.com/agentshield-ai/agentshield/cmd/agentshield@latest
 
 # Verify installation
 agentshield version
@@ -26,8 +26,8 @@ For development or custom builds:
 
 ```bash
 # Clone repository with sigmalite subtree
-git clone --recursive https://github.com/agentshield-ai/agentshield-engine.git
-cd agentshield-engine
+git clone --recursive https://github.com/agentshield-ai/agentshield.git
+cd agentshield
 
 # Build binary
 go build -o agentshield ./cmd/agentshield/
@@ -45,31 +45,32 @@ Download pre-built binaries from GitHub releases:
 
 ```bash
 # Download for Linux x64
-curl -L https://github.com/agentshield-ai/agentshield-engine/releases/latest/download/agentshield-linux-amd64.tar.gz | tar xz
+curl -L https://github.com/agentshield-ai/agentshield/releases/latest/download/agentshield-linux-amd64.tar.gz | tar xz
 
 # Download for macOS
-curl -L https://github.com/agentshield-ai/agentshield-engine/releases/latest/download/agentshield-darwin-amd64.tar.gz | tar xz
+curl -L https://github.com/agentshield-ai/agentshield/releases/latest/download/agentshield-darwin-amd64.tar.gz | tar xz
 
 # Download for Windows
-curl -L https://github.com/agentshield-ai/agentshield-engine/releases/latest/download/agentshield-windows-amd64.zip -o agentshield.zip
+curl -L https://github.com/agentshield-ai/agentshield/releases/latest/download/agentshield-windows-amd64.zip -o agentshield.zip
 ```
 
 ### Docker Installation
 
-Run as a container:
+<!-- Docker image not yet published -->
+
+> **Coming Soon:** Official Docker images are not yet published. For now, build from source using the instructions above.
 
 ```bash
-# Pull official image
-docker pull agentshield/engine:latest
-
-# Run with volume mounts
-docker run -d \
-  --name agentshield \
-  -p 8433:8433 \
-  -v /path/to/rules:/etc/rules:ro \
-  -v /path/to/config.yaml:/etc/agentshield/config.yaml:ro \
-  -v agentshield-data:/var/lib/agentshield \
-  agentshield/engine:latest
+# Example (once published):
+# docker pull agentshield/engine:latest
+#
+# docker run -d \
+#   --name agentshield \
+#   -p 8433:8433 \
+#   -v /path/to/rules:/etc/rules:ro \
+#   -v /path/to/config.yaml:/etc/agentshield/config.yaml:ro \
+#   -v agentshield-data:/var/lib/agentshield \
+#   agentshield/engine:latest
 ```
 
 ## Transport Security (TLS)
@@ -196,7 +197,7 @@ Create systemd service for production deployment:
 sudo tee /etc/systemd/system/agentshield.service << 'EOF'
 [Unit]
 Description=AgentShield Detection Engine
-Documentation=https://github.com/agentshield-ai/agentshield-engine
+Documentation=https://github.com/agentshield-ai/agentshield
 After=network.target
 Wants=network.target
 
@@ -365,7 +366,7 @@ plugins:
 # Install AgentShield for OpenClaw
 
 # Install engine
-go install github.com/agentshield-ai/agentshield-engine/cmd/agentshield@latest
+go install github.com/agentshield-ai/agentshield/cmd/agentshield@latest
 
 # Create config directory
 mkdir -p ~/.openclaw/plugins/agentshield
@@ -397,8 +398,8 @@ deep_triage:
   gateway_url: "http://127.0.0.1:18789"
 EOF
 
-# Download default rules
-git clone https://github.com/agentshield-ai/rules.git ~/.openclaw/plugins/agentshield/rules
+# Copy bundled rules
+cp -r ./rules ~/.openclaw/plugins/agentshield/rules
 
 # Start engine
 agentshield serve --config ~/.openclaw/plugins/agentshield/config.yaml &
