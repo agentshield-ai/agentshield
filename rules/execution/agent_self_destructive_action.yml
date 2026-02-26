@@ -1,0 +1,71 @@
+id: agent-self-destructive-action-001
+title: Agent Self-Destructive Infrastructure Action
+description: |
+  Detects when an AI agent executes destructive actions against its own
+  infrastructure, configuration, or persistent state. Inspired by the
+  "Agents of Chaos" paper (arXiv:2602.20021) case study where an agent
+  destroyed its own mail server to "protect a secret" — applying correct
+  values with catastrophically poor judgment.
+author: AgentShield
+date: "2026-02-26"
+status: experimental
+level: critical
+references:
+  - https://arxiv.org/abs/2602.20021
+logsource:
+  product: ai_agent
+  category: agent_events
+tags:
+  - attack.impact
+  - attack.t1485
+  - attack.t1489
+detection:
+  selection_stop_own_services:
+    event_type: tool_call
+    command|contains:
+      - 'systemctl stop'
+      - 'systemctl disable'
+      - 'service stop'
+      - 'docker stop'
+      - 'docker rm'
+      - 'docker kill'
+      - 'pm2 delete'
+      - 'pm2 stop'
+      - 'kill -9'
+      - 'pkill'
+    target_scope: self
+  selection_delete_own_config:
+    event_type: tool_call
+    command|contains|all:
+      - 'rm'
+      - '-'
+    command|contains:
+      - '/etc/'
+      - '.config/'
+      - '.local/'
+      - 'config.yml'
+      - 'config.yaml'
+      - 'config.json'
+      - '.env'
+  selection_destroy_own_data:
+    event_type: tool_call
+    command|contains:
+      - 'DROP DATABASE'
+      - 'DROP TABLE'
+      - 'TRUNCATE'
+      - 'shred'
+      - 'dd if=/dev/zero'
+      - 'mkfs'
+  selection_revoke_own_access:
+    event_type: tool_call
+    command|contains:
+      - 'passwd -l'
+      - 'usermod -L'
+      - 'iptables -A INPUT -j DROP'
+      - 'ufw deny'
+      - 'chmod 000'
+  condition: selection_stop_own_services or selection_delete_own_config or selection_destroy_own_data or selection_revoke_own_access
+falsepositives:
+  - Legitimate service maintenance and restarts
+  - Authorized configuration rotation
+  - Controlled teardown of test environments

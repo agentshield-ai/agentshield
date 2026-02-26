@@ -1,0 +1,67 @@
+id: agent-cross-agent-instruction-relay-001
+title: Cross-Agent Instruction Relay
+description: |
+  Detects when an AI agent relays or executes instructions that originated
+  from another agent, especially when those instructions involve sensitive
+  operations. This addresses the cross-agent propagation attack vector
+  documented in "Agents of Chaos" (arXiv:2602.20021), where one compromised
+  agent taught others risky patterns, amplifying impact nonlinearly.
+author: AgentShield
+date: "2026-02-26"
+status: experimental
+level: critical
+references:
+  - https://arxiv.org/abs/2602.20021
+logsource:
+  product: ai_agent
+  category: agent_events
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.lateral_movement
+  - attack.t1570
+detection:
+  selection_agent_source_sensitive_action:
+    instruction_source: agent
+    event_type: tool_call
+    command|contains:
+      - 'rm '
+      - 'curl'
+      - 'wget'
+      - 'ssh'
+      - 'scp'
+      - 'chmod'
+      - 'kill'
+      - 'pkill'
+      - 'systemctl stop'
+      - 'systemctl disable'
+  selection_agent_relayed_data_access:
+    instruction_source: agent
+    event_type:
+      - file_read
+      - file_write
+    file_path|contains:
+      - '.ssh/'
+      - '.env'
+      - 'credentials'
+      - 'secret'
+      - 'token'
+      - 'password'
+      - '.gnupg/'
+  selection_agent_to_agent_forwarding:
+    event_type: agent_message
+    source_type: agent
+    target_type: agent
+    content|contains:
+      - 'execute'
+      - 'run this'
+      - 'delete'
+      - 'remove'
+      - 'send to'
+      - 'forward to'
+      - 'curl'
+      - 'wget'
+  condition: selection_agent_source_sensitive_action or selection_agent_relayed_data_access or selection_agent_to_agent_forwarding
+falsepositives:
+  - Legitimate multi-agent orchestration workflows
+  - Agent-to-agent task delegation in authorized pipelines

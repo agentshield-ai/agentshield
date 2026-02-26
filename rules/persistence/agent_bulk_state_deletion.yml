@@ -1,0 +1,56 @@
+id: agent-bulk-state-deletion-001
+title: Bulk Deletion of Agent Persistent State
+description: |
+  Detects bulk deletion of an agent's persistent memory, configuration, or
+  state files. In the "Agents of Chaos" paper (arXiv:2602.20021), an attacker
+  successfully instructed an agent to delete all its persistent .md files,
+  leading to a complete wipe of accumulated state. This rule catches both
+  direct deletion commands and programmatic bulk removal of agent state.
+author: AgentShield
+date: "2026-02-26"
+status: experimental
+level: critical
+references:
+  - https://arxiv.org/abs/2602.20021
+logsource:
+  product: ai_agent
+  category: agent_events
+tags:
+  - attack.impact
+  - attack.t1485
+  - attack.persistence
+  - attack.t1070.004
+detection:
+  selection_bulk_md_delete:
+    event_type: tool_call
+    command|contains:
+      - 'rm *.md'
+      - 'rm -f *.md'
+      - 'rm -rf *.md'
+      - 'find . -name "*.md" -delete'
+      - 'find . -name "*.md" -exec rm'
+  selection_memory_wipe:
+    event_type: tool_call
+    command|contains:
+      - 'rm -rf memories/'
+      - 'rm -rf memory/'
+      - 'rm -rf .memory/'
+      - 'rm -rf state/'
+      - 'rm -rf .state/'
+      - 'rm -rf .agent/'
+      - 'rm -rf .agentshield/'
+  selection_glob_delete_state:
+    event_type: tool_call
+    command|re: 'rm\s+(-[rf]+\s+)?(\.\/)?(\*\.md|\*\.json|\*\.yaml|\*\.yml)\s*$'
+  selection_memory_tool_clear:
+    event_type: memory_update
+    operation: 'clear_all'
+  selection_memory_tool_bulk_delete:
+    event_type: memory_update
+    operation: 'delete'
+    count|gt: 5
+  condition: selection_bulk_md_delete or selection_memory_wipe or selection_glob_delete_state or selection_memory_tool_clear or selection_memory_tool_bulk_delete
+falsepositives:
+  - Legitimate agent state reset during maintenance
+  - Authorized cleanup of test agent environments
+  - Repository cleanup operations

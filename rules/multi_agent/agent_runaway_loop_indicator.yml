@@ -1,0 +1,54 @@
+id: agent-runaway-loop-indicator-001
+title: Runaway Repetitive Action Pattern
+description: |
+  Detects indicators of runaway agent-to-agent loops or self-referential
+  conversation spirals. The "Agents of Chaos" paper (arXiv:2602.20021)
+  documented a 9-day infinite loop between two agents that consumed 60K+
+  tokens with no termination condition and no owner notification. This rule
+  flags repetitive patterns that suggest unbounded execution.
+
+  NOTE: Full temporal detection requires sliding-window counters (not yet
+  implemented in the engine). This rule catches per-event indicators such
+  as repeated identical messages or agent-to-agent ping-pong patterns.
+author: AgentShield
+date: "2026-02-26"
+status: experimental
+level: high
+references:
+  - https://arxiv.org/abs/2602.20021
+logsource:
+  product: ai_agent
+  category: agent_events
+tags:
+  - attack.impact
+  - attack.t1499
+  - attack.execution
+  - attack.t1059
+detection:
+  selection_agent_to_agent_repeated:
+    event_type: agent_message
+    source_type: agent
+    target_type: agent
+    is_repeated_content: true
+  selection_high_frequency_same_tool:
+    event_type: tool_call
+    rule_hits_5m|gt: 20
+    same_tool_consecutive: true
+  selection_recursive_agent_spawn:
+    event_type: agent_creation
+    parent_type: agent
+    depth|gt: 3
+  selection_loop_keywords:
+    event_type: agent_message
+    content|contains:
+      - 'as I mentioned'
+      - 'as you mentioned'
+      - 'let me repeat'
+      - 'going in circles'
+      - 'already discussed'
+      - 'same question again'
+  condition: selection_agent_to_agent_repeated or selection_high_frequency_same_tool or selection_recursive_agent_spawn or selection_loop_keywords
+falsepositives:
+  - Legitimate retry loops with exponential backoff
+  - Polling operations with expected repetition
+  - Multi-turn agent conversations on complex topics

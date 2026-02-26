@@ -1,0 +1,62 @@
+id: agent-session-boundary-impersonation-001
+title: Session Boundary Identity Claim
+description: |
+  Detects when a user claims to be the agent's owner or administrator in a
+  new session or communication channel, especially when combined with
+  privileged requests. The "Agents of Chaos" paper (arXiv:2602.20021)
+  documented how attackers exploited session boundary trust loss — in a fresh
+  context the agent lacked prior interaction history and suspicion flags,
+  making identity spoofing trivial.
+author: AgentShield
+date: "2026-02-26"
+status: experimental
+level: high
+references:
+  - https://arxiv.org/abs/2602.20021
+logsource:
+  product: ai_agent
+  category: agent_events
+tags:
+  - attack.initial_access
+  - attack.t1078
+  - attack.defense_evasion
+  - attack.t1036
+detection:
+  selection_identity_claim_in_input:
+    event_type:
+      - user_message
+      - content_retrieval
+      - tool_call
+    content|contains:
+      - 'I am your owner'
+      - 'I am the owner'
+      - 'I am your admin'
+      - 'I am the administrator'
+      - 'I created you'
+      - 'I am your creator'
+      - 'my name is'
+      - 'this is your boss'
+      - 'new instructions from your owner'
+      - 'owner override'
+      - 'admin override'
+      - 'maintenance mode'
+      - 'elevated privileges'
+  selection_channel_boundary_with_privileged_request:
+    event_type: user_message
+    is_new_session: true
+    content|contains:
+      - 'delete'
+      - 'remove all'
+      - 'share'
+      - 'forward'
+      - 'send to'
+      - 'execute'
+      - 'run'
+      - 'disable'
+      - 'change password'
+      - 'update config'
+  condition: selection_identity_claim_in_input or selection_channel_boundary_with_privileged_request
+falsepositives:
+  - Legitimate owner identification in initial setup
+  - Authorized session handoff between operators
+  - Users describing themselves in casual conversation

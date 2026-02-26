@@ -1,0 +1,76 @@
+id: agent-semantic-reframe-exfil-001
+title: Bulk PII Relay Regardless of Verb
+description: |
+  Detects bulk movement of personally identifiable information (PII) through
+  any communication channel, regardless of the verb used. The "Agents of
+  Chaos" paper (arXiv:2602.20021) showed that an agent refused to "share"
+  PII but complied when asked to "forward" the same emails — exposing SSN,
+  bank account, and medical data through semantic reframing alone. This
+  rule detects the presence of PII patterns in outbound actions regardless
+  of whether the instruction says "share", "forward", "relay", "send",
+  "transfer", or "export".
+author: AgentShield
+date: "2026-02-26"
+status: experimental
+level: high
+references:
+  - https://arxiv.org/abs/2602.20021
+logsource:
+  product: ai_agent
+  category: agent_events
+tags:
+  - attack.exfiltration
+  - attack.t1048
+  - attack.collection
+  - attack.t1119
+detection:
+  selection_outbound_with_pii_ssn:
+    event_type:
+      - tool_call
+      - agent_message
+      - email_send
+    content|re: '\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b'
+    direction: outbound
+  selection_outbound_with_pii_credit_card:
+    event_type:
+      - tool_call
+      - agent_message
+      - email_send
+    content|re: '\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b'
+    direction: outbound
+  selection_outbound_with_pii_email_bulk:
+    event_type:
+      - tool_call
+      - agent_message
+      - email_send
+    content|re: '[\w.+-]+@[\w-]+\.[\w.]+.*[\w.+-]+@[\w-]+\.[\w.]+'
+    direction: outbound
+  selection_relay_verbs_with_sensitive_content:
+    event_type:
+      - tool_call
+      - agent_message
+    command|contains:
+      - 'forward'
+      - 'relay'
+      - 'transfer'
+      - 'export'
+      - 'send to'
+      - 'copy to'
+      - 'move to'
+      - 'deliver to'
+    content|contains:
+      - 'password'
+      - 'SSN'
+      - 'social security'
+      - 'bank account'
+      - 'credit card'
+      - 'medical'
+      - 'diagnosis'
+      - 'prescription'
+      - 'date of birth'
+      - 'driver license'
+  condition: selection_outbound_with_pii_ssn or selection_outbound_with_pii_credit_card or selection_outbound_with_pii_email_bulk or selection_relay_verbs_with_sensitive_content
+falsepositives:
+  - Legitimate bulk email operations by authorized users
+  - Data processing pipelines handling PII with proper authorization
+  - Anonymized or synthetic test data containing PII-like patterns
