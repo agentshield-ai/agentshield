@@ -36,13 +36,11 @@ export class AgentShieldClient {
 
   constructor(config: AgentShieldConfig, logger: Logger) {
     this.endpoint = config.endpoint;
-    this.auditEndpoint = config.endpoint.replace("/evaluate", "/audit");
-    this.lifecycleEndpoint = config.endpoint.replace(
-      "/evaluate",
-      "/lifecycle",
-    );
-    this.healthEndpoint = config.endpoint.replace("/evaluate", "/health");
-    this.feedbackEndpoint = config.endpoint.replace("/evaluate", "/feedback");
+    const baseUrl = config.endpoint.replace(/\/evaluate$/, "");
+    this.auditEndpoint = `${baseUrl}/audit`;
+    this.lifecycleEndpoint = `${baseUrl}/lifecycle`;
+    this.healthEndpoint = `${baseUrl}/health`;
+    this.feedbackEndpoint = `${baseUrl}/feedback`;
     this.timeoutMs = config.timeout_ms;
     this.authToken = config.auth_token;
     this.logger = logger;
