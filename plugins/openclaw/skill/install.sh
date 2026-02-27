@@ -9,6 +9,11 @@ INSTALL_DIR="${AGENTSHIELD_HOME:-$HOME/.agentshield}"
 CONFIG_FILE="$INSTALL_DIR/config.yaml"
 SERVICE_NAME="agentshield-engine"
 
+# Cleanup temporary files on exit
+CLEANUP_FILES=()
+cleanup() { for f in "${CLEANUP_FILES[@]}"; do rm -f "$f"; done; }
+trap cleanup EXIT
+
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log() { echo -e "${GREEN}[AgentShield]${NC} $1"; }
@@ -46,16 +51,48 @@ download_binary() {
     DOWNLOAD_URL=$(curl -s "$LATEST_URL" | grep "browser_download_url.*${PLATFORM}" | cut -d'"' -f4)
     if [ -z "$DOWNLOAD_URL" ]; then warn "No pre-built binary found for $PLATFORM"; install_via_go; return; fi
     
-    TEMP_FILE="/tmp/agentshield-${PLATFORM}.tar.gz"
+    TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-XXXXXX.tar.gz")
+    CLEANUP_FILES+=("$TEMP_FILE")
     curl -L -o "$TEMP_FILE" "$DOWNLOAD_URL" || { warn "Download failed"; install_via_go; return; }
-    
+
+    # I9: Checksum verification
+    RELEASE_TAG=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+    CHECKSUMS_URL="https://github.com/$REPO/releases/download/${RELEASE_TAG}/SHA256SUMS"
+    CHECKSUMS_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-checksums-XXXXXX")
+    CLEANUP_FILES+=("$CHECKSUMS_FILE")
+    if curl -sfL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; then
+        EXPECTED_HASH=$(grep "${PLATFORM}" "$CHECKSUMS_FILE" | awk '{print $1}')
+        if [ -n "$EXPECTED_HASH" ]; then
+            if command -v sha256sum >/dev/null 2>&1; then
+                ACTUAL_HASH=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
+            elif command -v shasum >/dev/null 2>&1; then
+                ACTUAL_HASH=$(shasum -a 256 "$TEMP_FILE" | awk '{print $1}')
+            else
+                warn "No sha256sum or shasum available — skipping checksum verification"
+                ACTUAL_HASH="$EXPECTED_HASH"
+            fi
+            if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
+                error "Checksum mismatch! Expected $EXPECTED_HASH, got $ACTUAL_HASH"
+            fi
+            log "Checksum verified"
+        else
+            warn "No checksum entry for $PLATFORM in SHA256SUMS — skipping verification"
+        fi
+    else
+        warn "SHA256SUMS not available for this release — skipping checksum verification"
+    fi
+
     mkdir -p "$INSTALL_DIR/bin"
-    tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" --strip-components=1 2>/dev/null || 
-        tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" 2>/dev/null || { warn "Extract failed"; rm -f "$TEMP_FILE"; install_via_go; return; }
-    
-    chmod +x "$INSTALL_DIR/bin/agentshield"
-    ln -sf "$INSTALL_DIR/bin/"$(ls "$INSTALL_DIR/bin/" | head -1) "$INSTALL_DIR/$BINARY_NAME"
-    rm -f "$TEMP_FILE"; log "Binary downloaded and installed"
+    tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" --strip-components=1 ||
+        tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" || { warn "Extract failed"; install_via_go; return; }
+
+    if [ -f "$INSTALL_DIR/bin/agentshield" ]; then
+        chmod +x "$INSTALL_DIR/bin/agentshield"
+        ln -sf "$INSTALL_DIR/bin/agentshield" "$INSTALL_DIR/$BINARY_NAME"
+    else
+        error "Expected binary 'agentshield' not found in archive"
+    fi
+    log "Binary downloaded and installed"
 }
 
 # Generate token
@@ -100,6 +137,8 @@ EOF
 create_config() {
     log "Creating configuration..."
     AUTH_TOKEN=$(generate_token)
+    OLD_UMASK=$(umask)
+    umask 077
     cat > "$CONFIG_FILE" << EOF
 server:
   addr: "127.0.0.1"
@@ -121,6 +160,7 @@ log_level: "info"
 #   max_tokens: 500
 #   timeout_sec: 10
 EOF
+    umask "$OLD_UMASK"
     log "Configuration created"
 }
 
@@ -197,11 +237,12 @@ patch_openclaw_config() {
     log "Configuring OpenClaw integration..."
     AUTH_TOKEN=$(grep "token:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
     if command -v openclaw >/dev/null 2>&1; then
-        openclaw config patch \
+        # shellcheck disable=SC2016
+        AGENTSHIELD_AUTH_TOKEN="$AUTH_TOKEN" openclaw config patch \
             plugins.entries.agentshield.enabled=true \
             plugins.entries.agentshield.config.enabled=true \
             plugins.entries.agentshield.config.endpoint="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate" \
-            plugins.entries.agentshield.config.auth_token="$AUTH_TOKEN" \
+            'plugins.entries.agentshield.config.auth_token=${AGENTSHIELD_AUTH_TOKEN}' \
             plugins.entries.agentshield.config.timeout_ms=200 \
             plugins.entries.agentshield.config.timeout_policy="block" 2>/dev/null && {
             log "OpenClaw configuration updated"; return
@@ -224,12 +265,17 @@ start_and_check() {
 
     log "Health check..."
     AUTH_TOKEN=$(grep token: "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"')
-    for i in {1..10}; do
-        curl -s -H "Authorization: Bearer $AUTH_TOKEN" "http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/health" >/dev/null 2>&1 && {
+    AUTH_HEADER_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-header-XXXXXX")
+    CLEANUP_FILES+=("$AUTH_HEADER_FILE")
+    printf 'Authorization: Bearer %s' "$AUTH_TOKEN" > "$AUTH_HEADER_FILE"
+    for _i in $(seq 1 10); do
+        curl -s -H @"$AUTH_HEADER_FILE" "http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/health" >/dev/null 2>&1 && {
+            rm -f "$AUTH_HEADER_FILE"
             log "✓ Engine is healthy"; return 0
         }
         sleep 1
     done
+    rm -f "$AUTH_HEADER_FILE"
     warn "Health check failed"
 }
 

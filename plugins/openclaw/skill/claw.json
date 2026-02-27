@@ -1,0 +1,23 @@
+{
+  "name": "agentshield",
+  "version": "2.0.0",
+  "description": "AI Agent Detection & Response — real-time security monitoring with Sigma rules and LLM-powered triage",
+  "author": "AgentShield",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/agentshield-ai/agentshield",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentshield-ai/agentshield.git"
+  },
+  "permissions": ["network"],
+  "entry": "SKILL.md",
+  "tags": ["security", "aadr", "sigma", "detection", "triage", "ai-agents"],
+  "models": ["claude-*", "gpt-*"],
+  "minOpenClawVersion": "2026.2.0",
+  "platforms": ["linux", "darwin"],
+  "architectures": ["amd64", "arm64"],
+  "install": {
+    "script": "install.sh",
+    "uninstall": "uninstall.sh"
+  }
+}

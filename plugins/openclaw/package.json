@@ -1,6 +1,6 @@
 {
   "name": "@agentshield/openclaw-plugin",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "AgentShield real-time security evaluation plugin for OpenClaw. Intercepts tool calls before execution and evaluates them against Sigma detection rules.",
   "type": "module",
   "main": "./index.ts",
@@ -22,7 +22,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentshield/agentshield",
+    "url": "https://github.com/agentshield-ai/agentshield.git",
     "directory": "plugins/openclaw"
   },
   "peerDependencies": {

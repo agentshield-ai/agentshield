@@ -1,6 +1,6 @@
 ---
 name: agentshield
-description: "AI Agent Detection & Response -- real-time security monitoring with Sigma rules and LLM-powered triage"
+description: "AI Agent Detection & Response — real-time security monitoring with Sigma rules and LLM-powered triage"
 homepage: "https://github.com/agentshield-ai/agentshield"
 user-invocable: true
 metadata: {"openclaw":{"requires":{"anyBins":["go","curl"]},"os":["darwin","linux"]}}
@@ -8,7 +8,7 @@ metadata: {"openclaw":{"requires":{"anyBins":["go","curl"]},"os":["darwin","linu
 
 # AgentShield
 
-**AI Agent Detection & Response (AADR)** -- real-time security monitoring with Sigma rules and LLM-powered triage.
+**AI Agent Detection & Response (AADR)** — real-time security monitoring with Sigma rules and LLM-powered triage.
 
 ## What is AgentShield?
 
@@ -259,8 +259,8 @@ The plugin registers as `agentshield` in OpenClaw's plugin system. The installer
           "enabled": true,
           "endpoint": "http://127.0.0.1:8433/api/v1/evaluate",
           "auth_token": "<generated-token>",
-          "timeout_ms": 100,
-          "timeout_policy": "allow"
+          "timeout_ms": 200,
+          "timeout_policy": "block"
         }
       }
     }

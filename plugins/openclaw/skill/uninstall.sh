@@ -5,7 +5,7 @@ set -e
 # AgentShield Uninstaller - v2.0.0
 # Clean removal of single Go binary architecture
 
-INSTALL_DIR="$HOME/.agentshield"
+INSTALL_DIR="${AGENTSHIELD_HOME:-$HOME/.agentshield}"
 SERVICE_NAME="agentshield-engine"
 
 # Colors for output
@@ -41,6 +41,18 @@ confirm_removal() {
 stop_service() {
     local os
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+    # Kill E2E process if running
+    local e2e_pid_file="$INSTALL_DIR/agentshield-e2e.pid"
+    if [ -f "$e2e_pid_file" ]; then
+        local e2e_pid
+        e2e_pid=$(cat "$e2e_pid_file")
+        if kill -0 "$e2e_pid" 2>/dev/null; then
+            log "Stopping E2E process (PID $e2e_pid)..."
+            kill "$e2e_pid" 2>/dev/null || true
+        fi
+        rm -f "$e2e_pid_file"
+    fi
 
     if [ "$os" = "darwin" ]; then
         log "Stopping AgentShield launchd service..."
@@ -78,7 +90,7 @@ revert_openclaw_config() {
     
     # Try openclaw config patch to disable
     if command -v openclaw >/dev/null 2>&1; then
-        openclaw config patch plugins.agentshield.enabled=false 2>/dev/null && {
+        openclaw config patch plugins.entries.agentshield.enabled=false 2>/dev/null && {
             log "OpenClaw configuration reverted via CLI"
             return
         }
