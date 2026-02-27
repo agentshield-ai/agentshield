@@ -1,0 +1,12 @@
+.git
+.github
+.beads
+.claude
+bench/results
+bin/
+design/
+docs/
+plugins/
+scripts/
+*.md
+LICENSE
