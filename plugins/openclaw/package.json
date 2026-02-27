@@ -29,7 +29,8 @@
     "openclaw": ">=2026.2.0"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.ts"
   },
   "devDependencies": {
     "vitest": "^4.0.0"
