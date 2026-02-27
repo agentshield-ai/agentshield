@@ -97,7 +97,7 @@ describe("plugin + real engine integration", () => {
   describe("detection accuracy", () => {
     beforeEach(async () => {
       // Small delay between tests to avoid engine rate limiting
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 200));
     });
 
     for (const tc of testCases) {
