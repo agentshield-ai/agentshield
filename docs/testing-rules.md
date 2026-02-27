@@ -167,39 +167,23 @@ Watch the AgentShield terminal for notifications like:
 In another terminal:
 ```bash
 # List all alerts
-<<<<<<< HEAD
 agentshield alerts
 
 # List only high/critical alerts
-agentshield alerts --severity high
-agentshield alerts --severity critical
+agentshield alerts --level high
+agentshield alerts --level critical
 
 # Show recent 20 alerts
 agentshield alerts --limit 20
-=======
-./bin/agentshield alerts
-
-# List only high/critical alerts
-./bin/agentshield alerts --level high
-./bin/agentshield alerts --level critical
-
-# Show recent 20 alerts
-./bin/agentshield alerts --limit 20
->>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
 ```
 
 ### Check alert details
 ```bash
-<<<<<<< HEAD
 # List loaded rules
 agentshield rules list
-=======
-# Generate summary report
-./bin/agentshield summary
 
 # Show rule statistics
-./bin/agentshield rules --stats
->>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
+agentshield rules --stats
 ```
 
 ## Triage Behavior
@@ -237,11 +221,7 @@ agentshield rules list
 
 4. **Terminal 2** - Check alerts:
    ```bash
-<<<<<<< HEAD
    agentshield alerts --limit 5
-=======
-   ./bin/agentshield alerts --limit 5
->>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
    ```
 
 ## Safety Notes
@@ -254,16 +234,9 @@ agentshield rules list
 ## Troubleshooting
 
 **No alerts appearing:**
-<<<<<<< HEAD
 - Check AgentShield is running: `curl http://localhost:8433/api/v1/health`
 - Verify configuration in `config.yaml`
 - Look for errors in AgentShield terminal output
-=======
-- Check AgentShield is running: `./bin/agentshield status`
-- Verify log paths in `~/.agentshield/config.yaml`
-- Check the agent log file exists
-- Look for errors in AgentShield terminal
->>>>>>> 3fcd9ec (docs: fix library names, Go version, stale Python-era commands, personal paths)
 
 **Alerts marked as SUSPICIOUS:**
 - Set `ANTHROPIC_API_KEY` for LLM triage
@@ -272,5 +245,5 @@ agentshield rules list
 
 **Missing tool calls:**
 - Ensure the AI agent is actually executing commands (not just planning)
-- Check collector is reading latest log position
-- Verify timestamp is recent in the agent log file
+- Check that tool calls are being intercepted by the plugin
+- Verify the agent is using a tool type in the plugin's `intercept` list

@@ -1,27 +1,22 @@
-# Docs Index (Production-Focused)
+# Docs Index
 
-This directory intentionally keeps only operational and developer-facing docs needed to run, secure, and extend AgentShield.
+Operational and developer-facing docs needed to run, secure, and extend AgentShield.
 
-## Core runbook docs
-- `QUICK_START.md` — shortest path to local run + first validation
-- `deployment.md` — production deployment and transport security guidance
-- `configuration.md` — full config reference and defaults
-- `api.md` — HTTP API contract and examples
-- `triage.md` — fast/deep triage behavior and controls
+## Core runbook
+- [deployment.md](deployment.md) — installation, daemon setup, and transport security
+- [configuration.md](configuration.md) — full config reference and defaults
+- [api.md](api.md) — HTTP API contract and examples
+- [triage.md](triage.md) — fast/deep triage behaviour and controls
 
-## Detection/rule docs
-- `rules.md` — rule model and authoring notes
-- `TESTING_RULES.md` — rule test strategy and workflow
+## Detection and rules
+- [rules.md](rules.md) — rule model and authoring guide
+- [testing-rules.md](testing-rules.md) — rule test strategy and workflow
+- [rules-source.md](rules-source.md) — upstream Sigma-AI rule strategy
 
 ## Evaluation and benchmarks
-- `EVALUATION.md` — AgentShieldBench benchmark harness
-- `SKILLS_ABUSE_EVAL.md` — skills/plugin abuse evaluation suite
-- `RULES_SOURCE.md` — upstream sigma-ai rule strategy
+- [evaluation.md](evaluation.md) — AgentShieldBench benchmark harness
+- [skills-abuse-eval.md](skills-abuse-eval.md) — skills/plugin abuse evaluation suite
 
-## Ops docs
-- `log_rotation.md` — log retention, database maintenance, structured logging
-- `architecture.md` — high-level engine architecture
-
----
-
-Planning notes and historical design drafts are intentionally kept out of this folder to reduce drift and maintenance overhead.
+## Operations
+- [log_rotation.md](log_rotation.md) — log retention, database maintenance, structured logging
+- [architecture.md](architecture.md) — high-level engine architecture

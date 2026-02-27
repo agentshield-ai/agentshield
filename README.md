@@ -93,7 +93,7 @@ Complete documentation for deployment and usage:
 - [**Configuration**](docs/configuration.md) - Complete config options
 - [**Deployment Guide**](docs/deployment.md) - Production setup
 - [**Triage System**](docs/triage.md) - AI-powered alert analysis
-- [**Quick Start**](docs/QUICK_START.md) - Get running in minutes
+- [**Rules Guide**](docs/rules.md) - Sigma rule authoring
 
 ## Quick Start
 
