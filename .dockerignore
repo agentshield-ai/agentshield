@@ -2,7 +2,7 @@
 .github
 .beads
 .claude
-bench/results
+bench/
 bin/
 design/
 docs/
