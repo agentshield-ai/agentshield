@@ -31,6 +31,7 @@ install_via_go() {
     log "Installing via Go..."
     go install "github.com/$REPO/cmd/agentshield@latest" || error "Go install failed"
     GOBIN=${GOBIN:-$(go env GOPATH)/bin}
+    mkdir -p "$INSTALL_DIR"
     cp "$GOBIN/agentshield" "$INSTALL_DIR/$BINARY_NAME" || error "Failed to copy Go binary"
 }
 
