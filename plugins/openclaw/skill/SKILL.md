@@ -1,3 +1,11 @@
+---
+name: agentshield
+description: "AI Agent Detection & Response -- real-time security monitoring with Sigma rules and LLM-powered triage"
+homepage: "https://github.com/agentshield-ai/agentshield"
+user-invocable: true
+metadata: {"openclaw":{"requires":{"anyBins":["go","curl"]},"os":["darwin","linux"]}}
+---
+
 # AgentShield
 
 **AI Agent Detection & Response (AADR)** -- real-time security monitoring with Sigma rules and LLM-powered triage.
