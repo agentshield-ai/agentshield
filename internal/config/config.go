@@ -74,7 +74,6 @@ type CorrelationConfig struct {
 
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
-<<<<<<< HEAD
 	Enabled         bool              `yaml:"enabled"`
 	Provider        string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
 	Model           string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
