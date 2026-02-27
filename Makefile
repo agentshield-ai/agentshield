@@ -1,4 +1,4 @@
-.PHONY: build test clean run bench bench-all
+.PHONY: build test clean run bench bench-all test-integration test-integration-docker docker-build
 
 # Go binary path
 GO ?= go
@@ -39,3 +39,15 @@ bench-all: bench-build
 deps:
 	$(GO) mod tidy
 	$(GO) mod download
+
+# Integration tests (requires engine binary)
+test-integration: build
+	cd plugins/openclaw && npm run test:integration
+
+# Integration tests via Docker
+test-integration-docker: docker-build
+	cd plugins/openclaw && AGENTSHIELD_ENGINE_MODE=docker npm run test:integration
+
+# Build Docker engine image
+docker-build:
+	docker build -t agentshield-engine:test -f docker/engine.Dockerfile .
