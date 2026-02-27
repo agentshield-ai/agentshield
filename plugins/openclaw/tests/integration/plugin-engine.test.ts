@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import plugin from "../../index.js";
 import { EngineHarness } from "./engine-harness.js";
@@ -95,6 +95,11 @@ describe("plugin + real engine integration", () => {
   });
 
   describe("detection accuracy", () => {
+    beforeEach(async () => {
+      // Small delay between tests to avoid engine rate limiting
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
     for (const tc of testCases) {
       it(`${tc.expected === "allow" ? "allows" : "blocks"} ${tc.id}: ${tc.description ?? tc.id}`, async () => {
         const result = await hooks.before_tool_call(
@@ -112,6 +117,9 @@ describe("plugin + real engine integration", () => {
           expect(result).toBeDefined();
           expect(result!.block).toBe(true);
           expect(result!.blockReason).toBeTruthy();
+          // Ensure block is from an actual rule match, not fail-closed timeout policy
+          expect(result!.blockReason).not.toContain("unavailable");
+          expect(result!.blockReason).not.toContain("fail-closed");
         }
       });
     }
