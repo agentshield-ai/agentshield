@@ -31,6 +31,10 @@ AgentShield protects AI agents by:
    Events               & Triage           & Logic
 ```
 
+## Platform Support
+
+AgentShield targets **Linux** (server-side agent deployments) and **macOS** (local development). Detection rules assume Unix/POSIX command semantics; Windows-specific rules are not yet included. See [PLATFORMS.md](PLATFORMS.md) for full details, rationale, and contribution guidance.
+
 ## Components
 
 ### 🔧 Go Engine ([`cmd/`](cmd/) • [`internal/`](internal/) • [`pkg/sigma/`](pkg/sigma/))
