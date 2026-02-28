@@ -49,7 +49,7 @@ const (
 // TriageAgentConfig configures the OpenClaw triage agent's personality and capabilities.
 // Users can customise this to create a specialised security analyst agent.
 type TriageAgentConfig struct {
-	SystemPrompt           string   `yaml:"system_prompt"`              // Custom agent personality (default: SOC analyst)
+	SystemPrompt           string   `yaml:"system_prompt"`             // Custom agent personality (default: SOC analyst)
 	Model                  string   `yaml:"model"`                     // Override model for triage agent
 	AgentID                string   `yaml:"agent_id"`                  // OpenClaw agent ID (optional)
 	Thinking               string   `yaml:"thinking"`                  // Thinking mode: "off", "low", "high"
@@ -76,10 +76,12 @@ type CorrelationConfig struct {
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
 	Enabled         bool              `yaml:"enabled"`
-	Provider        string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
-	Model           string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-	APIKey          string            `yaml:"api_key"`           // env: AGENTSHIELD_TRIAGE_API_KEY
-	BaseURL         string            `yaml:"base_url"`          // custom base URL (e.g. https://openrouter.ai/api/v1)
+	Provider        string            `yaml:"provider"`      // "openai", "anthropic", or "openclaw"
+	Model           string            `yaml:"model"`         // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
+	APIKey          string            `yaml:"api_key"`       // env: AGENTSHIELD_TRIAGE_API_KEY
+	BaseURL         string            `yaml:"base_url"`      // custom base URL (e.g. https://openrouter.ai/api/v1)
+	GatewayURL      string            `yaml:"gateway_url"`   // OpenClaw gateway URL (default: http://127.0.0.1:18789)
+	GatewayToken    string            `yaml:"gateway_token"` // OpenClaw gateway token (env: OPENCLAW_GATEWAY_TOKEN)
 	MaxTokens       int               `yaml:"max_tokens"`
 	TimeoutSec      int               `yaml:"timeout_sec"`
 	HealthCheckMode string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
@@ -289,7 +291,14 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// SECURITY: Validate triage URLs for SSRF protection
-	if cfg.Triage.BaseURL != "" {
+	if cfg.Triage.Provider == "openclaw" {
+		// OpenClaw gateway is intentionally localhost — skip HTTPS/private checks for base_url
+		if cfg.Triage.GatewayURL != "" {
+			if _, err := url.Parse(cfg.Triage.GatewayURL); err != nil {
+				return fmt.Errorf("triage gateway_url is not a valid URL: %w", err)
+			}
+		}
+	} else if cfg.Triage.BaseURL != "" {
 		if !strings.HasPrefix(cfg.Triage.BaseURL, "https://") {
 			return fmt.Errorf("triage base_url must use HTTPS for security")
 		}

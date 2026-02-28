@@ -468,6 +468,29 @@ func TestNewTriager(t *testing.T) {
 			expectError: true,
 			expectNil:   false,
 		},
+		{
+			name: "Valid OpenClaw config",
+			config: &config.TriageConfig{
+				Enabled:      true,
+				Provider:     "openclaw",
+				Model:        "anthropic/claude-sonnet-4-20250514",
+				GatewayToken: "test-token-32-chars-long-minimum!",
+				MaxTokens:    500,
+				TimeoutSec:   10,
+			},
+			expectError: false,
+			expectNil:   false,
+		},
+		{
+			name: "OpenClaw missing token",
+			config: &config.TriageConfig{
+				Enabled:  true,
+				Provider: "openclaw",
+				Model:    "anthropic/claude-sonnet-4-20250514",
+			},
+			expectError: true,
+			expectNil:   false,
+		},
 	}
 
 	for _, test := range tests {
@@ -2127,6 +2150,338 @@ func TestHealthCheckConnectivityMode(t *testing.T) {
 
 		if requestedMethod != "POST" {
 			t.Errorf("expected POST for full mode, got %s", requestedMethod)
+		}
+	})
+}
+
+func TestOpenClawProvider(t *testing.T) {
+	// Mock OpenClaw gateway
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// Verify request format
+		var reqBody openclawToolsInvokeRequest
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		if reqBody.Tool != "completions" {
+			t.Errorf("Expected tool 'completions', got %s", reqBody.Tool)
+		}
+
+		response := openclawToolsInvokeResponse{
+			OK: true,
+			Result: &openclawToolsResult{
+				Status: "ok",
+				Result: `{"verdict": "investigate", "confidence": 0.75, "reasoning": "Needs review", "suggested_action": "Review manually"}`,
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	cfg := &config.TriageConfig{
+		Enabled:      true,
+		Provider:     "openclaw",
+		Model:        "anthropic/claude-sonnet-4-20250514",
+		GatewayToken: "test-token",
+		MaxTokens:    500,
+		TimeoutSec:   10,
+	}
+
+	provider := &OpenClawProvider{
+		config:       cfg,
+		client:       createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
+		gatewayURL:   server.URL,
+		gatewayToken: "test-token",
+	}
+
+	ctx := context.Background()
+	triageCtx := &TriageContext{
+		Alert: engine.RuleResult{
+			RuleName:    "test-rule",
+			Description: "Test rule",
+			Severity:    engine.SeverityHigh,
+			Matched:     true,
+		},
+		Request: &models.EvaluationRequest{
+			EventID: "test-event",
+			Tool:    "test-tool",
+		},
+	}
+
+	result, err := provider.Triage(ctx, triageCtx)
+	if err != nil {
+		t.Fatalf("Triage failed: %v", err)
+	}
+
+	if result.Verdict != "investigate" {
+		t.Errorf("Expected verdict 'investigate', got %s", result.Verdict)
+	}
+
+	if result.Confidence != 0.75 {
+		t.Errorf("Expected confidence 0.75, got %f", result.Confidence)
+	}
+
+	if result.Provider != "openclaw" {
+		t.Errorf("Expected provider 'openclaw', got %s", result.Provider)
+	}
+
+	if result.Model != "anthropic/claude-sonnet-4-20250514" {
+		t.Errorf("Expected model 'anthropic/claude-sonnet-4-20250514', got %s", result.Model)
+	}
+}
+
+func TestNewOpenClawProvider(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *config.TriageConfig
+		expectError bool
+	}{
+		{
+			name: "Valid config with token",
+			config: &config.TriageConfig{
+				GatewayToken: "test-token",
+				Model:        "anthropic/claude-sonnet-4-20250514",
+				MaxTokens:    500,
+				TimeoutSec:   10,
+			},
+			expectError: false,
+		},
+		{
+			name: "Missing token",
+			config: &config.TriageConfig{
+				Model:      "anthropic/claude-sonnet-4-20250514",
+				MaxTokens:  500,
+				TimeoutSec: 10,
+			},
+			expectError: true,
+		},
+		{
+			name: "Custom gateway URL",
+			config: &config.TriageConfig{
+				GatewayURL:   "http://localhost:9999",
+				GatewayToken: "test-token",
+				Model:        "anthropic/claude-sonnet-4-20250514",
+				MaxTokens:    500,
+				TimeoutSec:   10,
+			},
+			expectError: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider, err := NewOpenClawProvider(test.config)
+
+			if test.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if provider == nil {
+				t.Error("Expected non-nil provider")
+				return
+			}
+
+			if provider.Name() != "openclaw" {
+				t.Errorf("Expected provider name 'openclaw', got %s", provider.Name())
+			}
+
+			if test.config.GatewayURL != "" && provider.gatewayURL != test.config.GatewayURL {
+				t.Errorf("Expected gateway URL %s, got %s", test.config.GatewayURL, provider.gatewayURL)
+			}
+
+			if test.config.GatewayURL == "" && provider.gatewayURL != "http://127.0.0.1:18789" {
+				t.Errorf("Expected default gateway URL http://127.0.0.1:18789, got %s", provider.gatewayURL)
+			}
+		})
+	}
+}
+
+func TestOpenClawProviderErrors(t *testing.T) {
+	t.Run("Gateway returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := openclawToolsInvokeResponse{
+				OK: false,
+				Error: &openclawToolsError{
+					Type:    "invalid_request",
+					Message: "model not found",
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "bad-model", MaxTokens: 500, TimeoutSec: 10},
+			client:       createLocalHTTPClient(10 * time.Second),
+			gatewayURL:   server.URL,
+			gatewayToken: "test-token",
+		}
+
+		_, err := provider.Triage(context.Background(), &TriageContext{
+			Alert:   engine.RuleResult{RuleName: "test", Severity: engine.SeverityHigh, Matched: true},
+			Request: &models.EvaluationRequest{EventID: "e1", Tool: "bash"},
+		})
+		if err == nil {
+			t.Fatal("Expected error from gateway error response")
+		}
+		if !strings.Contains(err.Error(), "model not found") {
+			t.Errorf("Expected error to contain 'model not found', got: %v", err)
+		}
+	})
+
+	t.Run("Gateway returns HTTP 500", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("internal error"))
+		}))
+		defer server.Close()
+
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "test-model", MaxTokens: 500, TimeoutSec: 2},
+			client:       createLocalHTTPClient(2 * time.Second),
+			gatewayURL:   server.URL,
+			gatewayToken: "test-token",
+		}
+
+		_, err := provider.Triage(context.Background(), &TriageContext{
+			Alert:   engine.RuleResult{RuleName: "test", Severity: engine.SeverityHigh, Matched: true},
+			Request: &models.EvaluationRequest{EventID: "e1", Tool: "bash"},
+		})
+		if err == nil {
+			t.Fatal("Expected error from HTTP 500")
+		}
+	})
+
+	t.Run("Gateway returns empty result", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := openclawToolsInvokeResponse{
+				OK:     true,
+				Result: &openclawToolsResult{Status: "ok", Result: ""},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "test-model", MaxTokens: 500, TimeoutSec: 10},
+			client:       createLocalHTTPClient(10 * time.Second),
+			gatewayURL:   server.URL,
+			gatewayToken: "test-token",
+		}
+
+		_, err := provider.Triage(context.Background(), &TriageContext{
+			Alert:   engine.RuleResult{RuleName: "test", Severity: engine.SeverityHigh, Matched: true},
+			Request: &models.EvaluationRequest{EventID: "e1", Tool: "bash"},
+		})
+		if err == nil {
+			t.Fatal("Expected error from empty result")
+		}
+		if !strings.Contains(err.Error(), "no content") {
+			t.Errorf("Expected 'no content' error, got: %v", err)
+		}
+	})
+
+	t.Run("Gateway returns unauthorized", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "test-model", MaxTokens: 500, TimeoutSec: 10},
+			client:       createLocalHTTPClient(10 * time.Second),
+			gatewayURL:   server.URL,
+			gatewayToken: "bad-token",
+		}
+
+		_, err := provider.Triage(context.Background(), &TriageContext{
+			Alert:   engine.RuleResult{RuleName: "test", Severity: engine.SeverityHigh, Matched: true},
+			Request: &models.EvaluationRequest{EventID: "e1", Tool: "bash"},
+		})
+		if err == nil {
+			t.Fatal("Expected error from unauthorized response")
+		}
+		if !strings.Contains(err.Error(), "authentication failed") {
+			t.Errorf("Expected 'authentication failed' error, got: %v", err)
+		}
+	})
+}
+
+func TestOpenClawProviderHealthCheck(t *testing.T) {
+	t.Run("Connectivity mode success", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := openclawToolsInvokeResponse{
+				OK:     true,
+				Result: &openclawToolsResult{Status: "ok", Result: "."},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "test", TimeoutSec: 10, HealthCheckMode: "connectivity"},
+			client:       createLocalHTTPClient(10 * time.Second),
+			gatewayURL:   server.URL,
+			gatewayToken: "test-token",
+		}
+
+		if err := provider.HealthCheck(context.Background()); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("Full mode success", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := openclawToolsInvokeResponse{
+				OK:     true,
+				Result: &openclawToolsResult{Status: "ok", Result: "Test response"},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "test", TimeoutSec: 10, HealthCheckMode: "full"},
+			client:       createLocalHTTPClient(10 * time.Second),
+			gatewayURL:   server.URL,
+			gatewayToken: "test-token",
+		}
+
+		if err := provider.HealthCheck(context.Background()); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("Gateway down", func(t *testing.T) {
+		provider := &OpenClawProvider{
+			config:       &config.TriageConfig{Model: "test", TimeoutSec: 1, HealthCheckMode: "connectivity"},
+			client:       createLocalHTTPClient(1 * time.Second),
+			gatewayURL:   "http://127.0.0.1:1", // nothing listening
+			gatewayToken: "test-token",
+		}
+
+		if err := provider.HealthCheck(context.Background()); err == nil {
+			t.Error("Expected error when gateway is unreachable")
 		}
 	})
 }

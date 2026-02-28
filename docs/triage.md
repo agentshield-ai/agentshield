@@ -13,7 +13,7 @@ Event → Rule Engine → Alert Generated
                          ↓
                  ┌─────────────────┐
                  │   FAST TRIAGE   │ ← Synchronous (~4s)
-                 │  (In request)   │   OpenAI/Anthropic API
+                 │  (In request)   │   OpenAI/Anthropic/OpenClaw
                  └─────────────────┘
                          ↓
               ┌─────────────────────┐
@@ -37,7 +37,7 @@ Event → Rule Engine → Alert Generated
 - **Speed**: ~4 seconds response time
 - **Scope**: In-request processing
 - **Triggers**: High and Critical severity alerts only
-- **Providers**: OpenAI or Anthropic APIs
+- **Providers**: OpenAI, Anthropic, or OpenClaw gateway
 - **Context**: Limited to alert data and recent events
 
 **When It Triggers**:
@@ -106,6 +106,20 @@ triage:
   max_tokens: 500
   timeout_sec: 10
 ```
+
+#### OpenClaw Provider
+```yaml
+triage:
+  enabled: true
+  provider: "openclaw"
+  model: "anthropic/claude-sonnet-4-20250514"
+  gateway_url: "http://127.0.0.1:18789"  # default
+  gateway_token: "${OPENCLAW_GATEWAY_TOKEN}"
+  max_tokens: 500
+  timeout_sec: 10
+```
+
+Routes fast triage through your local OpenClaw gateway using the synchronous `completions` tool. Token resolution: config field → `OPENCLAW_GATEWAY_TOKEN` env → `~/.openclaw/openclaw.json` file.
 
 #### OpenRouter Integration
 ```yaml
@@ -378,7 +392,7 @@ ORDER BY dt.created_at DESC;
 - **OpenAI GPT-4o-mini**: ~$0.001 per alert
 - **Anthropic Claude Haiku**: ~$0.002 per alert  
 - **OpenRouter**: Variable, often 50-80% cheaper than direct APIs
-- **OpenClaw**: Uses your existing OpenClaw credits
+- **OpenClaw** (`provider: "openclaw"`): Uses your existing OpenClaw credits, no separate API key needed
 
 ### Deep Triage Costs
 - **Only fires for high-priority alerts** (default: critical only)
@@ -448,6 +462,14 @@ grep -A5 "triage:" config.yaml
 # Check API key and connectivity
 curl -H "Authorization: Bearer $OPENAI_API_KEY" \
   https://api.openai.com/v1/models
+```
+
+**Symptom**: "OpenClaw completions failed" or "authentication failed"
+```bash
+# Check OpenClaw gateway is running and token is valid
+curl -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN" \
+  http://localhost:18789/tools/invoke \
+  -d '{"tool":"completions","args":{"model":"test","prompt":".","max_tokens":1}}'
 ```
 
 ### Deep Triage Issues

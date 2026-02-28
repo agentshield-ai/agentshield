@@ -84,8 +84,10 @@ func NewTriager(cfg *config.TriageConfig, store *store.Store) (*Triager, error) 
 		provider, err = NewOpenAIProvider(cfg)
 	case "anthropic":
 		provider, err = NewAnthropicProvider(cfg)
+	case "openclaw":
+		provider, err = NewOpenClawProvider(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported triage provider: %s (supported: openai, anthropic)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported triage provider: %s (supported: openai, anthropic, openclaw)", cfg.Provider)
 	}
 
 	if err != nil {
