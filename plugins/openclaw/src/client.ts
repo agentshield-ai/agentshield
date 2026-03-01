@@ -15,7 +15,7 @@ type Logger = {
 
 const CONTRACT_VERSION = "1.0.0";
 
-const VALID_ACTIONS = new Set(["allow", "block", "log"]);
+const VALID_ACTIONS = new Set(["allow", "block", "log", "require_approval"]);
 
 /**
  * HTTP client for communicating with the AgentShield real-time receiver.
