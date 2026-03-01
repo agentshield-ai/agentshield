@@ -81,16 +81,20 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 		cacheKey = cache.CacheKey(req.Tool, req.Args)
 		if cached, ok := e.cache.Get(cacheKey); ok {
 			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
-			return &EvaluationResponse{
+			resp := &EvaluationResponse{
 				EventID:       req.EventID,
 				Action:        cached.Action,
 				Alerts:        cached.Alerts,
 				TriageResults: cached.TriageResults,
-				Overridable:   false,
+				Overridable:   cached.Overridable,
 				EffectiveMode: effectiveMode,
 				Cached:        true,
 				Timestamp:     time.Now(),
-			}, nil
+			}
+			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
+				resp.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+			}
+			return resp, nil
 		}
 	}
 
@@ -154,6 +158,7 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 			Action:        response.Action,
 			Alerts:        response.Alerts,
 			TriageResults: response.TriageResults,
+			Overridable:   response.Overridable,
 			CachedAt:      time.Now(),
 		})
 	}

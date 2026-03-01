@@ -19,6 +19,7 @@ type CachedVerdict struct {
 	Action        models.Action        `json:"action"`
 	Alerts        []engine.RuleResult  `json:"alerts"`
 	TriageResults []triage.TriageResult `json:"triage_results,omitempty"`
+	Overridable   bool                 `json:"overridable"`
 	CachedAt      time.Time            `json:"cached_at"`
 }
 
