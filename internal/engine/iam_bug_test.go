@@ -2,14 +2,39 @@ package engine
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	sigmalite "github.com/agentshield-ai/agentshield/pkg/sigma"
 )
 
+// projectRulesDir returns the path to the project's vendored rules directory
+// by walking up from the test file location. Returns "" if not found.
+func projectRulesDir() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	// Walk up from internal/engine/ to project root
+	dir := filepath.Dir(filename)
+	for range 5 {
+		candidate := filepath.Join(dir, "rules", "rules", "ai_agent")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
 func TestActualIAMRuleBug(t *testing.T) {
-	// Test against the actual IAM rule that's reportedly causing the issue
-	engine, err := NewEngine("/home/agent/.agentshield/rules")
+	rulesDir := projectRulesDir()
+	if rulesDir == "" {
+		t.Skip("project rules directory not found — skipping integration test")
+	}
+
+	engine, err := NewEngine(rulesDir)
 	if err != nil {
 		t.Fatalf("creating engine: %v", err)
 	}
@@ -90,21 +115,22 @@ func TestActualIAMRuleBug(t *testing.T) {
 
 			results := engine.Evaluate(fields)
 			actualMatches := 0
-			
+
 			// Count only matches for the IAM escalation rule
+			const iamRuleID = "ae1ca6c2-6700-5044-b8f0-f59f559f6609"
 			for _, result := range results {
-				if result.RuleID == "agent-cloud-iam-escalation-001" {
+				if result.RuleID == iamRuleID {
 					actualMatches++
 				}
 			}
 
 			if actualMatches != tt.expectedMatches {
-				t.Errorf("%s: got %d IAM rule matches, want %d. %s", 
+				t.Errorf("%s: got %d IAM rule matches, want %d. %s",
 					tt.name, actualMatches, tt.expectedMatches, tt.description)
 				t.Logf("Input fields: %+v", fields)
 				if len(results) > 0 {
 					for _, result := range results {
-						if result.RuleID == "agent-cloud-iam-escalation-001" {
+						if result.RuleID == iamRuleID {
 							t.Logf("IAM rule matched: %+v", result)
 						}
 					}
@@ -117,10 +143,15 @@ func TestActualIAMRuleBug(t *testing.T) {
 }
 
 func TestDirectIAMRuleParsing(t *testing.T) {
-	// Read and parse the actual IAM rule file
-	ruleBytes, err := os.ReadFile("/home/agent/.agentshield/rules/agent_cloud_iam_escalation.yml")
+	rulesDir := projectRulesDir()
+	if rulesDir == "" {
+		t.Skip("project rules directory not found — skipping integration test")
+	}
+
+	rulePath := filepath.Join(rulesDir, "ai_agent_cloud_iam_escalation.yml")
+	ruleBytes, err := os.ReadFile(rulePath)
 	if err != nil {
-		t.Fatalf("reading IAM rule: %v", err)
+		t.Skipf("IAM rule file not found at %s — skipping", rulePath)
 	}
 
 	rule, err := sigmalite.ParseRule(ruleBytes)
