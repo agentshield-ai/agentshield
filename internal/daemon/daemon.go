@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
@@ -30,6 +31,7 @@ type Daemon struct {
 	triager         *triage.Triager
 	evaluator       *evaluate.Evaluator
 	server          *server.Server
+	verdictCache    *cache.VerdictCache
 	retentionCancel context.CancelFunc
 }
 
@@ -241,8 +243,18 @@ func (d *Daemon) initComponents() error {
 	d.evaluator = evaluate.NewEvaluator(d.engine, d.config.EvaluationMode, feedbackURL, triager, deepTriager)
 	d.logger.Info("Evaluator initialized", "mode", string(d.config.EvaluationMode))
 
+	// Initialize verdict cache
+	if d.config.Cache.Enabled {
+		ttl := time.Duration(d.config.Cache.TTLSec) * time.Second
+		d.verdictCache = cache.NewVerdictCache(d.config.Cache.MaxSize, ttl)
+		d.evaluator.SetCache(d.verdictCache)
+		d.logger.Info("Verdict cache initialized", "max_size", d.config.Cache.MaxSize, "ttl_sec", d.config.Cache.TTLSec)
+	} else {
+		d.logger.Info("Verdict cache disabled")
+	}
+
 	// Initialize server
-	srv, err := server.NewServer(d.config, d.evaluator, d.store, triager)
+	srv, err := server.NewServer(d.config, d.evaluator, d.store, triager, d.verdictCache)
 	if err != nil {
 		return fmt.Errorf("initializing server: %w", err)
 	}
@@ -252,13 +264,23 @@ func (d *Daemon) initComponents() error {
 	return nil
 }
 
-// reloadRules reloads the rule engine
+// reloadRules reloads the rule engine and invalidates the verdict cache.
 func (d *Daemon) reloadRules() error {
 	if d.engine == nil {
 		return fmt.Errorf("engine not initialized")
 	}
 
-	return d.engine.LoadRules()
+	if err := d.engine.LoadRules(); err != nil {
+		return err
+	}
+
+	// Invalidate cached verdicts so stale results are not served
+	if d.verdictCache != nil {
+		d.verdictCache.Invalidate()
+		d.logger.Info("Verdict cache invalidated after rule reload")
+	}
+
+	return nil
 }
 
 func (d *Daemon) startRetentionLoop() {

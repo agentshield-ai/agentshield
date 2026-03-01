@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
@@ -33,6 +34,7 @@ type EvaluationResponse struct {
 	Overridable   bool                  `json:"overridable"`
 	EffectiveMode config.EvaluationMode `json:"effective_mode"`
 	FeedbackURL   string                `json:"feedback_url,omitempty"`
+	Cached        bool                  `json:"cached"`
 	Timestamp     time.Time             `json:"timestamp"`
 }
 
@@ -49,6 +51,7 @@ type Evaluator struct {
 	feedbackURLBase string
 	triager         TriageService
 	deepTriager     DeepTriageService
+	cache           *cache.VerdictCache
 }
 
 // NewEvaluator creates a new evaluator
@@ -62,10 +65,38 @@ func NewEvaluator(eng RuleEvaluator, defaultMode config.EvaluationMode, feedback
 	}
 }
 
+// SetCache attaches a verdict cache to the evaluator. If nil, caching is disabled.
+func (e *Evaluator) SetCache(c *cache.VerdictCache) {
+	e.cache = c
+}
+
 // Evaluate processes an evaluation request and returns the appropriate response
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
 	// Determine effective evaluation mode (server-side only)
 	effectiveMode := e.determineEffectiveMode()
+
+	// Check verdict cache before running rule evaluation
+	var cacheKey string
+	if e.cache != nil {
+		cacheKey = cache.CacheKey(req.Tool, req.Args)
+		if cached, ok := e.cache.Get(cacheKey); ok {
+			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
+			resp := &EvaluationResponse{
+				EventID:       req.EventID,
+				Action:        cached.Action,
+				Alerts:        cached.Alerts,
+				TriageResults: cached.TriageResults,
+				Overridable:   cached.Overridable,
+				EffectiveMode: effectiveMode,
+				Cached:        true,
+				Timestamp:     time.Now(),
+			}
+			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
+				resp.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+			}
+			return resp, nil
+		}
+	}
 
 	// Run rule evaluation (engine now only returns matched rules)
 	alerts := e.engine.Evaluate(req.Fields)
@@ -121,6 +152,17 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 	// Add feedback URL if there are alerts
 	if len(alerts) > 0 && e.feedbackURLBase != "" {
 		response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+	}
+
+	// Store result in verdict cache
+	if e.cache != nil && cacheKey != "" {
+		e.cache.Set(cacheKey, &cache.CachedVerdict{
+			Action:        response.Action,
+			Alerts:        response.Alerts,
+			TriageResults: response.TriageResults,
+			Overridable:   response.Overridable,
+			CachedAt:      time.Now(),
+		})
 	}
 
 	// Fire deep triage async once at the end
