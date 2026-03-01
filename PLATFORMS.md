@@ -17,10 +17,10 @@ Detection rules assume **Unix/POSIX command semantics** (e.g. `bash`, `chmod`, `
 | Integration | Language | Status |
 |-------------|----------|--------|
 | [OpenClaw](plugins/openclaw/) | TypeScript | Production-ready |
-| [Claude Code](plugins/claude/) | Bash hooks | Planned |
+| Claude Code | Bash hooks | Planned |
 | Generic HTTP API | Any | Available via `POST /api/v1/evaluate` |
 
-Any platform capable of making HTTP requests can integrate with AgentShield through the evaluation API. See the [API Reference](docs/api.md) for details.
+Any platform capable of making HTTP requests can integrate with AgentShield through the evaluation API.
 
 ## Windows Coverage
 
@@ -44,7 +44,7 @@ Windows-specific rules are welcome. To contribute:
 
 1. Follow the existing Sigma rule format under `rules/rules/ai_agent/`
 2. Use `logsource.product: ai_agent` with `category: agent_events` (consistent with existing rules)
-3. Add a `logsource.product: windows` tag if the rule is Windows-specific
+3. Use `tags` to denote platform-specific rules (e.g. `- platform.windows`)
 4. Name the file with the `ai_agent_` prefix (e.g. `ai_agent_windows_powershell_download.yml`)
 5. Include MITRE ATT&CK references where applicable
 6. Submit a pull request to the [sigma-ai](https://github.com/agentshield-ai/sigma-ai) upstream repository
