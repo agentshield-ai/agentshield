@@ -9,6 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/supplychain"
 	"github.com/agentshield-ai/agentshield/internal/triage"
 )
 
@@ -26,14 +27,15 @@ type TriageService interface {
 
 // EvaluationResponse represents the response from evaluation
 type EvaluationResponse struct {
-	EventID       string                `json:"event_id"`
-	Action        models.Action         `json:"action"`
-	Alerts        []engine.RuleResult   `json:"alerts"`
-	TriageResults []triage.TriageResult `json:"triage_results,omitempty"`
-	Overridable   bool                  `json:"overridable"`
-	EffectiveMode config.EvaluationMode `json:"effective_mode"`
-	FeedbackURL   string                `json:"feedback_url,omitempty"`
-	Timestamp     time.Time             `json:"timestamp"`
+	EventID            string                      `json:"event_id"`
+	Action             models.Action               `json:"action"`
+	Alerts             []engine.RuleResult         `json:"alerts"`
+	TriageResults      []triage.TriageResult       `json:"triage_results,omitempty"`
+	SupplyChainResults []supplychain.PackageResult `json:"supply_chain_results,omitempty"`
+	Overridable        bool                        `json:"overridable"`
+	EffectiveMode      config.EvaluationMode       `json:"effective_mode"`
+	FeedbackURL        string                      `json:"feedback_url,omitempty"`
+	Timestamp          time.Time                   `json:"timestamp"`
 }
 
 // DeepTriageService is the interface for async deep triage
@@ -42,13 +44,19 @@ type DeepTriageService interface {
 	InvestigateAsync(alerts []engine.RuleResult, req *models.EvaluationRequest, fastResults []triage.TriageResult)
 }
 
+// SupplyChainChecker is the interface for supply chain validation.
+type SupplyChainChecker interface {
+	CheckPackages(ctx context.Context, refs []supplychain.PackageRef) []supplychain.PackageResult
+}
+
 // Evaluator handles the evaluation of events according to different modes
 type Evaluator struct {
-	engine          RuleEvaluator
-	defaultMode     config.EvaluationMode
-	feedbackURLBase string
-	triager         TriageService
-	deepTriager     DeepTriageService
+	engine             RuleEvaluator
+	defaultMode        config.EvaluationMode
+	feedbackURLBase    string
+	triager            TriageService
+	deepTriager        DeepTriageService
+	supplyChainChecker SupplyChainChecker
 }
 
 // NewEvaluator creates a new evaluator
@@ -60,6 +68,11 @@ func NewEvaluator(eng RuleEvaluator, defaultMode config.EvaluationMode, feedback
 		triager:         triager,
 		deepTriager:     deepTriager,
 	}
+}
+
+// SetSupplyChainChecker sets an optional supply chain checker on the evaluator.
+func (e *Evaluator) SetSupplyChainChecker(checker SupplyChainChecker) {
+	e.supplyChainChecker = checker
 }
 
 // Evaluate processes an evaluation request and returns the appropriate response
@@ -78,6 +91,39 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 			criticalCount++
 		case engine.SeverityHigh:
 			highCount++
+		}
+	}
+
+	// Run supply chain checks if enabled
+	var scResults []supplychain.PackageResult
+	if e.supplyChainChecker != nil {
+		refs := supplychain.ExtractPackages(req.Tool, toInterfaceMap(req.Args))
+		if len(refs) > 0 {
+			ctx := context.Background()
+			scResults = e.supplyChainChecker.CheckPackages(ctx, refs)
+			for _, r := range scResults {
+				switch r.Verdict {
+				case supplychain.VerdictNotFound:
+					// Non-existent package is as severe as a critical rule match
+					criticalCount++
+					alerts = append(alerts, engine.RuleResult{
+						RuleID:      "supply-chain-not-found",
+						RuleName:    "Supply Chain: Package Not Found",
+						Severity:    engine.SeverityCritical,
+						Description: fmt.Sprintf("Package %q not found on %s — possible hallucinated dependency", r.Package.Name, r.Package.Registry),
+						Matched:     true,
+					})
+				case supplychain.VerdictSuspiciousAge:
+					// Suspiciously new package warrants a warning
+					alerts = append(alerts, engine.RuleResult{
+						RuleID:      "supply-chain-suspicious-age",
+						RuleName:    "Supply Chain: Suspiciously New Package",
+						Severity:    engine.SeverityMedium,
+						Description: fmt.Sprintf("Package %q on %s: %s", r.Package.Name, r.Package.Registry, r.Detail),
+						Matched:     true,
+					})
+				}
+			}
 		}
 	}
 
@@ -107,13 +153,14 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 
 	// Build response once
 	response := &EvaluationResponse{
-		EventID:       req.EventID,
-		Action:        action,
-		Alerts:        alerts,
-		TriageResults: triageResults,
-		Overridable:   overridable,
-		EffectiveMode: effectiveMode,
-		Timestamp:     time.Now(),
+		EventID:            req.EventID,
+		Action:             action,
+		Alerts:             alerts,
+		TriageResults:      triageResults,
+		SupplyChainResults: scResults,
+		Overridable:        overridable,
+		EffectiveMode:      effectiveMode,
+		Timestamp:          time.Now(),
 	}
 
 	// Add feedback URL if there are alerts
@@ -186,6 +233,19 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 	}
 
 	return baseAction, baseOverridable
+}
+
+// toInterfaceMap converts map[string]string to map[string]interface{} for the
+// supply chain extractor, which expects the more general type.
+func toInterfaceMap(m map[string]string) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // GetModeInfo returns information about evaluation modes

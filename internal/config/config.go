@@ -111,6 +111,14 @@ type TestContextConfig struct {
 	Token   string `yaml:"token" json:"-"`
 }
 
+// SupplyChainConfig holds supply-chain package validation settings.
+type SupplyChainConfig struct {
+	Enabled        bool `yaml:"enabled" json:"enabled"`
+	MinAgeDays     int  `yaml:"min_age_days" json:"min_age_days"`       // default 7
+	TimeoutSec     int  `yaml:"timeout_sec" json:"timeout_sec"`         // default 5
+	CheckDownloads bool `yaml:"check_downloads" json:"check_downloads"` // default true
+}
+
 type Config struct {
 	Server         ServerConfig      `yaml:"server" json:"server"`
 	Auth           AuthConfig        `yaml:"auth" json:"auth"`
@@ -118,6 +126,7 @@ type Config struct {
 	Store          StoreConfig       `yaml:"store" json:"store"`
 	Triage         TriageConfig      `yaml:"triage" json:"triage"`
 	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
+	SupplyChain    SupplyChainConfig `yaml:"supply_chain" json:"supply_chain"`
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
 	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
 	LogLevel       string            `yaml:"log_level" json:"log_level"`
@@ -163,6 +172,12 @@ func LoadConfig(path string) (*Config, error) {
 				TimeDecayHalfLifeSec: 300,
 				EscalateThreshold:    0.8,
 			},
+		},
+		SupplyChain: SupplyChainConfig{
+			Enabled:        false,
+			MinAgeDays:     7,
+			TimeoutSec:     5,
+			CheckDownloads: true,
 		},
 		TestContext: TestContextConfig{
 			Enabled: false,
