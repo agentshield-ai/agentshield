@@ -111,11 +111,19 @@ type TestContextConfig struct {
 	Token   string `yaml:"token" json:"-"`
 }
 
+// CacheConfig controls the verdict caching layer.
+type CacheConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`    // default true
+	MaxSize int  `yaml:"max_size" json:"max_size"`  // default 10000
+	TTLSec  int  `yaml:"ttl_sec" json:"ttl_sec"`    // default 300 (5 minutes)
+}
+
 type Config struct {
 	Server         ServerConfig      `yaml:"server" json:"server"`
 	Auth           AuthConfig        `yaml:"auth" json:"auth"`
 	Rules          RulesConfig       `yaml:"rules" json:"rules"`
 	Store          StoreConfig       `yaml:"store" json:"store"`
+	Cache          CacheConfig       `yaml:"cache" json:"cache"`
 	Triage         TriageConfig      `yaml:"triage" json:"triage"`
 	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
@@ -142,6 +150,11 @@ func LoadConfig(path string) (*Config, error) {
 			SQLitePath:           "./agentshield.db",
 			RetentionDays:        90,
 			CleanupIntervalHours: 24,
+		},
+		Cache: CacheConfig{
+			Enabled: true,
+			MaxSize: 10000,
+			TTLSec:  300,
 		},
 		Triage: TriageConfig{
 			Enabled:    false,

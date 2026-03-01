@@ -28,7 +28,7 @@ func TestToolNameCommandValidation(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRawParamsValidationBypass(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestHealthEndpointNoConfigLeak(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}

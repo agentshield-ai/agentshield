@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/agentshield-ai/agentshield/internal/auth"
+	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/feedback"
@@ -54,6 +55,7 @@ type Server struct {
 	auth            *auth.Middleware
 	feedbackManager *feedback.FeedbackManager
 	triager         *triage.Triager
+	verdictCache    *cache.VerdictCache
 	httpServer      *http.Server
 	startTime       time.Time
 }
@@ -174,7 +176,7 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 }
 
 // NewServer creates a new HTTP server instance
-func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.Store, triager *triage.Triager) (*Server, error) {
+func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.Store, triager *triage.Triager, verdictCache *cache.VerdictCache) (*Server, error) {
 	// Create auth middleware if token is configured
 	var authMiddleware *auth.Middleware
 	if cfg.Auth.Token != "" {
@@ -195,6 +197,7 @@ func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.S
 		auth:            authMiddleware,
 		feedbackManager: feedbackManager,
 		triager:         triager,
+		verdictCache:    verdictCache,
 		startTime:       time.Now(),
 	}, nil
 }
@@ -564,11 +567,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	// SECURITY: Minimal information disclosure in unauthenticated health endpoint.
 	// Detailed config is not exposed — use an authenticated status endpoint instead.
+	configInfo := map[string]interface{}{}
+	if s.verdictCache != nil {
+		stats := s.verdictCache.Stats()
+		configInfo["cache"] = map[string]interface{}{
+			"hits":      stats.Hits,
+			"misses":    stats.Misses,
+			"size":      stats.Size,
+			"max_size":  stats.MaxSize,
+			"evictions": stats.Evictions,
+		}
+	}
+
 	response := HealthResponse{
 		Status:        status,
 		Version:       "1.0.0",
 		UptimeSeconds: time.Since(s.startTime).Seconds(),
-		Config:        map[string]interface{}{},
+		Config:        configInfo,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
