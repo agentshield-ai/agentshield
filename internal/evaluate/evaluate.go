@@ -101,7 +101,7 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 		if len(refs) > 0 {
 			ctx := context.Background()
 			scResults = e.supplyChainChecker.CheckPackages(ctx, refs)
-			for _, r := range scResults {
+			for i, r := range scResults {
 				switch r.Verdict {
 				case supplychain.VerdictNotFound:
 					// Non-existent package is as severe as a critical rule match
@@ -120,6 +120,21 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 						RuleName:    "Supply Chain: Suspiciously New Package",
 						Severity:    engine.SeverityMedium,
 						Description: fmt.Sprintf("Package %q on %s: %s", r.Package.Name, r.Package.Registry, r.Detail),
+						Matched:     true,
+					})
+				}
+
+				// Typosquat detection runs regardless of registry verdict
+				typo := supplychain.CheckTyposquat(r.Package.Name, r.Package.Registry)
+				if typo.IsTyposquat {
+					highCount++
+					detail := fmt.Sprintf("Package %q looks like a typosquat of %q (edit distance: %d)", r.Package.Name, typo.SimilarTo, typo.Distance)
+					scResults[i].Detail = detail
+					alerts = append(alerts, engine.RuleResult{
+						RuleID:      "supply-chain-typosquat",
+						RuleName:    "Supply Chain: Possible Typosquat",
+						Severity:    engine.SeverityHigh,
+						Description: detail,
 						Matched:     true,
 					})
 				}

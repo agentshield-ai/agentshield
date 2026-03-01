@@ -1,0 +1,54 @@
+title: Package Installation via AI Agent
+id: a3c2f8e1-7d94-5b23-9e1a-d4f6b8c2e710
+status: stable
+description: |
+  Detects package installation commands executed by an AI agent, including
+  npm install, pip install, and pip3 install. Package installations may
+  introduce supply-chain risks such as hallucinated (non-existent) packages,
+  typosquatted packages, or suspiciously new packages. Works in conjunction
+  with the supply-chain checker for registry validation.
+references:
+  - https://attack.mitre.org/techniques/T1195/002/
+  - https://arxiv.org/abs/2403.04783
+  - https://blog.phylum.io/the-state-of-software-supply-chain-security/
+author: AgentShield
+date: "2026-02-28"
+tags:
+  - attack.execution
+  - attack.t1195.002
+  - supply-chain
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_npm_install:
+    event_type: tool_call
+    command|contains:
+      - 'npm install '
+      - 'npm i '
+      - 'npm add '
+  selection_pip_install:
+    event_type: tool_call
+    command|contains:
+      - 'pip install '
+      - 'pip3 install '
+  selection_yarn_install:
+    event_type: tool_call
+    command|contains:
+      - 'yarn add '
+  # Exclude standard safe patterns
+  filter_requirements_file:
+    command|contains:
+      - 'pip install -r '
+      - 'pip3 install -r '
+      - 'pip install --requirement '
+      - 'pip3 install --requirement '
+  filter_package_lock:
+    command|endswith:
+      - 'npm install'
+      - 'npm i'
+  condition: (selection_npm_install or selection_pip_install or selection_yarn_install) and not filter_requirements_file and not filter_package_lock
+falsepositives:
+  - Legitimate package installation during development
+  - Installing well-known, trusted packages
+level: medium

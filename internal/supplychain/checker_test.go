@@ -386,6 +386,141 @@ func TestCheckPackages_cancellation(t *testing.T) {
 	}
 }
 
+// --- Typosquat detection tests ---
+
+func TestCheckTyposquat_detects_npm_typosquat(t *testing.T) {
+	tests := []struct {
+		name      string
+		pkg       string
+		registry  Registry
+		wantTypo  bool
+		wantMatch string
+	}{
+		{
+			name:      "expresss (extra s) detected as typosquat of express",
+			pkg:       "expresss",
+			registry:  RegistryNPM,
+			wantTypo:  true,
+			wantMatch: "express",
+		},
+		{
+			name:      "axio (deletion) detected as typosquat of axios",
+			pkg:       "axio",
+			registry:  RegistryNPM,
+			wantTypo:  true,
+			wantMatch: "axios",
+		},
+		{
+			name:      "lodasg (substitution) detected as typosquat of lodash",
+			pkg:       "lodasg",
+			registry:  RegistryNPM,
+			wantTypo:  true,
+			wantMatch: "lodash",
+		},
+		{
+			name:     "express (exact match) is NOT a typosquat",
+			pkg:      "express",
+			registry: RegistryNPM,
+			wantTypo: false,
+		},
+		{
+			name:     "totally-different-name is NOT a typosquat",
+			pkg:      "totally-different-name",
+			registry: RegistryNPM,
+			wantTypo: false,
+		},
+		{
+			name:     "short names (3 chars) are not checked",
+			pkg:      "axo",
+			registry: RegistryNPM,
+			wantTypo: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CheckTyposquat(tt.pkg, tt.registry)
+			if result.IsTyposquat != tt.wantTypo {
+				t.Errorf("CheckTyposquat(%q) IsTyposquat = %v, want %v", tt.pkg, result.IsTyposquat, tt.wantTypo)
+			}
+			if tt.wantTypo && result.SimilarTo != tt.wantMatch {
+				t.Errorf("CheckTyposquat(%q) SimilarTo = %q, want %q", tt.pkg, result.SimilarTo, tt.wantMatch)
+			}
+		})
+	}
+}
+
+func TestCheckTyposquat_detects_pypi_typosquat(t *testing.T) {
+	tests := []struct {
+		name      string
+		pkg       string
+		wantTypo  bool
+		wantMatch string
+	}{
+		{
+			name:      "reqeusts (transposition) detected",
+			pkg:       "reqeusts",
+			wantTypo:  true,
+			wantMatch: "requests",
+		},
+		{
+			name:      "flaask (insertion) detected",
+			pkg:       "flaask",
+			wantTypo:  true,
+			wantMatch: "flask",
+		},
+		{
+			name:     "requests (exact) is not a typosquat",
+			pkg:      "requests",
+			wantTypo: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CheckTyposquat(tt.pkg, RegistryPyPI)
+			if result.IsTyposquat != tt.wantTypo {
+				t.Errorf("CheckTyposquat(%q) IsTyposquat = %v, want %v", tt.pkg, result.IsTyposquat, tt.wantTypo)
+			}
+			if tt.wantTypo && result.SimilarTo != tt.wantMatch {
+				t.Errorf("CheckTyposquat(%q) SimilarTo = %q, want %q", tt.pkg, result.SimilarTo, tt.wantMatch)
+			}
+		})
+	}
+}
+
+func TestCheckTyposquat_unsupported_registry(t *testing.T) {
+	result := CheckTyposquat("express", Registry("cargo"))
+	if result.IsTyposquat {
+		t.Error("expected no typosquat detection for unsupported registry")
+	}
+}
+
+func TestLevenshtein(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"abc", "abd", 1},
+		{"kitten", "sitting", 3},
+		{"express", "expresss", 1},
+		{"axios", "axois", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.a+"_"+tt.b, func(t *testing.T) {
+			got := levenshtein(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("levenshtein(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Test helpers ---
 
 // newTestChecker creates a PackageChecker that routes requests to a local
