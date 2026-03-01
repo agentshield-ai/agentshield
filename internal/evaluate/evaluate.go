@@ -9,6 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/reputation"
 	"github.com/agentshield-ai/agentshield/internal/triage"
 )
 
@@ -49,6 +50,7 @@ type Evaluator struct {
 	feedbackURLBase string
 	triager         TriageService
 	deepTriager     DeepTriageService
+	reputation      *reputation.Checker
 }
 
 // NewEvaluator creates a new evaluator
@@ -62,6 +64,12 @@ func NewEvaluator(eng RuleEvaluator, defaultMode config.EvaluationMode, feedback
 	}
 }
 
+// SetReputation configures an optional reputation checker. When set, URLs
+// found in tool call arguments are checked after Sigma rule evaluation.
+func (e *Evaluator) SetReputation(checker *reputation.Checker) {
+	e.reputation = checker
+}
+
 // Evaluate processes an evaluation request and returns the appropriate response
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
 	// Determine effective evaluation mode (server-side only)
@@ -69,6 +77,13 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 
 	// Run rule evaluation (engine now only returns matched rules)
 	alerts := e.engine.Evaluate(req.Fields)
+
+	// Run reputation checks on any URLs found in the request fields.
+	// Failures are logged but never block the request (fail-open).
+	if e.reputation != nil && req.Fields != nil {
+		reputationAlerts := e.checkReputation(req)
+		alerts = append(alerts, reputationAlerts...)
+	}
 
 	// Count severity levels for decision making
 	var criticalCount, highCount int
@@ -186,6 +201,50 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 	}
 
 	return baseAction, baseOverridable
+}
+
+// checkReputation extracts URLs from request fields and checks each against
+// the reputation provider. Matched URLs produce high-severity alerts.
+// Errors are logged but never cause the request to fail (fail-open).
+func (e *Evaluator) checkReputation(req *models.EvaluationRequest) []engine.RuleResult {
+	urls := reputation.ExtractURLs(req.Fields)
+	if len(urls) == 0 {
+		return nil
+	}
+
+	ctx := context.Background()
+	var results []engine.RuleResult
+
+	for _, rawURL := range urls {
+		result, err := e.reputation.CheckURL(ctx, rawURL)
+		if err != nil {
+			slog.Warn("Reputation check failed (fail-open)", "url", rawURL, "error", err)
+			continue
+		}
+		if !result.Matched {
+			continue
+		}
+
+		severity := engine.SeverityHigh
+		if result.Severity == "critical" {
+			severity = engine.SeverityCritical
+		}
+
+		results = append(results, engine.RuleResult{
+			RuleID:      "reputation-url-match",
+			RuleName:    "Malicious URL Detected (Reputation)",
+			Severity:    severity,
+			Description: fmt.Sprintf("URL matched reputation database: %s (severity: %s)", rawURL, result.Severity),
+			Matched:     true,
+			MatchedFields: map[string]string{
+				"url":      rawURL,
+				"hash":     result.Hash,
+				"severity": result.Severity,
+			},
+		})
+	}
+
+	return results
 }
 
 // GetModeInfo returns information about evaluation modes

@@ -111,6 +111,15 @@ type TestContextConfig struct {
 	Token   string `yaml:"token" json:"-"`
 }
 
+// ReputationConfig holds configuration for privacy-preserving reputation lookups.
+type ReputationConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`             // default false (opt-in)
+	Endpoint    string `yaml:"endpoint" json:"endpoint"`           // reputation API base URL
+	PrefixLen   int    `yaml:"prefix_len" json:"prefix_len"`       // default 5 hex chars
+	TimeoutSec  int    `yaml:"timeout_sec" json:"timeout_sec"`     // default 3
+	LocalDBPath string `yaml:"local_db_path" json:"local_db_path"` // optional path to local hash DB
+}
+
 type Config struct {
 	Server         ServerConfig      `yaml:"server" json:"server"`
 	Auth           AuthConfig        `yaml:"auth" json:"auth"`
@@ -118,6 +127,7 @@ type Config struct {
 	Store          StoreConfig       `yaml:"store" json:"store"`
 	Triage         TriageConfig      `yaml:"triage" json:"triage"`
 	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
+	Reputation     ReputationConfig  `yaml:"reputation" json:"reputation"`
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
 	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
 	LogLevel       string            `yaml:"log_level" json:"log_level"`
@@ -163,6 +173,11 @@ func LoadConfig(path string) (*Config, error) {
 				TimeDecayHalfLifeSec: 300,
 				EscalateThreshold:    0.8,
 			},
+		},
+		Reputation: ReputationConfig{
+			Enabled:   false,
+			PrefixLen: 5,
+			TimeoutSec: 3,
 		},
 		TestContext: TestContextConfig{
 			Enabled: false,
@@ -230,6 +245,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if triageAPIKey := os.Getenv("AGENTSHIELD_TRIAGE_API_KEY"); triageAPIKey != "" {
 		cfg.Triage.APIKey = triageAPIKey
+	}
+	if repEndpoint := os.Getenv("AGENTSHIELD_REPUTATION_ENDPOINT"); repEndpoint != "" {
+		cfg.Reputation.Endpoint = repEndpoint
+	}
+	if repDB := os.Getenv("AGENTSHIELD_REPUTATION_DB_PATH"); repDB != "" {
+		cfg.Reputation.LocalDBPath = repDB
 	}
 }
 
@@ -318,6 +339,32 @@ func validateConfig(cfg *Config) error {
 		}
 		if cfg.Triage.Correlation.EscalateThreshold < 0 || cfg.Triage.Correlation.EscalateThreshold > 10 {
 			return fmt.Errorf("triage correlation escalate_threshold must be between 0 and 10")
+		}
+	}
+
+	// Validate reputation config
+	if cfg.Reputation.Enabled {
+		if cfg.Reputation.Endpoint == "" && cfg.Reputation.LocalDBPath == "" {
+			return fmt.Errorf("reputation: at least one of endpoint or local_db_path must be set when enabled")
+		}
+		if cfg.Reputation.Endpoint != "" {
+			if !strings.HasPrefix(cfg.Reputation.Endpoint, "https://") {
+				return fmt.Errorf("reputation endpoint must use HTTPS for security")
+			}
+			if isPrivateOrLocalURL(cfg.Reputation.Endpoint) {
+				return fmt.Errorf("reputation endpoint cannot target internal/private networks")
+			}
+		}
+		if cfg.Reputation.PrefixLen < 2 || cfg.Reputation.PrefixLen > 16 {
+			return fmt.Errorf("reputation prefix_len must be between 2 and 16")
+		}
+		if cfg.Reputation.TimeoutSec < 1 || cfg.Reputation.TimeoutSec > 30 {
+			return fmt.Errorf("reputation timeout_sec must be between 1 and 30")
+		}
+		if cfg.Reputation.LocalDBPath != "" {
+			if strings.Contains(filepath.Clean(cfg.Reputation.LocalDBPath), "..") {
+				return fmt.Errorf("reputation local_db_path contains directory traversal")
+			}
 		}
 	}
 
@@ -460,6 +507,11 @@ func resolveRelativePaths(cfg *Config, configPath string) error {
 	// Resolve SQLite path
 	if !filepath.IsAbs(cfg.Store.SQLitePath) {
 		cfg.Store.SQLitePath = filepath.Join(configDir, cfg.Store.SQLitePath)
+	}
+
+	// Resolve reputation local DB path
+	if cfg.Reputation.LocalDBPath != "" && !filepath.IsAbs(cfg.Reputation.LocalDBPath) {
+		cfg.Reputation.LocalDBPath = filepath.Join(configDir, cfg.Reputation.LocalDBPath)
 	}
 
 	return nil
