@@ -149,7 +149,7 @@ func (e *Evaluator) determineEffectiveMode() config.EvaluationMode {
 // Severity-to-action mapping (enforce mode):
 //   - critical/high -> block
 //   - medium        -> require_approval
-//   - low           -> log
+//   - low/none      -> allow
 //
 // Mode interactions:
 //   - audit:  require_approval downgrades to log (audit never blocks or asks)
