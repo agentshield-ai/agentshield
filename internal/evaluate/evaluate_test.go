@@ -45,6 +45,7 @@ func TestDetermineAction(t *testing.T) {
 		mode                config.EvaluationMode
 		criticalCount       int
 		highCount           int
+		mediumCount         int
 		expectedAction      models.Action
 		expectedOverridable bool
 	}{
@@ -53,6 +54,7 @@ func TestDetermineAction(t *testing.T) {
 			mode:                config.ModeEnforce,
 			criticalCount:       1,
 			highCount:           0,
+			mediumCount:         0,
 			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
@@ -61,6 +63,7 @@ func TestDetermineAction(t *testing.T) {
 			mode:                config.ModeEnforce,
 			criticalCount:       0,
 			highCount:           1,
+			mediumCount:         0,
 			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
@@ -69,22 +72,70 @@ func TestDetermineAction(t *testing.T) {
 			mode:                config.ModeEnforce,
 			criticalCount:       0,
 			highCount:           0,
+			mediumCount:         0,
 			expectedAction:      models.ActionAllow,
 			expectedOverridable: false,
 		},
 		{
-			name:                "audit mode always logs",
+			name:                "enforce mode with medium alert requires approval",
+			mode:                config.ModeEnforce,
+			criticalCount:       0,
+			highCount:           0,
+			mediumCount:         1,
+			expectedAction:      models.ActionRequireApproval,
+			expectedOverridable: true,
+		},
+		{
+			name:                "enforce mode critical takes precedence over medium",
+			mode:                config.ModeEnforce,
+			criticalCount:       1,
+			highCount:           0,
+			mediumCount:         3,
+			expectedAction:      models.ActionBlock,
+			expectedOverridable: true,
+		},
+		{
+			name:                "enforce mode high takes precedence over medium",
+			mode:                config.ModeEnforce,
+			criticalCount:       0,
+			highCount:           1,
+			mediumCount:         5,
+			expectedAction:      models.ActionBlock,
+			expectedOverridable: true,
+		},
+		{
+			name:                "audit mode always logs even with medium",
 			mode:                config.ModeAudit,
 			criticalCount:       5,
 			highCount:           3,
+			mediumCount:         2,
 			expectedAction:      models.ActionLog,
 			expectedOverridable: false,
 		},
 		{
-			name:                "shadow mode always allows",
+			name:                "audit mode logs on medium only",
+			mode:                config.ModeAudit,
+			criticalCount:       0,
+			highCount:           0,
+			mediumCount:         1,
+			expectedAction:      models.ActionLog,
+			expectedOverridable: false,
+		},
+		{
+			name:                "shadow mode always allows even with medium",
 			mode:                config.ModeShadow,
 			criticalCount:       5,
 			highCount:           3,
+			mediumCount:         2,
+			expectedAction:      models.ActionAllow,
+			expectedOverridable: false,
+		},
+		{
+			name:                "shadow mode allows on medium only",
+			mode:                config.ModeShadow,
+			criticalCount:       0,
+			highCount:           0,
+			mediumCount:         1,
 			expectedAction:      models.ActionAllow,
 			expectedOverridable: false,
 		},
@@ -94,7 +145,7 @@ func TestDetermineAction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			evaluator := &Evaluator{}
 
-			action, overridable := evaluator.determineAction(tt.mode, tt.criticalCount, tt.highCount)
+			action, overridable := evaluator.determineAction(tt.mode, tt.criticalCount, tt.highCount, tt.mediumCount)
 
 			if action != tt.expectedAction {
 				t.Errorf("determineAction() action = %s, want %s", action, tt.expectedAction)
@@ -164,6 +215,48 @@ func TestEvaluate(t *testing.T) {
 			expectedAction: models.ActionAllow,
 			expectedAlerts: 1,
 		},
+		{
+			name: "matched medium severity requires approval in enforce mode",
+			mockResults: []engine.RuleResult{
+				{
+					RuleID:   "test-rule-medium",
+					RuleName: "Medium Severity Rule",
+					Severity: engine.SeverityMedium,
+					Matched:  true,
+				},
+			},
+			defaultMode:    config.ModeEnforce,
+			expectedAction: models.ActionRequireApproval,
+			expectedAlerts: 1,
+		},
+		{
+			name: "matched medium severity logs in audit mode",
+			mockResults: []engine.RuleResult{
+				{
+					RuleID:   "test-rule-medium",
+					RuleName: "Medium Severity Rule",
+					Severity: engine.SeverityMedium,
+					Matched:  true,
+				},
+			},
+			defaultMode:    config.ModeAudit,
+			expectedAction: models.ActionLog,
+			expectedAlerts: 1,
+		},
+		{
+			name: "matched medium severity allows in shadow mode",
+			mockResults: []engine.RuleResult{
+				{
+					RuleID:   "test-rule-medium",
+					RuleName: "Medium Severity Rule",
+					Severity: engine.SeverityMedium,
+					Matched:  true,
+				},
+			},
+			defaultMode:    config.ModeShadow,
+			expectedAction: models.ActionAllow,
+			expectedAlerts: 1,
+		},
 		// client mode override removed: server-side mode only
 	}
 
@@ -213,7 +306,7 @@ func TestGetModeInfo(t *testing.T) {
 	info := GetModeInfo()
 
 	// Check that all expected keys exist
-	expectedKeys := []string{"modes", "downgrade_policy", "blocking_severities"}
+	expectedKeys := []string{"modes", "downgrade_policy", "blocking_severities", "approval_severities"}
 	for _, key := range expectedKeys {
 		if _, exists := info[key]; !exists {
 			t.Errorf("GetModeInfo() missing key: %s", key)

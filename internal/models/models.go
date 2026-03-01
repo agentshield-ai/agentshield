@@ -18,7 +18,8 @@ type EvaluationRequest struct {
 type Action string
 
 const (
-	ActionAllow Action = "allow"
-	ActionBlock Action = "block"
-	ActionLog   Action = "log"
+	ActionAllow           Action = "allow"
+	ActionBlock           Action = "block"
+	ActionLog             Action = "log"
+	ActionRequireApproval Action = "require_approval"
 )

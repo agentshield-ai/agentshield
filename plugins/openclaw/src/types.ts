@@ -52,7 +52,7 @@ export type Alert = {
 
 /** Evaluation response payload (contract Section 2.2). */
 export type EvaluationResponse = {
-  action: "allow" | "block" | "log";
+  action: "allow" | "block" | "log" | "require_approval";
   event_id: string;
   alerts?: Array<Alert>;
   reason?: string;

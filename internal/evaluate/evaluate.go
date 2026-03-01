@@ -71,13 +71,15 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 	alerts := e.engine.Evaluate(req.Fields)
 
 	// Count severity levels for decision making
-	var criticalCount, highCount int
+	var criticalCount, highCount, mediumCount int
 	for _, result := range alerts {
 		switch result.Severity {
 		case engine.SeverityCritical:
 			criticalCount++
 		case engine.SeverityHigh:
 			highCount++
+		case engine.SeverityMedium:
+			mediumCount++
 		}
 	}
 
@@ -99,10 +101,10 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 	var overridable bool
 	if len(triageResults) > 0 {
 		// Use triage-informed decision
-		action, overridable = e.incorporateTriageResults(effectiveMode, criticalCount, highCount, triageResults)
+		action, overridable = e.incorporateTriageResults(effectiveMode, criticalCount, highCount, mediumCount, triageResults)
 	} else {
 		// Fallback to rule-only decision if triage is disabled or failed
-		action, overridable = e.determineAction(effectiveMode, criticalCount, highCount)
+		action, overridable = e.determineAction(effectiveMode, criticalCount, highCount, mediumCount)
 	}
 
 	// Build response once
@@ -143,18 +145,28 @@ func (e *Evaluator) determineEffectiveMode() config.EvaluationMode {
 	return e.defaultMode
 }
 
-// determineAction determines what action to take based on mode and alert severity
-func (e *Evaluator) determineAction(mode config.EvaluationMode, criticalCount, highCount int) (models.Action, bool) {
+// determineAction determines what action to take based on mode and alert severity.
+// Severity-to-action mapping (enforce mode):
+//   - critical/high -> block
+//   - medium        -> require_approval
+//   - low/none      -> allow
+//
+// Mode interactions:
+//   - audit:  require_approval downgrades to log (audit never blocks or asks)
+//   - shadow: require_approval downgrades to allow (shadow is silent)
+func (e *Evaluator) determineAction(mode config.EvaluationMode, criticalCount, highCount, mediumCount int) (models.Action, bool) {
 	switch mode {
 	case config.ModeEnforce:
-		// Block on critical or high severity alerts
 		if criticalCount > 0 || highCount > 0 {
 			return models.ActionBlock, true // Overridable in enforce mode
+		}
+		if mediumCount > 0 {
+			return models.ActionRequireApproval, true
 		}
 		return models.ActionAllow, false
 
 	case config.ModeAudit:
-		// Log everything, never block
+		// Log everything, never block or require approval
 		return models.ActionLog, false
 
 	case config.ModeShadow:
@@ -166,22 +178,25 @@ func (e *Evaluator) determineAction(mode config.EvaluationMode, criticalCount, h
 		if criticalCount > 0 || highCount > 0 {
 			return models.ActionBlock, true
 		}
+		if mediumCount > 0 {
+			return models.ActionRequireApproval, true
+		}
 		return models.ActionAllow, false
 	}
 }
 
 // incorporateTriageResults adjusts the action based on triage analysis
-func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, criticalCount, highCount int, triageResults []triage.TriageResult) (models.Action, bool) {
+func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, criticalCount, highCount, mediumCount int, triageResults []triage.TriageResult) (models.Action, bool) {
 	// Start with rule-only decision
-	baseAction, baseOverridable := e.determineAction(mode, criticalCount, highCount)
+	baseAction, baseOverridable := e.determineAction(mode, criticalCount, highCount, mediumCount)
 
 	// In audit and shadow modes, triage doesn't change the action
 	if mode != config.ModeEnforce {
 		return baseAction, baseOverridable
 	}
 
-	// Security-critical: triage must never downgrade a block in enforce mode.
-	if baseAction == models.ActionBlock {
+	// Security-critical: triage must never downgrade a block or require_approval in enforce mode.
+	if baseAction == models.ActionBlock || baseAction == models.ActionRequireApproval {
 		return baseAction, baseOverridable
 	}
 
@@ -192,11 +207,12 @@ func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, critica
 func GetModeInfo() map[string]interface{} {
 	return map[string]interface{}{
 		"modes": map[string]string{
-			"enforce": "Block on critical/high alerts, allow others",
-			"audit":   "Log all alerts, never block",
+			"enforce": "Block on critical/high, require approval on medium, allow others",
+			"audit":   "Log all alerts, never block or require approval",
 			"shadow":  "Allow everything silently, evaluate in background",
 		},
 		"downgrade_policy":    "Mode is server-side only (no client override)",
 		"blocking_severities": []string{"critical", "high"},
+		"approval_severities": []string{"medium"},
 	}
 }

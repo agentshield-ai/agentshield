@@ -211,6 +211,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 		mode                config.EvaluationMode
 		criticalCount       int
 		highCount           int
+		mediumCount         int
 		triageResults       []triage.TriageResult
 		expectedAction      models.Action
 		expectedOverridable bool
@@ -220,6 +221,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 			mode:          config.ModeEnforce,
 			criticalCount: 0,
 			highCount:     1,
+			mediumCount:   0,
 			triageResults: []triage.TriageResult{
 				{Verdict: "allow", Confidence: 0.9},
 			},
@@ -231,6 +233,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 			mode:          config.ModeEnforce,
 			criticalCount: 0,
 			highCount:     2,
+			mediumCount:   0,
 			triageResults: []triage.TriageResult{
 				{Verdict: "allow", Confidence: 0.8},
 				{Verdict: "allow", Confidence: 0.9},
@@ -244,6 +247,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 			mode:          config.ModeEnforce,
 			criticalCount: 1,
 			highCount:     0,
+			mediumCount:   0,
 			triageResults: []triage.TriageResult{
 				{Verdict: "block", Confidence: 0.9},
 				{Verdict: "allow", Confidence: 0.6},
@@ -256,6 +260,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 			mode:          config.ModeAudit,
 			criticalCount: 1,
 			highCount:     1,
+			mediumCount:   0,
 			triageResults: []triage.TriageResult{
 				{Verdict: "allow", Confidence: 0.95},
 			},
@@ -267,6 +272,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 			mode:          config.ModeShadow,
 			criticalCount: 1,
 			highCount:     1,
+			mediumCount:   0,
 			triageResults: []triage.TriageResult{
 				{Verdict: "block", Confidence: 0.95},
 			},
@@ -278,11 +284,48 @@ func TestIncorporateTriageResults(t *testing.T) {
 			mode:          config.ModeEnforce,
 			criticalCount: 0,
 			highCount:     1,
+			mediumCount:   0,
 			triageResults: []triage.TriageResult{
 				{Verdict: "allow", Confidence: 0.5}, // Low confidence
 			},
 			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
+		},
+		{
+			name:          "Enforce mode - medium severity with triage preserves require_approval",
+			mode:          config.ModeEnforce,
+			criticalCount: 0,
+			highCount:     0,
+			mediumCount:   1,
+			triageResults: []triage.TriageResult{
+				{Verdict: "allow", Confidence: 0.9},
+			},
+			expectedAction:      models.ActionRequireApproval,
+			expectedOverridable: true,
+		},
+		{
+			name:          "Audit mode - medium severity with triage downgrades to log",
+			mode:          config.ModeAudit,
+			criticalCount: 0,
+			highCount:     0,
+			mediumCount:   1,
+			triageResults: []triage.TriageResult{
+				{Verdict: "allow", Confidence: 0.9},
+			},
+			expectedAction:      models.ActionLog,
+			expectedOverridable: false,
+		},
+		{
+			name:          "Shadow mode - medium severity with triage downgrades to allow",
+			mode:          config.ModeShadow,
+			criticalCount: 0,
+			highCount:     0,
+			mediumCount:   1,
+			triageResults: []triage.TriageResult{
+				{Verdict: "allow", Confidence: 0.9},
+			},
+			expectedAction:      models.ActionAllow,
+			expectedOverridable: false,
 		},
 	}
 
@@ -292,6 +335,7 @@ func TestIncorporateTriageResults(t *testing.T) {
 				test.mode,
 				test.criticalCount,
 				test.highCount,
+				test.mediumCount,
 				test.triageResults,
 			)
 

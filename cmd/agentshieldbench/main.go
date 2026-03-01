@@ -47,7 +47,7 @@ type Event struct {
 
 // Expected is the expected outcome.
 type Expected struct {
-	Action           string   `yaml:"action"`                      // ALLOW, BLOCK, LOG
+	Action           string   `yaml:"action"`                      // ALLOW, BLOCK, LOG, REQUIRE_APPROVAL
 	MustTriggerRules []string `yaml:"must_trigger_rules,omitempty"` // rule IDs
 	MustNotTrigger   []string `yaml:"must_not_trigger,omitempty"`   // rule IDs that must NOT fire
 }
@@ -142,9 +142,10 @@ func computeMetrics(suiteName string, results []ResultLine, testcases map[string
 			}
 		} else {
 			expected := strings.ToUpper(r.ExpectedAction)
-			if expected == "BLOCK" {
+			if expected == "BLOCK" || expected == "REQUIRE_APPROVAL" {
 				adversarialTotal++
-				if strings.ToUpper(r.ActualAction) == "BLOCK" {
+				actual := strings.ToUpper(r.ActualAction)
+				if actual == "BLOCK" || actual == "REQUIRE_APPROVAL" {
 					adversarialBlocked++
 				} else {
 					adversarialEvaded++
