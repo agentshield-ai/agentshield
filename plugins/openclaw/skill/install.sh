@@ -68,13 +68,14 @@ download_binary() {
             elif command -v shasum >/dev/null 2>&1; then
                 ACTUAL_HASH=$(shasum -a 256 "$TEMP_FILE" | awk '{print $1}')
             else
-                warn "No sha256sum or shasum available — skipping checksum verification"
-                ACTUAL_HASH="$EXPECTED_HASH"
+                warn "No sha256sum or shasum available — cannot verify binary integrity"
             fi
-            if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
-                error "Checksum mismatch! Expected $EXPECTED_HASH, got $ACTUAL_HASH"
+            if [ -n "$ACTUAL_HASH" ]; then
+                if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
+                    error "Checksum mismatch! Expected $EXPECTED_HASH, got $ACTUAL_HASH"
+                fi
+                log "Checksum verified"
             fi
-            log "Checksum verified"
         else
             warn "No checksum entry for $PLATFORM in SHA256SUMS — skipping verification"
         fi
@@ -106,7 +107,10 @@ generate_token() {
 setup_files() {
     log "Setting up directory structure..."
     mkdir -p "$INSTALL_DIR/rules"
+    OLD_UMASK_DB=$(umask)
+    umask 077
     touch "$INSTALL_DIR/agentshield.db"
+    umask "$OLD_UMASK_DB"
     
     log "Setting up security rules..."
     if command -v git >/dev/null 2>&1; then
@@ -188,7 +192,7 @@ Description=AgentShield Detection Engine
 After=network.target
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/$BINARY_NAME serve --config $CONFIG_FILE
+ExecStart="$INSTALL_DIR/$BINARY_NAME" serve --config "$CONFIG_FILE"
 Restart=always
 RestartSec=5
 [Install]
@@ -235,18 +239,23 @@ EOF
 # Patch OpenClaw
 patch_openclaw_config() {
     log "Configuring OpenClaw integration..."
-    AUTH_TOKEN=$(grep "token:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
+    AUTH_TOKEN=$(grep -m1 "^  token:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
     if command -v openclaw >/dev/null 2>&1; then
-        # shellcheck disable=SC2016
-        AGENTSHIELD_AUTH_TOKEN="$AUTH_TOKEN" openclaw config patch \
+        TOKEN_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-token-XXXXXX")
+        CLEANUP_FILES+=("$TOKEN_FILE")
+        printf '%s' "$AUTH_TOKEN" > "$TOKEN_FILE"
+        chmod 600 "$TOKEN_FILE"
+        openclaw config patch \
             plugins.entries.agentshield.enabled=true \
             plugins.entries.agentshield.config.enabled=true \
             plugins.entries.agentshield.config.endpoint="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate" \
-            'plugins.entries.agentshield.config.auth_token=${AGENTSHIELD_AUTH_TOKEN}' \
+            plugins.entries.agentshield.config.auth_token="$(cat "$TOKEN_FILE")" \
             plugins.entries.agentshield.config.timeout_ms=200 \
             plugins.entries.agentshield.config.timeout_policy="block" 2>/dev/null && {
+            rm -f "$TOKEN_FILE"
             log "OpenClaw configuration updated"; return
         }
+        rm -f "$TOKEN_FILE"
     fi
     warn "OpenClaw CLI not available - manual plugin configuration required"
 }
@@ -264,7 +273,7 @@ start_and_check() {
     fi
 
     log "Health check..."
-    AUTH_TOKEN=$(grep token: "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"')
+    AUTH_TOKEN=$(grep -m1 "^  token:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"')
     AUTH_HEADER_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-header-XXXXXX")
     CLEANUP_FILES+=("$AUTH_HEADER_FILE")
     printf 'Authorization: Bearer %s' "$AUTH_TOKEN" > "$AUTH_HEADER_FILE"
