@@ -3,11 +3,19 @@
   "version": "2.0.0",
   "description": "AgentShield real-time security evaluation plugin for OpenClaw. Intercepts tool calls before execution and evaluates them against Sigma detection rules.",
   "type": "module",
-  "main": "./index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "files": [
-    "index.ts",
-    "src/",
-    "openclaw.plugin.json"
+    "dist/",
+    "openclaw-plugin-sdk.d.ts",
+    "openclaw.plugin.json",
+    "README.md"
   ],
   "keywords": [
     "openclaw",
@@ -29,14 +37,20 @@
     "openclaw": ">=2026.2.0"
   },
   "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm test && npm run build",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.ts"
   },
   "devDependencies": {
+    "typescript": "~5.7",
     "vitest": "^4.0.0"
   },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "overrides": {
     "tar": ">=7.5.8",
