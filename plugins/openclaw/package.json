@@ -37,5 +37,9 @@
   },
   "openclaw": {
     "extensions": ["./index.ts"]
+  },
+  "overrides": {
+    "tar": ">=7.5.8",
+    "fast-xml-parser": ">=5.3.8"
   }
 }

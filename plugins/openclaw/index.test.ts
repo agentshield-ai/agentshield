@@ -206,6 +206,46 @@ describe("agentshield plugin", () => {
       expect(result.blockReason).toBe("curl pipe bash detected");
     });
 
+    it("fails closed on require_approval response", async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/evaluate")) {
+          return {
+            ok: true,
+            json: async () => ({
+              action: "require_approval",
+              event_id: "e1",
+              reason: "Medium-risk action requires user approval",
+              alerts: [
+                {
+                  rule_id: "r2",
+                  rule_name: "sensitive-operation",
+                  severity: "medium",
+                  matched_fields: { command: "chmod 777 /tmp/file" },
+                },
+              ],
+            }),
+          };
+        }
+        return { ok: true };
+      });
+
+      const { api, hooks } = createMockApi({
+        enabled: true,
+        intercept: ["exec"],
+        skip: [],
+      });
+      plugin.register(api as never);
+
+      const result = (await hooks.before_tool_call!.handler(
+        { toolName: "exec", params: { command: "chmod 777 /tmp/file" } },
+        { agentId: "a", sessionKey: "s", toolName: "exec" },
+      )) as { block: boolean; blockReason: string };
+
+      expect(result).toBeDefined();
+      expect(result.block).toBe(true);
+      expect(result.blockReason).toBe("Medium-risk action requires user approval");
+    });
+
     it("applies timeout_policy allow on fetch failure", async () => {
       fetchSpy.mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/evaluate")) {
@@ -291,6 +331,139 @@ describe("agentshield plugin", () => {
       // Third call should be short-circuited by circuit breaker
       await callHook();
       expect(evaluateCallCount).toBe(2); // No additional fetch call
+    });
+  });
+
+  describe("after_tool_call handler", () => {
+    it("uses the matching evaluation event_id as correlation_id", async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/evaluate")) {
+          return {
+            ok: true,
+            json: async () => ({ action: "allow", event_id: "engine-e1" }),
+          };
+        }
+        return { ok: true };
+      });
+
+      const { api, hooks } = createMockApi({
+        enabled: true,
+        intercept: ["exec"],
+        skip: [],
+      });
+      plugin.register(api as never);
+
+      await hooks.before_tool_call!.handler(
+        { toolName: "exec", params: { command: "ls" } },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      );
+
+      await hooks.after_tool_call!.handler(
+        { toolName: "exec", result: "ok" },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      );
+
+      const evaluateCall = fetchSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && c[0].includes("/evaluate"),
+      );
+      const evaluateBody = JSON.parse(
+        ((evaluateCall?.[1] as { body?: string })?.body ?? "{}"),
+      ) as { event_id?: string };
+
+      const auditCall = fetchSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && c[0].includes("/audit"),
+      );
+      const auditBody = JSON.parse(
+        ((auditCall?.[1] as { body?: string })?.body ?? "{}"),
+      ) as { correlation_id?: string };
+
+      expect(evaluateBody.event_id).toBeTruthy();
+      expect(auditBody.correlation_id).toBe(evaluateBody.event_id);
+    });
+
+    it("does not queue blocked evaluations for audit correlation", async () => {
+      let blockedEventId = "";
+      fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (typeof url === "string" && url.includes("/evaluate")) {
+          const requestBody = JSON.parse(
+            ((init as { body?: string } | undefined)?.body ?? "{}"),
+          ) as { event_id?: string };
+          blockedEventId = requestBody.event_id ?? "";
+          return {
+            ok: true,
+            json: async () => ({
+              action: "block",
+              event_id: blockedEventId,
+              reason: "blocked by policy",
+            }),
+          };
+        }
+        return { ok: true };
+      });
+
+      const { api, hooks } = createMockApi({
+        enabled: true,
+        intercept: ["exec"],
+        skip: [],
+      });
+      plugin.register(api as never);
+
+      const result = (await hooks.before_tool_call!.handler(
+        { toolName: "exec", params: { command: "rm -rf /" } },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      )) as { block: boolean; blockReason: string };
+      expect(result.block).toBe(true);
+      expect(blockedEventId).toBeTruthy();
+
+      // Simulate an unexpected after_tool_call emission for the same tool/session.
+      // Correlation must not reuse a blocked event ID.
+      await hooks.after_tool_call!.handler(
+        { toolName: "exec", result: "not-executed" },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      );
+
+      const auditCall = fetchSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && c[0].includes("/audit"),
+      );
+      const auditBody = JSON.parse(
+        ((auditCall?.[1] as { body?: string })?.body ?? "{}"),
+      ) as { correlation_id?: string };
+
+      expect(auditBody.correlation_id).toBeTruthy();
+      expect(auditBody.correlation_id).not.toBe(blockedEventId);
+    });
+
+    it("uses a fresh UUID correlation_id when no pending evaluation exists", async () => {
+      fetchSpy.mockResolvedValue({ ok: true });
+
+      const { api, hooks } = createMockApi({
+        enabled: true,
+        intercept: ["exec"],
+        skip: [],
+      });
+      plugin.register(api as never);
+
+      await hooks.after_tool_call!.handler(
+        { toolName: "exec", result: "ok" },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      );
+
+      const auditCall = fetchSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && c[0].includes("/audit"),
+      );
+      const auditBody = JSON.parse(
+        ((auditCall?.[1] as { body?: string })?.body ?? "{}"),
+      ) as { correlation_id?: string };
+
+      expect(auditBody.correlation_id).toBeTruthy();
+      expect(auditBody.correlation_id).not.toBe("exec");
+      expect(auditBody.correlation_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      );
     });
   });
 });

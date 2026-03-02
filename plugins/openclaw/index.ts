@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import { CircuitBreaker } from "./src/circuit-breaker.js";
@@ -102,33 +104,56 @@ function applyTimeoutPolicy(
 }
 
 /**
+ * Build a stable correlation bucket key.
+ */
+function correlationBucketKey(
+  sessionKey: string | undefined,
+  toolName: string,
+): string {
+  return `${sessionKey ?? ""}:${toolName}`;
+}
+
+/**
  * Find and remove the correlation event_id for a completed tool call.
  *
  * Best-effort: if no match is found the audit report is still sent
  * with a fresh event_id as correlation_id.
  */
 function findCorrelationId(
-  pending: Map<string, { eventId: string; timestamp: number }>,
-  ctx: { sessionKey?: string; toolName: string },
+  pending: Map<string, Array<{ eventId: string; timestamp: number }>>,
+  ctx: { sessionKey?: string },
   event: { toolName: string },
 ): string | null {
   const now = Date.now();
 
-  // Clean stale entries while iterating
-  for (const [key, entry] of pending) {
-    if (now - entry.timestamp > CORRELATION_TTL_MS) {
+  // Clean stale entries in every bucket first.
+  for (const [key, entries] of pending) {
+    const fresh = entries.filter(
+      (entry) => now - entry.timestamp <= CORRELATION_TTL_MS,
+    );
+    if (fresh.length === 0) {
       pending.delete(key);
       continue;
     }
-    if (
-      key.includes(ctx.sessionKey ?? "") &&
-      key.includes(event.toolName)
-    ) {
-      pending.delete(key);
-      return entry.eventId;
-    }
+    pending.set(key, fresh);
   }
-  return null;
+
+  const key = correlationBucketKey(ctx.sessionKey, event.toolName);
+  const queue = pending.get(key);
+  if (!queue || queue.length === 0) {
+    return null;
+  }
+
+  const next = queue.shift();
+  if (queue.length === 0) {
+    pending.delete(key);
+  } else {
+    pending.set(key, queue);
+  }
+  if (!next) {
+    return null;
+  }
+  return next.eventId;
 }
 
 const plugin = {
@@ -155,10 +180,10 @@ const plugin = {
     const interceptSet =
       config.intercept.length > 0 ? new Set(config.intercept) : null;
 
-    // Correlation map: toolCallKey -> { eventId, timestamp }
+    // Correlation map: session/tool bucket -> FIFO queue of pending evaluations.
     const pendingEvaluations = new Map<
       string,
-      { eventId: string; timestamp: number }
+      Array<{ eventId: string; timestamp: number }>
     >();
 
     // ---- before_tool_call: synchronous evaluation ----
@@ -181,17 +206,11 @@ const plugin = {
         }
 
         const request = buildEvaluationRequest(event, ctx);
-        const correlationKey = `${ctx.sessionKey ?? ""}:${event.toolName}:${Date.now()}`;
+        const correlationKey = correlationBucketKey(ctx.sessionKey, event.toolName);
 
         try {
           const response = await client.evaluate(request);
           circuitBreaker.recordSuccess();
-
-          // Store for audit correlation
-          pendingEvaluations.set(correlationKey, {
-            eventId: request.event_id,
-            timestamp: Date.now(),
-          });
 
           // Log effective mode for debugging
           if (response.effective_mode) {
@@ -234,6 +253,20 @@ const plugin = {
             };
           }
 
+          if (response.action === "require_approval") {
+            const approvalReason =
+              response.reason ??
+              "AgentShield requires explicit approval before this tool call can proceed";
+            api.logger.warn(
+              `AgentShield requires approval for ${event.toolName}: ${approvalReason}`,
+            );
+            notifyAlert(api, response, event.toolName, "blocked", config.notify);
+            return {
+              block: true,
+              blockReason: approvalReason,
+            };
+          }
+
           // If we have alerts but triage says allow with high confidence, respect the triage
           if (
             response.alerts?.length &&
@@ -249,6 +282,14 @@ const plugin = {
             // Notify user based on configured severity threshold
             notifyAlert(api, response, event.toolName, "logged", config.notify);
           }
+
+          // Queue correlation only for calls that are allowed to execute.
+          const pending = pendingEvaluations.get(correlationKey) ?? [];
+          pending.push({
+            eventId: request.event_id,
+            timestamp: Date.now(),
+          });
+          pendingEvaluations.set(correlationKey, pending);
 
           return undefined; // allow
         } catch (err) {
@@ -272,7 +313,7 @@ const plugin = {
       const report = buildAuditReport(
         event,
         ctx,
-        correlationId ?? event.toolName,
+        correlationId ?? randomUUID(),
       );
       client.sendAudit(report);
     });
