@@ -102,7 +102,11 @@ All rules use `logsource.product: ai_agent` with `category: agent_events`. Brows
 
 ### OpenClaw (recommended)
 
-One command installs the engine, downloads detection rules, and configures the plugin:
+In the OpenClaw TUI, ask your agent:
+
+> Install the agentshield skill from agentshield-ai/agentshield
+
+Or from a terminal:
 
 ```bash
 openclaw skill install agentshield-ai/agentshield
