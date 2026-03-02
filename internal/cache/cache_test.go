@@ -176,6 +176,26 @@ func TestCacheKey_nil_args(t *testing.T) {
 	}
 }
 
+func TestCacheKeyWithContext_different_contexts_different_keys(t *testing.T) {
+	args := map[string]string{"command": "ls"}
+	kProd := CacheKeyWithContext("bash", args, "prod")
+	kTest := CacheKeyWithContext("bash", args, "test")
+
+	if kProd == kTest {
+		t.Fatal("different contexts should produce different keys")
+	}
+}
+
+func TestCacheKeyWithContext_empty_context_defaults_to_prod(t *testing.T) {
+	args := map[string]string{"command": "ls"}
+	kEmpty := CacheKeyWithContext("bash", args, "")
+	kProd := CacheKeyWithContext("bash", args, "prod")
+
+	if kEmpty != kProd {
+		t.Fatal("empty context should normalize to prod")
+	}
+}
+
 func TestStats_accuracy(t *testing.T) {
 	c := NewVerdictCache(10, time.Minute)
 

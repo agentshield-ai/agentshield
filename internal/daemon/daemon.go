@@ -25,6 +25,7 @@ import (
 type Daemon struct {
 	config          *config.Config
 	pidFile         string
+	managePIDFile   bool
 	logger          *slog.Logger
 	engine          *engine.Engine
 	store           *store.Store
@@ -68,10 +69,23 @@ func NewDaemon(cfg *config.Config) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		config:  cfg,
-		pidFile: pidFile,
-		logger:  logger,
+		config:        cfg,
+		pidFile:       pidFile,
+		managePIDFile: true,
+		logger:        logger,
 	}, nil
+}
+
+// SetPIDFile overrides the default PID file path.
+func (d *Daemon) SetPIDFile(path string) {
+	if trimmed := strings.TrimSpace(path); trimmed != "" {
+		d.pidFile = trimmed
+	}
+}
+
+// SetPIDFileManagement toggles PID file lifecycle management.
+func (d *Daemon) SetPIDFileManagement(enabled bool) {
+	d.managePIDFile = enabled
 }
 
 // Start starts the daemon
@@ -79,18 +93,22 @@ func (d *Daemon) Start() error {
 	d.logger.Info("Starting AgentShield Engine v1.0.0")
 	d.logger.Info("Configuration", "config", d.logConfig())
 
-	// Check if already running
-	if d.isRunning() {
-		return fmt.Errorf("daemon already running (PID file exists: %s)", d.pidFile)
-	}
+	if d.managePIDFile {
+		// Check if already running
+		if d.isRunning() {
+			return fmt.Errorf("daemon already running (PID file exists: %s)", d.pidFile)
+		}
 
-	// Write PID file
-	if err := d.writePIDFile(); err != nil {
-		return fmt.Errorf("writing PID file: %w", err)
-	}
+		// Write PID file
+		if err := d.writePIDFile(); err != nil {
+			return fmt.Errorf("writing PID file: %w", err)
+		}
 
-	// Ensure PID file is cleaned up on exit
-	defer d.removePIDFile()
+		// Ensure PID file is cleaned up on exit
+		defer d.removePIDFile()
+	} else {
+		d.logger.Info("PID file management disabled for this run")
+	}
 
 	// Initialize components
 	if err := d.initComponents(); err != nil {

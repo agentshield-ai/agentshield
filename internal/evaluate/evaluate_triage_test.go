@@ -23,6 +23,7 @@ func (m *MockRuleEvaluator) Evaluate(fields map[string]string) []engine.RuleResu
 type MockTriager struct {
 	results []triage.TriageResult
 	err     error
+	lastCtx context.Context
 }
 
 func (m *MockTriager) ShouldTriage(alert engine.RuleResult) bool {
@@ -30,6 +31,7 @@ func (m *MockTriager) ShouldTriage(alert engine.RuleResult) bool {
 }
 
 func (m *MockTriager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, req *models.EvaluationRequest) ([]triage.TriageResult, error) {
+	m.lastCtx = ctx
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -115,6 +117,38 @@ func TestEvaluatorWithTriageIntegration(t *testing.T) {
 	// In enforce mode, triage must not downgrade blocking decisions.
 	if response.Action != models.ActionBlock {
 		t.Errorf("Expected action 'block', got %s", response.Action)
+	}
+}
+
+type triageCtxKey string
+
+func TestEvaluatorPropagatesContextToTriage(t *testing.T) {
+	mockEngine := &MockRuleEvaluator{
+		results: []engine.RuleResult{
+			{
+				RuleName: "high-severity-rule",
+				Severity: engine.SeverityHigh,
+				Matched:  true,
+			},
+		},
+	}
+	mockTriager := &MockTriager{}
+	evaluator := NewEvaluator(mockEngine, config.ModeEnforce, "", mockTriager, nil)
+
+	ctx := context.WithValue(context.Background(), triageCtxKey("request_id"), "req-123")
+	_, err := evaluator.EvaluateWithContext(ctx, &models.EvaluationRequest{
+		EventID: "event-context-propagation",
+		Fields:  map[string]string{"tool": "exec"},
+	})
+	if err != nil {
+		t.Fatalf("EvaluateWithContext failed: %v", err)
+	}
+
+	if mockTriager.lastCtx == nil {
+		t.Fatal("expected triager to receive a context")
+	}
+	if got, _ := mockTriager.lastCtx.Value(triageCtxKey("request_id")).(string); got != "req-123" {
+		t.Fatalf("expected triager context to include request_id req-123, got %q", got)
 	}
 }
 

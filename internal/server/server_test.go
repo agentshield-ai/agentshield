@@ -42,6 +42,8 @@ func (s *Server) setupTestRouter() *chi.Mux {
 		r.Post("/evaluate", s.handleEvaluate)
 		r.Get("/health", s.handleHealth)
 		r.Get("/alerts", s.handleAlerts)
+		r.Post("/audit", s.handleAuditEvent)
+		r.Post("/lifecycle", s.handleLifecycleEvent)
 		r.Route("/feedback", func(r chi.Router) {
 			r.Post("/", s.handleFeedbackSubmission)
 			r.Get("/", s.handleFeedbackQuery)
@@ -158,7 +160,7 @@ func TestHandleEvaluate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/api/v1/evaluate", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
-			
+
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 
@@ -216,7 +218,7 @@ func TestHandleHealth(t *testing.T) {
 
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -310,7 +312,7 @@ func TestHandleAlerts(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -426,7 +428,7 @@ func TestHandleFeedbackPost(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -494,7 +496,7 @@ func TestHandleFeedbackGet(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -554,6 +556,64 @@ func TestHandleFeedbackGet(t *testing.T) {
 
 			if tt.checkResponse != nil {
 				tt.checkResponse(t, rec)
+			}
+		})
+	}
+}
+
+func TestHandleAuditAndLifecycle(t *testing.T) {
+	testStore, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer testStore.Close()
+
+	cfg := &config.Config{}
+	mockEngine := &mockRuleEngine{}
+	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
+
+	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	if err != nil {
+		t.Fatalf("creating test server: %v", err)
+	}
+
+	router := server.setupTestRouter()
+
+	tests := []struct {
+		name           string
+		path           string
+		body           string
+		expectedStatus int
+	}{
+		{
+			name:           "audit accepts valid json",
+			path:           "/api/v1/audit",
+			body:           `{"event_id":"e1","event_type":"tool_result"}`,
+			expectedStatus: http.StatusAccepted,
+		},
+		{
+			name:           "lifecycle accepts valid json",
+			path:           "/api/v1/lifecycle",
+			body:           `{"event_id":"e2","event_type":"session_start"}`,
+			expectedStatus: http.StatusAccepted,
+		},
+		{
+			name:           "audit rejects invalid json",
+			path:           "/api/v1/audit",
+			body:           `{"event_id":`,
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.expectedStatus {
+				t.Fatalf("expected %d, got %d", tt.expectedStatus, rec.Code)
 			}
 		})
 	}
@@ -632,7 +692,7 @@ func TestRequestLogger(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -651,7 +711,7 @@ func TestRequestLogger(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("User-Agent", "test-agent")
 	req.RemoteAddr = "127.0.0.1:12345"
-	
+
 	rec := httptest.NewRecorder()
 	loggedHandler.ServeHTTP(rec, req)
 
@@ -681,7 +741,7 @@ func TestHandleHealthDegraded(t *testing.T) {
 
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -757,7 +817,7 @@ func TestHandleAlertsWithFilters(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -845,10 +905,10 @@ func TestHandleAlertsWithFilters(t *testing.T) {
 					t.Errorf("Failed to unmarshal response: %v", err)
 					return
 				}
-				
+
 				limit := int(response["limit"].(float64))
 				offset := int(response["offset"].(float64))
-				
+
 				if limit != 1 {
 					t.Errorf("Expected limit 1, got %d", limit)
 				}
@@ -906,7 +966,7 @@ func TestHandleFeedbackSubmissionErrors(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -930,6 +990,11 @@ func TestHandleFeedbackSubmissionErrors(t *testing.T) {
 		{
 			name:           "missing event_id",
 			body:           `{"feedback_type": "false_positive"}`,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "non-positive alert_id",
+			body:           `{"event_id": "test", "alert_id": 0, "feedback_type": "false_positive"}`,
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
@@ -966,7 +1031,7 @@ func TestHandleFeedbackQueryWithLimits(t *testing.T) {
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -1058,7 +1123,7 @@ func TestHandleEvaluateFieldMapping(t *testing.T) {
 	}
 
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -1090,15 +1155,15 @@ func TestHandleEvaluateFieldMapping(t *testing.T) {
 	if capturedFields["tool"] != "file_read" {
 		t.Errorf("Expected tool field to be 'file_read', got '%s'", capturedFields["tool"])
 	}
-	
+
 	if capturedFields["event_type"] != "tool_call" {
 		t.Errorf("Expected event_type to be 'tool_call', got '%s'", capturedFields["event_type"])
 	}
-	
+
 	if capturedFields["path"] != "/etc/passwd" {
 		t.Errorf("Expected path field from args, got '%s'", capturedFields["path"])
 	}
-	
+
 	if capturedFields["command"] != "cat /etc/passwd" {
 		t.Errorf("Expected command field from args, got '%s'", capturedFields["command"])
 	}
@@ -1120,7 +1185,7 @@ func TestStartAndShutdown(t *testing.T) {
 
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	
+
 	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
@@ -1146,7 +1211,7 @@ func TestStartAndShutdown(t *testing.T) {
 
 	// Test shutdown
 	shutdownErr := server.Shutdown(ctx)
-	
+
 	// Wait for start to complete
 	<-serverErr
 

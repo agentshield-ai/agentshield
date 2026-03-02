@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,20 +17,20 @@ import (
 
 // CachedVerdict stores the result of a previous evaluation for replay on cache hit.
 type CachedVerdict struct {
-	Action        models.Action        `json:"action"`
-	Alerts        []engine.RuleResult  `json:"alerts"`
+	Action        models.Action         `json:"action"`
+	Alerts        []engine.RuleResult   `json:"alerts"`
 	TriageResults []triage.TriageResult `json:"triage_results,omitempty"`
-	Overridable   bool                 `json:"overridable"`
-	CachedAt      time.Time            `json:"cached_at"`
+	Overridable   bool                  `json:"overridable"`
+	CachedAt      time.Time             `json:"cached_at"`
 }
 
 // CacheStats exposes operational metrics for the verdict cache.
 type CacheStats struct {
-	Hits       uint64 `json:"hits"`
-	Misses     uint64 `json:"misses"`
-	Size       int    `json:"size"`
-	MaxSize    int    `json:"max_size"`
-	Evictions  uint64 `json:"evictions"`
+	Hits      uint64 `json:"hits"`
+	Misses    uint64 `json:"misses"`
+	Size      int    `json:"size"`
+	MaxSize   int    `json:"max_size"`
+	Evictions uint64 `json:"evictions"`
 }
 
 // entry is the value stored in the doubly-linked list.
@@ -41,13 +42,13 @@ type entry struct {
 // VerdictCache is a thread-safe LRU cache with TTL-based expiry.
 // It uses a doubly-linked list + map for O(1) get/set/eviction.
 type VerdictCache struct {
-	mu       sync.RWMutex
-	maxSize  int
-	ttl      time.Duration
-	items    map[string]*list.Element
-	order    *list.List // front = most recently used
-	hits     uint64
-	misses   uint64
+	mu        sync.RWMutex
+	maxSize   int
+	ttl       time.Duration
+	items     map[string]*list.Element
+	order     *list.List // front = most recently used
+	hits      uint64
+	misses    uint64
 	evictions uint64
 }
 
@@ -143,6 +144,12 @@ func (c *VerdictCache) Invalidate() {
 // arguments. Arguments are sorted by key so that logically identical requests
 // (with args in different map-iteration order) produce the same key.
 func CacheKey(toolName string, args map[string]string) string {
+	return CacheKeyWithContext(toolName, args, "")
+}
+
+// CacheKeyWithContext computes a deterministic SHA-256 cache key from tool,
+// args, and execution context.
+func CacheKeyWithContext(toolName string, args map[string]string, context string) string {
 	keys := make([]string, 0, len(args))
 	for k := range args {
 		keys = append(keys, k)
@@ -151,10 +158,19 @@ func CacheKey(toolName string, args map[string]string) string {
 
 	h := sha256.New()
 	fmt.Fprintf(h, "tool=%s", toolName)
+	fmt.Fprintf(h, "\ncontext=%s", normalizeContext(context))
 	for _, k := range keys {
 		fmt.Fprintf(h, "\n%s=%s", k, args[k])
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func normalizeContext(context string) string {
+	c := strings.ToLower(strings.TrimSpace(context))
+	if c == "" {
+		return "prod"
+	}
+	return c
 }
 
 // removeLocked removes an element from both the list and the map.

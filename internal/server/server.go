@@ -34,8 +34,7 @@ var (
 	controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`)
 
 	// Allowed enum values, allocated once at package level
-	validSeverities    = []string{"low", "medium", "high", "critical"}
-	validFeedbackTypes = []string{"false_positive", "true_positive", "improvement"}
+	validSeverities = []string{"low", "medium", "high", "critical"}
 )
 
 const (
@@ -54,7 +53,6 @@ type Server struct {
 	store           *store.Store
 	auth            *auth.Middleware
 	feedbackManager *feedback.FeedbackManager
-	triager         *triage.Triager
 	verdictCache    *cache.VerdictCache
 	httpServer      *http.Server
 	startTime       time.Time
@@ -72,7 +70,7 @@ type HealthResponse struct {
 type FeedbackRequest struct {
 	EventID      string `json:"event_id"`
 	AlertID      *int64 `json:"alert_id,omitempty"`
-	FeedbackType string `json:"feedback_type"` // 'false_positive', 'true_positive', 'improvement'
+	FeedbackType string `json:"feedback_type"` // false_positive|true_positive|false_negative (improvement alias accepted)
 	Comment      string `json:"comment,omitempty"`
 }
 
@@ -176,7 +174,7 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 }
 
 // NewServer creates a new HTTP server instance
-func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.Store, triager *triage.Triager, verdictCache *cache.VerdictCache) (*Server, error) {
+func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.Store, _ *triage.Triager, verdictCache *cache.VerdictCache) (*Server, error) {
 	// Create auth middleware if token is configured
 	var authMiddleware *auth.Middleware
 	if cfg.Auth.Token != "" {
@@ -196,7 +194,6 @@ func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.S
 		store:           store,
 		auth:            authMiddleware,
 		feedbackManager: feedbackManager,
-		triager:         triager,
 		verdictCache:    verdictCache,
 		startTime:       time.Now(),
 	}, nil
@@ -286,10 +283,8 @@ func rateLimitMiddleware(limiter *ipRateLimiter) func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := r.RemoteAddr
-			// Use X-Real-IP if set (behind reverse proxy)
-			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
-				ip = realIP
-			}
+			// Use the actual socket peer address only. Do not trust client-provided
+			// forwarding headers for limiter identity by default.
 			// Strip port using net.SplitHostPort which correctly handles
 			// both IPv4 (1.2.3.4:8080) and IPv6 ([::1]:8080) addresses.
 			if host, _, err := net.SplitHostPort(ip); err == nil {
@@ -322,13 +317,12 @@ func (s *Server) Start() error {
 	r := chi.NewRouter()
 
 	// Add Chi middleware chain
-	r.Use(middleware.Recoverer)                 // Panic recovery
-	r.Use(middleware.RealIP)                    // Real IP detection
-	r.Use(middleware.RequestID)                 // Request ID generation
-	r.Use(securityHeaders)                                         // Security response headers
+	r.Use(middleware.Recoverer)                                                        // Panic recovery
+	r.Use(middleware.RequestID)                                                        // Request ID generation
+	r.Use(securityHeaders)                                                             // Security response headers
 	r.Use(rateLimitMiddleware(newIPRateLimiter(rate.Every(600*time.Millisecond), 10))) // Per-IP rate limit: ~100 req/min, burst 10
-	r.Use(s.requestLogger)                                         // Custom request logging
-	r.Use(middleware.Timeout(30 * time.Second))                    // Request timeout
+	r.Use(s.requestLogger)                                                             // Custom request logging
+	r.Use(middleware.Timeout(30 * time.Second))                                        // Request timeout
 
 	// Apply auth middleware if configured, but skip health endpoints
 	if s.auth != nil {
@@ -342,6 +336,8 @@ func (s *Server) Start() error {
 		r.Post("/evaluate", s.handleEvaluate)
 		r.Get("/health", s.handleHealth)
 		r.Get("/alerts", s.handleAlerts)
+		r.Post("/audit", s.handleAuditEvent)
+		r.Post("/lifecycle", s.handleLifecycleEvent)
 		r.Route("/feedback", func(r chi.Router) {
 			r.Post("/", s.handleFeedbackSubmission)
 			r.Get("/", s.handleFeedbackQuery)
@@ -529,7 +525,7 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Evaluate the request
-	response, err := s.evaluator.Evaluate(&req)
+	response, err := s.evaluator.EvaluateWithContext(r.Context(), &req)
 	if err != nil {
 		slog.Error("Evaluation failed", "event_id", req.EventID, "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -702,33 +698,37 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 	}
 
 	// SECURITY: Validate feedback input
+	if strings.TrimSpace(req.EventID) == "" {
+		http.Error(w, "event_id is required", http.StatusBadRequest)
+		return
+	}
 	if err := validateStringInput(req.EventID, 256, "event_id"); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid event_id: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	validType := false
-	for _, vt := range validFeedbackTypes {
-		if req.FeedbackType == vt {
-			validType = true
-			break
-		}
-	}
-	if !validType {
-		http.Error(w, "Invalid feedback_type (must be false_positive, true_positive, or improvement)", http.StatusBadRequest)
+	normalizedType, ok := feedback.NormalizeFeedbackType(req.FeedbackType)
+	if !ok {
+		http.Error(w, "Invalid feedback_type (must be false_positive, true_positive, false_negative, or improvement)", http.StatusBadRequest)
 		return
 	}
+	req.FeedbackType = normalizedType
 
 	if req.Comment != "" {
-		if err := validateStringInput(req.Comment, 2000, "comment"); err != nil {
+		if err := validateStringInput(req.Comment, feedback.MaxCommentLength, "comment"); err != nil {
 			http.Error(w, fmt.Sprintf("Invalid comment: %v", err), http.StatusBadRequest)
 			return
 		}
 	}
+	if req.AlertID != nil && *req.AlertID <= 0 {
+		http.Error(w, "alert_id must be a positive integer", http.StatusBadRequest)
+		return
+	}
 
-	// Get rule name from the alert if not provided directly
+	// Resolve rule name for event-level feedback (without explicit alert_id).
+	// When alert_id is present, store.InsertFeedback resolves rule_name by ID.
 	var ruleName string
-	if req.AlertID != nil {
+	if req.AlertID == nil {
 		alertQuery := &store.AlertQuery{
 			EventID: req.EventID,
 			Limit:   1,
@@ -739,9 +739,15 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	alertIDStr := ""
+	if req.AlertID != nil {
+		alertIDStr = strconv.FormatInt(*req.AlertID, 10)
+	}
+
 	// Create feedback object
 	fb := &feedback.Feedback{
-		AlertID:   req.EventID, // Use EventID as AlertID for now
+		EventID:   req.EventID,
+		AlertID:   alertIDStr,
 		RuleName:  ruleName,
 		Verdict:   req.FeedbackType,
 		Comment:   req.Comment,
@@ -767,6 +773,36 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "received",
 		"message": "Thank you for your feedback",
+	})
+}
+
+// handleAuditEvent accepts post-execution audit payloads from plugins.
+func (s *Server) handleAuditEvent(w http.ResponseWriter, r *http.Request) {
+	s.handleAcceptedEvent(w, r, "audit")
+}
+
+// handleLifecycleEvent accepts lifecycle telemetry payloads from plugins.
+func (s *Server) handleLifecycleEvent(w http.ResponseWriter, r *http.Request) {
+	s.handleAcceptedEvent(w, r, "lifecycle")
+}
+
+// handleAcceptedEvent validates JSON shape and returns 202 Accepted.
+func (s *Server) handleAcceptedEvent(w http.ResponseWriter, r *http.Request, kind string) {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+	defer r.Body.Close()
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
+		slog.Warn("Event JSON decode error", "kind", kind, "error", err, "remote_addr", r.RemoteAddr)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "accepted",
+		"message": kind + " event received",
 	})
 }
 

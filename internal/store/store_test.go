@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -308,13 +309,13 @@ func TestInsertFeedback(t *testing.T) {
 	}
 
 	// Test inserting feedback with alert ID
-	err = store.InsertFeedback("test-event-1", &alert.ID, "false_positive", "Test comment")
+	err = store.InsertFeedback("test-event-1", &alert.ID, "", "false_positive", "Test comment")
 	if err != nil {
 		t.Fatalf("InsertFeedback() failed: %v", err)
 	}
 
-	// Test inserting feedback without alert ID (inserts with empty rule_name)
-	err = store.InsertFeedback("test-event-2", nil, "true_positive", "Another test")
+	// Test inserting feedback without alert ID (uses caller-provided rule_name)
+	err = store.InsertFeedback("test-event-2", nil, "test-rule", "true_positive", "Another test")
 	if err != nil {
 		t.Fatalf("InsertFeedback() without alertID should succeed: %v", err)
 	}
@@ -355,7 +356,7 @@ func TestGetFeedbackForRule(t *testing.T) {
 	}
 
 	for _, fb := range feedbackData {
-		if err := store.InsertFeedback(fb.eventID, fb.alertID, fb.feedbackType, fb.comment); err != nil {
+		if err := store.InsertFeedback(fb.eventID, fb.alertID, "", fb.feedbackType, fb.comment); err != nil {
 			t.Fatalf("inserting test feedback: %v", err)
 		}
 	}
@@ -435,7 +436,7 @@ func TestGetRuleFPRate(t *testing.T) {
 	}
 
 	for _, fb := range feedbackData {
-		if err := store.InsertFeedback(fb.eventID, fb.alertID, fb.feedbackType, "test comment"); err != nil {
+		if err := store.InsertFeedback(fb.eventID, fb.alertID, "", fb.feedbackType, "test comment"); err != nil {
 			t.Fatalf("inserting test feedback: %v", err)
 		}
 	}
@@ -480,7 +481,7 @@ func TestGetRulesWithHighFPRate(t *testing.T) {
 	defer store.Close()
 
 	// Insert test feedback data using the actual API
-	// InsertFeedback(eventID string, alertID *int64, feedbackType, comment string)
+	// InsertFeedback(eventID string, alertID *int64, ruleName, feedbackType, comment string)
 	type testFeedback struct {
 		eventID      string
 		ruleName     string
@@ -513,7 +514,7 @@ func TestGetRulesWithHighFPRate(t *testing.T) {
 			t.Fatalf("inserting test alert: %v", err)
 		}
 		alertID := alert.ID
-		if err := store.InsertFeedback(fb.eventID, &alertID, fb.feedbackType, ""); err != nil {
+		if err := store.InsertFeedback(fb.eventID, &alertID, "", fb.feedbackType, ""); err != nil {
 			t.Fatalf("inserting test feedback: %v", err)
 		}
 	}
@@ -543,6 +544,49 @@ func TestGetRulesWithHighFPRate(t *testing.T) {
 	}
 }
 
+func TestGetRulesWithHighFPRateUsesTotalAlertsDenominator(t *testing.T) {
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer store.Close()
+
+	// 10 alerts for one rule.
+	var alertIDs []int64
+	for i := 0; i < 10; i++ {
+		alert := &Alert{
+			RuleName:    "sparse-feedback-rule",
+			Severity:    "high",
+			ActionTaken: "block",
+			Timestamp:   time.Now(),
+			EventID:     fmt.Sprintf("event-sparse-%d", i),
+		}
+		if err := store.InsertAlert(alert); err != nil {
+			t.Fatalf("inserting alert: %v", err)
+		}
+		alertIDs = append(alertIDs, alert.ID)
+	}
+
+	// Only 2 false-positive feedback entries (2/10 => 0.2 FP rate).
+	for i := 0; i < 2; i++ {
+		alertID := alertIDs[i]
+		if err := store.InsertFeedback("event-sparse-fp", &alertID, "", "false_positive", ""); err != nil {
+			t.Fatalf("inserting feedback: %v", err)
+		}
+	}
+
+	rules, err := store.GetRulesWithHighFPRate(0.5, 1)
+	if err != nil {
+		t.Fatalf("GetRulesWithHighFPRate failed: %v", err)
+	}
+
+	for _, rule := range rules {
+		if rule == "sparse-feedback-rule" {
+			t.Fatalf("rule should not be high-FP at threshold 0.5 when FP rate is 0.2")
+		}
+	}
+}
+
 func TestGetStats(t *testing.T) {
 	store, err := NewStore(":memory:")
 	if err != nil {
@@ -555,7 +599,7 @@ func TestGetStats(t *testing.T) {
 	alerts := []*Alert{
 		{RuleName: "rule1", Severity: "high", ActionTaken: "block", Timestamp: now, EventID: "event1"},
 		{RuleName: "rule2", Severity: "medium", ActionTaken: "log", Timestamp: now.Add(-time.Hour), EventID: "event2"},
-		{RuleName: "rule1", Severity: "critical", ActionTaken: "block", Timestamp: now.Add(-2*time.Hour), EventID: "event3"},
+		{RuleName: "rule1", Severity: "critical", ActionTaken: "block", Timestamp: now.Add(-2 * time.Hour), EventID: "event3"},
 	}
 
 	for _, alert := range alerts {
@@ -566,11 +610,11 @@ func TestGetStats(t *testing.T) {
 
 	// Insert feedback using actual API (alertID from first two alerts)
 	alertID1 := alerts[0].ID
-	if err := store.InsertFeedback("event1", &alertID1, "false_positive", ""); err != nil {
+	if err := store.InsertFeedback("event1", &alertID1, "", "false_positive", ""); err != nil {
 		t.Fatalf("inserting test feedback: %v", err)
 	}
 	alertID2 := alerts[1].ID
-	if err := store.InsertFeedback("event2", &alertID2, "true_positive", ""); err != nil {
+	if err := store.InsertFeedback("event2", &alertID2, "", "true_positive", ""); err != nil {
 		t.Fatalf("inserting test feedback: %v", err)
 	}
 
@@ -727,12 +771,12 @@ func TestSQLInjectionProtection(t *testing.T) {
 				EventID: "test-event",
 				Limit:   1,
 			}
-			
+
 			verifyAlerts, err := store.QueryAlerts(testQuery)
 			if err != nil {
 				t.Errorf("Verification query failed: %v", err)
 			}
-			
+
 			if len(verifyAlerts) != 1 {
 				t.Errorf("Expected 1 alert after injection attempt, got %d", len(verifyAlerts))
 			}

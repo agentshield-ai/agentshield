@@ -90,16 +90,16 @@ func TestRateLimiterBurst(t *testing.T) {
 	}
 }
 
-// TestRateLimiterXRealIP verifies that X-Real-Ip header is used
-// for rate limiting when present (reverse proxy scenario).
-func TestRateLimiterXRealIP(t *testing.T) {
+// TestRateLimiterIgnoresXRealIP verifies that limiter identity is derived from
+// the socket peer address, not client-provided forwarding headers.
+func TestRateLimiterIgnoresXRealIP(t *testing.T) {
 	rl := newIPRateLimiter(rate.Limit(1), 1)
 
 	handler := rateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// First request with X-Real-Ip
+	// First request with spoofed X-Real-Ip
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
 	req.Header.Set("X-Real-Ip", "203.0.113.1")
@@ -109,23 +109,24 @@ func TestRateLimiterXRealIP(t *testing.T) {
 		t.Errorf("first request: expected 200, got %d", rec.Code)
 	}
 
-	// Second request same X-Real-Ip should be limited
+	// Second request from same socket peer should be limited
 	req = httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
 	req.Header.Set("X-Real-Ip", "203.0.113.1")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("second request same real IP: expected 429, got %d", rec.Code)
+		t.Errorf("second request same peer IP: expected 429, got %d", rec.Code)
 	}
 
-	// Third request different X-Real-Ip should succeed
+	// Third request with different spoofed header should still be limited
+	// because the peer address is unchanged.
 	req = httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
 	req.Header.Set("X-Real-Ip", "203.0.113.2")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Errorf("different real IP: expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("same peer IP with spoofed header: expected 429, got %d", rec.Code)
 	}
 }

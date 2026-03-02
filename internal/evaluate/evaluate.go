@@ -70,15 +70,29 @@ func (e *Evaluator) SetCache(c *cache.VerdictCache) {
 	e.cache = c
 }
 
-// Evaluate processes an evaluation request and returns the appropriate response
+// Evaluate processes an evaluation request with a background context.
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
+	return e.EvaluateWithContext(context.Background(), req)
+}
+
+// EvaluateWithContext processes an evaluation request and propagates caller
+// cancellation/deadlines to triage providers.
+func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.EvaluationRequest) (*EvaluationResponse, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Determine effective evaluation mode (server-side only)
 	effectiveMode := e.determineEffectiveMode()
 
 	// Check verdict cache before running rule evaluation
 	var cacheKey string
 	if e.cache != nil {
-		cacheKey = cache.CacheKey(req.Tool, req.Args)
+		cacheContext := req.Context
+		if cacheContext == "" && req.Fields != nil {
+			cacheContext = req.Fields["context"]
+		}
+		cacheKey = cache.CacheKeyWithContext(req.Tool, req.Args, cacheContext)
 		if cached, ok := e.cache.Get(cacheKey); ok {
 			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
 			resp := &EvaluationResponse{
@@ -117,8 +131,6 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 	// Run triage analysis if enabled and we have alerts
 	var triageResults []triage.TriageResult
 	if e.triager != nil && len(alerts) > 0 {
-		ctx := context.Background() // TODO: Pass context from caller
-
 		triageRes, err := e.triager.TriageAlerts(ctx, alerts, req)
 		if err != nil {
 			slog.Error("triage failed, degrading gracefully", "error", err)

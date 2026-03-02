@@ -37,6 +37,10 @@ func TestNewDaemon(t *testing.T) {
 		if daemon.logger == nil {
 			t.Error("Expected logger to be initialized")
 		}
+
+		if !daemon.managePIDFile {
+			t.Error("Expected PID file management to be enabled by default")
+		}
 	})
 
 	t.Run("custom database path affects PID file location", func(t *testing.T) {
@@ -84,6 +88,30 @@ func TestNewDaemon(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestDaemonPIDOptions(t *testing.T) {
+	cfg := &config.Config{
+		LogLevel: "info",
+		Store: config.StoreConfig{
+			SQLitePath: "/tmp/test.db",
+		},
+	}
+
+	daemon, err := NewDaemon(cfg)
+	if err != nil {
+		t.Fatalf("NewDaemon() error = %v", err)
+	}
+
+	daemon.SetPIDFile(" /tmp/custom-agentshield.pid ")
+	if daemon.pidFile != "/tmp/custom-agentshield.pid" {
+		t.Fatalf("expected custom PID file to be applied, got %q", daemon.pidFile)
+	}
+
+	daemon.SetPIDFileManagement(false)
+	if daemon.managePIDFile {
+		t.Fatal("expected PID management to be disabled")
+	}
 }
 
 // TestPIDFileOperations tests PID file read/write/remove operations
@@ -421,7 +449,7 @@ func TestInitComponents(t *testing.T) {
 		tmpDir := t.TempDir()
 		rulesDir := filepath.Join(tmpDir, "rules")
 		os.MkdirAll(rulesDir, 0755)
-		
+
 		// Create a basic Sigma rule for testing
 		ruleContent := `title: Test Rule
 id: test-rule-001
@@ -438,7 +466,7 @@ level: high
 		dbPath := filepath.Join(tmpDir, "test.db")
 
 		cfg := &config.Config{
-			LogLevel: "info",
+			LogLevel:       "info",
 			EvaluationMode: config.ModeEnforce,
 			Rules: config.RulesConfig{
 				Dir: rulesDir,
@@ -527,7 +555,7 @@ level: high
 		dbPath := filepath.Join(tmpDir, "test.db")
 
 		cfg := &config.Config{
-			LogLevel: "info",
+			LogLevel:       "info",
 			EvaluationMode: config.ModeEnforce,
 			Rules: config.RulesConfig{
 				Dir: rulesDir,
@@ -611,7 +639,7 @@ func TestShutdown(t *testing.T) {
 		dbPath := filepath.Join(tmpDir, "test.db")
 
 		cfg := &config.Config{
-			LogLevel: "info",
+			LogLevel:       "info",
 			EvaluationMode: config.ModeEnforce,
 			Rules: config.RulesConfig{
 				Dir: rulesDir,

@@ -25,33 +25,30 @@ const (
 
 // RuleResult represents the result of evaluating a rule
 type RuleResult struct {
-	RuleID      string            `json:"rule_id"`
-	RuleName    string            `json:"rule_name"`
-	Severity    AlertSeverity     `json:"severity"`
-	Description string            `json:"description"`
-	Matched     bool              `json:"matched"`
+	RuleID        string            `json:"rule_id"`
+	RuleName      string            `json:"rule_name"`
+	Severity      AlertSeverity     `json:"severity"`
+	Description   string            `json:"description"`
+	Matched       bool              `json:"matched"`
 	MatchedFields map[string]string `json:"matched_fields,omitempty"`
 }
 
 // LoadedRule represents a loaded Sigma rule with metadata
 type LoadedRule struct {
 	rule        *sigma.Rule
-	rawContent  []byte
-	filePath    string
 	id          string
 	title       string
 	severity    AlertSeverity
 	description string
-	loadTime    time.Time
 }
 
 // Engine wraps the sigma rule evaluation with security protections
 type Engine struct {
-	mu          sync.RWMutex
-	rules       []LoadedRule
-	rulesDir    string
-	loadTime    time.Time
-	ruleCount   int
+	mu        sync.RWMutex
+	rules     []LoadedRule
+	rulesDir  string
+	loadTime  time.Time
+	ruleCount int
 }
 
 // NewEngine creates a new rule engine
@@ -199,13 +196,10 @@ func (e *Engine) loadRuleFile(filePath string) (*LoadedRule, error) {
 
 	return &LoadedRule{
 		rule:        rule,
-		rawContent:  content,
-		filePath:    filePath,
 		id:          ruleID,
 		title:       rule.Title,
 		severity:    severity,
 		description: description,
-		loadTime:    time.Now(),
 	}, nil
 }
 

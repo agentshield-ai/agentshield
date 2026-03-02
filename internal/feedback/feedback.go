@@ -5,6 +5,8 @@ package feedback
 import (
 	"fmt"
 	"html"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/store"
@@ -14,6 +16,7 @@ import (
 // Feedback represents user feedback on an alert or rule
 type Feedback struct {
 	ID        string    `json:"id"`
+	EventID   string    `json:"event_id"`
 	AlertID   string    `json:"alert_id"`
 	RuleName  string    `json:"rule_name"`
 	Verdict   string    `json:"verdict"` // "false_positive", "true_positive", "false_negative"
@@ -26,6 +29,24 @@ var ValidFeedbackTypes = map[string]bool{
 	"false_positive": true,
 	"true_positive":  true,
 	"false_negative": true,
+}
+
+// MaxCommentLength bounds user-supplied feedback comments.
+const MaxCommentLength = 1000
+
+// NormalizeFeedbackType canonicalizes accepted feedback type values.
+// "improvement" is kept as a backwards-compatible alias for false_negative.
+func NormalizeFeedbackType(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "false_positive":
+		return "false_positive", true
+	case "true_positive":
+		return "true_positive", true
+	case "false_negative", "improvement":
+		return "false_negative", true
+	default:
+		return "", false
+	}
 }
 
 // FeedbackManager handles feedback operations
@@ -42,24 +63,38 @@ func NewFeedbackManager(store *store.Store) *FeedbackManager {
 
 // SubmitFeedback validates and stores feedback
 func (fm *FeedbackManager) SubmitFeedback(feedback *Feedback) error {
-	// Validate feedback type
-	if !ValidFeedbackTypes[feedback.Verdict] {
+	// Validate and canonicalize feedback type
+	verdict, ok := NormalizeFeedbackType(feedback.Verdict)
+	if !ok {
 		return fmt.Errorf("invalid feedback type: %s", feedback.Verdict)
 	}
+	feedback.Verdict = verdict
 
-	// Validate required fields
-	if feedback.AlertID == "" {
-		return fmt.Errorf("alert_id is required")
+	// Resolve optional numeric alert ID.
+	alertID := parseAlertID(feedback.AlertID)
+
+	// Resolve required event ID. Keep AlertID fallback for backward compatibility
+	// with older internal callers/tests that stored event IDs in AlertID.
+	eventID := feedback.EventID
+	if eventID == "" {
+		eventID = feedback.AlertID
 	}
+	if eventID == "" {
+		return fmt.Errorf("event_id is required")
+	}
+	feedback.EventID = eventID
 
-	if feedback.RuleName == "" {
-		return fmt.Errorf("rule_name is required")
+	// Validate required identifiers.
+	if feedback.AlertID == "" && feedback.RuleName == "" {
+		return fmt.Errorf("either alert_id or rule_name is required")
+	}
+	if feedback.RuleName == "" && alertID == nil {
+		return fmt.Errorf("rule_name is required when alert_id is not numeric")
 	}
 
 	// Validate comment length
-	const maxCommentLength = 1000
-	if len(feedback.Comment) > maxCommentLength {
-		return fmt.Errorf("comment too long (max %d characters)", maxCommentLength)
+	if len(feedback.Comment) > MaxCommentLength {
+		return fmt.Errorf("comment too long (max %d characters)", MaxCommentLength)
 	}
 
 	// Sanitize comment (basic HTML/script tag removal)
@@ -75,9 +110,8 @@ func (fm *FeedbackManager) SubmitFeedback(feedback *Feedback) error {
 		feedback.Timestamp = time.Now()
 	}
 
-	// Store in database using the existing store method
-	alertID := parseAlertID(feedback.AlertID)
-	return fm.store.InsertFeedback(feedback.AlertID, alertID, feedback.Verdict, feedback.Comment)
+	// Store in database.
+	return fm.store.InsertFeedback(feedback.EventID, alertID, feedback.RuleName, feedback.Verdict, feedback.Comment)
 }
 
 // GetFeedbackForRule retrieves feedback for a specific rule
@@ -93,7 +127,8 @@ func (fm *FeedbackManager) GetFeedbackForRule(ruleName string, limit int) ([]Fee
 	for _, sf := range storeFeedbacks {
 		fb := Feedback{
 			ID:        fmt.Sprintf("%d", sf.ID),
-			AlertID:   sf.EventID,
+			EventID:   sf.EventID,
+			AlertID:   sf.EventID, // backward-compatible legacy field
 			RuleName:  sf.RuleName,
 			Verdict:   sf.FeedbackType,
 			Comment:   sf.Comment,
@@ -113,13 +148,13 @@ func (fm *FeedbackManager) GetRuleFalsePositiveRate(ruleName string) (float64, e
 
 // RuleStats represents statistics about a rule's performance
 type RuleStats struct {
-	RuleName           string  `json:"rule_name"`
-	TotalAlerts        int     `json:"total_alerts"`
-	FalsePositiveRate  float64 `json:"false_positive_rate"`
-	TruePositiveRate   float64 `json:"true_positive_rate"`
-	FeedbackCount      int     `json:"feedback_count"`
-	LastTriggered      *time.Time `json:"last_triggered"`
-	RecommendedAction  string  `json:"recommended_action"`
+	RuleName          string     `json:"rule_name"`
+	TotalAlerts       int        `json:"total_alerts"`
+	FalsePositiveRate float64    `json:"false_positive_rate"`
+	TruePositiveRate  float64    `json:"true_positive_rate"`
+	FeedbackCount     int        `json:"feedback_count"`
+	LastTriggered     *time.Time `json:"last_triggered"`
+	RecommendedAction string     `json:"recommended_action"`
 }
 
 // GetRuleStats returns comprehensive statistics for a rule
@@ -137,10 +172,35 @@ func (fm *FeedbackManager) GetRuleStats(ruleName string) (*RuleStats, error) {
 	stats := &RuleStats{
 		RuleName:          ruleName,
 		TotalAlerts:       len(alerts),
-		FalsePositiveRate: 0.1, // TODO: compute from store.GetRuleFPRate()
-		TruePositiveRate:  0.8, // TODO: compute from feedback data
-		FeedbackCount:     0,   // TODO: count from feedback table
+		FalsePositiveRate: 0,
+		TruePositiveRate:  0,
+		FeedbackCount:     0,
 		RecommendedAction: "none",
+	}
+
+	fpRate, err := fm.store.GetRuleFPRate(ruleName)
+	if err != nil {
+		return nil, fmt.Errorf("querying false positive rate for rule %s: %w", ruleName, err)
+	}
+	stats.FalsePositiveRate = fpRate
+
+	storeFeedbacks, err := fm.store.GetFeedbackForRule(ruleName, 10000)
+	if err != nil {
+		return nil, fmt.Errorf("querying feedback for rule %s: %w", ruleName, err)
+	}
+	stats.FeedbackCount = len(storeFeedbacks)
+
+	truePositiveCount := 0
+	for _, fb := range storeFeedbacks {
+		if fb.FeedbackType == "true_positive" {
+			truePositiveCount++
+		}
+	}
+	if stats.TotalAlerts > 0 {
+		stats.TruePositiveRate = float64(truePositiveCount) / float64(stats.TotalAlerts)
+		if stats.TruePositiveRate > 1 {
+			stats.TruePositiveRate = 1
+		}
 	}
 
 	// Set last triggered if we have alerts
@@ -161,8 +221,25 @@ func (fm *FeedbackManager) GetRuleStats(ruleName string) (*RuleStats, error) {
 
 // GetHighFalsePositiveRules returns rules with high false positive rates
 func (fm *FeedbackManager) GetHighFalsePositiveRules(threshold float64) ([]RuleStats, error) {
-	// TODO: implement using store.GetRulesWithHighFPRate(threshold)
-	return []RuleStats{}, nil
+	if threshold < 0 || threshold > 1 {
+		return nil, fmt.Errorf("threshold must be between 0 and 1")
+	}
+
+	rules, err := fm.store.GetRulesWithHighFPRate(threshold, 1)
+	if err != nil {
+		return nil, fmt.Errorf("querying high FP rules: %w", err)
+	}
+
+	stats := make([]RuleStats, 0, len(rules))
+	for _, rule := range rules {
+		ruleStats, err := fm.GetRuleStats(rule)
+		if err != nil {
+			return nil, fmt.Errorf("building stats for rule %s: %w", rule, err)
+		}
+		stats = append(stats, *ruleStats)
+	}
+
+	return stats, nil
 }
 
 // Utility functions
@@ -184,27 +261,24 @@ func generateFeedbackID() string {
 }
 
 func parseAlertID(alertIDStr string) *int64 {
-	// Try to parse alert ID as int64
-	// This is a simplified implementation
-	var alertID int64
-	n, err := fmt.Sscanf(alertIDStr, "%d", &alertID)
-	if err == nil && n == 1 {
-		// Check if the entire string was consumed (no extra characters)
-		expectedStr := fmt.Sprintf("%d", alertID)
-		if alertIDStr == expectedStr {
-			return &alertID
-		}
+	alertIDStr = strings.TrimSpace(alertIDStr)
+	if alertIDStr == "" {
+		return nil
 	}
-	return nil
+	alertID, err := strconv.ParseInt(alertIDStr, 10, 64)
+	if err != nil || alertID <= 0 {
+		return nil
+	}
+	return &alertID
 }
 
 // FeedbackSummary provides an overview of feedback for reporting
 type FeedbackSummary struct {
-	TotalFeedback      int                    `json:"total_feedback"`
-	ByType             map[string]int         `json:"by_type"`
-	TopFalsePositives  []string              `json:"top_false_positives"`
-	RecentFeedback     []Feedback            `json:"recent_feedback"`
-	RecommendedActions map[string]string     `json:"recommended_actions"`
+	TotalFeedback      int               `json:"total_feedback"`
+	ByType             map[string]int    `json:"by_type"`
+	TopFalsePositives  []string          `json:"top_false_positives"`
+	RecentFeedback     []Feedback        `json:"recent_feedback"`
+	RecommendedActions map[string]string `json:"recommended_actions"`
 }
 
 // GetFeedbackSummary returns a summary of all feedback

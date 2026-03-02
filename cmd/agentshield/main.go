@@ -82,14 +82,20 @@ func newServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("creating daemon: %w", err)
 			}
+			if pidFile != "" {
+				d.SetPIDFile(pidFile)
+			}
+			if !daemonMode {
+				d.SetPIDFileManagement(false)
+			}
 
 			// Start daemon
 			return d.Start()
 		},
 	}
 
-	cmd.Flags().BoolVarP(&daemonMode, "daemon", "d", true, "run in daemon mode")
-	cmd.Flags().StringVar(&pidFile, "pid-file", "", "PID file path (default: auto)")
+	cmd.Flags().BoolVarP(&daemonMode, "daemon", "d", true, "manage PID file for status/reload compatibility")
+	cmd.Flags().StringVar(&pidFile, "pid-file", "", "override PID file path")
 
 	return cmd
 }
@@ -118,7 +124,7 @@ func newStatusCmd() *cobra.Command {
 
 			// Check HTTP health
 			healthURL := fmt.Sprintf("http://%s/api/v1/health", cfg.ListenAddr())
-			
+
 			client := &http.Client{Timeout: 5 * time.Second}
 			resp, err := client.Get(healthURL)
 			if err != nil {
@@ -354,7 +360,7 @@ func loadConfig() (*config.Config, error) {
 func setupLogging(level string) {
 	// Basic logging setup - in production you might want structured logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	
+
 	// Set log level (basic implementation)
 	switch strings.ToLower(level) {
 	case "debug":
@@ -364,7 +370,7 @@ func setupLogging(level string) {
 	case "warn", "warning":
 		// Could filter out debug/info logs
 	case "error":
-		// Could filter out debug/info/warn logs  
+		// Could filter out debug/info/warn logs
 	}
 
 	if verbose {

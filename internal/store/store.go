@@ -290,15 +290,19 @@ type Feedback struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// InsertFeedback inserts user feedback for an alert/event
-func (s *Store) InsertFeedback(eventID string, alertID *int64, feedbackType, comment string) error {
-	// Get rule name from alert if alert_id is provided
-	var ruleName string
+// InsertFeedback inserts user feedback for an alert/event.
+// If alertID is provided, ruleName is resolved from the alert row.
+// If alertID is nil, caller-provided ruleName is used.
+func (s *Store) InsertFeedback(eventID string, alertID *int64, ruleName, feedbackType, comment string) error {
+	resolvedRuleName := ruleName
 	if alertID != nil {
-		err := s.db.QueryRow("SELECT rule_name FROM alerts WHERE id = ?", *alertID).Scan(&ruleName)
+		err := s.db.QueryRow("SELECT rule_name FROM alerts WHERE id = ?", *alertID).Scan(&resolvedRuleName)
 		if err != nil {
 			return fmt.Errorf("getting rule name for alert %d: %w", *alertID, err)
 		}
+	}
+	if resolvedRuleName == "" {
+		return fmt.Errorf("rule_name is required")
 	}
 
 	query := `
@@ -306,7 +310,7 @@ func (s *Store) InsertFeedback(eventID string, alertID *int64, feedbackType, com
 		VALUES (?, ?, ?, ?, ?)
 	`
 
-	_, err := s.db.Exec(query, eventID, alertID, ruleName, feedbackType, comment)
+	_, err := s.db.Exec(query, eventID, alertID, resolvedRuleName, feedbackType, comment)
 	if err != nil {
 		return fmt.Errorf("inserting feedback: %w", err)
 	}
@@ -385,19 +389,30 @@ func (s *Store) GetRuleFPRate(ruleName string) (float64, error) {
 
 	// Calculate FP rate
 	fpRate := float64(falsePositiveCount) / float64(totalAlerts)
+	if fpRate > 1 {
+		fpRate = 1
+	}
 	return fpRate, nil
 }
 
 // GetRulesWithHighFPRate returns rules with false positive rate above threshold
 func (s *Store) GetRulesWithHighFPRate(threshold float64, minAlerts int) ([]string, error) {
 	query := `
-		SELECT a.rule_name, 
-			   COUNT(*) as total_alerts,
-			   COUNT(CASE WHEN f.feedback_type = 'false_positive' THEN 1 END) as fp_count
-		FROM alerts a
-		LEFT JOIN feedback f ON a.rule_name = f.rule_name
-		GROUP BY a.rule_name
-		HAVING total_alerts >= ?
+		WITH alert_counts AS (
+			SELECT rule_name, COUNT(*) AS total_alerts
+			FROM alerts
+			GROUP BY rule_name
+			HAVING COUNT(*) >= ?
+		),
+		fp_feedback AS (
+			SELECT rule_name, COUNT(*) AS fp_count
+			FROM feedback
+			WHERE feedback_type = 'false_positive'
+			GROUP BY rule_name
+		)
+		SELECT a.rule_name, a.total_alerts, COALESCE(f.fp_count, 0) AS fp_count
+		FROM alert_counts a
+		LEFT JOIN fp_feedback f ON a.rule_name = f.rule_name
 		ORDER BY a.rule_name
 	`
 
@@ -419,6 +434,9 @@ func (s *Store) GetRulesWithHighFPRate(threshold float64, minAlerts int) ([]stri
 
 		// Calculate FP rate
 		fpRate := float64(fpCount) / float64(totalAlerts)
+		if fpRate > 1 {
+			fpRate = 1
+		}
 		if fpRate >= threshold {
 			highFPRules = append(highFPRules, ruleName)
 		}

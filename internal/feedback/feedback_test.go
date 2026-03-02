@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/store"
-	
+
 	_ "modernc.org/sqlite" // Import SQLite driver
 )
 
@@ -56,7 +56,7 @@ func TestSubmitFeedback(t *testing.T) {
 				Comment:  "Test comment",
 			},
 			expectError: true,
-			errorMsg:    "alert_id is required",
+			errorMsg:    "event_id is required",
 		},
 		{
 			name: "Missing rule name",
@@ -179,7 +179,9 @@ func TestParseAlertID(t *testing.T) {
 		expected *int64
 	}{
 		{"123", func() *int64 { val := int64(123); return &val }()},
-		{"0", func() *int64 { val := int64(0); return &val }()},
+		{" 456 ", func() *int64 { val := int64(456); return &val }()},
+		{"0", nil},
+		{"-1", nil},
 		{"abc", nil},
 		{"", nil},
 		{"123abc", nil},
@@ -199,6 +201,65 @@ func TestParseAlertID(t *testing.T) {
 				t.Errorf("parseAlertID(%q) = %d, expected %d", test.input, *result, *test.expected)
 			}
 		}
+	}
+}
+
+func TestGetRuleStatsComputesRatesFromStoreData(t *testing.T) {
+	st, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create test store: %v", err)
+	}
+	defer st.Close()
+
+	// 4 alerts total for the same rule.
+	alerts := []*store.Alert{
+		{RuleName: "stats-rule", Severity: "high", ActionTaken: "block", Timestamp: time.Now(), EventID: "e1"},
+		{RuleName: "stats-rule", Severity: "high", ActionTaken: "block", Timestamp: time.Now(), EventID: "e2"},
+		{RuleName: "stats-rule", Severity: "medium", ActionTaken: "log", Timestamp: time.Now(), EventID: "e3"},
+		{RuleName: "stats-rule", Severity: "low", ActionTaken: "allow", Timestamp: time.Now(), EventID: "e4"},
+	}
+	for _, alert := range alerts {
+		if err := st.InsertAlert(alert); err != nil {
+			t.Fatalf("Failed to insert alert: %v", err)
+		}
+	}
+
+	// 2 false positives + 1 true positive feedback.
+	for _, fb := range []struct {
+		eventID string
+		alertID int64
+		verdict string
+	}{
+		{eventID: "e1", alertID: alerts[0].ID, verdict: "false_positive"},
+		{eventID: "e2", alertID: alerts[1].ID, verdict: "false_positive"},
+		{eventID: "e3", alertID: alerts[2].ID, verdict: "true_positive"},
+	} {
+		alertID := fb.alertID
+		if err := st.InsertFeedback(fb.eventID, &alertID, "", fb.verdict, ""); err != nil {
+			t.Fatalf("Failed to insert feedback: %v", err)
+		}
+	}
+
+	fm := NewFeedbackManager(st)
+	stats, err := fm.GetRuleStats("stats-rule")
+	if err != nil {
+		t.Fatalf("GetRuleStats failed: %v", err)
+	}
+
+	if stats.TotalAlerts != 4 {
+		t.Fatalf("Expected 4 alerts, got %d", stats.TotalAlerts)
+	}
+	if stats.FeedbackCount != 3 {
+		t.Fatalf("Expected 3 feedback entries, got %d", stats.FeedbackCount)
+	}
+	if stats.FalsePositiveRate != 0.5 { // 2 / 4 alerts
+		t.Fatalf("Expected FP rate 0.5, got %f", stats.FalsePositiveRate)
+	}
+	if stats.TruePositiveRate != 0.25 { // 1 / 4 alerts
+		t.Fatalf("Expected TP rate 0.25, got %f", stats.TruePositiveRate)
+	}
+	if stats.RecommendedAction != "refine" {
+		t.Fatalf("Expected recommended action refine, got %s", stats.RecommendedAction)
 	}
 }
 
@@ -332,7 +393,7 @@ func TestGetFeedbackForRule(t *testing.T) {
 		Timestamp:   time.Now(),
 		EventID:     "alert1",
 	}
-	
+
 	err = st.InsertAlert(testAlert)
 	if err != nil {
 		t.Fatalf("Failed to insert test alert: %v", err)
@@ -340,7 +401,7 @@ func TestGetFeedbackForRule(t *testing.T) {
 
 	// Insert feedback referencing the alert
 	alertID := testAlert.ID // Should be set by InsertAlert
-	err = st.InsertFeedback("alert1", &alertID, "false_positive", "Test comment 1")
+	err = st.InsertFeedback("alert1", &alertID, "", "false_positive", "Test comment 1")
 	if err != nil {
 		t.Fatalf("Failed to insert test feedback: %v", err)
 	}
@@ -675,14 +736,14 @@ func TestSubmitFeedbackTimestampHandling(t *testing.T) {
 
 // Helper function to check if a string contains a substring
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-		   (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || 
-		   func() bool {
-		       for i := 0; i <= len(s)-len(substr); i++ {
-		           if s[i:i+len(substr)] == substr {
-		               return true
-		           }
-		       }
-		       return false
-		   }()))
+	return len(s) >= len(substr) &&
+		(s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+			func() bool {
+				for i := 0; i <= len(s)-len(substr); i++ {
+					if s[i:i+len(substr)] == substr {
+						return true
+					}
+				}
+				return false
+			}()))
 }
