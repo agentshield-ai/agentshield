@@ -430,6 +430,11 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 			req.Fields["context"] = req.Context
 		}
 	}
+	if req.Source != "" {
+		if _, ok := req.Fields["source"]; !ok {
+			req.Fields["source"] = req.Source
+		}
+	}
 	if _, ok := req.Fields["command"]; !ok {
 		if cmd, ok := req.Args["command"]; ok {
 			req.Fields["command"] = cmd

@@ -8,6 +8,7 @@ type EvaluationRequest struct {
 	Tool      string                 `json:"tool,omitempty"`
 	ToolName  string                 `json:"tool_name,omitempty"` // Plugin compat alias for Tool
 	Command   string                 `json:"command,omitempty"`   // Plugin compat: top-level command
+	Source    string                 `json:"source,omitempty"`    // Event source (e.g. "openclaw")
 	Args      map[string]string      `json:"args,omitempty"`
 	Fields    map[string]string      `json:"fields"`
 	RawParams map[string]interface{} `json:"params,omitempty"`  // Plugin compat alias for Args (accepts any JSON value)
