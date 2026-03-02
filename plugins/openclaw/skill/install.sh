@@ -236,28 +236,46 @@ EOF
     log "Launchd service configured at $PLIST_FILE"
 }
 
-# Patch OpenClaw
+# Install plugin code into OpenClaw and patch config
 patch_openclaw_config() {
     log "Configuring OpenClaw integration..."
     AUTH_TOKEN=$(grep -m1 "^  token:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-    if command -v openclaw >/dev/null 2>&1; then
-        TOKEN_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-token-XXXXXX")
-        CLEANUP_FILES+=("$TOKEN_FILE")
-        printf '%s' "$AUTH_TOKEN" > "$TOKEN_FILE"
-        chmod 600 "$TOKEN_FILE"
-        openclaw config patch \
-            plugins.entries.agentshield.enabled=true \
-            plugins.entries.agentshield.config.enabled=true \
-            plugins.entries.agentshield.config.endpoint="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate" \
-            plugins.entries.agentshield.config.auth_token="$(cat "$TOKEN_FILE")" \
-            plugins.entries.agentshield.config.timeout_ms=200 \
-            plugins.entries.agentshield.config.timeout_policy="block" 2>/dev/null && {
-            rm -f "$TOKEN_FILE"
-            log "OpenClaw configuration updated"; return
-        }
-        rm -f "$TOKEN_FILE"
+    if ! command -v openclaw >/dev/null 2>&1; then
+        warn "OpenClaw CLI not available - manual plugin configuration required"
+        return
     fi
-    warn "OpenClaw CLI not available - manual plugin configuration required"
+
+    # Step 1: Register the plugin code so OpenClaw can load it.
+    # The plugin source (index.ts, src/, openclaw.plugin.json) is in the
+    # parent directory relative to this skill script.
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+    if [ -f "$PLUGIN_DIR/openclaw.plugin.json" ]; then
+        log "Installing OpenClaw plugin from $PLUGIN_DIR..."
+        openclaw plugins install --link "$PLUGIN_DIR" 2>/dev/null && {
+            log "OpenClaw plugin registered"
+        } || warn "openclaw plugins install failed — plugin may not load"
+    else
+        warn "Plugin source not found at $PLUGIN_DIR — skipping plugin install"
+    fi
+
+    # Step 2: Patch config with auth token and endpoint settings.
+    TOKEN_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-token-XXXXXX")
+    CLEANUP_FILES+=("$TOKEN_FILE")
+    printf '%s' "$AUTH_TOKEN" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+    openclaw config patch \
+        plugins.entries.agentshield.enabled=true \
+        plugins.entries.agentshield.config.enabled=true \
+        plugins.entries.agentshield.config.endpoint="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate" \
+        plugins.entries.agentshield.config.auth_token="$(cat "$TOKEN_FILE")" \
+        plugins.entries.agentshield.config.timeout_ms=200 \
+        plugins.entries.agentshield.config.timeout_policy="block" 2>/dev/null && {
+        rm -f "$TOKEN_FILE"
+        log "OpenClaw configuration updated"; return
+    }
+    rm -f "$TOKEN_FILE"
+    warn "Failed to patch OpenClaw config — check openclaw config manually"
 }
 
 # Start and check
@@ -307,7 +325,8 @@ main() {
     fi
     echo "  • Edit config: $CONFIG_FILE"
     echo "  • Add rules: $INSTALL_DIR/rules/"
-    echo -e "\n🔒 Auth token is in config — keep it secure!"
+    echo -e "\n⚠️  Restart your OpenClaw session to load the plugin."
+    echo -e "🔒 Auth token is in config — keep it secure!"
 }
 
 main "$@"
