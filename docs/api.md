@@ -1,6 +1,6 @@
-# API Documentation
+# API Reference
 
-Complete API reference for AgentShield Engine HTTP endpoints with request/response formats and examples.
+This document provides a complete reference for the AgentShield Engine HTTP API, covering all available endpoints, request and response formats, authentication, error handling, and integration examples.
 
 ## Base URL
 
@@ -8,14 +8,14 @@ Default: `http://localhost:8433`
 
 ## Authentication
 
-The API requires Bearer token authentication. A token of at least 32 characters must be configured via `auth.token` in the YAML config or the `AGENTSHIELD_AUTH_TOKEN` environment variable.
+The API uses Bearer token authentication. A token of at least 32 characters must be configured via `auth.token` in the YAML configuration or the `AGENTSHIELD_AUTH_TOKEN` environment variable. Token comparison uses constant-time comparison (`subtle.ConstantTimeCompare`) to mitigate timing attacks.
 
 ```bash
-# Include Authorization header
-curl -H "Authorization: Bearer your-token" http://localhost:8433/api/v1/health
+# Include the Authorization header in all requests (except /health)
+curl -H "Authorization: Bearer your-token" http://localhost:8433/api/v1/alerts
 ```
 
-The engine will refuse to start if no auth token is configured.
+If no auth token is configured, authentication is disabled. See [Configuration Reference](configuration.md) for details.
 
 ## Content Types
 
@@ -38,12 +38,12 @@ All endpoints return consistent error format:
 ```
 
 **Common HTTP Status Codes:**
-- `200` - Success
-- `400` - Bad Request (invalid JSON, missing fields)
-- `401` - Unauthorized (invalid/missing token)
-- `404` - Not Found (invalid endpoint)
-- `429` - Too Many Requests (rate limited)
-- `500` - Internal Server Error
+- `200` -- Success
+- `400` -- Bad Request (invalid JSON, missing fields)
+- `401` -- Unauthorised (invalid or missing token)
+- `404` -- Not Found (invalid endpoint)
+- `429` -- Too Many Requests (rate limited)
+- `500` -- Internal Server Error
 
 ## Core Endpoints
 
@@ -67,17 +67,19 @@ Evaluate an event against all loaded Sigma rules.
     "process.name": "ls",
     "process.pid": "12345"
   },
-  "mode": "audit"
+  "context": "prod"
 }
 ```
 
 **Field Descriptions:**
 - `event_id` (string, required): Unique identifier for this event
-- `session_id` (string, optional): Agent session identifier for grouping
-- `tool` (string, optional): Tool being executed (exec, read, write, etc.)
-- `args` (object, optional): Tool-specific arguments
+- `session_id` (string, optional): Agent session identifier for grouping related events
+- `tool` (string, optional): Tool being executed (`exec`, `read`, `write`, etc.). Also accepted as `tool_name` for plugin compatibility
+- `command` (string, optional): Top-level command string (plugin compatibility shorthand)
+- `args` (object, optional): Tool-specific arguments as string key-value pairs
+- `params` (object, optional): Alias for `args` that accepts arbitrary JSON values (plugin compatibility)
 - `fields` (object, required): Event fields for Sigma rule matching
-- `mode` (string, optional): Override evaluation mode for this request
+- `context` (string, optional): Execution context, e.g. `"prod"` or `"test"`
 
 **Field Auto-mapping:**
 The engine automatically maps common fields from the request:
@@ -91,38 +93,46 @@ The engine automatically maps common fields from the request:
 ```json
 {
   "event_id": "unique-event-identifier",
-  "action": "BLOCK",
+  "action": "block",
   "alerts": [
     {
       "rule_id": "agent-dangerous-commands-001",
       "rule_name": "Dangerous File System Operations",
-      "severity": "high"
+      "severity": "high",
+      "description": "Detects dangerous file system operations",
+      "matched": true,
+      "matched_fields": {
+        "process.command_line": "rm -rf /"
+      }
     }
   ],
   "triage_results": [
     {
-      "verdict": "TRUE_POSITIVE",
+      "verdict": "block",
       "confidence": 0.95,
       "reasoning": "High-risk file deletion command in sensitive location",
+      "suggested_action": "Block execution immediately",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "processing_time_ms": 4200
+      "processing_time": 4200
     }
   ],
   "overridable": false,
   "effective_mode": "enforce",
-  "feedback_url": "/api/v1/feedback",
+  "cached": false,
+  "feedback_url": "/api/v1/feedback?event_id=unique-event-identifier",
   "timestamp": "2026-01-15T10:30:00Z"
 }
 ```
 
 **Response Fields:**
 - `event_id` (string): Echo of the submitted event ID
-- `action` (string): Action to take - "ALLOW", "BLOCK", "LOG"
-- `alerts` (array): Array of triggered rule results
-- `triage_results` (array, optional): LLM triage analyses (if triage is enabled)
-- `overridable` (bool): Whether the action can be overridden by the caller
-- `effective_mode` (string): The evaluation mode applied ("enforce", "audit", "shadow")
+- `action` (string): Action to take -- one of `"allow"`, `"block"`, `"log"`, or `"require_approval"` (see [Evaluation](evaluation.md) for how actions are determined)
+- `alerts` (array): Triggered rule results, each containing `rule_id`, `rule_name`, `severity`, `description`, `matched`, and optionally `matched_fields`
+- `triage_results` (array, optional): LLM triage analyses, present only when triage is enabled and the alert severity is high or critical
+- `overridable` (bool): Whether the action may be overridden by the caller (true for `require_approval` actions)
+- `effective_mode` (string): The evaluation mode applied (`"enforce"`, `"audit"`, or `"shadow"`)
+- `cached` (bool): Whether the result was served from the verdict cache
 - `feedback_url` (string, optional): URL for submitting feedback on this evaluation
 - `timestamp` (string): ISO 8601 timestamp of the evaluation
 
@@ -131,6 +141,7 @@ The engine automatically maps common fields from the request:
 ```bash
 # Basic file access evaluation
 curl -X POST http://localhost:8433/api/v1/evaluate \
+  -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "event_id": "file-access-001",
@@ -143,9 +154,10 @@ curl -X POST http://localhost:8433/api/v1/evaluate \
 
 # Network request evaluation
 curl -X POST http://localhost:8433/api/v1/evaluate \
+  -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "event_id": "network-001", 
+    "event_id": "network-001",
     "tool": "web_fetch",
     "fields": {
       "url.full": "https://suspicious-domain.com/payload.sh",
@@ -155,6 +167,7 @@ curl -X POST http://localhost:8433/api/v1/evaluate \
 
 # Command execution with session context
 curl -X POST http://localhost:8433/api/v1/evaluate \
+  -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "event_id": "cmd-exec-001",
@@ -173,7 +186,7 @@ curl -X POST http://localhost:8433/api/v1/evaluate \
 
 ### GET /api/v1/health
 
-Engine health check with detailed status information.
+Engine health check. Returns operational status and basic metadata.
 
 **Response Format:**
 ```json
@@ -185,11 +198,11 @@ Engine health check with detailed status information.
 }
 ```
 
-The health endpoint intentionally returns minimal information. Detailed configuration and performance data are not exposed for security reasons.
+The health endpoint intentionally returns minimal information; detailed configuration and performance data are not exposed for security reasons.
 
 **Status Values:**
-- `ok` - All systems operational (HTTP 200)
-- `degraded` - Store health check failed (HTTP 503)
+- `ok` -- All systems operational (HTTP 200)
+- `degraded` -- Store health check failed (HTTP 503)
 
 **Note:** The health endpoint bypasses authentication and is accessible without a Bearer token.
 
@@ -202,7 +215,7 @@ curl -X GET http://localhost:8433/api/v1/health
 
 ### GET /api/v1/alerts
 
-List and filter alerts with pagination support.
+List and filter alerts with pagination.
 
 **Query Parameters:**
 - `limit` (int): Number of alerts to return (default: 100, max: 1000)
@@ -265,23 +278,27 @@ List and filter alerts with pagination support.
 
 ```bash
 # Get recent critical alerts
-curl "http://localhost:8433/api/v1/alerts?severity=critical&since=24h&limit=10"
+curl -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
+  "http://localhost:8433/api/v1/alerts?severity=critical&since=24h&limit=10"
 
-# Get alerts for specific rule
-curl "http://localhost:8433/api/v1/alerts?rule=agent-dangerous-commands-001"
+# Get alerts for a specific rule
+curl -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
+  "http://localhost:8433/api/v1/alerts?rule=agent-dangerous-commands-001"
 
 # Get alerts with pagination
-curl "http://localhost:8433/api/v1/alerts?limit=25&offset=50"
+curl -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
+  "http://localhost:8433/api/v1/alerts?limit=25&offset=50"
 
-# Get alerts for date range
-curl "http://localhost:8433/api/v1/alerts?since=2024-01-01T00:00:00Z&until=2024-01-02T00:00:00Z"
+# Get alerts for a date range
+curl -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
+  "http://localhost:8433/api/v1/alerts?since=2024-01-01T00:00:00Z&until=2024-01-02T00:00:00Z"
 ```
 
 ## Feedback Endpoints
 
 ### POST /api/v1/feedback
 
-Submit feedback on alert classification to improve rule accuracy.
+Submit feedback on an alert classification. Feedback is used to track rule accuracy and support rule refinement.
 
 **Request Format:**
 ```json
@@ -289,7 +306,7 @@ Submit feedback on alert classification to improve rule accuracy.
   "event_id": "evt-abc-123",
   "alert_id": 123,
   "feedback_type": "false_positive",
-  "comment": "This is legitimate security testing authorized by the security team"
+  "comment": "This is legitimate security testing authorised by the security team"
 }
 ```
 
@@ -310,26 +327,24 @@ Submit feedback on alert classification to improve rule accuracy.
 **Example Requests:**
 
 ```bash
-# Mark alert as false positive
+# Mark an alert as a false positive
 curl -X POST http://localhost:8433/api/v1/feedback \
+  -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "alert_id": 123,
     "feedback_type": "false_positive",
-    "comment": "Authorized penetration testing",
-    "confidence": 0.95
+    "comment": "Authorised penetration testing"
   }'
 
-# Suggest rule improvement
+# Suggest a rule improvement
 curl -X POST http://localhost:8433/api/v1/feedback \
+  -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "event_id": "evt-abc-123",
     "feedback_type": "improvement",
-    "comment": "Rule should exclude commands run during business hours",
-    "metadata": {
-      "suggested_condition": "not (timeOfDay >= 09:00 and timeOfDay <= 17:00)"
-    }
+    "comment": "Rule should exclude commands run during business hours"
   }'
 ```
 
@@ -350,7 +365,7 @@ Query feedback for a specific rule.
       "alert_id": "evt-abc-123",
       "rule_name": "agent-dangerous-commands-001",
       "verdict": "false_positive",
-      "comment": "Authorized security testing",
+      "comment": "Authorised security testing",
       "timestamp": "2024-01-15T11:30:00Z"
     }
   ],
@@ -362,8 +377,9 @@ Query feedback for a specific rule.
 **Example Request:**
 
 ```bash
-# Get feedback for specific rule
-curl "http://localhost:8433/api/v1/feedback?rule=agent-dangerous-commands-001"
+# Get feedback for a specific rule
+curl -H "Authorization: Bearer $AGENTSHIELD_AUTH_TOKEN" \
+  "http://localhost:8433/api/v1/feedback?rule=agent-dangerous-commands-001"
 ```
 
 ## Response Headers
@@ -382,10 +398,10 @@ A `X-Request-Id` header is generated per request by Chi middleware.
 
 ## Rate Limiting
 
-The API implements per-IP token-bucket rate limiting:
+The API implements per-IP token-bucket rate limiting.
 
-- **Default Limits**: ~100 requests/minute per IP (one token every 600 ms, burst of 10)
-- **Status Code**: 429 when limits exceeded
+- **Default limits**: approximately 100 requests per minute per IP (one token every 600 ms, burst of 10)
+- **Status code**: `429` when limits are exceeded
 
 Rate-limit headers (`X-RateLimit-*`) are not currently emitted.
 
@@ -412,88 +428,85 @@ plugins:
     retry_attempts: 3
 ```
 
-### Custom Integration
+### Custom Integration (Python)
 
 ```python
 import requests
-import json
+
 
 class AgentShieldClient:
-    def __init__(self, endpoint, token=None):
+    def __init__(self, endpoint: str, token: str | None = None) -> None:
         self.endpoint = endpoint
-        self.token = token
         self.session = requests.Session()
         if token:
-            self.session.headers['Authorization'] = f'Bearer {token}'
-    
-    def evaluate(self, event_id, tool, fields, **kwargs):
-        payload = {
-            'event_id': event_id,
-            'tool': tool,
-            'fields': fields,
-            **kwargs
-        }
-        
+            self.session.headers["Authorization"] = f"Bearer {token}"
+
+    def evaluate(
+        self, event_id: str, tool: str, fields: dict[str, str], **kwargs
+    ) -> dict:
+        payload = {"event_id": event_id, "tool": tool, "fields": fields, **kwargs}
         response = self.session.post(
-            f'{self.endpoint}/api/v1/evaluate',
-            json=payload
+            f"{self.endpoint}/api/v1/evaluate", json=payload
         )
         response.raise_for_status()
         return response.json()
-    
-    def get_alerts(self, **filters):
+
+    def get_alerts(self, **filters) -> dict:
         response = self.session.get(
-            f'{self.endpoint}/api/v1/alerts',
-            params=filters
+            f"{self.endpoint}/api/v1/alerts", params=filters
         )
         response.raise_for_status()
         return response.json()
+
 
 # Usage
-client = AgentShieldClient('http://localhost:8433', 'your-token')
+client = AgentShieldClient("http://localhost:8433", "your-token")
 
 result = client.evaluate(
-    event_id='test-001',
-    tool='exec',
+    event_id="test-001",
+    tool="exec",
     fields={
-        'process.command_line': 'rm -rf /',
-        'user.name': 'agent'
-    }
+        "process.command_line": "rm -rf /",
+        "user.name": "agent",
+    },
 )
 
-if result['action'] == 'BLOCK':
-    print('⚠️  Dangerous command blocked!')
+if result["action"] == "block":
+    print("Dangerous command blocked!")
 ```
 
 ## Error Handling Best Practices
 
-1. **Always check HTTP status codes** before processing response JSON
-2. **Handle rate limiting** with exponential backoff
-3. **Validate response schema** before accessing fields
-4. **Log request IDs** from `X-Request-ID` header for debugging
-5. **Implement timeouts** to avoid hanging requests
+1. **Always check HTTP status codes** before processing response JSON.
+2. **Handle rate limiting** with exponential backoff when receiving `429` responses.
+3. **Validate the response schema** before accessing fields.
+4. **Log request IDs** from the `X-Request-Id` header for debugging.
+5. **Set timeouts** to avoid hanging requests.
 
 ```python
-# Example error handling
+import logging
+import time
+
+import requests
+
+logger = logging.getLogger(__name__)
+
 try:
     response = requests.post(endpoint, json=payload, timeout=30)
     response.raise_for_status()
     result = response.json()
-    
-    if result['action'] == 'BLOCK':
+
+    if result["action"] == "block":
         # Handle blocked action
         pass
-        
+
 except requests.exceptions.HTTPError as e:
     if e.response.status_code == 429:
-        # Handle rate limiting
-        retry_after = int(e.response.headers.get('Retry-After', 60))
+        retry_after = int(e.response.headers.get("Retry-After", 60))
         time.sleep(retry_after)
     else:
-        # Handle other HTTP errors
         logger.error(f"API error: {e}")
-        
+
 except requests.exceptions.RequestException as e:
-    # Handle network errors
     logger.error(f"Network error: {e}")
 ```

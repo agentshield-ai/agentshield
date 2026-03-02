@@ -1,10 +1,10 @@
 # Rule Authoring Guide
 
-AgentShield uses Sigma rules for threat detection. This guide explains how to write custom rules for detecting threats in AI agent activity.
+AgentShield uses [Sigma](https://sigmahq.io/) rules for threat detection. This guide explains how to write, test, and refine custom rules for detecting threats in AI agent activity.
 
 ## What is Sigma?
 
-Sigma is an open standard for writing detection rules. It provides a structured YAML format that can describe security threats independently of specific log formats or SIEM products.
+Sigma is an open standard for writing detection rules. It provides a structured YAML format that describes security threats independently of specific log formats or SIEM products. AgentShield evaluates Sigma rules using a fork of RunReveal's [sigmalite](https://github.com/runreveal/sigmalite) library.
 
 ## Rule Structure
 
@@ -15,13 +15,13 @@ id: unique-rule-identifier
 title: Human-readable rule name
 description: |
   Detailed description of what the rule detects
-  and why it's important.
+  and why it is important.
 author: Your Name
 date: "2026-01-25"
-status: production
+status: stable
 level: high
 logsource:
-  product: agentshield
+  product: ai_agent
   category: agent_events
 tags:
   - attack.execution
@@ -48,37 +48,21 @@ detection:
 | `description` | Detailed explanation | (none) |
 | `author` | Rule author | (none) |
 | `date` | Creation date (quoted string) | (none) |
-| `status` | experimental, test, production | `experimental` |
+| `status` | experimental, test, stable | `experimental` |
 | `level` | low, medium, high, critical | `medium` |
 | `tags` | MITRE ATT&CK tags | [] |
 
 ## Log Source
 
-Rules use one of the following logsource combinations:
+All existing rules use `product: ai_agent` and `category: agent_events`:
 
 ```yaml
-# AgentShield-native rules (most common)
-logsource:
-  product: agentshield
-  category: agent_events
-
-# OpenClaw-specific rules
-logsource:
-  product: openclaw
-  category: agent_events
-
-# Generic AI-agent rules (engine-agnostic, from sigma-ai upstream)
 logsource:
   product: ai_agent
   category: agent_events
-
-# MCP-specific rules
-logsource:
-  product: agentshield
-  category: mcp_events
 ```
 
-When writing new rules for AgentShield, use `product: agentshield` and `category: agent_events` unless targeting a specific integration.
+When writing new rules, use this same logsource specification to ensure consistency with the existing rule corpus (vendored from upstream `agentshield-ai/sigma-ai`).
 
 ## Detection Section
 
@@ -277,7 +261,7 @@ See [MITRE ATT&CK](https://attack.mitre.org/) for technique IDs.
 
 ### Step 1: Identify the Threat
 
-What behavior are you trying to detect? Be specific:
+What behaviour are you trying to detect? Be specific:
 - "Detect when an agent downloads and executes a script from the internet"
 - "Detect when an agent reads SSH private keys"
 
@@ -291,7 +275,7 @@ cat ~/.clawdbot/logs/agent.jsonl | jq '.command' | head -20
 
 ### Step 3: Write the Rule
 
-Create a new file in `~/.agentshield/rules/`:
+Create a new YAML file in your configured rules directory (see [Configuration Reference](configuration.md)):
 
 ```yaml
 id: my-custom-rule-001
@@ -304,7 +288,7 @@ date: "2026-01-25"
 status: experimental
 level: high
 logsource:
-  product: agentshield
+  product: ai_agent
   category: agent_events
 tags:
   - attack.credential_access
@@ -353,10 +337,10 @@ title: Dangerous Recursive File Deletion
 description: Detects rm -rf commands that could delete important data
 author: AgentShield
 date: "2026-01-25"
-status: production
+status: stable
 level: high
 logsource:
-  product: agentshield
+  product: ai_agent
   category: agent_events
 tags:
   - attack.impact
@@ -386,7 +370,7 @@ date: "2026-01-25"
 status: experimental
 level: high
 logsource:
-  product: agentshield
+  product: ai_agent
   category: agent_events
 tags:
   - attack.credential_access
@@ -423,15 +407,15 @@ python -c "import yaml; yaml.safe_load(open('rules/my_rule.yml'))"
 
 ### High False Positive Rate
 
-1. Add filter patterns for known safe behavior
+1. Add filter patterns for known safe behaviour
 2. Use more specific matching (e.g., `contains|all` instead of `contains`)
 3. Use the `agentshield refine` command for LLM-assisted improvements
 
 ## Best Practices
 
-1. **Be specific**: Narrow rules produce fewer false positives
-2. **Use filters**: Exclude known safe patterns
-3. **Test thoroughly**: Use experimental status until confident
-4. **Document well**: Future you will thank present you
-5. **Tag properly**: MITRE ATT&CK tags help with analysis
-6. **Quote dates**: Use `date: "2026-01-25"` to prevent YAML parsing issues
+1. **Be specific** -- Narrow rules produce fewer false positives.
+2. **Use filters** -- Exclude known safe patterns to reduce noise.
+3. **Test thoroughly** -- Use `experimental` status until the rule has been validated; promote to `test` and then `stable` as confidence grows.
+4. **Document clearly** -- Include a meaningful `description` explaining what the rule detects and why.
+5. **Tag properly** -- [MITRE ATT&CK](https://attack.mitre.org/) tags aid analysis and reporting.
+6. **Quote dates** -- Use `date: "2026-01-25"` to prevent YAML date-parsing issues.

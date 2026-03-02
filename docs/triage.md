@@ -1,6 +1,6 @@
 # Triage System
 
-AgentShield Engine features an intelligent two-tier triage system that combines fast synchronous analysis with deep asynchronous investigation using AI agents.
+The AgentShield Engine includes a two-tier triage system that combines fast synchronous LLM analysis with deep asynchronous investigation using AI agents. Triage is optional and is designed to reduce false positives by providing contextual classification of alerts.
 
 ## Architecture Overview
 
@@ -33,11 +33,11 @@ Event → Rule Engine → Alert Generated
 
 **Purpose**: Provide immediate threat assessment for high-priority alerts within the request lifecycle.
 
-**Characteristics**:
-- **Speed**: ~4 seconds response time
-- **Scope**: In-request processing
-- **Triggers**: High and Critical severity alerts only
-- **Providers**: OpenAI or Anthropic APIs
+**Characteristics:**
+- **Speed**: Typically around 4 seconds response time (dependent on provider latency)
+- **Scope**: In-request processing (synchronous)
+- **Triggers**: High and critical severity alerts only
+- **Providers**: OpenAI or Anthropic APIs (or any OpenAI-compatible endpoint via `base_url`)
 - **Context**: Limited to alert data and recent events
 
 **When It Triggers**:
@@ -48,23 +48,23 @@ triage:
   # Automatically triggers for alerts with severity >= high
 ```
 
-**Flow**:
+**Flow:**
 1. Alert generated with high/critical severity
 2. Fast triage provider called synchronously
-3. LLM analyzes alert context and provides verdict
+3. LLM analyses alert context and provides verdict
 4. Result included in evaluation response
-5. Fallback to "unknown" verdict if triage fails
+5. Fallback to `"UNKNOWN"` verdict if triage fails
 
 ### 2. Deep Triage (Asynchronous)
 
 **Purpose**: Comprehensive investigation using AI agents with tool access for complex threat analysis.
 
-**Characteristics**:
-- **Speed**: Variable (30s - 5 minutes)
-- **Scope**: Background processing, no request blocking
+**Characteristics:**
+- **Speed**: Variable (30 seconds to several minutes)
+- **Scope**: Background processing; does not block the evaluation request
 - **Triggers**: Configurable minimum severity (default: critical only)
 - **Provider**: OpenClaw sub-agent with tool access
-- **Context**: Full investigation capabilities
+- **Context**: Full investigation capabilities (web search, URL fetching, memory search)
 
 **When It Triggers**:
 ```yaml
@@ -74,11 +74,11 @@ deep_triage:
   min_severity: "critical"  # Only critical alerts trigger deep analysis
 ```
 
-**Flow**:
+**Flow:**
 1. Alert meets severity threshold for deep triage
 2. OpenClaw sub-agent spawned in background
 3. Agent investigates using available tools
-4. Results delivered asynchronously via webhook/chat
+4. Results delivered asynchronously via webhook or chat
 5. Database updated with investigation findings
 
 ## Fast Triage Configuration
@@ -136,45 +136,52 @@ Recent Events: {recent_events}
 Session Info: {session_context}
 
 TASK:
-Determine if this is a TRUE_POSITIVE (real threat) or FALSE_POSITIVE (benign).
+Determine whether this is a genuine threat or a false positive.
 
 Respond with JSON:
 {
-  "verdict": "TRUE_POSITIVE" | "FALSE_POSITIVE", 
+  "verdict": "block" | "allow" | "investigate",
   "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation"
+  "reasoning": "Brief explanation",
+  "suggested_action": "Recommended next steps"
 }
 ```
 
 ### Verdict Integration
 
-Fast triage verdicts are incorporated into the evaluation response:
+Fast triage verdicts are included in the evaluation response under the `triage_results` array:
 
 ```json
 {
-  "action": "BLOCK",
-  "alerts": [...],
-  "triage_result": {
-    "verdict": "TRUE_POSITIVE",
-    "confidence": 0.95,
-    "reasoning": "Command matches known attack patterns",
-    "provider": "openai",
-    "model": "gpt-4o-mini",
-    "processing_time_ms": 4200
-  }
+  "action": "block",
+  "alerts": ["..."],
+  "triage_results": [
+    {
+      "verdict": "block",
+      "confidence": 0.95,
+      "reasoning": "Command matches known attack patterns",
+      "suggested_action": "Block execution immediately",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "processing_time": 4200
+    }
+  ]
 }
 ```
 
-### Fallback Behavior
+Note that `processing_time` is in milliseconds.
 
-When fast triage fails:
-1. **Network Error**: Log error, continue with default action
-2. **Timeout**: Log timeout, continue with default action  
-3. **Invalid Response**: Log parsing error, continue with default action
-4. **Rate Limited**: Log rate limit, continue with default action
+### Fallback Behaviour
+
+When fast triage fails, the engine logs the error and continues with the default action (determined by rule severity and evaluation mode). Specific failure scenarios:
+
+1. **Network error** -- Log error, continue with default action
+2. **Timeout** -- Log timeout, continue with default action
+3. **Invalid response** -- Log parsing error, continue with default action
+4. **Rate limited** -- Log rate limit, continue with default action
 
 ```go
-// Example fallback behavior
+// Example fallback behaviour
 if triageResult == nil {
     logger.Warn("Fast triage failed, using default action")
     triageResult = &TriageResult{
@@ -224,9 +231,9 @@ deep_triage:
     timeout_sec: 120
 ```
 
-### Agent Personality Customization
+### Agent Personality Customisation
 
-Create specialized SOC analysts with custom prompts:
+Custom system prompts allow one to create specialised SOC analyst profiles:
 
 #### Malware Analysis Specialist
 ```yaml
@@ -252,7 +259,7 @@ agent:
 ```yaml
 agent:
   system_prompt: |
-    You are a cloud security expert specializing in AI agent deployments.
+    You are a cloud security expert specialising in AI agent deployments.
     
     Focus on:
     - Cloud service abuse (AWS, Azure, GCP)
@@ -280,7 +287,7 @@ agent:
 
 **Tool Descriptions**:
 - `web_search`: Search the web for threat intelligence, CVEs, attack patterns
-- `web_fetch`: Fetch and analyze suspicious URLs, download samples
+- `web_fetch`: Fetch and analyse suspicious URLs, download samples
 - `memory_search`: Search through agent memory/conversation history for context
 - `exec`: Execute system commands (high risk - use cautiously)
 - `read`: Read files and configurations (medium risk)
@@ -374,52 +381,53 @@ ORDER BY dt.created_at DESC;
 
 ## Cost Considerations
 
+Costs depend on provider pricing, which changes frequently. The figures below are approximate and should be verified against current provider documentation.
+
 ### Fast Triage Costs
-- **OpenAI GPT-4o-mini**: ~$0.001 per alert
-- **Anthropic Claude Haiku**: ~$0.002 per alert  
-- **OpenRouter**: Variable, often 50-80% cheaper than direct APIs
-- **OpenClaw**: Uses your existing OpenClaw credits
+- **OpenAI GPT-4o-mini**: approximately $0.001 per alert
+- **Anthropic Claude Haiku**: approximately $0.002 per alert
+- **OpenRouter**: Variable; may be lower than direct API pricing
 
 ### Deep Triage Costs
 - **Only fires for high-priority alerts** (default: critical only)
-- **Typical investigation**: 2-5 minutes of agent time
-- **With tools**: Additional API costs for web searches (~$0.01-0.05)
+- **Typical investigation**: 2--5 minutes of agent time
+- **With tools**: Additional API costs for web searches (approximately $0.01--0.05)
 - **Budget control**: Configure `min_severity` to control frequency
 
-### Cost Optimization
+### Cost Optimisation
 
 ```yaml
 # Cost-conscious configuration
 triage:
   enabled: true
   provider: "openai"
-  model: "gpt-4o-mini"  # Cheapest option
-  base_url: "https://openrouter.ai/api/v1"  # Often cheaper
+  model: "gpt-4o-mini"
+  base_url: "https://openrouter.ai/api/v1"
 
 deep_triage:
   enabled: true
   min_severity: "critical"  # Only highest priority
   agent:
-    thinking: "off"  # Reduce token usage
-    timeout_sec: 60   # Shorter investigations
+    thinking: "off"         # Reduce token usage
+    timeout_sec: 60         # Shorter investigations
 ```
 
 ## Performance Tuning
 
-### Fast Triage Optimization
+### Fast Triage Optimisation
 ```yaml
 triage:
   max_tokens: 200      # Reduce for faster responses
-  timeout_sec: 5       # Aggressive timeout
-  # Use faster models: gpt-4o-mini, claude-haiku
+  timeout_sec: 5       # Shorter timeout
+  # Prefer faster models: gpt-4o-mini, claude-haiku
 ```
 
-### Deep Triage Optimization
+### Deep Triage Optimisation
 ```yaml
 deep_triage:
   agent:
-    timeout_sec: 30    # Faster investigations
-    tools: ["web_search"]  # Fewer tools = faster analysis
+    timeout_sec: 30        # Shorter investigations
+    tools: ["web_search"]  # Fewer tools reduces analysis time
 ```
 
 ### Monitoring Performance
@@ -505,7 +513,7 @@ deep_triage:
 - **Monitor usage** regularly via API costs and OpenClaw credits
 - **Adjust thresholds** based on alert volume and budget
 - **Use cheaper models** for fast triage (gpt-4o-mini, claude-haiku)
-- **Optimize prompts** to reduce token usage
+- **Optimise prompts** to reduce token usage
 
 ### 4. Integration Planning
 - **Webhook endpoints** should handle failures gracefully
@@ -513,4 +521,4 @@ deep_triage:
 - **Chat integrations** should filter noise for human analysts
 - **Feedback loops** should capture analyst corrections for continuous improvement
 
-The two-tier triage system provides both immediate threat assessment and deep investigative capabilities, allowing organizations to balance speed, accuracy, and cost based on their specific security requirements.
+The two-tier triage system provides both immediate threat assessment and deep investigative capabilities, allowing organisations to balance speed, accuracy, and cost based on their specific security requirements.

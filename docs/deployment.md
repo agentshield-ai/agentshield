@@ -1,12 +1,12 @@
 # Deployment Guide
 
-Comprehensive deployment guide for AgentShield Engine covering installation, daemon setup, and integration scenarios.
+This guide covers installation, daemon setup, transport security, and integration scenarios for the AgentShield engine. It is intended for operators deploying AgentShield in development, staging, or production environments.
 
 ## Installation Methods
 
 ### Go Install (Recommended)
 
-Install directly from source using Go toolchain:
+Install directly from source using the Go toolchain:
 
 ```bash
 # Install latest version
@@ -56,12 +56,19 @@ curl -L https://github.com/agentshield-ai/agentshield/releases/latest/download/a
 
 ### Docker Installation
 
-<!-- Docker image not yet published -->
-
-> **Coming Soon:** Official Docker images are not yet published. For now, build from source using the instructions above.
+> **Note:** Official Docker images are not yet published to a public registry. For now, build a local image from source:
 
 ```bash
-# Example (once published):
+# Build a local Docker image
+make docker-build    # produces agentshield-engine:test
+
+# Run integration tests against the Docker image
+make test-integration-docker
+```
+
+Once official images are available, the expected usage will be:
+
+```bash
 # docker pull agentshield/engine:latest
 #
 # docker run -d \
@@ -75,7 +82,7 @@ curl -L https://github.com/agentshield-ai/agentshield/releases/latest/download/a
 
 ## Transport Security (TLS)
 
-AgentShield does **not** handle TLS natively. Production deployments that expose AgentShield beyond localhost **must** use a TLS-terminating reverse proxy such as nginx, Caddy, or a cloud load balancer.
+AgentShield does **not** handle TLS natively. Production deployments that expose the engine beyond localhost **must** use a TLS-terminating reverse proxy such as nginx, Caddy, or a cloud load balancer.
 
 ### Example: nginx reverse proxy with TLS
 
@@ -122,7 +129,7 @@ Create configuration file:
 # System config
 sudo tee /etc/agentshield/config.yaml << 'EOF'
 server:
-  addr: "0.0.0.0"
+  addr: "127.0.0.1"   # Bind to localhost; use a reverse proxy for external access
   port: 8433
 
 auth:
@@ -168,23 +175,23 @@ EOF
 
 ### Environment Variables
 
-Set up environment variables:
+Set up an environment file for secrets. **Do not commit this file to version control.**
 
 ```bash
 # Create environment file
 sudo tee /etc/agentshield/environment << 'EOF'
-AGENTSHIELD_AUTH_TOKEN=your-secure-random-token
-OPENAI_API_KEY=sk-your-openai-key
-OPENCLAW_GATEWAY_TOKEN=your-openclaw-token
+AGENTSHIELD_AUTH_TOKEN=<generate-a-secure-random-token>
+OPENAI_API_KEY=sk-<your-openai-key>
+OPENCLAW_GATEWAY_TOKEN=<your-openclaw-token>
 AGENTSHIELD_LOG_LEVEL=info
 EOF
 
-# Secure the file
+# Restrict read access to root and the agentshield service user
 sudo chmod 600 /etc/agentshield/environment
-
-# Source in your shell
-echo 'source /etc/agentshield/environment' >> ~/.bashrc
+sudo chown root:agentshield /etc/agentshield/environment
 ```
+
+The systemd unit file (below) references this file via `EnvironmentFile`, so there is no need to source it in a shell profile.
 
 ## Daemon Setup
 
@@ -389,7 +396,7 @@ evaluation_mode: "audit"
 triage:
   enabled: true
   provider: "openai"
-  model: "anthropic/claude-sonnet-4-20250514"
+  model: "anthropic/claude-sonnet-4-5-20250929"
   base_url: "https://openrouter.ai/api/v1"
   api_key: "${OPENROUTER_API_KEY}"
 
@@ -446,7 +453,7 @@ agentshield serve --config ~/.codex/security/config.yaml &
 ### Security Research Environment
 
 ```bash
-# High-verbosity monitoring for research
+# High-verbosity monitoring suitable for research and red-team evaluation
 cat > research-config.yaml << 'EOF'
 server:
   addr: "0.0.0.0"
@@ -458,7 +465,7 @@ log_level: "debug"
 triage:
   enabled: true
   provider: "anthropic"
-  model: "claude-3-5-sonnet-20241022"  # Best reasoning
+  model: "claude-sonnet-4-5-20250929"
   
 deep_triage:
   enabled: true
@@ -476,7 +483,7 @@ AGENTSHIELD_LOG_LEVEL=debug agentshield serve --config research-config.yaml
 ### Production SOC Integration
 
 ```bash
-# High-performance production config
+# Production configuration with enforcement enabled
 cat > production-config.yaml << 'EOF'
 server:
   addr: "0.0.0.0"
@@ -699,4 +706,4 @@ grep "triage.*failed" /var/log/agentshield/engine.log
 grep "memory\|cpu" /var/log/agentshield/engine.log
 ```
 
-This deployment guide covers all major deployment scenarios from development to production. Choose the appropriate installation method and configuration based on your environment and security requirements.
+Select the installation method and configuration that best suits your environment and security requirements. For further details, see [configuration.md](configuration.md) for the full config reference and [log_rotation.md](log_rotation.md) for data retention.

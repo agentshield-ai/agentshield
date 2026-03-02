@@ -1,8 +1,11 @@
 # AgentShield Plugin for OpenClaw
 
-An OpenClaw plugin that intercepts agent tool calls in real time, evaluates them
-against AgentShield's Sigma-based detection engine, and blocks or logs
-security-relevant activity before execution.
+A plugin for OpenClaw that intercepts agent tool calls in real time, evaluates them against AgentShield's [Sigma](https://sigmahq.io/)-based detection engine (a standardised format for describing log-based detection patterns), and blocks or logs security-relevant activity before execution.
+
+## Prerequisites
+
+- A running AgentShield engine (see the [main README](../../README.md) for build and setup instructions)
+- [OpenClaw](https://openclaw.dev/) installed and configured
 
 ## Installation
 
@@ -59,9 +62,11 @@ For every intercepted tool call the plugin:
    to the engine's `/api/v1/evaluate` endpoint.
 5. If the engine returns `action: "block"`, the tool call is prevented and the
    user is notified via a system event (subject to the `notify` threshold).
-6. If the engine returns `action: "log"`, the tool call proceeds but alerts are
+6. If the engine returns `action: "require_approval"`, the plugin fails closed
+   and blocks execution with an approval-required reason.
+7. If the engine returns `action: "log"`, the tool call proceeds but alerts are
    surfaced to the user.
-7. If triage results are present and a high-confidence `allow` verdict is
+8. If triage results are present and a high-confidence `allow` verdict is
    returned, rule-based alerts may be overridden.
 
 The hook runs at priority `-100` so it executes before other plugins can modify

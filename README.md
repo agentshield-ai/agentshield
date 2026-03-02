@@ -1,6 +1,6 @@
 # AgentShield
 
-Modern AI agent security monitoring platform with real-time threat detection using Sigma rules.
+Real-time security monitoring for AI agents, using Sigma rules for threat detection.
 
 ![Go Version](https://img.shields.io/badge/Go-1.24+-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
@@ -8,16 +8,17 @@ Modern AI agent security monitoring platform with real-time threat detection usi
 
 ## Overview
 
-AgentShield is a comprehensive security monitoring solution designed specifically for AI agents. It provides real-time threat detection, intelligent triage, and seamless integration with agent platforms like OpenClaw and Claude Code.
+AgentShield monitors the tool calls that AI agents make -- shell commands, file writes, network requests -- and evaluates each one against a corpus of [Sigma rules](https://sigmahq.io/) (a standardised format for describing log-based detection patterns). When a tool call matches a known threat pattern, AgentShield can block it, require human approval, or log it for later review.
 
-## What AgentShield Is
+The project comprises a high-performance Go detection engine, platform plugins for [OpenClaw](plugins/openclaw/) and [Claude Code](plugins/claude/), and a growing library of 45+ community-maintained detection rules.
 
-AgentShield protects AI agents by:
-- **Monitoring tool usage** in real-time with microsecond latency
-- **Detecting threats** using community-maintained Sigma rules
-- **Intelligent triage** with AI-powered false positive reduction
-- **Enforcing policies** with block/audit/shadow modes
-- **Integrating seamlessly** with existing agent workflows
+## What AgentShield Does
+
+- **Monitors tool usage** in real-time with typically sub-millisecond evaluation for the current rule set
+- **Detects threats** using community-maintained Sigma rules covering prompt injection, data exfiltration, privilege escalation, and more
+- **Reduces false positives** with optional LLM-powered triage (two-tier: fast synchronous + deep asynchronous analysis)
+- **Enforces policies** with graduated response actions (block, require approval, allow, log) across three evaluation modes (enforce, audit, shadow)
+- **Integrates with existing agent workflows** via platform plugins and a generic HTTP API
 
 ## Architecture Overview
 
@@ -37,87 +38,85 @@ AgentShield targets **Linux** (server-side agent deployments) and **macOS** (loc
 
 ## Components
 
-### 🔧 Go Engine ([`cmd/`](cmd/) • [`internal/`](internal/) • [`pkg/sigma/`](pkg/sigma/))
-High-performance detection engine built in Go with Chi HTTP server:
-- Real-time Sigma rule evaluation using forked sigmalite
-- Two-tier intelligent triage (fast + deep analysis)
-- Multiple evaluation modes (enforce/audit/shadow)
-- SQLite storage with automatic cleanup
-- Hot rule reloading with zero downtime
+### Go Detection Engine ([`cmd/`](cmd/), [`internal/`](internal/), [`pkg/sigma/`](pkg/sigma/))
 
-**Quick Start:**
+High-performance detection engine built in Go with a Chi HTTP router:
+
+- Real-time Sigma rule evaluation using a forked [sigmalite](https://github.com/runreveal/sigmalite) library
+- Optional two-tier LLM triage for false-positive reduction (fast synchronous + deep asynchronous)
+- Three evaluation modes: enforce, audit, and shadow
+- Pure-Go SQLite storage (no CGO dependency) with automatic cleanup
+- Hot rule reloading via `SIGHUP` with zero downtime
+
+**Quick start:**
 ```bash
 go build ./cmd/agentshield/
 ./agentshield serve -rules ./rules -config config.yaml
 ```
 
-### 🔌 OpenClaw Plugin ([`plugins/openclaw/`](plugins/openclaw/))
-TypeScript integration for OpenClaw agents:
-- Real-time tool monitoring and evaluation
-- Configurable enforcement modes
-- Seamless workflow integration
-- Event batching and async processing
+### OpenClaw Plugin ([`plugins/openclaw/`](plugins/openclaw/))
 
-**Installation:**
-```bash
-cd plugins/openclaw/
-npm install && npm run build
-openclaw plugin install ./dist/agentshield-plugin.js
-```
+TypeScript integration for OpenClaw agents with a circuit-breaker pattern for fault tolerance:
 
-### 🤖 Claude Code Hooks ([`plugins/claude/`](plugins/claude/))
-Bash scripts for Claude Code CLI integration:
-- Pre/post execution hooks
-- Command line analysis
-- Security policy enforcement
-- Lightweight shell-based monitoring
+- Synchronous `before_tool_call` evaluation with configurable timeout
+- Fire-and-forget `after_tool_call` audit reporting
+- Configurable enforcement modes and notification thresholds
+- Session and agent lifecycle event tracking
 
-**Setup:**
-```bash
-# Copy hooks to Claude Code directory
-cp plugins/claude/hooks/* ~/.claude-code/hooks/
-chmod +x ~/.claude-code/hooks/*
-```
+See the [OpenClaw plugin README](plugins/openclaw/README.md) for full configuration options.
 
-### 📊 Detection Rules ([`rules/`](rules/))
-AgentShield consumes engine-agnostic Sigma-AI rules from the upstream catalog (`agentshield-ai/sigma-ai`) vendored under [`rules/upstream/sigma-ai/`](rules/upstream/sigma-ai/).
+### Claude Code Hooks ([`plugins/claude/`](plugins/claude/))
 
-Community-maintained Sigma rules for AI agent threats:
-- **Prompt Injection**: Social engineering and manipulation detection
-- **Tool Poisoning**: Malicious tool usage patterns
-- **Data Exfiltration**: Unauthorized data access attempts
-- **Privilege Escalation**: Unauthorized system access
-- **Credential Access**: Token theft and authentication bypass
+Shell-based integration for Claude Code using the [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks):
 
-Browse rules: [`rules/`](rules/)
+- `PreToolUse` hook intercepts Bash, Write, and Edit tool calls
+- Evaluates each call against the detection engine before execution
+- Fail-open behaviour when the engine is unreachable (configurable)
 
-### 📚 Documentation ([`docs/`](docs/))
-Complete documentation for deployment and usage:
-- [**API Reference**](docs/api.md) - HTTP endpoints and examples
-- [**Configuration**](docs/configuration.md) - Complete config options
-- [**Deployment Guide**](docs/deployment.md) - Production setup
-- [**Triage System**](docs/triage.md) - AI-powered alert analysis
-- [**Rules Guide**](docs/rules.md) - Sigma rule authoring
+See the [Claude Code plugin README](plugins/claude/README.md) for setup instructions.
+
+### Detection Rules ([`rules/`](rules/))
+
+AgentShield consumes engine-agnostic Sigma rules from the upstream [sigma-ai](https://github.com/agentshield-ai/sigma-ai) catalogue, vendored under [`rules/`](rules/) via git subtree. The current corpus of 45+ rules covers:
+
+- **Prompt injection** -- direct, indirect, and exfiltration-oriented injection attempts
+- **Tool poisoning** -- MCP configuration manipulation, rug pulls, and tool substitution
+- **Data exfiltration** -- HTTP, DNS tunnelling, steganographic, and living-off-the-land techniques
+- **Privilege escalation** -- `sudo` abuse, container escapes, and cloud IAM escalation
+- **Credential access** -- token theft, keychain access, and environment variable enumeration
+- **Persistence** -- shell configuration modification, cron jobs, and rules-file backdoors
+
+All rules use `logsource.product: ai_agent` with `category: agent_events`. Browse the full set under [`rules/rules/ai_agent/`](rules/rules/ai_agent/).
+
+### Documentation ([`docs/`](docs/))
+
+- [API Reference](docs/api.md) -- HTTP endpoints and request/response examples
+- [Configuration](docs/configuration.md) -- Complete configuration options
+- [Deployment Guide](docs/deployment.md) -- Production setup and operations
+- [Triage System](docs/triage.md) -- LLM-powered alert analysis
+- [Rules Guide](docs/rules.md) -- Sigma rule authoring and testing
 
 ## Quick Start
 
-### 1. Build the Engine
+### 1. Build the engine
+
 ```bash
 git clone https://github.com/agentshield-ai/agentshield.git
 cd agentshield
 go build ./cmd/agentshield/
 ```
 
-### 2. Start Monitoring
+### 2. Start monitoring
+
 ```bash
-# Basic setup
+# Basic setup with bundled rules
 ./agentshield serve -rules ./rules
 
-# With configuration
+# With a configuration file
 ./agentshield serve -config config.yaml
 ```
 
-### 3. Install Platform Plugin
+### 3. Install a platform plugin
 
 **OpenClaw:**
 ```bash
@@ -127,23 +126,15 @@ npm install && openclaw plugin install .
 
 **Claude Code:**
 ```bash
-cp plugins/claude/hooks/* ~/.claude-code/hooks/
+./plugins/claude/install.sh
 ```
 
-### 4. View Alerts
+### 4. View alerts
+
 ```bash
 ./agentshield alerts list
 curl http://localhost:8433/api/v1/alerts
 ```
-
-## Key Features
-
-- **🚀 Microsecond Latency**: High-performance Go engine with Chi router
-- **🧠 Intelligent Triage**: AI-powered false positive reduction  
-- **🔄 Hot Reloading**: Update rules without downtime
-- **🌐 Multi-Platform**: OpenClaw, Claude Code, and extensible plugin system
-- **📈 Production Ready**: SQLite storage, structured logging, graceful shutdown
-- **🔒 Security First**: Token authentication, input validation, safe defaults
 
 ## Configuration Example
 
@@ -162,35 +153,36 @@ triage:
   model: "gpt-4o-mini"
 ```
 
+See [docs/configuration.md](docs/configuration.md) for the complete set of configuration options.
+
 ## Development
 
 ```bash
-# Run tests
+# Run all Go tests
 go test ./...
+
+# Run a single package
+go test -v ./internal/engine/...
 
 # Debug mode
 ./agentshield serve -log-level debug
-
-# Contribute rules
-cp my-rule.yml rules/custom/
-git commit -m "feat: add custom threat detection"
 ```
 
-## Community
+## Community and Resources
 
-- **Canonical Rules Repository**: [sigma-ai](https://github.com/agentshield-ai/sigma-ai) - Engine-agnostic AI-agent Sigma rules
-- **Vendored Upstream Snapshot**: [`rules/upstream/sigma-ai/`](rules/upstream/sigma-ai/) - Imported into this engine repo via subtree
-- **Plugin Development**: [plugins/](plugins/) - Platform integrations
-- **Documentation**: [docs/](docs/) - Comprehensive guides
+- **Canonical rules repository**: [sigma-ai](https://github.com/agentshield-ai/sigma-ai) -- engine-agnostic AI-agent Sigma rules
+- **Vendored upstream snapshot**: [`rules/`](rules/) -- imported via git subtree
+- **Plugin development**: [`plugins/`](plugins/) -- platform integrations
+- **Documentation**: [`docs/`](docs/) -- deployment, configuration, and rule-authoring guides
 
 ## Support
 
-- **GitHub Issues**: Bug reports and feature requests
-- **Discussions**: Architecture and usage questions  
-- **Security**: security@agentshield.ai
+- **GitHub Issues** -- bug reports and feature requests
+- **Discussions** -- architecture and usage questions
+- **Security** -- security@agentshield.ai
 
-## License
+## Licence
 
-Apache 2.0 - See [LICENSE](LICENSE) for details.
+Apache 2.0 -- see [LICENSE](LICENSE) for details.
 
-Built on RunReveal's sigmalite (Apache 2.0) with enhancements for AI agent security.
+Built on RunReveal's [sigmalite](https://github.com/runreveal/sigmalite) (Apache 2.0) with enhancements for AI agent security.

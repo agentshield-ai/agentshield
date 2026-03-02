@@ -172,7 +172,7 @@ func (r *CustomResolver) Resolve(fieldName string, entry *sigma.LogEntry) []stri
 func matches(detection *sigmalite.Detection) bool {
   opts := &sigmalite.MatchOptions{
 		FieldResolver: CustomResolver{},
-  },
+  }
 
   entry := &sigmalite.LogEntry{
 		Message: string("Message Text"),
@@ -186,6 +186,6 @@ func matches(detection *sigmalite.Detection) bool {
 
 Field Resolvers work seamlessly with all [field modifiers](#field-modifiers), allowing you to apply regex patterns, case-insensitive matching, and other transformations to the resolved values.
 
-## License
+## Licence
 
 [Apache 2.0](LICENSE)

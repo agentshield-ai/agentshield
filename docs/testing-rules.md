@@ -1,19 +1,19 @@
-# Testing AgentShield Detection Rules
+# Testing Detection Rules
 
-This guide shows how to test each Sigma rule by asking your AI agent to execute commands that trigger them.
+This guide explains how to test individual Sigma rules by asking an AI agent to execute commands that trigger them. It is intended for rule authors and security engineers who wish to verify that rules fire correctly.
 
 ## Prerequisites
 
-1. **Start AgentShield monitoring in a separate terminal:**
+1. **AgentShield Engine running** in a separate terminal:
    ```bash
    cd /path/to/agentshield
-   export ANTHROPIC_API_KEY=your-key-here  # For LLM triage
+   export ANTHROPIC_API_KEY=your-key-here  # Optional: enables LLM triage
    agentshield serve --config config.yaml
    ```
 
-2. **Have your AI agent running** and ready to accept commands
+2. **AI agent running** and connected to the AgentShield plugin
 
-3. **Watch for alerts** in the AgentShield terminal
+3. **Terminal visible** to observe alerts from the engine
 
 ## Rule 1: RCE Injection (CRITICAL)
 
@@ -186,18 +186,17 @@ agentshield rules list
 agentshield rules --stats
 ```
 
-## Triage Behavior
+## Triage Behaviour
 
-**With ANTHROPIC_API_KEY set:**
-- Alerts are triaged by Claude LLM with extended thinking
-- Verdicts: TRUE_POSITIVE, FALSE_POSITIVE, or SUSPICIOUS
-- High-confidence false positives auto-approved
-- Desktop notifications for true positives
+**With triage enabled** (API key configured):
+- Alerts are triaged by the configured LLM provider
+- Verdicts: `block`, `allow`, or `investigate`
+- Results are included in the evaluation response and stored in the database
 
-**Without ANTHROPIC_API_KEY:**
-- All alerts marked as SUSPICIOUS
-- Manual review required
-- Still logged in database
+**Without triage** (no API key or triage disabled):
+- All alerts are classified based on rule severity and evaluation mode alone
+- No LLM analysis is performed
+- Alerts are still logged in the database
 
 ## Example Test Session
 
@@ -226,10 +225,10 @@ agentshield rules --stats
 
 ## Safety Notes
 
-- All test commands are designed to be **safe** (read-only or echo)
-- **Don't actually execute** malicious commands
-- In **audit** mode AgentShield logs alerts without blocking; in **enforce** mode it returns BLOCK actions
-- Test in a **safe environment** (e.g., not production)
+- All test commands in this guide are designed to be **safe** (read-only or echo).
+- **Do not actually execute** malicious commands.
+- In **audit** mode, AgentShield logs alerts without blocking; in **enforce** mode, it returns `block` or `require_approval` actions.
+- Always test in an **isolated environment**, never in production.
 
 ## Troubleshooting
 
@@ -238,10 +237,10 @@ agentshield rules --stats
 - Verify configuration in `config.yaml`
 - Look for errors in AgentShield terminal output
 
-**Alerts marked as SUSPICIOUS:**
-- Set `ANTHROPIC_API_KEY` for LLM triage
-- Check API key is valid
-- Review triage reason in alert details
+**Alerts not triaged:**
+- Ensure triage is enabled in `config.yaml` and the API key is set
+- Verify the API key is valid
+- Review the engine log output for triage errors
 
 **Missing tool calls:**
 - Ensure the AI agent is actually executing commands (not just planning)

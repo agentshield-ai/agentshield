@@ -1,17 +1,17 @@
-# AgentShieldBench — Evaluation Guide
+# AgentShieldBench -- Evaluation Guide
 
-AgentShieldBench is a reproducible benchmark and adversarial test harness for AgentShield Engine. It evaluates event-boundary policy enforcement by submitting test events to a running engine and scoring the outcomes.
+AgentShieldBench is a reproducible benchmark and adversarial test harness for the AgentShield Engine. It evaluates event-boundary policy enforcement by submitting test events to a running engine and scoring the outcomes.
 
-> **Note:** This is event-boundary policy enforcement evaluation, not a claim of preventing prompt injection. It measures how well Sigma rules detect known-malicious patterns in tool calls and content.
+> **Important:** AgentShieldBench measures how well Sigma rules detect known-malicious patterns in tool calls and content. It is an evaluation of event-boundary policy enforcement, not a claim of preventing prompt injection in general.
 
 ## Metrics
 
 | Metric | Description |
 |--------|-------------|
-| **TMPR** (Tool Misuse Prevention Rate) | % of forbidden actions correctly BLOCKed |
-| **BTCR** (Benign Task Completion Rate) | % of benign actions correctly ALLOWed or LOGged |
-| **PESR** (Policy Evasion Success Rate) | % of adversarial tests where the attacker objective succeeded |
-| **Latency p50/p95** | Response time percentiles for rule-only evaluation |
+| **TMPR** (Tool Misuse Prevention Rate) | Percentage of forbidden actions correctly blocked or flagged for approval |
+| **BTCR** (Benign Task Completion Rate) | Percentage of benign actions correctly allowed or logged |
+| **PESR** (Policy Evasion Success Rate) | Percentage of adversarial tests where the attacker objective succeeded |
+| **Latency p50/p95** | Response time percentiles for rule-only evaluation (triage disabled) |
 
 ## Quick Start
 
@@ -61,11 +61,11 @@ go build -o bin/agentshieldbench ./cmd/agentshieldbench/
 
 Results are written to `bench/results/<suite>/`:
 
-- `<timestamp>.jsonl` — raw results, one JSON line per event:
+- `<timestamp>.jsonl` -- raw results, one JSON line per event:
   ```json
   {"testcase_id":"...","event_id":"...","expected_action":"BLOCK","actual_action":"BLOCK","triggered_rules":["agent-rce-injection-001"],"latency_ms":2.3,"pass":true}
   ```
-- `SUMMARY.md` — metrics table and list of failures
+- `SUMMARY.md` -- metrics table and list of failures
 
 ## Testcase Format
 
@@ -94,11 +94,11 @@ expected:
 
 ### Key Fields
 
-- `benign: true/false` — marks whether this is a benign or adversarial test
-- `triage: false` — keep disabled for deterministic benchmark runs
-- `expected.action` — ALLOW, BLOCK, or LOG
-- `expected.must_trigger_rules` — rule IDs that must fire
-- `expected.must_not_trigger` — rule IDs that must NOT fire
+- `benign: true/false` -- indicates whether this is a benign or adversarial test
+- `triage: false` -- keep disabled for deterministic benchmark runs
+- `expected.action` -- `ALLOW`, `BLOCK`, `REQUIRE_APPROVAL`, or `LOG`
+- `expected.must_trigger_rules` -- rule IDs that must fire
+- `expected.must_not_trigger` -- rule IDs that must not fire
 
 ## Adding New Testcases
 
@@ -127,7 +127,7 @@ See `.github/workflows/bench.yml` for configuration.
 
 ## Design Principles
 
-- **Deterministic:** Triage is disabled by default for reproducibility
-- **Event-boundary:** Tests evaluate policy enforcement at the tool-call level
-- **Minimal false positives:** Rules target high-signal patterns only
-- **Documented:** Every rule has a rationale and scope explanation
+- **Deterministic** -- Triage is disabled by default to ensure reproducibility.
+- **Event-boundary** -- Tests evaluate policy enforcement at the tool-call level.
+- **Minimal false positives** -- Rules target high-signal patterns only.
+- **Documented** -- Every rule has a rationale and scope explanation.

@@ -1,13 +1,16 @@
 # Configuration Reference
 
-Complete configuration reference for AgentShield Engine with all fields, defaults, and environment variable overrides.
+This document provides a complete reference for all AgentShield Engine configuration options, including field types, default values, and environment variable overrides.
 
 ## Configuration File
 
-The engine uses YAML configuration with environment variable substitution. Default locations:
-- `./config.yaml` (working directory)
-- `~/.agentshield/config.yaml` (user config)
-- `/etc/agentshield/config.yaml` (system config)
+The engine uses YAML configuration with environment variable substitution (e.g. `${AGENTSHIELD_AUTH_TOKEN}`). Configuration files are searched in the following order; the first file found is used:
+
+1. `./config.yaml` (working directory)
+2. `~/.agentshield/config.yaml` (user configuration)
+3. `/etc/agentshield/config.yaml` (system configuration)
+
+A specific path may be provided with the `--config` flag.
 
 ## Full Example Configuration
 
@@ -19,7 +22,7 @@ server:
 
 # Authentication Configuration
 auth:
-  token: "${AGENTSHIELD_AUTH_TOKEN}" # API authentication token (optional)
+  token: "${AGENTSHIELD_AUTH_TOKEN}" # API authentication token (min 32 chars)
 
 # Rules Configuration
 rules:
@@ -58,15 +61,15 @@ deep_triage:
   # Agent Configuration
   agent:
     system_prompt: |                 # Custom SOC analyst prompt (default: built-in)
-      You are an expert cybersecurity analyst specializing in AI agent security.
+      You are an expert cybersecurity analyst specialising in AI agent security.
       
-      Your task is to analyze security alerts and determine if they represent 
+      Your task is to analyse security alerts and determine if they represent 
       true threats or false positives. Consider:
       
       1. Context: Recent events and patterns
       2. Intent: Whether the action appears malicious or legitimate
       3. Impact: Potential damage if the alert is a true positive
-      4. Environment: Normal vs. suspicious behavior patterns
+      4. Environment: Normal vs. suspicious behaviour patterns
       
       Use available tools to gather additional context when needed.
       Provide clear reasoning for your verdict with confidence score.
@@ -102,7 +105,7 @@ server:
 - `addr`: "127.0.0.1"
 - `port`: 8433
 
-**TLS Note:** AgentShield does not terminate TLS. When using a non-localhost bind address (anything other than `127.0.0.1`, `localhost`, or `::1`), you must place a TLS-terminating reverse proxy (e.g., nginx, Caddy) in front of the engine. See the [Deployment Guide](deployment.md#transport-security-tls) for details.
+**TLS note:** AgentShield does not terminate TLS. When using a non-localhost bind address (anything other than `127.0.0.1`, `localhost`, or `::1`), one should place a TLS-terminating reverse proxy (e.g. nginx, Caddy) in front of the engine.
 
 ### Authentication Configuration
 
@@ -120,7 +123,7 @@ auth:
 **Defaults:**
 - `token`: "" (authentication disabled)
 
-**Security Note:** Always use strong, randomly generated tokens in production. Consider rotating tokens regularly.
+**Security note:** Always use strong, randomly generated tokens in production. Token comparison uses `subtle.ConstantTimeCompare` to mitigate timing attacks.
 
 ### Rules Configuration
 
@@ -157,7 +160,7 @@ store:
 **Defaults:**
 - `sqlite_path`: "./agentshield.db"
 
-**Note:** The engine automatically creates tables and handles migrations. Ensure the directory is writable.
+**Note:** The engine automatically creates tables and handles migrations. Ensure the parent directory is writable.
 
 ### Evaluation Mode Configuration
 
@@ -196,7 +199,7 @@ log_level: "info"
 
 ### Fast Triage Configuration
 
-Fast triage provides synchronous LLM analysis (~4 seconds) for high-priority alerts.
+Fast triage provides synchronous LLM analysis (typically around 4 seconds) for high-priority alerts. See [Triage System](triage.md) for a full discussion of the two-tier triage architecture.
 
 ```yaml
 triage:
@@ -244,7 +247,7 @@ Use `connectivity` mode in development or high-frequency health check scenarios 
 
 ### Deep Triage Configuration
 
-Deep triage uses async OpenClaw sub-agents with tool access for comprehensive analysis.
+Deep triage uses asynchronous OpenClaw sub-agents with tool access for comprehensive analysis.
 
 ```yaml
 deep_triage:
@@ -415,7 +418,7 @@ Other triage and deep-triage fields (provider, model, base_url, etc.) are set on
 The engine validates configuration on startup. To see validation errors, run with debug logging:
 
 ```bash
-AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve ---config config.yaml
+AGENTSHIELD_LOG_LEVEL=debug ./agentshield serve --config config.yaml
 ```
 
 **Common Validation Errors:**
@@ -440,7 +443,7 @@ kill -HUP $(pgrep agentshield)
 ./agentshield rules reload
 ```
 
-**Note:** Only rules are hot-reloadable. Server configuration changes require a restart.
+**Note:** Only rules are hot-reloadable; the verdict cache is automatically invalidated on reload. Server configuration changes require a restart.
 
 ### Multiple Environments
 

