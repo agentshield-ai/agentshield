@@ -14,11 +14,12 @@ describe("parseConfig", () => {
       "exec",
       "write",
       "edit",
+      "read",
       "browser",
       "message",
       "sessions_spawn",
     ]);
-    expect(config.skip).toEqual(["read", "session_status"]);
+    expect(config.skip).toEqual(["session_status"]);
     expect(config.circuit_breaker.failure_threshold).toBe(3);
     expect(config.circuit_breaker.recovery_interval_ms).toBe(30_000);
   });

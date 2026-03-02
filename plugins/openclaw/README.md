@@ -43,8 +43,8 @@ engine is running locally.
 | `auth_token` | `string` | `""` | Bearer token sent with every request. |
 | `timeout_ms` | `number` | `200` | HTTP timeout for evaluation calls (valid range: 5--5000). |
 | `timeout_policy` | `"allow" \| "block" \| "log"` | `"block"` | What to do when the engine is unreachable or times out. |
-| `intercept` | `string[]` | `["exec", "write", "edit", "browser", "message", "sessions_spawn"]` | Tool names to evaluate before execution. |
-| `skip` | `string[]` | `["read", "session_status"]` | Tool names to skip unconditionally (checked first). |
+| `intercept` | `string[]` | `["exec", "write", "edit", "read", "browser", "message", "sessions_spawn"]` | Tool names to evaluate before execution. |
+| `skip` | `string[]` | `["session_status"]` | Tool names to skip unconditionally (checked first). |
 | `notify` | `"all" \| "high" \| "critical" \| "none"` | `"high"` | Minimum alert severity that triggers a user-visible notification. |
 | `circuit_breaker.failure_threshold` | `number` | `3` | Consecutive failures before the circuit breaker opens. |
 | `circuit_breaker.recovery_interval_ms` | `number` | `30000` | Time (ms) before a half-open probe is attempted. |

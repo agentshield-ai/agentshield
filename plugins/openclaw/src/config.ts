@@ -6,8 +6,8 @@ const DEFAULTS: AgentShieldConfig = {
   auth_token: "",
   timeout_ms: 200,
   timeout_policy: "block",
-  intercept: ["exec", "write", "edit", "browser", "message", "sessions_spawn"],
-  skip: ["read", "session_status"],
+  intercept: ["exec", "write", "edit", "read", "browser", "message", "sessions_spawn"],
+  skip: ["session_status"],
   notify: "high",
   circuit_breaker: {
     failure_threshold: 3,
