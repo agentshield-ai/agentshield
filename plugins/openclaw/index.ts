@@ -40,6 +40,7 @@ function notifyAlert(
   response: EvaluationResponse,
   toolName: string,
   action: "blocked" | "logged",
+  sessionKey: string,
   notifyLevel: string = "high",
 ): void {
   try {
@@ -84,7 +85,7 @@ function notifyAlert(
     const message = parts.join("\n");
 
     // Inject as system event — agent sees this and can relay to user
-    api.runtime.system.enqueueSystemEvent(message);
+    api.runtime.system.enqueueSystemEvent(message, { sessionKey });
   } catch (err) {
     api.logger.warn(`AgentShield notification failed: ${String(err)}`);
   }
@@ -245,7 +246,7 @@ const plugin = {
             );
 
             // Notify user via system event for blocks
-            notifyAlert(api, response, event.toolName, "blocked", config.notify);
+            notifyAlert(api, response, event.toolName, "blocked", ctx.sessionKey ?? "", config.notify);
 
             return {
               block: true,
@@ -260,7 +261,7 @@ const plugin = {
             api.logger.warn(
               `AgentShield requires approval for ${event.toolName}: ${approvalReason}`,
             );
-            notifyAlert(api, response, event.toolName, "blocked", config.notify);
+            notifyAlert(api, response, event.toolName, "blocked", ctx.sessionKey ?? "", config.notify);
             return {
               block: true,
               blockReason: approvalReason,
@@ -280,7 +281,7 @@ const plugin = {
               `AgentShield logged ${response.alerts.length} alert(s) for ${event.toolName}`,
             );
             // Notify user based on configured severity threshold
-            notifyAlert(api, response, event.toolName, "logged", config.notify);
+            notifyAlert(api, response, event.toolName, "logged", ctx.sessionKey ?? "", config.notify);
           }
 
           // Queue correlation only for calls that are allowed to execute.

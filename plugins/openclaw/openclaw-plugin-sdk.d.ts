@@ -10,7 +10,7 @@ declare module "openclaw/plugin-sdk" {
     on: (event: string, handler: (...args: any[]) => any, options?: { priority?: number }) => void;
     runtime: {
       system: {
-        enqueueSystemEvent: (message: string) => void;
+        enqueueSystemEvent: (text: string, options: { sessionKey: string; contextKey?: string | null }) => boolean;
       };
     };
   }
