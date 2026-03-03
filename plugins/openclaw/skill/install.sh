@@ -84,8 +84,7 @@ download_binary() {
     fi
 
     mkdir -p "$INSTALL_DIR/bin"
-    tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" --strip-components=1 ||
-        tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" || { warn "Extract failed"; install_via_go; return; }
+    tar -xzf "$TEMP_FILE" -C "$INSTALL_DIR/bin" || { warn "Extract failed"; install_via_go; return; }
 
     if [ -f "$INSTALL_DIR/bin/agentshield" ]; then
         chmod +x "$INSTALL_DIR/bin/agentshield"
