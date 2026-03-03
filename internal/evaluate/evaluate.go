@@ -139,16 +139,10 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		}
 	}
 
-	// Determine final action (with or without triage input)
-	var action models.Action
-	var overridable bool
-	if len(triageResults) > 0 {
-		// Use triage-informed decision
-		action, overridable = e.incorporateTriageResults(effectiveMode, criticalCount, highCount, mediumCount, triageResults)
-	} else {
-		// Fallback to rule-only decision if triage is disabled or failed
-		action, overridable = e.determineAction(effectiveMode, criticalCount, highCount, mediumCount)
-	}
+	// Determine final action based on rule severity counts and evaluation mode.
+	// Security invariant: triage results are returned for observability but never
+	// override rule-based enforcement decisions.
+	action, overridable := e.determineAction(effectiveMode, criticalCount, highCount, mediumCount)
 
 	// Build response once
 	response := &EvaluationResponse{
@@ -237,24 +231,6 @@ func (e *Evaluator) determineAction(mode config.EvaluationMode, criticalCount, h
 		}
 		return models.ActionAllow, false
 	}
-}
-
-// incorporateTriageResults adjusts the action based on triage analysis
-func (e *Evaluator) incorporateTriageResults(mode config.EvaluationMode, criticalCount, highCount, mediumCount int, triageResults []triage.TriageResult) (models.Action, bool) {
-	// Start with rule-only decision
-	baseAction, baseOverridable := e.determineAction(mode, criticalCount, highCount, mediumCount)
-
-	// In audit and shadow modes, triage doesn't change the action
-	if mode != config.ModeEnforce {
-		return baseAction, baseOverridable
-	}
-
-	// Security-critical: triage must never downgrade a block or require_approval in enforce mode.
-	if baseAction == models.ActionBlock || baseAction == models.ActionRequireApproval {
-		return baseAction, baseOverridable
-	}
-
-	return baseAction, baseOverridable
 }
 
 // GetModeInfo returns information about evaluation modes

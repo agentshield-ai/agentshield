@@ -15,7 +15,6 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/store"
-	"github.com/agentshield-ai/agentshield/internal/triage"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -85,7 +84,7 @@ func TestHandleEvaluate(t *testing.T) {
 	// Create real evaluator with mock engine
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -182,7 +181,7 @@ func TestHandleEvaluateBodyTooLarge(t *testing.T) {
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -219,7 +218,7 @@ func TestHandleHealth(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -274,13 +273,8 @@ func TestHandleHealth(t *testing.T) {
 					t.Error("Expected uptime to be >= 0")
 				}
 
-				// H-3: Config details should NOT be exposed on unauthenticated health endpoint
-				sensitiveKeys := []string{"evaluation_mode", "rules_dir", "auth_enabled"}
-				for _, key := range sensitiveKeys {
-					if _, exists := response.Config[key]; exists {
-						t.Errorf("Health endpoint should NOT expose config key '%s'", key)
-					}
-				}
+				// H-3: Config details are no longer exposed on the health endpoint
+				// (Config field removed from HealthResponse for security)
 			}
 		})
 	}
@@ -313,7 +307,7 @@ func TestHandleAlerts(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -429,7 +423,7 @@ func TestHandleFeedbackPost(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -497,7 +491,7 @@ func TestHandleFeedbackGet(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -572,7 +566,7 @@ func TestHandleAuditAndLifecycle(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -633,9 +627,7 @@ func TestNewServer(t *testing.T) {
 
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
-	triager := &triage.Triager{}
-
-	server, err := NewServer(cfg, evaluator, testStore, triager, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Errorf("NewServer() failed: %v", err)
 	}
@@ -672,7 +664,7 @@ func TestNewServerWithoutAuth(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Errorf("NewServer() failed: %v", err)
 	}
@@ -693,7 +685,7 @@ func TestRequestLogger(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -742,7 +734,7 @@ func TestHandleHealthDegraded(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -818,7 +810,7 @@ func TestHandleAlertsWithFilters(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -967,7 +959,7 @@ func TestHandleFeedbackSubmissionErrors(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -1032,7 +1024,7 @@ func TestHandleFeedbackQueryWithLimits(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -1124,7 +1116,7 @@ func TestHandleEvaluateFieldMapping(t *testing.T) {
 
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -1186,7 +1178,7 @@ func TestStartAndShutdown(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}

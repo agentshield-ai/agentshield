@@ -327,13 +327,19 @@ func (e *Engine) Evaluate(fields map[string]string) []RuleResult {
 	var results []RuleResult
 	for i := range rules {
 		if rules[i].rule.Detection.Matches(entry, nil) {
+			// Shallow-copy fields to avoid leaking the caller's map reference
+			// (which may contain sensitive args not relevant to this rule match).
+			matched := make(map[string]string, len(fields))
+			for k, v := range fields {
+				matched[k] = v
+			}
 			results = append(results, RuleResult{
 				RuleID:        rules[i].id,
 				RuleName:      rules[i].title,
 				Severity:      rules[i].severity,
 				Description:   rules[i].description,
 				Matched:       true,
-				MatchedFields: fields,
+				MatchedFields: matched,
 			})
 		}
 	}

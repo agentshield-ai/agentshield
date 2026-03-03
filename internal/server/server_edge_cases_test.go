@@ -483,7 +483,7 @@ func TestNewServerEdgeCases(t *testing.T) {
 		evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 		testStore, _ := store.NewStore(":memory:")
 		
-		server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+		server, err := NewServer(cfg, evaluator, testStore, nil)
 		if err != nil {
 			t.Fatalf("NewServer() error = %v", err)
 		}
@@ -504,7 +504,7 @@ func TestNewServerEdgeCases(t *testing.T) {
 		evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 		testStore, _ := store.NewStore(":memory:")
 		
-		server, err := NewServer(cfg, evaluator, testStore, nil, nil)
+		server, err := NewServer(cfg, evaluator, testStore, nil)
 		if err != nil {
 			t.Fatalf("NewServer() unexpected error = %v", err)
 		}
@@ -527,7 +527,7 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
 	
-	server, _ := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
 	// Insert test alerts
 	testAlerts := []*store.Alert{
@@ -737,7 +737,7 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
 	
-	server, _ := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
 	t.Run("request body too large", func(t *testing.T) {
 		// Create a JSON request body larger than MaxRequestBodySize (1MB)
@@ -852,7 +852,7 @@ func TestHandleEvaluateConcurrency(t *testing.T) {
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
 	
-	server, _ := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, _ := NewServer(cfg, evaluator, testStore, nil)
 	
 	// Run concurrent requests
 	const numRequests = 50
@@ -912,7 +912,7 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 		t.Fatalf("Failed to insert test alert: %v", err)
 	}
 	
-	server, _ := NewServer(cfg, evaluator, testStore, nil, nil)
+	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
 	t.Run("invalid feedback type", func(t *testing.T) {
 		feedback := FeedbackRequest{

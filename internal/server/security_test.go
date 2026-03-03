@@ -28,7 +28,7 @@ func TestToolNameCommandValidation(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRawParamsValidationBypass(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestHealthEndpointNoConfigLeak(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}
@@ -138,18 +138,14 @@ func TestHealthEndpointNoConfigLeak(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// These sensitive fields must NOT be present
-	sensitiveKeys := []string{"evaluation_mode", "rules_dir", "auth_enabled", "store_healthy"}
-	for _, key := range sensitiveKeys {
-		if _, exists := response.Config[key]; exists {
-			t.Errorf("health endpoint leaks config key %q", key)
-		}
-	}
-
-	// Body string must not contain the secret path
+	// Config field was removed from HealthResponse entirely — verify the body
+	// doesn't contain sensitive paths or config info.
 	body := rec.Body.String()
 	if strings.Contains(body, "/secret/rules") {
 		t.Error("health response contains rules directory path")
+	}
+	if strings.Contains(body, "evaluation_mode") {
+		t.Error("health response contains evaluation_mode")
 	}
 }
 
@@ -166,7 +162,7 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 
-	srv, err := NewServer(cfg, evaluator, testStore, nil, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
 		t.Fatalf("creating test server: %v", err)
 	}

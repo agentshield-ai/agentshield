@@ -152,125 +152,51 @@ func TestDetermineActionEdgeCases(t *testing.T) {
 	})
 }
 
-// Test edge cases for incorporateTriageResults
-func TestIncorporateTriageResultsEdgeCases(t *testing.T) {
+// Test that determineAction correctly maps severity to action across all modes.
+// These tests previously validated incorporateTriageResults, which was removed
+// because triage never altered enforcement decisions (security invariant).
+func TestDetermineActionAllModes(t *testing.T) {
 	evaluator := &Evaluator{}
 
-	t.Run("empty triage results", func(t *testing.T) {
-		var emptyResults []triage.TriageResult
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, emptyResults)
-
-		// Should default to rule-only decision (block for critical)
+	t.Run("critical count blocks in enforce mode", func(t *testing.T) {
+		action, overridable := evaluator.determineAction(config.ModeEnforce, 1, 0, 0)
 		if action != models.ActionBlock || !overridable {
-			t.Errorf("Empty triage results: expected block/overridable, got %s/%t", action, overridable)
+			t.Errorf("Critical: expected block/overridable, got %s/%t", action, overridable)
 		}
 	})
 
-	t.Run("unknown verdict types", func(t *testing.T) {
-		triageResults := []triage.TriageResult{
-			{Verdict: "unknown", Confidence: 0.9},
-			{Verdict: "maybe", Confidence: 0.8},
-			{Verdict: "", Confidence: 0.7},
-		}
-
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		// Unknown verdicts shouldn't count as allow or block, so should stick with original decision
+	t.Run("high count blocks in enforce mode", func(t *testing.T) {
+		action, overridable := evaluator.determineAction(config.ModeEnforce, 0, 1, 0)
 		if action != models.ActionBlock || !overridable {
-			t.Errorf("Unknown verdicts: expected block/overridable, got %s/%t", action, overridable)
+			t.Errorf("High: expected block/overridable, got %s/%t", action, overridable)
 		}
 	})
 
-	t.Run("investigate without explicit block cannot downgrade block", func(t *testing.T) {
-		triageResults := []triage.TriageResult{
-			{Verdict: "investigate", Confidence: 0.9},
-			{Verdict: "allow", Confidence: 0.8},
-		}
-
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		if action != models.ActionBlock || !overridable {
-			t.Errorf("Investigate verdict: expected block/overridable, got %s/%t", action, overridable)
-		}
-	})
-
-	t.Run("equal allow/block counts", func(t *testing.T) {
-		triageResults := []triage.TriageResult{
-			{Verdict: "allow", Confidence: 0.9},
-			{Verdict: "block", Confidence: 0.8},
-		}
-
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		// Tie should default to original decision (block)
-		if action != models.ActionBlock || !overridable {
-			t.Errorf("Equal counts: expected block/overridable, got %s/%t", action, overridable)
-		}
-	})
-
-	t.Run("low confidence allows don't override", func(t *testing.T) {
-		triageResults := []triage.TriageResult{
-			{Verdict: "allow", Confidence: 0.5}, // Low confidence
-			{Verdict: "allow", Confidence: 0.6}, // Low confidence
-		}
-
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		// Low confidence allows shouldn't override block decision
-		if action != models.ActionBlock || !overridable {
-			t.Errorf("Low confidence allows: expected block/overridable, got %s/%t", action, overridable)
-		}
-	})
-
-	t.Run("boundary confidence threshold", func(t *testing.T) {
-		// Test exactly at threshold
-		triageResults := []triage.TriageResult{
-			{Verdict: "allow", Confidence: 0.7}, // Exactly at threshold
-		}
-
-		action, _ := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		// Should NOT override since 0.7 is not > 0.7
-		if action != models.ActionBlock {
-			t.Errorf("Boundary confidence (0.7): expected block, got %s", action)
-		}
-
-		// Test just above threshold
-		triageResults[0].Confidence = 0.71
-		action, _ = evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		// Should still block: triage can no longer downgrade in enforce mode
-		if action != models.ActionBlock {
-			t.Errorf("Above threshold confidence (0.71): expected block, got %s", action)
-		}
-	})
-
-	t.Run("complex scenario - majority high confidence allows", func(t *testing.T) {
-		triageResults := []triage.TriageResult{
-			{Verdict: "allow", Confidence: 0.9},  // High confidence allow
-			{Verdict: "allow", Confidence: 0.8},  // High confidence allow
-			{Verdict: "allow", Confidence: 0.75}, // High confidence allow
-			{Verdict: "block", Confidence: 0.9},  // High confidence block
-			{Verdict: "allow", Confidence: 0.5},  // Low confidence allow (doesn't count)
-		}
-
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 1, 0, 0, triageResults)
-
-		if action != models.ActionBlock || !overridable {
-			t.Errorf("Complex scenario: expected block/overridable, got %s/%t", action, overridable)
-		}
-	})
-
-	t.Run("medium severity with triage preserves require_approval", func(t *testing.T) {
-		triageResults := []triage.TriageResult{
-			{Verdict: "allow", Confidence: 0.9},
-		}
-
-		action, overridable := evaluator.incorporateTriageResults(config.ModeEnforce, 0, 0, 1, triageResults)
-
-		// Triage must not downgrade require_approval in enforce mode
+	t.Run("medium severity requires approval in enforce mode", func(t *testing.T) {
+		action, overridable := evaluator.determineAction(config.ModeEnforce, 0, 0, 1)
 		if action != models.ActionRequireApproval || !overridable {
-			t.Errorf("Medium with triage: expected require_approval/overridable, got %s/%t", action, overridable)
+			t.Errorf("Medium: expected require_approval/overridable, got %s/%t", action, overridable)
+		}
+	})
+
+	t.Run("no alerts allows in enforce mode", func(t *testing.T) {
+		action, overridable := evaluator.determineAction(config.ModeEnforce, 0, 0, 0)
+		if action != models.ActionAllow || overridable {
+			t.Errorf("No alerts: expected allow/not-overridable, got %s/%t", action, overridable)
+		}
+	})
+
+	t.Run("audit mode always logs", func(t *testing.T) {
+		action, overridable := evaluator.determineAction(config.ModeAudit, 1, 1, 1)
+		if action != models.ActionLog || overridable {
+			t.Errorf("Audit: expected log/not-overridable, got %s/%t", action, overridable)
+		}
+	})
+
+	t.Run("shadow mode always allows", func(t *testing.T) {
+		action, overridable := evaluator.determineAction(config.ModeShadow, 1, 1, 1)
+		if action != models.ActionAllow || overridable {
+			t.Errorf("Shadow: expected allow/not-overridable, got %s/%t", action, overridable)
 		}
 	})
 }
