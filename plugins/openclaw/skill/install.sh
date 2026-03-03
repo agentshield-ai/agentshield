@@ -252,23 +252,20 @@ patch_openclaw_config() {
         warn "openclaw plugins install failed — plugin may not load"
     fi
 
-    # Step 2: Patch config with auth token and endpoint settings.
-    TOKEN_FILE=$(mktemp "${TMPDIR:-/tmp}/agentshield-token-XXXXXX")
-    CLEANUP_FILES+=("$TOKEN_FILE")
-    printf '%s' "$AUTH_TOKEN" > "$TOKEN_FILE"
-    chmod 600 "$TOKEN_FILE"
-    openclaw config patch \
-        plugins.entries.agentshield.enabled=true \
-        plugins.entries.agentshield.config.enabled=true \
-        plugins.entries.agentshield.config.endpoint="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate" \
-        plugins.entries.agentshield.config.auth_token="$(cat "$TOKEN_FILE")" \
-        plugins.entries.agentshield.config.timeout_ms=200 \
-        plugins.entries.agentshield.config.timeout_policy="block" 2>/dev/null && {
-        rm -f "$TOKEN_FILE"
-        log "OpenClaw configuration updated"; return
-    }
-    rm -f "$TOKEN_FILE"
-    warn "Failed to patch OpenClaw config — check openclaw config manually"
+    # Step 2: Set config keys individually (openclaw config set accepts one key=value).
+    local ENDPOINT="http://127.0.0.1:${AGENTSHIELD_PORT:-8433}/api/v1/evaluate"
+    local failed=0
+    openclaw config set plugins.entries.agentshield.enabled true 2>/dev/null || failed=1
+    openclaw config set plugins.entries.agentshield.config.enabled true 2>/dev/null || failed=1
+    openclaw config set plugins.entries.agentshield.config.endpoint "$ENDPOINT" 2>/dev/null || failed=1
+    openclaw config set plugins.entries.agentshield.config.auth_token "$AUTH_TOKEN" 2>/dev/null || failed=1
+    openclaw config set plugins.entries.agentshield.config.timeout_ms 200 2>/dev/null || failed=1
+    openclaw config set plugins.entries.agentshield.config.timeout_policy block 2>/dev/null || failed=1
+    if [ "$failed" -eq 0 ]; then
+        log "OpenClaw configuration updated"
+    else
+        warn "Some OpenClaw config keys failed to set — check openclaw config manually"
+    fi
 }
 
 # Start and check
