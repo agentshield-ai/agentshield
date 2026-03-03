@@ -248,10 +248,12 @@ func parseDetection(block map[string]yaml.Node) (*Detection, error) {
 			return nil, fmt.Errorf("search identifier %q: unsupported value", id)
 		}
 
-		idents.insert(&NamedExpr{
+		if err := idents.insert(&NamedExpr{
 			Name: id,
 			X:    result,
-		})
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	container := new(OrExpr)
@@ -363,7 +365,7 @@ func (p *conditionParser) unary() (Expr, error) {
 			case "all":
 				return &AndExpr{X: exprs}, nil
 			default:
-				panic("unreachable")
+				return nil, fmt.Errorf("internal error: unexpected token %q in of-expression", tok)
 			}
 		}
 	default:
@@ -439,7 +441,7 @@ func (p *conditionParser) binaryTrail(x Expr, minPrecedence int) (Expr, error) {
 				}
 			}
 		default:
-			panic("unreachable")
+			return nil, fmt.Errorf("internal error: unexpected operator %q", op)
 		}
 	}
 }
@@ -573,12 +575,13 @@ func (ssi sortedSearchIdentifiers) find(name string) *NamedExpr {
 	return ssi[i]
 }
 
-func (ssi *sortedSearchIdentifiers) insert(x *NamedExpr) {
+func (ssi *sortedSearchIdentifiers) insert(x *NamedExpr) error {
 	i, ok := slices.BinarySearchFunc(*ssi, x.Name, compareNamedExpr)
 	if ok {
-		panic(x.Name + " already present")
+		return fmt.Errorf("duplicate search identifier: %s", x.Name)
 	}
 	*ssi = slices.Insert(*ssi, i, x)
+	return nil
 }
 
 // filter returns a new slice that contains only the expressions

@@ -1445,7 +1445,7 @@ func TestInvestigate(t *testing.T) {
 		Tool:    "test-tool",
 	}
 
-	err = triager.investigate(alerts, req, nil)
+	err = triager.investigate(context.Background(), alerts, req, nil)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -1480,7 +1480,7 @@ func TestInvestigateErrors(t *testing.T) {
 	alerts := []engine.RuleResult{{RuleName: "test", Severity: engine.SeverityCritical}}
 	req := &models.EvaluationRequest{EventID: "test", Tool: "test"}
 
-	err = triager.investigate(alerts, req, nil)
+	err = triager.investigate(context.Background(), alerts, req, nil)
 	if err == nil {
 		t.Error("Expected error for spawn failure")
 	}

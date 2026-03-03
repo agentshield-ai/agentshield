@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"net/netip"
 	"net/url"
 	"os"
@@ -221,7 +222,11 @@ func LoadConfig(path string) (*Config, error) {
 // applyEnvOverrides applies environment variable overrides to config
 func applyEnvOverrides(cfg *Config) {
 	if port := os.Getenv("AGENTSHIELD_PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &cfg.Server.Port)
+		if p, err := strconv.Atoi(port); err != nil {
+			slog.Warn("Invalid AGENTSHIELD_PORT, using default", "value", port, "error", err)
+		} else {
+			cfg.Server.Port = p
+		}
 	}
 	if addr := os.Getenv("AGENTSHIELD_ADDR"); addr != "" {
 		cfg.Server.Addr = addr

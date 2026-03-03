@@ -235,7 +235,11 @@ func TestEvaluatorTriageFailure(t *testing.T) {
 	}
 }
 
-func TestIncorporateTriageResults(t *testing.T) {
+// TestDetermineActionAcrossModes validates that determineAction correctly maps
+// severity counts to actions across all evaluation modes.
+// (Previously tested via incorporateTriageResults, which was removed because
+// triage results never altered enforcement decisions — a security invariant.)
+func TestDetermineActionAcrossModes(t *testing.T) {
 	evaluator := &Evaluator{
 		defaultMode: config.ModeEnforce,
 	}
@@ -246,118 +250,57 @@ func TestIncorporateTriageResults(t *testing.T) {
 		criticalCount       int
 		highCount           int
 		mediumCount         int
-		triageResults       []triage.TriageResult
 		expectedAction      models.Action
 		expectedOverridable bool
 	}{
 		{
-			name:          "Enforce mode - high confidence allow",
-			mode:          config.ModeEnforce,
-			criticalCount: 0,
-			highCount:     1,
-			mediumCount:   0,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.9},
-			},
+			name:                "Enforce mode - high severity blocks",
+			mode:                config.ModeEnforce,
+			highCount:           1,
 			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
 		{
-			name:          "Enforce mode - mixed verdicts, allow majority",
-			mode:          config.ModeEnforce,
-			criticalCount: 0,
-			highCount:     2,
-			mediumCount:   0,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.8},
-				{Verdict: "allow", Confidence: 0.9},
-				{Verdict: "block", Confidence: 0.7},
-			},
+			name:                "Enforce mode - critical severity blocks",
+			mode:                config.ModeEnforce,
+			criticalCount:      1,
 			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
 		{
-			name:          "Enforce mode - block majority",
-			mode:          config.ModeEnforce,
-			criticalCount: 1,
-			highCount:     0,
-			mediumCount:   0,
-			triageResults: []triage.TriageResult{
-				{Verdict: "block", Confidence: 0.9},
-				{Verdict: "allow", Confidence: 0.6},
-			},
-			expectedAction:      models.ActionBlock,
-			expectedOverridable: true,
-		},
-		{
-			name:          "Audit mode - triage doesn't change action",
-			mode:          config.ModeAudit,
-			criticalCount: 1,
-			highCount:     1,
-			mediumCount:   0,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.95},
-			},
+			name:                "Audit mode - always logs regardless of severity",
+			mode:                config.ModeAudit,
+			criticalCount:      1,
+			highCount:           1,
 			expectedAction:      models.ActionLog,
 			expectedOverridable: false,
 		},
 		{
-			name:          "Shadow mode - triage doesn't change action",
-			mode:          config.ModeShadow,
-			criticalCount: 1,
-			highCount:     1,
-			mediumCount:   0,
-			triageResults: []triage.TriageResult{
-				{Verdict: "block", Confidence: 0.95},
-			},
+			name:                "Shadow mode - always allows regardless of severity",
+			mode:                config.ModeShadow,
+			criticalCount:      1,
+			highCount:           1,
 			expectedAction:      models.ActionAllow,
 			expectedOverridable: false,
 		},
 		{
-			name:          "Enforce mode - low confidence allows don't change action",
-			mode:          config.ModeEnforce,
-			criticalCount: 0,
-			highCount:     1,
-			mediumCount:   0,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.5}, // Low confidence
-			},
-			expectedAction:      models.ActionBlock,
-			expectedOverridable: true,
-		},
-		{
-			name:          "Enforce mode - medium severity with triage preserves require_approval",
-			mode:          config.ModeEnforce,
-			criticalCount: 0,
-			highCount:     0,
-			mediumCount:   1,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.9},
-			},
+			name:                "Enforce mode - medium severity requires approval",
+			mode:                config.ModeEnforce,
+			mediumCount:         1,
 			expectedAction:      models.ActionRequireApproval,
 			expectedOverridable: true,
 		},
 		{
-			name:          "Audit mode - medium severity with triage downgrades to log",
-			mode:          config.ModeAudit,
-			criticalCount: 0,
-			highCount:     0,
-			mediumCount:   1,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.9},
-			},
+			name:                "Audit mode - medium severity logs",
+			mode:                config.ModeAudit,
+			mediumCount:         1,
 			expectedAction:      models.ActionLog,
 			expectedOverridable: false,
 		},
 		{
-			name:          "Shadow mode - medium severity with triage downgrades to allow",
-			mode:          config.ModeShadow,
-			criticalCount: 0,
-			highCount:     0,
-			mediumCount:   1,
-			triageResults: []triage.TriageResult{
-				{Verdict: "allow", Confidence: 0.9},
-			},
+			name:                "Shadow mode - medium severity allows",
+			mode:                config.ModeShadow,
+			mediumCount:         1,
 			expectedAction:      models.ActionAllow,
 			expectedOverridable: false,
 		},
@@ -365,12 +308,11 @@ func TestIncorporateTriageResults(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			action, overridable := evaluator.incorporateTriageResults(
+			action, overridable := evaluator.determineAction(
 				test.mode,
 				test.criticalCount,
 				test.highCount,
 				test.mediumCount,
-				test.triageResults,
 			)
 
 			if action != test.expectedAction {

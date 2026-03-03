@@ -272,7 +272,7 @@ func (d *Daemon) initComponents() error {
 	}
 
 	// Initialize server
-	srv, err := server.NewServer(d.config, d.evaluator, d.store, triager, d.verdictCache)
+	srv, err := server.NewServer(d.config, d.evaluator, d.store, d.verdictCache)
 	if err != nil {
 		return fmt.Errorf("initializing server: %w", err)
 	}

@@ -2,6 +2,7 @@ package triage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -165,15 +166,18 @@ func (d *DeepTriager) InvestigateAsync(alerts []engine.RuleResult, req *models.E
 		return
 	}
 
-	// Fire and forget
+	// Fire and forget with timeout to prevent goroutine leak
 	go func() {
-		if err := d.investigate(deepAlerts, req, fastResults); err != nil {
+		timeout := time.Duration(d.config.Agent.TimeoutSec) * time.Second
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := d.investigate(ctx, deepAlerts, req, fastResults); err != nil {
 			slog.Warn("Deep triage failed", "error", err)
 		}
 	}()
 }
 
-func (d *DeepTriager) investigate(alerts []engine.RuleResult, req *models.EvaluationRequest, fastResults []TriageResult) error {
+func (d *DeepTriager) investigate(ctx context.Context, alerts []engine.RuleResult, req *models.EvaluationRequest, fastResults []TriageResult) error {
 	task := d.buildTask(alerts, req, fastResults)
 
 	// Build spawn args
@@ -207,7 +211,7 @@ func (d *DeepTriager) investigate(alerts []engine.RuleResult, req *models.Evalua
 	}
 
 	url := fmt.Sprintf("%s/tools/invoke", d.gatewayURL)
-	httpReq, err := retryablehttp.NewRequest("POST", url, bytes.NewReader(body))
+	httpReq, err := retryablehttp.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}

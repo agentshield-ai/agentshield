@@ -23,7 +23,6 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/feedback"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/store"
-	"github.com/agentshield-ai/agentshield/internal/triage"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/time/rate"
@@ -55,15 +54,15 @@ type Server struct {
 	feedbackManager *feedback.FeedbackManager
 	verdictCache    *cache.VerdictCache
 	httpServer      *http.Server
+	rateLimiter     *ipRateLimiter
 	startTime       time.Time
 }
 
 // HealthResponse represents the health check response
 type HealthResponse struct {
-	Status        string                 `json:"status"`
-	Version       string                 `json:"version"`
-	UptimeSeconds float64                `json:"uptime_seconds"`
-	Config        map[string]interface{} `json:"config"`
+	Status        string  `json:"status"`
+	Version       string  `json:"version"`
+	UptimeSeconds float64 `json:"uptime_seconds"`
 }
 
 // FeedbackRequest represents a feedback submission
@@ -174,7 +173,7 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 }
 
 // NewServer creates a new HTTP server instance
-func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.Store, _ *triage.Triager, verdictCache *cache.VerdictCache) (*Server, error) {
+func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.Store, verdictCache *cache.VerdictCache) (*Server, error) {
 	// Create auth middleware if token is configured
 	var authMiddleware *auth.Middleware
 	if cfg.Auth.Token != "" {
@@ -232,6 +231,7 @@ type ipRateLimiter struct {
 	visitors map[string]*ipVisitor
 	rps      rate.Limit // sustained requests per second
 	burst    int        // maximum burst size
+	done     chan struct{}
 }
 
 type ipVisitor struct {
@@ -244,9 +244,14 @@ func newIPRateLimiter(rps rate.Limit, burst int) *ipRateLimiter {
 		visitors: make(map[string]*ipVisitor),
 		rps:      rps,
 		burst:    burst,
+		done:     make(chan struct{}),
 	}
 	go rl.cleanupLoop()
 	return rl
+}
+
+func (rl *ipRateLimiter) stop() {
+	close(rl.done)
 }
 
 func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
@@ -266,15 +271,21 @@ func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
 // cleanupLoop removes entries that haven't been seen in 3 minutes.
 func (rl *ipRateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(time.Minute)
-	for range ticker.C {
-		rl.mu.Lock()
-		cutoff := time.Now().Add(-3 * time.Minute)
-		for ip, v := range rl.visitors {
-			if v.lastSeen.Before(cutoff) {
-				delete(rl.visitors, ip)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-3 * time.Minute)
+			for ip, v := range rl.visitors {
+				if v.lastSeen.Before(cutoff) {
+					delete(rl.visitors, ip)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.done:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 
@@ -317,12 +328,13 @@ func (s *Server) Start() error {
 	r := chi.NewRouter()
 
 	// Add Chi middleware chain
-	r.Use(middleware.Recoverer)                                                        // Panic recovery
-	r.Use(middleware.RequestID)                                                        // Request ID generation
-	r.Use(securityHeaders)                                                             // Security response headers
-	r.Use(rateLimitMiddleware(newIPRateLimiter(rate.Every(600*time.Millisecond), 10))) // Per-IP rate limit: ~100 req/min, burst 10
-	r.Use(s.requestLogger)                                                             // Custom request logging
-	r.Use(middleware.Timeout(30 * time.Second))                                        // Request timeout
+	s.rateLimiter = newIPRateLimiter(rate.Every(600*time.Millisecond), 10)
+	r.Use(middleware.Recoverer)                    // Panic recovery
+	r.Use(middleware.RequestID)                    // Request ID generation
+	r.Use(securityHeaders)                         // Security response headers
+	r.Use(rateLimitMiddleware(s.rateLimiter))       // Per-IP rate limit: ~100 req/min, burst 10
+	r.Use(s.requestLogger)                         // Custom request logging
+	r.Use(middleware.Timeout(30 * time.Second))    // Request timeout
 
 	// Apply auth middleware if configured, but skip health endpoints
 	if s.auth != nil {
@@ -367,6 +379,9 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("Shutting down server...")
+	if s.rateLimiter != nil {
+		s.rateLimiter.stop()
+	}
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -545,7 +560,9 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	// Return response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
 }
 
 // handleHealth handles the health check endpoint
@@ -567,29 +584,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// SECURITY: Minimal information disclosure in unauthenticated health endpoint.
-	// Detailed config is not exposed — use an authenticated status endpoint instead.
-	configInfo := map[string]interface{}{}
-	if s.verdictCache != nil {
-		stats := s.verdictCache.Stats()
-		configInfo["cache"] = map[string]interface{}{
-			"hits":      stats.Hits,
-			"misses":    stats.Misses,
-			"size":      stats.Size,
-			"max_size":  stats.MaxSize,
-			"evictions": stats.Evictions,
-		}
-	}
-
+	// Cache stats and detailed config are not exposed — use an authenticated
+	// status endpoint instead.
 	response := HealthResponse{
 		Status:        status,
 		Version:       "1.0.0",
 		UptimeSeconds: time.Since(s.startTime).Seconds(),
-		Config:        configInfo,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
 }
 
 // handleAlerts handles the alerts listing endpoint
@@ -687,7 +694,9 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
 }
 
 // handleFeedbackSubmission handles POST /api/v1/feedback
@@ -775,10 +784,12 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 	// Return success
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status":  "received",
 		"message": "Thank you for your feedback",
-	})
+	}); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
 }
 
 // handleAuditEvent accepts post-execution audit payloads from plugins.
@@ -805,10 +816,12 @@ func (s *Server) handleAcceptedEvent(w http.ResponseWriter, r *http.Request, kin
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status":  "accepted",
 		"message": kind + " event received",
-	})
+	}); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
 }
 
 // handleFeedbackQuery handles GET /api/v1/feedback?rule=<name>
@@ -816,6 +829,10 @@ func (s *Server) handleFeedbackQuery(w http.ResponseWriter, r *http.Request) {
 	ruleName := r.URL.Query().Get("rule")
 	if ruleName == "" {
 		http.Error(w, "rule parameter is required", http.StatusBadRequest)
+		return
+	}
+	if err := validateStringInput(ruleName, 200, "rule"); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid rule parameter: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -850,5 +867,7 @@ func (s *Server) handleFeedbackQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
 }
