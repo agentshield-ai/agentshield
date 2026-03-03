@@ -1,5 +1,5 @@
 {
-  "name": "@agentshield/openclaw-plugin",
+  "name": "@agentshield-ai/openclaw-plugin",
   "version": "2.0.0",
   "description": "AgentShield real-time security evaluation plugin for OpenClaw. Intercepts tool calls before execution and evaluates them against Sigma detection rules.",
   "type": "module",

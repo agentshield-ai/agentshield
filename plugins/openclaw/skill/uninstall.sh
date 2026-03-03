@@ -93,15 +93,19 @@ revert_openclaw_config() {
         return
     fi
 
-    # Step 1: Uninstall the plugin code registration.
-    openclaw plugins uninstall agentshield 2>/dev/null && {
+    # Step 1: Uninstall the plugin package.
+    if openclaw plugins uninstall @agentshield-ai/openclaw-plugin 2>/dev/null; then
         log "OpenClaw plugin uninstalled"
-    } || warn "openclaw plugins uninstall failed — you may need to remove the plugin manually"
+    else
+        warn "openclaw plugins uninstall failed — you may need to remove the plugin manually"
+    fi
 
     # Step 2: Disable the config entry.
-    openclaw config patch plugins.entries.agentshield.enabled=false 2>/dev/null && {
+    if openclaw config patch plugins.entries.agentshield.enabled=false 2>/dev/null; then
         log "OpenClaw configuration reverted via CLI"
-    } || warn "Failed to disable agentshield in OpenClaw config"
+    else
+        warn "Failed to disable agentshield in OpenClaw config"
+    fi
 }
 
 # Remove from PATH if added

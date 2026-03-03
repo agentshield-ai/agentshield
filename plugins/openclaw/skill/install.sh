@@ -245,18 +245,12 @@ patch_openclaw_config() {
         return
     fi
 
-    # Step 1: Register the plugin code so OpenClaw can load it.
-    # The plugin source (index.ts, src/, openclaw.plugin.json) is in the
-    # parent directory relative to this skill script.
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-    if [ -f "$PLUGIN_DIR/openclaw.plugin.json" ]; then
-        log "Installing OpenClaw plugin from $PLUGIN_DIR..."
-        openclaw plugins install --link "$PLUGIN_DIR" 2>/dev/null && {
-            log "OpenClaw plugin registered"
-        } || warn "openclaw plugins install failed — plugin may not load"
+    # Step 1: Install the published npm package so OpenClaw can load it.
+    log "Installing @agentshield-ai/openclaw-plugin from npm..."
+    if openclaw plugins install @agentshield-ai/openclaw-plugin 2>/dev/null; then
+        log "OpenClaw plugin installed"
     else
-        warn "Plugin source not found at $PLUGIN_DIR — skipping plugin install"
+        warn "openclaw plugins install failed — plugin may not load"
     fi
 
     # Step 2: Patch config with auth token and endpoint settings.
