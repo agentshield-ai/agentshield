@@ -12,19 +12,11 @@ Agent tool call → AgentShield engine → Sigma rule match? → block / require
 
 ## Install
 
-### OpenClaw
-
 ```bash
 openclaw skill install agentshield-ai/agentshield
 ```
 
 This downloads the engine binary, clones the Sigma rule corpus, generates an auth token, and starts the engine as a background service. Restart your OpenClaw session afterwards.
-
-### Claude Code
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/agentshield-ai/agentshield/main/plugins/claude/install.sh | bash
-```
 
 ### Verify
 
@@ -64,8 +56,8 @@ AgentShield sits between an AI agent and its tools. Every tool call (shell comma
 ┌─────────────┐     ┌──────────────────────────────────────────────────┐     ┌────────────┐
 │   Plugin     │     │                   Engine                        │     │   Rules    │
 │              │────▶│  Cache ──▶ Sigma Eval ──▶ Triage (optional LLM) │────▶│  45+ Sigma │
-│  OpenClaw /  │     │                                                 │     │  patterns  │
-│  Claude Code │◀────│  Action: block / require_approval / allow / log │     └────────────┘
+│  OpenClaw    │     │                                                 │     │  patterns  │
+│              │◀────│  Action: block / require_approval / allow / log │     └────────────┘
 └─────────────┘     └──────────────────────────────────────────────────┘
 ```
 
@@ -166,7 +158,6 @@ internal/
 pkg/sigma/              Forked sigmalite library
 plugins/
   openclaw/             TypeScript plugin (circuit-breaker pattern)
-  claude/               Shell-based Claude Code hooks
 rules/rules/ai_agent/   45+ Sigma detection rules
 docs/                   API reference, deployment, configuration guides
 bench/                  Benchmark suites and test cases
