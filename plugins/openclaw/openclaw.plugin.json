@@ -15,12 +15,12 @@
       "intercept": {
         "type": "array",
         "items": { "type": "string" },
-        "default": ["exec", "write", "edit", "browser", "message", "sessions_spawn"]
+        "default": ["exec", "write", "edit", "read", "browser", "message", "sessions_spawn"]
       },
       "skip": {
         "type": "array",
         "items": { "type": "string" },
-        "default": ["read", "session_status"]
+        "default": ["session_status"]
       },
       "circuit_breaker": {
         "type": "object",

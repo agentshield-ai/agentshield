@@ -3,19 +3,19 @@
 # Evaluates tool calls against AgentShield engine before execution.
 #
 # Install: Add to ~/.claude/settings.json under hooks.PreToolUse
-# Requires: AgentShield engine running (default: http://127.0.0.1:8432)
+# Requires: AgentShield engine running (default: http://127.0.0.1:8433)
 #
 # Exit codes:
 #   0 = allow (no output or {"decision":"approve"})
 #   2 = block ({"decision":"block","reason":"..."})
 #
 # Environment:
-#   AGENTSHIELD_URL         - Engine URL (default: http://127.0.0.1:8432)
+#   AGENTSHIELD_URL         - Engine URL (default: http://127.0.0.1:8433)
 #   AGENTSHIELD_AUTH_TOKEN  - Engine auth token (required when auth is enabled)
 
 set -euo pipefail
 
-AGENTSHIELD_URL="${AGENTSHIELD_URL:-http://127.0.0.1:8432}"
+AGENTSHIELD_URL="${AGENTSHIELD_URL:-http://127.0.0.1:8433}"
 AGENTSHIELD_AUTH_TOKEN="${AGENTSHIELD_AUTH_TOKEN:-}"
 
 # Read JSON input from stdin (Claude Code passes tool call context)

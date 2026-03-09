@@ -151,7 +151,7 @@ See [PLATFORMS.md](PLATFORMS.md) for full details. Detection rules target Linux/
 - **Branch naming**: `<type>/<short-description>` (e.g. `feat/new-rule`).
 - **Security**: Constant-time auth comparison (`subtle.ConstantTimeCompare`), UTF-8 validation, length limits, and control character rejection on all input.
 - **Tests**: Table-driven Go tests. Security-specific test files (`security_test.go`) in most packages. Integration tests that depend on project rules use `runtime.Caller` to find the project root and `t.Skip` if rules are absent.
-- **NewServer signature**: `NewServer(cfg, evaluator, store, triager, verdictCache)` — the 5th parameter is `*cache.VerdictCache` (can be nil).
+- **NewServer signature**: `NewServer(cfg, evaluator, store, verdictCache)` — the 4th parameter is `*cache.VerdictCache` (can be nil). The triager is injected into the evaluator, not passed to the server.
 
 ## CI
 

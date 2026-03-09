@@ -356,23 +356,9 @@ func loadConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
-// setupLogging configures the log output
+// setupLogging configures early log output before the daemon takes over with slog.
 func setupLogging(level string) {
-	// Basic logging setup - in production you might want structured logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-	// Set log level (basic implementation)
-	switch strings.ToLower(level) {
-	case "debug":
-		// Enable all logging
-	case "info":
-		// Default level
-	case "warn", "warning":
-		// Could filter out debug/info logs
-	case "error":
-		// Could filter out debug/info/warn logs
-	}
-
 	if verbose {
 		log.Printf("Log level set to: %s", level)
 	}
