@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -316,4 +317,173 @@ func TestListenAddr(t *testing.T) {
 	if got := cfg.ListenAddr(); got != expected {
 		t.Errorf("ListenAddr() = %s, want %s", got, expected)
 	}
+}
+
+// validBaseConfig returns a Config that passes validateConfig. The rules
+// directory is a real temp directory so the path-traversal check succeeds.
+func validBaseConfig(t *testing.T) *Config {
+	t.Helper()
+	return &Config{
+		Server: ServerConfig{
+			Addr: "127.0.0.1",
+			Port: 8433,
+		},
+		Auth: AuthConfig{
+			Token: "test-token-that-is-at-least-32-characters-long",
+		},
+		Rules: RulesConfig{
+			Dir: t.TempDir(),
+		},
+		Store: StoreConfig{
+			SQLitePath:           filepath.Join(t.TempDir(), "test.db"),
+			RetentionDays:        90,
+			CleanupIntervalHours: 24,
+		},
+		EvaluationMode: ModeEnforce,
+		LogLevel:       "info",
+	}
+}
+
+func TestValidateConfig_TelemetryEndpointRequired(t *testing.T) {
+	cfg := validBaseConfig(t)
+	cfg.Telemetry.Enabled = true
+	cfg.Telemetry.Endpoint = ""
+
+	err := validateConfig(cfg)
+	if err == nil {
+		t.Fatal("expected validation error when telemetry is enabled but endpoint is empty")
+	}
+	if !strings.Contains(err.Error(), "telemetry.endpoint is required") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateConfig_TelemetrySampleRateBounds(t *testing.T) {
+	tests := []struct {
+		name       string
+		sampleRate float64
+		wantErr    bool
+	}{
+		{name: "negative", sampleRate: -0.1, wantErr: true},
+		{name: "zero_is_ok", sampleRate: 0.0, wantErr: false},
+		{name: "half_is_ok", sampleRate: 0.5, wantErr: false},
+		{name: "one_is_ok", sampleRate: 1.0, wantErr: false},
+		{name: "above_one", sampleRate: 1.1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBaseConfig(t)
+			cfg.Telemetry.Enabled = true
+			cfg.Telemetry.Endpoint = "https://otel.example.com:4318"
+			cfg.Telemetry.SampleRate = tt.sampleRate
+
+			err := validateConfig(cfg)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error for sample_rate=%f, got none", tt.sampleRate)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error for sample_rate=%f: %v", tt.sampleRate, err)
+			}
+		})
+	}
+}
+
+func TestValidateConfig_TelemetryInsecureHTTP(t *testing.T) {
+	cfg := validBaseConfig(t)
+	cfg.Telemetry.Enabled = true
+	cfg.Telemetry.Endpoint = "http://otel.example.com:4318"
+	cfg.Telemetry.Insecure = false
+	cfg.Telemetry.SampleRate = 1.0
+
+	err := validateConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error when endpoint is HTTP and insecure=false")
+	}
+	if !strings.Contains(err.Error(), "HTTPS") {
+		t.Errorf("error should mention HTTPS, got: %v", err)
+	}
+
+	// Now allow HTTP via insecure flag
+	cfg.Telemetry.Insecure = true
+	err = validateConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error when insecure=true: %v", err)
+	}
+}
+
+func TestValidateConfig_TelemetryDefaults(t *testing.T) {
+	cfg := validBaseConfig(t)
+	cfg.Telemetry.Enabled = true
+	cfg.Telemetry.Endpoint = "https://otel.example.com:4318"
+	cfg.Telemetry.ServiceName = ""
+	cfg.Telemetry.SampleRate = 0
+
+	err := validateConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Telemetry.ServiceName != "agentshield" {
+		t.Errorf("expected default service_name 'agentshield', got %q", cfg.Telemetry.ServiceName)
+	}
+	if cfg.Telemetry.SampleRate != 1.0 {
+		t.Errorf("expected default sample_rate 1.0, got %f", cfg.Telemetry.SampleRate)
+	}
+}
+
+func TestApplyEnvOverrides_TelemetryEndpoint(t *testing.T) {
+	// Save and restore env vars
+	envVars := []string{"AGENTSHIELD_OTEL_ENDPOINT", "AGENTSHIELD_OTEL_ENABLED"}
+	originalEnv := make(map[string]string)
+	for _, env := range envVars {
+		if val, ok := os.LookupEnv(env); ok {
+			originalEnv[env] = val
+		}
+	}
+	defer func() {
+		for _, env := range envVars {
+			os.Unsetenv(env)
+		}
+		for env, val := range originalEnv {
+			os.Setenv(env, val)
+		}
+	}()
+
+	t.Run("endpoint_and_enabled_true", func(t *testing.T) {
+		os.Setenv("AGENTSHIELD_OTEL_ENDPOINT", "https://otel.test:4318")
+		os.Setenv("AGENTSHIELD_OTEL_ENABLED", "true")
+
+		cfg := &Config{}
+		applyEnvOverrides(cfg)
+
+		if cfg.Telemetry.Endpoint != "https://otel.test:4318" {
+			t.Errorf("expected endpoint 'https://otel.test:4318', got %q", cfg.Telemetry.Endpoint)
+		}
+		if !cfg.Telemetry.Enabled {
+			t.Error("expected Telemetry.Enabled = true")
+		}
+	})
+
+	t.Run("enabled_with_1", func(t *testing.T) {
+		os.Setenv("AGENTSHIELD_OTEL_ENABLED", "1")
+
+		cfg := &Config{}
+		applyEnvOverrides(cfg)
+
+		if !cfg.Telemetry.Enabled {
+			t.Error("expected Telemetry.Enabled = true when env is '1'")
+		}
+	})
+
+	t.Run("enabled_with_false", func(t *testing.T) {
+		os.Setenv("AGENTSHIELD_OTEL_ENABLED", "false")
+
+		cfg := &Config{}
+		cfg.Telemetry.Enabled = true // pre-set to true
+		applyEnvOverrides(cfg)
+
+		if cfg.Telemetry.Enabled {
+			t.Error("expected Telemetry.Enabled = false when env is 'false'")
+		}
+	})
 }

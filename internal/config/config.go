@@ -260,6 +260,12 @@ func applyEnvOverrides(cfg *Config) {
 	if triageAPIKey := os.Getenv("AGENTSHIELD_TRIAGE_API_KEY"); triageAPIKey != "" {
 		cfg.Triage.APIKey = triageAPIKey
 	}
+	if v := os.Getenv("AGENTSHIELD_OTEL_ENDPOINT"); v != "" {
+		cfg.Telemetry.Endpoint = v
+	}
+	if v := os.Getenv("AGENTSHIELD_OTEL_ENABLED"); v != "" {
+		cfg.Telemetry.Enabled = v == "true" || v == "1"
+	}
 }
 
 // validateConfig validates the configuration
@@ -359,6 +365,25 @@ func validateConfig(cfg *Config) error {
 	// Validate log level
 	if !isValidLogLevel(cfg.LogLevel) {
 		return fmt.Errorf("invalid log level: %s (must be debug, info, warn, or error)", cfg.LogLevel)
+	}
+
+	// Validate telemetry configuration
+	if cfg.Telemetry.Enabled {
+		if cfg.Telemetry.Endpoint == "" {
+			return fmt.Errorf("telemetry.endpoint is required when telemetry is enabled")
+		}
+		if !cfg.Telemetry.Insecure && !strings.HasPrefix(cfg.Telemetry.Endpoint, "https://") {
+			return fmt.Errorf("telemetry.endpoint must use HTTPS (set insecure: true to allow HTTP)")
+		}
+		if cfg.Telemetry.SampleRate < 0 || cfg.Telemetry.SampleRate > 1.0 {
+			return fmt.Errorf("telemetry.sample_rate must be between 0.0 and 1.0")
+		}
+		if cfg.Telemetry.ServiceName == "" {
+			cfg.Telemetry.ServiceName = "agentshield"
+		}
+		if cfg.Telemetry.SampleRate == 0 {
+			cfg.Telemetry.SampleRate = 1.0
+		}
 	}
 
 	return nil
