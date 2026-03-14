@@ -258,6 +258,52 @@ func TestResolveRelativePaths(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_TelemetrySection(t *testing.T) {
+	rulesDir := t.TempDir()
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfgData := []byte(`
+server:
+  port: 8433
+auth:
+  token: "test-token-that-is-at-least-32-characters-long"
+rules:
+  dir: "` + rulesDir + `"
+telemetry:
+  enabled: true
+  endpoint: "https://otel-collector.example.com:4318"
+  service_name: "agentshield-prod"
+  sample_rate: 0.5
+  export_all_events: true
+  insecure: true
+`)
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if !cfg.Telemetry.Enabled {
+		t.Error("expected Telemetry.Enabled = true")
+	}
+	if cfg.Telemetry.Endpoint != "https://otel-collector.example.com:4318" {
+		t.Errorf("expected endpoint, got %q", cfg.Telemetry.Endpoint)
+	}
+	if cfg.Telemetry.ServiceName != "agentshield-prod" {
+		t.Errorf("expected service_name, got %q", cfg.Telemetry.ServiceName)
+	}
+	if cfg.Telemetry.SampleRate != 0.5 {
+		t.Errorf("expected sample_rate 0.5, got %f", cfg.Telemetry.SampleRate)
+	}
+	if !cfg.Telemetry.ExportAllEvents {
+		t.Error("expected ExportAllEvents = true")
+	}
+	if !cfg.Telemetry.Insecure {
+		t.Error("expected Telemetry.Insecure = true")
+	}
+}
+
 func TestListenAddr(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{

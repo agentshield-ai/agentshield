@@ -106,6 +106,16 @@ func (m EvaluationMode) IsValid() bool {
 	}
 }
 
+// TelemetryConfig configures OpenTelemetry export.
+type TelemetryConfig struct {
+	Enabled         bool    `yaml:"enabled"`
+	Endpoint        string  `yaml:"endpoint"`
+	ServiceName     string  `yaml:"service_name"`
+	SampleRate      float64 `yaml:"sample_rate"`
+	ExportAllEvents bool    `yaml:"export_all_events"`
+	Insecure        bool    `yaml:"insecure"`
+}
+
 // Config holds the complete application configuration
 type TestContextConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
@@ -128,6 +138,7 @@ type Config struct {
 	Triage         TriageConfig      `yaml:"triage" json:"triage"`
 	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
+	Telemetry      TelemetryConfig   `yaml:"telemetry" json:"telemetry"`
 	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
 	LogLevel       string            `yaml:"log_level" json:"log_level"`
 }
