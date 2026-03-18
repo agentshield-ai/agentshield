@@ -10,6 +10,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
 
@@ -58,6 +59,7 @@ type Evaluator struct {
 	cache           *cache.VerdictCache
 	tracer          trace.Tracer
 	metrics         *telemetry.MetricsRecorder
+	sessionRegistry *session.Registry
 }
 
 // NewEvaluator creates a new evaluator
@@ -84,6 +86,11 @@ func (e *Evaluator) SetTracer(t trace.Tracer) {
 // SetMetrics sets the OTel metrics recorder for evaluation instrumentation.
 func (e *Evaluator) SetMetrics(m *telemetry.MetricsRecorder) {
 	e.metrics = m
+}
+
+// SetSessionRegistry sets the session registry for behavioural sequencing.
+func (e *Evaluator) SetSessionRegistry(r *session.Registry) {
+	e.sessionRegistry = r
 }
 
 // Evaluate processes an evaluation request with a background context.
@@ -155,6 +162,14 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 				response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
 			}
 			return response, nil
+		}
+	}
+
+	// Inject session-derived fields for behavioural sequencing
+	if e.sessionRegistry != nil && req.SessionID != "" {
+		sessionFields := e.sessionRegistry.DeriveFields(req.SessionID)
+		for k, v := range sessionFields {
+			req.Fields[k] = v
 		}
 	}
 
@@ -232,6 +247,12 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Record evaluation metrics
 	if e.metrics != nil {
 		e.metrics.RecordEvaluation(ctx, req.Tool, string(response.Action), len(response.Alerts), false)
+	}
+
+	// Record this event in the session window (after evaluation, so the current
+	// event is visible to the NEXT evaluation, not this one)
+	if e.sessionRegistry != nil && req.SessionID != "" {
+		e.sessionRegistry.Record(req.SessionID, req.Tool, alerts)
 	}
 
 	// Fire deep triage async once at the end

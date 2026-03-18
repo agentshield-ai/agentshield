@@ -9,6 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -24,6 +25,19 @@ type mockEngine struct {
 
 func (m *mockEngine) Evaluate(fields map[string]string) []engine.RuleResult {
 	return m.mockResults
+}
+
+// fieldCapturingEngine captures the fields map passed to Evaluate for assertion.
+type fieldCapturingEngine struct {
+	captured map[string]string
+	results  []engine.RuleResult
+}
+
+func (e *fieldCapturingEngine) Evaluate(fields map[string]string) []engine.RuleResult {
+	for k, v := range fields {
+		e.captured[k] = v
+	}
+	return e.results
 }
 
 func TestDetermineEffectiveMode(t *testing.T) {
@@ -601,5 +615,59 @@ func TestGetModeInfo(t *testing.T) {
 		if _, exists := modes[mode]; !exists {
 			t.Errorf("GetModeInfo() modes missing: %s", mode)
 		}
+	}
+}
+
+func TestEvaluateWithContext_InjectsSessionFields(t *testing.T) {
+	captured := make(map[string]string)
+	mockEng := &fieldCapturingEngine{captured: captured}
+
+	registry := session.NewRegistry(10, 5*time.Minute)
+	registry.Record("sess-inject", "ls", nil)
+	registry.Record("sess-inject", "cat", nil)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-inj",
+		SessionID: "sess-inject",
+		Tool:      "curl",
+		Fields:    map[string]string{"tool": "curl"},
+	}
+	evaluator.EvaluateWithContext(context.Background(), req)
+
+	if captured["session.recent_tools"] != "ls,cat" {
+		t.Errorf("expected session.recent_tools='ls,cat', got %q", captured["session.recent_tools"])
+	}
+	if captured["session.tool_count"] != "2" {
+		t.Errorf("expected session.tool_count='2', got %q", captured["session.tool_count"])
+	}
+}
+
+func TestEvaluateWithContext_RecordsToSessionAfterEval(t *testing.T) {
+	mockEng := &mockEngine{mockResults: nil}
+	registry := session.NewRegistry(10, 5*time.Minute)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-rec",
+		SessionID: "sess-rec",
+		Tool:      "bash",
+		Fields:    map[string]string{"tool": "bash"},
+	}
+	evaluator.EvaluateWithContext(context.Background(), req)
+
+	window := registry.Get("sess-rec")
+	if window == nil {
+		t.Fatal("expected session to be recorded")
+	}
+	if len(window.Events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(window.Events))
+	}
+	if window.Events[0].Tool != "bash" {
+		t.Errorf("expected tool 'bash', got %q", window.Events[0].Tool)
 	}
 }
