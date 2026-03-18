@@ -80,6 +80,25 @@ Internal packages follow clear separation:
 - `auth/` — Constant-time token comparison
 - `feedback/` — Feedback collection and rule refinement
 - `daemon/` — Service lifecycle (graceful shutdown, signal handling)
+- `telemetry/` — OpenTelemetry TracerProvider, MeterProvider, and metrics recorder
+- `session/` — Per-session event window registry for behavioural sequencing
+
+### OpenTelemetry Export (`internal/telemetry/`)
+
+Exports evaluation telemetry as OTel traces and metrics:
+- **Traces**: Each evaluation becomes a span within a session-scoped trace. Span attributes include `event.id`, `session.id`, `tool.name`, `verdict.action`, `verdict.mode`. Rule matches are recorded as span events.
+- **Metrics**: `agentshield.evaluations.total` (counter), `agentshield.alerts.total` (counter), `agentshield.cache.hits` / `.misses` (counters).
+- **Export**: OTLP/HTTP to any OTel-compatible backend (Elastic, Splunk, Grafana, Datadog).
+- **Config**: `telemetry:` section in config.yaml with `enabled`, `endpoint`, `service_name`, `sample_rate`, `export_all_events`, `insecure`.
+
+### Session Behavioural Sequencing (`internal/session/`)
+
+Per-session sliding window that tracks tool call sequences:
+- **Registry**: In-memory, concurrent-safe, per-session ring buffer with configurable TTL and max events.
+- **Derived fields**: `session.recent_tools`, `session.tool_count`, `session.unique_tool_count`, `session.alert_count` — injected into Sigma evaluation context before rule matching.
+- **Cleanup**: Background goroutine evicts expired sessions.
+- **Config**: `session:` section in config.yaml with `enabled`, `window_sec`, `max_events`.
+- **Sigma rules**: `ai_agent_recon_then_exfil.yml` (detects recon→exfil chains), `ai_agent_session_velocity_anomaly.yml` (detects high tool-call velocity).
 
 ### OpenClaw Plugin (`plugins/openclaw/`)
 
@@ -128,6 +147,8 @@ In-memory LRU cache (default 10,000 entries, 5-min TTL) avoids re-evaluating ide
 | `AGENTSHIELD_MODE` | Evaluation mode (enforce/audit/shadow) |
 | `AGENTSHIELD_LOG_LEVEL` | Logging level |
 | `AGENTSHIELD_TRIAGE_API_KEY` | LLM triage API key |
+| `AGENTSHIELD_OTEL_ENDPOINT` | OTel OTLP endpoint URL |
+| `AGENTSHIELD_OTEL_ENABLED` | Enable OTel export (true/false) |
 
 ## Platform Support
 
