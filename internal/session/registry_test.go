@@ -84,3 +84,38 @@ func TestRegistry_DeriveFields_UnknownSession(t *testing.T) {
 		t.Error("expected nil for unknown session")
 	}
 }
+
+func TestRegistry_Cleanup_ExpiredSession(t *testing.T) {
+	r := NewRegistry(10, 50*time.Millisecond) // Very short TTL
+	r.Record("sess-1", "ls", nil)
+
+	time.Sleep(100 * time.Millisecond)
+	r.Cleanup()
+
+	if r.Get("sess-1") != nil {
+		t.Error("expected expired session to be cleaned up")
+	}
+}
+
+func TestRegistry_Cleanup_ActiveSession(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.Record("sess-1", "ls", nil)
+
+	r.Cleanup()
+
+	if r.Get("sess-1") == nil {
+		t.Error("expected active session to survive cleanup")
+	}
+}
+
+func TestRegistry_Stats(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	if r.Stats() != 0 {
+		t.Error("expected 0 sessions")
+	}
+	r.Record("sess-1", "ls", nil)
+	r.Record("sess-2", "cat", nil)
+	if r.Stats() != 2 {
+		t.Errorf("expected 2 sessions, got %d", r.Stats())
+	}
+}

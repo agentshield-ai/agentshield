@@ -92,6 +92,45 @@ func (r *Registry) Get(sessionID string) *Window {
 	return &Window{Events: events}
 }
 
+// Cleanup removes sessions that have not been active within the TTL window.
+func (r *Registry) Cleanup() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cutoff := time.Now().Add(-r.ttl)
+	for id, state := range r.sessions {
+		if state.lastSeen.Before(cutoff) {
+			delete(r.sessions, id)
+		}
+	}
+}
+
+// StartCleanupLoop runs periodic session cleanup. Call the returned cancel
+// function to stop the loop.
+func (r *Registry) StartCleanupLoop(interval time.Duration) func() {
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				r.Cleanup()
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// Stats returns the number of tracked sessions.
+func (r *Registry) Stats() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.sessions)
+}
+
 // DeriveFields returns Sigma-compatible fields derived from the session's
 // event window.
 func (r *Registry) DeriveFields(sessionID string) map[string]string {
