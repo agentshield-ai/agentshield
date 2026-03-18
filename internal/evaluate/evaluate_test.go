@@ -645,6 +645,49 @@ func TestEvaluateWithContext_InjectsSessionFields(t *testing.T) {
 	}
 }
 
+func TestEvaluateWithContext_SpanIncludesSessionFields(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: nil}
+	registry := session.NewRegistry(10, 5*time.Minute)
+	registry.Record("sess-span", "ls", nil)
+	registry.Record("sess-span", "cat", nil)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+	evaluator.SetSessionRegistry(registry)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-sp",
+		SessionID: "sess-span",
+		Tool:      "curl",
+		Fields:    map[string]string{"tool": "curl"},
+	}
+	evaluator.EvaluateWithContext(context.Background(), req)
+	tp.ForceFlush(context.Background())
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("expected span")
+	}
+
+	attrs := spans[0].Attributes()
+	found := false
+	for _, a := range attrs {
+		if string(a.Key) == "session.tool_count" {
+			found = true
+			if a.Value.AsString() != "2" {
+				t.Errorf("expected session.tool_count=2, got %q", a.Value.AsString())
+			}
+		}
+	}
+	if !found {
+		t.Error("expected session.tool_count span attribute")
+	}
+}
+
 func TestEvaluateWithContext_RecordsToSessionAfterEval(t *testing.T) {
 	mockEng := &mockEngine{mockResults: nil}
 	registry := session.NewRegistry(10, 5*time.Minute)

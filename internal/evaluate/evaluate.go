@@ -171,6 +171,14 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		for k, v := range sessionFields {
 			req.Fields[k] = v
 		}
+
+		// Add session context to OTel span
+		if e.tracer != nil {
+			span := trace.SpanFromContext(ctx)
+			for k, v := range sessionFields {
+				span.SetAttributes(attribute.String(k, v))
+			}
+		}
 	}
 
 	// Run rule evaluation (engine now only returns matched rules)
