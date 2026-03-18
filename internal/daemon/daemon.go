@@ -20,20 +20,22 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Daemon manages the AgentShield server process
 type Daemon struct {
-	config          *config.Config
-	pidFile         string
-	managePIDFile   bool
-	logger          *slog.Logger
-	engine          *engine.Engine
-	store           *store.Store
-	triager         *triage.Triager
-	evaluator       *evaluate.Evaluator
-	server          *server.Server
-	verdictCache    *cache.VerdictCache
+	config            *config.Config
+	pidFile           string
+	managePIDFile     bool
+	logger            *slog.Logger
+	engine            *engine.Engine
+	store             *store.Store
+	triager           *triage.Triager
+	evaluator         *evaluate.Evaluator
+	server            *server.Server
+	verdictCache      *cache.VerdictCache
+	tracerProvider    trace.TracerProvider
 	retentionCancel   context.CancelFunc
 	telemetryShutdown telemetry.ShutdownFunc
 }
@@ -214,10 +216,11 @@ func (d *Daemon) initComponents() error {
 	d.logger.Info("Engine initialized", "rule_count", len(eng.GetLoadedRules()))
 
 	// Initialise OpenTelemetry
-	_, otelShutdown, err := telemetry.Init(context.Background(), &d.config.Telemetry, "dev")
+	tp, otelShutdown, err := telemetry.Init(context.Background(), &d.config.Telemetry, "dev")
 	if err != nil {
 		return fmt.Errorf("initialising telemetry: %w", err)
 	}
+	d.tracerProvider = tp
 	d.telemetryShutdown = otelShutdown
 	if d.config.Telemetry.Enabled {
 		d.logger.Info("Telemetry initialized", "endpoint", d.config.Telemetry.Endpoint)
@@ -289,6 +292,9 @@ func (d *Daemon) initComponents() error {
 	srv, err := server.NewServer(d.config, d.evaluator, d.store, d.verdictCache)
 	if err != nil {
 		return fmt.Errorf("initializing server: %w", err)
+	}
+	if d.config.Telemetry.Enabled && d.tracerProvider != nil {
+		srv.SetTracerProvider(d.tracerProvider)
 	}
 	d.server = srv
 	d.logger.Info("Server initialized", "listen_addr", d.config.ListenAddr())

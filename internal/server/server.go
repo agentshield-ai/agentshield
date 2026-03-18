@@ -25,6 +25,8 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/riandyrn/otelchi"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 )
 
@@ -53,6 +55,7 @@ type Server struct {
 	auth            *auth.Middleware
 	feedbackManager *feedback.FeedbackManager
 	verdictCache    *cache.VerdictCache
+	tracerProvider  trace.TracerProvider
 	httpServer      *http.Server
 	rateLimiter     *ipRateLimiter
 	startTime       time.Time
@@ -198,6 +201,11 @@ func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.S
 	}, nil
 }
 
+// SetTracerProvider sets the OTel TracerProvider for HTTP-level span creation.
+func (s *Server) SetTracerProvider(tp trace.TracerProvider) {
+	s.tracerProvider = tp
+}
+
 // requestLogger creates a custom request logging middleware using slog
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +334,13 @@ func securityHeaders(next http.Handler) http.Handler {
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	r := chi.NewRouter()
+
+	// OTel tracing middleware — outermost so every request gets a span
+	if s.tracerProvider != nil {
+		r.Use(otelchi.Middleware("agentshield",
+			otelchi.WithTracerProvider(s.tracerProvider),
+		))
+	}
 
 	// Add Chi middleware chain
 	s.rateLimiter = newIPRateLimiter(rate.Every(600*time.Millisecond), 10)
