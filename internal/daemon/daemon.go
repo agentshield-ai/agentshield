@@ -18,6 +18,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/server"
 	"github.com/agentshield-ai/agentshield/internal/store"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
 )
 
@@ -33,7 +34,8 @@ type Daemon struct {
 	evaluator       *evaluate.Evaluator
 	server          *server.Server
 	verdictCache    *cache.VerdictCache
-	retentionCancel context.CancelFunc
+	retentionCancel   context.CancelFunc
+	telemetryShutdown telemetry.ShutdownFunc
 }
 
 // NewDaemon creates a new daemon instance
@@ -211,6 +213,18 @@ func (d *Daemon) initComponents() error {
 	d.engine = eng
 	d.logger.Info("Engine initialized", "rule_count", len(eng.GetLoadedRules()))
 
+	// Initialise OpenTelemetry
+	_, otelShutdown, err := telemetry.Init(context.Background(), &d.config.Telemetry, "dev")
+	if err != nil {
+		return fmt.Errorf("initialising telemetry: %w", err)
+	}
+	d.telemetryShutdown = otelShutdown
+	if d.config.Telemetry.Enabled {
+		d.logger.Info("Telemetry initialized", "endpoint", d.config.Telemetry.Endpoint)
+	} else {
+		d.logger.Info("Telemetry disabled")
+	}
+
 	// Initialize store
 	st, err := store.NewStore(d.config.Store.SQLitePath)
 	if err != nil {
@@ -347,6 +361,15 @@ func (d *Daemon) shutdown() error {
 		} else {
 			d.logger.Info("Server shut down successfully")
 		}
+	}
+
+	// Flush and shutdown telemetry
+	if d.telemetryShutdown != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := d.telemetryShutdown(shutdownCtx); err != nil {
+			d.logger.Error("Telemetry shutdown error", "error", err)
+		}
+		shutdownCancel()
 	}
 
 	if d.retentionCancel != nil {

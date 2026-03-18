@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -784,4 +786,55 @@ func TestDaemonLifecycle(t *testing.T) {
 			t.Errorf("Expected specific error message, got: %v", err)
 		}
 	})
+}
+
+func TestInitComponents_TelemetryDisabledHasNoopShutdown(t *testing.T) {
+	tmpDir := t.TempDir()
+	rulesDir := filepath.Join(tmpDir, "rules")
+	os.MkdirAll(rulesDir, 0755)
+	ruleFile := filepath.Join(rulesDir, "test.yml")
+	os.WriteFile(ruleFile, []byte("title: Test\nid: t1\ndescription: test\ndetection:\n    selection:\n        test: val\n    condition: selection\nlevel: high\n"), 0644)
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := &config.Config{
+		LogLevel:       "info",
+		EvaluationMode: config.ModeEnforce,
+		Rules:          config.RulesConfig{Dir: rulesDir},
+		Store:          config.StoreConfig{SQLitePath: dbPath},
+		Server:         config.ServerConfig{Addr: "127.0.0.1", Port: 18433},
+		Auth:           config.AuthConfig{Token: "test-token-12345678901234567890123456"},
+		Triage:         config.TriageConfig{Enabled: false},
+		DeepTriage:     config.DeepTriageConfig{Enabled: false},
+		Telemetry:      config.TelemetryConfig{Enabled: false},
+	}
+
+	daemon, err := NewDaemon(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.initComponents(); err != nil {
+		t.Fatalf("initComponents: %v", err)
+	}
+	// Set server to nil to avoid panic on Shutdown (httpServer not started)
+	daemon.server = nil
+	defer daemon.shutdown()
+
+	if daemon.telemetryShutdown == nil {
+		t.Error("expected non-nil telemetryShutdown even when disabled")
+	}
+}
+
+func TestShutdown_CallsTelemetryShutdown(t *testing.T) {
+	called := false
+	d := &Daemon{
+		logger: slog.Default(),
+		telemetryShutdown: func(_ context.Context) error {
+			called = true
+			return nil
+		},
+	}
+	d.shutdown()
+	if !called {
+		t.Error("expected telemetryShutdown to be called during shutdown")
+	}
 }
