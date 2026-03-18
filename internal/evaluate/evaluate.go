@@ -11,6 +11,9 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/triage"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RuleEvaluator is the interface for rule evaluation
@@ -52,6 +55,7 @@ type Evaluator struct {
 	triager         TriageService
 	deepTriager     DeepTriageService
 	cache           *cache.VerdictCache
+	tracer          trace.Tracer
 }
 
 // NewEvaluator creates a new evaluator
@@ -70,6 +74,11 @@ func (e *Evaluator) SetCache(c *cache.VerdictCache) {
 	e.cache = c
 }
 
+// SetTracer sets the OpenTelemetry tracer for evaluation instrumentation.
+func (e *Evaluator) SetTracer(t trace.Tracer) {
+	e.tracer = t
+}
+
 // Evaluate processes an evaluation request with a background context.
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
 	return e.EvaluateWithContext(context.Background(), req)
@@ -77,9 +86,32 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 
 // EvaluateWithContext processes an evaluation request and propagates caller
 // cancellation/deadlines to triage providers.
-func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.EvaluationRequest) (*EvaluationResponse, error) {
+func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.EvaluationRequest) (response *EvaluationResponse, err error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if e.tracer != nil {
+		var span trace.Span
+		ctx, span = e.tracer.Start(ctx, "evaluate",
+			trace.WithAttributes(
+				attribute.String("event.id", req.EventID),
+				attribute.String("session.id", req.SessionID),
+				attribute.String("tool.name", req.Tool),
+				attribute.String("source", req.Source),
+			),
+		)
+		defer func() {
+			if response != nil {
+				span.SetAttributes(
+					attribute.String("verdict.action", string(response.Action)),
+					attribute.Int("alerts.count", len(response.Alerts)),
+					attribute.Bool("verdict.cached", response.Cached),
+					attribute.String("verdict.mode", string(response.EffectiveMode)),
+				)
+			}
+			span.End()
+		}()
 	}
 
 	// Determine effective evaluation mode (server-side only)
@@ -95,7 +127,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		cacheKey = cache.CacheKeyWithContext(req.Tool, req.Args, cacheContext)
 		if cached, ok := e.cache.Get(cacheKey); ok {
 			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
-			resp := &EvaluationResponse{
+			response = &EvaluationResponse{
 				EventID:       req.EventID,
 				Action:        cached.Action,
 				Alerts:        cached.Alerts,
@@ -105,10 +137,14 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 				Cached:        true,
 				Timestamp:     time.Now(),
 			}
-			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
-				resp.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+			if e.tracer != nil {
+				span := trace.SpanFromContext(ctx)
+				span.AddEvent("cache.hit")
 			}
-			return resp, nil
+			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
+				response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+			}
+			return response, nil
 		}
 	}
 
@@ -125,6 +161,18 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			highCount++
 		case engine.SeverityMedium:
 			mediumCount++
+		}
+	}
+
+	// Emit span events for each matched rule
+	if e.tracer != nil {
+		span := trace.SpanFromContext(ctx)
+		for _, alert := range alerts {
+			span.AddEvent("rule.matched", trace.WithAttributes(
+				attribute.String("rule.id", alert.RuleID),
+				attribute.String("rule.name", alert.RuleName),
+				attribute.String("rule.severity", string(alert.Severity)),
+			))
 		}
 	}
 
@@ -145,7 +193,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	action, overridable := e.determineAction(effectiveMode, criticalCount, highCount, mediumCount)
 
 	// Build response once
-	response := &EvaluationResponse{
+	response = &EvaluationResponse{
 		EventID:       req.EventID,
 		Action:        action,
 		Alerts:        alerts,

@@ -1,11 +1,17 @@
 package evaluate
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // mockEngine implements a simple mock for testing
@@ -299,6 +305,161 @@ func TestEvaluate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEvaluateWithContext_EmitsSpan(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "test-1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-001",
+		SessionID: "sess-001",
+		Tool:      "bash",
+		Source:    "openclaw",
+		Fields:    map[string]string{"tool": "bash"},
+	}
+
+	ctx := context.Background()
+	resp, err := evaluator.EvaluateWithContext(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Action == "" {
+		t.Fatal("expected non-empty action")
+	}
+
+	tp.ForceFlush(ctx)
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("expected at least one span")
+	}
+	span := spans[0]
+	if span.Name() != "evaluate" {
+		t.Errorf("expected span name 'evaluate', got %q", span.Name())
+	}
+
+	attrs := span.Attributes()
+	found := map[string]bool{}
+	for _, a := range attrs {
+		found[string(a.Key)] = true
+	}
+	for _, key := range []string{"event.id", "session.id", "tool.name", "source", "verdict.action", "alerts.count", "verdict.cached", "verdict.mode"} {
+		if !found[key] {
+			t.Errorf("expected span attribute %q", key)
+		}
+	}
+}
+
+func TestEvaluateWithContext_SpanEvents_RuleMatches(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "rule-1", RuleName: "Reverse Shell", Severity: engine.SeverityCritical, Matched: true},
+		{RuleID: "rule-2", RuleName: "Data Exfil", Severity: engine.SeverityHigh, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-002",
+		Tool:    "bash",
+		Fields:  map[string]string{"tool": "bash"},
+	}
+
+	ctx := context.Background()
+	evaluator.EvaluateWithContext(ctx, req)
+	tp.ForceFlush(ctx)
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("expected span")
+	}
+
+	events := spans[0].Events()
+	ruleEvents := 0
+	for _, ev := range events {
+		if ev.Name == "rule.matched" {
+			ruleEvents++
+			// Verify each rule.matched event has the expected attributes
+			attrMap := make(map[string]string)
+			for _, attr := range ev.Attributes {
+				attrMap[string(attr.Key)] = attr.Value.AsString()
+			}
+			if _, ok := attrMap["rule.id"]; !ok {
+				t.Error("rule.matched event missing rule.id attribute")
+			}
+			if _, ok := attrMap["rule.name"]; !ok {
+				t.Error("rule.matched event missing rule.name attribute")
+			}
+			if _, ok := attrMap["rule.severity"]; !ok {
+				t.Error("rule.matched event missing rule.severity attribute")
+			}
+		}
+	}
+	if ruleEvents != 2 {
+		t.Errorf("expected 2 rule.matched events, got %d", ruleEvents)
+	}
+}
+
+func TestEvaluateWithContext_SpanEvents_CacheHit(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "rule-1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+
+	// Set up a verdict cache and pre-populate it
+	vc := cache.NewVerdictCache(100, 5*time.Minute)
+	evaluator.SetCache(vc)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-003",
+		Tool:    "bash",
+		Args:    map[string]string{"command": "ls"},
+		Fields:  map[string]string{"tool": "bash"},
+	}
+
+	ctx := context.Background()
+
+	// First call populates the cache
+	evaluator.EvaluateWithContext(ctx, req)
+	tp.ForceFlush(ctx)
+
+	// Second call should hit the cache
+	req.EventID = "evt-004" // different event ID, same tool+args
+	evaluator.EvaluateWithContext(ctx, req)
+	tp.ForceFlush(ctx)
+
+	spans := spanRecorder.Ended()
+	if len(spans) < 2 {
+		t.Fatalf("expected at least 2 spans, got %d", len(spans))
+	}
+
+	// The second span (cache hit) should have a "cache.hit" event
+	cacheHitSpan := spans[1]
+	cacheHitFound := false
+	for _, ev := range cacheHitSpan.Events() {
+		if ev.Name == "cache.hit" {
+			cacheHitFound = true
+		}
+	}
+	if !cacheHitFound {
+		t.Error("expected cache.hit span event on second evaluation (cache hit path)")
 	}
 }
 
