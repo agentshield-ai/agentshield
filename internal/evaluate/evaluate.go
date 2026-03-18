@@ -10,6 +10,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -56,6 +57,7 @@ type Evaluator struct {
 	deepTriager     DeepTriageService
 	cache           *cache.VerdictCache
 	tracer          trace.Tracer
+	metrics         *telemetry.MetricsRecorder
 }
 
 // NewEvaluator creates a new evaluator
@@ -77,6 +79,11 @@ func (e *Evaluator) SetCache(c *cache.VerdictCache) {
 // SetTracer sets the OpenTelemetry tracer for evaluation instrumentation.
 func (e *Evaluator) SetTracer(t trace.Tracer) {
 	e.tracer = t
+}
+
+// SetMetrics sets the OTel metrics recorder for evaluation instrumentation.
+func (e *Evaluator) SetMetrics(m *telemetry.MetricsRecorder) {
+	e.metrics = m
 }
 
 // Evaluate processes an evaluation request with a background context.
@@ -140,6 +147,9 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			if e.tracer != nil {
 				span := trace.SpanFromContext(ctx)
 				span.AddEvent("cache.hit")
+			}
+			if e.metrics != nil {
+				e.metrics.RecordEvaluation(ctx, req.Tool, string(response.Action), len(response.Alerts), true)
 			}
 			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
 				response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
@@ -217,6 +227,11 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			Overridable:   response.Overridable,
 			CachedAt:      time.Now(),
 		})
+	}
+
+	// Record evaluation metrics
+	if e.metrics != nil {
+		e.metrics.RecordEvaluation(ctx, req.Tool, string(response.Action), len(response.Alerts), false)
 	}
 
 	// Fire deep triage async once at the end

@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
@@ -65,6 +67,31 @@ func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (tra
 		return tp.Shutdown(ctx)
 	}
 	return tp, shutdown, nil
+}
+
+// InitMeter creates an OTel MeterProvider with an OTLP/HTTP metric exporter.
+// Returns nil when telemetry is disabled.
+func InitMeter(ctx context.Context, cfg *config.TelemetryConfig) (*sdkmetric.MeterProvider, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+
+	opts := []otlpmetrichttp.Option{
+		otlpmetrichttp.WithEndpoint(stripScheme(cfg.Endpoint)),
+	}
+	if cfg.Insecure {
+		opts = append(opts, otlpmetrichttp.WithInsecure())
+	}
+
+	exporter, err := otlpmetrichttp.New(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("creating OTLP metric exporter: %w", err)
+	}
+
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
+	)
+	return mp, nil
 }
 
 // stripScheme removes http:// or https:// prefix since the OTel HTTP exporter

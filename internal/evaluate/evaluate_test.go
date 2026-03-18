@@ -9,7 +9,10 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -460,6 +463,119 @@ func TestEvaluateWithContext_SpanEvents_CacheHit(t *testing.T) {
 	}
 	if !cacheHitFound {
 		t.Error("expected cache.hit span event on second evaluation (cache hit path)")
+	}
+}
+
+func TestEvaluateWithContext_RecordsMetrics(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	meter := mp.Meter("test")
+
+	metricsRec, err := telemetry.NewMetricsRecorder(meter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "r1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetMetrics(metricsRec)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-m1",
+		Tool:    "bash",
+		Fields:  map[string]string{"tool": "bash"},
+	}
+	_, err = evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	if len(rm.ScopeMetrics) == 0 {
+		t.Fatal("expected metrics to be recorded")
+	}
+
+	foundMetrics := make(map[string]bool)
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			foundMetrics[m.Name] = true
+		}
+	}
+
+	expected := []string{
+		"agentshield.evaluations.total",
+		"agentshield.alerts.total",
+		"agentshield.cache.misses",
+	}
+	for _, name := range expected {
+		if !foundMetrics[name] {
+			t.Errorf("expected metric %q to be recorded", name)
+		}
+	}
+}
+
+func TestEvaluateWithContext_RecordsMetrics_CacheHit(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	meter := mp.Meter("test")
+
+	metricsRec, err := telemetry.NewMetricsRecorder(meter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "r1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetMetrics(metricsRec)
+
+	vc := cache.NewVerdictCache(100, 5*time.Minute)
+	evaluator.SetCache(vc)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-m2",
+		Tool:    "bash",
+		Args:    map[string]string{"command": "ls"},
+		Fields:  map[string]string{"tool": "bash"},
+	}
+
+	// First call populates cache
+	_, err = evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second call hits cache
+	req.EventID = "evt-m3"
+	resp, err := evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Cached {
+		t.Fatal("expected second evaluation to be cached")
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+
+	foundHits := false
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "agentshield.cache.hits" {
+				foundHits = true
+			}
+		}
+	}
+	if !foundHits {
+		t.Error("expected agentshield.cache.hits metric after cache hit evaluation")
 	}
 }
 

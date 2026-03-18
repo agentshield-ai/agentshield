@@ -11,6 +11,7 @@ require (
 	github.com/runreveal/sigmalite v0.0.0-20250918190104-f180cb50a6a1
 	github.com/spf13/cobra v1.10.2
 	go.opentelemetry.io/otel v1.42.0
+	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.42.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.42.0
 	go.opentelemetry.io/otel/metric v1.42.0
 	go.opentelemetry.io/otel/sdk v1.42.0

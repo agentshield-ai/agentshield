@@ -20,6 +20,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -36,6 +37,7 @@ type Daemon struct {
 	server            *server.Server
 	verdictCache      *cache.VerdictCache
 	tracerProvider    trace.TracerProvider
+	meterProvider     *sdkmetric.MeterProvider
 	retentionCancel   context.CancelFunc
 	telemetryShutdown telemetry.ShutdownFunc
 }
@@ -288,6 +290,21 @@ func (d *Daemon) initComponents() error {
 		d.logger.Info("Verdict cache disabled")
 	}
 
+	// Initialize metrics
+	mp, err := telemetry.InitMeter(context.Background(), &d.config.Telemetry)
+	if err != nil {
+		return fmt.Errorf("initialising metrics: %w", err)
+	}
+	d.meterProvider = mp
+	if mp != nil {
+		metricsRec, err := telemetry.NewMetricsRecorder(mp.Meter("agentshield"))
+		if err != nil {
+			return fmt.Errorf("creating metrics recorder: %w", err)
+		}
+		d.evaluator.SetMetrics(metricsRec)
+		d.logger.Info("OTel metrics initialized")
+	}
+
 	// Initialize server
 	srv, err := server.NewServer(d.config, d.evaluator, d.store, d.verdictCache)
 	if err != nil {
@@ -374,6 +391,15 @@ func (d *Daemon) shutdown() error {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := d.telemetryShutdown(shutdownCtx); err != nil {
 			d.logger.Error("Telemetry shutdown error", "error", err)
+		}
+		shutdownCancel()
+	}
+
+	// Flush and shutdown meter provider
+	if d.meterProvider != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := d.meterProvider.Shutdown(shutdownCtx); err != nil {
+			d.logger.Error("MeterProvider shutdown error", "error", err)
 		}
 		shutdownCancel()
 	}
