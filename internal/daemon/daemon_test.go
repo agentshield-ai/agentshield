@@ -824,6 +824,79 @@ func TestInitComponents_TelemetryDisabledHasNoopShutdown(t *testing.T) {
 	}
 }
 
+func TestInitComponents_SessionRegistryEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	rulesDir := filepath.Join(tmpDir, "rules")
+	os.MkdirAll(rulesDir, 0755)
+	os.WriteFile(filepath.Join(rulesDir, "test.yml"), []byte("title: Test\nid: t1\ndescription: test\ndetection:\n    selection:\n        test: val\n    condition: selection\nlevel: high\n"), 0644)
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := &config.Config{
+		LogLevel:       "info",
+		EvaluationMode: config.ModeEnforce,
+		Rules:          config.RulesConfig{Dir: rulesDir},
+		Store:          config.StoreConfig{SQLitePath: dbPath},
+		Server:         config.ServerConfig{Addr: "127.0.0.1", Port: 18434},
+		Auth:           config.AuthConfig{Token: "test-token-12345678901234567890123456"},
+		Triage:         config.TriageConfig{Enabled: false},
+		DeepTriage:     config.DeepTriageConfig{Enabled: false},
+		Session:        config.SessionConfig{Enabled: true, WindowSec: 300, MaxEvents: 50},
+	}
+
+	daemon, err := NewDaemon(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.initComponents(); err != nil {
+		t.Fatalf("initComponents: %v", err)
+	}
+	// Set server to nil to avoid panic on Shutdown (httpServer not started)
+	daemon.server = nil
+	defer daemon.shutdown()
+
+	if daemon.sessionRegistry == nil {
+		t.Error("expected non-nil sessionRegistry when enabled")
+	}
+	if daemon.sessionCleanupCancel == nil {
+		t.Error("expected non-nil sessionCleanupCancel when enabled")
+	}
+}
+
+func TestInitComponents_SessionRegistryDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	rulesDir := filepath.Join(tmpDir, "rules")
+	os.MkdirAll(rulesDir, 0755)
+	os.WriteFile(filepath.Join(rulesDir, "test.yml"), []byte("title: Test\nid: t1\ndescription: test\ndetection:\n    selection:\n        test: val\n    condition: selection\nlevel: high\n"), 0644)
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	cfg := &config.Config{
+		LogLevel:       "info",
+		EvaluationMode: config.ModeEnforce,
+		Rules:          config.RulesConfig{Dir: rulesDir},
+		Store:          config.StoreConfig{SQLitePath: dbPath},
+		Server:         config.ServerConfig{Addr: "127.0.0.1", Port: 18435},
+		Auth:           config.AuthConfig{Token: "test-token-12345678901234567890123456"},
+		Triage:         config.TriageConfig{Enabled: false},
+		DeepTriage:     config.DeepTriageConfig{Enabled: false},
+		Session:        config.SessionConfig{Enabled: false},
+	}
+
+	daemon, err := NewDaemon(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.initComponents(); err != nil {
+		t.Fatalf("initComponents: %v", err)
+	}
+	// Set server to nil to avoid panic on Shutdown (httpServer not started)
+	daemon.server = nil
+	defer daemon.shutdown()
+
+	if daemon.sessionRegistry != nil {
+		t.Error("expected nil sessionRegistry when disabled")
+	}
+}
+
 func TestShutdown_CallsTelemetryShutdown(t *testing.T) {
 	called := false
 	d := &Daemon{

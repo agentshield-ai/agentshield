@@ -17,6 +17,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/server"
+	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
@@ -35,11 +36,13 @@ type Daemon struct {
 	triager           *triage.Triager
 	evaluator         *evaluate.Evaluator
 	server            *server.Server
-	verdictCache      *cache.VerdictCache
-	tracerProvider    trace.TracerProvider
-	meterProvider     *sdkmetric.MeterProvider
-	retentionCancel   context.CancelFunc
-	telemetryShutdown telemetry.ShutdownFunc
+	verdictCache         *cache.VerdictCache
+	sessionRegistry      *session.Registry
+	sessionCleanupCancel func()
+	tracerProvider       trace.TracerProvider
+	meterProvider        *sdkmetric.MeterProvider
+	retentionCancel      context.CancelFunc
+	telemetryShutdown    telemetry.ShutdownFunc
 }
 
 // NewDaemon creates a new daemon instance
@@ -290,6 +293,20 @@ func (d *Daemon) initComponents() error {
 		d.logger.Info("Verdict cache disabled")
 	}
 
+	// Initialize session registry for behavioural sequencing
+	if d.config.Session.Enabled {
+		ttl := time.Duration(d.config.Session.WindowSec) * time.Second
+		d.sessionRegistry = session.NewRegistry(d.config.Session.MaxEvents, ttl)
+		d.evaluator.SetSessionRegistry(d.sessionRegistry)
+		d.sessionCleanupCancel = d.sessionRegistry.StartCleanupLoop(1 * time.Minute)
+		d.logger.Info("Session sequencing enabled",
+			"window_sec", d.config.Session.WindowSec,
+			"max_events", d.config.Session.MaxEvents,
+		)
+	} else {
+		d.logger.Info("Session sequencing disabled")
+	}
+
 	// Initialize metrics
 	mp, err := telemetry.InitMeter(context.Background(), &d.config.Telemetry)
 	if err != nil {
@@ -407,6 +424,11 @@ func (d *Daemon) shutdown() error {
 	if d.retentionCancel != nil {
 		d.retentionCancel()
 		d.retentionCancel = nil
+	}
+
+	if d.sessionCleanupCancel != nil {
+		d.sessionCleanupCancel()
+		d.sessionCleanupCancel = nil
 	}
 
 	// Close store
