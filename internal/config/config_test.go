@@ -431,6 +431,58 @@ func TestValidateConfig_TelemetryDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_SessionSection(t *testing.T) {
+	rulesDir := t.TempDir()
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfgData := []byte(`
+server:
+  port: 8433
+auth:
+  token: "test-token-that-is-at-least-32-characters-long"
+rules:
+  dir: "` + rulesDir + `"
+session:
+  enabled: true
+  window_sec: 600
+  max_events: 100
+`)
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if !cfg.Session.Enabled {
+		t.Error("expected Session.Enabled = true")
+	}
+	if cfg.Session.WindowSec != 600 {
+		t.Errorf("expected WindowSec=600, got %d", cfg.Session.WindowSec)
+	}
+	if cfg.Session.MaxEvents != 100 {
+		t.Errorf("expected MaxEvents=100, got %d", cfg.Session.MaxEvents)
+	}
+}
+
+func TestValidateConfig_SessionDefaults(t *testing.T) {
+	cfg := validBaseConfig(t)
+	cfg.Session.Enabled = true
+	cfg.Session.WindowSec = 0
+	cfg.Session.MaxEvents = 0
+
+	err := validateConfig(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Session.WindowSec != 900 {
+		t.Errorf("expected default WindowSec=900, got %d", cfg.Session.WindowSec)
+	}
+	if cfg.Session.MaxEvents != 50 {
+		t.Errorf("expected default MaxEvents=50, got %d", cfg.Session.MaxEvents)
+	}
+}
+
 func TestApplyEnvOverrides_TelemetryEndpoint(t *testing.T) {
 	// Save and restore env vars
 	envVars := []string{"AGENTSHIELD_OTEL_ENDPOINT", "AGENTSHIELD_OTEL_ENABLED"}

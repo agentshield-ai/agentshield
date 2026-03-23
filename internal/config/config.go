@@ -116,6 +116,13 @@ type TelemetryConfig struct {
 	Insecure        bool    `yaml:"insecure"`
 }
 
+// SessionConfig configures per-session behavioural sequencing.
+type SessionConfig struct {
+	Enabled   bool `yaml:"enabled" json:"enabled"`
+	WindowSec int  `yaml:"window_sec" json:"window_sec"`
+	MaxEvents int  `yaml:"max_events" json:"max_events"`
+}
+
 // Config holds the complete application configuration
 type TestContextConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
@@ -139,6 +146,7 @@ type Config struct {
 	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
 	Telemetry      TelemetryConfig   `yaml:"telemetry" json:"telemetry"`
+	Session        SessionConfig     `yaml:"session" json:"session"`
 	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
 	LogLevel       string            `yaml:"log_level" json:"log_level"`
 }
@@ -383,6 +391,16 @@ func validateConfig(cfg *Config) error {
 		}
 		if cfg.Telemetry.SampleRate == 0 {
 			cfg.Telemetry.SampleRate = 1.0
+		}
+	}
+
+	// Apply session sequencing defaults when enabled
+	if cfg.Session.Enabled {
+		if cfg.Session.WindowSec <= 0 {
+			cfg.Session.WindowSec = 900
+		}
+		if cfg.Session.MaxEvents <= 0 {
+			cfg.Session.MaxEvents = 50
 		}
 	}
 
