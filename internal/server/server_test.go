@@ -17,6 +17,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // mockRuleEngine is a mock implementation of the rule engine for testing
@@ -1225,4 +1226,78 @@ func TestServerConfigMethods(t *testing.T) {
 	if addr := cfg.ListenAddr(); addr != expected {
 		t.Errorf("Expected ListenAddr() to return %s, got %s", expected, addr)
 	}
+}
+
+func TestServer_SetTracerProvider(t *testing.T) {
+	tp := sdktrace.NewTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	cfg := &config.Config{}
+	testStore, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer testStore.Close()
+
+	evaluator := evaluate.NewEvaluator(&mockRuleEngine{}, config.ModeEnforce, "", nil, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Before setting, tracerProvider should be nil
+	if srv.tracerProvider != nil {
+		t.Error("expected tracerProvider to be nil before SetTracerProvider")
+	}
+
+	srv.SetTracerProvider(tp)
+
+	if srv.tracerProvider == nil {
+		t.Error("expected tracerProvider to be set after SetTracerProvider")
+	}
+	if srv.tracerProvider != tp {
+		t.Error("expected tracerProvider to match the provider that was set")
+	}
+}
+
+func TestServer_StartWithTracerProvider(t *testing.T) {
+	// Verify that Start() succeeds when a TracerProvider is configured
+	// (i.e. the otelchi middleware is wired in without panics).
+	tp := sdktrace.NewTracerProvider()
+	defer tp.Shutdown(context.Background())
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Addr: "127.0.0.1",
+			Port: 0,
+		},
+	}
+
+	testStore, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer testStore.Close()
+
+	evaluator := evaluate.NewEvaluator(&mockRuleEngine{}, config.ModeAudit, "", nil, nil)
+	srv, err := NewServer(cfg, evaluator, testStore, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetTracerProvider(tp)
+
+	// Start in background, then shut down promptly
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- srv.Start()
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Logf("Shutdown returned error (expected in test): %v", err)
+	}
+	<-serverErr
 }

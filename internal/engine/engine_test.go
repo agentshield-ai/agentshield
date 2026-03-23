@@ -582,3 +582,182 @@ level: high
 		})
 	}
 }
+
+// --- Session-aware Sigma rule tests ---
+
+func TestEvaluate_SessionReconThenExfil(t *testing.T) {
+	tmpDir := t.TempDir()
+	ruleYAML := `
+title: Recon Then Exfil Test
+id: test-recon-exfil
+status: test
+logsource:
+    product: ai_agent
+    category: agent_events
+detection:
+    selection_recon:
+        session.recent_tools|re: '.*(ls|find|cat).*'
+    selection_exfil:
+        tool|re: '.*(curl|wget).*'
+    condition: selection_recon and selection_exfil
+level: high
+`
+	rulePath := filepath.Join(tmpDir, "test_recon_exfil.yml")
+	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := NewEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	// Should match: recon tools in history + exfil tool current
+	fields := map[string]string{
+		"tool":                 "curl",
+		"session.recent_tools": "ls,cat,env",
+		"session.tool_count":   "3",
+	}
+	results := eng.Evaluate(fields)
+	if len(results) == 0 {
+		t.Error("expected rule to match recon->exfil pattern")
+	}
+}
+
+func TestEvaluate_SessionReconThenExfil_NoMatch_BenignTool(t *testing.T) {
+	tmpDir := t.TempDir()
+	ruleYAML := `
+title: Recon Then Exfil Test
+id: test-recon-exfil-neg
+status: test
+logsource:
+    product: ai_agent
+    category: agent_events
+detection:
+    selection_recon:
+        session.recent_tools|re: '.*(ls|find|cat).*'
+    selection_exfil:
+        tool|re: '.*(curl|wget).*'
+    condition: selection_recon and selection_exfil
+level: high
+`
+	rulePath := filepath.Join(tmpDir, "test_recon_exfil.yml")
+	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := NewEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	// Should NOT match: current tool is "echo", not an exfil tool
+	fields := map[string]string{
+		"tool":                 "echo",
+		"session.recent_tools": "ls,cat",
+		"session.tool_count":   "2",
+	}
+	results := eng.Evaluate(fields)
+	if len(results) != 0 {
+		t.Error("expected no match for benign current tool")
+	}
+}
+
+func TestEvaluate_SessionReconThenExfil_NoMatch_NoReconHistory(t *testing.T) {
+	tmpDir := t.TempDir()
+	ruleYAML := `
+title: Recon Then Exfil Test
+id: test-recon-exfil-no-hist
+status: test
+logsource:
+    product: ai_agent
+    category: agent_events
+detection:
+    selection_recon:
+        session.recent_tools|re: '.*(ls|find|cat).*'
+    selection_exfil:
+        tool|re: '.*(curl|wget).*'
+    condition: selection_recon and selection_exfil
+level: high
+`
+	rulePath := filepath.Join(tmpDir, "test_recon_exfil.yml")
+	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := NewEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	// Should NOT match: exfil tool present but no recon history
+	fields := map[string]string{
+		"tool":                 "curl",
+		"session.recent_tools": "echo,mkdir",
+		"session.tool_count":   "2",
+	}
+	results := eng.Evaluate(fields)
+	if len(results) != 0 {
+		t.Error("expected no match when session history has no recon tools")
+	}
+}
+
+func TestEvaluate_SessionVelocityAnomaly(t *testing.T) {
+	tmpDir := t.TempDir()
+	ruleYAML := `
+title: Session Velocity Anomaly Test
+id: test-session-velocity
+status: test
+logsource:
+    product: ai_agent
+    category: agent_events
+detection:
+    selection:
+        session.tool_count|re: '^([2-9][0-9]|[1-9][0-9]{2,})$'
+    condition: selection
+level: medium
+`
+	rulePath := filepath.Join(tmpDir, "test_velocity.yml")
+	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := NewEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		toolCount   string
+		shouldMatch bool
+	}{
+		{"20 tools should match", "20", true},
+		{"25 tools should match", "25", true},
+		{"99 tools should match", "99", true},
+		{"100 tools should match", "100", true},
+		{"999 tools should match", "999", true},
+		{"5 tools should not match", "5", false},
+		{"10 tools should not match", "10", false},
+		{"19 tools should not match", "19", false},
+		{"1 tool should not match", "1", false},
+		{"0 tools should not match", "0", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields := map[string]string{
+				"tool":                 "some_tool",
+				"session.tool_count":   tt.toolCount,
+				"session.recent_tools": "ls,cat,echo",
+			}
+			results := eng.Evaluate(fields)
+			if tt.shouldMatch && len(results) == 0 {
+				t.Errorf("expected match for tool_count=%s", tt.toolCount)
+			}
+			if !tt.shouldMatch && len(results) != 0 {
+				t.Errorf("expected no match for tool_count=%s", tt.toolCount)
+			}
+		})
+	}
+}

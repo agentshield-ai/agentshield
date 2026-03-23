@@ -10,7 +10,12 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/session"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RuleEvaluator is the interface for rule evaluation
@@ -52,6 +57,9 @@ type Evaluator struct {
 	triager         TriageService
 	deepTriager     DeepTriageService
 	cache           *cache.VerdictCache
+	tracer          trace.Tracer
+	metrics         *telemetry.MetricsRecorder
+	sessionRegistry *session.Registry
 }
 
 // NewEvaluator creates a new evaluator
@@ -70,6 +78,21 @@ func (e *Evaluator) SetCache(c *cache.VerdictCache) {
 	e.cache = c
 }
 
+// SetTracer sets the OpenTelemetry tracer for evaluation instrumentation.
+func (e *Evaluator) SetTracer(t trace.Tracer) {
+	e.tracer = t
+}
+
+// SetMetrics sets the OTel metrics recorder for evaluation instrumentation.
+func (e *Evaluator) SetMetrics(m *telemetry.MetricsRecorder) {
+	e.metrics = m
+}
+
+// SetSessionRegistry sets the session registry for behavioural sequencing.
+func (e *Evaluator) SetSessionRegistry(r *session.Registry) {
+	e.sessionRegistry = r
+}
+
 // Evaluate processes an evaluation request with a background context.
 func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse, error) {
 	return e.EvaluateWithContext(context.Background(), req)
@@ -77,9 +100,36 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 
 // EvaluateWithContext processes an evaluation request and propagates caller
 // cancellation/deadlines to triage providers.
-func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.EvaluationRequest) (*EvaluationResponse, error) {
+func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.EvaluationRequest) (response *EvaluationResponse, err error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if req.Fields == nil {
+		req.Fields = make(map[string]string)
+	}
+
+	if e.tracer != nil {
+		var span trace.Span
+		ctx, span = e.tracer.Start(ctx, "evaluate",
+			trace.WithAttributes(
+				attribute.String("event.id", req.EventID),
+				attribute.String("session.id", req.SessionID),
+				attribute.String("tool.name", req.Tool),
+				attribute.String("source", req.Source),
+			),
+		)
+		defer func() {
+			if response != nil {
+				span.SetAttributes(
+					attribute.String("verdict.action", string(response.Action)),
+					attribute.Int("alerts.count", len(response.Alerts)),
+					attribute.Bool("verdict.cached", response.Cached),
+					attribute.String("verdict.mode", string(response.EffectiveMode)),
+				)
+			}
+			span.End()
+		}()
 	}
 
 	// Determine effective evaluation mode (server-side only)
@@ -95,7 +145,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		cacheKey = cache.CacheKeyWithContext(req.Tool, req.Args, cacheContext)
 		if cached, ok := e.cache.Get(cacheKey); ok {
 			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
-			resp := &EvaluationResponse{
+			response = &EvaluationResponse{
 				EventID:       req.EventID,
 				Action:        cached.Action,
 				Alerts:        cached.Alerts,
@@ -105,10 +155,33 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 				Cached:        true,
 				Timestamp:     time.Now(),
 			}
-			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
-				resp.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+			if e.tracer != nil {
+				span := trace.SpanFromContext(ctx)
+				span.AddEvent("cache.hit")
 			}
-			return resp, nil
+			if e.metrics != nil {
+				e.metrics.RecordEvaluation(ctx, req.Tool, string(response.Action), len(response.Alerts), true)
+			}
+			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
+				response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
+			}
+			return response, nil
+		}
+	}
+
+	// Inject session-derived fields for behavioural sequencing
+	if e.sessionRegistry != nil && req.SessionID != "" {
+		sessionFields := e.sessionRegistry.DeriveFields(req.SessionID)
+		for k, v := range sessionFields {
+			req.Fields[k] = v
+		}
+
+		// Add session context to OTel span
+		if e.tracer != nil {
+			span := trace.SpanFromContext(ctx)
+			for k, v := range sessionFields {
+				span.SetAttributes(attribute.String(k, v))
+			}
 		}
 	}
 
@@ -125,6 +198,18 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			highCount++
 		case engine.SeverityMedium:
 			mediumCount++
+		}
+	}
+
+	// Emit span events for each matched rule
+	if e.tracer != nil {
+		span := trace.SpanFromContext(ctx)
+		for _, alert := range alerts {
+			span.AddEvent("rule.matched", trace.WithAttributes(
+				attribute.String("rule.id", alert.RuleID),
+				attribute.String("rule.name", alert.RuleName),
+				attribute.String("rule.severity", string(alert.Severity)),
+			))
 		}
 	}
 
@@ -145,7 +230,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	action, overridable := e.determineAction(effectiveMode, criticalCount, highCount, mediumCount)
 
 	// Build response once
-	response := &EvaluationResponse{
+	response = &EvaluationResponse{
 		EventID:       req.EventID,
 		Action:        action,
 		Alerts:        alerts,
@@ -169,6 +254,17 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			Overridable:   response.Overridable,
 			CachedAt:      time.Now(),
 		})
+	}
+
+	// Record evaluation metrics
+	if e.metrics != nil {
+		e.metrics.RecordEvaluation(ctx, req.Tool, string(response.Action), len(response.Alerts), false)
+	}
+
+	// Record this event in the session window (after evaluation, so the current
+	// event is visible to the NEXT evaluation, not this one)
+	if e.sessionRegistry != nil && req.SessionID != "" {
+		e.sessionRegistry.Record(req.SessionID, req.Tool, alerts)
 	}
 
 	// Fire deep triage async once at the end

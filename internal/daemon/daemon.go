@@ -17,23 +17,32 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/server"
+	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/store"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Daemon manages the AgentShield server process
 type Daemon struct {
-	config          *config.Config
-	pidFile         string
-	managePIDFile   bool
-	logger          *slog.Logger
-	engine          *engine.Engine
-	store           *store.Store
-	triager         *triage.Triager
-	evaluator       *evaluate.Evaluator
-	server          *server.Server
-	verdictCache    *cache.VerdictCache
-	retentionCancel context.CancelFunc
+	config            *config.Config
+	pidFile           string
+	managePIDFile     bool
+	logger            *slog.Logger
+	engine            *engine.Engine
+	store             *store.Store
+	triager           *triage.Triager
+	evaluator         *evaluate.Evaluator
+	server            *server.Server
+	verdictCache         *cache.VerdictCache
+	sessionRegistry      *session.Registry
+	sessionCleanupCancel func()
+	tracerProvider       trace.TracerProvider
+	meterProvider        *sdkmetric.MeterProvider
+	retentionCancel      context.CancelFunc
+	telemetryShutdown    telemetry.ShutdownFunc
 }
 
 // NewDaemon creates a new daemon instance
@@ -211,6 +220,19 @@ func (d *Daemon) initComponents() error {
 	d.engine = eng
 	d.logger.Info("Engine initialized", "rule_count", len(eng.GetLoadedRules()))
 
+	// Initialise OpenTelemetry
+	tp, otelShutdown, err := telemetry.Init(context.Background(), &d.config.Telemetry, "dev")
+	if err != nil {
+		return fmt.Errorf("initialising telemetry: %w", err)
+	}
+	d.tracerProvider = tp
+	d.telemetryShutdown = otelShutdown
+	if d.config.Telemetry.Enabled {
+		d.logger.Info("Telemetry initialized", "endpoint", d.config.Telemetry.Endpoint)
+	} else {
+		d.logger.Info("Telemetry disabled")
+	}
+
 	// Initialize store
 	st, err := store.NewStore(d.config.Store.SQLitePath)
 	if err != nil {
@@ -271,10 +293,47 @@ func (d *Daemon) initComponents() error {
 		d.logger.Info("Verdict cache disabled")
 	}
 
+	// Initialize session registry for behavioural sequencing
+	if d.config.Session.Enabled {
+		ttl := time.Duration(d.config.Session.WindowSec) * time.Second
+		d.sessionRegistry = session.NewRegistry(d.config.Session.MaxEvents, ttl)
+		d.evaluator.SetSessionRegistry(d.sessionRegistry)
+		d.sessionCleanupCancel = d.sessionRegistry.StartCleanupLoop(1 * time.Minute)
+		d.logger.Info("Session sequencing enabled",
+			"window_sec", d.config.Session.WindowSec,
+			"max_events", d.config.Session.MaxEvents,
+		)
+	} else {
+		d.logger.Info("Session sequencing disabled")
+	}
+
+	// Initialize metrics
+	mp, err := telemetry.InitMeter(context.Background(), &d.config.Telemetry)
+	if err != nil {
+		return fmt.Errorf("initialising metrics: %w", err)
+	}
+	d.meterProvider = mp
+	if mp != nil {
+		metricsRec, err := telemetry.NewMetricsRecorder(mp.Meter("agentshield"))
+		if err != nil {
+			return fmt.Errorf("creating metrics recorder: %w", err)
+		}
+		d.evaluator.SetMetrics(metricsRec)
+		d.logger.Info("OTel metrics initialized")
+	}
+
+	// Wire tracer into evaluator for evaluation-level spans
+	if d.config.Telemetry.Enabled && d.tracerProvider != nil {
+		d.evaluator.SetTracer(d.tracerProvider.Tracer("agentshield"))
+	}
+
 	// Initialize server
 	srv, err := server.NewServer(d.config, d.evaluator, d.store, d.verdictCache)
 	if err != nil {
 		return fmt.Errorf("initializing server: %w", err)
+	}
+	if d.config.Telemetry.Enabled && d.tracerProvider != nil {
+		srv.SetTracerProvider(d.tracerProvider)
 	}
 	d.server = srv
 	d.logger.Info("Server initialized", "listen_addr", d.config.ListenAddr())
@@ -349,9 +408,22 @@ func (d *Daemon) shutdown() error {
 		}
 	}
 
+	// Flush and shutdown telemetry providers
+	if d.telemetryShutdown != nil {
+		d.shutdownComponent("Telemetry", d.telemetryShutdown)
+	}
+	if d.meterProvider != nil {
+		d.shutdownComponent("MeterProvider", d.meterProvider.Shutdown)
+	}
+
 	if d.retentionCancel != nil {
 		d.retentionCancel()
 		d.retentionCancel = nil
+	}
+
+	if d.sessionCleanupCancel != nil {
+		d.sessionCleanupCancel()
+		d.sessionCleanupCancel = nil
 	}
 
 	// Close store
@@ -365,6 +437,15 @@ func (d *Daemon) shutdown() error {
 
 	d.logger.Info("Graceful shutdown completed")
 	return nil
+}
+
+// shutdownComponent shuts down a component with a 5-second timeout.
+func (d *Daemon) shutdownComponent(name string, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		d.logger.Error(name+" shutdown error", "error", err)
+	}
 }
 
 // isRunning checks if the daemon is currently running

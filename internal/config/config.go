@@ -106,6 +106,23 @@ func (m EvaluationMode) IsValid() bool {
 	}
 }
 
+// TelemetryConfig configures OpenTelemetry export.
+type TelemetryConfig struct {
+	Enabled         bool    `yaml:"enabled"`
+	Endpoint        string  `yaml:"endpoint"`
+	ServiceName     string  `yaml:"service_name"`
+	SampleRate      float64 `yaml:"sample_rate"`
+	ExportAllEvents bool    `yaml:"export_all_events"`
+	Insecure        bool    `yaml:"insecure"`
+}
+
+// SessionConfig configures per-session behavioural sequencing.
+type SessionConfig struct {
+	Enabled   bool `yaml:"enabled" json:"enabled"`
+	WindowSec int  `yaml:"window_sec" json:"window_sec"`
+	MaxEvents int  `yaml:"max_events" json:"max_events"`
+}
+
 // Config holds the complete application configuration
 type TestContextConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
@@ -128,6 +145,8 @@ type Config struct {
 	Triage         TriageConfig      `yaml:"triage" json:"triage"`
 	DeepTriage     DeepTriageConfig  `yaml:"deep_triage" json:"deep_triage"`
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
+	Telemetry      TelemetryConfig   `yaml:"telemetry" json:"telemetry"`
+	Session        SessionConfig     `yaml:"session" json:"session"`
 	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
 	LogLevel       string            `yaml:"log_level" json:"log_level"`
 }
@@ -249,6 +268,12 @@ func applyEnvOverrides(cfg *Config) {
 	if triageAPIKey := os.Getenv("AGENTSHIELD_TRIAGE_API_KEY"); triageAPIKey != "" {
 		cfg.Triage.APIKey = triageAPIKey
 	}
+	if v := os.Getenv("AGENTSHIELD_OTEL_ENDPOINT"); v != "" {
+		cfg.Telemetry.Endpoint = v
+	}
+	if v := os.Getenv("AGENTSHIELD_OTEL_ENABLED"); v != "" {
+		cfg.Telemetry.Enabled = v == "true" || v == "1"
+	}
 }
 
 // validateConfig validates the configuration
@@ -348,6 +373,35 @@ func validateConfig(cfg *Config) error {
 	// Validate log level
 	if !isValidLogLevel(cfg.LogLevel) {
 		return fmt.Errorf("invalid log level: %s (must be debug, info, warn, or error)", cfg.LogLevel)
+	}
+
+	// Validate telemetry configuration
+	if cfg.Telemetry.Enabled {
+		if cfg.Telemetry.Endpoint == "" {
+			return fmt.Errorf("telemetry.endpoint is required when telemetry is enabled")
+		}
+		if !cfg.Telemetry.Insecure && !strings.HasPrefix(cfg.Telemetry.Endpoint, "https://") {
+			return fmt.Errorf("telemetry.endpoint must use HTTPS (set insecure: true to allow HTTP)")
+		}
+		if cfg.Telemetry.SampleRate < 0 || cfg.Telemetry.SampleRate > 1.0 {
+			return fmt.Errorf("telemetry.sample_rate must be between 0.0 and 1.0")
+		}
+		if cfg.Telemetry.ServiceName == "" {
+			cfg.Telemetry.ServiceName = "agentshield"
+		}
+		if cfg.Telemetry.SampleRate == 0 {
+			cfg.Telemetry.SampleRate = 1.0
+		}
+	}
+
+	// Apply session sequencing defaults when enabled
+	if cfg.Session.Enabled {
+		if cfg.Session.WindowSec <= 0 {
+			cfg.Session.WindowSec = 900
+		}
+		if cfg.Session.MaxEvents <= 0 {
+			cfg.Session.MaxEvents = 50
+		}
 	}
 
 	return nil

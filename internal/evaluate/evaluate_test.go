@@ -1,11 +1,21 @@
 package evaluate
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/session"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // mockEngine implements a simple mock for testing
@@ -15,6 +25,19 @@ type mockEngine struct {
 
 func (m *mockEngine) Evaluate(fields map[string]string) []engine.RuleResult {
 	return m.mockResults
+}
+
+// fieldCapturingEngine captures the fields map passed to Evaluate for assertion.
+type fieldCapturingEngine struct {
+	captured map[string]string
+	results  []engine.RuleResult
+}
+
+func (e *fieldCapturingEngine) Evaluate(fields map[string]string) []engine.RuleResult {
+	for k, v := range fields {
+		e.captured[k] = v
+	}
+	return e.results
 }
 
 func TestDetermineEffectiveMode(t *testing.T) {
@@ -302,6 +325,274 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+func TestEvaluateWithContext_EmitsSpan(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "test-1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-001",
+		SessionID: "sess-001",
+		Tool:      "bash",
+		Source:    "openclaw",
+		Fields:    map[string]string{"tool": "bash"},
+	}
+
+	ctx := context.Background()
+	resp, err := evaluator.EvaluateWithContext(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Action == "" {
+		t.Fatal("expected non-empty action")
+	}
+
+	tp.ForceFlush(ctx)
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("expected at least one span")
+	}
+	span := spans[0]
+	if span.Name() != "evaluate" {
+		t.Errorf("expected span name 'evaluate', got %q", span.Name())
+	}
+
+	attrs := span.Attributes()
+	found := map[string]bool{}
+	for _, a := range attrs {
+		found[string(a.Key)] = true
+	}
+	for _, key := range []string{"event.id", "session.id", "tool.name", "source", "verdict.action", "alerts.count", "verdict.cached", "verdict.mode"} {
+		if !found[key] {
+			t.Errorf("expected span attribute %q", key)
+		}
+	}
+}
+
+func TestEvaluateWithContext_SpanEvents_RuleMatches(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "rule-1", RuleName: "Reverse Shell", Severity: engine.SeverityCritical, Matched: true},
+		{RuleID: "rule-2", RuleName: "Data Exfil", Severity: engine.SeverityHigh, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-002",
+		Tool:    "bash",
+		Fields:  map[string]string{"tool": "bash"},
+	}
+
+	ctx := context.Background()
+	evaluator.EvaluateWithContext(ctx, req)
+	tp.ForceFlush(ctx)
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("expected span")
+	}
+
+	events := spans[0].Events()
+	ruleEvents := 0
+	for _, ev := range events {
+		if ev.Name == "rule.matched" {
+			ruleEvents++
+			// Verify each rule.matched event has the expected attributes
+			attrMap := make(map[string]string)
+			for _, attr := range ev.Attributes {
+				attrMap[string(attr.Key)] = attr.Value.AsString()
+			}
+			if _, ok := attrMap["rule.id"]; !ok {
+				t.Error("rule.matched event missing rule.id attribute")
+			}
+			if _, ok := attrMap["rule.name"]; !ok {
+				t.Error("rule.matched event missing rule.name attribute")
+			}
+			if _, ok := attrMap["rule.severity"]; !ok {
+				t.Error("rule.matched event missing rule.severity attribute")
+			}
+		}
+	}
+	if ruleEvents != 2 {
+		t.Errorf("expected 2 rule.matched events, got %d", ruleEvents)
+	}
+}
+
+func TestEvaluateWithContext_SpanEvents_CacheHit(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "rule-1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+
+	// Set up a verdict cache and pre-populate it
+	vc := cache.NewVerdictCache(100, 5*time.Minute)
+	evaluator.SetCache(vc)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-003",
+		Tool:    "bash",
+		Args:    map[string]string{"command": "ls"},
+		Fields:  map[string]string{"tool": "bash"},
+	}
+
+	ctx := context.Background()
+
+	// First call populates the cache
+	evaluator.EvaluateWithContext(ctx, req)
+	tp.ForceFlush(ctx)
+
+	// Second call should hit the cache
+	req.EventID = "evt-004" // different event ID, same tool+args
+	evaluator.EvaluateWithContext(ctx, req)
+	tp.ForceFlush(ctx)
+
+	spans := spanRecorder.Ended()
+	if len(spans) < 2 {
+		t.Fatalf("expected at least 2 spans, got %d", len(spans))
+	}
+
+	// The second span (cache hit) should have a "cache.hit" event
+	cacheHitSpan := spans[1]
+	cacheHitFound := false
+	for _, ev := range cacheHitSpan.Events() {
+		if ev.Name == "cache.hit" {
+			cacheHitFound = true
+		}
+	}
+	if !cacheHitFound {
+		t.Error("expected cache.hit span event on second evaluation (cache hit path)")
+	}
+}
+
+func TestEvaluateWithContext_RecordsMetrics(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	meter := mp.Meter("test")
+
+	metricsRec, err := telemetry.NewMetricsRecorder(meter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "r1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetMetrics(metricsRec)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-m1",
+		Tool:    "bash",
+		Fields:  map[string]string{"tool": "bash"},
+	}
+	_, err = evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	if len(rm.ScopeMetrics) == 0 {
+		t.Fatal("expected metrics to be recorded")
+	}
+
+	foundMetrics := make(map[string]bool)
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			foundMetrics[m.Name] = true
+		}
+	}
+
+	expected := []string{
+		"agentshield.evaluations.total",
+		"agentshield.alerts.total",
+		"agentshield.cache.misses",
+	}
+	for _, name := range expected {
+		if !foundMetrics[name] {
+			t.Errorf("expected metric %q to be recorded", name)
+		}
+	}
+}
+
+func TestEvaluateWithContext_RecordsMetrics_CacheHit(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	meter := mp.Meter("test")
+
+	metricsRec, err := telemetry.NewMetricsRecorder(meter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockEng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: "r1", RuleName: "Test Rule", Severity: engine.SeverityLow, Matched: true},
+	}}
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetMetrics(metricsRec)
+
+	vc := cache.NewVerdictCache(100, 5*time.Minute)
+	evaluator.SetCache(vc)
+
+	req := &models.EvaluationRequest{
+		EventID: "evt-m2",
+		Tool:    "bash",
+		Args:    map[string]string{"command": "ls"},
+		Fields:  map[string]string{"tool": "bash"},
+	}
+
+	// First call populates cache
+	_, err = evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second call hits cache
+	req.EventID = "evt-m3"
+	resp, err := evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Cached {
+		t.Fatal("expected second evaluation to be cached")
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+
+	foundHits := false
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "agentshield.cache.hits" {
+				foundHits = true
+			}
+		}
+	}
+	if !foundHits {
+		t.Error("expected agentshield.cache.hits metric after cache hit evaluation")
+	}
+}
+
 func TestGetModeInfo(t *testing.T) {
 	info := GetModeInfo()
 
@@ -324,5 +615,128 @@ func TestGetModeInfo(t *testing.T) {
 		if _, exists := modes[mode]; !exists {
 			t.Errorf("GetModeInfo() modes missing: %s", mode)
 		}
+	}
+}
+
+func TestEvaluateWithContext_InjectsSessionFields(t *testing.T) {
+	captured := make(map[string]string)
+	mockEng := &fieldCapturingEngine{captured: captured}
+
+	registry := session.NewRegistry(10, 5*time.Minute)
+	registry.Record("sess-inject", "ls", nil)
+	registry.Record("sess-inject", "cat", nil)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-inj",
+		SessionID: "sess-inject",
+		Tool:      "curl",
+		Fields:    map[string]string{"tool": "curl"},
+	}
+	evaluator.EvaluateWithContext(context.Background(), req)
+
+	if captured["session.recent_tools"] != "ls,cat" {
+		t.Errorf("expected session.recent_tools='ls,cat', got %q", captured["session.recent_tools"])
+	}
+	if captured["session.tool_count"] != "2" {
+		t.Errorf("expected session.tool_count='2', got %q", captured["session.tool_count"])
+	}
+}
+
+func TestEvaluateWithContext_SpanIncludesSessionFields(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tp.Tracer("agentshield")
+
+	mockEng := &mockEngine{mockResults: nil}
+	registry := session.NewRegistry(10, 5*time.Minute)
+	registry.Record("sess-span", "ls", nil)
+	registry.Record("sess-span", "cat", nil)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetTracer(tracer)
+	evaluator.SetSessionRegistry(registry)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-sp",
+		SessionID: "sess-span",
+		Tool:      "curl",
+		Fields:    map[string]string{"tool": "curl"},
+	}
+	evaluator.EvaluateWithContext(context.Background(), req)
+	tp.ForceFlush(context.Background())
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("expected span")
+	}
+
+	attrs := spans[0].Attributes()
+	found := false
+	for _, a := range attrs {
+		if string(a.Key) == "session.tool_count" {
+			found = true
+			if a.Value.AsString() != "2" {
+				t.Errorf("expected session.tool_count=2, got %q", a.Value.AsString())
+			}
+		}
+	}
+	if !found {
+		t.Error("expected session.tool_count span attribute")
+	}
+}
+
+func TestEvaluateWithContext_RecordsToSessionAfterEval(t *testing.T) {
+	mockEng := &mockEngine{mockResults: nil}
+	registry := session.NewRegistry(10, 5*time.Minute)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-rec",
+		SessionID: "sess-rec",
+		Tool:      "bash",
+		Fields:    map[string]string{"tool": "bash"},
+	}
+	evaluator.EvaluateWithContext(context.Background(), req)
+
+	window := registry.Get("sess-rec")
+	if window == nil {
+		t.Fatal("expected session to be recorded")
+	}
+	if len(window.Events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(window.Events))
+	}
+	if window.Events[0].Tool != "bash" {
+		t.Errorf("expected tool 'bash', got %q", window.Events[0].Tool)
+	}
+}
+
+func TestEvaluateWithContext_NilFields_NoPanic(t *testing.T) {
+	mockEng := &mockEngine{mockResults: nil}
+	registry := session.NewRegistry(10, 5*time.Minute)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+
+	// Pre-populate session so DeriveFields returns non-nil
+	registry.Record("sess-nil", "prior-tool", nil)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-nil",
+		SessionID: "sess-nil",
+		Tool:      "exec",
+		Fields:    nil, // Deliberately nil
+	}
+	// Should not panic
+	resp, err := evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
 	}
 }
