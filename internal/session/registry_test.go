@@ -1,6 +1,8 @@
 package session
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -117,5 +119,69 @@ func TestRegistry_Stats(t *testing.T) {
 	r.Record("sess-2", "cat", nil)
 	if r.Stats() != 2 {
 		t.Errorf("expected 2 sessions, got %d", r.Stats())
+	}
+}
+
+func TestRegistry_MaxSessions_EvictsOldest(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute, WithMaxSessions(3))
+	r.Record("sess-1", "ls", nil)
+	time.Sleep(time.Millisecond) // ensure distinct lastSeen
+	r.Record("sess-2", "cat", nil)
+	time.Sleep(time.Millisecond)
+	r.Record("sess-3", "curl", nil)
+
+	if r.Stats() != 3 {
+		t.Fatalf("expected 3 sessions, got %d", r.Stats())
+	}
+
+	// Adding a 4th session should evict sess-1 (oldest)
+	r.Record("sess-4", "wget", nil)
+	if r.Stats() != 3 {
+		t.Errorf("expected 3 sessions after eviction, got %d", r.Stats())
+	}
+	if r.Get("sess-1") != nil {
+		t.Error("expected sess-1 to be evicted (oldest)")
+	}
+	if r.Get("sess-4") == nil {
+		t.Error("expected sess-4 to exist")
+	}
+}
+
+func TestRegistry_ConcurrentAccess(t *testing.T) {
+	r := NewRegistry(50, 5*time.Minute)
+	var wg sync.WaitGroup
+
+	// Concurrent writers
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			sid := fmt.Sprintf("sess-%d", n%10)
+			r.Record(sid, fmt.Sprintf("tool-%d", n), nil)
+			r.DeriveFields(sid)
+			r.Get(sid)
+		}(i)
+	}
+
+	// Concurrent cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r.Cleanup()
+	}()
+
+	// Concurrent stats
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = r.Stats()
+	}()
+
+	wg.Wait()
+
+	// Verify registry is in a consistent state
+	stats := r.Stats()
+	if stats < 1 || stats > 10 {
+		t.Errorf("expected 1-10 sessions, got %d", stats)
 	}
 }

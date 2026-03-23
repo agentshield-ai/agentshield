@@ -23,10 +23,11 @@ type Window struct {
 
 // Registry maintains per-session event windows for behavioural sequencing.
 type Registry struct {
-	mu        sync.RWMutex
-	sessions  map[string]*sessionState
-	maxEvents int
-	ttl       time.Duration
+	mu          sync.RWMutex
+	sessions    map[string]*sessionState
+	maxEvents   int
+	maxSessions int
+	ttl         time.Duration
 }
 
 type sessionState struct {
@@ -35,17 +36,36 @@ type sessionState struct {
 }
 
 // NewRegistry creates a Registry with the given max events per session and TTL.
-func NewRegistry(maxEvents int, ttl time.Duration) *Registry {
+// maxSessions caps total concurrent sessions to prevent unbounded memory growth;
+// when exceeded, the oldest session is evicted. Pass 0 for the default (100,000).
+func NewRegistry(maxEvents int, ttl time.Duration, opts ...RegistryOption) *Registry {
 	if maxEvents <= 0 {
 		maxEvents = 50
 	}
 	if ttl <= 0 {
 		ttl = 15 * time.Minute
 	}
-	return &Registry{
-		sessions:  make(map[string]*sessionState),
-		maxEvents: maxEvents,
-		ttl:       ttl,
+	r := &Registry{
+		sessions:    make(map[string]*sessionState),
+		maxEvents:   maxEvents,
+		maxSessions: 100_000,
+		ttl:         ttl,
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+// RegistryOption configures optional Registry parameters.
+type RegistryOption func(*Registry)
+
+// WithMaxSessions sets the maximum number of concurrent sessions.
+func WithMaxSessions(n int) RegistryOption {
+	return func(r *Registry) {
+		if n > 0 {
+			r.maxSessions = n
+		}
 	}
 }
 
@@ -59,6 +79,10 @@ func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
 
 	state, ok := r.sessions[sessionID]
 	if !ok {
+		// Evict oldest session if at capacity
+		if len(r.sessions) >= r.maxSessions {
+			r.evictOldest()
+		}
 		state = &sessionState{
 			events: make([]Event, 0, r.maxEvents),
 		}
@@ -75,6 +99,24 @@ func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
 
 	if len(state.events) > r.maxEvents {
 		state.events = state.events[len(state.events)-r.maxEvents:]
+	}
+}
+
+// evictOldest removes the session with the oldest lastSeen timestamp.
+// Must be called with r.mu held.
+func (r *Registry) evictOldest() {
+	var oldestID string
+	var oldestTime time.Time
+	first := true
+	for id, state := range r.sessions {
+		if first || state.lastSeen.Before(oldestTime) {
+			oldestID = id
+			oldestTime = state.lastSeen
+			first = false
+		}
+	}
+	if oldestID != "" {
+		delete(r.sessions, oldestID)
 	}
 }
 
