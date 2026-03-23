@@ -4,6 +4,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -98,7 +99,7 @@ func InitMeter(ctx context.Context, cfg *config.TelemetryConfig) (*sdkmetric.Met
 // takes a bare host:port and uses WithInsecure() to control TLS.
 func stripScheme(endpoint string) string {
 	for _, prefix := range []string{"https://", "http://"} {
-		if len(endpoint) > len(prefix) && endpoint[:len(prefix)] == prefix {
+		if strings.HasPrefix(endpoint, prefix) {
 			return endpoint[len(prefix):]
 		}
 	}

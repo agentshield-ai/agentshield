@@ -65,12 +65,13 @@ func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
 		r.sessions[sessionID] = state
 	}
 
+	now := time.Now()
 	state.events = append(state.events, Event{
 		Tool:      tool,
 		Alerts:    alerts,
-		Timestamp: time.Now(),
+		Timestamp: now,
 	})
-	state.lastSeen = time.Now()
+	state.lastSeen = now
 
 	if len(state.events) > r.maxEvents {
 		state.events = state.events[len(state.events)-r.maxEvents:]
