@@ -69,9 +69,17 @@ AgentShield sits between an AI agent and its tools. Every tool call (shell comma
 | **audit**   | Log all alerts, never block                                     |
 | **shadow**  | Silent monitoring, nothing surfaced                             |
 
+### Session Behavioural Sequencing
+
+AgentShield tracks tool-call sequences per session using an in-memory sliding window. Derived fields (`session.recent_tools`, `session.tool_count`, `session.unique_tool_count`, `session.alert_count`) are injected into the Sigma evaluation context, enabling temporal detection rules like "recon followed by exfiltration" or "high tool-call velocity".
+
 ### Verdict Caching
 
 Identical tool calls are cached (LRU, 10k entries, 5-min TTL) to avoid re-evaluation. Cache is invalidated automatically on rule hot-reload (`SIGHUP`).
+
+### OpenTelemetry Export
+
+Evaluation telemetry can be exported as OTel traces and metrics to any OTLP-compatible backend (Jaeger, Grafana Tempo, Elastic, Datadog, Splunk). Each evaluation becomes a span with tool name, verdict, session context, and rule match events. Metrics include evaluation counts, alert counts, and cache hit/miss rates.
 
 ## Configuration
 
@@ -91,6 +99,16 @@ triage:
 cache:
   max_entries: 10000
   ttl: "5m"
+session:
+  enabled: true
+  window_sec: 900
+  max_events: 50
+telemetry:
+  enabled: true
+  endpoint: "https://otel-collector.example.com:4318"
+  service_name: "agentshield"
+  sample_rate: 1.0
+  insecure: false
 ```
 
 Config is loaded from `./config.yaml`, `~/.agentshield/config.yaml`, or `/etc/agentshield/config.yaml` (first found wins). See [docs/configuration.md](docs/configuration.md) for all options.
@@ -106,6 +124,8 @@ Config is loaded from `./config.yaml`, `~/.agentshield/config.yaml`, or `/etc/ag
 | `AGENTSHIELD_MODE`         | —       | Evaluation mode            |
 | `AGENTSHIELD_LOG_LEVEL`    | —       | Logging level              |
 | `AGENTSHIELD_TRIAGE_API_KEY` | —    | LLM triage API key         |
+| `AGENTSHIELD_OTEL_ENDPOINT`  | —    | OTel OTLP endpoint URL     |
+| `AGENTSHIELD_OTEL_ENABLED`   | —    | Enable OTel export (true/false) |
 
 ## Development
 
@@ -155,6 +175,8 @@ internal/
   auth/                 Constant-time token comparison
   feedback/             Feedback collection and rule refinement
   daemon/               Service lifecycle, graceful shutdown
+  telemetry/            OpenTelemetry traces and metrics export
+  session/              Per-session behavioural sequencing
 pkg/sigma/              Forked sigmalite library
 plugins/
   openclaw/             TypeScript plugin (circuit-breaker pattern)
