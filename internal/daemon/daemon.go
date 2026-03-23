@@ -322,6 +322,11 @@ func (d *Daemon) initComponents() error {
 		d.logger.Info("OTel metrics initialized")
 	}
 
+	// Wire tracer into evaluator for evaluation-level spans
+	if d.config.Telemetry.Enabled && d.tracerProvider != nil {
+		d.evaluator.SetTracer(d.tracerProvider.Tracer("agentshield"))
+	}
+
 	// Initialize server
 	srv, err := server.NewServer(d.config, d.evaluator, d.store, d.verdictCache)
 	if err != nil {
@@ -403,22 +408,12 @@ func (d *Daemon) shutdown() error {
 		}
 	}
 
-	// Flush and shutdown telemetry
+	// Flush and shutdown telemetry providers
 	if d.telemetryShutdown != nil {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := d.telemetryShutdown(shutdownCtx); err != nil {
-			d.logger.Error("Telemetry shutdown error", "error", err)
-		}
-		shutdownCancel()
+		d.shutdownComponent("Telemetry", d.telemetryShutdown)
 	}
-
-	// Flush and shutdown meter provider
 	if d.meterProvider != nil {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := d.meterProvider.Shutdown(shutdownCtx); err != nil {
-			d.logger.Error("MeterProvider shutdown error", "error", err)
-		}
-		shutdownCancel()
+		d.shutdownComponent("MeterProvider", d.meterProvider.Shutdown)
 	}
 
 	if d.retentionCancel != nil {
@@ -442,6 +437,15 @@ func (d *Daemon) shutdown() error {
 
 	d.logger.Info("Graceful shutdown completed")
 	return nil
+}
+
+// shutdownComponent shuts down a component with a 5-second timeout.
+func (d *Daemon) shutdownComponent(name string, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		d.logger.Error(name+" shutdown error", "error", err)
+	}
 }
 
 // isRunning checks if the daemon is currently running
