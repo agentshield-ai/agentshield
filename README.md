@@ -100,11 +100,11 @@ cache:
   max_entries: 10000
   ttl: "5m"
 session:
-  enabled: true
+  enabled: false              # enable per-session behavioural sequencing
   window_sec: 900
   max_events: 50
 telemetry:
-  enabled: true
+  enabled: false              # enable OpenTelemetry export
   endpoint: "https://otel-collector.example.com:4318"
   service_name: "agentshield"
   sample_rate: 1.0
