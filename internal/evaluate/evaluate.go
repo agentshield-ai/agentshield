@@ -105,6 +105,10 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		ctx = context.Background()
 	}
 
+	if req.Fields == nil {
+		req.Fields = make(map[string]string)
+	}
+
 	if e.tracer != nil {
 		var span trace.Span
 		ctx, span = e.tracer.Start(ctx, "evaluate",

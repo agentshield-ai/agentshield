@@ -714,3 +714,29 @@ func TestEvaluateWithContext_RecordsToSessionAfterEval(t *testing.T) {
 		t.Errorf("expected tool 'bash', got %q", window.Events[0].Tool)
 	}
 }
+
+func TestEvaluateWithContext_NilFields_NoPanic(t *testing.T) {
+	mockEng := &mockEngine{mockResults: nil}
+	registry := session.NewRegistry(10, 5*time.Minute)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+
+	// Pre-populate session so DeriveFields returns non-nil
+	registry.Record("sess-nil", "prior-tool", nil)
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-nil",
+		SessionID: "sess-nil",
+		Tool:      "exec",
+		Fields:    nil, // Deliberately nil
+	}
+	// Should not panic
+	resp, err := evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+}
