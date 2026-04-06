@@ -318,4 +318,33 @@ describe("AgentShieldClient", () => {
       await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
     });
   });
+
+  describe("sendOverride", () => {
+    it("sends override to correct endpoint with session and event IDs", async () => {
+      fetchSpy.mockResolvedValue({ ok: true });
+
+      const client = new AgentShieldClient(makeConfig(), noopLogger);
+      client.sendOverride("sess-001", "evt-001");
+
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
+
+      const [url, opts] = fetchSpy.mock.calls[0];
+      expect(url).toBe("http://127.0.0.1:8433/api/v1/override");
+      expect(opts.method).toBe("POST");
+
+      const body = JSON.parse(opts.body);
+      expect(body.session_id).toBe("sess-001");
+      expect(body.event_id).toBe("evt-001");
+    });
+
+    it("swallows errors silently", async () => {
+      fetchSpy.mockRejectedValue(new Error("network error"));
+
+      const client = new AgentShieldClient(makeConfig(), noopLogger);
+      // Should not throw
+      client.sendOverride("sess-001", "evt-001");
+
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
+    });
+  });
 });

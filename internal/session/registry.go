@@ -7,13 +7,17 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/engine"
+	"github.com/agentshield-ai/agentshield/internal/models"
 )
 
 // Event represents a single tool call in a session timeline.
 type Event struct {
-	Tool      string
-	Alerts    []engine.RuleResult
-	Timestamp time.Time
+	Tool       string
+	EventID    string // Evaluation event ID for override correlation
+	Alerts     []engine.RuleResult
+	Action     string // Must match models.Action constants
+	Overridden bool   // Whether the user overrode a block/require_approval
+	Timestamp  time.Time
 }
 
 // Window holds the sliding window of events for a single session.
@@ -28,6 +32,11 @@ type Registry struct {
 	maxEvents   int
 	maxSessions int
 	ttl         time.Duration
+
+	// Cached cross-session fields to avoid recomputation on every evaluation.
+	crossCache      map[string]string
+	crossCacheTime  time.Time
+	crossCacheTTL   time.Duration
 }
 
 type sessionState struct {
@@ -46,10 +55,11 @@ func NewRegistry(maxEvents int, ttl time.Duration, opts ...RegistryOption) *Regi
 		ttl = 15 * time.Minute
 	}
 	r := &Registry{
-		sessions:    make(map[string]*sessionState),
-		maxEvents:   maxEvents,
-		maxSessions: 100_000,
-		ttl:         ttl,
+		sessions:      make(map[string]*sessionState),
+		maxEvents:     maxEvents,
+		maxSessions:   100_000,
+		ttl:           ttl,
+		crossCacheTTL: 1 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -71,6 +81,11 @@ func WithMaxSessions(n int) RegistryOption {
 
 // Record adds a tool call event to the given session's window.
 func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
+	r.RecordWithVerdict(sessionID, tool, "", alerts, "", false)
+}
+
+// RecordWithVerdict adds a tool call event with verdict metadata to the session window.
+func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []engine.RuleResult, action string, overridden bool) {
 	if sessionID == "" {
 		return
 	}
@@ -91,15 +106,21 @@ func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
 
 	now := time.Now()
 	state.events = append(state.events, Event{
-		Tool:      tool,
-		Alerts:    alerts,
-		Timestamp: now,
+		Tool:       tool,
+		EventID:    eventID,
+		Alerts:     alerts,
+		Action:     action,
+		Overridden: overridden,
+		Timestamp:  now,
 	})
 	state.lastSeen = now
 
 	if len(state.events) > r.maxEvents {
 		state.events = state.events[len(state.events)-r.maxEvents:]
 	}
+
+	// Invalidate cross-session cache on any write
+	r.crossCache = nil
 }
 
 // evictOldest removes the session with the oldest lastSeen timestamp.
@@ -174,27 +195,213 @@ func (r *Registry) Stats() int {
 	return len(r.sessions)
 }
 
+// RecordOverride marks the most recent event in a session as overridden by
+// the user. Returns true if the override was recorded, false if the session
+// or event was not found.
+func (r *Registry) RecordOverride(sessionID, eventID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, ok := r.sessions[sessionID]
+	if !ok || len(state.events) == 0 {
+		return false
+	}
+
+	// If eventID is provided, find and mark that specific event.
+	// Otherwise mark the most recent event.
+	if eventID != "" {
+		for i := len(state.events) - 1; i >= 0; i-- {
+			if state.events[i].EventID == eventID {
+				state.events[i].Overridden = true
+				return true
+			}
+		}
+		return false
+	}
+
+	state.events[len(state.events)-1].Overridden = true
+	return true
+}
+
 // DeriveFields returns Sigma-compatible fields derived from the session's
-// event window.
+// event window. Iterates events directly under read lock without copying.
 func (r *Registry) DeriveFields(sessionID string) map[string]string {
-	window := r.Get(sessionID)
-	if window == nil || len(window.Events) == 0 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.deriveFieldsLocked(sessionID)
+}
+
+// deriveFieldsLocked computes session fields. Must be called with r.mu held.
+func (r *Registry) deriveFieldsLocked(sessionID string) map[string]string {
+	state, ok := r.sessions[sessionID]
+	if !ok || len(state.events) == 0 {
 		return nil
 	}
 
-	tools := make([]string, len(window.Events))
+	tools := make([]string, len(state.events))
 	uniqueTools := make(map[string]struct{})
 	alertCount := 0
-	for i, ev := range window.Events {
+	approvalCount := 0
+	overrideCount := 0
+	for i, ev := range state.events {
 		tools[i] = ev.Tool
 		uniqueTools[ev.Tool] = struct{}{}
 		alertCount += len(ev.Alerts)
+		if ev.Action == string(models.ActionRequireApproval) {
+			approvalCount++
+		}
+		if ev.Overridden {
+			overrideCount++
+		}
 	}
 
 	return map[string]string{
-		"session.tool_count":        fmt.Sprintf("%d", len(window.Events)),
+		"session.tool_count":        fmt.Sprintf("%d", len(state.events)),
 		"session.recent_tools":      strings.Join(tools, ","),
 		"session.unique_tool_count": fmt.Sprintf("%d", len(uniqueTools)),
 		"session.alert_count":       fmt.Sprintf("%d", alertCount),
+		"session.approval_count":    fmt.Sprintf("%d", approvalCount),
+		"session.override_count":    fmt.Sprintf("%d", overrideCount),
 	}
+}
+
+// DeriveAllFields returns both per-session and cross-session Sigma-compatible
+// fields in a single lock acquisition. This is the preferred method for the
+// evaluation hot path.
+func (r *Registry) DeriveAllFields(sessionID string, correlationWindow time.Duration) map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	fields := r.deriveFieldsLocked(sessionID)
+
+	crossFields := r.crossSessionFieldsLocked(sessionID, correlationWindow)
+	if fields == nil && crossFields != nil {
+		fields = crossFields
+	} else {
+		for k, v := range crossFields {
+			fields[k] = v
+		}
+	}
+
+	return fields
+}
+
+// CrossSessionFields returns Sigma-compatible fields derived from all active
+// sessions, providing a global view for systemic/coordinated attack detection.
+// The correlationWindow limits analysis to events within the given duration.
+func (r *Registry) CrossSessionFields(excludeSessionID string, correlationWindow time.Duration) map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.crossSessionFieldsLocked(excludeSessionID, correlationWindow)
+}
+
+// crossSessionFieldsLocked computes cross-session fields. Must be called with r.mu held.
+// Uses a short-lived cache to avoid recomputation on every evaluation.
+func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlationWindow time.Duration) map[string]string {
+	now := time.Now()
+
+	// Return cached result if still fresh
+	if r.crossCache != nil && now.Sub(r.crossCacheTime) < r.crossCacheTTL {
+		// Overlap is session-specific, so recompute just that part
+		cached := make(map[string]string, len(r.crossCache))
+		for k, v := range r.crossCache {
+			cached[k] = v
+		}
+		cached["session.cross_session_tool_overlap"] = r.computeToolOverlap(excludeSessionID, correlationWindow)
+		return cached
+	}
+
+	cutoff := now.Add(-correlationWindow)
+	totalAlerts := 0
+	sessionCount := 0
+
+	for _, state := range r.sessions {
+		sessionHasRecent := false
+		for _, ev := range state.events {
+			if ev.Timestamp.Before(cutoff) {
+				continue
+			}
+			sessionHasRecent = true
+			totalAlerts += len(ev.Alerts)
+		}
+		if sessionHasRecent {
+			sessionCount++
+		}
+	}
+
+	// Exclude the current session from the count
+	if excludeSessionID != "" {
+		if state, ok := r.sessions[excludeSessionID]; ok {
+			for _, ev := range state.events {
+				if !ev.Timestamp.Before(cutoff) {
+					sessionCount--
+					break
+				}
+			}
+		}
+	}
+	if sessionCount < 0 {
+		sessionCount = 0
+	}
+
+	// Cache the session-independent parts
+	r.crossCache = map[string]string{
+		"session.cross_session_alert_count": fmt.Sprintf("%d", totalAlerts),
+		"session.cross_session_count":       fmt.Sprintf("%d", sessionCount),
+	}
+	r.crossCacheTime = now
+
+	result := map[string]string{
+		"session.cross_session_alert_count":  r.crossCache["session.cross_session_alert_count"],
+		"session.cross_session_count":        r.crossCache["session.cross_session_count"],
+		"session.cross_session_tool_overlap": r.computeToolOverlap(excludeSessionID, correlationWindow),
+	}
+	return result
+}
+
+// computeToolOverlap calculates what fraction of the excluded session's tools
+// appear in other sessions' recent events. Must be called with r.mu held.
+func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow time.Duration) string {
+	if excludeSessionID == "" {
+		return "0.0"
+	}
+	state, ok := r.sessions[excludeSessionID]
+	if !ok || len(state.events) == 0 {
+		return "0.0"
+	}
+
+	myTools := make(map[string]struct{})
+	for _, ev := range state.events {
+		myTools[ev.Tool] = struct{}{}
+	}
+	if len(myTools) == 0 {
+		return "0.0"
+	}
+
+	cutoff := time.Now().Add(-correlationWindow)
+	otherTools := make(map[string]struct{})
+	for id, s := range r.sessions {
+		if id == excludeSessionID {
+			continue
+		}
+		for _, ev := range s.events {
+			if !ev.Timestamp.Before(cutoff) {
+				otherTools[ev.Tool] = struct{}{}
+			}
+		}
+	}
+
+	matchCount := 0
+	for tool := range myTools {
+		if _, ok := otherTools[tool]; ok {
+			matchCount++
+		}
+	}
+
+	return fmt.Sprintf("%.2f", float64(matchCount)/float64(len(myTools)))
 }

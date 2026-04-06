@@ -4,6 +4,7 @@ import type {
   EvaluationRequest,
   EvaluationResponse,
   LifecycleEvent,
+  OverrideRequest,
 } from "./types.js";
 
 type Logger = {
@@ -30,6 +31,7 @@ export class AgentShieldClient {
   private readonly lifecycleEndpoint: string;
   private readonly healthEndpoint: string;
   private readonly feedbackEndpoint: string;
+  private readonly overrideEndpoint: string;
   private readonly timeoutMs: number;
   private readonly authToken: string;
   private readonly logger: Logger;
@@ -41,6 +43,7 @@ export class AgentShieldClient {
     this.lifecycleEndpoint = `${baseUrl}/lifecycle`;
     this.healthEndpoint = `${baseUrl}/health`;
     this.feedbackEndpoint = `${baseUrl}/feedback`;
+    this.overrideEndpoint = `${baseUrl}/override`;
     this.timeoutMs = config.timeout_ms;
     this.authToken = config.auth_token;
     this.logger = logger;
@@ -76,28 +79,12 @@ export class AgentShieldClient {
 
   /** Fire-and-forget audit report after tool execution. */
   sendAudit(report: AuditReport): void {
-    fetch(this.auditEndpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(report),
-    }).catch((err) => {
-      this.logger.debug?.(
-        `AgentShield audit send failed: ${String(err)}`,
-      );
-    });
+    this.fireAndForget(this.auditEndpoint, report, "audit");
   }
 
   /** Fire-and-forget lifecycle event. */
   sendLifecycle(event: LifecycleEvent): void {
-    fetch(this.lifecycleEndpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(event),
-    }).catch((err) => {
-      this.logger.debug?.(
-        `AgentShield lifecycle send failed: ${String(err)}`,
-      );
-    });
+    this.fireAndForget(this.lifecycleEndpoint, event, "lifecycle");
   }
 
   /** Check whether AgentShield is reachable. */
@@ -127,13 +114,32 @@ export class AgentShieldClient {
       timestamp: new Date().toISOString(),
     };
 
-    fetch(this.feedbackEndpoint, {
+    this.fireAndForget(this.feedbackEndpoint, payload, "feedback");
+  }
+
+  /**
+   * Report that a user overrode a block or require_approval verdict.
+   * Fire-and-forget — the engine updates session.override_count for
+   * downstream Sigma rules (ai_agent_override_escalation.yml).
+   */
+  sendOverride(sessionId: string, eventId: string): void {
+    const payload: OverrideRequest = {
+      session_id: sessionId,
+      event_id: eventId,
+    };
+
+    this.fireAndForget(this.overrideEndpoint, payload, "override");
+  }
+
+  /** POST payload to url, swallowing errors at debug level. */
+  private fireAndForget(url: string, payload: unknown, label: string): void {
+    fetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(payload),
     }).catch((err) => {
       this.logger.debug?.(
-        `AgentShield feedback submission failed: ${String(err)}`,
+        `AgentShield ${label} send failed: ${String(err)}`,
       );
     });
   }

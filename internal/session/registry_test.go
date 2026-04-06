@@ -78,6 +78,130 @@ func TestRegistry_DeriveFields(t *testing.T) {
 	if fields["session.alert_count"] != "0" {
 		t.Errorf("expected alert_count=0, got %q", fields["session.alert_count"])
 	}
+	if fields["session.approval_count"] != "0" {
+		t.Errorf("expected approval_count=0, got %q", fields["session.approval_count"])
+	}
+	if fields["session.override_count"] != "0" {
+		t.Errorf("expected override_count=0, got %q", fields["session.override_count"])
+	}
+}
+
+func TestRegistry_DeriveFields_ApprovalAndOverride(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.RecordWithVerdict("sess-1", "curl", "evt-1", nil, "require_approval", false)
+	r.RecordWithVerdict("sess-1", "wget", "evt-2", nil, "require_approval", false)
+	r.RecordWithVerdict("sess-1", "nc", "evt-3", nil, "block", true) // overridden block
+	r.RecordWithVerdict("sess-1", "ls", "evt-4", nil, "allow", false)
+
+	fields := r.DeriveFields("sess-1")
+	if fields == nil {
+		t.Fatal("expected non-nil fields")
+	}
+	if fields["session.approval_count"] != "2" {
+		t.Errorf("expected approval_count=2, got %q", fields["session.approval_count"])
+	}
+	if fields["session.override_count"] != "1" {
+		t.Errorf("expected override_count=1, got %q", fields["session.override_count"])
+	}
+}
+
+func TestRegistry_RecordOverride(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.RecordWithVerdict("sess-1", "curl", "evt-1", nil, "block", false)
+	r.RecordWithVerdict("sess-1", "wget", "evt-2", nil, "require_approval", false)
+
+	// Override specific event by ID
+	if !r.RecordOverride("sess-1", "evt-1") {
+		t.Error("expected override to succeed")
+	}
+
+	fields := r.DeriveFields("sess-1")
+	if fields["session.override_count"] != "1" {
+		t.Errorf("expected override_count=1, got %q", fields["session.override_count"])
+	}
+
+	// Override most recent event (no eventID)
+	if !r.RecordOverride("sess-1", "") {
+		t.Error("expected override of latest to succeed")
+	}
+	fields = r.DeriveFields("sess-1")
+	if fields["session.override_count"] != "2" {
+		t.Errorf("expected override_count=2, got %q", fields["session.override_count"])
+	}
+
+	// Unknown session
+	if r.RecordOverride("nonexistent", "") {
+		t.Error("expected override of unknown session to fail")
+	}
+
+	// Unknown event ID
+	if r.RecordOverride("sess-1", "evt-nonexistent") {
+		t.Error("expected override of unknown event to fail")
+	}
+}
+
+func TestRegistry_CrossSessionFields(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+
+	// Session A: ls, cat, curl
+	r.Record("sess-A", "ls", nil)
+	r.Record("sess-A", "cat", nil)
+	r.Record("sess-A", "curl", nil)
+
+	// Session B: ls, wget (overlaps on "ls")
+	r.Record("sess-B", "ls", nil)
+	r.Record("sess-B", "wget", nil)
+
+	// Session C: curl, nc (overlaps on "curl")
+	r.Record("sess-C", "curl", nil)
+	r.Record("sess-C", "nc", nil)
+
+	// Cross-session fields for session A should see B and C
+	fields := r.CrossSessionFields("sess-A", 5*time.Minute)
+	if fields["session.cross_session_count"] != "2" {
+		t.Errorf("expected 2 other sessions, got %q", fields["session.cross_session_count"])
+	}
+	if fields["session.cross_session_alert_count"] != "0" {
+		t.Errorf("expected 0 cross-session alerts, got %q", fields["session.cross_session_alert_count"])
+	}
+	// sess-A has {ls, cat, curl}; B has ls, C has curl → 2/3 overlap
+	if fields["session.cross_session_tool_overlap"] != "0.67" {
+		t.Errorf("expected tool overlap 0.67, got %q", fields["session.cross_session_tool_overlap"])
+	}
+}
+
+func TestRegistry_CrossSessionFields_Empty(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.Record("sess-1", "ls", nil)
+
+	// Only one session, so cross-session should be empty
+	fields := r.CrossSessionFields("sess-1", 5*time.Minute)
+	if fields["session.cross_session_count"] != "0" {
+		t.Errorf("expected 0 other sessions, got %q", fields["session.cross_session_count"])
+	}
+	if fields["session.cross_session_tool_overlap"] != "0.0" {
+		t.Errorf("expected 0.0 overlap, got %q", fields["session.cross_session_tool_overlap"])
+	}
+}
+
+func TestRegistry_DeriveAllFields(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.Record("sess-A", "ls", nil)
+	r.Record("sess-A", "curl", nil)
+	r.Record("sess-B", "ls", nil)
+
+	fields := r.DeriveAllFields("sess-A", 5*time.Minute)
+	if fields == nil {
+		t.Fatal("expected non-nil fields")
+	}
+	// Per-session fields
+	if fields["session.tool_count"] != "2" {
+		t.Errorf("expected tool_count=2, got %q", fields["session.tool_count"])
+	}
+	// Cross-session fields
+	if fields["session.cross_session_count"] != "1" {
+		t.Errorf("expected cross_session_count=1, got %q", fields["session.cross_session_count"])
+	}
 }
 
 func TestRegistry_DeriveFields_UnknownSession(t *testing.T) {

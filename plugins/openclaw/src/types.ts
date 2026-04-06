@@ -93,5 +93,11 @@ export type LifecycleEvent = {
   data: Record<string, unknown>;
 };
 
+/** Override request payload sent when user overrides a block/require_approval. */
+export type OverrideRequest = {
+  session_id: string;
+  event_id: string;
+};
+
 /** Circuit breaker states. */
 export type CircuitBreakerState = "closed" | "open" | "half-open";

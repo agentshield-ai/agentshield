@@ -18,6 +18,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// defaultCorrelationWindow is the time window for cross-session correlation.
+const defaultCorrelationWindow = 5 * time.Minute
+
 // RuleEvaluator is the interface for rule evaluation
 type RuleEvaluator interface {
 	Evaluate(fields map[string]string) []engine.RuleResult
@@ -169,17 +172,16 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		}
 	}
 
-	// Inject session-derived fields for behavioural sequencing
+	// Inject session-derived and cross-session fields in a single lock acquisition
 	if e.sessionRegistry != nil && req.SessionID != "" {
-		sessionFields := e.sessionRegistry.DeriveFields(req.SessionID)
-		for k, v := range sessionFields {
+		allFields := e.sessionRegistry.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
+		for k, v := range allFields {
 			req.Fields[k] = v
 		}
 
-		// Add session context to OTel span
 		if e.tracer != nil {
 			span := trace.SpanFromContext(ctx)
-			for k, v := range sessionFields {
+			for k, v := range allFields {
 				span.SetAttributes(attribute.String(k, v))
 			}
 		}
@@ -264,7 +266,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Record this event in the session window (after evaluation, so the current
 	// event is visible to the NEXT evaluation, not this one)
 	if e.sessionRegistry != nil && req.SessionID != "" {
-		e.sessionRegistry.Record(req.SessionID, req.Tool, alerts)
+		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, string(action), false)
 	}
 
 	// Fire deep triage async once at the end

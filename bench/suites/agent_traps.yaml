@@ -1,0 +1,15 @@
+name: agent_traps
+description: |
+  Tests aligned with the six AI Agent Trap categories identified by
+  Franklin et al. (2026) in "AI Agent Traps" (SSRN 6372438). Covers
+  semantic manipulation, approval fatigue, and override escalation patterns.
+testcases:
+  # Category 2: Semantic Manipulation Traps
+  - semantic_manipulation/authority_hijack_sysadmin.yaml
+  - semantic_manipulation/authority_hijack_policy.yaml
+  - semantic_manipulation/urgency_skip_checks.yaml
+  - semantic_manipulation/urgency_threat_shutdown.yaml
+  - semantic_manipulation/benign_policy_reference.yaml
+  # Category 6: Human-in-the-Loop Traps
+  - approval_fatigue/high_approval_count.yaml
+  - approval_fatigue/override_escalation.yaml

@@ -335,6 +335,9 @@ func (d *Daemon) initComponents() error {
 	if d.config.Telemetry.Enabled && d.tracerProvider != nil {
 		srv.SetTracerProvider(d.tracerProvider)
 	}
+	if d.sessionRegistry != nil {
+		srv.SetSessionRegistry(d.sessionRegistry)
+	}
 	d.server = srv
 	d.logger.Info("Server initialized", "listen_addr", d.config.ListenAddr())
 

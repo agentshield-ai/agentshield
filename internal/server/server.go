@@ -22,6 +22,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/feedback"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -55,6 +56,7 @@ type Server struct {
 	auth            *auth.Middleware
 	feedbackManager *feedback.FeedbackManager
 	verdictCache    *cache.VerdictCache
+	sessionRegistry *session.Registry
 	tracerProvider  trace.TracerProvider
 	httpServer      *http.Server
 	rateLimiter     *ipRateLimiter
@@ -204,6 +206,11 @@ func NewServer(cfg *config.Config, evaluator *evaluate.Evaluator, store *store.S
 // SetTracerProvider sets the OTel TracerProvider for HTTP-level span creation.
 func (s *Server) SetTracerProvider(tp trace.TracerProvider) {
 	s.tracerProvider = tp
+}
+
+// SetSessionRegistry sets the session registry for override tracking.
+func (s *Server) SetSessionRegistry(r *session.Registry) {
+	s.sessionRegistry = r
 }
 
 // requestLogger creates a custom request logging middleware using slog
@@ -365,6 +372,7 @@ func (s *Server) Start() error {
 		r.Get("/alerts", s.handleAlerts)
 		r.Post("/audit", s.handleAuditEvent)
 		r.Post("/lifecycle", s.handleLifecycleEvent)
+		r.Post("/override", s.handleOverride)
 		r.Route("/feedback", func(r chi.Router) {
 			r.Post("/", s.handleFeedbackSubmission)
 			r.Get("/", s.handleFeedbackQuery)
@@ -834,6 +842,65 @@ func (s *Server) handleAcceptedEvent(w http.ResponseWriter, r *http.Request, kin
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status":  "accepted",
 		"message": kind + " event received",
+	}); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
+}
+
+// OverrideRequest represents a user override of a block/require_approval verdict.
+type OverrideRequest struct {
+	SessionID string `json:"session_id"`
+	EventID   string `json:"event_id"`
+}
+
+// handleOverride handles POST /api/v1/override
+// Plugins call this endpoint when a user overrides a block or require_approval
+// verdict. The override is recorded in the session registry so that
+// session.override_count is accurate for downstream Sigma rules like
+// ai_agent_override_escalation.yml.
+func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
+	if s.sessionRegistry == nil {
+		http.Error(w, "Session tracking not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+	defer r.Body.Close()
+
+	var req OverrideRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
+		slog.Warn("Override JSON decode error", "error", err, "remote_addr", r.RemoteAddr)
+		return
+	}
+
+	if req.SessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+	if err := validateStringInput(req.SessionID, 256, "session_id"); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid session_id: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.EventID != "" {
+		if err := validateStringInput(req.EventID, 256, "event_id"); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid event_id: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	ok := s.sessionRegistry.RecordOverride(req.SessionID, req.EventID)
+	if !ok {
+		http.Error(w, "Session or event not found", http.StatusNotFound)
+		return
+	}
+
+	slog.Info("Override recorded", "session_id", req.SessionID, "event_id", req.EventID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"status": "recorded",
 	}); err != nil {
 		slog.Warn("Failed to write response", "error", err)
 	}
