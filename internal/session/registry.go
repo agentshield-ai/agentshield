@@ -13,6 +13,8 @@ import (
 type Event struct {
 	Tool      string
 	Alerts    []engine.RuleResult
+	Action    string // Verdict action: "allow", "block", "require_approval", "log"
+	Overridden bool  // Whether the user overrode a block/require_approval
 	Timestamp time.Time
 }
 
@@ -71,6 +73,11 @@ func WithMaxSessions(n int) RegistryOption {
 
 // Record adds a tool call event to the given session's window.
 func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
+	r.RecordWithVerdict(sessionID, tool, alerts, "", false)
+}
+
+// RecordWithVerdict adds a tool call event with verdict metadata to the session window.
+func (r *Registry) RecordWithVerdict(sessionID, tool string, alerts []engine.RuleResult, action string, overridden bool) {
 	if sessionID == "" {
 		return
 	}
@@ -91,9 +98,11 @@ func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
 
 	now := time.Now()
 	state.events = append(state.events, Event{
-		Tool:      tool,
-		Alerts:    alerts,
-		Timestamp: now,
+		Tool:       tool,
+		Alerts:     alerts,
+		Action:     action,
+		Overridden: overridden,
+		Timestamp:  now,
 	})
 	state.lastSeen = now
 
@@ -185,10 +194,18 @@ func (r *Registry) DeriveFields(sessionID string) map[string]string {
 	tools := make([]string, len(window.Events))
 	uniqueTools := make(map[string]struct{})
 	alertCount := 0
+	approvalCount := 0
+	overrideCount := 0
 	for i, ev := range window.Events {
 		tools[i] = ev.Tool
 		uniqueTools[ev.Tool] = struct{}{}
 		alertCount += len(ev.Alerts)
+		if ev.Action == "require_approval" {
+			approvalCount++
+		}
+		if ev.Overridden {
+			overrideCount++
+		}
 	}
 
 	return map[string]string{
@@ -196,5 +213,7 @@ func (r *Registry) DeriveFields(sessionID string) map[string]string {
 		"session.recent_tools":      strings.Join(tools, ","),
 		"session.unique_tool_count": fmt.Sprintf("%d", len(uniqueTools)),
 		"session.alert_count":       fmt.Sprintf("%d", alertCount),
+		"session.approval_count":    fmt.Sprintf("%d", approvalCount),
+		"session.override_count":    fmt.Sprintf("%d", overrideCount),
 	}
 }

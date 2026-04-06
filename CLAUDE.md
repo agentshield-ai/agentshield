@@ -95,10 +95,10 @@ Exports evaluation telemetry as OTel traces and metrics:
 
 Per-session sliding window that tracks tool call sequences:
 - **Registry**: In-memory, concurrent-safe, per-session ring buffer with configurable TTL and max events.
-- **Derived fields**: `session.recent_tools`, `session.tool_count`, `session.unique_tool_count`, `session.alert_count` — injected into Sigma evaluation context before rule matching.
+- **Derived fields**: `session.recent_tools`, `session.tool_count`, `session.unique_tool_count`, `session.alert_count`, `session.approval_count`, `session.override_count` — injected into Sigma evaluation context before rule matching.
 - **Cleanup**: Background goroutine evicts expired sessions.
 - **Config**: `session:` section in config.yaml with `enabled`, `window_sec`, `max_events`.
-- **Sigma rules**: `ai_agent_recon_then_exfil.yml` (detects recon→exfil chains), `ai_agent_session_velocity_anomaly.yml` (detects high tool-call velocity).
+- **Sigma rules**: `ai_agent_recon_then_exfil.yml` (detects recon→exfil chains), `ai_agent_session_velocity_anomaly.yml` (detects high tool-call velocity), `ai_agent_approval_fatigue.yml` (detects excessive require_approval verdicts), `ai_agent_override_escalation.yml` (detects repeated user overrides of blocks).
 
 ### OpenClaw Plugin (`plugins/openclaw/`)
 
@@ -152,7 +152,7 @@ In-memory LRU cache (default 10,000 entries, 5-min TTL) avoids re-evaluating ide
 
 ## Platform Support
 
-See [PLATFORMS.md](PLATFORMS.md) for full details. Detection rules target Linux/macOS (Unix/POSIX commands). The Go engine runs on Windows but no Windows-specific rules exist. All 45+ rules are under `rules/rules/ai_agent/` using `logsource.product: ai_agent`.
+See [PLATFORMS.md](PLATFORMS.md) for full details. Detection rules target Linux/macOS (Unix/POSIX commands). The Go engine runs on Windows but no Windows-specific rules exist. All 50+ rules are under `rules/rules/ai_agent/` using `logsource.product: ai_agent`.
 
 ## Competitive Landscape
 
@@ -160,6 +160,16 @@ See [PLATFORMS.md](PLATFORMS.md) for full details. Detection rules target Linux/
 - **AgentShield**: Go engine, Sigma rules, LLM triage, temporal correlation, prompt injection detection, `require_approval` graduated response, verdict caching
 - **Sage**: TypeScript in-process, flat regex YAML rules, URL/package reputation APIs, supply-chain validation, Windows rules
 - They are complementary: Sage excels at "is this command/URL/package dangerous?"; AgentShield excels at "is this agent being manipulated?"
+
+### Academic Validation
+
+[AI Agent Traps](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6372438) (Franklin et al., Google DeepMind, 2026) defines six trap categories targeting agent perception, reasoning, memory, action, multi-agent dynamics, and human oversight. AgentShield's detection rules map to all six categories:
+- **Content Injection Traps** → 13 rules (prompt injection, CSS hiding, Unicode smuggling, steganography, MCP poisoning)
+- **Semantic Manipulation Traps** → `ai_agent_authority_hijacking.yml`, `ai_agent_urgency_manipulation.yml`
+- **Cognitive State Traps** → `ai_agent_memory_poisoning.yml`, `ai_agent_context_poisoning.yml`
+- **Behavioral Control Traps** → 15 rules (exfiltration, RCE, reverse shells, persistence)
+- **Systemic Traps** → `ai_agent_lateral_movement.yml`, `ai_agent_coordinated_tool_abuse.yml`
+- **Human-in-the-Loop Traps** → `ai_agent_approval_fatigue.yml`, `ai_agent_override_escalation.yml`, `ai_agent_config_auto_approve.yml`
 
 ### Planned (v1.1 branches, not yet merged)
 - `feat/supply-chain-checks` — npm/PyPI registry validation for hallucinated/typosquatted packages

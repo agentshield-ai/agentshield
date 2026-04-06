@@ -78,6 +78,31 @@ func TestRegistry_DeriveFields(t *testing.T) {
 	if fields["session.alert_count"] != "0" {
 		t.Errorf("expected alert_count=0, got %q", fields["session.alert_count"])
 	}
+	if fields["session.approval_count"] != "0" {
+		t.Errorf("expected approval_count=0, got %q", fields["session.approval_count"])
+	}
+	if fields["session.override_count"] != "0" {
+		t.Errorf("expected override_count=0, got %q", fields["session.override_count"])
+	}
+}
+
+func TestRegistry_DeriveFields_ApprovalAndOverride(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.RecordWithVerdict("sess-1", "curl", nil, "require_approval", false)
+	r.RecordWithVerdict("sess-1", "wget", nil, "require_approval", false)
+	r.RecordWithVerdict("sess-1", "nc", nil, "block", true) // overridden block
+	r.RecordWithVerdict("sess-1", "ls", nil, "allow", false)
+
+	fields := r.DeriveFields("sess-1")
+	if fields == nil {
+		t.Fatal("expected non-nil fields")
+	}
+	if fields["session.approval_count"] != "2" {
+		t.Errorf("expected approval_count=2, got %q", fields["session.approval_count"])
+	}
+	if fields["session.override_count"] != "1" {
+		t.Errorf("expected override_count=1, got %q", fields["session.override_count"])
+	}
 }
 
 func TestRegistry_DeriveFields_UnknownSession(t *testing.T) {
