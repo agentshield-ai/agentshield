@@ -4,6 +4,7 @@ import type {
   EvaluationRequest,
   EvaluationResponse,
   LifecycleEvent,
+  OverrideRequest,
 } from "./types.js";
 
 type Logger = {
@@ -30,6 +31,7 @@ export class AgentShieldClient {
   private readonly lifecycleEndpoint: string;
   private readonly healthEndpoint: string;
   private readonly feedbackEndpoint: string;
+  private readonly overrideEndpoint: string;
   private readonly timeoutMs: number;
   private readonly authToken: string;
   private readonly logger: Logger;
@@ -41,6 +43,7 @@ export class AgentShieldClient {
     this.lifecycleEndpoint = `${baseUrl}/lifecycle`;
     this.healthEndpoint = `${baseUrl}/health`;
     this.feedbackEndpoint = `${baseUrl}/feedback`;
+    this.overrideEndpoint = `${baseUrl}/override`;
     this.timeoutMs = config.timeout_ms;
     this.authToken = config.auth_token;
     this.logger = logger;
@@ -134,6 +137,28 @@ export class AgentShieldClient {
     }).catch((err) => {
       this.logger.debug?.(
         `AgentShield feedback submission failed: ${String(err)}`,
+      );
+    });
+  }
+
+  /**
+   * Report that a user overrode a block or require_approval verdict.
+   * Fire-and-forget — the engine updates session.override_count for
+   * downstream Sigma rules (ai_agent_override_escalation.yml).
+   */
+  sendOverride(sessionId: string, eventId: string): void {
+    const payload: OverrideRequest = {
+      session_id: sessionId,
+      event_id: eventId,
+    };
+
+    fetch(this.overrideEndpoint, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(payload),
+    }).catch((err) => {
+      this.logger.debug?.(
+        `AgentShield override send failed: ${String(err)}`,
       );
     });
   }
