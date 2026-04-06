@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentShield · SIEM Investigation</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 3 7v9c0 7.5 5.5 12.5 13 14 7.5-1.5 13-6.5 13-14V7L16 2z' fill='%234f8cff'/%3E%3Cpath d='M16 6.5 7 10v6c0 5.5 4 9.3 9 10.5 5-1.2 9-5 9-10.5v-6l-9-3.5z' fill='%230b1020'/%3E%3Cpath d='M10.5 15.5l4 4 7-7' stroke='%234f8cff' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+<div id="login" class="login-screen hidden">
+  <form id="login-form" class="login-card">
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 3 7v9c0 7.5 5.5 12.5 13 14 7.5-1.5 13-6.5 13-14V7L16 2z" fill="currentColor" opacity=".9"/><path d="M10.5 15.5l4 4 7-7" stroke="#0b1020" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div>
+        <h1>AgentShield</h1>
+        <p>SIEM · Investigation Console</p>
+      </div>
+    </div>
+    <label>
+      <span>API base URL</span>
+      <input id="login-base" type="text" autocomplete="off" placeholder="/">
+    </label>
+    <label>
+      <span>Bearer token</span>
+      <input id="login-token" type="password" autocomplete="off" placeholder="paste your AGENTSHIELD_AUTH_TOKEN">
+    </label>
+    <button type="submit">Unlock console</button>
+    <p class="muted">Token is stored in this browser's localStorage only.</p>
+  </form>
+</div>
+
+<aside class="sidebar">
+  <div class="brand">
+    <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 3 7v9c0 7.5 5.5 12.5 13 14 7.5-1.5 13-6.5 13-14V7L16 2z" fill="currentColor"/><path d="M10.5 15.5l4 4 7-7" stroke="#0b1020" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div>
+      <strong>AgentShield</strong>
+      <small>SIEM · Console</small>
+    </div>
+  </div>
+  <nav>
+    <a href="#/overview" data-view="overview"><span class="ico">◈</span>Overview</a>
+    <a href="#/alerts" data-view="alerts"><span class="ico">◉</span>Alerts</a>
+    <a href="#/sessions" data-view="sessions"><span class="ico">◐</span>Sessions</a>
+    <a href="#/rules" data-view="rules"><span class="ico">☰</span>Rules</a>
+    <a href="#/investigate" data-view="investigate"><span class="ico">⌕</span>Investigate</a>
+  </nav>
+  <div class="sidebar-foot">
+    <div id="conn-status" class="status-dot" title="Engine status">●</div>
+    <button id="theme-toggle" class="icon-btn" title="Toggle theme">◐</button>
+    <button id="logout-btn" class="icon-btn" title="Clear token">⎋</button>
+  </div>
+</aside>
+
+<main id="main">
+  <header class="topbar">
+    <div class="crumb">
+      <span id="crumb-view">Overview</span>
+      <span id="crumb-detail" class="muted"></span>
+    </div>
+    <div class="topbar-tools">
+      <select id="time-range" class="time-range">
+        <option value="1">Last 1 hour</option>
+        <option value="6">Last 6 hours</option>
+        <option value="24" selected>Last 24 hours</option>
+        <option value="168">Last 7 days</option>
+        <option value="720">Last 30 days</option>
+      </select>
+      <button id="refresh-btn" class="icon-btn" title="Refresh">↻</button>
+    </div>
+  </header>
+  <section id="view" class="view"></section>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="/ui/app.js"></script>
+</body>
+</html>

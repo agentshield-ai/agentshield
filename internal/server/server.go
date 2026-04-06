@@ -344,12 +344,19 @@ func (s *Server) Start() error {
 
 	// Add Chi middleware chain
 	s.rateLimiter = newIPRateLimiter(rate.Every(600*time.Millisecond), 10)
-	r.Use(middleware.Recoverer)                    // Panic recovery
-	r.Use(middleware.RequestID)                    // Request ID generation
-	r.Use(securityHeaders)                         // Security response headers
-	r.Use(rateLimitMiddleware(s.rateLimiter))       // Per-IP rate limit: ~100 req/min, burst 10
-	r.Use(s.requestLogger)                         // Custom request logging
-	r.Use(middleware.Timeout(30 * time.Second))    // Request timeout
+	r.Use(middleware.Recoverer)                 // Panic recovery
+	r.Use(middleware.RequestID)                 // Request ID generation
+	r.Use(securityHeaders)                      // Security response headers
+	r.Use(rateLimitMiddleware(s.rateLimiter))   // Per-IP rate limit: ~100 req/min, burst 10
+	r.Use(s.requestLogger)                      // Custom request logging
+	r.Use(middleware.Timeout(30 * time.Second)) // Request timeout
+
+	// UI routes — served without auth (static assets; no secrets).
+	// Auth middleware skips these paths; see auth.go.
+	uiHandler := s.uiHandler()
+	r.Get("/", uiHandler.ServeHTTP)
+	r.Get("/ui", uiHandler.ServeHTTP)
+	r.Get("/ui/*", uiHandler.ServeHTTP)
 
 	// Apply auth middleware if configured, but skip health endpoints
 	if s.auth != nil {
@@ -362,12 +369,22 @@ func (s *Server) Start() error {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/evaluate", s.handleEvaluate)
 		r.Get("/health", s.handleHealth)
-		r.Get("/alerts", s.handleAlerts)
 		r.Post("/audit", s.handleAuditEvent)
 		r.Post("/lifecycle", s.handleLifecycleEvent)
 		r.Route("/feedback", func(r chi.Router) {
 			r.Post("/", s.handleFeedbackSubmission)
 			r.Get("/", s.handleFeedbackQuery)
+		})
+		// SIEM Investigation Console API endpoints
+		r.Get("/stats", s.handleStats)
+		r.Get("/timeline", s.handleTimeline)
+		r.Get("/rules", s.handleRules)
+		r.Get("/top-tools", s.handleTopTools)
+		r.Get("/sessions", s.handleSessions)
+		r.Get("/sessions/{sessionID}/alerts", s.handleSessionAlerts)
+		r.Route("/alerts", func(r chi.Router) {
+			r.Get("/", s.handleAlerts)
+			r.Get("/{alertID}", s.handleAlertByID)
 		})
 	})
 

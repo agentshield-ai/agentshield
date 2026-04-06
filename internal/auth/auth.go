@@ -32,6 +32,15 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Skip auth for the SIEM UI static assets. The HTML/JS/CSS contain no
+		// sensitive data; API calls made from the UI still carry a bearer token
+		// entered by the user in-browser.
+		if r.URL.Path == "/" || r.URL.Path == "/ui" ||
+			strings.HasPrefix(r.URL.Path, "/ui/") ||
+			r.URL.Path == "/favicon.ico" {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// Get authorization header
 		authHeader := r.Header.Get("Authorization")

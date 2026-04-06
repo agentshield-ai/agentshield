@@ -527,6 +527,244 @@ func (s *Store) GetStats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
+// SessionSummary aggregates alert activity for a single session.
+type SessionSummary struct {
+	SessionID     string    `json:"session_id"`
+	AlertCount    int64     `json:"alert_count"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	TopSeverity   string    `json:"top_severity"`
+	DistinctRules int64     `json:"distinct_rules"`
+	DistinctTools int64     `json:"distinct_tools"`
+}
+
+// RuleSummary aggregates alerts per rule.
+type RuleSummary struct {
+	RuleName   string    `json:"rule_name"`
+	AlertCount int64     `json:"alert_count"`
+	Severity   string    `json:"severity"`
+	LastSeen   time.Time `json:"last_seen"`
+	FPCount    int64     `json:"fp_count"`
+	TPCount    int64     `json:"tp_count"`
+}
+
+// TimelineBucket is a single time-bucketed count.
+type TimelineBucket struct {
+	Bucket   time.Time `json:"bucket"`
+	Total    int64     `json:"total"`
+	Critical int64     `json:"critical"`
+	High     int64     `json:"high"`
+	Medium   int64     `json:"medium"`
+	Low      int64     `json:"low"`
+}
+
+// GetAlertByID returns a single alert by primary key.
+func (s *Store) GetAlertByID(id int64) (*Alert, error) {
+	row := s.db.QueryRow(`
+		SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id
+		FROM alerts WHERE id = ?`, id)
+
+	var a Alert
+	var tool, args, sessionID, eventID sql.NullString
+	if err := row.Scan(&a.ID, &a.RuleName, &a.Severity, &tool, &args, &a.ActionTaken,
+		&a.Timestamp, &sessionID, &eventID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying alert by id: %w", err)
+	}
+	a.Tool = tool.String
+	a.Args = args.String
+	a.SessionID = sessionID.String
+	a.EventID = eventID.String
+	return &a, nil
+}
+
+// GetSessions returns recent session summaries, ordered by most recent activity.
+func (s *Store) GetSessions(limit int, since *time.Time) ([]SessionSummary, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	args := []interface{}{}
+	where := "WHERE session_id IS NOT NULL AND session_id != ''"
+	if since != nil {
+		where += " AND timestamp >= ?"
+		args = append(args, since)
+	}
+	q := `
+		SELECT session_id,
+			COUNT(*) AS alert_count,
+			MIN(timestamp) AS first_seen,
+			MAX(timestamp) AS last_seen,
+			COUNT(DISTINCT rule_name) AS distinct_rules,
+			COUNT(DISTINCT tool) AS distinct_tools,
+			COALESCE(
+				MAX(CASE severity
+					WHEN 'critical' THEN 4
+					WHEN 'high' THEN 3
+					WHEN 'medium' THEN 2
+					WHEN 'low' THEN 1
+					ELSE 0
+				END), 0) AS top_sev_rank
+		FROM alerts ` + where + `
+		GROUP BY session_id
+		ORDER BY last_seen DESC
+		LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying sessions: %w", err)
+	}
+	defer rows.Close()
+	rankToSev := map[int]string{4: "critical", 3: "high", 2: "medium", 1: "low", 0: ""}
+	out := []SessionSummary{}
+	for rows.Next() {
+		var sess SessionSummary
+		var rank int
+		if err := rows.Scan(&sess.SessionID, &sess.AlertCount, &sess.FirstSeen, &sess.LastSeen,
+			&sess.DistinctRules, &sess.DistinctTools, &rank); err != nil {
+			return nil, fmt.Errorf("scanning session row: %w", err)
+		}
+		sess.TopSeverity = rankToSev[rank]
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// GetRuleSummaries returns alert counts per rule with feedback counts.
+func (s *Store) GetRuleSummaries(limit int) ([]RuleSummary, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	q := `
+		SELECT a.rule_name,
+			COUNT(*) AS alert_count,
+			MAX(a.timestamp) AS last_seen,
+			-- severity is rule-level; pick any (MAX) as representative
+			MAX(a.severity) AS severity,
+			COALESCE(SUM(CASE WHEN f.feedback_type = 'false_positive' THEN 1 ELSE 0 END), 0) AS fp_count,
+			COALESCE(SUM(CASE WHEN f.feedback_type = 'true_positive' THEN 1 ELSE 0 END), 0) AS tp_count
+		FROM alerts a
+		LEFT JOIN feedback f ON f.rule_name = a.rule_name
+		GROUP BY a.rule_name
+		ORDER BY alert_count DESC
+		LIMIT ?`
+	rows, err := s.db.Query(q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying rule summaries: %w", err)
+	}
+	defer rows.Close()
+	out := []RuleSummary{}
+	for rows.Next() {
+		var r RuleSummary
+		if err := rows.Scan(&r.RuleName, &r.AlertCount, &r.LastSeen, &r.Severity, &r.FPCount, &r.TPCount); err != nil {
+			return nil, fmt.Errorf("scanning rule summary row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetTimeline returns time-bucketed alert counts over the last `hours` hours.
+// bucketMinutes controls bucket granularity (e.g. 60 = hourly buckets).
+func (s *Store) GetTimeline(hours, bucketMinutes int) ([]TimelineBucket, error) {
+	if hours <= 0 || hours > 24*30 {
+		hours = 24
+	}
+	if bucketMinutes <= 0 || bucketMinutes > 1440 {
+		bucketMinutes = 60
+	}
+	seconds := bucketMinutes * 60
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	q := `
+		SELECT
+			CAST(strftime('%s', timestamp) AS INTEGER) / ? * ? AS bucket_unix,
+			COUNT(*),
+			SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN severity = 'medium' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN severity = 'low' THEN 1 ELSE 0 END)
+		FROM alerts
+		WHERE timestamp >= ?
+		GROUP BY bucket_unix
+		ORDER BY bucket_unix ASC`
+	rows, err := s.db.Query(q, seconds, seconds, since)
+	if err != nil {
+		return nil, fmt.Errorf("querying timeline: %w", err)
+	}
+	defer rows.Close()
+	out := []TimelineBucket{}
+	for rows.Next() {
+		var b TimelineBucket
+		var unix int64
+		if err := rows.Scan(&unix, &b.Total, &b.Critical, &b.High, &b.Medium, &b.Low); err != nil {
+			return nil, fmt.Errorf("scanning timeline bucket: %w", err)
+		}
+		b.Bucket = time.Unix(unix, 0).UTC()
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// GetTopTools returns the most frequent tools in alerts.
+func (s *Store) GetTopTools(limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	rows, err := s.db.Query(`
+		SELECT COALESCE(NULLIF(tool, ''), '(unknown)'), COUNT(*) AS c
+		FROM alerts
+		GROUP BY tool
+		ORDER BY c DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying top tools: %w", err)
+	}
+	defer rows.Close()
+	out := []map[string]interface{}{}
+	for rows.Next() {
+		var name string
+		var count int64
+		if err := rows.Scan(&name, &count); err != nil {
+			return nil, fmt.Errorf("scanning top tools: %w", err)
+		}
+		out = append(out, map[string]interface{}{"tool": name, "count": count})
+	}
+	return out, rows.Err()
+}
+
+// GetSessionAlerts returns all alerts for a session in chronological order.
+func (s *Store) GetSessionAlerts(sessionID string, limit int) ([]Alert, error) {
+	if limit <= 0 || limit > 10000 {
+		limit = 1000
+	}
+	rows, err := s.db.Query(`
+		SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id
+		FROM alerts
+		WHERE session_id = ?
+		ORDER BY timestamp ASC
+		LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying session alerts: %w", err)
+	}
+	defer rows.Close()
+	var out []Alert
+	for rows.Next() {
+		var a Alert
+		var tool, args, sid, eid sql.NullString
+		if err := rows.Scan(&a.ID, &a.RuleName, &a.Severity, &tool, &args, &a.ActionTaken,
+			&a.Timestamp, &sid, &eid); err != nil {
+			return nil, fmt.Errorf("scanning session alert: %w", err)
+		}
+		a.Tool = tool.String
+		a.Args = args.String
+		a.SessionID = sid.String
+		a.EventID = eid.String
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // Close closes the database connection
 func (s *Store) Close() error {
 	if s.db != nil {
