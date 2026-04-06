@@ -79,28 +79,12 @@ export class AgentShieldClient {
 
   /** Fire-and-forget audit report after tool execution. */
   sendAudit(report: AuditReport): void {
-    fetch(this.auditEndpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(report),
-    }).catch((err) => {
-      this.logger.debug?.(
-        `AgentShield audit send failed: ${String(err)}`,
-      );
-    });
+    this.fireAndForget(this.auditEndpoint, report, "audit");
   }
 
   /** Fire-and-forget lifecycle event. */
   sendLifecycle(event: LifecycleEvent): void {
-    fetch(this.lifecycleEndpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(event),
-    }).catch((err) => {
-      this.logger.debug?.(
-        `AgentShield lifecycle send failed: ${String(err)}`,
-      );
-    });
+    this.fireAndForget(this.lifecycleEndpoint, event, "lifecycle");
   }
 
   /** Check whether AgentShield is reachable. */
@@ -130,15 +114,7 @@ export class AgentShieldClient {
       timestamp: new Date().toISOString(),
     };
 
-    fetch(this.feedbackEndpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(payload),
-    }).catch((err) => {
-      this.logger.debug?.(
-        `AgentShield feedback submission failed: ${String(err)}`,
-      );
-    });
+    this.fireAndForget(this.feedbackEndpoint, payload, "feedback");
   }
 
   /**
@@ -152,13 +128,18 @@ export class AgentShieldClient {
       event_id: eventId,
     };
 
-    fetch(this.overrideEndpoint, {
+    this.fireAndForget(this.overrideEndpoint, payload, "override");
+  }
+
+  /** POST payload to url, swallowing errors at debug level. */
+  private fireAndForget(url: string, payload: unknown, label: string): void {
+    fetch(url, {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(payload),
     }).catch((err) => {
       this.logger.debug?.(
-        `AgentShield override send failed: ${String(err)}`,
+        `AgentShield ${label} send failed: ${String(err)}`,
       );
     });
   }

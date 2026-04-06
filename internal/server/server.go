@@ -865,6 +865,7 @@ func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+	defer r.Body.Close()
 
 	var req OverrideRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

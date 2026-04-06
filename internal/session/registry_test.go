@@ -184,6 +184,26 @@ func TestRegistry_CrossSessionFields_Empty(t *testing.T) {
 	}
 }
 
+func TestRegistry_DeriveAllFields(t *testing.T) {
+	r := NewRegistry(10, 5*time.Minute)
+	r.Record("sess-A", "ls", nil)
+	r.Record("sess-A", "curl", nil)
+	r.Record("sess-B", "ls", nil)
+
+	fields := r.DeriveAllFields("sess-A", 5*time.Minute)
+	if fields == nil {
+		t.Fatal("expected non-nil fields")
+	}
+	// Per-session fields
+	if fields["session.tool_count"] != "2" {
+		t.Errorf("expected tool_count=2, got %q", fields["session.tool_count"])
+	}
+	// Cross-session fields
+	if fields["session.cross_session_count"] != "1" {
+		t.Errorf("expected cross_session_count=1, got %q", fields["session.cross_session_count"])
+	}
+}
+
 func TestRegistry_DeriveFields_UnknownSession(t *testing.T) {
 	r := NewRegistry(10, 5*time.Minute)
 	if r.DeriveFields("nonexistent") != nil {

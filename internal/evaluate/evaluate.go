@@ -18,6 +18,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// defaultCorrelationWindow is the time window for cross-session correlation.
+const defaultCorrelationWindow = 5 * time.Minute
+
 // RuleEvaluator is the interface for rule evaluation
 type RuleEvaluator interface {
 	Evaluate(fields map[string]string) []engine.RuleResult
@@ -169,26 +172,16 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		}
 	}
 
-	// Inject session-derived fields for behavioural sequencing
+	// Inject session-derived and cross-session fields in a single lock acquisition
 	if e.sessionRegistry != nil && req.SessionID != "" {
-		sessionFields := e.sessionRegistry.DeriveFields(req.SessionID)
-		for k, v := range sessionFields {
+		allFields := e.sessionRegistry.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
+		for k, v := range allFields {
 			req.Fields[k] = v
 		}
 
-		// Inject cross-session correlation fields for systemic attack detection
-		crossFields := e.sessionRegistry.CrossSessionFields(req.SessionID, 5*time.Minute)
-		for k, v := range crossFields {
-			req.Fields[k] = v
-		}
-
-		// Add session context to OTel span
 		if e.tracer != nil {
 			span := trace.SpanFromContext(ctx)
-			for k, v := range sessionFields {
-				span.SetAttributes(attribute.String(k, v))
-			}
-			for k, v := range crossFields {
+			for k, v := range allFields {
 				span.SetAttributes(attribute.String(k, v))
 			}
 		}
