@@ -12,7 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Claude Code hook input JSON sent via HTTP hooks.
+const sourceClaudeCode = "claude-code"
+
+const (
+	claudeDecisionDeny  = "deny"
+	claudeDecisionAsk   = "ask"
+	claudeDecisionAllow = "allow"
+)
+
 type claudeHookInput struct {
 	SessionID     string                 `json:"session_id"`
 	Cwd           string                 `json:"cwd"`
@@ -20,31 +27,29 @@ type claudeHookInput struct {
 	ToolName      string                 `json:"tool_name"`
 	ToolInput     map[string]interface{} `json:"tool_input"`
 	ToolResult    interface{}            `json:"tool_result"`
-	Prompt        string                 `json:"prompt"` // UserPromptSubmit
+	Prompt        string                 `json:"prompt"`
 }
 
-// Claude Code hook response structures.
 type claudeHookResponse struct {
 	HookSpecificOutput *claudeHookOutput `json:"hookSpecificOutput,omitempty"`
 }
 
 type claudeHookOutput struct {
-	HookEventName          string `json:"hookEventName"`
-	PermissionDecision     string `json:"permissionDecision"`
+	HookEventName            string `json:"hookEventName"`
+	PermissionDecision       string `json:"permissionDecision"`
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
 }
 
-// handleClaudeHook handles Claude Code HTTP hook calls. It accepts Claude
-// Code's native hook JSON format, translates it to an EvaluationRequest, runs
-// it through the existing evaluation pipeline, and returns a response in the
-// format Claude Code expects.
+// emptyJSON is a pre-allocated response for hook events that require no action.
+var emptyJSON = struct{}{}
+
 func (s *Server) handleClaudeHook(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
 
 	var input claudeHookInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		var maxBytesErr *http.MaxBytesError
-		if isMaxBytesErr(err, &maxBytesErr) {
+		if errors.As(err, &maxBytesErr) {
 			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
 		} else {
 			http.Error(w, "Invalid request format", http.StatusBadRequest)
@@ -61,139 +66,117 @@ func (s *Server) handleClaudeHook(w http.ResponseWriter, r *http.Request) {
 	case "UserPromptSubmit":
 		s.handleClaudeUserPromptSubmit(w, r, &input)
 	default:
-		// Unknown or unhandled hook event — return empty success so Claude Code
-		// proceeds without error.
-		writeJSON(w, http.StatusOK, map[string]interface{}{})
+		writeJSON(w, http.StatusOK, emptyJSON)
 	}
 }
 
-// handleClaudePreToolUse evaluates a tool call and returns a permission decision.
-func (s *Server) handleClaudePreToolUse(w http.ResponseWriter, r *http.Request, input *claudeHookInput) {
-	req := claudeHookToEvalRequest(input)
-
+// evaluateClaudeHook runs the shared normalize → validate → evaluate → store
+// pipeline for a Claude Code hook request. Returns the response or writes an
+// HTTP error and returns nil.
+func (s *Server) evaluateClaudeHook(w http.ResponseWriter, r *http.Request, req *models.EvaluationRequest) *evaluate.EvaluationResponse {
 	normalizePluginRequest(req, r, s.config)
 
 	if err := validateEvaluationRequest(req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
 		slog.Warn("Claude hook validation failed", "error", err, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
-		return
+		return nil
 	}
 
 	response, err := s.evaluator.EvaluateWithContext(r.Context(), req)
 	if err != nil {
 		slog.Error("Claude hook evaluation failed", "event_id", req.EventID, "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 
 	if len(response.Alerts) > 0 {
 		s.storeMatchedAlerts(response, req)
 	}
 
-	decision, reason := actionToClaudeDecision(response)
-
-	resp := claudeHookResponse{
-		HookSpecificOutput: &claudeHookOutput{
-			HookEventName:          "PreToolUse",
-			PermissionDecision:     decision,
-			PermissionDecisionReason: reason,
-		},
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+	return response
 }
 
-// handleClaudePostToolUse stores the tool result as an audit event.
+func (s *Server) handleClaudePreToolUse(w http.ResponseWriter, r *http.Request, input *claudeHookInput) {
+	req := claudeHookToEvalRequest(input)
+
+	response := s.evaluateClaudeHook(w, r, req)
+	if response == nil {
+		return
+	}
+
+	decision, reason := actionToClaudeDecision(response)
+	writeJSON(w, http.StatusOK, claudeHookResponse{
+		HookSpecificOutput: &claudeHookOutput{
+			HookEventName:            "PreToolUse",
+			PermissionDecision:       decision,
+			PermissionDecisionReason: reason,
+		},
+	})
+}
+
 func (s *Server) handleClaudePostToolUse(w http.ResponseWriter, r *http.Request, input *claudeHookInput) {
-	slog.Info("Claude PostToolUse audit",
+	slog.Debug("Claude PostToolUse audit",
 		"session_id", input.SessionID,
 		"tool", input.ToolName,
 		"cwd", input.Cwd,
 	)
-
-	// Return empty object — Claude Code expects 200 OK with valid JSON.
-	writeJSON(w, http.StatusOK, map[string]interface{}{})
+	writeJSON(w, http.StatusOK, emptyJSON)
 }
 
-// handleClaudeUserPromptSubmit evaluates user prompt text for prompt injection.
 func (s *Server) handleClaudeUserPromptSubmit(w http.ResponseWriter, r *http.Request, input *claudeHookInput) {
 	req := &models.EvaluationRequest{
 		EventID:   uuid.New().String(),
 		SessionID: input.SessionID,
 		Tool:      "UserPrompt",
-		Source:    "claude-code",
+		Source:    sourceClaudeCode,
 		Args: map[string]string{
 			"command": input.Prompt,
 			"content": input.Prompt,
 		},
 		Fields: map[string]string{
-			"tool":        "UserPrompt",
+			// event_type must be pre-set here so normalizePluginRequest doesn't
+			// overwrite it with "tool_call".
 			"event_type":  "user_prompt",
-			"source":      "claude-code",
-			"command":     input.Prompt,
-			"content":     input.Prompt,
 			"working_dir": input.Cwd,
 		},
 	}
 
-	normalizePluginRequest(req, r, s.config)
-
-	if err := validateEvaluationRequest(req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
-		slog.Warn("Claude prompt validation failed", "error", err, "remote_addr", r.RemoteAddr)
+	response := s.evaluateClaudeHook(w, r, req)
+	if response == nil {
 		return
-	}
-
-	response, err := s.evaluator.EvaluateWithContext(r.Context(), req)
-	if err != nil {
-		slog.Error("Claude prompt evaluation failed", "event_id", req.EventID, "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	if len(response.Alerts) > 0 {
-		s.storeMatchedAlerts(response, req)
 	}
 
 	decision, reason := actionToClaudeDecision(response)
-
-	// UserPromptSubmit does not use hookSpecificOutput — it uses exit-code
-	// semantics for command hooks but for HTTP hooks we return a simple object.
-	// Claude Code checks for a "decision" field at the top level.
-	if decision == "allow" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{})
+	if decision == claudeDecisionAllow {
+		writeJSON(w, http.StatusOK, emptyJSON)
 	} else {
-		resp := claudeHookResponse{
+		writeJSON(w, http.StatusOK, claudeHookResponse{
 			HookSpecificOutput: &claudeHookOutput{
-				HookEventName:          "UserPromptSubmit",
-				PermissionDecision:     decision,
+				HookEventName:            "UserPromptSubmit",
+				PermissionDecision:       decision,
 				PermissionDecisionReason: reason,
 			},
-		}
-		writeJSON(w, http.StatusOK, resp)
+		})
 	}
 }
 
-// claudeHookToEvalRequest translates a Claude Code hook input into an
-// EvaluationRequest suitable for the existing evaluation pipeline.
 func claudeHookToEvalRequest(input *claudeHookInput) *models.EvaluationRequest {
 	req := &models.EvaluationRequest{
 		EventID:   uuid.New().String(),
 		SessionID: input.SessionID,
 		ToolName:  input.ToolName,
-		Source:    "claude-code",
+		Source:    sourceClaudeCode,
 		RawParams: input.ToolInput,
 	}
 
-	// Extract top-level command for tools that have one, so it populates
-	// fields["command"] correctly after normalisation.
+	// Extract top-level command so it populates fields["command"] correctly
+	// after normalisation.
 	if cmd, ok := input.ToolInput["command"]; ok {
 		if cmdStr, ok := cmd.(string); ok {
 			req.Command = cmdStr
 		}
 	}
 
-	// Inject working directory into Fields so rules can match on it.
 	if input.Cwd != "" {
 		req.Fields = map[string]string{
 			"working_dir": input.Cwd,
@@ -208,14 +191,13 @@ func claudeHookToEvalRequest(input *claudeHookInput) *models.EvaluationRequest {
 func actionToClaudeDecision(response *evaluate.EvaluationResponse) (decision string, reason string) {
 	switch response.Action {
 	case models.ActionBlock:
-		decision = "deny"
+		decision = claudeDecisionDeny
 	case models.ActionRequireApproval:
-		decision = "ask"
+		decision = claudeDecisionAsk
 	default:
-		return "allow", ""
+		return claudeDecisionAllow, ""
 	}
 
-	// Build a human-readable reason from the first alert.
 	if len(response.Alerts) > 0 {
 		first := response.Alerts[0]
 		reason = fmt.Sprintf("AgentShield: %s (%s)", first.RuleName, first.Severity)
@@ -229,12 +211,6 @@ func actionToClaudeDecision(response *evaluate.EvaluationResponse) (decision str
 	return decision, reason
 }
 
-// isMaxBytesErr is a helper that wraps errors.As for http.MaxBytesError.
-func isMaxBytesErr(err error, target **http.MaxBytesError) bool {
-	return errors.As(err, target)
-}
-
-// writeJSON encodes v as JSON and writes it to w with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

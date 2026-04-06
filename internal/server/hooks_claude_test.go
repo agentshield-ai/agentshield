@@ -307,7 +307,7 @@ func TestClaudeHookToEvalRequest(t *testing.T) {
 	if req.ToolName != "Bash" {
 		t.Errorf("ToolName = %q, want Bash", req.ToolName)
 	}
-	if req.Source != "claude-code" {
+	if req.Source != sourceClaudeCode {
 		t.Errorf("Source = %q, want claude-code", req.Source)
 	}
 	if req.Command != "ls -la" {
