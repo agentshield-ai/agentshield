@@ -6,7 +6,6 @@ const S = {
   view: 'overview',
   hours: 24,
   page: { offset: 0, limit: 50 },
-  alertFilter: { severity: '', rule: '', session_id: '' },
 };
 
 // ─── API ───
@@ -72,7 +71,6 @@ function renderTimeline(buckets, width = 800, height = 160) {
   const w = width - pad.l - pad.r;
   const bw = Math.max(3, Math.min(28, (w / buckets.length) - 2));
   const maxVal = Math.max(1, ...buckets.map(b => b.total));
-  const scaleY = v => (height - pad.t - pad.b) * (1 - v / maxVal);
   let bars = '';
   buckets.forEach((b, i) => {
     const x = pad.l + i * (w / buckets.length) + (w / buckets.length - bw) / 2;
@@ -143,7 +141,6 @@ function renderDonut(data, size = 140) {
 }
 
 // ─── Drawer ───
-let _drawerOpen = false;
 function openDrawer(title, html) {
   let drawer = $('#drawer');
   let scrim = $('#scrim');
@@ -156,13 +153,11 @@ function openDrawer(title, html) {
   $('h2', drawer).textContent = title;
   $('.drawer-body', drawer).innerHTML = html;
   requestAnimationFrame(() => { drawer.classList.add('open'); scrim.classList.add('open'); });
-  _drawerOpen = true;
 }
 function closeDrawer() {
   const d = $('#drawer'), s = $('#scrim');
   if (d) d.classList.remove('open');
   if (s) s.classList.remove('open');
-  _drawerOpen = false;
 }
 
 // ─── Alert detail ───
@@ -300,7 +295,6 @@ views.alerts = async function(_, filterRule) {
 
   if (filterRule) {
     $('#alert-search').value = filterRule;
-    S.alertFilter.rule = filterRule;
   }
 
   async function load() {
@@ -486,10 +480,9 @@ views.investigate = async function() {
         return;
       }
 
-      // Otherwise, search for session, then try as event_id
-      const [sessAlerts, byEvent] = await Promise.allSettled([
+      // Otherwise, search as session_id
+      const [sessAlerts] = await Promise.allSettled([
         api('/api/v1/alerts', { session_id: q, limit: 100 }),
-        api('/api/v1/alerts', { limit: 20 }),
       ]);
 
       let found = false;
@@ -597,9 +590,12 @@ if (localStorage.getItem('as_theme') === 'light') {
 }
 
 // ─── Boot ───
+let _healthInterval;
 function boot() {
   checkHealth();
-  setInterval(checkHealth, 30000);
+  if (_healthInterval) clearInterval(_healthInterval);
+  _healthInterval = setInterval(checkHealth, 30000);
+  window.removeEventListener('hashchange', route);
   window.addEventListener('hashchange', route);
   route();
 }

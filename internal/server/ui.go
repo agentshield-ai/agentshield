@@ -16,8 +16,17 @@ import (
 //go:embed ui
 var uiFS embed.FS
 
+// parseQueryInt parses an integer query parameter with bounds validation.
+func parseQueryInt(r *http.Request, key string, defaultVal, minVal, maxVal int) int {
+	if v := r.URL.Query().Get(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= minVal && n <= maxVal {
+			return n
+		}
+	}
+	return defaultVal
+}
+
 // uiHandler serves the embedded SIEM Investigation Console.
-// It serves index.html for the root and /ui paths, and static assets under /ui/*.
 func (s *Server) uiHandler() http.Handler {
 	sub, _ := fs.Sub(uiFS, "ui")
 	fileServer := http.FileServer(http.FS(sub))
@@ -58,18 +67,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // handleTimeline returns time-bucketed alert counts.
 func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
-	hours := 24
-	if v := r.URL.Query().Get("hours"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 720 {
-			hours = n
-		}
-	}
-	bucketMin := 60
-	if v := r.URL.Query().Get("bucket_minutes"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1440 {
-			bucketMin = n
-		}
-	}
+	hours := parseQueryInt(r, "hours", 24, 1, 720)
+	bucketMin := parseQueryInt(r, "bucket_minutes", 60, 1, 1440)
 	data, err := s.store.GetTimeline(hours, bucketMin)
 	if err != nil {
 		slog.Error("Failed to get timeline", "error", err)
@@ -82,12 +81,7 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 
 // handleRules returns rule-level alert summaries.
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
-			limit = n
-		}
-	}
+	limit := parseQueryInt(r, "limit", 100, 1, 1000)
 	data, err := s.store.GetRuleSummaries(limit)
 	if err != nil {
 		slog.Error("Failed to get rule summaries", "error", err)
@@ -100,12 +94,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 
 // handleTopTools returns the most frequent tools in alerts.
 func (s *Server) handleTopTools(w http.ResponseWriter, r *http.Request) {
-	limit := 10
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
-	}
+	limit := parseQueryInt(r, "limit", 10, 1, 100)
 	data, err := s.store.GetTopTools(limit)
 	if err != nil {
 		slog.Error("Failed to get top tools", "error", err)
@@ -118,12 +107,7 @@ func (s *Server) handleTopTools(w http.ResponseWriter, r *http.Request) {
 
 // handleSessions returns session summaries.
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
-			limit = n
-		}
-	}
+	limit := parseQueryInt(r, "limit", 100, 1, 1000)
 	var since *time.Time
 	if v := r.URL.Query().Get("since"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {

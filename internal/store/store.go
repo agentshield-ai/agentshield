@@ -637,17 +637,23 @@ func (s *Store) GetRuleSummaries(limit int) ([]RuleSummary, error) {
 		limit = 200
 	}
 	q := `
-		SELECT a.rule_name,
-			COUNT(*) AS alert_count,
-			MAX(a.timestamp) AS last_seen,
-			-- severity is rule-level; pick any (MAX) as representative
-			MAX(a.severity) AS severity,
-			COALESCE(SUM(CASE WHEN f.feedback_type = 'false_positive' THEN 1 ELSE 0 END), 0) AS fp_count,
-			COALESCE(SUM(CASE WHEN f.feedback_type = 'true_positive' THEN 1 ELSE 0 END), 0) AS tp_count
-		FROM alerts a
-		LEFT JOIN feedback f ON f.rule_name = a.rule_name
-		GROUP BY a.rule_name
-		ORDER BY alert_count DESC
+		SELECT a.rule_name, a.alert_count, a.last_seen, a.severity,
+			COALESCE(fp.cnt, 0) AS fp_count,
+			COALESCE(tp.cnt, 0) AS tp_count
+		FROM (
+			SELECT rule_name, COUNT(*) AS alert_count,
+				MAX(timestamp) AS last_seen, MAX(severity) AS severity
+			FROM alerts GROUP BY rule_name
+		) a
+		LEFT JOIN (
+			SELECT rule_name, COUNT(*) AS cnt FROM feedback
+			WHERE feedback_type = 'false_positive' GROUP BY rule_name
+		) fp ON fp.rule_name = a.rule_name
+		LEFT JOIN (
+			SELECT rule_name, COUNT(*) AS cnt FROM feedback
+			WHERE feedback_type = 'true_positive' GROUP BY rule_name
+		) tp ON tp.rule_name = a.rule_name
+		ORDER BY a.alert_count DESC
 		LIMIT ?`
 	rows, err := s.db.Query(q, limit)
 	if err != nil {
