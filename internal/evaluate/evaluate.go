@@ -176,10 +176,19 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			req.Fields[k] = v
 		}
 
+		// Inject cross-session correlation fields for systemic attack detection
+		crossFields := e.sessionRegistry.CrossSessionFields(req.SessionID, 5*time.Minute)
+		for k, v := range crossFields {
+			req.Fields[k] = v
+		}
+
 		// Add session context to OTel span
 		if e.tracer != nil {
 			span := trace.SpanFromContext(ctx)
 			for k, v := range sessionFields {
+				span.SetAttributes(attribute.String(k, v))
+			}
+			for k, v := range crossFields {
 				span.SetAttributes(attribute.String(k, v))
 			}
 		}
@@ -264,7 +273,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Record this event in the session window (after evaluation, so the current
 	// event is visible to the NEXT evaluation, not this one)
 	if e.sessionRegistry != nil && req.SessionID != "" {
-		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, alerts, string(action), false)
+		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, string(action), false)
 	}
 
 	// Fire deep triage async once at the end

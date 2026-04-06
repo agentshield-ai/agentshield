@@ -96,6 +96,8 @@ Exports evaluation telemetry as OTel traces and metrics:
 Per-session sliding window that tracks tool call sequences:
 - **Registry**: In-memory, concurrent-safe, per-session ring buffer with configurable TTL and max events.
 - **Derived fields**: `session.recent_tools`, `session.tool_count`, `session.unique_tool_count`, `session.alert_count`, `session.approval_count`, `session.override_count` — injected into Sigma evaluation context before rule matching.
+- **Cross-session correlation**: `session.cross_session_alert_count`, `session.cross_session_count`, `session.cross_session_tool_overlap` — derived from all active sessions within a 5-minute correlation window, injected for systemic attack detection.
+- **Override tracking**: `POST /api/v1/override` endpoint for plugins to report user overrides of block/require_approval verdicts. Overrides update `session.override_count` for downstream Sigma rules.
 - **Cleanup**: Background goroutine evicts expired sessions.
 - **Config**: `session:` section in config.yaml with `enabled`, `window_sec`, `max_events`.
 - **Sigma rules**: `ai_agent_recon_then_exfil.yml` (detects recon→exfil chains), `ai_agent_session_velocity_anomaly.yml` (detects high tool-call velocity), `ai_agent_approval_fatigue.yml` (detects excessive require_approval verdicts), `ai_agent_override_escalation.yml` (detects repeated user overrides of blocks).

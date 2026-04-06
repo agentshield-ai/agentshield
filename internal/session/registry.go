@@ -11,11 +11,12 @@ import (
 
 // Event represents a single tool call in a session timeline.
 type Event struct {
-	Tool      string
-	Alerts    []engine.RuleResult
-	Action    string // Verdict action: "allow", "block", "require_approval", "log"
-	Overridden bool  // Whether the user overrode a block/require_approval
-	Timestamp time.Time
+	Tool       string
+	EventID    string // Evaluation event ID for override correlation
+	Alerts     []engine.RuleResult
+	Action     string // Verdict action: "allow", "block", "require_approval", "log"
+	Overridden bool   // Whether the user overrode a block/require_approval
+	Timestamp  time.Time
 }
 
 // Window holds the sliding window of events for a single session.
@@ -73,11 +74,11 @@ func WithMaxSessions(n int) RegistryOption {
 
 // Record adds a tool call event to the given session's window.
 func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
-	r.RecordWithVerdict(sessionID, tool, alerts, "", false)
+	r.RecordWithVerdict(sessionID, tool, "", alerts, "", false)
 }
 
 // RecordWithVerdict adds a tool call event with verdict metadata to the session window.
-func (r *Registry) RecordWithVerdict(sessionID, tool string, alerts []engine.RuleResult, action string, overridden bool) {
+func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []engine.RuleResult, action string, overridden bool) {
 	if sessionID == "" {
 		return
 	}
@@ -99,6 +100,7 @@ func (r *Registry) RecordWithVerdict(sessionID, tool string, alerts []engine.Rul
 	now := time.Now()
 	state.events = append(state.events, Event{
 		Tool:       tool,
+		EventID:    eventID,
 		Alerts:     alerts,
 		Action:     action,
 		Overridden: overridden,
@@ -183,6 +185,37 @@ func (r *Registry) Stats() int {
 	return len(r.sessions)
 }
 
+// RecordOverride marks the most recent event in a session as overridden by
+// the user. Returns true if the override was recorded, false if the session
+// or event was not found.
+func (r *Registry) RecordOverride(sessionID, eventID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, ok := r.sessions[sessionID]
+	if !ok || len(state.events) == 0 {
+		return false
+	}
+
+	// If eventID is provided, find and mark that specific event.
+	// Otherwise mark the most recent event.
+	if eventID != "" {
+		for i := len(state.events) - 1; i >= 0; i-- {
+			if state.events[i].EventID == eventID {
+				state.events[i].Overridden = true
+				return true
+			}
+		}
+		return false
+	}
+
+	state.events[len(state.events)-1].Overridden = true
+	return true
+}
+
 // DeriveFields returns Sigma-compatible fields derived from the session's
 // event window.
 func (r *Registry) DeriveFields(sessionID string) map[string]string {
@@ -215,5 +248,70 @@ func (r *Registry) DeriveFields(sessionID string) map[string]string {
 		"session.alert_count":       fmt.Sprintf("%d", alertCount),
 		"session.approval_count":    fmt.Sprintf("%d", approvalCount),
 		"session.override_count":    fmt.Sprintf("%d", overrideCount),
+	}
+}
+
+// CrossSessionFields returns Sigma-compatible fields derived from all active
+// sessions, providing a global view for systemic/coordinated attack detection.
+// The correlationWindow limits analysis to events within the given duration.
+func (r *Registry) CrossSessionFields(excludeSessionID string, correlationWindow time.Duration) map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cutoff := time.Now().Add(-correlationWindow)
+	totalAlerts := 0
+	toolCounts := make(map[string]int)
+	sessionCount := 0
+
+	for id, state := range r.sessions {
+		if id == excludeSessionID {
+			continue
+		}
+		sessionHasRecent := false
+		for _, ev := range state.events {
+			if ev.Timestamp.Before(cutoff) {
+				continue
+			}
+			sessionHasRecent = true
+			totalAlerts += len(ev.Alerts)
+			toolCounts[ev.Tool]++
+		}
+		if sessionHasRecent {
+			sessionCount++
+		}
+	}
+
+	if sessionCount == 0 {
+		return map[string]string{
+			"session.cross_session_alert_count": "0",
+			"session.cross_session_count":       "0",
+			"session.cross_session_tool_overlap": "0.0",
+		}
+	}
+
+	// Calculate tool overlap: what fraction of this session's tools appear in other sessions
+	overlap := 0.0
+	if excludeSessionID != "" {
+		if state, ok := r.sessions[excludeSessionID]; ok {
+			myTools := make(map[string]struct{})
+			for _, ev := range state.events {
+				myTools[ev.Tool] = struct{}{}
+			}
+			if len(myTools) > 0 {
+				matchCount := 0
+				for tool := range myTools {
+					if toolCounts[tool] > 0 {
+						matchCount++
+					}
+				}
+				overlap = float64(matchCount) / float64(len(myTools))
+			}
+		}
+	}
+
+	return map[string]string{
+		"session.cross_session_alert_count":  fmt.Sprintf("%d", totalAlerts),
+		"session.cross_session_count":        fmt.Sprintf("%d", sessionCount),
+		"session.cross_session_tool_overlap": fmt.Sprintf("%.2f", overlap),
 	}
 }
