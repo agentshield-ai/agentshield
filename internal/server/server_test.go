@@ -40,6 +40,7 @@ func (s *Server) setupTestRouter() *chi.Mux {
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/evaluate", s.handleEvaluate)
+		r.Post("/hooks/claude", s.handleClaudeHook)
 		r.Get("/health", s.handleHealth)
 		r.Get("/alerts", s.handleAlerts)
 		r.Post("/audit", s.handleAuditEvent)
