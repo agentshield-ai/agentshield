@@ -195,6 +195,25 @@ func isFPCandidate(result ReplayResult) string {
 		return "read of non-sensitive path"
 	}
 
+	// Content retrieval from well-known benign domains
+	if tool == "web_fetch" || tool == "fetch" || tool == "http" || tool == "webfetch" {
+		benignDomains := []string{
+			"github.com", "arxiv.org", "stackoverflow.com", "docs.python.org",
+			"developer.mozilla.org", "wikipedia.org", "npmjs.com", "pypi.org",
+			"golang.org", "pkg.go.dev", "crates.io", "rubygems.org",
+		}
+		for _, domain := range benignDomains {
+			if strings.Contains(cmd, domain) {
+				return "content retrieval from known-benign domain: " + domain
+			}
+		}
+	}
+
+	// Heredoc file creation (cat > file.py << 'EOF') is writing, not executing
+	if strings.HasPrefix(cmd, "cat ") && strings.Contains(cmd, "<<") {
+		return "heredoc file creation, not execution"
+	}
+
 	return ""
 }
 
