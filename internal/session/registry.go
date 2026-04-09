@@ -368,11 +368,11 @@ func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlation
 // appear in other sessions' recent events. Must be called with r.mu held.
 func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow time.Duration) string {
 	if excludeSessionID == "" {
-		return "0.0"
+		return "0.00"
 	}
 	state, ok := r.sessions[excludeSessionID]
 	if !ok || len(state.events) == 0 {
-		return "0.0"
+		return "0.00"
 	}
 
 	myTools := make(map[string]struct{})
@@ -380,7 +380,7 @@ func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow
 		myTools[ev.Tool] = struct{}{}
 	}
 	if len(myTools) == 0 {
-		return "0.0"
+		return "0.00"
 	}
 
 	cutoff := time.Now().Add(-correlationWindow)

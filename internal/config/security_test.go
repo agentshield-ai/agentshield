@@ -9,39 +9,40 @@ import (
 // TestSSRFBypassVectors verifies H-1: SSRF protection catches bypass vectors
 // like hex-encoded IPs, IPv6 loopback, and URL userinfo.
 func TestSSRFBypassVectors(t *testing.T) {
+	_, dnsErr := net.LookupIP("api.openai.com")
+	hasDNS := dnsErr == nil
+
 	tests := []struct {
-		name     string
-		url      string
-		expected bool // true = private/local
+		name        string
+		url         string
+		expected    bool // true = private/local
+		requiresDNS bool
 	}{
-		{"plain localhost", "https://localhost/api", true},
-		{"127.0.0.1", "https://127.0.0.1/api", true},
-		{"IPv6 loopback", "https://[::1]/api", true},
-		{"10.x private", "https://10.0.0.1/api", true},
-		{"192.168.x private", "https://192.168.1.1/api", true},
-		{"172.16.x private", "https://172.16.0.1/api", true},
-		{"unspecified 0.0.0.0", "https://0.0.0.0/api", true},
-		{"ip6-localhost", "https://ip6-localhost/api", true},
-		{"malformed URL fails closed", "ht!tp://broken", true},
-		{"empty hostname fails closed", "https:///path", true},
-		{"public IP allowed", "https://8.8.8.8/api", false},
-		{"public domain allowed", "https://api.openai.com/v1", false},
+		{"plain localhost", "https://localhost/api", true, false},
+		{"127.0.0.1", "https://127.0.0.1/api", true, false},
+		{"IPv6 loopback", "https://[::1]/api", true, false},
+		{"10.x private", "https://10.0.0.1/api", true, false},
+		{"192.168.x private", "https://192.168.1.1/api", true, false},
+		{"172.16.x private", "https://172.16.0.1/api", true, false},
+		{"unspecified 0.0.0.0", "https://0.0.0.0/api", true, false},
+		{"ip6-localhost", "https://ip6-localhost/api", true, false},
+		{"malformed URL fails closed", "ht!tp://broken", true, false},
+		{"empty hostname fails closed", "https:///path", true, false},
+		{"public IP allowed", "https://8.8.8.8/api", false, false},
+		{"public domain allowed", "https://api.openai.com/v1", false, true},
 		// IPv4-mapped IPv6 bypass vectors (new hardening)
-		{"IPv4-mapped loopback", "https://[::ffff:127.0.0.1]/api", true},
-		{"IPv4-mapped private 10.x", "https://[::ffff:10.0.0.1]/api", true},
-		{"IPv4-mapped private 192.168.x", "https://[::ffff:192.168.1.1]/api", true},
-		{"IPv4-mapped public allowed", "https://[::ffff:8.8.8.8]/api", false},
+		{"IPv4-mapped loopback", "https://[::ffff:127.0.0.1]/api", true, false},
+		{"IPv4-mapped private 10.x", "https://[::ffff:10.0.0.1]/api", true, false},
+		{"IPv4-mapped private 192.168.x", "https://[::ffff:192.168.1.1]/api", true, false},
+		{"IPv4-mapped public allowed", "https://[::ffff:8.8.8.8]/api", false, false},
 		// URL userinfo SSRF bypass vector
-		{"userinfo bypass attempt", "https://admin@127.0.0.1/api", true},
+		{"userinfo bypass attempt", "https://admin@127.0.0.1/api", true, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Skip DNS-dependent test cases when DNS is unavailable
-			if tt.name == "public domain allowed" {
-				if _, err := net.LookupIP("api.openai.com"); err != nil {
-					t.Skip("skipping: DNS resolution unavailable")
-				}
+			if tt.requiresDNS && !hasDNS {
+				t.Skip("DNS resolution unavailable")
 			}
 			result := IsPrivateOrLocalURL(tt.url)
 			if result != tt.expected {
