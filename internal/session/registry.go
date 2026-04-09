@@ -320,7 +320,12 @@ func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlation
 	totalAlerts := 0
 	sessionCount := 0
 
-	for _, state := range r.sessions {
+	for id, state := range r.sessions {
+		// Skip the excluded session entirely so cross-session metrics
+		// reflect only *other* sessions.
+		if id == excludeSessionID {
+			continue
+		}
 		sessionHasRecent := false
 		for _, ev := range state.events {
 			if ev.Timestamp.Before(cutoff) {
@@ -332,21 +337,6 @@ func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlation
 		if sessionHasRecent {
 			sessionCount++
 		}
-	}
-
-	// Exclude the current session from the count
-	if excludeSessionID != "" {
-		if state, ok := r.sessions[excludeSessionID]; ok {
-			for _, ev := range state.events {
-				if !ev.Timestamp.Before(cutoff) {
-					sessionCount--
-					break
-				}
-			}
-		}
-	}
-	if sessionCount < 0 {
-		sessionCount = 0
 	}
 
 	// Cache the session-independent parts
@@ -375,15 +365,17 @@ func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow
 		return "0.00"
 	}
 
+	cutoff := time.Now().Add(-correlationWindow)
+
 	myTools := make(map[string]struct{})
 	for _, ev := range state.events {
-		myTools[ev.Tool] = struct{}{}
+		if !ev.Timestamp.Before(cutoff) {
+			myTools[ev.Tool] = struct{}{}
+		}
 	}
 	if len(myTools) == 0 {
 		return "0.00"
 	}
-
-	cutoff := time.Now().Add(-correlationWindow)
 	otherTools := make(map[string]struct{})
 	for id, s := range r.sessions {
 		if id == excludeSessionID {
