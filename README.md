@@ -12,11 +12,29 @@ Agent tool call → AgentShield engine → Sigma rule match? → block / require
 
 ## Install
 
+### OpenClaw
+
 ```bash
 openclaw skill install agentshield-ai/agentshield
 ```
 
 This downloads the engine binary, clones the Sigma rule corpus, generates an auth token, and starts the engine as a background service. Restart your OpenClaw session afterwards.
+
+### Hermes Agent
+
+Copy the plugin into your Hermes plugins directory:
+
+```bash
+cp -r plugins/hermes ~/.hermes/plugins/agentshield
+```
+
+Set the auth token (optional for local dev):
+
+```bash
+export AGENTSHIELD_AUTH_TOKEN="your-token"
+```
+
+See [plugins/hermes/README.md](plugins/hermes/README.md) for full configuration options.
 
 ### Verify
 
@@ -56,9 +74,10 @@ AgentShield sits between an AI agent and its tools. Every tool call (shell comma
 ┌─────────────┐     ┌──────────────────────────────────────────────────┐     ┌────────────┐
 │   Plugin     │     │                   Engine                        │     │   Rules    │
 │              │────▶│  Cache ──▶ Sigma Eval ──▶ Triage (optional LLM) │────▶│  45+ Sigma │
-│  OpenClaw    │     │                                                 │     │  patterns  │
-│              │◀────│  Action: block / require_approval / allow / log │     └────────────┘
-└─────────────┘     └──────────────────────────────────────────────────┘
+│  OpenClaw /  │     │                                                 │     │  patterns  │
+│  Hermes /    │◀────│  Action: block / require_approval / allow / log │     └────────────┘
+│  Claude Code │     └──────────────────────────────────────────────────┘
+└─────────────┘
 ```
 
 ### Evaluation Modes
@@ -144,6 +163,9 @@ go test -v -run TestEvaluate_PromptInjection ./internal/evaluate/...
 # OpenClaw plugin
 cd plugins/openclaw && npm install && npm test
 
+# Hermes plugin
+cd plugins/hermes && python -m pytest tests/ -v
+
 # Integration tests (requires running engine)
 cd plugins/openclaw && npm run test:integration
 ```
@@ -179,7 +201,9 @@ internal/
   session/              Per-session behavioural sequencing
 pkg/sigma/              Forked sigmalite library
 plugins/
-  openclaw/             TypeScript plugin (circuit-breaker pattern)
+  openclaw/             TypeScript plugin for OpenClaw
+  hermes/               Python plugin for Hermes Agent
+  claude/               Hook-based integration for Claude Code
 rules/rules/ai_agent/   45+ Sigma detection rules
 docs/                   API reference, deployment, configuration guides
 bench/                  Benchmark suites and test cases
