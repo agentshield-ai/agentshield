@@ -107,14 +107,8 @@ def _build_command(
         cmd = args.get("command") or args.get("cmd")
         return str(cmd) if cmd else None
 
-    if canonical == "write":
-        return f"Write: {_file_path(args)}"
-
-    if canonical == "read":
-        return f"Read: {_file_path(args)}"
-
-    if canonical == "edit":
-        return f"Edit: {_file_path(args)}"
+    if canonical in ("write", "read", "edit"):
+        return f"{canonical.capitalize()}: {_file_path(args)}"
 
     if canonical == "browser":
         action = _str(args.get("action", "navigate"))
@@ -133,7 +127,6 @@ def _build_command(
 
     if canonical == "code_execute":
         code = _str(args.get("code") or args.get("script", ""))
-        # Truncate for readability; full code goes in params
         if len(code) > 200:
             code = code[:200] + "..."
         return f"Execute: {code}" if code else None

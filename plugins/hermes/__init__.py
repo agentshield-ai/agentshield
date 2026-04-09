@@ -6,9 +6,9 @@ standard Hermes plugin via ``~/.hermes/plugins/agentshield/``.
 
 Hooks registered
 ~~~~~~~~~~~~~~~~
-- ``pre_tool_call``  — synchronous security evaluation before each tool runs
-- ``post_tool_call`` — fire-and-forget audit report after each tool completes
-- ``on_session_start`` / ``on_session_end`` — lifecycle tracking
+- ``pre_tool_call``  -- synchronous security evaluation before each tool runs
+- ``post_tool_call`` -- fire-and-forget audit report after each tool completes
+- ``on_session_start`` / ``on_session_end`` -- lifecycle tracking
 """
 
 from __future__ import annotations
@@ -28,14 +28,12 @@ from .event_builder import (
     build_evaluation_request,
     build_lifecycle_event,
 )
-from .normalise import normalise_tool_name
+from .normalise import normalise_tool_call
 
 logger = logging.getLogger("agentshield")
 
-# Max age (seconds) for entries in the pending evaluations correlation map.
 _CORRELATION_TTL_S = 60.0
 
-# Severity ordering for notification filtering.
 _SEVERITY_ORDER: Dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 _NOTIFY_THRESHOLD: Dict[str, int] = {"all": 0, "high": 2, "critical": 3, "none": 999}
 
@@ -60,14 +58,13 @@ def _format_alert_message(
     action: str,
     notify_level: str,
 ) -> Optional[str]:
-    """Build a human-readable alert string for the user, or ``None``."""
+    """Build a human-readable alert string, or ``None`` if below threshold."""
     alerts = response.get("alerts") or []
     if not alerts:
         return None
 
     threshold = _NOTIFY_THRESHOLD.get(notify_level, 2)
-    meets = any(_SEVERITY_ORDER.get(a.get("severity", ""), 0) >= threshold for a in alerts)
-    if not meets:
+    if not any(_SEVERITY_ORDER.get(a.get("severity", ""), 0) >= threshold for a in alerts):
         return None
 
     top = alerts[0]
@@ -108,27 +105,33 @@ class _CorrelationTracker:
         self._lock = threading.Lock()
         self._pending: Dict[str, Deque[Tuple[str, float]]] = {}
 
+    @staticmethod
+    def _key(task_id: Optional[str], tool_name: str) -> str:
+        return f"{task_id or ''}:{tool_name}"
+
     def push(self, task_id: Optional[str], tool_name: str, event_id: str) -> None:
-        key = f"{task_id or ''}:{tool_name}"
+        key = self._key(task_id, tool_name)
         with self._lock:
-            bucket = self._pending.setdefault(key, deque())
-            bucket.append((event_id, time.monotonic()))
+            self._pending.setdefault(key, deque()).append(
+                (event_id, time.monotonic())
+            )
 
     def pop(self, task_id: Optional[str], tool_name: str) -> Optional[str]:
-        key = f"{task_id or ''}:{tool_name}"
+        key = self._key(task_id, tool_name)
         now = time.monotonic()
         with self._lock:
-            # Purge stale entries across all buckets opportunistically.
-            for k in list(self._pending):
-                q = self._pending[k]
-                while q and (now - q[0][1]) > _CORRELATION_TTL_S:
-                    q.popleft()
-                if not q:
-                    del self._pending[k]
-
             bucket = self._pending.get(key)
             if not bucket:
                 return None
+
+            # Purge stale entries in this bucket only.
+            while bucket and (now - bucket[0][1]) > _CORRELATION_TTL_S:
+                bucket.popleft()
+
+            if not bucket:
+                del self._pending[key]
+                return None
+
             event_id, _ = bucket.popleft()
             if not bucket:
                 del self._pending[key]
@@ -140,9 +143,8 @@ class _CorrelationTracker:
 # ---------------------------------------------------------------------------
 
 def register(ctx: Any) -> None:
-    """Hermes plugin entry-point — called once at startup."""
+    """Hermes plugin entry-point -- called once at startup."""
 
-    # Build config from Hermes settings + env vars.
     raw_settings: Dict[str, Any] = {}
     for field_name in (
         "enabled", "endpoint", "auth_token", "timeout_ms", "timeout_policy",
@@ -184,17 +186,15 @@ def register(ctx: Any) -> None:
         Returns ``{"block": True, "reason": "..."}`` to prevent execution,
         or ``None`` to allow.
         """
-        canonical = normalise_tool_name(tool_name)
+        safe_args = args if isinstance(args, dict) else {}
+        canonical, command = normalise_tool_call(tool_name, safe_args)
 
-        # Skip list takes precedence.
         if tool_name in skip_set or canonical in skip_set:
             return None
 
-        # If an intercept list is configured, only evaluate listed tools.
         if intercept_set and tool_name not in intercept_set and canonical not in intercept_set:
             return None
 
-        # Circuit breaker check.
         if breaker.is_open():
             logger.warning(
                 "AgentShield circuit breaker open, applying %s policy",
@@ -204,8 +204,10 @@ def register(ctx: Any) -> None:
 
         request = build_evaluation_request(
             tool_name,
-            args if isinstance(args, dict) else {},
+            safe_args,
             task_id=task_id,
+            canonical_name=canonical,
+            command=command,
         )
 
         try:
@@ -220,7 +222,6 @@ def register(ctx: Any) -> None:
                     effective_mode,
                 )
 
-            # Log triage results.
             for triage in response.get("triage_results") or []:
                 logger.info(
                     "AgentShield triage: %s (%s) - %s",
@@ -260,7 +261,6 @@ def register(ctx: Any) -> None:
 
                 return {"block": True, "reason": reason}
 
-            # High-confidence triage allow overrides rule alerts.
             has_hc_allow = any(
                 t.get("verdict") == "allow" and (t.get("confidence") or 0) > 0.8
                 for t in (response.get("triage_results") or [])
@@ -282,9 +282,8 @@ def register(ctx: Any) -> None:
                 if msg:
                     logger.warning(msg)
 
-            # Queue for post_tool_call correlation.
             correlation.push(task_id, tool_name, request["event_id"])
-            return None  # allow
+            return None
 
         except Exception as exc:
             breaker.record_failure()
@@ -301,31 +300,30 @@ def register(ctx: Any) -> None:
         **kwargs: Any,
     ) -> None:
         """Send a fire-and-forget audit report after tool execution."""
+        safe_args = args if isinstance(args, dict) else {}
         corr_id = correlation.pop(task_id, tool_name) or str(uuid.uuid4())
-
-        is_error = isinstance(result, str) and result.startswith("Error")
-        error_message = result if is_error else None
+        canonical, _ = normalise_tool_call(tool_name, safe_args)
 
         report = build_audit_report(
             tool_name,
-            args if isinstance(args, dict) else {},
+            safe_args,
             result,
             correlation_id=corr_id,
             task_id=task_id,
-            is_error=is_error,
-            error_message=error_message,
+            canonical_name=canonical,
         )
         client.send_audit(report)
 
     # ---- lifecycle hooks ------------------------------------------------
 
+    def _on_lifecycle(event_type: str, task_id: Optional[str] = None, **kwargs: Any) -> None:
+        client.send_lifecycle(build_lifecycle_event(event_type, task_id=task_id))
+
     def _on_session_start(task_id: Optional[str] = None, **kwargs: Any) -> None:
-        event = build_lifecycle_event("session_start", task_id=task_id)
-        client.send_lifecycle(event)
+        _on_lifecycle("session_start", task_id)
 
     def _on_session_end(task_id: Optional[str] = None, **kwargs: Any) -> None:
-        event = build_lifecycle_event("session_end", task_id=task_id)
-        client.send_lifecycle(event)
+        _on_lifecycle("session_end", task_id)
 
     # ---- register hooks -------------------------------------------------
 

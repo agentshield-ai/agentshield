@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from .config import AgentShieldConfig
 
@@ -37,7 +38,20 @@ class AgentShieldClient:
         self._feedback_endpoint = f"{base_url}/feedback"
         self._override_endpoint = f"{base_url}/override"
         self._timeout_s = config.timeout_ms / 1000.0
-        self._auth_token = config.auth_token
+
+        self._headers: Dict[str, str] = {
+            "Content-Type": "application/json; charset=utf-8",
+            "X-AgentShield-Version": CONTRACT_VERSION,
+        }
+        if config.auth_token:
+            self._headers["Authorization"] = f"Bearer {config.auth_token}"
+
+        # Bounded background queue for fire-and-forget requests.
+        self._bg_queue: queue.Queue[Tuple[str, Dict[str, Any], str]] = queue.Queue(
+            maxsize=256
+        )
+        self._bg_worker = threading.Thread(target=self._bg_loop, daemon=True)
+        self._bg_worker.start()
 
     # -- synchronous evaluation -------------------------------------------
 
@@ -87,7 +101,7 @@ class AgentShieldClient:
         """Return *True* if the engine is reachable."""
         try:
             req = urllib.request.Request(self._health_endpoint, method="GET")
-            for key, val in self._build_headers().items():
+            for key, val in self._headers.items():
                 req.add_unredirected_header(key, val)
             with urllib.request.urlopen(req, timeout=2) as resp:
                 return 200 <= resp.status < 300
@@ -104,9 +118,9 @@ class AgentShieldClient:
     ) -> Dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
-        # Use add_unredirected_header to preserve exact header case
-        # (urllib's default add_header lowercases via .capitalize()).
-        for key, val in self._build_headers().items():
+        # add_unredirected_header preserves exact header case
+        # (urllib's add_header lowercases via .capitalize()).
+        for key, val in self._headers.items():
             req.add_unredirected_header(key, val)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -126,22 +140,17 @@ class AgentShieldClient:
         payload: Dict[str, Any],
         label: str,
     ) -> None:
-        """POST in a background thread, swallowing errors."""
+        """Enqueue a background POST, dropping silently if the queue is full."""
+        try:
+            self._bg_queue.put_nowait((url, payload, label))
+        except queue.Full:
+            logger.debug("AgentShield %s queue full, dropping", label)
 
-        def _send() -> None:
+    def _bg_loop(self) -> None:
+        """Background worker that drains the fire-and-forget queue."""
+        while True:
+            url, payload, label = self._bg_queue.get()
             try:
                 self._post(url, payload, timeout=5.0)
             except Exception as exc:
                 logger.debug("AgentShield %s send failed: %s", label, exc)
-
-        thread = threading.Thread(target=_send, daemon=True)
-        thread.start()
-
-    def _build_headers(self) -> Dict[str, str]:
-        headers: Dict[str, str] = {
-            "Content-Type": "application/json; charset=utf-8",
-            "X-AgentShield-Version": CONTRACT_VERSION,
-        }
-        if self._auth_token:
-            headers["Authorization"] = f"Bearer {self._auth_token}"
-        return headers

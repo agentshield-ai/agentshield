@@ -6,13 +6,31 @@ JSON contract (same wire format as the OpenClaw plugin).
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from .normalise import normalise_tool_call
 
 MAX_RESULT_SUMMARY_LENGTH = 1000
+
+
+def _base_envelope(
+    event_type: str,
+    *,
+    task_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Common fields shared by all event payloads."""
+    return {
+        "event_id": str(uuid.uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_type": event_type,
+        "source": "hermes",
+        "agent_id": agent_id,
+        "session_id": task_id,
+    }
 
 
 def build_evaluation_request(
@@ -21,27 +39,30 @@ def build_evaluation_request(
     *,
     task_id: Optional[str] = None,
     agent_id: Optional[str] = None,
+    canonical_name: Optional[str] = None,
+    command: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build an ``EvaluationRequest`` payload for ``POST /api/v1/evaluate``."""
-    canonical, command = normalise_tool_call(tool_name, args)
+    """Build an ``EvaluationRequest`` payload for ``POST /api/v1/evaluate``.
+
+    If *canonical_name* and *command* are provided, normalization is skipped
+    (the caller already did it).
+    """
+    if canonical_name is None:
+        canonical_name, command = normalise_tool_call(tool_name, args)
 
     params = dict(args)
     if command:
         params["command"] = command
 
-    return {
-        "event_id": str(uuid.uuid4()),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "event_type": "tool_call",
-        "tool_name": canonical,
-        "source": "hermes",
-        "command": command,
-        "params": params,
-        "agent_id": agent_id,
-        "session_id": task_id,
-        "working_dir": None,
-        "data": {},
-    }
+    envelope = _base_envelope("tool_call", task_id=task_id, agent_id=agent_id)
+    envelope.update(
+        tool_name=canonical_name,
+        command=command,
+        params=params,
+        working_dir=None,
+        data={},
+    )
+    return envelope
 
 
 def build_audit_report(
@@ -52,29 +73,30 @@ def build_audit_report(
     correlation_id: str,
     task_id: Optional[str] = None,
     agent_id: Optional[str] = None,
-    is_error: bool = False,
-    error_message: Optional[str] = None,
+    canonical_name: Optional[str] = None,
     duration_ms: float = 0,
 ) -> Dict[str, Any]:
-    """Build an ``AuditReport`` payload for ``POST /api/v1/audit``."""
-    canonical, _ = normalise_tool_call(tool_name, args)
+    """Build an ``AuditReport`` payload for ``POST /api/v1/audit``.
 
-    return {
-        "event_id": str(uuid.uuid4()),
-        "correlation_id": correlation_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "event_type": "tool_result",
-        "tool_name": canonical,
-        "source": "hermes",
-        "result_summary": _summarise_result(result),
-        "is_error": is_error,
-        "error_message": error_message,
-        "duration_ms": duration_ms,
-        "agent_id": agent_id,
-        "session_id": task_id,
-        "working_dir": None,
-        "data": {},
-    }
+    Error status is derived from *result* automatically.
+    """
+    if canonical_name is None:
+        canonical_name, _ = normalise_tool_call(tool_name, args)
+
+    is_error = isinstance(result, str) and result.startswith("Error")
+
+    envelope = _base_envelope("tool_result", task_id=task_id, agent_id=agent_id)
+    envelope.update(
+        correlation_id=correlation_id,
+        tool_name=canonical_name,
+        result_summary=_summarise_result(result),
+        is_error=is_error,
+        error_message=result if is_error else None,
+        duration_ms=duration_ms,
+        working_dir=None,
+        data={},
+    )
+    return envelope
 
 
 def build_lifecycle_event(
@@ -85,15 +107,9 @@ def build_lifecycle_event(
     data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a ``LifecycleEvent`` payload for ``POST /api/v1/lifecycle``."""
-    return {
-        "event_id": str(uuid.uuid4()),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "event_type": event_type,
-        "source": "hermes",
-        "agent_id": agent_id,
-        "session_id": task_id,
-        "data": data or {},
-    }
+    envelope = _base_envelope(event_type, task_id=task_id, agent_id=agent_id)
+    envelope["data"] = data or {}
+    return envelope
 
 
 def _summarise_result(result: Any) -> Optional[str]:
@@ -104,8 +120,6 @@ def _summarise_result(result: Any) -> Optional[str]:
         text = result
     else:
         try:
-            import json
-
             text = json.dumps(result)
         except (TypeError, ValueError):
             text = str(result)

@@ -34,7 +34,7 @@ class TestCircuitBreaker:
         cb.record_failure()
         cb.record_success()
 
-        # Counter reset — need 3 more to trip.
+        # Counter reset -- need 3 more to trip.
         cb.record_failure()
         cb.record_failure()
         assert cb.get_state() == "closed"
@@ -49,7 +49,6 @@ class TestCircuitBreaker:
         assert cb.get_state() == "open"
         assert cb.is_open() is True
 
-        # Advance past recovery interval.
         with patch.object(time, "monotonic", return_value=time.monotonic() + 31):
             assert cb.is_open() is False
             assert cb.get_state() == "half-open"
@@ -79,5 +78,4 @@ class TestCircuitBreaker:
         cb = CircuitBreaker(failure_threshold=1, recovery_interval_ms=30_000)
         cb.record_failure()
         assert cb.is_open() is True
-        # Not enough time has passed.
         assert cb.is_open() is True
