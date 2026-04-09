@@ -266,7 +266,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Record this event in the session window (after evaluation, so the current
 	// event is visible to the NEXT evaluation, not this one)
 	if e.sessionRegistry != nil && req.SessionID != "" {
-		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, string(action), false)
+		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, action, false)
 	}
 
 	// Fire deep triage async once at the end
