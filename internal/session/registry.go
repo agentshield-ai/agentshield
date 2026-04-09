@@ -13,10 +13,10 @@ import (
 // Event represents a single tool call in a session timeline.
 type Event struct {
 	Tool       string
-	EventID    string // Evaluation event ID for override correlation
+	EventID    string
 	Alerts     []engine.RuleResult
-	Action     string // Must match models.Action constants
-	Overridden bool   // Whether the user overrode a block/require_approval
+	Action     models.Action
+	Overridden bool
 	Timestamp  time.Time
 }
 
@@ -33,10 +33,12 @@ type Registry struct {
 	maxSessions int
 	ttl         time.Duration
 
-	// Cached cross-session fields to avoid recomputation on every evaluation.
-	crossCache      map[string]string
-	crossCacheTime  time.Time
-	crossCacheTTL   time.Duration
+	// Cached cross-session aggregates to avoid rescanning all sessions on every evaluation.
+	crossCache             map[string]string // non-nil when cache is valid
+	crossCacheTotalAlerts   int
+	crossCacheTotalSessions int
+	crossCacheTime         time.Time
+	crossCacheTTL          time.Duration
 }
 
 type sessionState struct {
@@ -81,11 +83,11 @@ func WithMaxSessions(n int) RegistryOption {
 
 // Record adds a tool call event to the given session's window.
 func (r *Registry) Record(sessionID, tool string, alerts []engine.RuleResult) {
-	r.RecordWithVerdict(sessionID, tool, "", alerts, "", false)
+	r.RecordWithVerdict(sessionID, tool, "", alerts, models.ActionAllow, false)
 }
 
 // RecordWithVerdict adds a tool call event with verdict metadata to the session window.
-func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []engine.RuleResult, action string, overridden bool) {
+func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []engine.RuleResult, action models.Action, overridden bool) {
 	if sessionID == "" {
 		return
 	}
@@ -227,7 +229,7 @@ func (r *Registry) RecordOverride(sessionID, eventID string) bool {
 }
 
 // DeriveFields returns Sigma-compatible fields derived from the session's
-// event window. Iterates events directly under read lock without copying.
+// event window.
 func (r *Registry) DeriveFields(sessionID string) map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -251,7 +253,7 @@ func (r *Registry) deriveFieldsLocked(sessionID string) map[string]string {
 		tools[i] = ev.Tool
 		uniqueTools[ev.Tool] = struct{}{}
 		alertCount += len(ev.Alerts)
-		if ev.Action == string(models.ActionRequireApproval) {
+		if ev.Action == models.ActionRequireApproval {
 			approvalCount++
 		}
 		if ev.Overridden {
@@ -301,21 +303,44 @@ func (r *Registry) CrossSessionFields(excludeSessionID string, correlationWindow
 }
 
 // crossSessionFieldsLocked computes cross-session fields. Must be called with r.mu held.
-// Uses a short-lived cache to avoid recomputation on every evaluation.
+// Caches aggregate totals across all sessions, then subtracts the excluded
+// session's contribution at query time.
 func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlationWindow time.Duration) map[string]string {
 	now := time.Now()
 
-	// Return cached result if still fresh
-	if r.crossCache != nil && now.Sub(r.crossCacheTime) < r.crossCacheTTL {
-		// Overlap is session-specific, so recompute just that part
-		cached := make(map[string]string, len(r.crossCache))
-		for k, v := range r.crossCache {
-			cached[k] = v
-		}
-		cached["session.cross_session_tool_overlap"] = r.computeToolOverlap(excludeSessionID, correlationWindow)
-		return cached
+	if r.crossCache == nil || now.Sub(r.crossCacheTime) >= r.crossCacheTTL {
+		r.rebuildCrossCache(correlationWindow, now)
 	}
 
+	// Subtract excluded session's contribution from cached totals
+	totalAlerts := r.crossCacheTotalAlerts
+	sessionCount := r.crossCacheTotalSessions
+	if excludeSessionID != "" {
+		if state, ok := r.sessions[excludeSessionID]; ok {
+			cutoff := now.Add(-correlationWindow)
+			hasRecent := false
+			for _, ev := range state.events {
+				if !ev.Timestamp.Before(cutoff) {
+					hasRecent = true
+					totalAlerts -= len(ev.Alerts)
+				}
+			}
+			if hasRecent {
+				sessionCount--
+			}
+		}
+	}
+
+	return map[string]string{
+		"session.cross_session_alert_count":  fmt.Sprintf("%d", totalAlerts),
+		"session.cross_session_count":        fmt.Sprintf("%d", sessionCount),
+		"session.cross_session_tool_overlap": r.computeToolOverlap(excludeSessionID, correlationWindow),
+	}
+}
+
+// rebuildCrossCache scans all sessions to populate aggregate counts.
+// Must be called with r.mu held.
+func (r *Registry) rebuildCrossCache(correlationWindow time.Duration, now time.Time) {
 	cutoff := now.Add(-correlationWindow)
 	totalAlerts := 0
 	sessionCount := 0
@@ -334,38 +359,14 @@ func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlation
 		}
 	}
 
-	// Exclude the current session from the count
-	if excludeSessionID != "" {
-		if state, ok := r.sessions[excludeSessionID]; ok {
-			for _, ev := range state.events {
-				if !ev.Timestamp.Before(cutoff) {
-					sessionCount--
-					break
-				}
-			}
-		}
-	}
-	if sessionCount < 0 {
-		sessionCount = 0
-	}
-
-	// Cache the session-independent parts
-	r.crossCache = map[string]string{
-		"session.cross_session_alert_count": fmt.Sprintf("%d", totalAlerts),
-		"session.cross_session_count":       fmt.Sprintf("%d", sessionCount),
-	}
+	r.crossCacheTotalAlerts = totalAlerts
+	r.crossCacheTotalSessions = sessionCount
+	r.crossCache = map[string]string{} // mark cache as valid
 	r.crossCacheTime = now
-
-	result := map[string]string{
-		"session.cross_session_alert_count":  r.crossCache["session.cross_session_alert_count"],
-		"session.cross_session_count":        r.crossCache["session.cross_session_count"],
-		"session.cross_session_tool_overlap": r.computeToolOverlap(excludeSessionID, correlationWindow),
-	}
-	return result
 }
 
-// computeToolOverlap calculates what fraction of the excluded session's tools
-// appear in other sessions' recent events. Must be called with r.mu held.
+// computeToolOverlap calculates what fraction of the given session's recent
+// tools appear in other sessions' recent events. Must be called with r.mu held.
 func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow time.Duration) string {
 	if excludeSessionID == "" {
 		return "0.00"
@@ -375,15 +376,18 @@ func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow
 		return "0.00"
 	}
 
+	cutoff := time.Now().Add(-correlationWindow)
+
 	myTools := make(map[string]struct{})
 	for _, ev := range state.events {
-		myTools[ev.Tool] = struct{}{}
+		if !ev.Timestamp.Before(cutoff) {
+			myTools[ev.Tool] = struct{}{}
+		}
 	}
 	if len(myTools) == 0 {
 		return "0.00"
 	}
 
-	cutoff := time.Now().Add(-correlationWindow)
 	otherTools := make(map[string]struct{})
 	for id, s := range r.sessions {
 		if id == excludeSessionID {

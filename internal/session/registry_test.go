@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/agentshield-ai/agentshield/internal/models"
 )
 
 func TestRegistry_Record_and_Get(t *testing.T) {
@@ -88,10 +90,10 @@ func TestRegistry_DeriveFields(t *testing.T) {
 
 func TestRegistry_DeriveFields_ApprovalAndOverride(t *testing.T) {
 	r := NewRegistry(10, 5*time.Minute)
-	r.RecordWithVerdict("sess-1", "curl", "evt-1", nil, "require_approval", false)
-	r.RecordWithVerdict("sess-1", "wget", "evt-2", nil, "require_approval", false)
-	r.RecordWithVerdict("sess-1", "nc", "evt-3", nil, "block", true) // overridden block
-	r.RecordWithVerdict("sess-1", "ls", "evt-4", nil, "allow", false)
+	r.RecordWithVerdict("sess-1", "curl", "evt-1", nil, models.ActionRequireApproval, false)
+	r.RecordWithVerdict("sess-1", "wget", "evt-2", nil, models.ActionRequireApproval, false)
+	r.RecordWithVerdict("sess-1", "nc", "evt-3", nil, models.ActionBlock, true) // overridden block
+	r.RecordWithVerdict("sess-1", "ls", "evt-4", nil, models.ActionAllow, false)
 
 	fields := r.DeriveFields("sess-1")
 	if fields == nil {
@@ -107,8 +109,8 @@ func TestRegistry_DeriveFields_ApprovalAndOverride(t *testing.T) {
 
 func TestRegistry_RecordOverride(t *testing.T) {
 	r := NewRegistry(10, 5*time.Minute)
-	r.RecordWithVerdict("sess-1", "curl", "evt-1", nil, "block", false)
-	r.RecordWithVerdict("sess-1", "wget", "evt-2", nil, "require_approval", false)
+	r.RecordWithVerdict("sess-1", "curl", "evt-1", nil, models.ActionBlock, false)
+	r.RecordWithVerdict("sess-1", "wget", "evt-2", nil, models.ActionRequireApproval, false)
 
 	// Override specific event by ID
 	if !r.RecordOverride("sess-1", "evt-1") {
