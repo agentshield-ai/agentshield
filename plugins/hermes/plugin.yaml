@@ -1,0 +1,84 @@
+name: agentshield
+version: 1.0.0
+description: >-
+  Real-time security evaluation for Hermes agent tool calls.
+  Evaluates every tool invocation against AgentShield's Sigma-based
+  detection engine and blocks, requires approval, or logs threats.
+author: AgentShield
+homepage: https://github.com/agentshield-ai/agentshield
+
+provides_tools: []
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+  - on_session_start
+  - on_session_end
+
+requires_env:
+  - name: AGENTSHIELD_AUTH_TOKEN
+    prompt: "AgentShield API bearer token (leave blank for local dev)"
+    required: false
+    category: security
+
+settings:
+  enabled:
+    type: bool
+    default: true
+    description: Enable or disable the AgentShield plugin
+
+  endpoint:
+    type: string
+    default: "http://127.0.0.1:8433/api/v1/evaluate"
+    description: AgentShield engine evaluate endpoint URL
+
+  timeout_ms:
+    type: int
+    default: 200
+    description: HTTP timeout in milliseconds for evaluation calls (5-5000)
+
+  timeout_policy:
+    type: string
+    default: block
+    description: "Policy when engine is unreachable: allow, block, or log"
+
+  notify:
+    type: string
+    default: high
+    description: "Minimum severity for user notifications: all, high, critical, none"
+
+  intercept:
+    type: list
+    default:
+      - terminal
+      - execute_command
+      - write_file
+      - create_file
+      - edit_file
+      - patch_file
+      - read_file
+      - web_browse
+      - browser
+      - send_message
+      - delegate
+      - spawn_agent
+      - code_execute
+      - python_execute
+    description: Tool names to intercept for security evaluation
+
+  skip:
+    type: list
+    default:
+      - todo
+      - memory_search
+      - memory_add
+    description: Tool names to always skip
+
+  circuit_breaker_failure_threshold:
+    type: int
+    default: 3
+    description: Consecutive failures before circuit opens
+
+  circuit_breaker_recovery_interval_ms:
+    type: int
+    default: 30000
+    description: Milliseconds before retrying after circuit opens
