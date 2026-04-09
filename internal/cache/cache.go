@@ -15,6 +15,15 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/triage"
 )
 
+var ignoredFieldKeys = map[string]struct{}{
+	"event_id":       {},
+	"correlation_id": {},
+	"request_id":     {},
+	"timestamp":      {},
+	"trace_id":       {},
+	"span_id":        {},
+}
+
 // CachedVerdict stores the result of a previous evaluation for replay on cache hit.
 type CachedVerdict struct {
 	Action        models.Action         `json:"action"`
@@ -144,23 +153,57 @@ func (c *VerdictCache) Invalidate() {
 // arguments. Arguments are sorted by key so that logically identical requests
 // (with args in different map-iteration order) produce the same key.
 func CacheKey(toolName string, args map[string]string) string {
-	return CacheKeyWithContext(toolName, args, "")
+	return CacheKeyWithFields(toolName, args, nil, "")
 }
 
 // CacheKeyWithContext computes a deterministic SHA-256 cache key from tool,
 // args, and execution context.
 func CacheKeyWithContext(toolName string, args map[string]string, context string) string {
+	return CacheKeyWithFields(toolName, args, nil, context)
+}
+
+// CacheKeyWithFields computes a deterministic SHA-256 cache key from tool,
+// args, the rule-evaluation fields, and execution context.
+//
+// Fields are included because the evaluator makes decisions from the flattened
+// field map, including derived session/cross-session values. This prevents
+// stale verdict reuse across changes in event semantics or behavioural state.
+func CacheKeyWithFields(toolName string, args, fields map[string]string, context string) string {
 	keys := make([]string, 0, len(args))
 	for k := range args {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
+	fieldKeys := make([]string, 0, len(fields))
+	for k := range fields {
+		if k == "context" || k == "tool" {
+			continue
+		}
+		if _, ignored := ignoredFieldKeys[k]; ignored {
+			continue
+		}
+		fieldKeys = append(fieldKeys, k)
+	}
+	sort.Strings(fieldKeys)
+
+	effectiveTool := toolName
+	if effectiveTool == "" && fields != nil {
+		effectiveTool = fields["tool"]
+	}
+	effectiveContext := context
+	if effectiveContext == "" && fields != nil {
+		effectiveContext = fields["context"]
+	}
+
 	h := sha256.New()
-	fmt.Fprintf(h, "tool=%s", toolName)
-	fmt.Fprintf(h, "\ncontext=%s", normalizeContext(context))
+	fmt.Fprintf(h, "tool=%s", effectiveTool)
+	fmt.Fprintf(h, "\ncontext=%s", normalizeContext(effectiveContext))
 	for _, k := range keys {
-		fmt.Fprintf(h, "\n%s=%s", k, args[k])
+		fmt.Fprintf(h, "\narg:%s=%s", k, args[k])
+	}
+	for _, k := range fieldKeys {
+		fmt.Fprintf(h, "\nfield:%s=%s", k, fields[k])
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

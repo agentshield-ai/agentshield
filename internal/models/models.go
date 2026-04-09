@@ -4,6 +4,7 @@ package models
 // Shared between evaluate and triage packages to avoid circular dependencies
 type EvaluationRequest struct {
 	EventID   string                 `json:"event_id"`
+	EventType string                 `json:"event_type,omitempty"`
 	SessionID string                 `json:"session_id,omitempty"`
 	Tool      string                 `json:"tool,omitempty"`
 	ToolName  string                 `json:"tool_name,omitempty"` // Plugin compat alias for Tool

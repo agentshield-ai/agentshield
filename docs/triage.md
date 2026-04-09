@@ -1,6 +1,6 @@
 # Triage System
 
-The AgentShield Engine includes a two-tier triage system that combines fast synchronous LLM analysis with deep asynchronous investigation using AI agents. Triage is optional and is designed to reduce false positives by providing contextual classification of alerts.
+The AgentShield Engine includes a two-tier triage system that combines fast synchronous LLM analysis with deep asynchronous investigation using AI agents. Triage is optional and provides contextual classification of alerts, but enforce-mode actions remain rule-driven and are not downgraded automatically by LLM output.
 
 ## Architecture Overview
 

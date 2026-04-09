@@ -73,14 +73,14 @@
     "id": "mal-ssh-key-read",
     "tool": "read",
     "params": { "filePath": "/home/user/.ssh/id_rsa" },
-    "expected": "allow",
-    "description": "Read SSH private key (TODO: rules expect event_type=file_read but plugin sends tool_call)"
+    "expected": "block",
+    "description": "Read SSH private key"
   },
   {
     "id": "mal-env-file-read",
     "tool": "read",
     "params": { "filePath": "/app/.env" },
-    "expected": "allow",
-    "description": "Read environment file with secrets (TODO: rules expect event_type=file_read but plugin sends tool_call)"
+    "expected": "block",
+    "description": "Read environment file with secrets"
   }
 ]

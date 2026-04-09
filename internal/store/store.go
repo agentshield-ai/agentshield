@@ -13,6 +13,7 @@ import (
 // Alert represents an alert stored in the database
 type Alert struct {
 	ID          int64     `json:"id"`
+	RuleID      string    `json:"rule_id"`
 	RuleName    string    `json:"rule_name"`
 	Severity    string    `json:"severity"`
 	Tool        string    `json:"tool"`
@@ -28,7 +29,7 @@ type AlertQuery struct {
 	Since     *time.Time
 	Until     *time.Time
 	Severity  string
-	Rule      string
+	Rule      string // matches either stable rule_id or display rule_name
 	SessionID string
 	EventID   string
 	Limit     int
@@ -81,6 +82,7 @@ func (s *Store) initSchema() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS alerts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		rule_id TEXT NOT NULL DEFAULT '',
 		rule_name TEXT NOT NULL,
 		severity TEXT NOT NULL,
 		tool TEXT,
@@ -93,6 +95,7 @@ func (s *Store) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_alerts_rule_id ON alerts(rule_id);
 	CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 	CREATE INDEX IF NOT EXISTS idx_alerts_rule_name ON alerts(rule_name);
 	CREATE INDEX IF NOT EXISTS idx_alerts_session_id ON alerts(session_id);
@@ -103,6 +106,7 @@ func (s *Store) initSchema() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		event_id TEXT NOT NULL,
 		alert_id INTEGER,
+		rule_id TEXT NOT NULL DEFAULT '',
 		rule_name TEXT NOT NULL,
 		feedback_type TEXT NOT NULL, -- 'false_positive', 'true_positive', 'false_negative'
 		comment TEXT,
@@ -112,6 +116,7 @@ func (s *Store) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_feedback_event_id ON feedback(event_id);
 	CREATE INDEX IF NOT EXISTS idx_feedback_alert_id ON feedback(alert_id);
+	CREATE INDEX IF NOT EXISTS idx_feedback_rule_id ON feedback(rule_id);
 	CREATE INDEX IF NOT EXISTS idx_feedback_rule_name ON feedback(rule_name);
 	CREATE INDEX IF NOT EXISTS idx_feedback_type ON feedback(feedback_type);
 	`
@@ -121,17 +126,64 @@ func (s *Store) initSchema() error {
 		return fmt.Errorf("creating schema: %w", err)
 	}
 
+	if err := s.ensureColumn("alerts", "rule_id", "ALTER TABLE alerts ADD COLUMN rule_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("feedback", "rule_id", "ALTER TABLE feedback ADD COLUMN rule_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_alerts_rule_id ON alerts(rule_id)"); err != nil {
+		return fmt.Errorf("creating alerts rule_id index: %w", err)
+	}
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_feedback_rule_id ON feedback(rule_id)"); err != nil {
+		return fmt.Errorf("creating feedback rule_id index: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) ensureColumn(table, column, alterSQL string) error {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return fmt.Errorf("querying schema for %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return fmt.Errorf("scanning schema for %s: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating schema for %s: %w", table, err)
+	}
+
+	if _, err := s.db.Exec(alterSQL); err != nil {
+		return fmt.Errorf("adding %s.%s column: %w", table, column, err)
+	}
 	return nil
 }
 
 // InsertAlert inserts a new alert into the database
 func (s *Store) InsertAlert(alert *Alert) error {
 	query := `
-		INSERT INTO alerts (rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO alerts (rule_id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.db.Exec(query,
+		alert.RuleID,
 		alert.RuleName,
 		alert.Severity,
 		alert.Tool,
@@ -177,7 +229,8 @@ func buildWhereClause(query *AlertQuery) (string, []interface{}) {
 	}
 
 	if query.Rule != "" {
-		conditions = append(conditions, "rule_name = ?")
+		conditions = append(conditions, "(rule_id = ? OR rule_name = ?)")
+		args = append(args, query.Rule)
 		args = append(args, query.Rule)
 	}
 
@@ -202,7 +255,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 	whereClause, args := buildWhereClause(query)
 
 	// Build SQL query with parameterized LIMIT/OFFSET
-	query_sql := "SELECT id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id FROM alerts" + whereClause
+	query_sql := "SELECT id, rule_id, rule_name, severity, tool, args, action_taken, timestamp, session_id, event_id FROM alerts" + whereClause
 
 	query_sql += " ORDER BY timestamp DESC"
 
@@ -231,10 +284,12 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 	var alerts []Alert
 	for rows.Next() {
 		var alert Alert
+		var ruleID sql.NullString
 		var tool, args, sessionID, eventID sql.NullString
 
 		err := rows.Scan(
 			&alert.ID,
+			&ruleID,
 			&alert.RuleName,
 			&alert.Severity,
 			&tool,
@@ -249,6 +304,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 		}
 
 		// Handle nullable fields
+		alert.RuleID = ruleID.String
 		alert.Tool = tool.String
 		alert.Args = args.String
 		alert.SessionID = sessionID.String
@@ -284,6 +340,7 @@ type Feedback struct {
 	ID           int64     `json:"id"`
 	EventID      string    `json:"event_id"`
 	AlertID      *int64    `json:"alert_id"`
+	RuleID       string    `json:"rule_id"`
 	RuleName     string    `json:"rule_name"`
 	FeedbackType string    `json:"feedback_type"`
 	Comment      string    `json:"comment"`
@@ -294,23 +351,36 @@ type Feedback struct {
 // If alertID is provided, ruleName is resolved from the alert row.
 // If alertID is nil, caller-provided ruleName is used.
 func (s *Store) InsertFeedback(eventID string, alertID *int64, ruleName, feedbackType, comment string) error {
+	resolvedRuleID := ""
 	resolvedRuleName := ruleName
 	if alertID != nil {
-		err := s.db.QueryRow("SELECT rule_name FROM alerts WHERE id = ?", *alertID).Scan(&resolvedRuleName)
+		err := s.db.QueryRow("SELECT rule_id, rule_name FROM alerts WHERE id = ?", *alertID).Scan(&resolvedRuleID, &resolvedRuleName)
 		if err != nil {
 			return fmt.Errorf("getting rule name for alert %d: %w", *alertID, err)
 		}
+	} else if ruleName != "" {
+		// Accept either rule_id or rule_name from callers, then backfill both
+		// identifiers from the most recent matching alert when available.
+		_ = s.db.QueryRow(
+			`SELECT rule_id, rule_name
+			 FROM alerts
+			 WHERE rule_id = ? OR rule_name = ?
+			 ORDER BY timestamp DESC
+			 LIMIT 1`,
+			ruleName,
+			ruleName,
+		).Scan(&resolvedRuleID, &resolvedRuleName)
 	}
 	if resolvedRuleName == "" {
 		return fmt.Errorf("rule_name is required")
 	}
 
 	query := `
-		INSERT INTO feedback (event_id, alert_id, rule_name, feedback_type, comment)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO feedback (event_id, alert_id, rule_id, rule_name, feedback_type, comment)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`
 
-	_, err := s.db.Exec(query, eventID, alertID, resolvedRuleName, feedbackType, comment)
+	_, err := s.db.Exec(query, eventID, alertID, resolvedRuleID, resolvedRuleName, feedbackType, comment)
 	if err != nil {
 		return fmt.Errorf("inserting feedback: %w", err)
 	}
@@ -321,14 +391,14 @@ func (s *Store) InsertFeedback(eventID string, alertID *int64, ruleName, feedbac
 // GetFeedbackForRule retrieves feedback for a specific rule
 func (s *Store) GetFeedbackForRule(ruleName string, limit int) ([]Feedback, error) {
 	query := `
-		SELECT id, event_id, alert_id, rule_name, feedback_type, comment, created_at
+		SELECT id, event_id, alert_id, rule_id, rule_name, feedback_type, comment, created_at
 		FROM feedback 
-		WHERE rule_name = ? 
+		WHERE rule_id = ? OR rule_name = ? 
 		ORDER BY created_at DESC
 		LIMIT ?
 	`
 
-	rows, err := s.db.Query(query, ruleName, limit)
+	rows, err := s.db.Query(query, ruleName, ruleName, limit)
 	if err != nil {
 		return nil, fmt.Errorf("querying feedback for rule %s: %w", ruleName, err)
 	}
@@ -338,12 +408,14 @@ func (s *Store) GetFeedbackForRule(ruleName string, limit int) ([]Feedback, erro
 	for rows.Next() {
 		var feedback Feedback
 		var alertID sql.NullInt64
+		var ruleID sql.NullString
 		var comment sql.NullString
 
 		err := rows.Scan(
 			&feedback.ID,
 			&feedback.EventID,
 			&alertID,
+			&ruleID,
 			&feedback.RuleName,
 			&feedback.FeedbackType,
 			&comment,
@@ -356,6 +428,7 @@ func (s *Store) GetFeedbackForRule(ruleName string, limit int) ([]Feedback, erro
 		if alertID.Valid {
 			feedback.AlertID = &alertID.Int64
 		}
+		feedback.RuleID = ruleID.String
 		feedback.Comment = comment.String
 
 		feedbacks = append(feedbacks, feedback)
@@ -368,7 +441,7 @@ func (s *Store) GetFeedbackForRule(ruleName string, limit int) ([]Feedback, erro
 func (s *Store) GetRuleFPRate(ruleName string) (float64, error) {
 	// Count total alerts for this rule
 	var totalAlerts int64
-	err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_name = ?", ruleName).Scan(&totalAlerts)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_id = ? OR rule_name = ?", ruleName, ruleName).Scan(&totalAlerts)
 	if err != nil {
 		return 0, fmt.Errorf("counting total alerts for rule %s: %w", ruleName, err)
 	}
@@ -380,7 +453,8 @@ func (s *Store) GetRuleFPRate(ruleName string) (float64, error) {
 	// Count false positive feedback
 	var falsePositiveCount int64
 	err = s.db.QueryRow(
-		"SELECT COUNT(*) FROM feedback WHERE rule_name = ? AND feedback_type = 'false_positive'",
+		"SELECT COUNT(*) FROM feedback WHERE (rule_id = ? OR rule_name = ?) AND feedback_type = 'false_positive'",
+		ruleName,
 		ruleName,
 	).Scan(&falsePositiveCount)
 	if err != nil {
@@ -399,21 +473,21 @@ func (s *Store) GetRuleFPRate(ruleName string) (float64, error) {
 func (s *Store) GetRulesWithHighFPRate(threshold float64, minAlerts int) ([]string, error) {
 	query := `
 		WITH alert_counts AS (
-			SELECT rule_name, COUNT(*) AS total_alerts
+			SELECT COALESCE(NULLIF(rule_id, ''), rule_name) AS rule_identity, COUNT(*) AS total_alerts
 			FROM alerts
-			GROUP BY rule_name
+			GROUP BY rule_identity
 			HAVING COUNT(*) >= ?
 		),
 		fp_feedback AS (
-			SELECT rule_name, COUNT(*) AS fp_count
+			SELECT COALESCE(NULLIF(rule_id, ''), rule_name) AS rule_identity, COUNT(*) AS fp_count
 			FROM feedback
 			WHERE feedback_type = 'false_positive'
-			GROUP BY rule_name
+			GROUP BY rule_identity
 		)
-		SELECT a.rule_name, a.total_alerts, COALESCE(f.fp_count, 0) AS fp_count
+		SELECT a.rule_identity, a.total_alerts, COALESCE(f.fp_count, 0) AS fp_count
 		FROM alert_counts a
-		LEFT JOIN fp_feedback f ON a.rule_name = f.rule_name
-		ORDER BY a.rule_name
+		LEFT JOIN fp_feedback f ON a.rule_identity = f.rule_identity
+		ORDER BY a.rule_identity
 	`
 
 	rows, err := s.db.Query(query, minAlerts)

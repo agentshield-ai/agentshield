@@ -31,8 +31,17 @@ class TestBuildEvaluationRequest:
             "write_file",
             {"path": "/tmp/test.txt", "content": "hello"},
         )
+        assert req["event_type"] == "file_write"
         assert req["tool_name"] == "write"
         assert req["command"] == "Write: /tmp/test.txt"
+
+    def test_read_file_request(self) -> None:
+        req = build_evaluation_request(
+            "read_file",
+            {"path": "/tmp/test.txt"},
+        )
+        assert req["event_type"] == "file_read"
+        assert req["tool_name"] == "read"
 
     def test_optional_agent_id(self) -> None:
         req = build_evaluation_request(

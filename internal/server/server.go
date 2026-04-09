@@ -115,6 +115,12 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 		}
 	}
 
+	if req.EventType != "" {
+		if err := validateStringInput(req.EventType, 100, "event_type"); err != nil {
+			return err
+		}
+	}
+
 	// Validate Tool
 	if req.Tool != "" {
 		if err := validateStringInput(req.Tool, 100, "tool"); err != nil {
@@ -351,12 +357,12 @@ func (s *Server) Start() error {
 
 	// Add Chi middleware chain
 	s.rateLimiter = newIPRateLimiter(rate.Every(600*time.Millisecond), 10)
-	r.Use(middleware.Recoverer)                    // Panic recovery
-	r.Use(middleware.RequestID)                    // Request ID generation
-	r.Use(securityHeaders)                         // Security response headers
-	r.Use(rateLimitMiddleware(s.rateLimiter))       // Per-IP rate limit: ~100 req/min, burst 10
-	r.Use(s.requestLogger)                         // Custom request logging
-	r.Use(middleware.Timeout(30 * time.Second))    // Request timeout
+	r.Use(middleware.Recoverer)                 // Panic recovery
+	r.Use(middleware.RequestID)                 // Request ID generation
+	r.Use(securityHeaders)                      // Security response headers
+	r.Use(rateLimitMiddleware(s.rateLimiter))   // Per-IP rate limit: ~100 req/min, burst 10
+	r.Use(s.requestLogger)                      // Custom request logging
+	r.Use(middleware.Timeout(30 * time.Second)) // Request timeout
 
 	// Apply auth middleware if configured, but skip health endpoints
 	if s.auth != nil {
@@ -461,7 +467,11 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 		}
 	}
 	if _, ok := req.Fields["event_type"]; !ok {
-		req.Fields["event_type"] = "tool_call"
+		if req.EventType != "" {
+			req.Fields["event_type"] = req.EventType
+		} else {
+			req.Fields["event_type"] = defaultEventTypeForTool(req.Tool)
+		}
 	}
 	if req.Context != "" {
 		if _, ok := req.Fields["context"]; !ok {
@@ -478,11 +488,53 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 			req.Fields["command"] = cmd
 		}
 	}
+	if _, ok := req.Fields["file_path"]; !ok {
+		if filePath, ok := firstNonEmptyArg(req.Args, "file_path", "filePath", "path"); ok {
+			req.Fields["file_path"] = filePath
+		}
+	}
 	for k, v := range req.Args {
 		if _, exists := req.Fields[k]; !exists {
 			req.Fields[k] = v
 		}
 	}
+}
+
+func firstNonEmptyArg(args map[string]string, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if value, ok := args[key]; ok && value != "" {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func defaultEventTypeForTool(tool string) string {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "read", "file_read":
+		return "file_read"
+	case "write", "file_write", "create":
+		return "file_write"
+	case "edit", "file_edit":
+		return "file_edit"
+	case "sessions_spawn", "session_spawn":
+		return "session_spawn"
+	default:
+		return "tool_call"
+	}
+}
+
+func parseAlertFilterTime(raw string) (time.Time, error) {
+	candidates := []string{raw}
+	if strings.Contains(raw, " ") {
+		candidates = append(candidates, strings.ReplaceAll(raw, " ", "+"))
+	}
+	for _, candidate := range candidates {
+		if ts, err := time.Parse(time.RFC3339Nano, candidate); err == nil {
+			return ts, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid RFC3339 timestamp")
 }
 
 func resolveExecutionContext(r *http.Request, cfg *config.Config) string {
@@ -520,6 +572,7 @@ func (s *Server) storeMatchedAlerts(response *evaluate.EvaluationResponse, req *
 		}
 
 		dbAlert := &store.Alert{
+			RuleID:      alert.RuleID,
 			RuleName:    alert.RuleName,
 			Severity:    string(alert.Severity),
 			Tool:        req.Tool,
@@ -646,16 +699,22 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 
 	// Parse since timestamp
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
-		if since, err := time.Parse(time.RFC3339, sinceStr); err == nil {
-			query.Since = &since
+		since, err := parseAlertFilterTime(sinceStr)
+		if err != nil {
+			http.Error(w, "Invalid since parameter (must be RFC3339)", http.StatusBadRequest)
+			return
 		}
+		query.Since = &since
 	}
 
 	// Parse until timestamp
 	if untilStr := r.URL.Query().Get("until"); untilStr != "" {
-		if until, err := time.Parse(time.RFC3339, untilStr); err == nil {
-			query.Until = &until
+		until, err := parseAlertFilterTime(untilStr)
+		if err != nil {
+			http.Error(w, "Invalid until parameter (must be RFC3339)", http.StatusBadRequest)
+			return
 		}
+		query.Until = &until
 	}
 
 	// Parse severity filter with validation

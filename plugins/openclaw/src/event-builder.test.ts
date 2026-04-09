@@ -35,6 +35,7 @@ describe("buildEvaluationRequest", () => {
       { toolName: "read" },
     );
 
+    expect(req.event_type).toBe("file_read");
     expect(req.agent_id).toBeNull();
     expect(req.session_id).toBeNull();
   });

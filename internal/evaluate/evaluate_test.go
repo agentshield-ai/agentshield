@@ -40,6 +40,16 @@ func (e *fieldCapturingEngine) Evaluate(fields map[string]string) []engine.RuleR
 	return e.results
 }
 
+type countingEngine struct {
+	calls   int
+	results []engine.RuleResult
+}
+
+func (e *countingEngine) Evaluate(fields map[string]string) []engine.RuleResult {
+	e.calls++
+	return e.results
+}
+
 func TestDetermineEffectiveMode(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -642,6 +652,48 @@ func TestEvaluateWithContext_InjectsSessionFields(t *testing.T) {
 	}
 	if captured["session.tool_count"] != "2" {
 		t.Errorf("expected session.tool_count='2', got %q", captured["session.tool_count"])
+	}
+}
+
+func TestEvaluateWithContext_CacheMissWhenSessionStateChanges(t *testing.T) {
+	mockEng := &countingEngine{}
+	registry := session.NewRegistry(10, 5*time.Minute)
+	registry.Record("sess-cache", "ls", nil)
+
+	evaluator := NewEvaluator(mockEng, config.ModeEnforce, "", nil, nil)
+	evaluator.SetSessionRegistry(registry)
+	evaluator.SetCache(cache.NewVerdictCache(100, 5*time.Minute))
+
+	req := &models.EvaluationRequest{
+		EventID:   "evt-cache-1",
+		SessionID: "sess-cache",
+		Tool:      "bash",
+		Args:      map[string]string{"command": "echo hi"},
+		Fields:    map[string]string{"tool": "bash", "event_type": "tool_call", "command": "echo hi"},
+	}
+
+	resp1, err := evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first evaluation failed: %v", err)
+	}
+	if resp1.Cached {
+		t.Fatal("first evaluation should not be cached")
+	}
+
+	// Change the prior session state; identical command should no longer reuse
+	// the cached verdict because behavioural rules can now evaluate differently.
+	registry.Record("sess-cache", "cat", nil)
+	req.EventID = "evt-cache-2"
+
+	resp2, err := evaluator.EvaluateWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second evaluation failed: %v", err)
+	}
+	if resp2.Cached {
+		t.Fatal("second evaluation should miss cache after session state changes")
+	}
+	if mockEng.calls != 2 {
+		t.Fatalf("expected engine to run twice, got %d calls", mockEng.calls)
 	}
 }
 

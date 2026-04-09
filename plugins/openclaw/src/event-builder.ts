@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { normaliseToolCall } from "./normalise.js";
+import { eventTypeForToolCall, normaliseToolCall } from "./normalise.js";
 import type {
   AuditReport,
   EvaluationRequest,
@@ -39,11 +39,12 @@ export function buildEvaluationRequest(
     event.toolName,
     event.params,
   );
+  const eventType = eventTypeForToolCall(event.toolName, event.params);
 
   return {
     event_id: randomUUID(),
     timestamp: new Date().toISOString(),
-    event_type: "tool_call", // Always use "tool_call" as the engine expects this
+    event_type: eventType,
     tool_name: event.toolName,
     source: "openclaw",
     command,

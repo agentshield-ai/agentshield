@@ -229,11 +229,6 @@ const plugin = {
             }
           }
 
-          // Check if triage results override rule-based decisions
-          const hasHighConfidenceAllow = response.triage_results?.some(
-            (t) => t.verdict === "allow" && t.confidence > 0.8,
-          );
-
           if (response.action === "block") {
             // Include triage reasoning in block reason if available
             const triageReason = response.triage_results?.[0]?.reasoning;
@@ -268,15 +263,7 @@ const plugin = {
             };
           }
 
-          // If we have alerts but triage says allow with high confidence, respect the triage
-          if (
-            response.alerts?.length &&
-            hasHighConfidenceAllow
-          ) {
-            api.logger.info(
-              `AgentShield: ${response.alerts.length} alert(s) fired for ${event.toolName}, but triage overrides with high-confidence allow`,
-            );
-          } else if (response.action === "log" && response.alerts?.length) {
+          if (response.action === "log" && response.alerts?.length) {
             api.logger.info(
               `AgentShield logged ${response.alerts.length} alert(s) for ${event.toolName}`,
             );

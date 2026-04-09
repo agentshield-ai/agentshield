@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-from .normalise import normalise_tool_call
+from .normalise import event_type_for_tool_call, normalise_tool_call
 
 MAX_RESULT_SUMMARY_LENGTH = 1000
 
@@ -54,7 +54,8 @@ def build_evaluation_request(
     if command:
         params["command"] = command
 
-    envelope = _base_envelope("tool_call", task_id=task_id, agent_id=agent_id)
+    event_type = event_type_for_tool_call(canonical_name, args)
+    envelope = _base_envelope(event_type, task_id=task_id, agent_id=agent_id)
     envelope.update(
         tool_name=canonical_name,
         command=command,

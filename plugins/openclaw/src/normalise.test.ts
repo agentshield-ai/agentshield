@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normaliseToolCall } from "./normalise.js";
+import { eventTypeForToolCall, normaliseToolCall } from "./normalise.js";
 
 describe("normaliseToolCall", () => {
   it("maps exec with command", () => {
@@ -67,5 +67,27 @@ describe("normaliseToolCall", () => {
   it("handles file ops with no path", () => {
     const result = normaliseToolCall("write", {});
     expect(result.command).toBe("Write: <unknown>");
+  });
+});
+
+describe("eventTypeForToolCall", () => {
+  it("maps read to file_read", () => {
+    expect(eventTypeForToolCall("read", {})).toBe("file_read");
+  });
+
+  it("maps write to file_write", () => {
+    expect(eventTypeForToolCall("write", {})).toBe("file_write");
+  });
+
+  it("maps edit to file_edit", () => {
+    expect(eventTypeForToolCall("edit", {})).toBe("file_edit");
+  });
+
+  it("maps sessions_spawn to session_spawn", () => {
+    expect(eventTypeForToolCall("sessions_spawn", {})).toBe("session_spawn");
+  });
+
+  it("defaults unknown tools to tool_call", () => {
+    expect(eventTypeForToolCall("exec", {})).toBe("tool_call");
   });
 });

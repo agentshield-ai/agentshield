@@ -211,7 +211,7 @@ triage:
   health_check_mode: "full"   # "full" runs a model call; "connectivity" just checks /v1/models
 ```
 
-Triage returns a verdict (`block`, `allow`, `investigate`), confidence (0-1), and reasoning. In the OpenClaw plugin, a high-confidence allow (>0.8) from triage overrides rule-based alerts.
+Triage returns a verdict (`block`, `allow`, `investigate`), confidence (0-1), and reasoning. In the OpenClaw plugin, these results are advisory context and do not downgrade rule-based enforcement.
 
 ## Sigma Rules
 

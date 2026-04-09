@@ -66,8 +66,8 @@ For every intercepted tool call the plugin:
    and blocks execution with an approval-required reason.
 7. If the engine returns `action: "log"`, the tool call proceeds but alerts are
    surfaced to the user.
-8. If triage results are present and a high-confidence `allow` verdict is
-   returned, rule-based alerts may be overridden.
+8. If triage results are present, they are surfaced as advisory context; they
+   do not downgrade rule-based enforcement decisions.
 
 The hook runs at priority `-100` so it executes before other plugins can modify
 tool parameters.

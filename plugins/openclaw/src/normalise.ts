@@ -1,11 +1,11 @@
 /**
- * Map OpenClaw tool names to AgentShield command strings.
+ * Map OpenClaw tool names to AgentShield event semantics and command strings.
  *
  * Tool names arrive already normalised by OpenClaw's `normalizeToolName()`
  * (e.g. "bash" -> "exec"), so we use them as-is.
  *
- * Mapping follows integration contract Section 2.4.
- * Note: event_type is always "tool_call" in the new format.
+ * Mapping follows the server-side normalization defaults so the adapter can
+ * preserve richer event semantics like file reads/writes.
  */
 export function normaliseToolCall(
   toolName: string,
@@ -49,6 +49,29 @@ export function normaliseToolCall(
 
     default:
       return { command: toolName };
+  }
+}
+
+export function eventTypeForToolCall(
+  toolName: string,
+  _params: Record<string, unknown>,
+): string {
+  switch (toolName) {
+    case "read":
+    case "file_read":
+      return "file_read";
+    case "write":
+    case "file_write":
+    case "create":
+      return "file_write";
+    case "edit":
+    case "file_edit":
+      return "file_edit";
+    case "sessions_spawn":
+    case "session_spawn":
+      return "session_spawn";
+    default:
+      return "tool_call";
   }
 }
 

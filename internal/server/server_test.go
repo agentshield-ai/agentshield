@@ -1149,8 +1149,8 @@ func TestHandleEvaluateFieldMapping(t *testing.T) {
 		t.Errorf("Expected tool field to be 'file_read', got '%s'", capturedFields["tool"])
 	}
 
-	if capturedFields["event_type"] != "tool_call" {
-		t.Errorf("Expected event_type to be 'tool_call', got '%s'", capturedFields["event_type"])
+	if capturedFields["event_type"] != "file_read" {
+		t.Errorf("Expected event_type to be 'file_read', got '%s'", capturedFields["event_type"])
 	}
 
 	if capturedFields["path"] != "/etc/passwd" {
@@ -1159,6 +1159,91 @@ func TestHandleEvaluateFieldMapping(t *testing.T) {
 
 	if capturedFields["command"] != "cat /etc/passwd" {
 		t.Errorf("Expected command field from args, got '%s'", capturedFields["command"])
+	}
+}
+
+func TestHandleEvaluatePluginPayloadPreservesEventSemantics(t *testing.T) {
+	testStore, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer testStore.Close()
+
+	cfg := &config.Config{}
+	mockEngine := &mockFieldCapturingEngine{
+		results: []engine.RuleResult{
+			{RuleName: "test", Severity: engine.SeverityLow, Matched: false},
+		},
+	}
+	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
+
+	server, err := NewServer(cfg, evaluator, testStore, nil)
+	if err != nil {
+		t.Fatalf("creating test server: %v", err)
+	}
+
+	body := `{
+		"event_id": "plugin-evt-1",
+		"event_type": "file_read",
+		"tool_name": "read",
+		"source": "openclaw",
+		"params": {
+			"filePath": "/home/user/.ssh/id_rsa",
+			"command": "Read: /home/user/.ssh/id_rsa"
+		}
+	}`
+
+	router := server.setupTestRouter()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	capturedFields := mockEngine.capturedFields
+	if capturedFields["tool"] != "read" {
+		t.Errorf("Expected tool 'read', got %q", capturedFields["tool"])
+	}
+	if capturedFields["event_type"] != "file_read" {
+		t.Errorf("Expected event_type 'file_read', got %q", capturedFields["event_type"])
+	}
+	if capturedFields["source"] != "openclaw" {
+		t.Errorf("Expected source 'openclaw', got %q", capturedFields["source"])
+	}
+	if capturedFields["command"] != "Read: /home/user/.ssh/id_rsa" {
+		t.Errorf("Expected command to be preserved, got %q", capturedFields["command"])
+	}
+	if capturedFields["file_path"] != "/home/user/.ssh/id_rsa" {
+		t.Errorf("Expected canonical file_path field, got %q", capturedFields["file_path"])
+	}
+}
+
+func TestHandleAlertsRejectsInvalidTimeFilters(t *testing.T) {
+	testStore, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("creating test store: %v", err)
+	}
+	defer testStore.Close()
+
+	cfg := &config.Config{}
+	evaluator := evaluate.NewEvaluator(&mockRuleEngine{}, config.ModeAudit, "", nil, nil)
+	server, err := NewServer(cfg, evaluator, testStore, nil)
+	if err != nil {
+		t.Fatalf("creating test server: %v", err)
+	}
+
+	router := server.setupTestRouter()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts?since=not-a-time", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid since filter, got %d", rec.Code)
 	}
 }
 

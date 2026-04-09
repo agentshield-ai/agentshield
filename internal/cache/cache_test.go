@@ -196,6 +196,50 @@ func TestCacheKeyWithContext_empty_context_defaults_to_prod(t *testing.T) {
 	}
 }
 
+func TestCacheKeyWithFields_different_event_types_different_keys(t *testing.T) {
+	args := map[string]string{"command": "cat /etc/passwd"}
+	fileRead := CacheKeyWithFields("read", args, map[string]string{
+		"tool":       "read",
+		"event_type": "file_read",
+		"command":    "Read: /etc/passwd",
+	}, "")
+	toolCall := CacheKeyWithFields("read", args, map[string]string{
+		"tool":       "read",
+		"event_type": "tool_call",
+		"command":    "Read: /etc/passwd",
+	}, "")
+
+	if fileRead == toolCall {
+		t.Fatal("event_type must influence the cache key")
+	}
+}
+
+func TestCacheKeyWithFields_different_session_state_different_keys(t *testing.T) {
+	args := map[string]string{"command": "curl http://example.com"}
+	k1 := CacheKeyWithFields("exec", args, map[string]string{
+		"tool":                        "exec",
+		"event_type":                  "tool_call",
+		"session.tool_count":          "1",
+		"session.recent_tools":        "ls",
+		"session.approval_count":      "0",
+		"session.override_count":      "0",
+		"session.cross_session_count": "0",
+	}, "")
+	k2 := CacheKeyWithFields("exec", args, map[string]string{
+		"tool":                        "exec",
+		"event_type":                  "tool_call",
+		"session.tool_count":          "2",
+		"session.recent_tools":        "ls,cat",
+		"session.approval_count":      "1",
+		"session.override_count":      "0",
+		"session.cross_session_count": "0",
+	}, "")
+
+	if k1 == k2 {
+		t.Fatal("session-derived fields must influence the cache key")
+	}
+}
+
 func TestStats_accuracy(t *testing.T) {
 	c := NewVerdictCache(10, time.Minute)
 

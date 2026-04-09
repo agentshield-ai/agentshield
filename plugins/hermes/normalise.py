@@ -97,6 +97,21 @@ def normalise_tool_call(
     return canonical, command
 
 
+def event_type_for_tool_call(canonical: str, args: Dict[str, Any]) -> str:
+    """Return the semantic event type for a normalised Hermes tool call."""
+    del args  # Reserved for future action-sensitive mappings.
+
+    if canonical in ("read", "file_read"):
+        return "file_read"
+    if canonical in ("write", "file_write", "create"):
+        return "file_write"
+    if canonical in ("edit", "file_edit"):
+        return "file_edit"
+    if canonical in ("sessions_spawn", "session_spawn"):
+        return "session_spawn"
+    return "tool_call"
+
+
 def _build_command(
     canonical: str,
     original: str,

@@ -111,6 +111,26 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	if req.Fields == nil {
 		req.Fields = make(map[string]string)
 	}
+	if req.Tool != "" {
+		if _, ok := req.Fields["tool"]; !ok {
+			req.Fields["tool"] = req.Tool
+		}
+	}
+	if req.Context != "" {
+		if _, ok := req.Fields["context"]; !ok {
+			req.Fields["context"] = req.Context
+		}
+	}
+	if req.EventType != "" {
+		if _, ok := req.Fields["event_type"]; !ok {
+			req.Fields["event_type"] = req.EventType
+		}
+	}
+	if req.Source != "" {
+		if _, ok := req.Fields["source"]; !ok {
+			req.Fields["source"] = req.Source
+		}
+	}
 
 	if e.tracer != nil {
 		var span trace.Span
@@ -138,14 +158,27 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Determine effective evaluation mode (server-side only)
 	effectiveMode := e.determineEffectiveMode()
 
-	// Check verdict cache before running rule evaluation
+	// Inject session-derived and cross-session fields in a single lock acquisition
+	if e.sessionRegistry != nil && req.SessionID != "" {
+		allFields := e.sessionRegistry.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
+		for k, v := range allFields {
+			req.Fields[k] = v
+		}
+
+		if e.tracer != nil {
+			span := trace.SpanFromContext(ctx)
+			for k, v := range allFields {
+				span.SetAttributes(attribute.String(k, v))
+			}
+		}
+	}
+
+	// Check verdict cache before running rule evaluation.
+	// The cache key includes the final field map so session/correlation-derived
+	// context cannot replay stale verdicts across behavioural state changes.
 	var cacheKey string
 	if e.cache != nil {
-		cacheContext := req.Context
-		if cacheContext == "" && req.Fields != nil {
-			cacheContext = req.Fields["context"]
-		}
-		cacheKey = cache.CacheKeyWithContext(req.Tool, req.Args, cacheContext)
+		cacheKey = cache.CacheKeyWithFields(req.Tool, req.Args, req.Fields, req.Context)
 		if cached, ok := e.cache.Get(cacheKey); ok {
 			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
 			response = &EvaluationResponse{
@@ -169,21 +202,6 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 				response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
 			}
 			return response, nil
-		}
-	}
-
-	// Inject session-derived and cross-session fields in a single lock acquisition
-	if e.sessionRegistry != nil && req.SessionID != "" {
-		allFields := e.sessionRegistry.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
-		for k, v := range allFields {
-			req.Fields[k] = v
-		}
-
-		if e.tracer != nil {
-			span := trace.SpanFromContext(ctx)
-			for k, v := range allFields {
-				span.SetAttributes(attribute.String(k, v))
-			}
 		}
 	}
 

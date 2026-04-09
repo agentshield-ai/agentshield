@@ -200,7 +200,7 @@ func TestValidateStringInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateStringInput(tt.input, tt.maxLength, tt.fieldName)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("validateStringInput() expected error, got nil")
@@ -443,7 +443,7 @@ func TestValidateEvaluationRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateEvaluationRequest(tt.req)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("validateEvaluationRequest() expected error, got nil")
@@ -478,16 +478,16 @@ func TestNewServerEdgeCases(t *testing.T) {
 				Token: "test-token-12345678901234567890123456",
 			},
 		}
-		
+
 		mockEngine := &mockRuleEngine{}
 		evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 		testStore, _ := store.NewStore(":memory:")
-		
+
 		server, err := NewServer(cfg, evaluator, testStore, nil)
 		if err != nil {
 			t.Fatalf("NewServer() error = %v", err)
 		}
-		
+
 		if server.auth == nil {
 			t.Error("Expected auth middleware to be created")
 		}
@@ -499,16 +499,16 @@ func TestNewServerEdgeCases(t *testing.T) {
 				Token: "", // Empty token should work (no auth middleware created)
 			},
 		}
-		
+
 		mockEngine := &mockRuleEngine{}
 		evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 		testStore, _ := store.NewStore(":memory:")
-		
+
 		server, err := NewServer(cfg, evaluator, testStore, nil)
 		if err != nil {
 			t.Fatalf("NewServer() unexpected error = %v", err)
 		}
-		
+
 		if server.auth != nil {
 			t.Error("Expected no auth middleware when token is empty")
 		}
@@ -521,12 +521,12 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 	cfg := &config.Config{
 		Rules: config.RulesConfig{Dir: "./rules"},
 	}
-	
+
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
-	
+
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
 	// Insert test alerts
@@ -629,12 +629,14 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 		{
 			name:           "invalid since timestamp",
 			queryParams:    "since=invalid-timestamp",
-			expectedStatus: http.StatusOK, // Ignores invalid timestamp
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Invalid since parameter",
 		},
 		{
 			name:           "invalid until timestamp",
 			queryParams:    "until=not-a-timestamp",
-			expectedStatus: http.StatusOK, // Ignores invalid timestamp
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Invalid until parameter",
 		},
 		{
 			name:           "rule filter with script content allowed",
@@ -649,7 +651,7 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 			expectedError:  "Invalid rule parameter",
 		},
 		{
-			name:           "session_id filter with javascript content allowed", 
+			name:           "session_id filter with javascript content allowed",
 			queryParams:    "session_id=" + url.QueryEscape("javascript:alert(1)"),
 			expectedStatus: http.StatusOK,
 			expectedError:  "",
@@ -683,16 +685,16 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 			if tt.queryParams != "" {
 				url += "?" + tt.queryParams
 			}
-			
+
 			req := httptest.NewRequest(http.MethodGet, url, nil)
 			w := httptest.NewRecorder()
-			
+
 			server.handleAlerts(w, req)
-			
+
 			if w.Code != tt.expectedStatus {
 				t.Errorf("handleAlerts() status = %d, want %d", w.Code, tt.expectedStatus)
 			}
-			
+
 			if tt.expectedError != "" {
 				if !strings.Contains(w.Body.String(), tt.expectedError) {
 					t.Errorf("handleAlerts() body = %v, want to contain %v", w.Body.String(), tt.expectedError)
@@ -703,7 +705,7 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 					t.Errorf("handleAlerts() invalid JSON response: %v", err)
 				}
-				
+
 				// Check required fields
 				if _, ok := response["alerts"]; !ok {
 					t.Error("handleAlerts() missing 'alerts' field in response")
@@ -722,12 +724,12 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 	cfg := &config.Config{
 		Rules: config.RulesConfig{Dir: "./rules"},
 	}
-	
+
 	mockEngine := &mockRuleEngine{
 		results: []engine.RuleResult{
 			{
 				RuleID:   "test-rule",
-				RuleName: "Test Rule", 
+				RuleName: "Test Rule",
 				Severity: engine.SeverityHigh,
 				Matched:  true,
 			},
@@ -736,7 +738,7 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
-	
+
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
 	t.Run("request body too large", func(t *testing.T) {
@@ -748,18 +750,18 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 				"large_field": strings.Repeat("a", MaxRequestBodySize), // This makes the JSON > 1MB
 			},
 		}
-		
+
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleEvaluate(w, req)
-		
+
 		if w.Code != http.StatusRequestEntityTooLarge {
 			t.Errorf("handleEvaluate() status = %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
 		}
-		
+
 		if !strings.Contains(w.Body.String(), "Request body too large") {
 			t.Errorf("handleEvaluate() body should contain 'Request body too large', got: %s", w.Body.String())
 		}
@@ -769,13 +771,13 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader("invalid json {"))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleEvaluate(w, req)
-		
+
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("handleEvaluate() status = %d, want %d", w.Code, http.StatusBadRequest)
 		}
-		
+
 		if !strings.Contains(w.Body.String(), "Invalid request format") {
 			t.Errorf("handleEvaluate() body should contain 'Invalid request format'")
 		}
@@ -789,14 +791,14 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 				"malicious": "javascript:alert(document.cookie)",
 			},
 		}
-		
+
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json") 
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleEvaluate(w, req)
-		
+
 		if w.Code != http.StatusOK {
 			t.Errorf("handleEvaluate() status = %d, want %d", w.Code, http.StatusOK)
 		}
@@ -812,24 +814,24 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 			},
 			Fields: nil, // Will be auto-built from other fields
 		}
-		
+
 		body, _ := json.Marshal(payload)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleEvaluate(w, req)
-		
+
 		if w.Code != http.StatusOK {
 			t.Errorf("handleEvaluate() status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
 		}
-		
+
 		// Verify the response contains expected alerts
 		var response evaluate.EvaluationResponse
 		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		
+
 		if len(response.Alerts) == 0 {
 			t.Error("Expected alerts to be present in response")
 		}
@@ -842,7 +844,7 @@ func TestHandleEvaluateConcurrency(t *testing.T) {
 	cfg := &config.Config{
 		Rules: config.RulesConfig{Dir: "./rules"},
 	}
-	
+
 	mockEngine := &mockRuleEngine{
 		results: []engine.RuleResult{
 			{RuleID: "test", Severity: engine.SeverityLow, Matched: true},
@@ -851,13 +853,13 @@ func TestHandleEvaluateConcurrency(t *testing.T) {
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
-	
+
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
-	
+
 	// Run concurrent requests
 	const numRequests = 50
 	results := make(chan int, numRequests)
-	
+
 	for i := 0; i < numRequests; i++ {
 		go func(id int) {
 			payload := models.EvaluationRequest{
@@ -865,17 +867,17 @@ func TestHandleEvaluateConcurrency(t *testing.T) {
 				Tool:    "concurrent_tool",
 				Fields:  map[string]string{"test": "concurrent"},
 			}
-			
+
 			body, _ := json.Marshal(payload)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
-			
+
 			server.handleEvaluate(w, req)
 			results <- w.Code
 		}(i)
 	}
-	
+
 	// Check all requests succeeded
 	for i := 0; i < numRequests; i++ {
 		statusCode := <-results
@@ -891,12 +893,12 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 	cfg := &config.Config{
 		Rules: config.RulesConfig{Dir: "./rules"},
 	}
-	
+
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
 	defer testStore.Close()
-	
+
 	// Insert a test alert for feedback tests
 	testAlert := &store.Alert{
 		RuleName:    "test-rule",
@@ -911,7 +913,7 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 	if err := testStore.InsertAlert(testAlert); err != nil {
 		t.Fatalf("Failed to insert test alert: %v", err)
 	}
-	
+
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
 	t.Run("invalid feedback type", func(t *testing.T) {
@@ -920,18 +922,18 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 			FeedbackType: "invalid_type",
 			Comment:      "test comment",
 		}
-		
+
 		body, _ := json.Marshal(feedback)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/feedback", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleFeedbackSubmission(w, req)
-		
+
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("handleFeedbackSubmission() status = %d, want %d", w.Code, http.StatusBadRequest)
 		}
-		
+
 		if !strings.Contains(w.Body.String(), "Invalid feedback_type") {
 			t.Errorf("Expected 'Invalid feedback_type' error")
 		}
@@ -943,18 +945,18 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 			FeedbackType: "false_positive",
 			Comment:      strings.Repeat("a", 2500), // 2500 chars, limit is 2000
 		}
-		
+
 		body, _ := json.Marshal(feedback)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/feedback", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleFeedbackSubmission(w, req)
-		
+
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("handleFeedbackSubmission() status = %d, want %d", w.Code, http.StatusBadRequest)
 		}
-		
+
 		if !strings.Contains(w.Body.String(), "Invalid comment") {
 			t.Errorf("Expected 'Invalid comment' error")
 		}
@@ -965,17 +967,17 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 		feedback := FeedbackRequest{
 			EventID:      "event-123",
 			AlertID:      &alertID,
-			FeedbackType: "false_positive", // Changed from "improvement" which is invalid 
+			FeedbackType: "false_positive", // Changed from "improvement" which is invalid
 			Comment:      "<script>alert('xss')</script>",
 		}
-		
+
 		body, _ := json.Marshal(feedback)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/feedback", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		
+
 		server.handleFeedbackSubmission(w, req)
-		
+
 		if w.Code != http.StatusOK {
 			t.Errorf("handleFeedbackSubmission() status = %d, want %d", w.Code, http.StatusOK)
 		}
@@ -984,13 +986,13 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 	t.Run("feedback query missing rule parameter", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/feedback", nil)
 		w := httptest.NewRecorder()
-		
+
 		server.handleFeedbackQuery(w, req)
-		
+
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("handleFeedbackQuery() status = %d, want %d", w.Code, http.StatusBadRequest)
 		}
-		
+
 		if !strings.Contains(w.Body.String(), "rule parameter is required") {
 			t.Errorf("Expected 'rule parameter is required' error")
 		}
@@ -999,19 +1001,19 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 	t.Run("feedback query with valid parameters", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/feedback?rule=test-rule&limit=10", nil)
 		w := httptest.NewRecorder()
-		
+
 		server.handleFeedbackQuery(w, req)
-		
+
 		if w.Code != http.StatusOK {
 			t.Errorf("handleFeedbackQuery() status = %d, want %d", w.Code, http.StatusOK)
 		}
-		
+
 		// Verify JSON structure
 		var response map[string]interface{}
 		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 			t.Errorf("handleFeedbackQuery() invalid JSON response: %v", err)
 		}
-		
+
 		expectedFields := []string{"rule_name", "feedback", "false_positive_rate", "total_feedback"}
 		for _, field := range expectedFields {
 			if _, ok := response[field]; !ok {
