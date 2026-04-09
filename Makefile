@@ -1,4 +1,4 @@
-.PHONY: build test clean run bench bench-all test-integration test-integration-docker docker-build
+.PHONY: build test clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay
 
 # Go binary path
 GO ?= go
@@ -47,6 +47,14 @@ test-integration: build
 # Integration tests via Docker
 test-integration-docker: docker-build
 	cd plugins/openclaw && AGENTSHIELD_ENGINE_MODE=docker npm run test:integration
+
+# Build replay tool
+replay-build:
+	$(GO) build -o bin/agentshield-replay ./cmd/agentshield-replay
+
+# Run replay (usage: make replay DATASET=nlile/misc-merged-claude-code-traces-v1)
+replay: replay-build
+	./bin/agentshield-replay run --dataset $(DATASET) --rules-dir rules/rules
 
 # Build Docker engine image
 docker-build:

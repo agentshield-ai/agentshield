@@ -43,6 +43,37 @@ make bench-all                                  # All suites
 
 Requires engine running on `localhost:8433`. Suites live in `bench/suites/`, test cases in `bench/testcases/`.
 
+### HuggingFace Traces Replay
+
+```bash
+make replay-build                              # Build bin/agentshield-replay
+make replay DATASET=nlile/misc-merged-claude-code-traces-v1  # Build + run
+
+# Full usage:
+./bin/agentshield-replay run \
+  --dataset nlile/misc-merged-claude-code-traces-v1 \
+  --max-traces 100 \
+  --rules-dir rules/rules \
+  --format json
+
+# HTTP mode (against running engine on localhost:8433):
+./bin/agentshield-replay run \
+  --dataset sammshen/wildclaw-opus-traces \
+  --http --endpoint http://localhost:8433
+
+# Export triggered traces as benchmark testcases:
+./bin/agentshield-replay run \
+  --dataset nlile/misc-merged-claude-code-traces-v1 \
+  --export-testcases bench/testcases/hf_traces/
+
+# With session behavioural tracking:
+./bin/agentshield-replay run \
+  --dataset nlile/misc-merged-claude-code-traces-v1 \
+  --sessions --mode enforce
+```
+
+Downloads public agent trace datasets from HuggingFace, extracts tool calls, replays through the Sigma rule engine, and reports rule coverage/quality. No auth needed for public datasets.
+
 ### Docker
 
 ```bash
@@ -82,6 +113,7 @@ Internal packages follow clear separation:
 - `daemon/` — Service lifecycle (graceful shutdown, signal handling)
 - `telemetry/` — OpenTelemetry TracerProvider, MeterProvider, and metrics recorder
 - `session/` — Per-session event window registry for behavioural sequencing
+- `replay/` — HuggingFace traces replay engine (fetch, extract, evaluate, report)
 
 ### OpenTelemetry Export (`internal/telemetry/`)
 
@@ -101,6 +133,19 @@ Per-session sliding window that tracks tool call sequences:
 - **Cleanup**: Background goroutine evicts expired sessions.
 - **Config**: `session:` section in config.yaml with `enabled`, `window_sec`, `max_events`.
 - **Sigma rules**: `ai_agent_recon_then_exfil.yml` (detects recon→exfil chains), `ai_agent_session_velocity_anomaly.yml` (detects high tool-call velocity), `ai_agent_approval_fatigue.yml` (detects excessive require_approval verdicts), `ai_agent_override_escalation.yml` (detects repeated user overrides of blocks).
+
+### HuggingFace Traces Replay (`cmd/agentshield-replay/`, `internal/replay/`)
+
+CLI tool that validates Sigma rules against real-world agent traces from public HuggingFace datasets:
+- **Fetcher** (`fetcher.go`): Paginated HF Dataset Viewer API client (`/rows` endpoint) with `retryablehttp` retry. Implements `Fetcher` interface for future Parquet support.
+- **Adapters** (`adapter_*.go`): `TraceAdapter` interface with implementations for three dataset formats:
+  - `NlileAdapter` — `nlile/misc-merged-claude-code-traces-v1` (32K Claude Code conversations, `messages_json` column with `tool_use` blocks)
+  - `WildClawAdapter` — `sammshen/wildclaw-opus-traces` (HTTP-level OpenClaw+Opus traces with `tool_calls[].function.name/arguments`)
+  - `SmolAgentsAdapter` — `smolagents/synthetic-traces-toolcalling` (direct `tool_name`/`arguments` fields)
+- **Field mapping** (`fieldmap.go`): Ports tool name → `event_type` + `command` mapping from `plugins/openclaw/src/normalise.ts` and field enrichment from `internal/server/server.go:454-486`. Handles both Claude Code names (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`) and OpenClaw names (`exec`, `read`, `write`).
+- **Runner** (`runner.go`): Pipeline orchestrator. Library mode (direct `evaluate.NewEvaluator()`) or HTTP mode (`--http` flag to POST `/api/v1/evaluate`). Stream-processes pages to bound memory.
+- **Report** (`report.go`): Aggregates rule coverage, alert distribution by rule/severity, action distribution, FP candidates (benign-looking commands that triggered rules), latency stats.
+- **Testcase export** (`testcase_export.go`): Writes triggered traces as `agentshieldbench`-compatible YAML testcases.
 
 ### OpenClaw Plugin (`plugins/openclaw/`)
 
