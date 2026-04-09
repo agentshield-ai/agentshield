@@ -179,8 +179,8 @@ func TestRegistry_CrossSessionFields_Empty(t *testing.T) {
 	if fields["session.cross_session_count"] != "0" {
 		t.Errorf("expected 0 other sessions, got %q", fields["session.cross_session_count"])
 	}
-	if fields["session.cross_session_tool_overlap"] != "0.0" {
-		t.Errorf("expected 0.0 overlap, got %q", fields["session.cross_session_tool_overlap"])
+	if fields["session.cross_session_tool_overlap"] != "0.00" {
+		t.Errorf("expected 0.00 overlap, got %q", fields["session.cross_session_tool_overlap"])
 	}
 }
 

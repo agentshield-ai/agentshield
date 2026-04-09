@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"net/netip"
 	"testing"
 )
@@ -36,6 +37,12 @@ func TestSSRFBypassVectors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Skip DNS-dependent test cases when DNS is unavailable
+			if tt.name == "public domain allowed" {
+				if _, err := net.LookupIP("api.openai.com"); err != nil {
+					t.Skip("skipping: DNS resolution unavailable")
+				}
+			}
 			result := IsPrivateOrLocalURL(tt.url)
 			if result != tt.expected {
 				t.Errorf("IsPrivateOrLocalURL(%q) = %v, want %v", tt.url, result, tt.expected)
