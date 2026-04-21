@@ -36,7 +36,7 @@ var (
 type TriageResult struct {
 	RiskLevel         RiskLevel         `json:"risk_level"`         // intrinsic risk of the action
 	UserAuthorization UserAuthorization `json:"user_authorization"` // how clearly the user authorized it
-	Verdict           string            `json:"verdict"`            // "block", "allow", "investigate"
+	Verdict           Verdict           `json:"verdict"`            // "block", "allow", "investigate"
 	Confidence        float64           `json:"confidence"`         // 0.0-1.0
 	Reasoning         string            `json:"reasoning"`          // Explanation (alias of rationale)
 	SuggestedAction   string            `json:"suggested_action"`   // Recommended next steps
@@ -60,9 +60,6 @@ type TriageContext struct {
 	Request      *models.EvaluationRequest `json:"request"`
 	RecentAlerts []store.Alert             `json:"recent_alerts"`
 	Correlation  CorrelationSummary        `json:"correlation"`
-	// PolicyPath is an optional path to a tenant-specific policy markdown file
-	// that overrides internal/triage/policy.md. Empty means use the embedded default.
-	PolicyPath string `json:"-"`
 }
 
 // Provider interface for LLM triage providers
@@ -159,7 +156,6 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 			Request:      req,
 			RecentAlerts: filteredRecent,
 			Correlation:  correlation,
-			PolicyPath:   t.config.PolicyPath,
 		}
 
 		result, err := t.provider.Triage(ctx, triageCtx)
@@ -205,19 +201,17 @@ func severityToRiskLevel(severity engine.AlertSeverity) RiskLevel {
 	}
 }
 
-// getFallbackVerdict returns a safe fallback verdict when triage fails
-func (t *Triager) getFallbackVerdict(severity engine.AlertSeverity) string {
+// getFallbackVerdict returns a safe fallback verdict when triage fails.
+// Fails closed for critical/high, fails open for medium/low, and defaults to
+// the safe side for any unknown severity.
+func (t *Triager) getFallbackVerdict(severity engine.AlertSeverity) Verdict {
 	switch severity {
-	case engine.SeverityCritical:
-		return "block" // Fail closed for critical
-	case engine.SeverityHigh:
-		return "block" // Fail closed for high
-	case engine.SeverityMedium:
-		return "allow" // Fail open for medium
-	case engine.SeverityLow:
-		return "allow" // Fail open for low
+	case engine.SeverityCritical, engine.SeverityHigh:
+		return VerdictBlock
+	case engine.SeverityMedium, engine.SeverityLow:
+		return VerdictAllow
 	default:
-		return "block" // Default to safe side
+		return VerdictBlock
 	}
 }
 
@@ -461,15 +455,11 @@ Assess the intrinsic risk of the tool call above, score the user authorization b
 }
 
 // buildTriagePrompt builds a single-string prompt embedding both the policy
-// and the evidence. Providers that can send separate system + user messages
-// should prefer renderPolicySystemPrompt + buildTriageEvidence; this is the
-// compatibility path for providers or tests that want a single blob.
+// (with the embedded default tenant policy) and the evidence. Providers that
+// can send separate system + user messages should prefer
+// renderPolicySystemPrompt + buildTriageEvidence.
 func buildTriagePrompt(triageCtx *TriageContext) string {
-	policyPath := ""
-	if triageCtx != nil && triageCtx.PolicyPath != "" {
-		policyPath = triageCtx.PolicyPath
-	}
-	return renderPolicySystemPrompt(policyPath) + "\n" + buildTriageEvidence(triageCtx)
+	return renderPolicySystemPrompt("") + "\n" + buildTriageEvidence(triageCtx)
 }
 
 // parseTriageResponse parses the LLM response into a TriageResult.
@@ -522,26 +512,23 @@ func parseTriageResponse(response string, provider, model string, processingTime
 		result.Reasoning = result.Rationale
 	}
 
-	// Normalise / validate risk level
-	risk := RiskLevel(strings.ToLower(strings.TrimSpace(result.RiskLevel)))
+	// Conservative defaults when the model omits or malforms the axes:
+	// medium risk + unknown authorization is the neutral middle of the matrix.
+	risk := RiskLevel(normalizeEnumString(result.RiskLevel))
 	if !risk.IsValid() {
-		risk = RiskLevelMedium // conservative default when the model omits risk
+		risk = RiskLevelMedium
 	}
-
-	// Normalise / validate user authorization
-	auth := UserAuthorization(strings.ToLower(strings.TrimSpace(result.UserAuthorization)))
+	auth := UserAuthorization(normalizeEnumString(result.UserAuthorization))
 	if !auth.IsValid() {
 		auth = UserAuthorizationUnknown
 	}
 
 	// Derive verdict from the two axes if the model did not supply one.
-	verdict := strings.ToLower(strings.TrimSpace(result.Verdict))
-	switch verdict {
-	case "block", "allow", "investigate":
-		// explicit and valid
-	case "":
+	verdict := Verdict(normalizeEnumString(result.Verdict))
+	switch {
+	case verdict == "":
 		verdict = deriveVerdict(risk, auth)
-	default:
+	case !verdict.IsValid():
 		return nil, fmt.Errorf("invalid verdict: %s", result.Verdict)
 	}
 
@@ -567,19 +554,19 @@ func parseTriageResponse(response string, provider, model string, processingTime
 // internal/triage/policy_template.md when the model omits an explicit verdict.
 // Tenant policy overrides live in the prompt itself; this is only the fallback
 // used when the model returns the two axes without a verdict.
-func deriveVerdict(risk RiskLevel, auth UserAuthorization) string {
+func deriveVerdict(risk RiskLevel, auth UserAuthorization) Verdict {
 	switch risk {
 	case RiskLevelCritical:
-		return "block"
+		return VerdictBlock
 	case RiskLevelHigh:
 		if auth == UserAuthorizationMedium || auth == UserAuthorizationHigh {
-			return "allow"
+			return VerdictAllow
 		}
-		return "block"
+		return VerdictBlock
 	case RiskLevelMedium, RiskLevelLow:
-		return "allow"
+		return VerdictAllow
 	default:
-		return "investigate"
+		return VerdictInvestigate
 	}
 }
 

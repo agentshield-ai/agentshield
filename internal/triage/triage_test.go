@@ -585,13 +585,13 @@ func TestGetFallbackVerdict(t *testing.T) {
 
 	tests := []struct {
 		severity engine.AlertSeverity
-		expected string
+		expected Verdict
 	}{
-		{engine.SeverityCritical, "block"},
-		{engine.SeverityHigh, "block"},
-		{engine.SeverityMedium, "allow"},
-		{engine.SeverityLow, "allow"},
-		{engine.AlertSeverity("unknown"), "block"}, // Default case
+		{engine.SeverityCritical, VerdictBlock},
+		{engine.SeverityHigh, VerdictBlock},
+		{engine.SeverityMedium, VerdictAllow},
+		{engine.SeverityLow, VerdictAllow},
+		{engine.AlertSeverity("unknown"), VerdictBlock},
 	}
 
 	for _, test := range tests {

@@ -37,16 +37,16 @@ func TestDeriveVerdict(t *testing.T) {
 	cases := []struct {
 		risk RiskLevel
 		auth UserAuthorization
-		want string
+		want Verdict
 	}{
-		{RiskLevelCritical, UserAuthorizationHigh, "block"},  // critical always blocks
-		{RiskLevelCritical, UserAuthorizationLow, "block"},
-		{RiskLevelHigh, UserAuthorizationHigh, "allow"},       // high + explicit auth allowed
-		{RiskLevelHigh, UserAuthorizationMedium, "allow"},
-		{RiskLevelHigh, UserAuthorizationLow, "block"},        // high without strong auth blocked
-		{RiskLevelHigh, UserAuthorizationUnknown, "block"},
-		{RiskLevelMedium, UserAuthorizationUnknown, "allow"},  // medium allowed by default
-		{RiskLevelLow, UserAuthorizationUnknown, "allow"},
+		{RiskLevelCritical, UserAuthorizationHigh, VerdictBlock},
+		{RiskLevelCritical, UserAuthorizationLow, VerdictBlock},
+		{RiskLevelHigh, UserAuthorizationHigh, VerdictAllow},
+		{RiskLevelHigh, UserAuthorizationMedium, VerdictAllow},
+		{RiskLevelHigh, UserAuthorizationLow, VerdictBlock},
+		{RiskLevelHigh, UserAuthorizationUnknown, VerdictBlock},
+		{RiskLevelMedium, UserAuthorizationUnknown, VerdictAllow},
+		{RiskLevelLow, UserAuthorizationUnknown, VerdictAllow},
 	}
 	for _, c := range cases {
 		got := deriveVerdict(c.risk, c.auth)
@@ -107,28 +107,28 @@ func TestParseTriageResponse_DerivesVerdictWhenMissing(t *testing.T) {
 	// per the default mapping.
 	cases := []struct {
 		name     string
-		response string
-		wantVerdict string
+		response     string
+		wantVerdict  Verdict
 	}{
 		{
 			name:        "critical + unknown -> block",
 			response:    `{"risk_level":"critical","user_authorization":"unknown","confidence":0.9,"rationale":"r","suggested_action":"s"}`,
-			wantVerdict: "block",
+			wantVerdict: VerdictBlock,
 		},
 		{
 			name:        "high + high -> allow",
 			response:    `{"risk_level":"high","user_authorization":"high","confidence":0.9,"rationale":"r","suggested_action":"s"}`,
-			wantVerdict: "allow",
+			wantVerdict: VerdictAllow,
 		},
 		{
 			name:        "high + low -> block",
 			response:    `{"risk_level":"high","user_authorization":"low","confidence":0.9,"rationale":"r","suggested_action":"s"}`,
-			wantVerdict: "block",
+			wantVerdict: VerdictBlock,
 		},
 		{
 			name:        "low + unknown -> allow",
 			response:    `{"risk_level":"low","user_authorization":"unknown","confidence":0.9,"rationale":"r","suggested_action":"s"}`,
-			wantVerdict: "allow",
+			wantVerdict: VerdictAllow,
 		},
 	}
 	for _, c := range cases {

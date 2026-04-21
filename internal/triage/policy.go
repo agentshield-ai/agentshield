@@ -3,8 +3,10 @@ package triage
 import (
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 )
 
 //go:embed policy_template.md
@@ -53,68 +55,41 @@ func (a UserAuthorization) IsValid() bool {
 	return false
 }
 
-// buildPolicyPrompt renders the triage policy prompt by substituting the
-// tenant-specific policy block into the shared template. When
-// tenantPolicyPath is empty or unreadable, the embedded defaults are used.
-func buildPolicyPrompt(tenantPolicyPath string) string {
-	tenant := strings.TrimSpace(defaultTenantPolicy)
-	if tenantPolicyPath != "" {
-		if data, err := os.ReadFile(tenantPolicyPath); err == nil {
-			tenant = strings.TrimSpace(string(data))
-		}
+// Verdict is the final triage decision derived from risk_level × user_authorization
+// and tenant policy.
+type Verdict string
+
+const (
+	VerdictAllow       Verdict = "allow"
+	VerdictBlock       Verdict = "block"
+	VerdictInvestigate Verdict = "investigate"
+)
+
+// IsValid reports whether v is one of the known verdicts.
+func (v Verdict) IsValid() bool {
+	switch v {
+	case VerdictAllow, VerdictBlock, VerdictInvestigate:
+		return true
 	}
-	template := strings.TrimRight(defaultPolicyTemplate, "\n")
-	return strings.ReplaceAll(template, "{tenant_policy_config}", tenant)
+	return false
 }
 
-// triageOutputSchema returns the JSON schema enforced on the provider response.
-// Matches the shape produced by parseTriageResponse. Providers that support
-// structured outputs (OpenAI json_schema) should set this on their request.
-func triageOutputSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties": map[string]any{
-			"risk_level": map[string]any{
-				"type": "string",
-				"enum": []string{"low", "medium", "high", "critical"},
-			},
-			"user_authorization": map[string]any{
-				"type": "string",
-				"enum": []string{"unknown", "low", "medium", "high"},
-			},
-			"verdict": map[string]any{
-				"type": "string",
-				"enum": []string{"allow", "block", "investigate"},
-			},
-			"confidence": map[string]any{
-				"type":    "number",
-				"minimum": 0,
-				"maximum": 1,
-			},
-			"rationale": map[string]any{
-				"type": "string",
-			},
-			"suggested_action": map[string]any{
-				"type": "string",
-			},
-		},
-		"required": []string{
-			"risk_level",
-			"user_authorization",
-			"verdict",
-			"confidence",
-			"rationale",
-			"suggested_action",
-		},
+var (
+	riskLevelValues = []string{
+		string(RiskLevelLow), string(RiskLevelMedium), string(RiskLevelHigh), string(RiskLevelCritical),
 	}
-}
+	userAuthorizationValues = []string{
+		string(UserAuthorizationUnknown), string(UserAuthorizationLow), string(UserAuthorizationMedium), string(UserAuthorizationHigh),
+	}
+	verdictValues = []string{
+		string(VerdictAllow), string(VerdictBlock), string(VerdictInvestigate),
+	}
+)
 
-// outputContractPrompt is appended to the policy prompt so the model knows the
-// exact schema it must emit. Providers that also enforce the schema via
-// structured outputs still benefit from this contract for better adherence.
-func outputContractPrompt() string {
-	return `Your final message must be strict JSON with this exact schema:
+// outputContract is the JSON schema description appended to every policy
+// system prompt. Providers that also enforce the schema via structured
+// outputs still benefit from this contract for better model adherence.
+const outputContract = `Your final message must be strict JSON with this exact schema:
 {
   "risk_level": "low" | "medium" | "high" | "critical",
   "user_authorization": "unknown" | "low" | "medium" | "high",
@@ -123,10 +98,104 @@ func outputContractPrompt() string {
   "rationale": one concise sentence,
   "suggested_action": one short sentence
 }`
+
+// normalizeEnumString lower-cases and trims a string value for enum parsing.
+func normalizeEnumString(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// renderPolicySystemPrompt renders the full system prompt: the policy template
-// (with tenant policy merged in) followed by the output contract.
+// cachedTriageOutputSchema is built once and reused across every OpenAI
+// structured-output request. The schema is deterministic, so there's no reason
+// to reallocate it per call.
+var cachedTriageOutputSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"properties": map[string]any{
+		"risk_level": map[string]any{
+			"type": "string",
+			"enum": riskLevelValues,
+		},
+		"user_authorization": map[string]any{
+			"type": "string",
+			"enum": userAuthorizationValues,
+		},
+		"verdict": map[string]any{
+			"type": "string",
+			"enum": verdictValues,
+		},
+		"confidence": map[string]any{
+			"type":    "number",
+			"minimum": 0,
+			"maximum": 1,
+		},
+		"rationale": map[string]any{
+			"type": "string",
+		},
+		"suggested_action": map[string]any{
+			"type": "string",
+		},
+	},
+	"required": []string{
+		"risk_level", "user_authorization", "verdict",
+		"confidence", "rationale", "suggested_action",
+	},
+}
+
+// triageOutputSchema returns the JSON schema enforced on the provider response.
+// Matches the shape produced by parseTriageResponse. The returned map is
+// shared; providers must treat it as read-only.
+func triageOutputSchema() map[string]any { return cachedTriageOutputSchema }
+
+var (
+	// trimmedPolicyTemplate is the embedded template with the trailing newline
+	// stripped, computed once at package load.
+	trimmedPolicyTemplate = strings.TrimRight(defaultPolicyTemplate, "\n")
+	// trimmedDefaultTenantPolicy is the embedded tenant block ready to
+	// substitute into the template.
+	trimmedDefaultTenantPolicy = strings.TrimSpace(defaultTenantPolicy)
+
+	// policyPromptCache memoises the rendered system prompt keyed by
+	// tenantPolicyPath so the file read + string substitution only runs once
+	// per distinct path (typically once total, since the path comes from
+	// config). Invalidated on process restart; callers that hot-reload policy
+	// files should clear this via invalidatePolicyCache.
+	policyPromptCache sync.Map // map[string]string
+)
+
+// renderPolicySystemPrompt returns the full system prompt for triage:
+// the policy template with the tenant block substituted in, followed by the
+// output contract. When tenantPolicyPath is set but unreadable, we log a
+// warning once (via the cache) and fall back to the embedded default so the
+// triager still works but operators see the misconfiguration.
 func renderPolicySystemPrompt(tenantPolicyPath string) string {
-	return fmt.Sprintf("%s\n\n%s\n", buildPolicyPrompt(tenantPolicyPath), outputContractPrompt())
+	if cached, ok := policyPromptCache.Load(tenantPolicyPath); ok {
+		return cached.(string)
+	}
+	rendered := computePolicySystemPrompt(tenantPolicyPath)
+	policyPromptCache.Store(tenantPolicyPath, rendered)
+	return rendered
+}
+
+func computePolicySystemPrompt(tenantPolicyPath string) string {
+	tenant := trimmedDefaultTenantPolicy
+	if tenantPolicyPath != "" {
+		data, err := os.ReadFile(tenantPolicyPath)
+		if err != nil {
+			slog.Warn("triage policy file unreadable, using embedded default",
+				"path", tenantPolicyPath, "error", err)
+		} else {
+			tenant = strings.TrimSpace(string(data))
+		}
+	}
+	policy := strings.ReplaceAll(trimmedPolicyTemplate, "{tenant_policy_config}", tenant)
+	return fmt.Sprintf("%s\n\n%s\n", policy, outputContract)
+}
+
+// invalidatePolicyCache clears the cached policy prompt. Exposed for tests
+// and future hot-reload; not currently wired up to SIGHUP.
+func invalidatePolicyCache() {
+	policyPromptCache.Range(func(k, _ any) bool {
+		policyPromptCache.Delete(k)
+		return true
+	})
 }

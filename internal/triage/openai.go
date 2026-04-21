@@ -101,14 +101,10 @@ func (p *OpenAIProvider) Name() string {
 func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (*TriageResult, error) {
 	start := time.Now()
 
-	// Split prompt into system (policy) and user (evidence) messages. This
-	// keeps the fixed policy out of the cacheable-per-request surface and lets
-	// structured outputs constrain the final assistant message to strict JSON.
-	policyPath := ""
-	if triageCtx != nil {
-		policyPath = triageCtx.PolicyPath
-	}
-	systemPrompt := renderPolicySystemPrompt(policyPath)
+	// Policy lives in the system message so structured outputs constrain only
+	// the per-request assistant reply and Anthropic/OpenAI prompt caching can
+	// deduplicate the fixed policy across requests.
+	systemPrompt := renderPolicySystemPrompt(p.config.PolicyPath)
 	userPrompt := buildTriageEvidence(triageCtx)
 
 	reqBody := OpenAIRequest{

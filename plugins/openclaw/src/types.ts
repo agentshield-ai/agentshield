@@ -35,6 +35,9 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 /** How clearly the user authorized the exact action being evaluated. */
 export type UserAuthorization = "unknown" | "low" | "medium" | "high";
 
+/** Final triage decision derived from risk_level × user_authorization and tenant policy. */
+export type Verdict = "block" | "allow" | "investigate";
+
 /** Triage result from LLM analysis.
  *
  * Risk and authorization are modelled as two independent axes (inspired by
@@ -45,7 +48,7 @@ export type UserAuthorization = "unknown" | "low" | "medium" | "high";
 export type TriageResult = {
   risk_level?: RiskLevel;
   user_authorization?: UserAuthorization;
-  verdict: "block" | "allow" | "investigate";
+  verdict: Verdict;
   confidence: number;
   reasoning: string;
   suggested_action: string;

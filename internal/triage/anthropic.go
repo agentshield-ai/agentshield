@@ -78,14 +78,9 @@ func (p *AnthropicProvider) Name() string {
 func (p *AnthropicProvider) Triage(ctx context.Context, triageCtx *TriageContext) (*TriageResult, error) {
 	start := time.Now()
 
-	// Split prompt into system (policy) and user (evidence) so Anthropic
-	// prompt caching of the system block works naturally. The system block
-	// is deterministic across requests for a given policy_path.
-	policyPath := ""
-	if triageCtx != nil {
-		policyPath = triageCtx.PolicyPath
-	}
-	systemPrompt := renderPolicySystemPrompt(policyPath)
+	// Policy lives in the system block so Anthropic prompt caching
+	// deduplicates the fixed policy across requests.
+	systemPrompt := renderPolicySystemPrompt(p.config.PolicyPath)
 	userPrompt := buildTriageEvidence(triageCtx)
 
 	reqBody := AnthropicRequest{
