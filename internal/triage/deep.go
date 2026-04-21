@@ -85,20 +85,10 @@ func NewDeepTriager(cfg *config.DeepTriageConfig) (*DeepTriager, error) {
 
 	gatewayURL := cfg.GatewayURL
 	if gatewayURL == "" {
-		gatewayURL = "http://127.0.0.1:18789"
+		gatewayURL = defaultGatewayURL
 	}
 
-	gatewayToken := cfg.GatewayToken
-	if gatewayToken == "" {
-		gatewayToken = os.Getenv("OPENCLAW_GATEWAY_TOKEN")
-	}
-	if gatewayToken == "" {
-		token, err := readOpenClawToken()
-		if err == nil && token != "" {
-			gatewayToken = token
-		}
-	}
-
+	gatewayToken := resolveGatewayToken(cfg.GatewayToken)
 	if gatewayToken == "" {
 		return nil, fmt.Errorf("deep triage requires OpenClaw gateway token: set deep_triage.gateway_token, OPENCLAW_GATEWAY_TOKEN env, or ensure ~/.openclaw/openclaw.json is readable")
 	}

@@ -23,10 +23,10 @@ type OpenAIProvider struct {
 
 // OpenAIRequest represents the request format for OpenAI API
 type OpenAIRequest struct {
-	Model      string              `json:"model"`
-	Messages   []OpenAIMessage     `json:"messages"`
-	MaxTokens  int                 `json:"max_tokens"`
-	Temperature float64            `json:"temperature"`
+	Model       string          `json:"model"`
+	Messages    []OpenAIMessage `json:"messages"`
+	MaxTokens   int             `json:"max_tokens"`
+	Temperature float64         `json:"temperature"`
 }
 
 // OpenAIMessage represents a message in the OpenAI format
@@ -95,7 +95,7 @@ func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (
 		Messages: []OpenAIMessage{
 			{
 				Role:    "system",
-				Content: "You are a cybersecurity expert analyzing AI agent behavior. Respond only with the requested JSON format.",
+				Content: triageSystemPrompt,
 			},
 			{
 				Role:    "user",

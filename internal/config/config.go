@@ -292,10 +292,9 @@ func validateConfig(cfg *Config) error {
 
 	// SECURITY: Validate triage URLs for SSRF protection
 	if cfg.Triage.Provider == "openclaw" {
-		// OpenClaw gateway is intentionally localhost — skip HTTPS/private checks for base_url
 		if cfg.Triage.GatewayURL != "" {
-			if _, err := url.Parse(cfg.Triage.GatewayURL); err != nil {
-				return fmt.Errorf("triage gateway_url is not a valid URL: %w", err)
+			if u, err := url.Parse(cfg.Triage.GatewayURL); err != nil || u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("triage gateway_url must be a valid URL with scheme and host (e.g. http://127.0.0.1:18789)")
 			}
 		}
 	} else if cfg.Triage.BaseURL != "" {

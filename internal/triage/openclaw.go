@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
@@ -28,20 +27,10 @@ type OpenClawProvider struct {
 func NewOpenClawProvider(cfg *config.TriageConfig) (*OpenClawProvider, error) {
 	gatewayURL := cfg.GatewayURL
 	if gatewayURL == "" {
-		gatewayURL = "http://127.0.0.1:18789"
+		gatewayURL = defaultGatewayURL
 	}
 
-	gatewayToken := cfg.GatewayToken
-	if gatewayToken == "" {
-		gatewayToken = os.Getenv("OPENCLAW_GATEWAY_TOKEN")
-	}
-	if gatewayToken == "" {
-		token, err := readOpenClawToken()
-		if err == nil && token != "" {
-			gatewayToken = token
-		}
-	}
-
+	gatewayToken := resolveGatewayToken(cfg.GatewayToken)
 	if gatewayToken == "" {
 		return nil, fmt.Errorf("openclaw triage requires a gateway token: set triage.gateway_token, OPENCLAW_GATEWAY_TOKEN env, or ensure ~/.openclaw/openclaw.json is readable")
 	}
@@ -99,7 +88,7 @@ func (p *OpenClawProvider) HealthCheck(ctx context.Context) error {
 func (p *OpenClawProvider) invokeCompletions(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	args := map[string]interface{}{
 		"model":      p.config.Model,
-		"system":     "You are a cybersecurity expert analyzing AI agent behavior. Respond only with the requested JSON format.",
+		"system":     triageSystemPrompt,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
 	}

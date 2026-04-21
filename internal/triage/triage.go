@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +20,11 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/hashicorp/go-retryablehttp"
+)
+
+const (
+	defaultGatewayURL  = "http://127.0.0.1:18789"
+	triageSystemPrompt = "You are a cybersecurity expert analyzing AI agent behavior. Respond only with the requested JSON format."
 )
 
 var (
@@ -599,4 +605,19 @@ func createLocalHTTPClient(timeout time.Duration) *retryablehttp.Client {
 		},
 	}
 	return client
+}
+
+// resolveGatewayToken resolves the OpenClaw gateway token via a 3-step chain:
+// config value → OPENCLAW_GATEWAY_TOKEN env → ~/.openclaw/openclaw.json file.
+func resolveGatewayToken(cfgToken string) string {
+	if cfgToken != "" {
+		return cfgToken
+	}
+	if envToken := os.Getenv("OPENCLAW_GATEWAY_TOKEN"); envToken != "" {
+		return envToken
+	}
+	if fileToken, err := readOpenClawToken(); err == nil && fileToken != "" {
+		return fileToken
+	}
+	return ""
 }
