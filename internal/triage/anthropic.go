@@ -24,6 +24,7 @@ type AnthropicProvider struct {
 type AnthropicRequest struct {
 	Model     string             `json:"model"`
 	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system,omitempty"`
 	Messages  []AnthropicMessage `json:"messages"`
 }
 
@@ -77,18 +78,22 @@ func (p *AnthropicProvider) Name() string {
 func (p *AnthropicProvider) Triage(ctx context.Context, triageCtx *TriageContext) (*TriageResult, error) {
 	start := time.Now()
 
-	// Build the prompt
-	prompt := buildTriagePrompt(triageCtx)
+	// Split prompt into system (policy) and user (evidence) so Anthropic
+	// prompt caching of the system block works naturally. The system block
+	// is deterministic across requests for a given policy_path.
+	policyPath := ""
+	if triageCtx != nil {
+		policyPath = triageCtx.PolicyPath
+	}
+	systemPrompt := renderPolicySystemPrompt(policyPath)
+	userPrompt := buildTriageEvidence(triageCtx)
 
-	// Create the request
 	reqBody := AnthropicRequest{
 		Model:     p.config.Model,
 		MaxTokens: p.config.MaxTokens,
+		System:    systemPrompt,
 		Messages: []AnthropicMessage{
-			{
-				Role:    "user",
-				Content: prompt,
-			},
+			{Role: "user", Content: userPrompt},
 		},
 	}
 

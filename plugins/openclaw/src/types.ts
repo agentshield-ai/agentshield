@@ -29,8 +29,22 @@ export type EvaluationRequest = {
   data: Record<string, unknown>;
 };
 
-/** Triage result from LLM analysis. */
+/** Intrinsic risk level of the action, independent of user authorization. */
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+
+/** How clearly the user authorized the exact action being evaluated. */
+export type UserAuthorization = "unknown" | "low" | "medium" | "high";
+
+/** Triage result from LLM analysis.
+ *
+ * Risk and authorization are modelled as two independent axes (inspired by
+ * OpenAI Codex guardian mode); `verdict` is derived from them plus tenant
+ * policy. `risk_level` and `user_authorization` may be absent on responses
+ * from older engine versions — treat them as optional for backwards compat.
+ */
 export type TriageResult = {
+  risk_level?: RiskLevel;
+  user_authorization?: UserAuthorization;
   verdict: "block" | "allow" | "investigate";
   confidence: number;
   reasoning: string;

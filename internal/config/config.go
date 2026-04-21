@@ -83,6 +83,8 @@ type TriageConfig struct {
 	MaxTokens       int               `yaml:"max_tokens"`
 	TimeoutSec      int               `yaml:"timeout_sec"`
 	HealthCheckMode string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
+	PolicyPath      string            `yaml:"policy_path"`       // optional override for the tenant triage policy markdown (see internal/triage/policy.md)
+	StructuredOutput bool             `yaml:"structured_output"` // if true, OpenAI provider sets response_format=json_schema; default false for provider compatibility
 	Correlation     CorrelationConfig `yaml:"correlation"`
 }
 
@@ -177,12 +179,13 @@ func LoadConfig(path string) (*Config, error) {
 			TTLSec:  300,
 		},
 		Triage: TriageConfig{
-			Enabled:    false,
-			Provider:   "openai",
-			Model:      "gpt-4o-mini",
-			APIKey:     "",
-			MaxTokens:  500,
-			TimeoutSec: 10,
+			Enabled:          false,
+			Provider:         "openai",
+			Model:            "gpt-4o-mini",
+			APIKey:           "",
+			MaxTokens:        500,
+			TimeoutSec:       10,
+			StructuredOutput: true, // OpenAI + Anthropic both support structured outputs on default models
 			Correlation: CorrelationConfig{
 				Enabled:              true,
 				WindowSec:            900,

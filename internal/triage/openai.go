@@ -23,10 +23,25 @@ type OpenAIProvider struct {
 
 // OpenAIRequest represents the request format for OpenAI API
 type OpenAIRequest struct {
-	Model      string              `json:"model"`
-	Messages   []OpenAIMessage     `json:"messages"`
-	MaxTokens  int                 `json:"max_tokens"`
-	Temperature float64            `json:"temperature"`
+	Model          string                `json:"model"`
+	Messages       []OpenAIMessage       `json:"messages"`
+	MaxTokens      int                   `json:"max_tokens"`
+	Temperature    float64               `json:"temperature"`
+	ResponseFormat *OpenAIResponseFormat `json:"response_format,omitempty"`
+}
+
+// OpenAIResponseFormat enables OpenAI structured outputs. When type is
+// "json_schema", the model is constrained to emit a response that matches
+// the provided schema. See https://platform.openai.com/docs/guides/structured-outputs
+type OpenAIResponseFormat struct {
+	Type       string                 `json:"type"`                  // "json_schema"
+	JSONSchema *OpenAIJSONSchemaBlock `json:"json_schema,omitempty"`
+}
+
+type OpenAIJSONSchemaBlock struct {
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
+	Schema map[string]any `json:"schema"`
 }
 
 // OpenAIMessage represents a message in the OpenAI format
@@ -86,24 +101,35 @@ func (p *OpenAIProvider) Name() string {
 func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (*TriageResult, error) {
 	start := time.Now()
 
-	// Build the prompt
-	prompt := buildTriagePrompt(triageCtx)
+	// Split prompt into system (policy) and user (evidence) messages. This
+	// keeps the fixed policy out of the cacheable-per-request surface and lets
+	// structured outputs constrain the final assistant message to strict JSON.
+	policyPath := ""
+	if triageCtx != nil {
+		policyPath = triageCtx.PolicyPath
+	}
+	systemPrompt := renderPolicySystemPrompt(policyPath)
+	userPrompt := buildTriageEvidence(triageCtx)
 
-	// Create the request
 	reqBody := OpenAIRequest{
 		Model: p.config.Model,
 		Messages: []OpenAIMessage{
-			{
-				Role:    "system",
-				Content: "You are a cybersecurity expert analyzing AI agent behavior. Respond only with the requested JSON format.",
-			},
-			{
-				Role:    "user",
-				Content: prompt,
-			},
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens:   p.config.MaxTokens,
 		Temperature: 0.1, // Low temperature for consistent analysis
+	}
+
+	if p.config.StructuredOutput {
+		reqBody.ResponseFormat = &OpenAIResponseFormat{
+			Type: "json_schema",
+			JSONSchema: &OpenAIJSONSchemaBlock{
+				Name:   "agentshield_triage",
+				Strict: true,
+				Schema: triageOutputSchema(),
+			},
+		}
 	}
 
 	jsonData, err := json.Marshal(reqBody)

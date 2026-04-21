@@ -140,12 +140,21 @@ Determine whether this is a genuine threat or a false positive.
 
 Respond with JSON:
 {
+  "risk_level": "low" | "medium" | "high" | "critical",
+  "user_authorization": "unknown" | "low" | "medium" | "high",
   "verdict": "block" | "allow" | "investigate",
   "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation",
+  "rationale": "Brief explanation of the intrinsic risk",
   "suggested_action": "Recommended next steps"
 }
 ```
+
+Risk and authorization are modelled as two independent axes (inspired by OpenAI Codex guardian mode):
+- `risk_level` is the intrinsic risk of the tool call.
+- `user_authorization` is how clearly the user approved the exact action.
+- `verdict` is derived from them plus tenant policy. When the model omits `verdict`, the server derives it from the mapping defined in `internal/triage/policy_template.md`.
+
+The tenant policy itself lives in `internal/triage/policy.md` and can be overridden per deployment via `triage.policy_path` in config.yaml.
 
 ### Verdict Integration
 
@@ -157,6 +166,8 @@ Fast triage verdicts are included in the evaluation response under the `triage_r
   "alerts": ["..."],
   "triage_results": [
     {
+      "risk_level": "high",
+      "user_authorization": "low",
       "verdict": "block",
       "confidence": 0.95,
       "reasoning": "Command matches known attack patterns",

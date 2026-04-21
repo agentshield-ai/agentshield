@@ -27,15 +27,22 @@ var (
 	injectionRegex    = regexp.MustCompile(`(?i)(ignore|forget|system|prompt|instruction)[\s]*[:=]`)
 )
 
-// TriageResult represents the result of LLM triage analysis
+// TriageResult represents the result of LLM triage analysis.
+//
+// Risk and authorization are modelled as two independent axes, mirroring
+// OpenAI Codex guardian mode: `risk_level` is the intrinsic risk of the action
+// and `user_authorization` is how clearly the user approved the exact action.
+// The derived `verdict` follows from the policy mapping of those two axes.
 type TriageResult struct {
-	Verdict         string  `json:"verdict"`          // "block", "allow", "investigate"
-	Confidence      float64 `json:"confidence"`       // 0.0-1.0
-	Reasoning       string  `json:"reasoning"`        // Explanation
-	SuggestedAction string  `json:"suggested_action"` // Recommended next steps
-	Provider        string  `json:"provider"`         // Which LLM provider was used
-	Model           string  `json:"model"`            // Which model was used
-	ProcessingTime  int64   `json:"processing_time"`  // Time in milliseconds
+	RiskLevel         RiskLevel         `json:"risk_level"`         // intrinsic risk of the action
+	UserAuthorization UserAuthorization `json:"user_authorization"` // how clearly the user authorized it
+	Verdict           string            `json:"verdict"`            // "block", "allow", "investigate"
+	Confidence        float64           `json:"confidence"`         // 0.0-1.0
+	Reasoning         string            `json:"reasoning"`          // Explanation (alias of rationale)
+	SuggestedAction   string            `json:"suggested_action"`   // Recommended next steps
+	Provider          string            `json:"provider"`           // Which LLM provider was used
+	Model             string            `json:"model"`              // Which model was used
+	ProcessingTime    int64             `json:"processing_time"`    // Time in milliseconds
 }
 
 // CorrelationSummary contains deterministic correlation metadata used by triage.
@@ -53,6 +60,9 @@ type TriageContext struct {
 	Request      *models.EvaluationRequest `json:"request"`
 	RecentAlerts []store.Alert             `json:"recent_alerts"`
 	Correlation  CorrelationSummary        `json:"correlation"`
+	// PolicyPath is an optional path to a tenant-specific policy markdown file
+	// that overrides internal/triage/policy.md. Empty means use the embedded default.
+	PolicyPath string `json:"-"`
 }
 
 // Provider interface for LLM triage providers
@@ -149,19 +159,25 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 			Request:      req,
 			RecentAlerts: filteredRecent,
 			Correlation:  correlation,
+			PolicyPath:   t.config.PolicyPath,
 		}
 
 		result, err := t.provider.Triage(ctx, triageCtx)
 		if err != nil {
-			// For triage failures, return a fallback result based on alert severity
+			// For triage failures, return a fallback result based on alert severity.
+			// RiskLevel mirrors rule severity (our best available signal when the
+			// LLM is unreachable) and UserAuthorization is marked unknown because
+			// we have no evidence we can trust without the reviewer.
 			fallbackResult := &TriageResult{
-				Verdict:         t.getFallbackVerdict(alert.Severity),
-				Confidence:      0.5,
-				Reasoning:       fmt.Sprintf("Triage failed: %v. Falling back to rule-only verdict.", err),
-				SuggestedAction: "Review manually due to triage failure",
-				Provider:        t.provider.Name(),
-				Model:           t.config.Model,
-				ProcessingTime:  0,
+				RiskLevel:         severityToRiskLevel(alert.Severity),
+				UserAuthorization: UserAuthorizationUnknown,
+				Verdict:           t.getFallbackVerdict(alert.Severity),
+				Confidence:        0.5,
+				Reasoning:         fmt.Sprintf("Triage failed: %v. Falling back to rule-only verdict.", err),
+				SuggestedAction:   "Review manually due to triage failure",
+				Provider:          t.provider.Name(),
+				Model:             t.config.Model,
+				ProcessingTime:    0,
 			}
 			results = append(results, *fallbackResult)
 			continue
@@ -171,6 +187,22 @@ func (t *Triager) TriageAlerts(ctx context.Context, alerts []engine.RuleResult, 
 	}
 
 	return results, nil
+}
+
+// severityToRiskLevel maps engine rule severity onto triage risk level. Used
+// when the LLM reviewer is unreachable and we have to fall back to the rule
+// severity as our only risk signal.
+func severityToRiskLevel(severity engine.AlertSeverity) RiskLevel {
+	switch severity {
+	case engine.SeverityCritical:
+		return RiskLevelCritical
+	case engine.SeverityHigh:
+		return RiskLevelHigh
+	case engine.SeverityMedium:
+		return RiskLevelMedium
+	default:
+		return RiskLevelLow
+	}
 }
 
 // getFallbackVerdict returns a safe fallback verdict when triage fails
@@ -370,9 +402,11 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
-// buildTriagePrompt builds the prompt for LLM triage
-func buildTriagePrompt(triageCtx *TriageContext) string {
-	// Sanitize all inputs
+// buildTriageEvidence builds the per-request evidence block that is paired
+// with the policy system prompt (renderPolicySystemPrompt). It contains only
+// the evidence the reviewer is expected to assess — the risk taxonomy,
+// authorization scoring, and output contract live in the system prompt.
+func buildTriageEvidence(triageCtx *TriageContext) string {
 	ruleName := sanitizeInput(triageCtx.Alert.RuleName)
 	description := sanitizeInput(triageCtx.Alert.Description)
 	tool := sanitizeInput(triageCtx.Request.Tool)
@@ -381,11 +415,9 @@ func buildTriagePrompt(triageCtx *TriageContext) string {
 		contextLabel = "prod"
 	}
 
-	// Mask sensitive data in arguments
 	args := maskSensitiveData(triageCtx.Request.Args)
 	argsJSON, _ := json.Marshal(args)
 
-	// Build recent context (limit to prevent prompt bloat)
 	var recentContext strings.Builder
 	if len(triageCtx.RecentAlerts) > 0 {
 		recentContext.WriteString("Recent alerts (last 5):\n")
@@ -402,34 +434,19 @@ func buildTriagePrompt(triageCtx *TriageContext) string {
 		recentContext.WriteString("No recent alerts in this session.")
 	}
 
-	prompt := fmt.Sprintf(`You are a security analyst reviewing an AI agent tool call that triggered a detection rule.
-
-Alert: %s (%s)
+	return fmt.Sprintf(`>>> EVIDENCE START
+Triggered rule: %s (severity: %s)
 Rule description: %s
 Tool called: %s
 Execution context: %s
 Arguments: %s
-Recent context: %s
+%s
 Correlation score: %.2f
 Correlation factors: %v
 Correlation window: %ds, recent alerts: %d
+>>> EVIDENCE END
 
-Determine if this is:
-1. A true positive (genuine security concern that should be blocked)
-2. A false positive (benign activity that incorrectly triggered the rule)
-
-Respond in JSON format only:
-{"verdict": "block"|"allow"|"investigate", "confidence": 0.95, "reasoning": "Brief explanation of your analysis", "suggested_action": "Specific recommendation"}
-
-Guidelines:
-- "block": Clear direct security risk in the current event
-- "allow": False positive, safe to proceed
-- "investigate": Uncertain, needs human review
-- confidence: 0.0-1.0 (higher = more certain)
-- Keep reasoning under 200 characters
-- Correlation is supporting context, not sole proof
-- If current command appears benign but correlation is high, prefer "investigate" over "block" unless direct malicious indicators are present
-- If Execution context is "test", do not recommend incident-response language unless there is direct harmful execution evidence`,
+Assess the intrinsic risk of the tool call above, score the user authorization based on the evidence, and emit the JSON verdict described in the system prompt.`,
 		ruleName,
 		string(triageCtx.Alert.Severity),
 		description,
@@ -441,13 +458,28 @@ Guidelines:
 		triageCtx.Correlation.Factors,
 		triageCtx.Correlation.WindowSec,
 		triageCtx.Correlation.RecentCount)
-
-	return prompt
 }
 
-// parseTriageResponse parses the LLM response into a TriageResult
+// buildTriagePrompt builds a single-string prompt embedding both the policy
+// and the evidence. Providers that can send separate system + user messages
+// should prefer renderPolicySystemPrompt + buildTriageEvidence; this is the
+// compatibility path for providers or tests that want a single blob.
+func buildTriagePrompt(triageCtx *TriageContext) string {
+	policyPath := ""
+	if triageCtx != nil && triageCtx.PolicyPath != "" {
+		policyPath = triageCtx.PolicyPath
+	}
+	return renderPolicySystemPrompt(policyPath) + "\n" + buildTriageEvidence(triageCtx)
+}
+
+// parseTriageResponse parses the LLM response into a TriageResult.
+//
+// Accepts both the new two-axis schema (risk_level + user_authorization +
+// verdict) and a best-effort legacy single-verdict schema where risk and
+// authorization are inferred from verdict + severity. Missing fields are
+// filled conservatively (default risk=medium, authorization=unknown) rather
+// than failing the response outright.
 func parseTriageResponse(response string, provider, model string, processingTime int64) (*TriageResult, error) {
-	// Try to extract JSON from response (some models wrap it)
 	jsonStart := strings.Index(response, "{")
 	jsonEnd := strings.LastIndex(response, "}")
 
@@ -458,38 +490,97 @@ func parseTriageResponse(response string, provider, model string, processingTime
 	jsonStr := response[jsonStart : jsonEnd+1]
 
 	var result struct {
-		Verdict         string  `json:"verdict"`
-		Confidence      float64 `json:"confidence"`
-		Reasoning       string  `json:"reasoning"`
-		SuggestedAction string  `json:"suggested_action"`
+		RiskLevel         string  `json:"risk_level"`
+		UserAuthorization string  `json:"user_authorization"`
+		Verdict           string  `json:"verdict"`
+		Outcome           string  `json:"outcome"`         // guardian-style alias for verdict ("allow"/"deny")
+		Confidence        float64 `json:"confidence"`
+		Reasoning         string  `json:"reasoning"`
+		Rationale         string  `json:"rationale"`       // guardian-style alias for reasoning
+		SuggestedAction   string  `json:"suggested_action"`
 	}
 
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		return nil, fmt.Errorf("parsing JSON response: %w", err)
 	}
 
-	// Validate verdict
-	switch result.Verdict {
+	// Accept `outcome` as a drop-in alias for `verdict` (guardian shape).
+	// Map guardian "deny" onto our "block". "allow" stays "allow".
+	if result.Verdict == "" && result.Outcome != "" {
+		switch result.Outcome {
+		case "deny":
+			result.Verdict = "block"
+		case "allow":
+			result.Verdict = "allow"
+		default:
+			result.Verdict = result.Outcome
+		}
+	}
+
+	// Accept `rationale` as a drop-in alias for `reasoning`.
+	if result.Reasoning == "" && result.Rationale != "" {
+		result.Reasoning = result.Rationale
+	}
+
+	// Normalise / validate risk level
+	risk := RiskLevel(strings.ToLower(strings.TrimSpace(result.RiskLevel)))
+	if !risk.IsValid() {
+		risk = RiskLevelMedium // conservative default when the model omits risk
+	}
+
+	// Normalise / validate user authorization
+	auth := UserAuthorization(strings.ToLower(strings.TrimSpace(result.UserAuthorization)))
+	if !auth.IsValid() {
+		auth = UserAuthorizationUnknown
+	}
+
+	// Derive verdict from the two axes if the model did not supply one.
+	verdict := strings.ToLower(strings.TrimSpace(result.Verdict))
+	switch verdict {
 	case "block", "allow", "investigate":
-		// Valid
+		// explicit and valid
+	case "":
+		verdict = deriveVerdict(risk, auth)
 	default:
 		return nil, fmt.Errorf("invalid verdict: %s", result.Verdict)
 	}
 
-	// Validate confidence range
+	// Clamp confidence to [0,1]. Missing confidence is neutral.
 	if result.Confidence < 0.0 || result.Confidence > 1.0 {
-		result.Confidence = 0.5 // Default to neutral confidence
+		result.Confidence = 0.5
 	}
 
 	return &TriageResult{
-		Verdict:         result.Verdict,
-		Confidence:      result.Confidence,
-		Reasoning:       sanitizeInput(result.Reasoning),
-		SuggestedAction: sanitizeInput(result.SuggestedAction),
-		Provider:        provider,
-		Model:           model,
-		ProcessingTime:  processingTime,
+		RiskLevel:         risk,
+		UserAuthorization: auth,
+		Verdict:           verdict,
+		Confidence:        result.Confidence,
+		Reasoning:         sanitizeInput(result.Reasoning),
+		SuggestedAction:   sanitizeInput(result.SuggestedAction),
+		Provider:          provider,
+		Model:             model,
+		ProcessingTime:    processingTime,
 	}, nil
+}
+
+// deriveVerdict applies the default risk × authorization mapping described in
+// internal/triage/policy_template.md when the model omits an explicit verdict.
+// Tenant policy overrides live in the prompt itself; this is only the fallback
+// used when the model returns the two axes without a verdict.
+func deriveVerdict(risk RiskLevel, auth UserAuthorization) string {
+	switch risk {
+	case RiskLevelCritical:
+		return "block"
+	case RiskLevelHigh:
+		if auth == UserAuthorizationMedium || auth == UserAuthorizationHigh {
+			return "allow"
+		}
+		return "block"
+	case RiskLevelMedium, RiskLevelLow:
+		return "allow"
+	default:
+		return "investigate"
+	}
 }
 
 // ssrfSafeDialContext returns a DialContext function that resolves DNS and
