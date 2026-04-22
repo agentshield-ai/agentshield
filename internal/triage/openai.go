@@ -23,18 +23,18 @@ type OpenAIProvider struct {
 
 // OpenAIRequest represents the request format for OpenAI API.
 //
-// Temperature is a pointer + omitempty so reasoning models (gpt-5,
-// codex-auto-review, o-series) receive no temperature at all — they reject
-// anything other than the default value. Likewise, when ReasoningEffort is
-// set we send MaxCompletionTokens instead of MaxTokens, because reasoning
-// models reject the deprecated max_tokens field.
+// The two token fields and the pointer-typed Temperature exist so the engine
+// can send the right shape to both legacy and reasoning models. Reasoning
+// models (gpt-5, codex-auto-review, o-series) reject max_tokens and any
+// non-default temperature, so callers must populate MaxCompletionTokens and
+// leave Temperature nil for those. See applyTokenAndTempBudget.
 type OpenAIRequest struct {
 	Model               string                `json:"model"`
 	Messages            []OpenAIMessage       `json:"messages"`
 	MaxTokens           int                   `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int                   `json:"max_completion_tokens,omitempty"`
 	Temperature         *float64              `json:"temperature,omitempty"`
-	ReasoningEffort     string                `json:"reasoning_effort,omitempty"` // "minimal"|"low"|"medium"|"high"
+	ReasoningEffort     config.ReasoningEffort `json:"reasoning_effort,omitempty"`
 	ResponseFormat      *OpenAIResponseFormat `json:"response_format,omitempty"`
 }
 
@@ -50,6 +50,23 @@ type OpenAIJSONSchemaBlock struct {
 	Name   string         `json:"name"`
 	Strict bool           `json:"strict"`
 	Schema map[string]any `json:"schema"`
+}
+
+// defaultChatTemperature is the temperature used for non-reasoning models.
+// Held at package level so we don't allocate a fresh float on every request.
+var defaultChatTemperature = func() *float64 { t := 0.1; return &t }()
+
+// applyTokenAndTempBudget populates the token budget + temperature fields of
+// req according to whether the configured model is a reasoning model.
+// Reasoning models reject max_tokens and non-default temperature.
+func (p *OpenAIProvider) applyTokenAndTempBudget(req *OpenAIRequest, tokenBudget int) {
+	if p.config.ReasoningEffort != "" {
+		req.ReasoningEffort = p.config.ReasoningEffort
+		req.MaxCompletionTokens = tokenBudget
+		return
+	}
+	req.Temperature = defaultChatTemperature
+	req.MaxTokens = tokenBudget
 }
 
 // OpenAIMessage represents a message in the OpenAI format
@@ -122,14 +139,7 @@ func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (
 			{Role: "user", Content: userPrompt},
 		},
 	}
-	if p.config.ReasoningEffort != "" {
-		reqBody.ReasoningEffort = p.config.ReasoningEffort
-		reqBody.MaxCompletionTokens = p.config.MaxTokens
-	} else {
-		temp := 0.1 // Low temperature for consistent analysis; omitted for reasoning models.
-		reqBody.Temperature = &temp
-		reqBody.MaxTokens = p.config.MaxTokens
-	}
+	p.applyTokenAndTempBudget(&reqBody, p.config.MaxTokens)
 
 	if p.config.StructuredOutput {
 		reqBody.ResponseFormat = &OpenAIResponseFormat{
@@ -239,21 +249,10 @@ func (p *OpenAIProvider) healthCheckFull(ctx context.Context) error {
 	reqBody := OpenAIRequest{
 		Model: p.config.Model,
 		Messages: []OpenAIMessage{
-			{
-				Role:    "user",
-				Content: "Test",
-			},
+			{Role: "user", Content: "Test"},
 		},
 	}
-	// Reasoning models (gpt-5, codex-auto-review) reject max_tokens and any
-	// non-default temperature; route the token budget through
-	// max_completion_tokens and skip temperature for those.
-	if p.config.ReasoningEffort != "" {
-		reqBody.ReasoningEffort = p.config.ReasoningEffort
-		reqBody.MaxCompletionTokens = 5
-	} else {
-		reqBody.MaxTokens = 5
-	}
+	p.applyTokenAndTempBudget(&reqBody, 5)
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {

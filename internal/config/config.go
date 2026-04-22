@@ -73,6 +73,27 @@ type CorrelationConfig struct {
 	EscalateThreshold    float64 `yaml:"escalate_threshold"`
 }
 
+// ReasoningEffort controls how much reasoning time OpenAI reasoning models
+// spend per request (gpt-5, codex-auto-review, o-series). Empty means the
+// caller is not using a reasoning model.
+type ReasoningEffort string
+
+const (
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+)
+
+// IsValid reports whether e is empty (unset) or one of the known values.
+func (e ReasoningEffort) IsValid() bool {
+	switch e {
+	case "", ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh:
+		return true
+	}
+	return false
+}
+
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
 	Enabled          bool              `yaml:"enabled"`
@@ -85,7 +106,7 @@ type TriageConfig struct {
 	HealthCheckMode  string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
 	PolicyPath       string            `yaml:"policy_path"`       // optional override for the tenant triage policy markdown (see internal/triage/policy.md)
 	StructuredOutput bool              `yaml:"structured_output"` // if true, OpenAI provider sets response_format=json_schema; default false for provider compatibility
-	ReasoningEffort  string            `yaml:"reasoning_effort"`  // "minimal"|"low"|"medium"|"high" — set for OpenAI reasoning models (gpt-5, codex-auto-review). Sends reasoning_effort + max_completion_tokens and omits temperature, which reasoning models reject.
+	ReasoningEffort  ReasoningEffort   `yaml:"reasoning_effort"`  // set for OpenAI reasoning models (gpt-5, codex-auto-review); triggers max_completion_tokens + omits temperature
 	Correlation      CorrelationConfig `yaml:"correlation"`
 }
 
@@ -368,12 +389,8 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	if cfg.Triage.ReasoningEffort != "" {
-		switch cfg.Triage.ReasoningEffort {
-		case "minimal", "low", "medium", "high":
-		default:
-			return fmt.Errorf("triage reasoning_effort must be one of minimal|low|medium|high, got %q", cfg.Triage.ReasoningEffort)
-		}
+	if !cfg.Triage.ReasoningEffort.IsValid() {
+		return fmt.Errorf("triage reasoning_effort must be one of minimal|low|medium|high, got %q", cfg.Triage.ReasoningEffort)
 	}
 
 	if cfg.TestContext.Enabled {

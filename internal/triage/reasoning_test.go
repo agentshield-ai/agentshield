@@ -14,25 +14,57 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/models"
 )
 
-// When reasoning_effort is set, the OpenAI request must:
-// - include `reasoning_effort`
-// - send the token budget as `max_completion_tokens` (not `max_tokens`)
-// - omit `temperature`, which reasoning models reject.
-func TestOpenAIRequest_ReasoningEffortShape(t *testing.T) {
-	var captured map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &captured)
+// newCapturingOpenAIServer spins up an httptest server that records the
+// decoded JSON request body into *captured and returns a canned triage
+// response so the caller can assert on the outgoing request shape.
+func newCapturingOpenAIServer(t *testing.T, captured *map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		if err := json.Unmarshal(body, captured); err != nil {
+			t.Errorf("unmarshal request body: %v", err)
+		}
 		resp := map[string]any{
 			"choices": []map[string]any{{
 				"message": map[string]any{
-					"content": `{"risk_level":"low","user_authorization":"high","verdict":"allow","confidence":0.9,"rationale":"benign","suggested_action":"continue"}`,
+					"content": `{"risk_level":"low","user_authorization":"high","verdict":"allow","confidence":0.9,"rationale":"r","suggested_action":"s"}`,
 				},
 			}},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
+}
+
+func newTestOpenAIProvider(cfg *config.TriageConfig, url string) *OpenAIProvider {
+	return &OpenAIProvider{
+		config: cfg,
+		client: createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
+		apiURL: url,
+	}
+}
+
+func runTriageAgainst(t *testing.T, provider *OpenAIProvider) {
+	t.Helper()
+	_, err := provider.Triage(context.Background(), &TriageContext{
+		Alert:   engine.RuleResult{RuleName: "r", Severity: engine.SeverityHigh},
+		Request: &models.EvaluationRequest{Tool: "shell"},
+	})
+	if err != nil {
+		t.Fatalf("Triage failed: %v", err)
+	}
+}
+
+// When reasoning_effort is set, the OpenAI request must:
+// - include `reasoning_effort`
+// - send the token budget as `max_completion_tokens` (not `max_tokens`)
+// - omit `temperature`, which reasoning models reject.
+func TestOpenAIRequest_ReasoningEffortShape(t *testing.T) {
+	var captured map[string]any
+	server := newCapturingOpenAIServer(t, &captured)
 	defer server.Close()
 
 	cfg := &config.TriageConfig{
@@ -42,21 +74,9 @@ func TestOpenAIRequest_ReasoningEffortShape(t *testing.T) {
 		APIKey:          "test-key",
 		MaxTokens:       512,
 		TimeoutSec:      10,
-		ReasoningEffort: "low",
+		ReasoningEffort: config.ReasoningEffortLow,
 	}
-	provider := &OpenAIProvider{
-		config: cfg,
-		client: createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
-		apiURL: server.URL,
-	}
-
-	_, err := provider.Triage(context.Background(), &TriageContext{
-		Alert:   engine.RuleResult{RuleName: "r", Severity: engine.SeverityHigh},
-		Request: &models.EvaluationRequest{Tool: "shell"},
-	})
-	if err != nil {
-		t.Fatalf("Triage failed: %v", err)
-	}
+	runTriageAgainst(t, newTestOpenAIProvider(cfg, server.URL))
 
 	if got := captured["reasoning_effort"]; got != "low" {
 		t.Errorf("reasoning_effort=%v; want low", got)
@@ -80,19 +100,7 @@ func TestOpenAIRequest_ReasoningEffortShape(t *testing.T) {
 // reasoning_effort.
 func TestOpenAIRequest_LegacyShapeWhenNoReasoningEffort(t *testing.T) {
 	var captured map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &captured)
-		resp := map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]any{
-					"content": `{"risk_level":"low","user_authorization":"high","verdict":"allow","confidence":0.9,"rationale":"r","suggested_action":"s"}`,
-				},
-			}},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
+	server := newCapturingOpenAIServer(t, &captured)
 	defer server.Close()
 
 	cfg := &config.TriageConfig{
@@ -103,19 +111,7 @@ func TestOpenAIRequest_LegacyShapeWhenNoReasoningEffort(t *testing.T) {
 		MaxTokens:  500,
 		TimeoutSec: 10,
 	}
-	provider := &OpenAIProvider{
-		config: cfg,
-		client: createLocalHTTPClient(time.Duration(cfg.TimeoutSec) * time.Second),
-		apiURL: server.URL,
-	}
-
-	_, err := provider.Triage(context.Background(), &TriageContext{
-		Alert:   engine.RuleResult{RuleName: "r", Severity: engine.SeverityHigh},
-		Request: &models.EvaluationRequest{Tool: "shell"},
-	})
-	if err != nil {
-		t.Fatalf("Triage failed: %v", err)
-	}
+	runTriageAgainst(t, newTestOpenAIProvider(cfg, server.URL))
 
 	if _, present := captured["reasoning_effort"]; present {
 		t.Error("reasoning_effort must be omitted when config.ReasoningEffort is empty")
@@ -131,22 +127,38 @@ func TestOpenAIRequest_LegacyShapeWhenNoReasoningEffort(t *testing.T) {
 	}
 }
 
-// Config validation should reject unknown reasoning_effort values.
-func TestTriageConfig_ReasoningEffortValidation(t *testing.T) {
-	valid := []string{"", "minimal", "low", "medium", "high"}
-	for _, v := range valid {
-		req := &OpenAIRequest{
-			Model:           "codex-auto-review",
-			ReasoningEffort: v,
-		}
-		b, err := json.Marshal(req)
-		if err != nil {
-			t.Fatalf("marshal(%q): %v", v, err)
-		}
-		if v == "" {
-			if got := string(b); got != `{"model":"codex-auto-review","messages":null}` {
-				t.Errorf("empty reasoning_effort should omit the field; got %s", got)
+// Every documented reasoning_effort value round-trips through JSON, and the
+// empty value is omitted so non-reasoning requests stay unchanged.
+func TestOpenAIRequest_ReasoningEffortRoundtrip(t *testing.T) {
+	cases := []struct {
+		effort   config.ReasoningEffort
+		wantKey  bool
+		wantText string
+	}{
+		{"", false, ""},
+		{config.ReasoningEffortMinimal, true, "minimal"},
+		{config.ReasoningEffortLow, true, "low"},
+		{config.ReasoningEffortMedium, true, "medium"},
+		{config.ReasoningEffortHigh, true, "high"},
+	}
+	for _, c := range cases {
+		t.Run(string(c.effort), func(t *testing.T) {
+			req := &OpenAIRequest{Model: "codex-auto-review", ReasoningEffort: c.effort}
+			b, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
 			}
-		}
+			var decoded map[string]any
+			if err := json.Unmarshal(b, &decoded); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, present := decoded["reasoning_effort"]
+			if c.wantKey != present {
+				t.Errorf("reasoning_effort present=%v; want %v (json=%s)", present, c.wantKey, b)
+			}
+			if c.wantKey && got != c.wantText {
+				t.Errorf("reasoning_effort=%v; want %s", got, c.wantText)
+			}
+		})
 	}
 }
