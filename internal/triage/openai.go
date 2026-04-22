@@ -21,13 +21,21 @@ type OpenAIProvider struct {
 	apiURL string
 }
 
-// OpenAIRequest represents the request format for OpenAI API
+// OpenAIRequest represents the request format for OpenAI API.
+//
+// Temperature is a pointer + omitempty so reasoning models (gpt-5,
+// codex-auto-review, o-series) receive no temperature at all — they reject
+// anything other than the default value. Likewise, when ReasoningEffort is
+// set we send MaxCompletionTokens instead of MaxTokens, because reasoning
+// models reject the deprecated max_tokens field.
 type OpenAIRequest struct {
-	Model          string                `json:"model"`
-	Messages       []OpenAIMessage       `json:"messages"`
-	MaxTokens      int                   `json:"max_tokens"`
-	Temperature    float64               `json:"temperature"`
-	ResponseFormat *OpenAIResponseFormat `json:"response_format,omitempty"`
+	Model               string                `json:"model"`
+	Messages            []OpenAIMessage       `json:"messages"`
+	MaxTokens           int                   `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                   `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64              `json:"temperature,omitempty"`
+	ReasoningEffort     string                `json:"reasoning_effort,omitempty"` // "minimal"|"low"|"medium"|"high"
+	ResponseFormat      *OpenAIResponseFormat `json:"response_format,omitempty"`
 }
 
 // OpenAIResponseFormat enables OpenAI structured outputs. When type is
@@ -113,8 +121,14 @@ func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
-		MaxTokens:   p.config.MaxTokens,
-		Temperature: 0.1, // Low temperature for consistent analysis
+	}
+	if p.config.ReasoningEffort != "" {
+		reqBody.ReasoningEffort = p.config.ReasoningEffort
+		reqBody.MaxCompletionTokens = p.config.MaxTokens
+	} else {
+		temp := 0.1 // Low temperature for consistent analysis; omitted for reasoning models.
+		reqBody.Temperature = &temp
+		reqBody.MaxTokens = p.config.MaxTokens
 	}
 
 	if p.config.StructuredOutput {
@@ -230,7 +244,15 @@ func (p *OpenAIProvider) healthCheckFull(ctx context.Context) error {
 				Content: "Test",
 			},
 		},
-		MaxTokens: 5,
+	}
+	// Reasoning models (gpt-5, codex-auto-review) reject max_tokens and any
+	// non-default temperature; route the token budget through
+	// max_completion_tokens and skip temperature for those.
+	if p.config.ReasoningEffort != "" {
+		reqBody.ReasoningEffort = p.config.ReasoningEffort
+		reqBody.MaxCompletionTokens = 5
+	} else {
+		reqBody.MaxTokens = 5
 	}
 
 	jsonData, err := json.Marshal(reqBody)

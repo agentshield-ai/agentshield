@@ -1,0 +1,34 @@
+# AgentShield triage: guardian-compatible preset.
+#
+# Routes fast triage through OpenAI's codex-auto-review model — the same
+# classifier used by OpenAI Codex guardian mode (codex-rs/core/src/guardian).
+# Copy the `triage:` block below into your config.yaml to enable it.
+#
+# Requirements:
+#   - An OpenAI API key with access to GPT-5-class models.
+#   - AGENTSHIELD_TRIAGE_API_KEY (or triage.api_key) set.
+#
+# Trade-offs vs the default gpt-4o-mini triage:
+#   - Matches the risk/authorization scoring behaviour Codex ships with.
+#   - Reasoning models are slower per call; reasoning_effort=low keeps latency
+#     in the hundreds of ms and cost close to the default model.
+#   - Reasoning models reject the deprecated max_tokens field and non-default
+#     temperature; the engine automatically switches to max_completion_tokens
+#     and omits temperature when reasoning_effort is set.
+
+triage:
+  enabled: true
+  provider: openai
+  model: codex-auto-review     # GPT-5 variant tuned for approval review
+  api_key: ${AGENTSHIELD_TRIAGE_API_KEY}
+  max_tokens: 512              # sent as max_completion_tokens for reasoning models
+  timeout_sec: 30              # reasoning models are slower; give them room
+  structured_output: true      # constrain response to the JSON schema
+  reasoning_effort: low        # matches guardian's own setting
+  # policy_path: /etc/agentshield/policy.md   # uncomment to override the embedded tenant policy
+
+  correlation:
+    enabled: true
+    window_sec: 900
+    max_alerts: 5
+    require_same_session: true

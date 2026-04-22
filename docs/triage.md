@@ -119,6 +119,27 @@ triage:
   timeout_sec: 15
 ```
 
+#### Guardian-Compatible Preset (OpenAI `codex-auto-review`)
+
+OpenAI Codex's guardian mode uses a dedicated classifier — `codex-auto-review`, a GPT-5 variant tuned for approval reviews — called with `reasoning_effort=low` and structured outputs. AgentShield can route fast triage through the same model to get bit-for-bit the same classifier.
+
+```yaml
+triage:
+  enabled: true
+  provider: "openai"
+  model: "codex-auto-review"
+  api_key: "${AGENTSHIELD_TRIAGE_API_KEY}"
+  max_tokens: 512              # sent as max_completion_tokens for reasoning models
+  timeout_sec: 30              # reasoning models are slower than 4o-mini
+  structured_output: true
+  reasoning_effort: "low"      # matches guardian's own setting
+```
+
+Notes:
+- `reasoning_effort` accepts `minimal|low|medium|high`. When set, the engine switches to `max_completion_tokens` and omits `temperature`, which reasoning models reject.
+- A ready-to-copy version of this block lives at [`docs/config.guardian.yaml`](config.guardian.yaml).
+- Requires an OpenAI API key with access to GPT-5-class models.
+
 ### Prompt Engineering
 
 Fast triage uses a structured prompt to ensure consistent analysis:

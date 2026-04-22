@@ -75,17 +75,18 @@ type CorrelationConfig struct {
 
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
-	Enabled         bool              `yaml:"enabled"`
-	Provider        string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
-	Model           string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-	APIKey          string            `yaml:"api_key" json:"-"`  // env: AGENTSHIELD_TRIAGE_API_KEY
-	BaseURL         string            `yaml:"base_url"`          // custom base URL (e.g. https://openrouter.ai/api/v1)
-	MaxTokens       int               `yaml:"max_tokens"`
-	TimeoutSec      int               `yaml:"timeout_sec"`
-	HealthCheckMode string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
-	PolicyPath      string            `yaml:"policy_path"`       // optional override for the tenant triage policy markdown (see internal/triage/policy.md)
-	StructuredOutput bool             `yaml:"structured_output"` // if true, OpenAI provider sets response_format=json_schema; default false for provider compatibility
-	Correlation     CorrelationConfig `yaml:"correlation"`
+	Enabled          bool              `yaml:"enabled"`
+	Provider         string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
+	Model            string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514", "codex-auto-review"
+	APIKey           string            `yaml:"api_key" json:"-"`  // env: AGENTSHIELD_TRIAGE_API_KEY
+	BaseURL          string            `yaml:"base_url"`          // custom base URL (e.g. https://openrouter.ai/api/v1)
+	MaxTokens        int               `yaml:"max_tokens"`
+	TimeoutSec       int               `yaml:"timeout_sec"`
+	HealthCheckMode  string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
+	PolicyPath       string            `yaml:"policy_path"`       // optional override for the tenant triage policy markdown (see internal/triage/policy.md)
+	StructuredOutput bool              `yaml:"structured_output"` // if true, OpenAI provider sets response_format=json_schema; default false for provider compatibility
+	ReasoningEffort  string            `yaml:"reasoning_effort"`  // "minimal"|"low"|"medium"|"high" — set for OpenAI reasoning models (gpt-5, codex-auto-review). Sends reasoning_effort + max_completion_tokens and omits temperature, which reasoning models reject.
+	Correlation      CorrelationConfig `yaml:"correlation"`
 }
 
 // DeepTriageConfig holds deep triage configuration (async, OpenClaw sub-agent with tools)
@@ -364,6 +365,14 @@ func validateConfig(cfg *Config) error {
 		}
 		if cfg.Triage.Correlation.EscalateThreshold < 0 || cfg.Triage.Correlation.EscalateThreshold > 10 {
 			return fmt.Errorf("triage correlation escalate_threshold must be between 0 and 10")
+		}
+	}
+
+	if cfg.Triage.ReasoningEffort != "" {
+		switch cfg.Triage.ReasoningEffort {
+		case "minimal", "low", "medium", "high":
+		default:
+			return fmt.Errorf("triage reasoning_effort must be one of minimal|low|medium|high, got %q", cfg.Triage.ReasoningEffort)
 		}
 	}
 
