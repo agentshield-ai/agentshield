@@ -1,4 +1,4 @@
-.PHONY: build test clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay
+.PHONY: build test clean run bench bench-all bench-go bench-go-baseline bench-go-compare test-integration test-integration-docker docker-build replay-build replay
 
 # Go binary path
 GO ?= go
@@ -34,6 +34,29 @@ bench: bench-build
 # Run all benchmark suites
 bench-all: bench-build
 	./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
+
+# Microbench packages — keep this list in sync with .github/workflows/bench.yml
+BENCH_PACKAGES = ./internal/engine/... ./internal/cache/... ./internal/evaluate/... ./internal/server/... ./pkg/sigma/...
+BENCH_COUNT ?= 6
+BENCH_TIME  ?= 1s
+
+# Run Go microbenchmarks across the hot path with allocation tracking
+bench-go:
+	$(GO) test -run=^$$ -bench=. -benchmem -benchtime=$(BENCH_TIME) -count=$(BENCH_COUNT) $(BENCH_PACKAGES)
+
+# Capture a baseline file for benchstat comparison (count=10 for stability)
+bench-go-baseline:
+	@mkdir -p bench/baseline
+	$(GO) test -run=^$$ -bench=. -benchmem -benchtime=$(BENCH_TIME) -count=10 $(BENCH_PACKAGES) > bench/baseline/microbench.txt
+	@echo "wrote bench/baseline/microbench.txt"
+
+# Compare current code against the checked-in baseline
+bench-go-compare:
+	@test -f bench/baseline/microbench.txt || (echo "no baseline; run: make bench-go-baseline" && exit 1)
+	@command -v benchstat >/dev/null 2>&1 || (echo "benchstat not installed; run: go install golang.org/x/perf/cmd/benchstat@latest" && exit 1)
+	@mkdir -p bench/results
+	$(GO) test -run=^$$ -bench=. -benchmem -benchtime=$(BENCH_TIME) -count=$(BENCH_COUNT) $(BENCH_PACKAGES) > bench/results/microbench.txt
+	benchstat -delta-test=utest bench/baseline/microbench.txt bench/results/microbench.txt
 
 # Install dependencies
 deps:

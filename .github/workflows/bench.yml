@@ -9,10 +9,16 @@ on:
       - 'cmd/agentshieldbench/**'
       - 'internal/**'
       - 'pkg/**'
+      - 'scripts/bench_gate.sh'
+      - '.github/workflows/bench.yml'
   schedule:
     # Nightly full suite run at 03:00 UTC
     - cron: '0 3 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -23,6 +29,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache: true
       - run: go test ./...
 
   bench-pr:
@@ -35,6 +42,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache: true
 
       - name: Build engine and bench runner
         run: |
@@ -60,8 +68,71 @@ jobs:
           name: bench-results-pr
           path: bench/results/
 
+  microbench:
+    name: Microbench (PR — Go benches + benchstat gate)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: test
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      BENCH_PACKAGES: ./internal/engine/... ./internal/cache/... ./internal/evaluate/... ./internal/server/... ./pkg/sigma/...
+      BENCH_COUNT: '6'
+      BENCH_TIME: 500ms
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Bench PR HEAD
+        run: |
+          go test -run='^$' -bench=. -benchmem \
+            -benchtime=${BENCH_TIME} -count=${BENCH_COUNT} \
+            ${BENCH_PACKAGES} | tee pr.txt
+
+      - name: Bench base branch
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth 1
+          git worktree add ../base FETCH_HEAD
+          (cd ../base && go test -run='^$' -bench=. -benchmem \
+            -benchtime=${BENCH_TIME} -count=${BENCH_COUNT} \
+            ${BENCH_PACKAGES}) | tee base.txt
+
+      - name: Compare with benchstat
+        run: benchstat -alpha 0.05 base.txt pr.txt | tee diff.txt
+
+      - name: Gate on regressions
+        id: gate
+        run: bash scripts/bench_gate.sh diff.txt
+
+      - name: Upload diff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microbench-diff
+          path: |
+            base.txt
+            pr.txt
+            diff.txt
+
+      - name: Post sticky PR comment
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: microbench
+          path: diff.txt
+
   bench-nightly:
-    name: Benchmark (Nightly — full suite)
+    name: Benchmark (Nightly — full suite + microbench)
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: test
@@ -70,6 +141,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache: true
 
       - name: Build engine and bench runner
         run: |
@@ -84,6 +156,17 @@ jobs:
 
       - name: Run all suites
         run: ./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
+
+      - name: Stop engine
+        run: pkill -f 'bin/agentshield serve' || true
+
+      - name: Run microbench (heavy, no gate)
+        run: |
+          go test -run='^$' -bench=. -benchmem \
+            -benchtime=2s -count=20 \
+            ./internal/engine/... ./internal/cache/... \
+            ./internal/evaluate/... ./internal/server/... \
+            ./pkg/sigma/... | tee bench/results/microbench-nightly.txt
 
       - name: Upload results
         uses: actions/upload-artifact@v4
