@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: docker-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +53,6 @@ jobs:
 
       - name: Smoke test — start container and probe /health
         run: |
-          # Minimal config so the engine can start without external deps
           mkdir -p ./ci-config
           cat > ./ci-config/config.yaml <<'EOF'
           server:
@@ -68,19 +67,11 @@ jobs:
             -v "$PWD/ci-config/config.yaml:/config.yaml:ro" \
             agentshield-engine:ci
 
-          # Poll /health for up to 30s
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8433/health >/dev/null; then
-              echo "engine ready after ${i}s"
-              docker logs agentshield-ci
-              exit 0
-            fi
-            sleep 1
-          done
-
-          echo "engine failed to become ready"
+          if ! scripts/wait_for_health.sh; then
+            docker logs agentshield-ci
+            exit 1
+          fi
           docker logs agentshield-ci
-          exit 1
 
       - name: Stop container
         if: always()

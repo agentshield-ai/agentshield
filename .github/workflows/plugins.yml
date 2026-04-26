@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: plugins-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -76,7 +76,8 @@ jobs:
           pip install pytest ruff
 
       - name: Lint with ruff
-        run: ruff check . || true  # advisory until baseline established
+        continue-on-error: true
+        run: ruff check .
 
       - name: Run pytest
         working-directory: ${{ github.workspace }}

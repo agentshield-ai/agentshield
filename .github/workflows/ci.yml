@@ -4,10 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -51,7 +55,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.62.2
           args: --timeout=5m
 
   test:
@@ -91,14 +95,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build agentshield
-        run: go build -o bin/agentshield ./cmd/agentshield
-
-      - name: Build agentshieldbench
-        run: go build -o bin/agentshieldbench ./cmd/agentshieldbench
-
-      - name: Build agentshield-replay
-        run: go build -o bin/agentshield-replay ./cmd/agentshield-replay
+      - name: Build all binaries via make
+        run: make build bench-build replay-build
 
       - name: Verify binaries are runnable
         run: |
@@ -112,13 +110,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
-
       - name: Run govulncheck
-        run: govulncheck ./...
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: ${{ env.GO_VERSION }}

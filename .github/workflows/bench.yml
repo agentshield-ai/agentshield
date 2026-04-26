@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: bench-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -48,15 +48,7 @@ jobs:
         run: |
           ./bin/agentshield serve --rules ./rules --port 8433 &
           echo $! > engine.pid
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8433/health >/dev/null; then
-              echo "engine ready after ${i}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "engine failed to become ready"
-          exit 1
+          scripts/wait_for_health.sh
 
       - name: Run benign suite
         run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/benign.yaml --bench-root bench
@@ -99,15 +91,7 @@ jobs:
         run: |
           ./bin/agentshield serve --rules ./rules --port 8433 &
           echo $! > engine.pid
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8433/health >/dev/null; then
-              echo "engine ready after ${i}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "engine failed to become ready"
-          exit 1
+          scripts/wait_for_health.sh
 
       - name: Run all suites
         run: ./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
