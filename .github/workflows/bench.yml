@@ -50,16 +50,32 @@ jobs:
           go build -o bin/agentshieldbench ./cmd/agentshieldbench/
 
       - name: Start engine
+        env:
+          AGENTSHIELD_AUTH_TOKEN: agentshieldbench-test-token-0123456789abcdef
         run: |
-          ./bin/agentshield serve --rules ./rules --port 8433 &
-          sleep 2
-          curl -sf http://localhost:8433/health || exit 1
+          # bench/config.yaml expects rules at /tmp/agentshieldbench/rules
+          # and listens on 127.0.0.1:18433 with the token above.
+          mkdir -p /tmp/agentshieldbench/rules
+          cp -r rules /tmp/agentshieldbench/rules/
+          ./bin/agentshield serve --config bench/config.yaml &
+          for i in {1..10}; do
+            sleep 1
+            curl -sf http://127.0.0.1:18433/health > /dev/null && break
+            if [ $i -eq 10 ]; then
+              echo "engine failed to come up" >&2
+              exit 1
+            fi
+          done
 
       - name: Run benign suite
-        run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/benign.yaml --bench-root bench
+        env:
+          AGENTSHIELD_AUTH_TOKEN: agentshieldbench-test-token-0123456789abcdef
+        run: ./bin/agentshieldbench run --endpoint http://127.0.0.1:18433 --suite bench/suites/benign.yaml --bench-root bench
 
       - name: Run direct adversary suite
-        run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/direct_adversary.yaml --bench-root bench
+        env:
+          AGENTSHIELD_AUTH_TOKEN: agentshieldbench-test-token-0123456789abcdef
+        run: ./bin/agentshieldbench run --endpoint http://127.0.0.1:18433 --suite bench/suites/direct_adversary.yaml --bench-root bench
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -149,13 +165,25 @@ jobs:
           go build -o bin/agentshieldbench ./cmd/agentshieldbench/
 
       - name: Start engine
+        env:
+          AGENTSHIELD_AUTH_TOKEN: agentshieldbench-test-token-0123456789abcdef
         run: |
-          ./bin/agentshield serve --rules ./rules --port 8433 &
-          sleep 2
-          curl -sf http://localhost:8433/health || exit 1
+          mkdir -p /tmp/agentshieldbench/rules
+          cp -r rules /tmp/agentshieldbench/rules/
+          ./bin/agentshield serve --config bench/config.yaml &
+          for i in {1..10}; do
+            sleep 1
+            curl -sf http://127.0.0.1:18433/health > /dev/null && break
+            if [ $i -eq 10 ]; then
+              echo "engine failed to come up" >&2
+              exit 1
+            fi
+          done
 
       - name: Run all suites
-        run: ./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
+        env:
+          AGENTSHIELD_AUTH_TOKEN: agentshieldbench-test-token-0123456789abcdef
+        run: ./bin/agentshieldbench run-all --endpoint http://127.0.0.1:18433 --bench-root bench
 
       - name: Stop engine
         run: pkill -f 'bin/agentshield serve' || true
