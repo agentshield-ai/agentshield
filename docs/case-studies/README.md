@@ -11,8 +11,9 @@ The case studies share a common shape:
    request looks ordinary.
 2. **Trace.** A timeline of evaluation events with the relevant
    `session.*` fields rising on each step.
-3. **Detection mechanism.** The rule excerpt that fires, with the
-   specific regex or selector logic.
+3. **Detection mechanism.** The rule's selectors and condition, shown
+   inline within or immediately after the trace so the link between
+   trace state and matching logic is direct.
 4. **Why a stateless system can't detect this.** The structural
    argument: which pieces of state the rule depends on, why they
    cannot exist at the network layer.
@@ -21,9 +22,15 @@ The case studies share a common shape:
 
 Traces are illustrative — composed from realistic tool-call shapes
 seen in agent traces, not single captured sessions. Detection
-mechanisms, fields, and verdicts are exactly as the rules fire today;
-integration verification lives in the bench testcase suite and the
-Go integration tests.
+mechanisms, fields, and verdicts are exactly as the rules fire today.
+Integration verification lives in the bench testcase suite for the
+two approval/override rules
+([`bench/testcases/approval_fatigue/`](../../bench/testcases/approval_fatigue/))
+and in the Go integration tests for the layer-spanning variant
+([`internal/proxyadapter/integration_test.go`](../../internal/proxyadapter/integration_test.go)).
+The other two rules (recon-then-exfil and velocity anomaly) are
+currently exercised through unit tests of their underlying session
+fields; an end-to-end testcase for each is a sensible follow-up.
 
 ## The four rules
 

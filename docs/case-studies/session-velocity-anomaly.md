@@ -117,5 +117,5 @@ one numeric field — so it costs almost nothing to leave on.
 
 - Rule: [`ai_agent_session_velocity_anomaly.yml`][rule]
 - Reference: [Sun et al., "Trustworthy LLM Agents", arXiv 2024](https://arxiv.org/abs/2403.04783)
-- MITRE: [T1046 — Network Service Discovery](https://attack.mitre.org/techniques/T1046/)
+- MITRE: [T1083 — File and Directory Discovery](https://attack.mitre.org/techniques/T1083/) (matches the trace shown; the rule itself also tags [T1046 — Network Service Discovery](https://attack.mitre.org/techniques/T1046/) for the network-scanning variant)
 - Sibling rules: [approval fatigue](approval-fatigue.md), [override escalation](override-escalation.md), [recon then exfil](recon-then-exfil.md)
