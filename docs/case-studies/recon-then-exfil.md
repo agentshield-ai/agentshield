@@ -8,12 +8,6 @@ shows why a per-request system structurally cannot make this call.
 
 [rule]: ../../rules/rules/ai_agent/ai_agent_recon_then_exfil.yml
 
-> **Trace caveat:** the timeline below is illustrative — composed from
-> real tool-call shapes seen in agent traces, not a single captured
-> session. The detection mechanism, fields, and verdict are exactly as
-> the rule fires today; integration verification lives in the bench
-> testcase suite.
-
 ## Scenario
 
 An adversary has injected instructions into a document the agent is

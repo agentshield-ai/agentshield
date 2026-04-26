@@ -274,8 +274,8 @@ See [PLATFORMS.md](PLATFORMS.md) for details.
 |---|---|---|
 | Layer | TypeScript in-process | Go engine, separate process |
 | Rule format | Flat regex YAML | Full Sigma (selections + conditions) |
-| Reputation lookups | URL + package registry APIs | Pluggable (`feat/reputation-lookups` v1.1) |
-| Supply-chain validation | Native | Pluggable (`feat/supply-chain-checks` v1.1) |
+| Reputation lookups | URL + package registry APIs | Planned (v1.1, on `feat/reputation-lookups`) |
+| Supply-chain validation | Native | Planned (v1.1, on `feat/supply-chain-checks`) |
 | Behavioural correlation | — | Per-session sliding window |
 | LLM triage | — | Optional, off the hot path |
 | Verdict caching | — | LRU + TTL, hot-reload-aware |
@@ -286,7 +286,7 @@ Complementary, not competing. Sage answers "is this command, URL, or package dan
 
 ### Brex CrabTrap
 
-[Brex CrabTrap](https://github.com/brexhq/CrabTrap) is an HTTPS forward proxy with static rules + an LLM judge per request. It operates one layer below AgentShield (network bytes vs tool-call semantics).
+[Brex CrabTrap](https://github.com/brexhq/CrabTrap) is an HTTPS forward proxy with static rules + an LLM judge per request — a different layer of the agent stack than AgentShield's tool-call hooks.
 
 |  | CrabTrap | AgentShield |
 |---|---|---|
