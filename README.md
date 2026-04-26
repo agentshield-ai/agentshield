@@ -309,6 +309,7 @@ The two strictly contain each other — running both feeds one audit trail, one 
 - [Deployment Guide](docs/deployment.md) — production setup
 - [AgentShield + CrabTrap](docs/deployments/agentshield-with-crabtrap.md) — joint forward-proxy + tool-call deployment
 - [Performance](docs/performance.md) — measured latency, allocations, throughput, regression-gated CI
+- [Behavioural Case Studies](docs/case-studies/) — recon→exfil, approval fatigue, override escalation, velocity anomaly
 - [Triage System](docs/triage.md) — LLM-powered alert analysis
 - [Rules Guide](docs/rules.md) — authoring and testing rules
 - [Contributing](CONTRIBUTING.md) — development setup, PR process
