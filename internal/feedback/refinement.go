@@ -17,25 +17,25 @@ import (
 
 // RefinementSuggestion represents a suggested rule improvement
 type RefinementSuggestion struct {
-	Type        string `json:"type"`        // "add_exception", "narrow_condition", "reduce_severity", "disable"
-	Description string `json:"description"` // Human-readable description
-	Before      string `json:"before"`      // Current rule content (relevant section)
-	After       string `json:"after"`       // Suggested rule content
-	Confidence  float64 `json:"confidence"` // 0.0-1.0 confidence in suggestion
-	Reasoning   string `json:"reasoning"`   // Why this change is suggested
+	Type        string  `json:"type"`        // "add_exception", "narrow_condition", "reduce_severity", "disable"
+	Description string  `json:"description"` // Human-readable description
+	Before      string  `json:"before"`      // Current rule content (relevant section)
+	After       string  `json:"after"`       // Suggested rule content
+	Confidence  float64 `json:"confidence"`  // 0.0-1.0 confidence in suggestion
+	Reasoning   string  `json:"reasoning"`   // Why this change is suggested
 }
 
 // RuleRefinementResult contains analysis and suggestions for a rule
 type RuleRefinementResult struct {
-	RuleName           string                 `json:"rule_name"`
-	RuleFile           string                 `json:"rule_file"`
-	FalsePositiveRate  float64                `json:"false_positive_rate"`
-	TotalAlerts        int                    `json:"total_alerts"`
-	FeedbackCount      int                    `json:"feedback_count"`
-	CommonPatterns     []string               `json:"common_patterns"`
-	Suggestions        []RefinementSuggestion `json:"suggestions"`
-	LLMAnalysis        *triage.TriageResult  `json:"llm_analysis,omitempty"`
-	RecommendedAction  string                `json:"recommended_action"`
+	RuleName          string                 `json:"rule_name"`
+	RuleFile          string                 `json:"rule_file"`
+	FalsePositiveRate float64                `json:"false_positive_rate"`
+	TotalAlerts       int                    `json:"total_alerts"`
+	FeedbackCount     int                    `json:"feedback_count"`
+	CommonPatterns    []string               `json:"common_patterns"`
+	Suggestions       []RefinementSuggestion `json:"suggestions"`
+	LLMAnalysis       *triage.TriageResult   `json:"llm_analysis,omitempty"`
+	RecommendedAction string                 `json:"recommended_action"`
 }
 
 // RefinementEngine handles rule analysis and improvement suggestions
@@ -193,25 +193,25 @@ func (re *RefinementEngine) ApplyRefinement(ruleName string, suggestion *Refinem
 
 func (re *RefinementEngine) findRuleFile(ruleName string) (string, error) {
 	var ruleFile string
-	
+
 	err := filepath.WalkDir(re.rulesDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		
+
 		if !d.IsDir() && (strings.HasSuffix(path, ".yml") || strings.HasSuffix(path, ".yaml")) {
 			// Read and check if this file contains the rule
 			content, err := os.ReadFile(path)
 			if err != nil {
 				return nil // Skip files we can't read
 			}
-			
+
 			// Parse YAML to check rule name
 			var rule struct {
 				Name string `yaml:"name"`
 				ID   string `yaml:"id"`
 			}
-			
+
 			if yaml.Unmarshal(content, &rule) == nil {
 				if rule.Name == ruleName || rule.ID == ruleName {
 					ruleFile = path
@@ -219,18 +219,18 @@ func (re *RefinementEngine) findRuleFile(ruleName string) (string, error) {
 				}
 			}
 		}
-		
+
 		return nil
 	})
-	
+
 	if err != nil {
 		return "", err
 	}
-	
+
 	if ruleFile == "" {
 		return "", fmt.Errorf("rule file not found for rule: %s", ruleName)
 	}
-	
+
 	return ruleFile, nil
 }
 
@@ -240,26 +240,26 @@ func (re *RefinementEngine) analyzeFalsePositivePatterns(ruleName string) ([]str
 		Rule:  ruleName,
 		Limit: 100, // Sample size
 	}
-	
+
 	alerts, err := re.feedbackManager.store.QueryAlerts(alertQuery)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Analyze patterns in the arguments/tools that triggered false positives
 	// This is a simplified pattern analysis
 	patterns := make(map[string]int)
-	
+
 	for _, alert := range alerts {
 		// Extract patterns from the alert args
 		if alert.Tool != "" {
 			patterns[fmt.Sprintf("tool:%s", alert.Tool)]++
 		}
-		
+
 		// Could add more sophisticated pattern analysis here
 		// e.g., common argument patterns, time patterns, etc.
 	}
-	
+
 	// Convert to sorted slice
 	var result []string
 	for pattern, count := range patterns {
@@ -267,14 +267,14 @@ func (re *RefinementEngine) analyzeFalsePositivePatterns(ruleName string) ([]str
 			result = append(result, fmt.Sprintf("%s (%d occurrences)", pattern, count))
 		}
 	}
-	
+
 	sort.Strings(result)
 	return result, nil
 }
 
 func (re *RefinementEngine) generateSuggestions(stats *RuleStats, patterns []string) []RefinementSuggestion {
 	var suggestions []RefinementSuggestion
-	
+
 	// Suggest based on false positive rate
 	if stats.FalsePositiveRate > 0.5 {
 		suggestions = append(suggestions, RefinementSuggestion{
@@ -291,7 +291,7 @@ func (re *RefinementEngine) generateSuggestions(stats *RuleStats, patterns []str
 			Reasoning:   fmt.Sprintf("FP rate: %.1f%% suggests need for refinement", stats.FalsePositiveRate*100),
 		})
 	}
-	
+
 	// Suggest based on patterns
 	if len(patterns) > 0 {
 		suggestions = append(suggestions, RefinementSuggestion{
@@ -301,7 +301,7 @@ func (re *RefinementEngine) generateSuggestions(stats *RuleStats, patterns []str
 			Reasoning:   fmt.Sprintf("Found %d recurring patterns: %v", len(patterns), patterns),
 		})
 	}
-	
+
 	return suggestions
 }
 
@@ -343,25 +343,25 @@ func (re *RefinementEngine) validateRuleFilePath(path string) error {
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("path traversal detected")
 	}
-	
+
 	// Ensure the path is within the rules directory and doesn't contain traversal
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	
+
 	rulesAbs, err := filepath.Abs(re.rulesDir)
 	if err != nil {
 		return err
 	}
-	
+
 	// Clean both paths to resolve any . or .. components that might remain
 	abs = filepath.Clean(abs)
 	rulesAbs = filepath.Clean(rulesAbs)
-	
+
 	if !strings.HasPrefix(abs, rulesAbs) {
 		return fmt.Errorf("path outside rules directory")
 	}
-	
+
 	return nil
 }

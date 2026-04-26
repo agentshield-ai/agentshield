@@ -263,14 +263,14 @@ func TestDetermineActionAcrossModes(t *testing.T) {
 		{
 			name:                "Enforce mode - critical severity blocks",
 			mode:                config.ModeEnforce,
-			criticalCount:      1,
+			criticalCount:       1,
 			expectedAction:      models.ActionBlock,
 			expectedOverridable: true,
 		},
 		{
 			name:                "Audit mode - always logs regardless of severity",
 			mode:                config.ModeAudit,
-			criticalCount:      1,
+			criticalCount:       1,
 			highCount:           1,
 			expectedAction:      models.ActionLog,
 			expectedOverridable: false,
@@ -278,7 +278,7 @@ func TestDetermineActionAcrossModes(t *testing.T) {
 		{
 			name:                "Shadow mode - always allows regardless of severity",
 			mode:                config.ModeShadow,
-			criticalCount:      1,
+			criticalCount:       1,
 			highCount:           1,
 			expectedAction:      models.ActionAllow,
 			expectedOverridable: false,

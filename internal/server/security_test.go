@@ -177,8 +177,8 @@ func TestSecurityHeadersPresent(t *testing.T) {
 
 	expectedHeaders := map[string]string{
 		"X-Content-Type-Options":  "nosniff",
-		"X-Frame-Options":        "DENY",
-		"Cache-Control":          "no-store",
+		"X-Frame-Options":         "DENY",
+		"Cache-Control":           "no-store",
 		"Content-Security-Policy": "default-src 'none'",
 	}
 

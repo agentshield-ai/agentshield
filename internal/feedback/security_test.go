@@ -9,10 +9,10 @@ import (
 // to prevent stored XSS.
 func TestSanitizeCommentXSS(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		check   func(string) bool
-		desc    string
+		name  string
+		input string
+		check func(string) bool
+		desc  string
 	}{
 		{
 			name:  "script tag neutralized",

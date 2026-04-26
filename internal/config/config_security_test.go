@@ -11,7 +11,7 @@ func TestIsNonLocalhost(t *testing.T) {
 		{"127.0.0.1", false},
 		{"localhost", false},
 		{"::1", false},
-		{"Localhost", false},  // case-insensitive
+		{"Localhost", false},   // case-insensitive
 		{" 127.0.0.1 ", false}, // trimmed
 
 		// Non-localhost addresses (should warn)
