@@ -25,6 +25,9 @@ permissions:
 
 env:
   GO_VERSION: '1.25'
+  AGENTSHIELD_PORT: '8433'
+  AGENTSHIELD_RULES_DIR: ./rules
+  AGENTSHIELD_AUTH_TOKEN: ci-bench-token-do-not-use-in-prod
 
 jobs:
   bench-pr:
@@ -46,9 +49,9 @@ jobs:
 
       - name: Start engine
         run: |
-          ./bin/agentshield serve --rules ./rules --port 8433 &
+          ./bin/agentshield serve >engine.log 2>&1 &
           echo $! > engine.pid
-          scripts/wait_for_health.sh
+          scripts/wait_for_health.sh || { echo '--- engine.log ---'; cat engine.log; exit 1; }
 
       - name: Run benign suite
         run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/benign.yaml --bench-root bench
@@ -89,9 +92,9 @@ jobs:
 
       - name: Start engine
         run: |
-          ./bin/agentshield serve --rules ./rules --port 8433 &
+          ./bin/agentshield serve >engine.log 2>&1 &
           echo $! > engine.pid
-          scripts/wait_for_health.sh
+          scripts/wait_for_health.sh || { echo '--- engine.log ---'; cat engine.log; exit 1; }
 
       - name: Run all suites
         run: ./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
