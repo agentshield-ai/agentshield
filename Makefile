@@ -1,4 +1,4 @@
-.PHONY: build test clean run bench bench-all bench-go bench-go-baseline bench-go-compare test-integration test-integration-docker docker-build replay-build replay
+.PHONY: build test clean run bench bench-all bench-go bench-go-baseline bench-go-compare test-integration test-integration-docker docker-build replay-build replay replay-cache-benchmark
 
 # Go binary path
 GO ?= go
@@ -78,6 +78,29 @@ replay-build:
 # Run replay (usage: make replay DATASET=nlile/misc-merged-claude-code-traces-v1)
 replay: replay-build
 	./bin/agentshield-replay run --dataset $(DATASET) --rules-dir rules/rules
+
+# Cache hit-rate benchmark across the three published HF datasets.
+# Requires network access to datasets-server.huggingface.co (no auth needed).
+# REPLAY_MAX_TRACES caps each dataset; raise for production runs.
+REPLAY_MAX_TRACES ?= 1000
+replay-cache-benchmark: replay-build
+	@mkdir -p bench/results/cache
+	@echo "→ replaying nlile/misc-merged-claude-code-traces-v1 (max=$(REPLAY_MAX_TRACES))"
+	./bin/agentshield-replay run \
+	  --dataset nlile/misc-merged-claude-code-traces-v1 \
+	  --rules-dir rules/rules --max-traces $(REPLAY_MAX_TRACES) \
+	  --output bench/results/cache/nlile.json
+	@echo "→ replaying sammshen/wildclaw-opus-traces (max=$(REPLAY_MAX_TRACES))"
+	./bin/agentshield-replay run \
+	  --dataset sammshen/wildclaw-opus-traces \
+	  --rules-dir rules/rules --max-traces $(REPLAY_MAX_TRACES) \
+	  --output bench/results/cache/wildclaw.json
+	@echo "→ replaying smolagents/synthetic-traces-toolcalling (max=$(REPLAY_MAX_TRACES))"
+	./bin/agentshield-replay run \
+	  --dataset smolagents/synthetic-traces-toolcalling \
+	  --rules-dir rules/rules --max-traces $(REPLAY_MAX_TRACES) \
+	  --output bench/results/cache/smolagents.json
+	@echo "Cache benchmark complete. Reports under bench/results/cache/"
 
 # Build Docker engine image
 docker-build:

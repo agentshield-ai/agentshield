@@ -67,6 +67,58 @@ state (`internal/cache/cache.go:82`). Parallel benches show ~50% slowdown vs
 serial at GOMAXPROCS=4; the contention cost rises with core count. Issue
 #28 (P2-A) tracks splitting the read path; the `BenchmarkVerdictCache_GetParallel` bench is the baseline that fix must beat.
 
+## Cache hit rate on real agent traces
+
+The microbenches above measure cache cost in isolation. The deterministic-path
+advantage in production is best characterised by **how often** the cache hits
+on representative agent workloads. The replay harness (`cmd/agentshield-replay`)
+streams public HuggingFace trace datasets through the engine with the verdict
+cache attached and reports the per-dataset hit rate plus split p50/p95
+latency for hits versus misses.
+
+### Reproducibility
+
+Run from a network-permitted environment (datasets-server.huggingface.co
+unauthenticated, no token required):
+
+```bash
+make replay-cache-benchmark                     # default 1000 traces per dataset
+make replay-cache-benchmark REPLAY_MAX_TRACES=0 # full datasets
+```
+
+Reports are written to `bench/results/cache/{nlile,wildclaw,smolagents}.json`,
+each containing the structured `cache_stats` block:
+
+```json
+{
+  "cache_stats": {
+    "enabled": true,
+    "hit_count": <int>,
+    "miss_count": <int>,
+    "hit_rate": <float, percent>,
+    "hit_latency_p50_us": <int>,
+    "hit_latency_p95_us": <int>,
+    "miss_latency_p50_us": <int>,
+    "miss_latency_p95_us": <int>
+  }
+}
+```
+
+### Numbers
+
+| Dataset | Events | Hit rate | Hit p50 | Hit p95 | Miss p50 | Miss p95 |
+|---|---:|---:|---:|---:|---:|---:|
+| `nlile/misc-merged-claude-code-traces-v1` | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| `sammshen/wildclaw-opus-traces` | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| `smolagents/synthetic-traces-toolcalling` | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+
+Numbers will be filled in from the first `replay-cache-benchmark` run from a
+network-permitted environment (the AgentShield CI sandbox blocks
+`datasets-server.huggingface.co`). The harness is verified against a synthetic
+fetcher in `internal/replay/runner_cache_test.go`: a 20-event repeating stream
+yields 95% hit rate (1 miss + 19 hits), and a uniqueness-guaranteed stream
+yields 0% hit rate. `--no-cache` flag disables the cache for control runs.
+
 ## Cache-key compute
 
 `CacheKeyWithFields` is on the hot path of every cache miss. SHA-256 over a

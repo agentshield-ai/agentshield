@@ -27,6 +27,12 @@ type ReportAggregator struct {
 	latencies       []int64         // nanoseconds per evaluation
 
 	fpCandidates []FPCandidate // bounded to maxFPCandidates
+
+	cacheEnabled    bool
+	cacheHits       int
+	cacheMisses     int
+	hitLatenciesNs  []int64
+	missLatenciesNs []int64
 }
 
 const maxFPCandidates = 100
@@ -65,6 +71,14 @@ func (a *ReportAggregator) Record(result ReplayResult) {
 	a.eventsEvaluated++
 	a.actionCounts[result.Action]++
 	a.latencies = append(a.latencies, result.EvalDurationNs)
+
+	if result.Cached {
+		a.cacheHits++
+		a.hitLatenciesNs = append(a.hitLatenciesNs, result.EvalDurationNs)
+	} else {
+		a.cacheMisses++
+		a.missLatenciesNs = append(a.missLatenciesNs, result.EvalDurationNs)
+	}
 
 	for _, alert := range result.Alerts {
 		a.totalAlerts++
@@ -170,6 +184,27 @@ func (a *ReportAggregator) Report() *ReportData {
 		FPCandidates:       a.fpCandidates,
 		ActionDistribution: a.actionCounts,
 		LatencyStats:       computeLatencyStats(a.latencies),
+		CacheStats:         a.cacheStats(),
+	}
+}
+
+func (a *ReportAggregator) cacheStats() CacheStats {
+	total := a.cacheHits + a.cacheMisses
+	hitRate := 0.0
+	if total > 0 {
+		hitRate = float64(a.cacheHits) / float64(total) * 100
+	}
+	hit := computeLatencyStats(a.hitLatenciesNs)
+	miss := computeLatencyStats(a.missLatenciesNs)
+	return CacheStats{
+		Enabled:          a.cacheEnabled,
+		HitCount:         a.cacheHits,
+		MissCount:        a.cacheMisses,
+		HitRate:          hitRate,
+		HitLatencyP50Us:  hit.P50Us,
+		HitLatencyP95Us:  hit.P95Us,
+		MissLatencyP50Us: miss.P50Us,
+		MissLatencyP95Us: miss.P95Us,
 	}
 }
 
