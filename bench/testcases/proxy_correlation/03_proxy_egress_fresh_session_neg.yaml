@@ -1,0 +1,30 @@
+id: proxy_corr_03_proxy_egress_fresh_session_neg
+severity: high
+session_id: bench-proxy-corr-fresh
+triage: false
+benign: false
+rationale: |
+  Negative control for the layer-spanning rule. Same proxy observation as
+  step 2 (private-IP egress) but from a fresh session with no prior tool
+  calls. The per-request SSRF rule (id 7c3e2d8a…) still fires because the
+  URL targets a private IP — that's correct, the per-request layer is
+  doing its job. But the layer-spanning rule (id a1c4d2f8…) MUST NOT fire,
+  because there's no agent context in the session to correlate with.
+  Verdict is still BLOCK because of the SSRF rule alone.
+events:
+  - event_id: evt-corr-fresh
+    tool: http_egress
+    args:
+      url: "http://10.0.0.5:8080/admin"
+      method: "GET"
+    fields:
+      event_type: http_egress
+      command: "GET http://10.0.0.5:8080/admin"
+      proxy.source: crabtrap
+      proxy.verdict: allow
+expected:
+  action: BLOCK
+  must_trigger_rules:
+    - 7c3e2d8a-1b4f-4d9c-9e2f-egress-ssrf01
+  must_not_trigger:
+    - a1c4d2f8-5e6b-7a8c-9d0e-proxy-recon01
