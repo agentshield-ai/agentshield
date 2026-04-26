@@ -1,0 +1,17 @@
+id: egress_tld_normal_neg
+severity: info
+session_id: bench-egress-tld-neg-001
+triage: false
+benign: true
+rationale: |
+  Egress to a normal .com TLD. Must NOT fire the suspicious-TLD rule.
+events:
+  - event_id: evt-egress-tld-neg-001
+    tool: Bash
+    args:
+      command: "curl -sSL https://example.com/file.txt"
+    fields:
+      event_type: tool_call
+      command: "curl -sSL https://example.com/file.txt"
+expected:
+  action: ALLOW
