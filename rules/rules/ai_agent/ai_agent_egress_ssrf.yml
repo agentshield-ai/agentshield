@@ -25,10 +25,14 @@ logsource:
   category: agent_events
 detection:
   selection_link_local:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.is_link_local: 'true'
   selection_private:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.is_private_ip: 'true'
   condition: selection_link_local or selection_private
 falsepositives:

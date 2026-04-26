@@ -1,0 +1,11 @@
+name: proxy_correlation
+description: |
+  Layer-spanning correlation tests demonstrating P3-D — tool-call events
+  (from agent hooks) and proxy observations (forwarded by
+  agentshield-proxy-adapter) sharing one session. Testcase order matters:
+  01 warms the session, 02 verifies the layer-spanning rule fires in that
+  warm session, 03 verifies it does NOT fire in a fresh session.
+testcases:
+  - proxy_correlation/01_warm_session_setup.yaml
+  - proxy_correlation/02_proxy_egress_in_warm_session_pos.yaml
+  - proxy_correlation/03_proxy_egress_fresh_session_neg.yaml

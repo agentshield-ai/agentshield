@@ -23,7 +23,9 @@ logsource:
   category: agent_events
 detection:
   selection_freenom:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host|endswith:
       - .tk
       - .ml
@@ -31,7 +33,9 @@ detection:
       - .cf
       - .gq
   selection_low_reputation:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host|endswith:
       - .country
       - .gdn

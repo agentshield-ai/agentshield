@@ -1,10 +1,10 @@
-package server
+package enrich
 
 import (
 	"testing"
 )
 
-func TestEnrichURLFields(t *testing.T) {
+func TestURLFields(t *testing.T) {
 	tests := []struct {
 		name string
 		args map[string]string
@@ -128,7 +128,7 @@ func TestEnrichURLFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fields := map[string]string{}
-			enrichURLFields(tt.args, fields)
+			URLFields(tt.args, fields)
 			for k, want := range tt.want {
 				got := fields[k]
 				if want == "" {
@@ -149,7 +149,7 @@ func TestEnrichURLFields(t *testing.T) {
 func TestEnrichURLFields_DoesNotOverwriteExistingHost(t *testing.T) {
 	args := map[string]string{"command": "curl https://example.com/"}
 	fields := map[string]string{"url.host": "preset.example"}
-	enrichURLFields(args, fields)
+	URLFields(args, fields)
 	if fields["url.host"] != "preset.example" {
 		t.Fatalf("existing url.host should not be overwritten; got %q", fields["url.host"])
 	}
@@ -160,7 +160,7 @@ func TestEnrichURLFields_DoesNotOverwriteExistingHost(t *testing.T) {
 
 func TestEnrichURLFields_NoArgs(t *testing.T) {
 	fields := map[string]string{}
-	enrichURLFields(nil, fields)
+	URLFields(nil, fields)
 	if len(fields) != 0 {
 		t.Fatalf("nil args should produce no fields, got %v", fields)
 	}
