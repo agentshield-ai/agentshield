@@ -1,0 +1,41 @@
+title: Forward-Proxy Egress to Internal Network in Active Agent Session
+id: a1c4d2f8-5e6b-7a8c-9d0e-proxy-recon01
+status: test
+description: |
+  Fires when an external forward proxy (CrabTrap, mitmproxy, etc.) observes a
+  request to an internal-network destination (RFC 1918 or link-local) AND
+  AgentShield has seen one or more tool calls in the same session. Neither
+  side detects this alone: the proxy is stateless and can't tell "this
+  connection came from an active AI agent that just did N other things",
+  and AgentShield's tool-call hooks miss network-layer egress whose URL
+  isn't statically extractable from the tool-call args. The
+  agentshield-proxy-adapter ingests proxy observations through
+  /api/v1/evaluate, sharing the session_id with the agent harness, which
+  is what makes this correlation possible.
+references:
+  - https://owasp.org/www-community/attacks/Server_Side_Request_Forgery
+  - https://attack.mitre.org/techniques/T1090/
+author: AgentShield
+date: "2026-04-26"
+tags:
+  - attack.command-and-control
+  - attack.t1090
+  - attack.discovery
+  - attack.t1018
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_internal_egress:
+    event_type: http_egress
+    url.is_private_ip: 'true'
+  selection_link_local_egress:
+    event_type: http_egress
+    url.is_link_local: 'true'
+  selection_active_session:
+    session.tool_count|re: '^([1-9]|[1-9][0-9]+)$'
+  condition: (selection_internal_egress or selection_link_local_egress) and selection_active_session
+falsepositives:
+  - Internal-only agents whose entire workflow is within RFC 1918 (override + audit)
+  - Agents legitimately probing infrastructure under operator approval
+level: high

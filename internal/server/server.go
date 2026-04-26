@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/auth"
 	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
+	"github.com/agentshield-ai/agentshield/internal/enrich"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/feedback"
 	"github.com/agentshield-ai/agentshield/internal/models"
@@ -500,113 +500,10 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 		}
 	}
 
-	enrichURLFields(req.Args, req.Fields)
-}
-
-// urlPattern matches the first http(s)/file URL in a string. Quote chars and
-// shell-pipeline-terminator punctuation are excluded from the character class
-// so the URL doesn't capture surrounding context. `]` is intentionally NOT
-// excluded so IPv6 bracketed hosts (`http://[::1]:80/`) match correctly.
-var urlPattern = regexp.MustCompile(`(?i)(https?|file)://[^\s'"<>` + "`" + `\)|]+`)
-
-// internalMetadataHosts are well-known cloud metadata service hostnames that
-// resolve to link-local addresses but are referenced by name in tool calls.
-// We treat them as link-local without DNS resolution.
-var internalMetadataHosts = map[string]struct{}{
-	"metadata.google.internal":  {},
-	"metadata.azure.com":        {},
-	"instance-data.ec2.internal": {},
-}
-
-// enrichURLFields scans args for the first URL-shaped substring and injects
-// structured url.* fields for Sigma rule matching. Skipped silently when no
-// URL is found. DNS resolution is intentionally avoided to keep the eval hot
-// path predictable; rules wanting to match private hostnames must do so via
-// pattern on url.host.
-func enrichURLFields(args, fields map[string]string) {
-	if _, exists := fields["url.host"]; exists {
-		return
-	}
-
-	raw := findFirstURL(args)
-	if raw == "" {
-		return
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" {
-		return
-	}
-	// file:// URLs legitimately have an empty host; require a host for the
-	// network schemes only.
-	if u.Scheme != "file" && u.Host == "" {
-		return
-	}
-
-	host := strings.ToLower(u.Hostname())
-	port := u.Port()
-	scheme := strings.ToLower(u.Scheme)
-	path := u.Path
-	if path == "" {
-		path = "/"
-	}
-
-	loopback, private, linkLocal := classifyHost(host)
-
-	fields["url.scheme"] = scheme
-	fields["url.host"] = host
-	fields["url.port"] = port
-	fields["url.path"] = path
-	fields["url.is_loopback"] = boolStr(loopback)
-	fields["url.is_private_ip"] = boolStr(private)
-	fields["url.is_link_local"] = boolStr(linkLocal)
-}
-
-// findFirstURL returns the first URL substring found across args. Common
-// args are checked in priority order so the most-likely-to-contain-a-URL
-// keys are scanned first; the rest are scanned in iteration order as a
-// fallback. Trailing punctuation common in shell pipelines is trimmed.
-func findFirstURL(args map[string]string) string {
-	for _, key := range []string{"url", "command", "endpoint", "uri"} {
-		if v, ok := args[key]; ok {
-			if m := urlPattern.FindString(v); m != "" {
-				return strings.TrimRight(m, ".,;")
-			}
-		}
-	}
-	for k, v := range args {
-		switch k {
-		case "url", "command", "endpoint", "uri":
-			continue
-		}
-		if m := urlPattern.FindString(v); m != "" {
-			return strings.TrimRight(m, ".,;")
-		}
-	}
-	return ""
-}
-
-// classifyHost returns (isLoopback, isPrivate, isLinkLocal) for a hostname or
-// IP literal. Hostnames are matched against a small internal-metadata list
-// and the literal "localhost"; IP literals use net.ParseIP.
-func classifyHost(host string) (loopback, private, linkLocal bool) {
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return true, false, false
-	}
-	if _, ok := internalMetadataHosts[host]; ok {
-		return false, false, true
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false, false, false
-	}
-	return ip.IsLoopback(), ip.IsPrivate(), ip.IsLinkLocalUnicast()
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
+	// URL enrichment moved to internal/enrich (called by both server and
+	// evaluator) so library-mode callers (replay, in-process API) get the
+	// same url.* fields as HTTP-originated requests.
+	enrich.URLFields(req.Args, req.Fields)
 }
 
 func firstNonEmptyArg(args map[string]string, keys ...string) (string, bool) {
