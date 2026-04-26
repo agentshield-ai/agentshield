@@ -105,6 +105,11 @@ Supported datasets:
 	cmd.Flags().StringVar(&cfg.Endpoint, "endpoint", "http://localhost:8433", "Engine HTTP endpoint (for --http mode)")
 	cmd.Flags().StringVar(&cfg.AuthToken, "token", "", "Auth token (for --http mode, or AGENTSHIELD_AUTH_TOKEN env)")
 
+	// Verdict cache (library mode)
+	cmd.Flags().IntVar(&cfg.CacheSize, "cache-size", 0, "Verdict cache capacity (0 = default 10000)")
+	cmd.Flags().DurationVar(&cfg.CacheTTL, "cache-ttl", 0, "Verdict cache TTL (0 = default 5m)")
+	cmd.Flags().BoolVar(&cfg.DisableCache, "no-cache", false, "Disable verdict cache (control runs)")
+
 	// Debug
 	cmd.Flags().BoolVar(&cfg.Verbose, "verbose", false, "Verbose output")
 

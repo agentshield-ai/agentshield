@@ -46,6 +46,7 @@ type ReplayResult struct {
 	Action         string
 	Alerts         []engine.RuleResult
 	EvalDurationNs int64
+	Cached         bool
 }
 
 // ReportData is the final aggregated report.
@@ -59,6 +60,21 @@ type ReportData struct {
 	FPCandidates       []FPCandidate      `json:"fp_candidates" yaml:"fp_candidates"`
 	ActionDistribution map[string]int     `json:"action_distribution" yaml:"action_distribution"`
 	LatencyStats       LatencyStats       `json:"latency_stats" yaml:"latency_stats"`
+	CacheStats         CacheStats         `json:"cache_stats" yaml:"cache_stats"`
+}
+
+// CacheStats reports verdict-cache behaviour observed during the replay.
+// HitRate is fraction of total evaluations served from cache; latency
+// percentiles are split so the deterministic-path advantage is visible.
+type CacheStats struct {
+	Enabled          bool    `json:"enabled" yaml:"enabled"`
+	HitCount         int     `json:"hit_count" yaml:"hit_count"`
+	MissCount        int     `json:"miss_count" yaml:"miss_count"`
+	HitRate          float64 `json:"hit_rate" yaml:"hit_rate"`
+	HitLatencyP50Us  int64   `json:"hit_latency_p50_us" yaml:"hit_latency_p50_us"`
+	HitLatencyP95Us  int64   `json:"hit_latency_p95_us" yaml:"hit_latency_p95_us"`
+	MissLatencyP50Us int64   `json:"miss_latency_p50_us" yaml:"miss_latency_p50_us"`
+	MissLatencyP95Us int64   `json:"miss_latency_p95_us" yaml:"miss_latency_p95_us"`
 }
 
 // ReportMetadata captures context about the replay run.
@@ -128,8 +144,14 @@ type RunConfig struct {
 	ExportTestcases string // path for bench YAML export; empty = skip
 	PageSize        int    // HF API page size (max 100)
 	Verbose         bool
-	// HTTP mode (alternative to library mode)
+	// Verdict cache (library mode only; HTTP mode reads cached flag from server response).
+	DisableCache bool          // when true, no cache is attached and HitCount stays 0
+	CacheSize    int           // 0 → default (10000)
+	CacheTTL     time.Duration // 0 → default (5m)
+	// HTTP mode (alternative to library mode).
 	HTTPMode  bool
 	Endpoint  string
 	AuthToken string
+	// Test-only seam: when non-nil, replaces the default HF fetcher.
+	Fetcher Fetcher `json:"-" yaml:"-"`
 }
