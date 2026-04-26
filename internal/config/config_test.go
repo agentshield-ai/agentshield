@@ -233,7 +233,7 @@ func TestResolveRelativePaths(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	
+
 	cfg := &Config{
 		Rules: RulesConfig{
 			Dir: "./rules",

@@ -1,7 +1,7 @@
 # docker/engine.Dockerfile
 # Multi-stage build for AgentShield engine.
 # Used by integration tests in CI (AGENTSHIELD_ENGINE_MODE=docker).
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /src
 

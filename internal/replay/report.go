@@ -10,21 +10,21 @@ import (
 
 // ReportAggregator accumulates replay results and produces a summary report.
 type ReportAggregator struct {
-	dataset    string
-	mode       string
+	dataset     string
+	mode        string
 	rulesLoaded map[string]engine.RuleResult // ruleID -> rule info
-	startTime  time.Time
+	startTime   time.Time
 
 	tracesProcessed int
 	eventsEvaluated int
 	eventsSkipped   int
 	totalAlerts     int
 
-	ruleHitCounts   map[string]int  // ruleID -> count
-	severityCounts  map[string]int  // severity -> count
-	actionCounts    map[string]int  // action -> count
-	matchedRules    map[string]bool // ruleID -> true if matched at least once
-	latencies       []int64         // nanoseconds per evaluation
+	ruleHitCounts  map[string]int  // ruleID -> count
+	severityCounts map[string]int  // severity -> count
+	actionCounts   map[string]int  // action -> count
+	matchedRules   map[string]bool // ruleID -> true if matched at least once
+	latencies      []int64         // nanoseconds per evaluation
 
 	fpCandidates []FPCandidate // bounded to maxFPCandidates
 }
