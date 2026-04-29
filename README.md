@@ -264,11 +264,52 @@ Browse all rules under [`rules/rules/ai_agent/`](rules/rules/ai_agent/). See [do
 
 See [PLATFORMS.md](PLATFORMS.md) for details.
 
+## Related Projects
+
+### Avast Sage
+
+[Avast Sage](https://github.com/avast/sage) is the closest single-product comparable.
+
+|  | Sage | AgentShield |
+|---|---|---|
+| Layer | TypeScript in-process | Go engine, separate process |
+| Rule format | Flat regex YAML | Full Sigma (selections + conditions) |
+| Reputation lookups | URL + package registry APIs | Planned (v1.1, on `feat/reputation-lookups`) |
+| Supply-chain validation | Native | Planned (v1.1, on `feat/supply-chain-checks`) |
+| Behavioural correlation | — | Per-session sliding window |
+| LLM triage | — | Optional, off the hot path |
+| Verdict caching | — | LRU + TTL, hot-reload-aware |
+| Graduated response | block / allow | block / require_approval / log / allow |
+| Windows rules | Yes | [Not yet](PLATFORMS.md) |
+
+Complementary, not competing. Sage answers "is this command, URL, or package dangerous?"; AgentShield answers "is this agent being manipulated, and what has its session done so far?".
+
+### Brex CrabTrap
+
+[Brex CrabTrap](https://github.com/brexhq/CrabTrap) is an HTTPS forward proxy with static rules + an LLM judge per request — a different layer of the agent stack than AgentShield's tool-call hooks.
+
+|  | CrabTrap | AgentShield |
+|---|---|---|
+| Layer | HTTPS forward proxy | Tool-call hooks inside agent runtime |
+| What it sees | Wire bytes, URL, body | Tool name, args, session history |
+| Detection | Static rules + LLM judge | Sigma rules + verdict cache |
+| LLM in hot path | Yes (one call per request) | No (only on triaged alerts) |
+| Stateful detection | — (proxy is stateless) | Per-session correlation |
+| Hot reload | Restart required | SIGHUP, no downtime |
+| Subprocess egress (`npm install`, etc.) | Visible | Invisible without an adapter |
+| Tool calls without network | Invisible | Visible |
+| URL host / scheme / private-IP fields | Native | Available via [`url.*` enrichment](docs/rules.md#url-enrichment-fields) (issue [#33](https://github.com/agentshield-ai/agentshield/issues/33)) |
+
+The two strictly contain each other — running both feeds one audit trail, one verdict cache, and per-session rules that can correlate tool calls with proxy observations in the same session window. See [docs/deployments/agentshield-with-crabtrap.md](docs/deployments/agentshield-with-crabtrap.md) for the joint deployment guide and the `agentshield-proxy-adapter` binary that wires CrabTrap's audit log into AgentShield.
+
 ## Documentation
 
 - [API Reference](docs/api.md) — endpoints, request/response examples
 - [Configuration](docs/configuration.md) — all config options
 - [Deployment Guide](docs/deployment.md) — production setup
+- [AgentShield + CrabTrap](docs/deployments/agentshield-with-crabtrap.md) — joint forward-proxy + tool-call deployment
+- [Performance](docs/performance.md) — measured latency, allocations, throughput, regression-gated CI
+- [Behavioural Case Studies](docs/case-studies/) — recon→exfil, approval fatigue, override escalation, velocity anomaly
 - [Triage System](docs/triage.md) — LLM-powered alert analysis
 - [Rules Guide](docs/rules.md) — authoring and testing rules
 - [Contributing](CONTRIBUTING.md) — development setup, PR process

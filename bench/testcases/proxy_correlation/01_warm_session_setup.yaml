@@ -1,0 +1,23 @@
+id: proxy_corr_01_warm_session_setup
+severity: info
+session_id: bench-proxy-corr-warm
+triage: false
+benign: true
+rationale: |
+  Step 1 of the layer-spanning correlation demonstration. A benign Bash tool
+  call is recorded into session bench-proxy-corr-warm. The layer-spanning
+  rule (id a1c4d2f8…) must NOT fire here — at this point session.tool_count
+  for THIS event is still 0 (events are recorded after evaluation, so the
+  current event isn't in its own pre-eval window).
+events:
+  - event_id: evt-corr-warm-a
+    tool: Bash
+    args:
+      command: "ls /etc"
+    fields:
+      event_type: tool_call
+      command: "ls /etc"
+expected:
+  action: ALLOW
+  must_not_trigger:
+    - a1c4d2f8-5e6b-7a8c-9d0e-proxy-recon01

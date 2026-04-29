@@ -9,6 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
+	"github.com/agentshield-ai/agentshield/internal/enrich"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
@@ -131,6 +132,11 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			req.Fields["source"] = req.Source
 		}
 	}
+
+	// URL enrichment runs for every entry point (HTTP, library, replay,
+	// proxy adapter). Rules that match url.host / url.is_private_ip etc.
+	// must work regardless of how the request reached the evaluator.
+	enrich.URLFields(req.Args, req.Fields)
 
 	if e.tracer != nil {
 		var span trace.Span

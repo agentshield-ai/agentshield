@@ -25,14 +25,18 @@ logsource:
   category: agent_events
 detection:
   selection_webhooks:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host:
       - discord.com
       - discordapp.com
       - webhook.site
       - api.telegram.org
   selection_paste:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host:
       - pastebin.com
       - paste.ee
@@ -40,7 +44,9 @@ detection:
       - dpaste.com
       - rentry.co
   selection_anon_share:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host:
       - transfer.sh
       - file.io
@@ -48,14 +54,18 @@ detection:
       - bashupload.com
       - 0x0.st
   selection_requestbins:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host|contains:
       - 'requestbin.io'
       - 'requestbin.com'
       - 'webhook.site'
       - 'pipedream.net'
   filter_telegram_browse:
-    event_type: tool_call
+    event_type:
+      - tool_call
+      - http_egress
     url.host: t.me
     url.path|contains: '/c/'
   condition: (selection_webhooks or selection_paste or selection_anon_share or selection_requestbins) and not filter_telegram_browse
