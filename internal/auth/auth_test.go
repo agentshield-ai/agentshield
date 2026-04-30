@@ -60,7 +60,7 @@ func TestHandler(t *testing.T) {
 	// Mock handler that should only be called when auth succeeds
 	mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
+		_, _ = w.Write([]byte("success"))
 	})
 
 	wrappedHandler := middleware.Handler(mockHandler)
@@ -187,7 +187,7 @@ func TestRequireAuth(t *testing.T) {
 
 	handlerFunc := func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("authenticated"))
+		_, _ = w.Write([]byte("authenticated"))
 	}
 
 	wrappedFunc := middleware.RequireAuth(handlerFunc)
@@ -228,7 +228,7 @@ func TestChiMiddleware(t *testing.T) {
 	// Mock handler that should only be called when auth succeeds
 	mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
+		_, _ = w.Write([]byte("success"))
 	})
 
 	// Create Chi-style middleware
@@ -338,7 +338,7 @@ func TestChiMiddlewareHealthEndpointVariations(t *testing.T) {
 
 	mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 
 	chiHandler := middleware.ChiMiddleware(mockHandler)

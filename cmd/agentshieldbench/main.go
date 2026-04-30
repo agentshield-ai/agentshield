@@ -412,7 +412,7 @@ func executeEvent(client *http.Client, endpoint, authToken string, tc *Testcase,
 			Reason:         fmt.Sprintf("http error: %v", err),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return ResultLine{
@@ -505,7 +505,7 @@ func writeJSONL(outputDir, suiteName string, results []ResultLine) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
@@ -514,7 +514,7 @@ func writeJSONL(outputDir, suiteName string, results []ResultLine) error {
 			return err
 		}
 	}
-	w.Flush()
+	_ = w.Flush()
 	fmt.Printf("  Results written: %s\n", path)
 	return nil
 }
@@ -530,34 +530,34 @@ func writeSummaryMarkdown(outputDir, suiteName string, m SuiteMetrics) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	w := bufio.NewWriter(f)
-	fmt.Fprintf(w, "# Benchmark Results: %s\n\n", suiteName)
-	fmt.Fprintf(w, "**Date:** %s\n\n", time.Now().Format(time.RFC3339))
-	fmt.Fprintf(w, "## Metrics\n\n")
-	fmt.Fprintf(w, "| Metric | Value |\n")
-	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| Total Events | %d |\n", m.Total)
-	fmt.Fprintf(w, "| Passed | %d |\n", m.Passed)
-	fmt.Fprintf(w, "| Failed | %d |\n", m.Failed)
-	fmt.Fprintf(w, "| TMPR (Tool Misuse Prevention Rate) | %.1f%% |\n", m.TMPR)
-	fmt.Fprintf(w, "| BTCR (Benign Task Completion Rate) | %.1f%% |\n", m.BTCR)
-	fmt.Fprintf(w, "| PESR (Policy Evasion Success Rate) | %.1f%% |\n", m.PESR)
-	fmt.Fprintf(w, "| Latency p50 | %.1fms |\n", m.LatencyP50)
-	fmt.Fprintf(w, "| Latency p95 | %.1fms |\n", m.LatencyP95)
+	_, _ = fmt.Fprintf(w, "# Benchmark Results: %s\n\n", suiteName)
+	_, _ = fmt.Fprintf(w, "**Date:** %s\n\n", time.Now().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "## Metrics\n\n")
+	_, _ = fmt.Fprintf(w, "| Metric | Value |\n")
+	_, _ = fmt.Fprintf(w, "|--------|-------|\n")
+	_, _ = fmt.Fprintf(w, "| Total Events | %d |\n", m.Total)
+	_, _ = fmt.Fprintf(w, "| Passed | %d |\n", m.Passed)
+	_, _ = fmt.Fprintf(w, "| Failed | %d |\n", m.Failed)
+	_, _ = fmt.Fprintf(w, "| TMPR (Tool Misuse Prevention Rate) | %.1f%% |\n", m.TMPR)
+	_, _ = fmt.Fprintf(w, "| BTCR (Benign Task Completion Rate) | %.1f%% |\n", m.BTCR)
+	_, _ = fmt.Fprintf(w, "| PESR (Policy Evasion Success Rate) | %.1f%% |\n", m.PESR)
+	_, _ = fmt.Fprintf(w, "| Latency p50 | %.1fms |\n", m.LatencyP50)
+	_, _ = fmt.Fprintf(w, "| Latency p95 | %.1fms |\n", m.LatencyP95)
 
 	if len(m.Failures) > 0 {
-		fmt.Fprintf(w, "\n## Failures\n\n")
-		fmt.Fprintf(w, "| Testcase | Event | Expected | Actual | Reason |\n")
-		fmt.Fprintf(w, "|----------|-------|----------|--------|--------|\n")
+		_, _ = fmt.Fprintf(w, "\n## Failures\n\n")
+		_, _ = fmt.Fprintf(w, "| Testcase | Event | Expected | Actual | Reason |\n")
+		_, _ = fmt.Fprintf(w, "|----------|-------|----------|--------|--------|\n")
 		for _, fail := range m.Failures {
-			fmt.Fprintf(w, "| %s | %s | %s | %s | %s |\n",
+			_, _ = fmt.Fprintf(w, "| %s | %s | %s | %s | %s |\n",
 				fail.TestcaseID, fail.EventID, fail.ExpectedAction, fail.ActualAction, fail.Reason)
 		}
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Printf("  Summary written: %s\n", path)
 	return nil
 }

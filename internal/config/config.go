@@ -342,9 +342,11 @@ func validateConfig(cfg *Config) error {
 
 	// SECURITY: Validate deep triage gateway URL for SSRF protection
 	if cfg.DeepTriage.Enabled && cfg.DeepTriage.GatewayURL != "" {
+		// gateway_url targeting localhost is expected for local OpenClaw; we
+		// log a warning rather than reject (operators intentionally run it
+		// locally), but only when the URL actually targets a private host.
 		if isPrivateOrLocalURL(cfg.DeepTriage.GatewayURL) {
-			// gateway_url targeting localhost is expected for local OpenClaw;
-			// only warn, don't reject (operators intentionally run it locally).
+			slog.Warn("deep_triage gateway_url targets a private/local network; allowed for local OpenClaw", "url", cfg.DeepTriage.GatewayURL)
 		}
 	}
 

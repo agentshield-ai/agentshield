@@ -197,13 +197,13 @@ func CacheKeyWithFields(toolName string, args, fields map[string]string, context
 	}
 
 	h := sha256.New()
-	fmt.Fprintf(h, "tool=%s", effectiveTool)
-	fmt.Fprintf(h, "\ncontext=%s", normalizeContext(effectiveContext))
+	_, _ = fmt.Fprintf(h, "tool=%s", effectiveTool)
+	_, _ = fmt.Fprintf(h, "\ncontext=%s", normalizeContext(effectiveContext))
 	for _, k := range keys {
-		fmt.Fprintf(h, "\narg:%s=%s", k, args[k])
+		_, _ = fmt.Fprintf(h, "\narg:%s=%s", k, args[k])
 	}
 	for _, k := range fieldKeys {
-		fmt.Fprintf(h, "\nfield:%s=%s", k, fields[k])
+		_, _ = fmt.Fprintf(h, "\nfield:%s=%s", k, fields[k])
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

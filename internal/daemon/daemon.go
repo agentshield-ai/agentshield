@@ -491,8 +491,8 @@ func (d *Daemon) writePIDFile() error {
 
 	pidStr := strconv.Itoa(pid)
 	if _, err := f.WriteString(pidStr); err != nil {
-		f.Close()
-		os.Remove(d.pidFile)
+		_ = f.Close()
+		_ = os.Remove(d.pidFile)
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 

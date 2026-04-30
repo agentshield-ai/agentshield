@@ -56,7 +56,7 @@ func TestRun_LibraryMode_SmallFixture(t *testing.T) {
 			NumRows: 2,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 

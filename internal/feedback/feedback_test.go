@@ -16,7 +16,7 @@ func TestSubmitFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -209,7 +209,7 @@ func TestGetRuleStatsComputesRatesFromStoreData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// 4 alerts total for the same rule.
 	alerts := []*store.Alert{
@@ -269,7 +269,7 @@ func TestGetRuleStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// Add some test alerts
 	alerts := []*store.Alert{
@@ -340,7 +340,7 @@ func TestFeedbackSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -370,7 +370,7 @@ func TestGetFeedbackForRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -448,7 +448,7 @@ func TestGetRuleFalsePositiveRate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -494,7 +494,7 @@ func TestGetHighFalsePositiveRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -513,10 +513,9 @@ func TestGetHighFalsePositiveRules(t *testing.T) {
 				t.Error("Expected non-nil rules slice")
 			}
 
-			// Should return slice (even if empty)
-			if len(rules) < 0 {
-				t.Error("Expected valid rules slice length")
-			}
+			// Should return slice (even if empty); rules == nil also acceptable.
+			// Original assertion `len(rules) < 0` was a vacuous tautology.
+			_ = rules
 
 			// Verify structure of returned rules
 			for _, rule := range rules {
@@ -536,7 +535,7 @@ func TestGetFeedbackSummaryWithData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -594,7 +593,7 @@ func TestGetRuleStatsPlaceholderValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -635,7 +634,7 @@ func TestSubmitFeedbackIDGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 
@@ -685,7 +684,7 @@ func TestSubmitFeedbackTimestampHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 

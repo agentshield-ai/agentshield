@@ -100,12 +100,12 @@ log_level: "invalid"
 				if err != nil {
 					t.Fatalf("creating temp file: %v", err)
 				}
-				defer os.Remove(tmpFile.Name())
+				defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 				if _, err := tmpFile.WriteString(tt.configYAML); err != nil {
 					t.Fatalf("writing config file: %v", err)
 				}
-				tmpFile.Close()
+				_ = tmpFile.Close()
 				configPath = tmpFile.Name()
 			}
 
@@ -181,18 +181,18 @@ func TestApplyEnvOverrides(t *testing.T) {
 	// Clean up environment
 	defer func() {
 		for _, env := range envVars {
-			os.Unsetenv(env)
+			_ = os.Unsetenv(env)
 		}
 		for env, val := range originalEnv {
-			os.Setenv(env, val)
+			_ = os.Setenv(env, val)
 		}
 	}()
 
 	// Set test environment variables
-	os.Setenv("AGENTSHIELD_PORT", "9999")
-	os.Setenv("AGENTSHIELD_ADDR", "127.0.0.1")
-	os.Setenv("AGENTSHIELD_AUTH_TOKEN", "env-token")
-	os.Setenv("AGENTSHIELD_MODE", "audit")
+	_ = os.Setenv("AGENTSHIELD_PORT", "9999")
+	_ = os.Setenv("AGENTSHIELD_ADDR", "127.0.0.1")
+	_ = os.Setenv("AGENTSHIELD_AUTH_TOKEN", "env-token")
+	_ = os.Setenv("AGENTSHIELD_MODE", "audit")
 
 	cfg := &Config{
 		Server: ServerConfig{
@@ -230,7 +230,7 @@ func TestResolveRelativePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
@@ -494,16 +494,16 @@ func TestApplyEnvOverrides_TelemetryEndpoint(t *testing.T) {
 	}
 	defer func() {
 		for _, env := range envVars {
-			os.Unsetenv(env)
+			_ = os.Unsetenv(env)
 		}
 		for env, val := range originalEnv {
-			os.Setenv(env, val)
+			_ = os.Setenv(env, val)
 		}
 	}()
 
 	t.Run("endpoint_and_enabled_true", func(t *testing.T) {
-		os.Setenv("AGENTSHIELD_OTEL_ENDPOINT", "https://otel.test:4318")
-		os.Setenv("AGENTSHIELD_OTEL_ENABLED", "true")
+		_ = os.Setenv("AGENTSHIELD_OTEL_ENDPOINT", "https://otel.test:4318")
+		_ = os.Setenv("AGENTSHIELD_OTEL_ENABLED", "true")
 
 		cfg := &Config{}
 		applyEnvOverrides(cfg)
@@ -517,7 +517,7 @@ func TestApplyEnvOverrides_TelemetryEndpoint(t *testing.T) {
 	})
 
 	t.Run("enabled_with_1", func(t *testing.T) {
-		os.Setenv("AGENTSHIELD_OTEL_ENABLED", "1")
+		_ = os.Setenv("AGENTSHIELD_OTEL_ENABLED", "1")
 
 		cfg := &Config{}
 		applyEnvOverrides(cfg)
@@ -528,7 +528,7 @@ func TestApplyEnvOverrides_TelemetryEndpoint(t *testing.T) {
 	})
 
 	t.Run("enabled_with_false", func(t *testing.T) {
-		os.Setenv("AGENTSHIELD_OTEL_ENABLED", "false")
+		_ = os.Setenv("AGENTSHIELD_OTEL_ENABLED", "false")
 
 		cfg := &Config{}
 		cfg.Telemetry.Enabled = true // pre-set to true

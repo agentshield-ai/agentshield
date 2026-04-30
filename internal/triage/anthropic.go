@@ -57,7 +57,7 @@ type AnthropicError struct {
 // NewAnthropicProvider creates a new Anthropic provider
 func NewAnthropicProvider(cfg *config.TriageConfig) (*AnthropicProvider, error) {
 	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("Anthropic API key is required")
+		return nil, fmt.Errorf("anthropic API key is required")
 	}
 
 	timeout := time.Duration(cfg.TimeoutSec) * time.Second
@@ -113,7 +113,7 @@ func (p *AnthropicProvider) Triage(ctx context.Context, triageCtx *TriageContext
 	if err != nil {
 		return nil, fmt.Errorf("making request to Anthropic: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response with size limit to prevent OOM from malicious responses
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024)) // 1MB max
@@ -125,9 +125,9 @@ func (p *AnthropicProvider) Triage(ctx context.Context, triageCtx *TriageContext
 	if resp.StatusCode != http.StatusOK {
 		var anthropicErr AnthropicError
 		if json.Unmarshal(body, &anthropicErr) == nil && anthropicErr.Error.Message != "" {
-			return nil, fmt.Errorf("Anthropic API error (%d): %s", resp.StatusCode, anthropicErr.Error.Message)
+			return nil, fmt.Errorf("anthropic API error (%d): %s", resp.StatusCode, anthropicErr.Error.Message)
 		}
-		return nil, fmt.Errorf("Anthropic API error (%d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("anthropic API error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response
@@ -137,7 +137,7 @@ func (p *AnthropicProvider) Triage(ctx context.Context, triageCtx *TriageContext
 	}
 
 	if len(anthropicResp.Content) == 0 {
-		return nil, fmt.Errorf("no content in Anthropic response")
+		return nil, fmt.Errorf("no content in anthropic response")
 	}
 
 	content := anthropicResp.Content[0].Text
@@ -190,15 +190,15 @@ func (p *AnthropicProvider) healthCheckConnectivity(ctx context.Context) error {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("Anthropic connectivity check failed: %w", err)
+		return fmt.Errorf("anthropic connectivity check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("Anthropic API authentication failed - check API key")
+		return fmt.Errorf("anthropic API authentication failed - check API key")
 	}
 	if resp.StatusCode >= 500 {
-		return fmt.Errorf("Anthropic API server error: %d", resp.StatusCode)
+		return fmt.Errorf("anthropic API server error: %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -233,16 +233,16 @@ func (p *AnthropicProvider) healthCheckFull(ctx context.Context) error {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("Anthropic health check failed: %w", err)
+		return fmt.Errorf("anthropic health check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("Anthropic API authentication failed - check API key")
+		return fmt.Errorf("anthropic API authentication failed - check API key")
 	}
 
 	if resp.StatusCode >= 500 {
-		return fmt.Errorf("Anthropic API server error: %d", resp.StatusCode)
+		return fmt.Errorf("anthropic API server error: %d", resp.StatusCode)
 	}
 
 	return nil

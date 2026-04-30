@@ -17,7 +17,7 @@ func TestDetermineRecommendedAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, "/tmp", nil)
@@ -48,7 +48,7 @@ func TestGenerateSuggestions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, "/tmp", nil)
@@ -117,7 +117,7 @@ func TestValidateRuleFilePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	rulesDir := filepath.Join(tmpDir, "rules")
 	err = os.MkdirAll(rulesDir, 0755)
@@ -129,7 +129,7 @@ func TestValidateRuleFilePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, rulesDir, nil)
@@ -181,7 +181,7 @@ func TestValidateRuleYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, "/tmp", nil)
@@ -234,7 +234,7 @@ func TestAnalyzeFalsePositivePatterns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// Add test alerts
 	alerts := []*store.Alert{
@@ -312,7 +312,7 @@ func TestFindRuleFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	rulesDir := filepath.Join(tmpDir, "rules")
 	err = os.MkdirAll(rulesDir, 0755)
@@ -346,7 +346,7 @@ severity: medium
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, rulesDir, nil)
@@ -385,7 +385,7 @@ func TestRefinementResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// Add test alerts
 	alert := &store.Alert{
@@ -408,7 +408,7 @@ func TestRefinementResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a test rule file
 	testRule := `
