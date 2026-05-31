@@ -20,6 +20,7 @@ Detection rules assume **Unix/POSIX command semantics** (e.g. `bash`, `chmod`, `
 | [Claude Code](plugins/claude/) | Shell (Bash) | Production-ready |
 | [MCP Gateway](plugins/mcp-gateway/) | TypeScript | In development |
 | [OpenAI Codex CLI](plugins/codex/) | Python | In development |
+| [Google Gemini CLI](plugins/gemini/) | Python | In development |
 | Generic HTTP API | Any | Available via `POST /api/v1/evaluate` |
 
 Any platform capable of making HTTP requests can integrate with AgentShield through the [evaluation API](docs/api.md).
