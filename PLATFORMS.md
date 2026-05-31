@@ -17,8 +17,20 @@ Detection rules assume **Unix/POSIX command semantics** (e.g. `bash`, `chmod`, `
 | Integration | Language | Status |
 |-------------|----------|--------|
 | [OpenClaw](plugins/openclaw/) | TypeScript | Production-ready |
+| [Hermes](plugins/hermes/) | Python | Production-ready |
 | [Claude Code](plugins/claude/) | Shell (Bash) | Production-ready |
 | Generic HTTP API | Any | Available via `POST /api/v1/evaluate` |
+
+All connectors normalise platform-specific tool names to a shared canonical
+vocabulary and speak the same wire contract (`X-AgentShield-Version: 1.0.0`), so
+a single Sigma rule corpus applies across every platform.
+
+> **Fail-mode note.** The shared connector contract defaults to **fail-closed**
+> (`timeout_policy: block`): when the engine is unreachable, the tool call is
+> blocked. The [Claude Code](plugins/claude/) local hook is a deliberate
+> exception and defaults to **fail-open** (`allow`), so that a missing or
+> crashed local engine never wedges an interactive developer session. It remains
+> configurable to fail-closed via `AGENTSHIELD_TIMEOUT_POLICY=block`.
 
 Any platform capable of making HTTP requests can integrate with AgentShield through the [evaluation API](docs/api.md).
 
