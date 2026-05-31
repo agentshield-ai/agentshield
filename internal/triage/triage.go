@@ -393,10 +393,10 @@ func buildTriagePrompt(triageCtx *TriageContext) string {
 			if i >= 5 {
 				break
 			}
-			recentContext.WriteString(fmt.Sprintf("- %s (%s) at %s\n",
+			fmt.Fprintf(&recentContext, "- %s (%s) at %s\n",
 				sanitizeInput(alert.RuleName),
 				sanitizeInput(alert.Severity),
-				alert.Timestamp.Format("15:04:05")))
+				alert.Timestamp.Format("15:04:05"))
 		}
 	} else {
 		recentContext.WriteString("No recent alerts in this session.")

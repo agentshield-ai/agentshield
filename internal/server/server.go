@@ -887,7 +887,7 @@ func (s *Server) handleLifecycleEvent(w http.ResponseWriter, r *http.Request) {
 // handleAcceptedEvent validates JSON shape and returns 202 Accepted.
 func (s *Server) handleAcceptedEvent(w http.ResponseWriter, r *http.Request, kind string) {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var payload map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -924,7 +924,7 @@ func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var req OverrideRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

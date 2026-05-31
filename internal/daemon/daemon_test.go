@@ -450,7 +450,9 @@ func TestInitComponents(t *testing.T) {
 		// Create temporary directory with test rules
 		tmpDir := t.TempDir()
 		rulesDir := filepath.Join(tmpDir, "rules")
-		os.MkdirAll(rulesDir, 0755)
+		if err := os.MkdirAll(rulesDir, 0755); err != nil {
+			t.Fatalf("creating rules dir: %v", err)
+		}
 
 		// Create a basic Sigma rule for testing
 		ruleContent := `title: Test Rule
@@ -463,7 +465,9 @@ detection:
 level: high
 `
 		ruleFile := filepath.Join(rulesDir, "test.yml")
-		os.WriteFile(ruleFile, []byte(ruleContent), 0644)
+		if err := os.WriteFile(ruleFile, []byte(ruleContent), 0644); err != nil {
+			t.Fatalf("writing rule file: %v", err)
+		}
 
 		dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -520,7 +524,7 @@ level: high
 
 		// Clean up
 		if daemon.store != nil {
-			daemon.store.Close()
+			_ = daemon.store.Close()
 		}
 	})
 
@@ -553,7 +557,9 @@ level: high
 	t.Run("triage enabled but fails", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		rulesDir := filepath.Join(tmpDir, "rules")
-		os.MkdirAll(rulesDir, 0755)
+		if err := os.MkdirAll(rulesDir, 0755); err != nil {
+			t.Fatalf("creating rules dir: %v", err)
+		}
 		dbPath := filepath.Join(tmpDir, "test.db")
 
 		cfg := &config.Config{
@@ -604,7 +610,7 @@ level: high
 
 		// Clean up
 		if daemon.store != nil {
-			daemon.store.Close()
+			_ = daemon.store.Close()
 		}
 	})
 }
@@ -637,7 +643,9 @@ func TestShutdown(t *testing.T) {
 	t.Run("shutdown with initialized components", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		rulesDir := filepath.Join(tmpDir, "rules")
-		os.MkdirAll(rulesDir, 0755)
+		if err := os.MkdirAll(rulesDir, 0755); err != nil {
+			t.Fatalf("creating rules dir: %v", err)
+		}
 		dbPath := filepath.Join(tmpDir, "test.db")
 
 		cfg := &config.Config{
@@ -795,8 +803,12 @@ func newTestDaemon(t *testing.T, port int, modify func(*config.Config)) *Daemon 
 	t.Helper()
 	tmpDir := t.TempDir()
 	rulesDir := filepath.Join(tmpDir, "rules")
-	os.MkdirAll(rulesDir, 0755)
-	os.WriteFile(filepath.Join(rulesDir, "test.yml"), []byte("title: Test\nid: t1\ndescription: test\ndetection:\n    selection:\n        test: val\n    condition: selection\nlevel: high\n"), 0644)
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatalf("creating rules dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "test.yml"), []byte("title: Test\nid: t1\ndescription: test\ndetection:\n    selection:\n        test: val\n    condition: selection\nlevel: high\n"), 0644); err != nil {
+		t.Fatalf("writing rule file: %v", err)
+	}
 
 	cfg := &config.Config{
 		LogLevel:       "info",
@@ -820,7 +832,7 @@ func newTestDaemon(t *testing.T, port int, modify func(*config.Config)) *Daemon 
 		t.Fatalf("initComponents: %v", err)
 	}
 	daemon.server = nil
-	t.Cleanup(func() { daemon.shutdown() })
+	t.Cleanup(func() { _ = daemon.shutdown() })
 	return daemon
 }
 
@@ -863,7 +875,7 @@ func TestShutdown_CallsTelemetryShutdown(t *testing.T) {
 			return nil
 		},
 	}
-	d.shutdown()
+	_ = d.shutdown()
 	if !called {
 		t.Error("expected telemetryShutdown to be called during shutdown")
 	}
