@@ -215,7 +215,7 @@ func TestOpenAIProvider(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -284,7 +284,7 @@ func TestAnthropicProvider(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -350,7 +350,7 @@ func TestTriagerFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	triager, err := NewTriager(cfg, st)
 	if err != nil {
@@ -397,7 +397,7 @@ func TestNewTriager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	tests := []struct {
 		name        string
@@ -514,7 +514,7 @@ func TestShouldTriage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	triager, err := NewTriager(cfg, st)
 	if err != nil {
@@ -576,7 +576,7 @@ func TestGetFallbackVerdict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	triager, err := NewTriager(cfg, st)
 	if err != nil {
@@ -618,7 +618,7 @@ func TestTriagerHealthCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	disabledTriager, _ := NewTriager(disabledCfg, st)
 	if disabledTriager != nil {
@@ -629,7 +629,7 @@ func TestTriagerHealthCheck(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "Bearer valid-key" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
 		} else {
 			w.WriteHeader(http.StatusUnauthorized)
 		}
@@ -798,7 +798,7 @@ func TestProviderHealthChecks(t *testing.T) {
 			switch r.Header.Get("Authorization") {
 			case "Bearer valid-key":
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
 			case "Bearer server-error-key":
 				w.WriteHeader(http.StatusInternalServerError)
 			default:
@@ -849,7 +849,7 @@ func TestProviderHealthChecks(t *testing.T) {
 			switch r.Header.Get("x-api-key") {
 			case "valid-key":
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"content":[{"type":"text","text":"Test"}]}`))
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Test"}]}`))
 			case "server-error-key":
 				w.WriteHeader(http.StatusInternalServerError)
 			default:
@@ -902,7 +902,7 @@ func TestTriageAlertsOrchestration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// Test with nil triager
 	results, err := (*Triager)(nil).TriageAlerts(context.Background(), nil, nil)
@@ -929,7 +929,7 @@ func TestTriageAlertsOrchestration(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -1411,7 +1411,7 @@ func TestInvestigate(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -1462,7 +1462,7 @@ func TestInvestigateErrors(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer errorServer.Close()
 
@@ -1881,7 +1881,7 @@ func TestHealthCheckConnectivityMode(t *testing.T) {
 			requestedPath = r.URL.Path
 			if r.Header.Get("Authorization") == "Bearer test-key" {
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"data":[{"id":"gpt-4o-mini"}]}`))
+				_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4o-mini"}]}`))
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -1969,7 +1969,7 @@ func TestHealthCheckConnectivityMode(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestedPath = r.URL.Path
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
 		}))
 		defer server.Close()
 
@@ -1999,10 +1999,10 @@ func TestHealthCheckConnectivityMode(t *testing.T) {
 	t.Run("Anthropic connectivity mode uses minimal request", func(t *testing.T) {
 		var receivedBody AnthropicRequest
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewDecoder(r.Body).Decode(&receivedBody)
+			_ = json.NewDecoder(r.Body).Decode(&receivedBody)
 			if r.Header.Get("x-api-key") == "test-key" {
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"content":[{"type":"text","text":"."}]}`))
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"."}]}`))
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -2066,9 +2066,9 @@ func TestHealthCheckConnectivityMode(t *testing.T) {
 	t.Run("Anthropic default mode uses standard request", func(t *testing.T) {
 		var receivedBody AnthropicRequest
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewDecoder(r.Body).Decode(&receivedBody)
+			_ = json.NewDecoder(r.Body).Decode(&receivedBody)
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"content":[{"type":"text","text":"Test"}]}`))
+			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Test"}]}`))
 		}))
 		defer server.Close()
 
@@ -2103,7 +2103,7 @@ func TestHealthCheckConnectivityMode(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestedMethod = r.Method
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Test"}}]}`))
 		}))
 		defer server.Close()
 

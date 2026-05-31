@@ -832,7 +832,7 @@ func TestBase64Permuter(t *testing.T) {
 		perms := base64permute(pstring)
 		for i := 0; i < 20; i++ {
 			pbs := base64.RawStdEncoding.EncodeToString([]byte(pstring))
-			var has bool = false
+			var has = false
 			for _, p := range perms {
 				if strings.Contains(pbs, p) {
 					has = true

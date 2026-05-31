@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,12 +43,9 @@ type Store struct {
 
 // NewStore creates a new store instance and initializes the database
 func NewStore(dbPath string) (*Store, error) {
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(dbPath)
-	if dir != "." && dir != "" {
-		// Note: In production, you might want to create the directory
-		// but for security, we'll just validate it exists
-	}
+	// We intentionally do not create the parent directory for dbPath: for
+	// security we require the operator to provision it, and rely on sql.Open
+	// to surface an error if it is missing.
 
 	// Open database connection
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_timeout=5000")
@@ -70,7 +66,7 @@ func NewStore(dbPath string) (*Store, error) {
 
 	// Initialize schema
 	if err := store.initSchema(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("initializing schema: %w", err)
 	}
 
@@ -147,7 +143,7 @@ func (s *Store) ensureColumn(table, column, alterSQL string) error {
 	if err != nil {
 		return fmt.Errorf("querying schema for %s: %w", table, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var (
@@ -279,7 +275,7 @@ func (s *Store) QueryAlerts(query *AlertQuery) ([]Alert, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying alerts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var alerts []Alert
 	for rows.Next() {
@@ -402,7 +398,7 @@ func (s *Store) GetFeedbackForRule(ruleName string, limit int) ([]Feedback, erro
 	if err != nil {
 		return nil, fmt.Errorf("querying feedback for rule %s: %w", ruleName, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var feedbacks []Feedback
 	for rows.Next() {
@@ -494,7 +490,7 @@ func (s *Store) GetRulesWithHighFPRate(threshold float64, minAlerts int) ([]stri
 	if err != nil {
 		return nil, fmt.Errorf("querying rules with high FP rate: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var highFPRules []string
 	for rows.Next() {
@@ -533,7 +529,7 @@ func (s *Store) EnforceRetention(maxAgeDays int) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("starting retention transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Keep feedback table bounded too.
 	if _, err := tx.Exec("DELETE FROM feedback WHERE created_at < ?", cutoff); err != nil {
@@ -577,7 +573,7 @@ func (s *Store) GetStats() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getting severity stats: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	severityStats := make(map[string]int64)
 	for rows.Next() {

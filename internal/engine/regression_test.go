@@ -74,7 +74,7 @@ func TestEvaluateConcurrentSafety(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testRule := `
 title: Concurrent Test Rule
@@ -129,7 +129,7 @@ func TestEvaluateSnapshotIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testRule := `
 title: Snapshot Test Rule

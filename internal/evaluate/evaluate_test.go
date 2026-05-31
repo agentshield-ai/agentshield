@@ -363,7 +363,7 @@ func TestEvaluateWithContext_EmitsSpan(t *testing.T) {
 		t.Fatal("expected non-empty action")
 	}
 
-	tp.ForceFlush(ctx)
+	_ = tp.ForceFlush(ctx)
 
 	spans := spanRecorder.Ended()
 	if len(spans) == 0 {
@@ -405,8 +405,8 @@ func TestEvaluateWithContext_SpanEvents_RuleMatches(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	evaluator.EvaluateWithContext(ctx, req)
-	tp.ForceFlush(ctx)
+	_, _ = evaluator.EvaluateWithContext(ctx, req)
+	_ = tp.ForceFlush(ctx)
 
 	spans := spanRecorder.Ended()
 	if len(spans) == 0 {
@@ -464,13 +464,13 @@ func TestEvaluateWithContext_SpanEvents_CacheHit(t *testing.T) {
 	ctx := context.Background()
 
 	// First call populates the cache
-	evaluator.EvaluateWithContext(ctx, req)
-	tp.ForceFlush(ctx)
+	_, _ = evaluator.EvaluateWithContext(ctx, req)
+	_ = tp.ForceFlush(ctx)
 
 	// Second call should hit the cache
 	req.EventID = "evt-004" // different event ID, same tool+args
-	evaluator.EvaluateWithContext(ctx, req)
-	tp.ForceFlush(ctx)
+	_, _ = evaluator.EvaluateWithContext(ctx, req)
+	_ = tp.ForceFlush(ctx)
 
 	spans := spanRecorder.Ended()
 	if len(spans) < 2 {
@@ -645,7 +645,7 @@ func TestEvaluateWithContext_InjectsSessionFields(t *testing.T) {
 		Tool:      "curl",
 		Fields:    map[string]string{"tool": "curl"},
 	}
-	evaluator.EvaluateWithContext(context.Background(), req)
+	_, _ = evaluator.EvaluateWithContext(context.Background(), req)
 
 	if captured["session.recent_tools"] != "ls,cat" {
 		t.Errorf("expected session.recent_tools='ls,cat', got %q", captured["session.recent_tools"])
@@ -717,8 +717,8 @@ func TestEvaluateWithContext_SpanIncludesSessionFields(t *testing.T) {
 		Tool:      "curl",
 		Fields:    map[string]string{"tool": "curl"},
 	}
-	evaluator.EvaluateWithContext(context.Background(), req)
-	tp.ForceFlush(context.Background())
+	_, _ = evaluator.EvaluateWithContext(context.Background(), req)
+	_ = tp.ForceFlush(context.Background())
 
 	spans := spanRecorder.Ended()
 	if len(spans) == 0 {
@@ -753,7 +753,7 @@ func TestEvaluateWithContext_RecordsToSessionAfterEval(t *testing.T) {
 		Tool:      "bash",
 		Fields:    map[string]string{"tool": "bash"},
 	}
-	evaluator.EvaluateWithContext(context.Background(), req)
+	_, _ = evaluator.EvaluateWithContext(context.Background(), req)
 
 	window := registry.Get("sess-rec")
 	if window == nil {

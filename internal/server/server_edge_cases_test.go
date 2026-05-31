@@ -525,7 +525,7 @@ func TestHandleAlertsEdgeCases(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
@@ -737,7 +737,7 @@ func TestHandleEvaluateAdversarialInputs(t *testing.T) {
 	}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
@@ -852,7 +852,7 @@ func TestHandleEvaluateConcurrency(t *testing.T) {
 	}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	server, _ := NewServer(cfg, evaluator, testStore, nil)
 
@@ -897,7 +897,7 @@ func TestHandleFeedbackEdgeCases(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeEnforce, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	// Insert a test alert for feedback tests
 	testAlert := &store.Alert{
