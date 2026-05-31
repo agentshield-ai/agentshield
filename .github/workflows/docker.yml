@@ -62,8 +62,12 @@ jobs:
           mode: audit
           EOF
 
+          # The engine requires an auth token to start (auth cannot be
+          # disabled). Supply a dummy >=32-char token for the smoke test; the
+          # /health endpoint is unauthenticated, so the probe still succeeds.
           docker run -d --name agentshield-ci \
             -p 8433:8433 \
+            -e AGENTSHIELD_AUTH_TOKEN=ci-smoke-test-dummy-token-not-a-secret \
             -v "$PWD/ci-config/config.yaml:/config.yaml:ro" \
             agentshield-engine:ci
 
