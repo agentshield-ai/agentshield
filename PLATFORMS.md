@@ -18,6 +18,7 @@ Detection rules assume **Unix/POSIX command semantics** (e.g. `bash`, `chmod`, `
 |-------------|----------|--------|
 | [OpenClaw](plugins/openclaw/) | TypeScript | Production-ready |
 | [Claude Code](plugins/claude/) | Shell (Bash) | Production-ready |
+| [OpenAI Codex CLI](plugins/codex/) | Python | In development |
 | Generic HTTP API | Any | Available via `POST /api/v1/evaluate` |
 
 Any platform capable of making HTTP requests can integrate with AgentShield through the [evaluation API](docs/api.md).
