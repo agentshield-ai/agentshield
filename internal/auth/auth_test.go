@@ -27,7 +27,7 @@ func TestNewMiddleware(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			middleware, err := NewMiddleware(tt.token)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("expected error for empty token, got nil")
@@ -353,7 +353,7 @@ func TestChiMiddlewareHealthEndpointVariations(t *testing.T) {
 		t.Run("health_path_"+path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			// Intentionally no auth header
-			
+
 			rr := httptest.NewRecorder()
 			chiHandler.ServeHTTP(rr, req)
 

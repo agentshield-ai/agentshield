@@ -15,9 +15,9 @@ type TraceAdapter interface {
 
 // adapterRegistry maps known dataset name prefixes to their adapters.
 var adapterRegistry = map[string]func() TraceAdapter{
-	"nlile/":       func() TraceAdapter { return &NlileAdapter{} },
-	"sammshen/":    func() TraceAdapter { return &WildClawAdapter{} },
-	"smolagents/":  func() TraceAdapter { return &SmolAgentsAdapter{} },
+	"nlile/":      func() TraceAdapter { return &NlileAdapter{} },
+	"sammshen/":   func() TraceAdapter { return &WildClawAdapter{} },
+	"smolagents/": func() TraceAdapter { return &SmolAgentsAdapter{} },
 }
 
 // SelectAdapter returns the appropriate adapter for a dataset name.

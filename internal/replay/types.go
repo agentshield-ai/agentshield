@@ -50,15 +50,15 @@ type ReplayResult struct {
 
 // ReportData is the final aggregated report.
 type ReportData struct {
-	Metadata           ReportMetadata       `json:"metadata" yaml:"metadata"`
-	Summary            ReportSummary        `json:"summary" yaml:"summary"`
-	RuleCoverage       RuleCoverageReport   `json:"rule_coverage" yaml:"rule_coverage"`
-	AlertsByRule       []RuleAlertCount     `json:"alerts_by_rule" yaml:"alerts_by_rule"`
-	AlertsBySeverity   map[string]int       `json:"alerts_by_severity" yaml:"alerts_by_severity"`
-	TopAlertingRules   []RuleAlertCount     `json:"top_alerting_rules" yaml:"top_alerting_rules"`
-	FPCandidates       []FPCandidate        `json:"fp_candidates" yaml:"fp_candidates"`
-	ActionDistribution map[string]int       `json:"action_distribution" yaml:"action_distribution"`
-	LatencyStats       LatencyStats         `json:"latency_stats" yaml:"latency_stats"`
+	Metadata           ReportMetadata     `json:"metadata" yaml:"metadata"`
+	Summary            ReportSummary      `json:"summary" yaml:"summary"`
+	RuleCoverage       RuleCoverageReport `json:"rule_coverage" yaml:"rule_coverage"`
+	AlertsByRule       []RuleAlertCount   `json:"alerts_by_rule" yaml:"alerts_by_rule"`
+	AlertsBySeverity   map[string]int     `json:"alerts_by_severity" yaml:"alerts_by_severity"`
+	TopAlertingRules   []RuleAlertCount   `json:"top_alerting_rules" yaml:"top_alerting_rules"`
+	FPCandidates       []FPCandidate      `json:"fp_candidates" yaml:"fp_candidates"`
+	ActionDistribution map[string]int     `json:"action_distribution" yaml:"action_distribution"`
+	LatencyStats       LatencyStats       `json:"latency_stats" yaml:"latency_stats"`
 }
 
 // ReportMetadata captures context about the replay run.

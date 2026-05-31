@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strconv"
 	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -76,10 +76,10 @@ type CorrelationConfig struct {
 // TriageConfig holds triage configuration (fast triage — synchronous, in request path)
 type TriageConfig struct {
 	Enabled         bool              `yaml:"enabled"`
-	Provider        string            `yaml:"provider"`          // "openai", "anthropic", or "openclaw"
-	Model           string            `yaml:"model"`             // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-	APIKey          string            `yaml:"api_key" json:"-"`  // env: AGENTSHIELD_TRIAGE_API_KEY
-	BaseURL         string            `yaml:"base_url"`          // custom base URL (e.g. https://openrouter.ai/api/v1)
+	Provider        string            `yaml:"provider"`         // "openai", "anthropic", or "openclaw"
+	Model           string            `yaml:"model"`            // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
+	APIKey          string            `yaml:"api_key" json:"-"` // env: AGENTSHIELD_TRIAGE_API_KEY
+	BaseURL         string            `yaml:"base_url"`         // custom base URL (e.g. https://openrouter.ai/api/v1)
 	MaxTokens       int               `yaml:"max_tokens"`
 	TimeoutSec      int               `yaml:"timeout_sec"`
 	HealthCheckMode string            `yaml:"health_check_mode"` // "full" (default) or "connectivity"
@@ -89,11 +89,11 @@ type TriageConfig struct {
 // DeepTriageConfig holds deep triage configuration (async, OpenClaw sub-agent with tools)
 type DeepTriageConfig struct {
 	Enabled      bool              `yaml:"enabled"`
-	GatewayURL   string            `yaml:"gateway_url"`   // default: http://127.0.0.1:18789
+	GatewayURL   string            `yaml:"gateway_url"`            // default: http://127.0.0.1:18789
 	GatewayToken string            `yaml:"gateway_token" json:"-"` // env: OPENCLAW_GATEWAY_TOKEN
-	Agent        TriageAgentConfig `yaml:"agent"`         // Agent personality, model, tools
-	MinSeverity  string            `yaml:"min_severity"`  // Minimum severity to trigger deep triage (default: critical)
-	Webhook      string            `yaml:"webhook"`       // Optional webhook URL for deep triage results
+	Agent        TriageAgentConfig `yaml:"agent"`                  // Agent personality, model, tools
+	MinSeverity  string            `yaml:"min_severity"`           // Minimum severity to trigger deep triage (default: critical)
+	Webhook      string            `yaml:"webhook"`                // Optional webhook URL for deep triage results
 }
 
 // IsValid checks if the evaluation mode is valid
@@ -131,9 +131,9 @@ type TestContextConfig struct {
 
 // CacheConfig controls the verdict caching layer.
 type CacheConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`    // default true
-	MaxSize int  `yaml:"max_size" json:"max_size"`  // default 10000
-	TTLSec  int  `yaml:"ttl_sec" json:"ttl_sec"`    // default 300 (5 minutes)
+	Enabled bool `yaml:"enabled" json:"enabled"`   // default true
+	MaxSize int  `yaml:"max_size" json:"max_size"` // default 10000
+	TTLSec  int  `yaml:"ttl_sec" json:"ttl_sec"`   // default 300 (5 minutes)
 }
 
 type Config struct {

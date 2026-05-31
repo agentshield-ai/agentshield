@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documentation placeholders and vendored detection rules"
+paths = [
+    '''rules/.*''',
+    '''bench/testcases/.*''',
+    '''docs/.*''',
+    '''.*\.md$''',
+]
+regexes = [
+    '''(?i)bearer\s+(your[-_]?token|YOUR_TOKEN|test[-_]?token[-_a-z0-9]*)''',
+    '''ci-bench-token-do-not-use-in-prod''',
+]

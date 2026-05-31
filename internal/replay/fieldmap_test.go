@@ -6,11 +6,11 @@ import (
 
 func TestMapToolCall(t *testing.T) {
 	tests := []struct {
-		name         string
-		toolName     string
-		args         map[string]string
-		wantEvtType  string
-		wantCommand  string
+		name        string
+		toolName    string
+		args        map[string]string
+		wantEvtType string
+		wantCommand string
 	}{
 		{
 			name:        "exec tool",

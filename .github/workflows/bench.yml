@@ -9,32 +9,38 @@ on:
       - 'cmd/agentshieldbench/**'
       - 'internal/**'
       - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
   schedule:
     # Nightly full suite run at 03:00 UTC
     - cron: '0 3 * * *'
   workflow_dispatch:
 
-jobs:
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-      - run: go test ./...
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.25'
+  AGENTSHIELD_PORT: '8433'
+  AGENTSHIELD_RULES_DIR: ./rules
+  AGENTSHIELD_AUTH_TOKEN: ci-bench-token-do-not-use-in-prod
+
+jobs:
   bench-pr:
     name: Benchmark (PR — fast subset)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    needs: test
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Build engine and bench runner
         run: |
@@ -43,15 +49,22 @@ jobs:
 
       - name: Start engine
         run: |
-          ./bin/agentshield serve --rules ./rules --port 8433 &
-          sleep 2
-          curl -sf http://localhost:8433/health || exit 1
+          ./bin/agentshield serve >engine.log 2>&1 &
+          echo $! > engine.pid
+          scripts/wait_for_health.sh || { echo '--- engine.log ---'; cat engine.log; exit 1; }
 
       - name: Run benign suite
         run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/benign.yaml --bench-root bench
 
       - name: Run direct adversary suite
         run: ./bin/agentshieldbench run --endpoint http://localhost:8433 --suite bench/suites/direct_adversary.yaml --bench-root bench
+
+      - name: Stop engine
+        if: always()
+        run: |
+          if [ -f engine.pid ]; then
+            kill "$(cat engine.pid)" 2>/dev/null || true
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -64,12 +77,13 @@ jobs:
     name: Benchmark (Nightly — full suite)
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    needs: test
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Build engine and bench runner
         run: |
@@ -78,12 +92,19 @@ jobs:
 
       - name: Start engine
         run: |
-          ./bin/agentshield serve --rules ./rules --port 8433 &
-          sleep 2
-          curl -sf http://localhost:8433/health || exit 1
+          ./bin/agentshield serve >engine.log 2>&1 &
+          echo $! > engine.pid
+          scripts/wait_for_health.sh || { echo '--- engine.log ---'; cat engine.log; exit 1; }
 
       - name: Run all suites
         run: ./bin/agentshieldbench run-all --endpoint http://localhost:8433 --bench-root bench
+
+      - name: Stop engine
+        if: always()
+        run: |
+          if [ -f engine.pid ]; then
+            kill "$(cat engine.pid)" 2>/dev/null || true
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v4
