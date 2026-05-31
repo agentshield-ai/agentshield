@@ -113,7 +113,7 @@ level: high
 	}
 
 	// ── Phase 3: Verify OTel spans ──────────────────────────────────────
-	tp.ForceFlush(ctx)
+	_ = tp.ForceFlush(ctx)
 	spans := spanRecorder.Ended()
 	if len(spans) < 4 {
 		t.Errorf("expected at least 4 spans (3 recon + 1 exfil), got %d", len(spans))

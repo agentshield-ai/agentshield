@@ -2,7 +2,6 @@ package replay
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 // WildClawAdapter parses the sammshen/wildclaw-opus-traces dataset.
@@ -173,17 +172,4 @@ func parseArguments(argsRaw interface{}) map[string]string {
 func init() {
 	// Ensure WildClawAdapter satisfies TraceAdapter
 	var _ TraceAdapter = (*WildClawAdapter)(nil)
-}
-
-// wildclaw sessionID extraction helper
-func wildclaw_sessionID(row map[string]interface{}) string {
-	if meta, ok := row["task_metadata"].(map[string]interface{}); ok {
-		if id, ok := meta["task_id"].(string); ok {
-			return id
-		}
-	}
-	if id, ok := row["request_id"].(string); ok {
-		return id
-	}
-	return fmt.Sprintf("wildclaw-%d", row["row_idx"])
 }

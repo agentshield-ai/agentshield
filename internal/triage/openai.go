@@ -126,7 +126,7 @@ func (p *OpenAIProvider) Triage(ctx context.Context, triageCtx *TriageContext) (
 	if err != nil {
 		return nil, fmt.Errorf("making request to OpenAI: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response with size limit to prevent OOM from malicious responses
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024)) // 1MB max
@@ -187,7 +187,7 @@ func (p *OpenAIProvider) healthCheckConnectivity(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("OpenAI connectivity check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("OpenAI API authentication failed - check API key")
@@ -229,7 +229,7 @@ func (p *OpenAIProvider) healthCheckFull(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("OpenAI health check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("OpenAI API authentication failed - check API key")

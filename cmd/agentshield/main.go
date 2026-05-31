@@ -131,7 +131,7 @@ func newStatusCmd() *cobra.Command {
 				fmt.Printf("HTTP Health: ERROR - %v\n", err)
 				return nil
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode == http.StatusOK {
 				var health map[string]interface{}
@@ -177,7 +177,7 @@ func newAlertsCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("connecting to store: %w", err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 
 			// Build query
 			query := &store.AlertQuery{
@@ -400,7 +400,7 @@ func newRefineCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("connecting to store: %w", err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 
 			// Create feedback manager
 			feedbackManager := feedback.NewFeedbackManager(st)

@@ -14,7 +14,7 @@ func TestNewStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if store == nil {
 		t.Fatal("NewStore() returned nil")
@@ -25,14 +25,14 @@ func TestNewStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	fileStore, err := NewStore(dbPath)
 	if err != nil {
 		t.Fatalf("NewStore() with file failed: %v", err)
 	}
-	defer fileStore.Close()
+	defer func() { _ = fileStore.Close() }()
 
 	// Verify database file was created
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -45,7 +45,7 @@ func TestInsertAlert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	alert := &Alert{
 		RuleName:    "test-rule",
@@ -95,7 +95,7 @@ func TestQueryAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test data
 	now := time.Now()
@@ -233,7 +233,7 @@ func TestCountAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test data
 	alerts := []*Alert{
@@ -294,7 +294,7 @@ func TestInsertFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert a test alert first
 	alert := &Alert{
@@ -326,7 +326,7 @@ func TestGetFeedbackForRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test alerts first
 	alerts := []*Alert{
@@ -407,7 +407,7 @@ func TestGetRuleFPRate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test alerts first
 	alerts := []*Alert{
@@ -478,7 +478,7 @@ func TestGetRulesWithHighFPRate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test feedback data using the actual API
 	// InsertFeedback(eventID string, alertID *int64, ruleName, feedbackType, comment string)
@@ -549,7 +549,7 @@ func TestGetRulesWithHighFPRateUsesTotalAlertsDenominator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// 10 alerts for one rule.
 	var alertIDs []int64
@@ -592,7 +592,7 @@ func TestGetStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test data
 	now := time.Now()
@@ -654,7 +654,7 @@ func TestHealth(t *testing.T) {
 	}
 
 	// Close store and test health check on closed store
-	store.Close()
+	_ = store.Close()
 
 	err = store.Health()
 	if err == nil {
@@ -701,7 +701,7 @@ func TestSQLInjectionProtection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Insert test data
 	alert := &Alert{

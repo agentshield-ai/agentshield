@@ -84,7 +84,9 @@ Supported datasets:
 
 	// Required
 	cmd.Flags().StringVar(&cfg.Dataset, "dataset", "", "HuggingFace dataset name (e.g. nlile/misc-merged-claude-code-traces-v1)")
-	cmd.MarkFlagRequired("dataset")
+	if err := cmd.MarkFlagRequired("dataset"); err != nil {
+		panic(fmt.Sprintf("marking dataset flag required: %v", err))
+	}
 
 	// Engine
 	cmd.Flags().StringVar(&cfg.RulesDir, "rules-dir", "rules/rules", "Path to Sigma rules directory")

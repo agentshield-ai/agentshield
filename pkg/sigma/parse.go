@@ -47,13 +47,6 @@ type yamlRelation struct {
 	Type RelationType `yaml:"type"`
 }
 
-type yamlLogSource struct {
-	Category   string `yaml:"category,omitempty"`
-	Product    string `yaml:"product,omitempty"`
-	Service    string `yaml:"service,omitempty"`
-	Definition string `yaml:"definition,omitempty"`
-}
-
 // ParseRule parses a single Sigma YAML document.
 func ParseRule(data []byte) (*Rule, error) {
 	docNode := new(yaml.Node)

@@ -47,14 +47,14 @@ func ParseDate(s string) (Date, error) {
 	if err != nil {
 		return Date{}, fmt.Errorf("parse sigma date %q: month: %v", s, err)
 	}
-	if !(1 <= month && month <= 12) {
+	if month < 1 || month > 12 {
 		return Date{}, fmt.Errorf("parse sigma date %q: invalid month %d", s, month)
 	}
 	day, err := strconv.Atoi(parts[2])
 	if err != nil {
 		return Date{}, fmt.Errorf("parse sigma date %q: day: %v", s, err)
 	}
-	if !(1 <= day && day <= 31) {
+	if day < 1 || day > 31 {
 		return Date{}, fmt.Errorf("parse sigma date %q: invalid day %d", s, day)
 	}
 	return NewDate(year, time.Month(month), day), nil
