@@ -34,11 +34,11 @@ type Registry struct {
 	ttl         time.Duration
 
 	// Cached cross-session aggregates to avoid rescanning all sessions on every evaluation.
-	crossCache             map[string]string // non-nil when cache is valid
+	crossCache              map[string]string // non-nil when cache is valid
 	crossCacheTotalAlerts   int
 	crossCacheTotalSessions int
-	crossCacheTime         time.Time
-	crossCacheTTL          time.Duration
+	crossCacheTime          time.Time
+	crossCacheTTL           time.Duration
 }
 
 type sessionState struct {

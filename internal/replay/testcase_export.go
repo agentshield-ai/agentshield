@@ -12,14 +12,14 @@ import (
 
 // benchTestcase matches the YAML structure used by agentshieldbench.
 type benchTestcase struct {
-	ID        string          `yaml:"id"`
-	Severity  string          `yaml:"severity"`
-	SessionID string          `yaml:"session_id,omitempty"`
-	Triage    bool            `yaml:"triage"`
-	Benign    bool            `yaml:"benign"`
-	Rationale string          `yaml:"rationale,omitempty"`
-	Events    []benchEvent    `yaml:"events"`
-	Expected  benchExpected   `yaml:"expected"`
+	ID        string        `yaml:"id"`
+	Severity  string        `yaml:"severity"`
+	SessionID string        `yaml:"session_id,omitempty"`
+	Triage    bool          `yaml:"triage"`
+	Benign    bool          `yaml:"benign"`
+	Rationale string        `yaml:"rationale,omitempty"`
+	Events    []benchEvent  `yaml:"events"`
+	Expected  benchExpected `yaml:"expected"`
 }
 
 type benchEvent struct {

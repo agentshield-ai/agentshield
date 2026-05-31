@@ -96,7 +96,7 @@ detection:
 			expected: false,
 			reason:   "Simple colon should not match literal *:* pattern",
 		},
-		
+
 		// Tests for "file?.txt" pattern
 		{
 			name: "exact match file?.txt should match",

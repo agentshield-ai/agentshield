@@ -1,0 +1,34 @@
+{
+  "enabled": true,
+  "endpoint": "http://127.0.0.1:8433/api/v1/evaluate",
+  "auth_token": "",
+  "timeout_ms": 200,
+  "timeout_policy": "block",
+  "notify": "high",
+  "intercept": [
+    "exec",
+    "write",
+    "edit",
+    "read",
+    "browser",
+    "message",
+    "sessions_spawn",
+    "code_execute"
+  ],
+  "skip": ["todo", "memory_search", "session_status"],
+  "circuit_breaker": {
+    "failure_threshold": 3,
+    "recovery_interval_ms": 30000
+  },
+  "downstream": {
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+    "env": {}
+  },
+  "serve": {
+    "transport": "stdio",
+    "host": "127.0.0.1",
+    "port": 8434
+  }
+}

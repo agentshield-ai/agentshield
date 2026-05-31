@@ -1,0 +1,94 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docker.yml'
+  pull_request:
+    paths:
+      - 'docker/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  build-and-scan:
+    name: Build, smoke-test, scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build engine image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/engine.Dockerfile
+          tags: agentshield-engine:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — start container and probe /health
+        run: |
+          mkdir -p ./ci-config
+          cat > ./ci-config/config.yaml <<'EOF'
+          server:
+            port: 8433
+          rules:
+            dir: /rules
+          mode: audit
+          EOF
+
+          docker run -d --name agentshield-ci \
+            -p 8433:8433 \
+            -v "$PWD/ci-config/config.yaml:/config.yaml:ro" \
+            agentshield-engine:ci
+
+          if ! scripts/wait_for_health.sh; then
+            docker logs agentshield-ci
+            exit 1
+          fi
+          docker logs agentshield-ci
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f agentshield-ci || true
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: agentshield-engine:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image

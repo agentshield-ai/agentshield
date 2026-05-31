@@ -1,0 +1,48 @@
+{
+  "name": "@agentshield-ai/mcp-gateway",
+  "version": "1.0.0",
+  "description": "AgentShield security gateway for the Model Context Protocol. A transparent proxy between an MCP client (agent) and downstream MCP servers that evaluates every tools/call against AgentShield's Sigma detection engine and blocks or forwards it.",
+  "type": "module",
+  "bin": {
+    "agentshield-mcp-gateway": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agentshield",
+    "security",
+    "siem",
+    "ai-agent",
+    "proxy",
+    "gateway",
+    "sigma-rules"
+  ],
+  "author": "AgentShield",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentshield-ai/agentshield.git",
+    "directory": "plugins/mcp-gateway"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/bin.js",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.7",
+    "vitest": "^4.0.0"
+  }
+}

@@ -101,9 +101,9 @@ func TestReportAggregator_Basic(t *testing.T) {
 
 func TestIsFPCandidate(t *testing.T) {
 	tests := []struct {
-		name    string
-		result  ReplayResult
-		wantFP  bool
+		name   string
+		result ReplayResult
+		wantFP bool
 	}{
 		{
 			name:   "git command",
