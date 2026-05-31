@@ -27,15 +27,15 @@ import (
 
 // Daemon manages the AgentShield server process
 type Daemon struct {
-	config            *config.Config
-	pidFile           string
-	managePIDFile     bool
-	logger            *slog.Logger
-	engine            *engine.Engine
-	store             *store.Store
-	triager           *triage.Triager
-	evaluator         *evaluate.Evaluator
-	server            *server.Server
+	config               *config.Config
+	pidFile              string
+	managePIDFile        bool
+	logger               *slog.Logger
+	engine               *engine.Engine
+	store                *store.Store
+	triager              *triage.Triager
+	evaluator            *evaluate.Evaluator
+	server               *server.Server
 	verdictCache         *cache.VerdictCache
 	sessionRegistry      *session.Registry
 	sessionCleanupCancel func()

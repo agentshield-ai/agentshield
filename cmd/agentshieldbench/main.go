@@ -27,14 +27,14 @@ type Suite struct {
 
 // Testcase is a single benchmark test with ordered events.
 type Testcase struct {
-	ID        string     `yaml:"id"`
-	Severity  string     `yaml:"severity"`
-	SessionID string     `yaml:"session_id"`
-	Triage    bool       `yaml:"triage"`
-	Events    []Event    `yaml:"events"`
-	Expected  Expected   `yaml:"expected"`
-	Benign    bool       `yaml:"benign"` // marks a benign test (expected ALLOW/LOG)
-	Rationale string     `yaml:"rationale,omitempty"`
+	ID        string   `yaml:"id"`
+	Severity  string   `yaml:"severity"`
+	SessionID string   `yaml:"session_id"`
+	Triage    bool     `yaml:"triage"`
+	Events    []Event  `yaml:"events"`
+	Expected  Expected `yaml:"expected"`
+	Benign    bool     `yaml:"benign"` // marks a benign test (expected ALLOW/LOG)
+	Rationale string   `yaml:"rationale,omitempty"`
 }
 
 // Event is a single event within a testcase.
@@ -47,7 +47,7 @@ type Event struct {
 
 // Expected is the expected outcome.
 type Expected struct {
-	Action           string   `yaml:"action"`                      // ALLOW, BLOCK, LOG, REQUIRE_APPROVAL
+	Action           string   `yaml:"action"`                       // ALLOW, BLOCK, LOG, REQUIRE_APPROVAL
 	MustTriggerRules []string `yaml:"must_trigger_rules,omitempty"` // rule IDs
 	MustNotTrigger   []string `yaml:"must_not_trigger,omitempty"`   // rule IDs that must NOT fire
 }
@@ -63,11 +63,11 @@ type EvalRequest struct {
 
 // EvalResponse from the engine.
 type EvalResponse struct {
-	EventID        string        `json:"event_id"`
-	Action         string        `json:"action"`
-	Alerts         []AlertResult `json:"alerts"`
-	EffectiveMode  string        `json:"effective_mode"`
-	EvalTimeMs     float64       `json:"evaluation_time_ms"`
+	EventID       string        `json:"event_id"`
+	Action        string        `json:"action"`
+	Alerts        []AlertResult `json:"alerts"`
+	EffectiveMode string        `json:"effective_mode"`
+	EvalTimeMs    float64       `json:"evaluation_time_ms"`
 }
 
 // AlertResult is a rule match from the engine.

@@ -279,13 +279,13 @@ func TestExtractSearchAtoms(t *testing.T) {
 			expected: 2,
 		},
 		{
-			name: "NotExpr wrapping atom",
-			expr: &sigma.NotExpr{X: &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}}},
+			name:     "NotExpr wrapping atom",
+			expr:     &sigma.NotExpr{X: &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}}},
 			expected: 1,
 		},
 		{
-			name: "NamedExpr wrapping atom",
-			expr: &sigma.NamedExpr{Name: "selection", X: &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}}},
+			name:     "NamedExpr wrapping atom",
+			expr:     &sigma.NamedExpr{Name: "selection", X: &sigma.SearchAtom{Field: "f1", Patterns: []string{"v1"}}},
 			expected: 1,
 		},
 		{
@@ -341,7 +341,7 @@ func TestMapSeverity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			result := engine.mapSeverity(sigma.Level(tt.input))
-			
+
 			if result != tt.expected {
 				t.Errorf("mapSeverity(%s) = %v, want %v", tt.input, result, tt.expected)
 			}
@@ -385,8 +385,8 @@ level: high
 	}
 
 	tests := []struct {
-		name           string
-		fields         map[string]string
+		name            string
+		fields          map[string]string
 		expectedMatches int
 	}{
 		{
@@ -404,8 +404,8 @@ level: high
 			expectedMatches: 0,
 		},
 		{
-			name: "empty fields should not trigger rule",
-			fields: map[string]string{},
+			name:            "empty fields should not trigger rule",
+			fields:          map[string]string{},
 			expectedMatches: 0,
 		},
 	}
