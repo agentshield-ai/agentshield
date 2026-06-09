@@ -1,0 +1,47 @@
+title: Agent Skill Self-Modification
+id: d7f74525-7ecc-4c96-9580-f0e49853bbd3
+status: test
+description: |
+  Detects an agent rewriting its own skill or instruction definition, or
+  disabling its own safety, validation, or guard checks. Self-modification lets
+  a skill mutate its declared behaviour after vetting — overwriting SKILL.md,
+  patching its own source, or commenting out safety mechanisms — establishing
+  persistence and evading the original review.
+references:
+  - https://attack.mitre.org/techniques/T1546/
+  - https://attack.mitre.org/techniques/T1564/
+  - https://github.com/NVIDIA/SkillSpector
+author: AgentShield
+date: "2026-06-09"
+tags:
+  - attack.persistence
+  - attack.t1546
+  - attack.defense-evasion
+  - attack.t1564
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_overwrite_own_def:
+    event_type: file_write
+    file_path|endswith:
+      - 'SKILL.md'
+      - 'skill.md'
+  selection_self_modify_code:
+    event_type: file_write
+    content|re:
+      - 'open\s*\(\s*__file__\s*,\s*[''"]w'
+      - '(?i)(?:Path|pathlib)\s*\(\s*__file__\s*\)\s*\.\s*write_text'
+      - '(?i)(?:self[_-]?modify|self[_-]?update|self[_-]?rewrite|self[_-]?patch|self[_-]?evolve)'
+      - '(?i)(?:modify|edit|change|rewrite|update|alter)\s+(?:your\s+own|its\s+own|this\s+skill(?:.s)?)\s+(?:code|source|file|script|config|configuration|instructions?|rules?)'
+      - '(?i)(?:append|add|inject|insert)\s+(?:code|instructions?|rules?)\s+(?:to|into)\s+(?:this|the\s+current|your\s+own)\s+(?:file|skill|script)'
+  selection_disable_safety:
+    event_type: file_write
+    content|re:
+      - '(?i)(?:disable|remove|delete|bypass)\s+(?:the\s+)?(?:safety|security|guard|protection|constraint)\s+(?:check|rule|mechanism|feature)'
+      - '(?i)(?:comment\s+out|remove)\s+(?:the\s+)?(?:validation|verification|check|guard|assertion)'
+  condition: selection_self_modify_code or selection_disable_safety or (selection_overwrite_own_def and selection_self_modify_code)
+falsepositives:
+  - Legitimate skill scaffolding or generator tooling that templates SKILL.md
+  - Refactoring that genuinely renames safety-related identifiers
+level: high

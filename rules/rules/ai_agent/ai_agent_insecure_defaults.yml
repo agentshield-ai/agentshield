@@ -1,0 +1,46 @@
+title: Insecure Defaults Weakening Agent Security Posture
+id: 5731eabf-b5bb-4163-8780-3bffe70467cd
+status: test
+description: |
+  Detects code or configuration written by an agent that disables transport
+  security, certificate validation, authentication, or sets wildcard CORS.
+  These "unsafe default" changes silently weaken the security posture of the
+  agent or the system it operates on and frequently accompany exfiltration or
+  man-in-the-middle setups.
+references:
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+  - https://attack.mitre.org/techniques/T1562/
+  - https://github.com/NVIDIA/SkillSpector
+author: AgentShield
+date: "2026-06-09"
+tags:
+  - attack.defense-evasion
+  - attack.t1562
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_tls_disable_code:
+    event_type: file_write
+    content|re:
+      - '(?i)(?:ssl|tls)[_.]?verify\s*=\s*(?:False|false|0)'
+      - '(?i)\bverify\s*=\s*False'
+      - 'NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*[''"]?0'
+      - 'REQUESTS_CA_BUNDLE\s*=\s*[''"][''"]'
+  selection_auth_disable_code:
+    event_type: file_write
+    content|re:
+      - '(?i)(?:require[_.]?auth)\s*=\s*(?:False|false|0)'
+      - '(?i)(?:allow[_.]?anonymous)\s*=\s*(?:True|true|1)'
+      - '(?i)(?:CORS|cors)[^=\n]*=\s*[''"]?\*'
+      - '(?i)(?:allow|access)[_.-]?(?:control[_.-]?allow[_.-]?)?origin\s*=\s*[''"]?\*'
+  selection_tls_disable_cmd:
+    event_type: tool_call
+    command|re:
+      - '(?i)\bcurl\b[^|\n]*\s-k(?:\s|$)'
+      - '(?i)\bwget\b[^|\n]*--no-check-certificate'
+  condition: selection_tls_disable_code or selection_auth_disable_code or selection_tls_disable_cmd
+falsepositives:
+  - Local development or test configuration against self-signed certificates
+  - Internal tooling that intentionally relaxes CORS for trusted origins
+level: medium

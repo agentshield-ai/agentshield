@@ -1,0 +1,62 @@
+title: Excessive Agency Grant in Agent Instructions
+id: 7e80530f-843c-47f8-b6d6-a45942b965ce
+status: test
+description: |
+  Detects agent skill, instruction, or manifest files that grant unrestricted
+  tool access, authorise autonomous execution without user approval, or remove
+  resource and iteration limits. These "excessive agency" directives expand an
+  agent's authority beyond its stated purpose and are a precursor to unbounded
+  or unsupervised actions. Complements the structured-config detection in
+  ai_agent_config_auto_approve by catching natural-language directives embedded
+  in instruction files.
+references:
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+  - https://attack.mitre.org/techniques/T1548/
+  - https://github.com/NVIDIA/SkillSpector
+author: AgentShield
+date: "2026-06-09"
+tags:
+  - attack.privilege-escalation
+  - attack.t1548
+  - attack.defense-evasion
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_instruction_files:
+    event_type: file_write
+    file_path|endswith:
+      - 'SKILL.md'
+      - 'skill.md'
+      - 'CLAUDE.md'
+      - 'AGENTS.md'
+      - 'GEMINI.md'
+      - '.cursorrules'
+      - '.windsurfrules'
+      - 'copilot-instructions.md'
+  selection_skill_manifest:
+    event_type: tool_description
+  selection_unrestricted_tools:
+    content|re:
+      - '(?i)(?:unrestricted|unlimited|unconstrained)\s+(?:tool|function|api)\s+(?:access|use|calls?)'
+      - '(?i)(?:grant|give)\s+(?:full|complete|total)\s+(?:tool|function|api)\s+access'
+      - '(?i)(?:call|invoke|use|execute)\s+(?:any|all|every)\s+(?:available\s+)?tools?'
+      - '(?i)(?:execute|run)\s+(?:arbitrary|any)\s+(?:commands?|code|scripts?)'
+      - '(?i)(?:no|without)\s+(?:tool|permission|access|capability)\s+(?:restrictions?|constraints?|limitations?)'
+  selection_autonomy:
+    content|re:
+      - '(?i)(?:skip|bypass|disable)\s+(?:user\s+)?(?:confirmation|approval|consent|verification|prompt)'
+      - '(?i)(?:do\s+not|don.t|never)\s+(?:ask|prompt|confirm|verify|check)\s+(?:the\s+)?(?:user|before)'
+      - '(?i)(?:auto[_-]?approve|auto[_-]?confirm|auto[_-]?execute|auto[_-]?deploy)'
+      - '(?i)(?:proceed|continue|execute)\s+without\s+(?:waiting|asking)\s+(?:for\s+)?(?:user|human|permission)'
+      - '(?i)(?:assume|presume)\s+(?:user\s+)?(?:consent|approval|permission)'
+  selection_unbounded:
+    content|re:
+      - '(?i)(?:loop|iterate|repeat)\s+(?:indefinitely|forever|infinitely|endlessly)'
+      - '(?i)(?:retry|attempt)\s+(?:indefinitely|forever|without\s+limit|unlimited\s+times)'
+      - '(?i)(?:unlimited|infinite|unbounded|no\s+limit)\s+(?:api\s+)?(?:calls?|requests?|queries?|invocations?)'
+  condition: (selection_instruction_files or selection_skill_manifest) and (selection_unrestricted_tools or selection_autonomy or selection_unbounded)
+falsepositives:
+  - Documentation describing tool permissions or rate-limit policy in prose
+  - Security guidance that quotes these phrases as examples of what to avoid
+level: high

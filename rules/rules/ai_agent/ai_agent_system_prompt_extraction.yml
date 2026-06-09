@@ -1,0 +1,48 @@
+title: System Prompt Extraction or Exfiltration
+id: 9116c965-399d-40c3-9d6d-63d9372704b5
+status: test
+description: |
+  Detects attempts to make an agent reveal, encode, or exfiltrate its own
+  system prompt, instructions, or guidelines. Covers direct extraction
+  ("print your system prompt"), indirect extraction (translate/encode/summarise
+  the instructions), and exfiltration via a tool (write/send the system prompt
+  to a file or remote endpoint). System prompt leakage exposes guardrails and
+  embedded secrets and is a common prompt-injection objective.
+references:
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+  - https://attack.mitre.org/techniques/T1041/
+  - https://github.com/NVIDIA/SkillSpector
+author: AgentShield
+date: "2026-06-09"
+tags:
+  - attack.collection
+  - attack.exfiltration
+  - attack.t1041
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_direct_extract:
+    event_type: user_input
+    message|re:
+      - '(?i)(?:print|output|show|display|reveal|expose|return|echo)\s+(?:your\s+)?(?:full\s+)?(?:system\s+)?(?:prompt|instructions?|rules?|guidelines?|directives?)'
+      - '(?i)(?:share|disclose|leak|give\s+me)\s+(?:your\s+)?(?:internal|hidden|system|secret)\s+(?:prompt|instructions?|rules?|config)'
+      - '(?i)(?:dump|extract|copy)\s+(?:the\s+)?(?:system\s+)?(?:prompt|message|instructions?)\s+(?:to|into|as)'
+      - '(?i)(?:verbatim|exactly|word\s+for\s+word)\s+(?:repeat|output|print)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?)'
+      - '(?i)(?:repeat|recite|reproduce)\s+(?:everything|all|the\s+text)\s+(?:above|before|prior|preceding)'
+  selection_indirect_extract:
+    event_type: user_input
+    message|re:
+      - '(?i)(?:summarize|summarise|paraphrase|rephrase|translate)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?|rules?|guidelines?)'
+      - '(?i)(?:encode|encrypt|rot13|base64|reverse)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?|rules?)'
+      - '(?i)(?:format|present|rearrange)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?)\s+(?:as|in)\s+(?:a\s+)?(?:list|json|yaml|csv|table|markdown)'
+  selection_exfil:
+    content|re:
+      - '(?i)(?:send|post|upload|transmit)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?|rules?)\s+(?:to|via)\s+(?:https?://|external|remote|webhook|api|server)'
+      - '(?i)(?:write|save|store|log|dump)\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions?|rules?)\s+(?:to|into|in)\s+(?:a\s+)?(?:file|disk|log|database|storage)'
+      - '(?i)(?:pipe|redirect|forward)\s+(?:the\s+)?(?:system\s+)?(?:prompt|instructions?)\s+(?:to|through|via)\s+(?:curl|wget|fetch|http|api|tool)'
+  condition: selection_direct_extract or selection_indirect_extract or selection_exfil
+falsepositives:
+  - Developers legitimately requesting their own configured prompt during testing
+  - Security research or red-team exercises documenting extraction techniques
+level: high

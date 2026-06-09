@@ -1,0 +1,40 @@
+title: Unvalidated Model Output Sent to Execution Sink
+id: 966d6590-bb8b-424a-b2b2-b391cf45c5d9
+status: test
+description: |
+  Detects code that passes model, LLM, or tool output directly into a
+  code-execution or markup sink without validation — for example
+  exec(response), eval(output), subprocess(..., result), os.system(answer),
+  or innerHTML = response. Treating untrusted generated text as code is a
+  direct path from prompt injection to remote code execution.
+references:
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+  - https://attack.mitre.org/techniques/T1059/
+  - https://github.com/NVIDIA/SkillSpector
+author: AgentShield
+date: "2026-06-09"
+tags:
+  - attack.execution
+  - attack.t1059
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_code_exec_sink:
+    content|re:
+      - '(?i)(?:exec|eval)\s*\(\s*(?:response|output|result|answer|completion|reply|generated)'
+      - '(?i)subprocess\.\w+\s*\([^)]*(?:response|output|result|answer|completion)'
+      - '(?i)os\.(?:system|popen)\s*\(\s*(?:response|output|result|answer|completion)'
+  selection_markup_sink:
+    content|re:
+      - '(?i)innerHTML\s*=\s*(?:response|output|result|answer|completion)'
+      - '(?i)document\.write\s*\(\s*(?:response|output|result|answer|completion)'
+  selection_nl_directive:
+    content|re:
+      - '(?i)(?:run|execute|shell)\s+(?:the\s+)?(?:generated|model|llm|ai)\s+(?:output|response|code|command)'
+      - '(?i)(?:pipe|pass|feed)\s+(?:the\s+)?(?:output|response|result)\s+(?:directly\s+)?(?:to|into)\s+(?:the\s+)?(?:shell|terminal|command|interpreter)'
+  condition: selection_code_exec_sink or selection_markup_sink or selection_nl_directive
+falsepositives:
+  - Code that validates or sanitises the output before the sink call
+  - Test fixtures and security examples demonstrating the anti-pattern
+level: high
