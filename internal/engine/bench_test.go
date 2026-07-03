@@ -11,7 +11,7 @@ func BenchmarkEvaluate(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testRule := `
 title: Bench Test Rule
@@ -52,7 +52,7 @@ func BenchmarkEvaluateNoMatch(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testRule := `
 title: Bench Test Rule

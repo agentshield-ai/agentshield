@@ -15,7 +15,7 @@ func TestNewEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a simple Sigma rule
 	testRule := `
@@ -80,7 +80,7 @@ func TestIsPathSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	engine := &Engine{
 		rulesDir: tmpDir,
@@ -228,7 +228,7 @@ level: medium
 			if err != nil {
 				t.Fatalf("creating temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			rulePath := filepath.Join(tmpDir, "rule.yml")
 			if err := os.WriteFile(rulePath, []byte(tt.ruleYAML), 0644); err != nil {
@@ -355,7 +355,7 @@ func TestEvaluate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a test rule that matches a specific field
 	testRule := `
@@ -443,7 +443,7 @@ func TestGetStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	engine, err := NewEngine(tmpDir)
 	if err != nil {
@@ -479,7 +479,7 @@ func TestMultiFieldSelectionLogic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a rule with TWO required fields in the selection
 	testRule := `

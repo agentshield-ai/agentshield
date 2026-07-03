@@ -47,7 +47,7 @@ func TestApplyRefinementPathValidationBeforeIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	rulesDir := filepath.Join(tmpDir, "rules")
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
@@ -82,7 +82,7 @@ detection:
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, rulesDir, nil)
@@ -107,7 +107,7 @@ func TestApplyRefinementBackupFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	rulesDir := filepath.Join(tmpDir, "rules")
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
@@ -132,7 +132,7 @@ detection:
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	fm := NewFeedbackManager(st)
 	re := NewRefinementEngine(fm, rulesDir, nil)

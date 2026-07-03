@@ -65,7 +65,7 @@ func (f *HFFetcher) FetchPage(offset int) ([]TraceRow, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("HF API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

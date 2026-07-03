@@ -22,7 +22,7 @@ func TestToolNameCommandValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -76,7 +76,7 @@ func TestRawParamsValidationBypass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -109,7 +109,7 @@ func TestHealthEndpointNoConfigLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{
 		EvaluationMode: config.ModeEnforce,
@@ -156,7 +156,7 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}

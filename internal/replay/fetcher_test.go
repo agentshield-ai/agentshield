@@ -24,7 +24,9 @@ func TestHFFetcher_FetchPage(t *testing.T) {
 			NumRows: 100,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -61,7 +63,9 @@ func TestHFFetcher_FetchPage(t *testing.T) {
 func TestHFFetcher_FetchPage_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("dataset not found"))
+		if _, err := w.Write([]byte("dataset not found")); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 

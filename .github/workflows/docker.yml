@@ -56,14 +56,22 @@ jobs:
           mkdir -p ./ci-config
           cat > ./ci-config/config.yaml <<'EOF'
           server:
+            # Bind all interfaces so the container is reachable through the
+            # `-p 8433:8433` mapping (the default 127.0.0.1 is only reachable
+            # inside the container). Safe here: auth is enabled.
+            addr: 0.0.0.0
             port: 8433
           rules:
             dir: /rules
           mode: audit
           EOF
 
+          # The engine requires an auth token to start (auth cannot be
+          # disabled). Supply a dummy >=32-char token for the smoke test; the
+          # /health endpoint is unauthenticated, so the probe still succeeds.
           docker run -d --name agentshield-ci \
             -p 8433:8433 \
+            -e AGENTSHIELD_AUTH_TOKEN=ci-smoke-test-dummy-token-not-a-secret \
             -v "$PWD/ci-config/config.yaml:/config.yaml:ro" \
             agentshield-engine:ci
 

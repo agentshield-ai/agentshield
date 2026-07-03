@@ -63,7 +63,7 @@ func TestHandleEvaluate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{
 		EvaluationMode: config.ModeAudit,
@@ -180,7 +180,7 @@ func TestHandleEvaluateBodyTooLarge(t *testing.T) {
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
 	testStore, _ := store.NewStore(":memory:")
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	server, err := NewServer(cfg, evaluator, testStore, nil)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestHandleHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{
 		EvaluationMode: config.ModeEnforce,
@@ -286,7 +286,7 @@ func TestHandleAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	// Insert test alerts
 	testAlert := &store.Alert{
@@ -403,7 +403,7 @@ func TestHandleFeedbackPost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	// Insert a test alert so feedback can find the rule name
 	testAlert := &store.Alert{
@@ -486,7 +486,7 @@ func TestHandleFeedbackGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -561,7 +561,7 @@ func TestHandleAuditAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -624,7 +624,7 @@ func TestNewServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
@@ -634,7 +634,7 @@ func TestNewServer(t *testing.T) {
 	}
 
 	if server == nil {
-		t.Error("NewServer() returned nil")
+		t.Fatal("NewServer() returned nil")
 	}
 
 	if server.config != cfg {
@@ -660,7 +660,7 @@ func TestNewServerWithoutAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	mockEngine := &mockRuleEngine{}
 	evaluator := evaluate.NewEvaluator(mockEngine, config.ModeAudit, "", nil, nil)
@@ -680,7 +680,7 @@ func TestRequestLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -694,7 +694,7 @@ func TestRequestLogger(t *testing.T) {
 	// Create a test handler that the logger will wrap
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test response"))
+		_, _ = w.Write([]byte("test response"))
 	})
 
 	// Wrap with request logger
@@ -725,7 +725,7 @@ func TestHandleHealthDegraded(t *testing.T) {
 		t.Fatalf("creating test store: %v", err)
 	}
 	// Close the store to make it fail health checks
-	testStore.Close()
+	_ = testStore.Close()
 
 	cfg := &config.Config{
 		EvaluationMode: config.ModeEnforce,
@@ -767,7 +767,7 @@ func TestHandleAlertsWithFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	// Insert multiple test alerts with different properties
 	now := time.Now()
@@ -954,7 +954,7 @@ func TestHandleFeedbackSubmissionErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -1019,7 +1019,7 @@ func TestHandleFeedbackQueryWithLimits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockRuleEngine{}
@@ -1104,7 +1104,7 @@ func TestHandleEvaluateFieldMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 
@@ -1167,7 +1167,7 @@ func TestHandleEvaluatePluginPayloadPreservesEventSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	mockEngine := &mockFieldCapturingEngine{
@@ -1227,7 +1227,7 @@ func TestHandleAlertsRejectsInvalidTimeFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{}
 	evaluator := evaluate.NewEvaluator(&mockRuleEngine{}, config.ModeAudit, "", nil, nil)
@@ -1252,7 +1252,7 @@ func TestStartAndShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -1315,14 +1315,14 @@ func TestServerConfigMethods(t *testing.T) {
 
 func TestServer_SetTracerProvider(t *testing.T) {
 	tp := sdktrace.NewTracerProvider()
-	defer tp.Shutdown(context.Background())
+	defer func() { _ = tp.Shutdown(context.Background()) }()
 
 	cfg := &config.Config{}
 	testStore, err := store.NewStore(":memory:")
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	evaluator := evaluate.NewEvaluator(&mockRuleEngine{}, config.ModeEnforce, "", nil, nil)
 	srv, err := NewServer(cfg, evaluator, testStore, nil)
@@ -1349,7 +1349,7 @@ func TestServer_StartWithTracerProvider(t *testing.T) {
 	// Verify that Start() succeeds when a TracerProvider is configured
 	// (i.e. the otelchi middleware is wired in without panics).
 	tp := sdktrace.NewTracerProvider()
-	defer tp.Shutdown(context.Background())
+	defer func() { _ = tp.Shutdown(context.Background()) }()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -1362,7 +1362,7 @@ func TestServer_StartWithTracerProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating test store: %v", err)
 	}
-	defer testStore.Close()
+	defer func() { _ = testStore.Close() }()
 
 	evaluator := evaluate.NewEvaluator(&mockRuleEngine{}, config.ModeAudit, "", nil, nil)
 	srv, err := NewServer(cfg, evaluator, testStore, nil)
