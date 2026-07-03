@@ -145,6 +145,22 @@ func TestAppendPatternRegexpWithModifierFlags(t *testing.T) {
 			input:     "test123",
 			wantMatch: true,
 		},
+		{
+			// |re is case-insensitive by default, matching every other matcher.
+			name:      "re modifier matches case-insensitively",
+			pattern:   "curl\\s+-x\\s+post",
+			modifiers: []string{"re"},
+			input:     "CURL -X POST https://evil.example",
+			wantMatch: true,
+		},
+		{
+			// Authors can force case sensitivity with an inline (?-i:...).
+			name:      "re modifier honours inline case-sensitive flag",
+			pattern:   "(?-i:CURL)",
+			modifiers: []string{"re"},
+			input:     "curl https://evil.example",
+			wantMatch: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -476,7 +476,13 @@ func appendPatternRegexp(sb *strings.Builder, pattern string, mf modifierFlags, 
 		if _, err := regexp.Compile(pattern); err != nil {
 			return false
 		}
-		sb.WriteString("(?:")
+		// Compile |re patterns case-insensitively, matching the semantics of
+		// every other matcher (contains/startswith/endswith/plain equality all
+		// use (?i:...) below). Without this, |re was the sole case-sensitive
+		// matcher, so patterns like 'CURL' or 'Python3' silently evaded rules
+		// whose authors reasonably assumed case-insensitive matching. Authors
+		// who need case sensitivity can opt back in with an inline (?-i:...).
+		sb.WriteString("(?i:")
 		sb.WriteString(pattern)
 		sb.WriteString(")")
 		return true
