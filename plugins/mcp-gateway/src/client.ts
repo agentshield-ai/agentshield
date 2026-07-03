@@ -15,6 +15,13 @@ const VALID_ACTIONS = new Set(["allow", "block", "log", "require_approval"]);
 const HEALTH_TIMEOUT_MS = 2000;
 
 /**
+ * Timeout for fire-and-forget requests (audit, lifecycle, feedback, override).
+ * sendAudit fires on every tool result, so without a bound a reachable-but-slow
+ * engine would let these requests accumulate without limit.
+ */
+const FIRE_AND_FORGET_TIMEOUT_MS = 5000;
+
+/**
  * HTTP client for the AgentShield engine API (contract Section 1).
  *
  * - `evaluate()` is synchronous (awaited) with a configurable timeout.
@@ -117,6 +124,7 @@ export class AgentShieldClient {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(FIRE_AND_FORGET_TIMEOUT_MS),
     }).catch((err: unknown) => {
       this.logger.debug(`AgentShield ${label} send failed: ${String(err)}`);
     });

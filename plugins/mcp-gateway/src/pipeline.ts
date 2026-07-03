@@ -28,6 +28,16 @@ const NOTIFY_THRESHOLD: Record<string, number> = {
 const CORRELATION_TTL_MS = 60_000;
 
 /**
+ * Window within which a re-issued blocked call is treated as an override.
+ * The gateway fails closed, so a blocked tool call never executes; the only
+ * override an MCP proxy can observe is the agent re-issuing a call it was just
+ * told was blocked. Re-issuing the same (session, tool) within this window is
+ * reported as an override so session.override_count reflects the agent
+ * ignoring blocks (ai_agent_override_escalation.yml).
+ */
+const OVERRIDE_REISSUE_WINDOW_MS = 60_000;
+
+/**
  * The outcome of evaluating a tool call.
  *
  * - `allowed: true`  -> forward the call to the downstream MCP server.
@@ -99,6 +109,8 @@ export class GatewayPipeline {
   private readonly skipSet: Set<string>;
   private readonly interceptSet: Set<string> | null;
   private readonly correlation = new CorrelationTracker();
+  /** Last block per (session, tool), for re-issue override detection. */
+  private readonly recentBlocks = new Map<string, { eventId: string; t: number }>();
 
   constructor(config: AgentShieldConfig, client: AgentShieldClient, logger: Logger) {
     this.config = config;
@@ -201,6 +213,35 @@ export class GatewayPipeline {
     this.client.sendOverride(sessionId, eventId);
   }
 
+  /**
+   * Record that a call was blocked. If the same (session, tool) was already
+   * blocked within OVERRIDE_REISSUE_WINDOW_MS, the agent is re-issuing a call
+   * it was told was blocked — report that prior block as overridden.
+   */
+  private noteBlockedCall(
+    sessionId: string | null,
+    toolName: string,
+    eventId: string,
+  ): void {
+    const now = Date.now();
+    // Prune stale markers so the map stays bounded by active (session, tool)s.
+    for (const [k, v] of this.recentBlocks) {
+      if (now - v.t > OVERRIDE_REISSUE_WINDOW_MS) {
+        this.recentBlocks.delete(k);
+      }
+    }
+
+    const key = `${sessionId ?? ""}:${toolName}`;
+    const prior = this.recentBlocks.get(key);
+    if (prior && sessionId && now - prior.t <= OVERRIDE_REISSUE_WINDOW_MS) {
+      this.reportOverride(sessionId, prior.eventId);
+      this.logger.info(
+        `AgentShield override reported: re-issued blocked ${toolName} (event ${prior.eventId})`,
+      );
+    }
+    this.recentBlocks.set(key, { eventId, t: now });
+  }
+
   /** Non-blocking startup health probe. */
   async startupHealthCheck(): Promise<void> {
     try {
@@ -242,6 +283,7 @@ export class GatewayPipeline {
       }
       this.logger.warn(`AgentShield blocked ${toolName}: ${reason}`);
       this.maybeNotify(response, toolName, "blocked");
+      this.noteBlockedCall(ctx.sessionId, toolName, eventId);
       return { allowed: false, reason, overridable: false, eventId };
     }
 
@@ -253,6 +295,7 @@ export class GatewayPipeline {
         "AgentShield requires explicit approval before this tool call can proceed";
       this.logger.warn(`AgentShield requires approval for ${toolName}: ${reason}`);
       this.maybeNotify(response, toolName, "requires approval");
+      this.noteBlockedCall(ctx.sessionId, toolName, eventId);
       return { allowed: false, reason, overridable: response.overridable ?? true, eventId };
     }
 
@@ -309,7 +352,13 @@ export class GatewayPipeline {
     if (!meets) {
       return;
     }
-    const top = alerts[0];
+    // Show the highest-severity alert, not merely the first: alerts[0] may be
+    // a low-severity match while a later alert crossed the threshold.
+    const top = alerts.reduce((best, a) =>
+      (SEVERITY_ORDER[a.severity] ?? 0) > (SEVERITY_ORDER[best.severity] ?? 0)
+        ? a
+        : best,
+    );
     if (!top) {
       return;
     }

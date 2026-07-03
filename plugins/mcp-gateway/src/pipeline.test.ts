@@ -34,17 +34,26 @@ function baseConfig(overrides: Partial<AgentShieldConfig> = {}): AgentShieldConf
 function makePipeline(
   evaluate: () => Promise<EvaluationResponse> | EvaluationResponse,
   config: AgentShieldConfig = baseConfig(),
-): { pipeline: GatewayPipeline; sendAudit: ReturnType<typeof vi.fn> } {
+): {
+  pipeline: GatewayPipeline;
+  sendAudit: ReturnType<typeof vi.fn>;
+  sendOverride: ReturnType<typeof vi.fn>;
+} {
   const sendAudit = vi.fn();
+  const sendOverride = vi.fn();
   const client = {
     evaluate: vi.fn(async () => evaluate()),
     sendAudit,
     sendLifecycle: vi.fn(),
     healthCheck: vi.fn(async () => true),
     submitFeedback: vi.fn(),
-    sendOverride: vi.fn(),
+    sendOverride,
   } as unknown as AgentShieldClient;
-  return { pipeline: new GatewayPipeline(config, client, SILENT_LOGGER), sendAudit };
+  return {
+    pipeline: new GatewayPipeline(config, client, SILENT_LOGGER),
+    sendAudit,
+    sendOverride,
+  };
 }
 
 const ALLOW: EvaluationResponse = { action: "allow", event_id: "e" };
@@ -181,6 +190,45 @@ describe("GatewayPipeline.evaluateToolCall", () => {
     // Second call should short-circuit via the breaker (still blocked).
     const d = await pipeline.evaluateToolCall("exec", { command: "ls" }, CTX);
     expect(d.allowed).toBe(false);
+  });
+});
+
+describe("GatewayPipeline override-on-reissue", () => {
+  const BLOCK: EvaluationResponse = {
+    action: "block",
+    event_id: "e",
+    reason: "dangerous",
+  };
+
+  it("does not report an override on the first block", async () => {
+    const { pipeline, sendOverride } = makePipeline(() => BLOCK);
+    await pipeline.evaluateToolCall("exec", { command: "rm -rf /" }, CTX);
+    expect(sendOverride).not.toHaveBeenCalled();
+  });
+
+  it("reports an override when a blocked call is re-issued for the same session/tool", async () => {
+    const { pipeline, sendOverride } = makePipeline(() => BLOCK);
+    // The reported override carries the FIRST block's request event_id (the
+    // per-call id the engine recorded), not the response's event_id.
+    const first = await pipeline.evaluateToolCall("exec", { command: "rm -rf /" }, CTX);
+    await pipeline.evaluateToolCall("exec", { command: "rm -rf /" }, CTX);
+    expect(sendOverride).toHaveBeenCalledOnce();
+    expect(sendOverride).toHaveBeenCalledWith("s", first.eventId);
+  });
+
+  it("does not report an override for a different tool", async () => {
+    const { pipeline, sendOverride } = makePipeline(() => BLOCK);
+    await pipeline.evaluateToolCall("exec", { command: "rm -rf /" }, CTX);
+    await pipeline.evaluateToolCall("fetch", { command: "curl x" }, CTX);
+    expect(sendOverride).not.toHaveBeenCalled();
+  });
+
+  it("does not report an override when the session id is unknown", async () => {
+    const { pipeline, sendOverride } = makePipeline(() => BLOCK);
+    const noSession = { agentId: "a", sessionId: null };
+    await pipeline.evaluateToolCall("exec", { command: "rm -rf /" }, noSession);
+    await pipeline.evaluateToolCall("exec", { command: "rm -rf /" }, noSession);
+    expect(sendOverride).not.toHaveBeenCalled();
   });
 });
 
