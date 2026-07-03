@@ -54,7 +54,14 @@ function notifyAlert(
     );
     if (!meetsThreshold) return;
 
-    const topAlert = alerts[0];
+    // Show the highest-severity alert, not merely the first one: alerts[0]
+    // may be a low-severity match while a later alert is the one that
+    // crossed the notification threshold.
+    const topAlert = alerts.reduce((best, a) =>
+      (SEVERITY_ORDER[a.severity] ?? 0) > (SEVERITY_ORDER[best.severity] ?? 0)
+        ? a
+        : best,
+    );
     const emoji = SEVERITY_EMOJI[topAlert.severity] ?? "⚪";
     const triage = response.triage_results?.[0];
 
@@ -114,30 +121,38 @@ function correlationBucketKey(
   return `${sessionKey ?? ""}:${toolName}`;
 }
 
-/**
- * Find and remove the correlation event_id for a completed tool call.
- *
- * Best-effort: if no match is found the audit report is still sent
- * with a fresh event_id as correlation_id.
- */
-function findCorrelationId(
-  pending: Map<string, Array<{ eventId: string; timestamp: number }>>,
-  ctx: { sessionKey?: string },
-  event: { toolName: string },
-): string | null {
-  const now = Date.now();
+/** A pending evaluation awaiting its tool result, keyed by session+tool. */
+type PendingEntry = {
+  eventId: string;
+  timestamp: number;
+  /** The session_id sent to the engine, for override reporting. */
+  sessionId?: string;
+};
 
-  // Clean stale entries in every bucket first.
+/** Drop entries older than the correlation TTL from every bucket. */
+function pruneStale(
+  pending: Map<string, PendingEntry[]>,
+  now: number,
+): void {
   for (const [key, entries] of pending) {
     const fresh = entries.filter(
       (entry) => now - entry.timestamp <= CORRELATION_TTL_MS,
     );
     if (fresh.length === 0) {
       pending.delete(key);
-      continue;
+    } else {
+      pending.set(key, fresh);
     }
-    pending.set(key, fresh);
   }
+}
+
+/** Dequeue the oldest pending entry for this session+tool bucket, or null. */
+function takePending(
+  pending: Map<string, PendingEntry[]>,
+  ctx: { sessionKey?: string },
+  event: { toolName: string },
+): PendingEntry | null {
+  pruneStale(pending, Date.now());
 
   const key = correlationBucketKey(ctx.sessionKey, event.toolName);
   const queue = pending.get(key);
@@ -151,10 +166,7 @@ function findCorrelationId(
   } else {
     pending.set(key, queue);
   }
-  if (!next) {
-    return null;
-  }
-  return next.eventId;
+  return next ?? null;
 }
 
 const plugin = {
@@ -181,11 +193,32 @@ const plugin = {
     const interceptSet =
       config.intercept.length > 0 ? new Set(config.intercept) : null;
 
-    // Correlation map: session/tool bucket -> FIFO queue of pending evaluations.
-    const pendingEvaluations = new Map<
-      string,
-      Array<{ eventId: string; timestamp: number }>
-    >();
+    // Correlation map: session/tool bucket -> FIFO queue of allowed
+    // evaluations awaiting their tool result, used to correlate audit
+    // reports back to the originating evaluation.
+    const pendingEvaluations = new Map<string, PendingEntry[]>();
+
+    // Blocked/approval-required calls, tracked so that if the host executes
+    // one anyway (an after_tool_call arrives for it), we can report the user
+    // override to the engine — this is what increments session.override_count
+    // for ai_agent_override_escalation.yml.
+    const blockedEvaluations = new Map<string, PendingEntry[]>();
+
+    /** Record a blocked/approval-required call for later override detection. */
+    const recordBlocked = (
+      request: { event_id: string; session_id: string | null },
+      sessionKey: string | undefined,
+      toolName: string,
+    ): void => {
+      const key = correlationBucketKey(sessionKey, toolName);
+      const queue = blockedEvaluations.get(key) ?? [];
+      queue.push({
+        eventId: request.event_id,
+        sessionId: request.session_id ?? undefined,
+        timestamp: Date.now(),
+      });
+      blockedEvaluations.set(key, queue);
+    };
 
     // ---- before_tool_call: synchronous evaluation ----
     api.on(
@@ -243,6 +276,7 @@ const plugin = {
             // Notify user via system event for blocks
             notifyAlert(api, response, event.toolName, "blocked", ctx.sessionKey ?? "", config.notify);
 
+            recordBlocked(request, ctx.sessionKey, event.toolName);
             return {
               block: true,
               blockReason,
@@ -257,6 +291,7 @@ const plugin = {
               `AgentShield requires approval for ${event.toolName}: ${approvalReason}`,
             );
             notifyAlert(api, response, event.toolName, "blocked", ctx.sessionKey ?? "", config.notify);
+            recordBlocked(request, ctx.sessionKey, event.toolName);
             return {
               block: true,
               blockReason: approvalReason,
@@ -291,17 +326,30 @@ const plugin = {
       { priority: -100 },
     ); // Run early, before other plugins modify params
 
-    // ---- after_tool_call: fire-and-forget audit ----
+    // ---- after_tool_call: override detection + fire-and-forget audit ----
     api.on("after_tool_call", async (event, ctx) => {
-      const correlationId = findCorrelationId(
-        pendingEvaluations,
-        ctx,
-        event,
-      );
+      // A tool result for a call we blocked or required approval on means the
+      // host executed it anyway — i.e. the user overrode the verdict. Report
+      // it so session.override_count reflects reality. Check this before the
+      // allowed-call correlation, since blocked calls are tracked separately.
+      const overridden = takePending(blockedEvaluations, ctx, event);
+      if (overridden) {
+        if (overridden.sessionId) {
+          client.sendOverride(overridden.sessionId, overridden.eventId);
+          api.logger.info(
+            `AgentShield override reported for ${event.toolName} (event ${overridden.eventId})`,
+          );
+        }
+        // Correlate the audit report to the original evaluation.
+        client.sendAudit(buildAuditReport(event, ctx, overridden.eventId));
+        return;
+      }
+
+      const allowed = takePending(pendingEvaluations, ctx, event);
       const report = buildAuditReport(
         event,
         ctx,
-        correlationId ?? randomUUID(),
+        allowed?.eventId ?? randomUUID(),
       );
       client.sendAudit(report);
     });
@@ -311,7 +359,12 @@ const plugin = {
       client.sendLifecycle(
         buildLifecycleEvent(
           "session_start",
-          { agentId: ctx.agentId, sessionKey: ctx.sessionId },
+          // Use ctx.sessionKey (not ctx.sessionId, which does not exist) so
+          // the top-level session_id matches the tool-call path and the
+          // engine can correlate lifecycle events with the session's tool
+          // calls. Fall back to the event's session id if the context has
+          // none yet at session start.
+          { agentId: ctx.agentId, sessionKey: ctx.sessionKey ?? event.sessionId },
           {
             session_id: event.sessionId,
             resumed_from: event.resumedFrom ?? null,
@@ -324,7 +377,7 @@ const plugin = {
       client.sendLifecycle(
         buildLifecycleEvent(
           "session_end",
-          { agentId: ctx.agentId, sessionKey: ctx.sessionId },
+          { agentId: ctx.agentId, sessionKey: ctx.sessionKey ?? event.sessionId },
           {
             session_id: event.sessionId,
             message_count: event.messageCount,

@@ -16,6 +16,13 @@ type Logger = {
 
 const CONTRACT_VERSION = "1.0.0";
 
+/**
+ * Timeout for fire-and-forget requests (audit, lifecycle, feedback, override).
+ * sendAudit fires on every tool result, so without a bound a reachable-but-slow
+ * engine would let these requests accumulate without limit.
+ */
+const FIRE_AND_FORGET_TIMEOUT_MS = 5000;
+
 const VALID_ACTIONS = new Set(["allow", "block", "log", "require_approval"]);
 
 /**
@@ -137,6 +144,7 @@ export class AgentShieldClient {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(FIRE_AND_FORGET_TIMEOUT_MS),
     }).catch((err) => {
       this.logger.debug?.(
         `AgentShield ${label} send failed: ${String(err)}`,

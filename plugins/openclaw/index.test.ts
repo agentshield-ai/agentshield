@@ -100,6 +100,36 @@ describe("agentshield plugin", () => {
     expect(hooks.agent_end).toBeDefined();
   });
 
+  it("emits a non-null session_id on lifecycle events", async () => {
+    const lifecycleBodies: Array<{ session_id?: string | null }> = [];
+    fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.includes("/lifecycle")) {
+        lifecycleBodies.push(
+          JSON.parse(((init as { body?: string } | undefined)?.body ?? "{}")),
+        );
+      }
+      return { ok: true };
+    });
+
+    const { api, hooks } = createMockApi({ enabled: true });
+    plugin.register(api as never);
+
+    await hooks.session_start!.handler(
+      { sessionId: "sess-abc" },
+      { agentId: "a", sessionKey: "sess-abc", toolName: "" },
+    );
+    await hooks.session_end!.handler(
+      { sessionId: "sess-abc", messageCount: 3 },
+      { agentId: "a", sessionKey: "sess-abc", toolName: "" },
+    );
+
+    expect(lifecycleBodies.length).toBe(2);
+    for (const body of lifecycleBodies) {
+      // Regression: previously read ctx.sessionId (undefined), emitting null.
+      expect(body.session_id).toBe("sess-abc");
+    }
+  });
+
   describe("before_tool_call handler", () => {
     it("skips tools in the skip list", async () => {
       const { api, hooks } = createMockApi({
@@ -383,7 +413,7 @@ describe("agentshield plugin", () => {
       expect(auditBody.correlation_id).toBe(evaluateBody.event_id);
     });
 
-    it("does not queue blocked evaluations for audit correlation", async () => {
+    it("reports an override and correlates audit when a blocked call executes anyway", async () => {
       let blockedEventId = "";
       fetchSpy.mockImplementation(async (url: string, init?: RequestInit) => {
         if (typeof url === "string" && url.includes("/evaluate")) {
@@ -417,12 +447,24 @@ describe("agentshield plugin", () => {
       expect(result.block).toBe(true);
       expect(blockedEventId).toBeTruthy();
 
-      // Simulate an unexpected after_tool_call emission for the same tool/session.
-      // Correlation must not reuse a blocked event ID.
+      // A tool result for the blocked call means the host executed it anyway:
+      // the user overrode the verdict. That must be reported to /override and
+      // the audit correlated back to the original evaluation event.
       await hooks.after_tool_call!.handler(
-        { toolName: "exec", result: "not-executed" },
+        { toolName: "exec", result: "executed-after-override" },
         { agentId: "a", sessionKey: "session-1", toolName: "exec" },
       );
+
+      const overrideCall = fetchSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && c[0].includes("/override"),
+      );
+      expect(overrideCall).toBeTruthy();
+      const overrideBody = JSON.parse(
+        ((overrideCall?.[1] as { body?: string })?.body ?? "{}"),
+      ) as { session_id?: string; event_id?: string };
+      expect(overrideBody.session_id).toBe("session-1");
+      expect(overrideBody.event_id).toBe(blockedEventId);
 
       const auditCall = fetchSpy.mock.calls.find(
         (c: unknown[]) =>
@@ -431,9 +473,41 @@ describe("agentshield plugin", () => {
       const auditBody = JSON.parse(
         ((auditCall?.[1] as { body?: string })?.body ?? "{}"),
       ) as { correlation_id?: string };
+      expect(auditBody.correlation_id).toBe(blockedEventId);
+    });
 
-      expect(auditBody.correlation_id).toBeTruthy();
-      expect(auditBody.correlation_id).not.toBe(blockedEventId);
+    it("does not report an override for a normally allowed call", async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/evaluate")) {
+          return {
+            ok: true,
+            json: async () => ({ action: "allow", event_id: "evt-allow" }),
+          };
+        }
+        return { ok: true };
+      });
+
+      const { api, hooks } = createMockApi({
+        enabled: true,
+        intercept: ["exec"],
+        skip: [],
+      });
+      plugin.register(api as never);
+
+      await hooks.before_tool_call!.handler(
+        { toolName: "exec", params: { command: "ls" } },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      );
+      await hooks.after_tool_call!.handler(
+        { toolName: "exec", result: "ok" },
+        { agentId: "a", sessionKey: "session-1", toolName: "exec" },
+      );
+
+      const overrideCall = fetchSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && c[0].includes("/override"),
+      );
+      expect(overrideCall).toBeUndefined();
     });
 
     it("uses a fresh UUID correlation_id when no pending evaluation exists", async () => {
