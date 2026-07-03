@@ -1,0 +1,34 @@
+title: Unauthorized User Account Creation
+id: 9c5a1b43-6e0d-7f8a-d3c4-5b6c7d8e9f0a
+status: stable
+description: |
+  Detects creation of new local user accounts via useradd, adduser, or
+  Windows "net user /add". Agents creating accounts is a common persistence
+  and backdoor technique, granting durable access that survives session
+  teardown. Legitimate user-info commands (id, whoami, getent) are not
+  matched.
+references:
+  - https://attack.mitre.org/techniques/T1136/001/
+author: AgentShield
+date: "2026-07-03"
+modified: "2026-07-03"
+tags:
+  - attack.persistence
+  - attack.t1136.001
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  # Unix account creation
+  selection_unix:
+    event_type: tool_call
+    command|re: '(?i)(^|\s|;|&&|\|)(useradd|adduser)\s'
+  # Windows account creation
+  selection_windows:
+    event_type: tool_call
+    command|re: '(?i)net\s+user\s+\S+\s+.*\/add'
+  condition: selection_unix or selection_windows
+falsepositives:
+  - Provisioning scripts that legitimately create service accounts
+  - Container image build steps adding a non-root user
+level: high

@@ -19,4 +19,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-data-exfil-001
+    - "Data Exfiltration via HTTP"

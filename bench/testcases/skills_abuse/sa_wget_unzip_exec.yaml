@@ -18,4 +18,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-archive-download-exec-001
+    - "Archive Download and Execution via Shell Chaining"

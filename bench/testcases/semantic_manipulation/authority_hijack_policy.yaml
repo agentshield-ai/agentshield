@@ -17,4 +17,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-authority-hijacking-001
+    - "Authority Hijacking and Social Engineering in Agent Input"

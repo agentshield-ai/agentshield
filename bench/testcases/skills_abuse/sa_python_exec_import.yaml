@@ -19,4 +19,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-encoded-payload-001
+    - "Encoded or Obfuscated Command Execution"

@@ -1,3 +1,7 @@
+# NOTE: session.* fields below are engine-derived. The server strips
+# client-supplied session.* values, so this testcase only fires against
+# real session-registry state (not field injection). It is excluded from
+# bench/suites/agent_traps.yaml until the harness can build that state.
 id: approval_fatigue_override_escalation
 severity: high
 session_id: bench-approval-002
@@ -19,4 +23,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-override-escalation-001
+    - "Repeated Security Override Pattern in Session"

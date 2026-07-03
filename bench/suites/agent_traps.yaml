@@ -11,5 +11,13 @@ testcases:
   - semantic_manipulation/urgency_threat_shutdown.yaml
   - semantic_manipulation/benign_policy_reference.yaml
   # Category 6: Human-in-the-Loop Traps
-  - approval_fatigue/high_approval_count.yaml
-  - approval_fatigue/override_escalation.yaml
+  #
+  # NOTE: the approval_fatigue/* testcases are intentionally NOT listed here.
+  # They exercise session.approval_count / session.override_count, which are
+  # engine-derived fields. The server now strips client-supplied values for
+  # session.* keys (they can no longer be spoofed via the request body), so
+  # these rules can only fire from real session-registry state built up over a
+  # sequence of prior verdicts (and, for override_count, /api/v1/override
+  # calls). Driving that requires the session registry enabled plus multi-event
+  # state buildup, which this single-shot harness does not yet support. Re-add
+  # them once the harness can construct genuine session state.

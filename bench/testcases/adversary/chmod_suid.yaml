@@ -15,4 +15,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-privesc-001
+    - "Privilege Escalation Attempt"

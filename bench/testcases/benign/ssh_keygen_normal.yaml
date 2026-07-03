@@ -16,4 +16,4 @@ events:
 expected:
   action: ALLOW
   must_not_trigger:
-    - agent-ssh-key-exfil-001
+    - "Shell Configuration Modification"

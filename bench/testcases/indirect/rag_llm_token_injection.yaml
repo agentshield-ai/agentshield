@@ -16,4 +16,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-prompt-injection-indirect-001
+    - "Indirect Prompt Injection in Retrieved Content"

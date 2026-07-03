@@ -15,4 +15,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-reverse-shell-001
+    - "Reverse Shell Attempt"

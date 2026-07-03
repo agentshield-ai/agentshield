@@ -16,4 +16,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-ssh-key-exfil-001
+    - "Shell Configuration Modification"

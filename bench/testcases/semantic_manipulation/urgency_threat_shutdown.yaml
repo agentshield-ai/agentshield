@@ -14,4 +14,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-urgency-manipulation-001
+    - "Urgency and Pressure Manipulation in Agent Input"

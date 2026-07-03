@@ -16,4 +16,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-user-account-creation-001
+    - "Unauthorized User Account Creation"

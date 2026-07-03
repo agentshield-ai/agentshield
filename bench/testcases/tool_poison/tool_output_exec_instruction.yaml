@@ -16,4 +16,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-rce-injection-001
+    - "Remote Code Execution via Piped Script Download"

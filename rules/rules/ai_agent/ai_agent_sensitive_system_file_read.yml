@@ -1,0 +1,42 @@
+title: Sensitive System File Read
+id: 8b4f0a32-5d9c-6e7f-c2b3-4a5b6c7d8e9f
+status: stable
+description: |
+  Detects reads of sensitive system account and authorisation files such
+  as /etc/passwd, /etc/shadow, /etc/sudoers, and /etc/gshadow. Agents may
+  read these for user enumeration, credential harvesting, or to plan
+  privilege escalation. Covers both command-based reads and file_read tool
+  events; benign reads of innocuous /etc files (e.g. /etc/hostname) are not
+  matched.
+references:
+  - https://attack.mitre.org/techniques/T1003/008/
+  - https://attack.mitre.org/techniques/T1087/001/
+author: AgentShield
+date: "2026-07-03"
+modified: "2026-07-03"
+tags:
+  - attack.credential-access
+  - attack.t1003.008
+  - attack.discovery
+  - attack.t1087.001
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  # Command-based reads of sensitive account files
+  selection_cmd_read:
+    event_type: tool_call
+    command|re: '(?i)(cat|less|more|head|tail|nl|strings|grep|awk|sort|cp|scp|xxd|od)\s+.*/etc/(passwd|shadow|gshadow|sudoers)(\s|$|/)'
+  # file_read / read tool targeting sensitive account files
+  selection_file_read:
+    event_type: file_read
+    file_path|endswith:
+      - '/etc/passwd'
+      - '/etc/shadow'
+      - '/etc/gshadow'
+      - '/etc/sudoers'
+  condition: selection_cmd_read or selection_file_read
+falsepositives:
+  - Configuration management tools auditing account state
+  - Backup jobs that archive /etc
+level: high

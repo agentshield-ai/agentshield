@@ -16,4 +16,4 @@ events:
 expected:
   action: ALLOW
   must_not_trigger:
-    - agent-powershell-encoded-001
+    - "PowerShell Encoded Command Execution"

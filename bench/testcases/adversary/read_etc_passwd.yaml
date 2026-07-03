@@ -16,4 +16,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-sensitive-system-files-001
+    - "Sensitive System File Read"

@@ -16,4 +16,4 @@ events:
 expected:
   action: ALLOW
   must_not_trigger:
-    - agent-user-account-creation-001
+    - "Unauthorized User Account Creation"

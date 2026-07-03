@@ -16,4 +16,4 @@ events:
 expected:
   action: BLOCK
   must_trigger_rules:
-    - agent-powershell-encoded-001
+    - "PowerShell Encoded Command Execution"

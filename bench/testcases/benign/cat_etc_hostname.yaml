@@ -16,4 +16,4 @@ events:
 expected:
   action: ALLOW
   must_not_trigger:
-    - agent-sensitive-system-files-001
+    - "Sensitive System File Read"

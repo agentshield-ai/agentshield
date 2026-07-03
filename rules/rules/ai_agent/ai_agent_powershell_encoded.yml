@@ -1,0 +1,37 @@
+title: PowerShell Encoded Command Execution
+id: 7a3e9f21-4c8b-5d6e-b1a2-3f4c5d6e7a8b
+status: stable
+description: |
+  Detects PowerShell invocations that hide their payload behind base64
+  encoding or in-memory expression evaluation. The -EncodedCommand / -enc
+  switch, FromBase64String, and IEX/Invoke-Expression are the canonical
+  living-off-the-land techniques for running an obfuscated PowerShell
+  payload that evades command-line inspection.
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+  - https://attack.mitre.org/techniques/T1027/
+author: AgentShield
+date: "2026-07-03"
+modified: "2026-07-03"
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense-evasion
+  - attack.t1027
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  # powershell/pwsh with an encoded-command switch (-enc, -e, -encodedcommand)
+  selection_encoded_switch:
+    event_type: tool_call
+    command|re: '(?i)(powershell|pwsh)(\.exe)?\s+.*(-enc(odedcommand)?|-e)\s+[A-Za-z0-9+/=]{16,}'
+  # In-memory decode/execute patterns
+  selection_inmemory_exec:
+    event_type: tool_call
+    command|re: '(?i)(powershell|pwsh).*(frombase64string|iex|invoke-expression)'
+  condition: selection_encoded_switch or selection_inmemory_exec
+falsepositives:
+  - Administrative automation that legitimately uses -EncodedCommand for quoting
+  - Configuration management tools invoking PowerShell with encoded blocks
+level: high

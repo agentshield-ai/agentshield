@@ -48,8 +48,8 @@ type Event struct {
 // Expected is the expected outcome.
 type Expected struct {
 	Action           string   `yaml:"action"`                       // ALLOW, BLOCK, LOG, REQUIRE_APPROVAL
-	MustTriggerRules []string `yaml:"must_trigger_rules,omitempty"` // rule IDs
-	MustNotTrigger   []string `yaml:"must_not_trigger,omitempty"`   // rule IDs that must NOT fire
+	MustTriggerRules []string `yaml:"must_trigger_rules,omitempty"` // rule id or title
+	MustNotTrigger   []string `yaml:"must_not_trigger,omitempty"`   // rule id or title that must NOT fire
 }
 
 // EvalRequest is sent to /api/v1/evaluate.
@@ -193,6 +193,7 @@ func main() {
 	var outputDir string
 	var benchRoot string
 	var authToken string
+	var rulesDir string
 
 	rootCmd := &cobra.Command{
 		Use:   "agentshieldbench",
@@ -203,7 +204,7 @@ func main() {
 		Use:   "run",
 		Short: "Run a benchmark suite against a running AgentShield engine",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSuite(endpoint, suitePath, outputDir, benchRoot, authToken)
+			return runSuite(endpoint, suitePath, outputDir, benchRoot, authToken, rulesDir)
 		},
 	}
 
@@ -212,13 +213,14 @@ func main() {
 	runCmd.Flags().StringVar(&outputDir, "output", "bench/results", "Output directory for results")
 	runCmd.Flags().StringVar(&benchRoot, "bench-root", "bench", "Root directory for bench testcases")
 	runCmd.Flags().StringVar(&authToken, "token", "", "Bearer auth token (or set AGENTSHIELD_AUTH_TOKEN)")
+	runCmd.Flags().StringVar(&rulesDir, "rules-dir", "rules", "Rules directory used to validate testcase rule references")
 	_ = runCmd.MarkFlagRequired("suite")
 
 	runAllCmd := &cobra.Command{
 		Use:   "run-all",
 		Short: "Run all suites in bench/suites/",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAllSuites(endpoint, outputDir, benchRoot, authToken)
+			return runAllSuites(endpoint, outputDir, benchRoot, authToken, rulesDir)
 		},
 	}
 
@@ -226,6 +228,7 @@ func main() {
 	runAllCmd.Flags().StringVar(&outputDir, "output", "bench/results", "Output directory for results")
 	runAllCmd.Flags().StringVar(&benchRoot, "bench-root", "bench", "Root directory for bench testcases")
 	runAllCmd.Flags().StringVar(&authToken, "token", "", "Bearer auth token (or set AGENTSHIELD_AUTH_TOKEN)")
+	runAllCmd.Flags().StringVar(&rulesDir, "rules-dir", "rules", "Rules directory used to validate testcase rule references")
 
 	rootCmd.AddCommand(runCmd, runAllCmd)
 
@@ -241,8 +244,24 @@ func resolveToken(token string) string {
 	return os.Getenv("AGENTSHIELD_AUTH_TOKEN")
 }
 
-func runAllSuites(endpoint, outputDir, benchRoot, authToken string) error {
+// loadValidRefs loads the rule id/title set from rulesDir, warning (but not
+// failing) if the directory cannot be read so the harness still runs when
+// pointed at an environment without a local rules checkout.
+func loadValidRefs(rulesDir string) map[string]bool {
+	if rulesDir == "" {
+		return nil
+	}
+	validRefs, err := loadRuleIdentities(rulesDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: could not load rules from %s for reference validation: %v\n", rulesDir, err)
+		return nil
+	}
+	return validRefs
+}
+
+func runAllSuites(endpoint, outputDir, benchRoot, authToken, rulesDir string) error {
 	authToken = resolveToken(authToken)
+	validRefs := loadValidRefs(rulesDir)
 	suiteDir := filepath.Join(benchRoot, "suites")
 	entries, err := os.ReadDir(suiteDir)
 	if err != nil {
@@ -250,26 +269,32 @@ func runAllSuites(endpoint, outputDir, benchRoot, authToken string) error {
 	}
 
 	var allMetrics []SuiteMetrics
+	var failed []string
 	for _, e := range entries {
 		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yaml") && !strings.HasSuffix(e.Name(), ".yml")) {
 			continue
 		}
 		suitePath := filepath.Join(suiteDir, e.Name())
-		m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken)
+		m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken, validRefs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: suite %s failed: %v\n", e.Name(), err)
+			fmt.Fprintf(os.Stderr, "ERROR: suite %s failed: %v\n", e.Name(), err)
+			failed = append(failed, e.Name())
 			continue
 		}
 		allMetrics = append(allMetrics, m)
 	}
 
 	printOverallSummary(allMetrics)
+	if len(failed) > 0 {
+		return fmt.Errorf("%d suite(s) failed: %s", len(failed), strings.Join(failed, ", "))
+	}
 	return nil
 }
 
-func runSuite(endpoint, suitePath, outputDir, benchRoot, authToken string) error {
+func runSuite(endpoint, suitePath, outputDir, benchRoot, authToken, rulesDir string) error {
 	authToken = resolveToken(authToken)
-	m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken)
+	validRefs := loadValidRefs(rulesDir)
+	m, err := runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken, validRefs)
 	if err != nil {
 		return err
 	}
@@ -277,7 +302,7 @@ func runSuite(endpoint, suitePath, outputDir, benchRoot, authToken string) error
 	return nil
 }
 
-func runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken string) (SuiteMetrics, error) {
+func runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken string, validRefs map[string]bool) (SuiteMetrics, error) {
 	data, err := os.ReadFile(suitePath)
 	if err != nil {
 		return SuiteMetrics{}, fmt.Errorf("reading suite: %w", err)
@@ -306,6 +331,15 @@ func runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken string) 
 		}
 		testcaseMap[tc.ID] = tc
 		allTestcases = append(allTestcases, tc)
+	}
+
+	// Fail loudly if any testcase references a rule that does not exist:
+	// a dangling must_trigger_rules reference can never be satisfied and
+	// otherwise silently degrades to an action-only check.
+	if validRefs != nil {
+		if err := validateTestcaseReferences(allTestcases, validRefs); err != nil {
+			return SuiteMetrics{}, err
+		}
 	}
 
 	// Execute testcases
@@ -342,6 +376,82 @@ func runSuiteInner(endpoint, suitePath, outputDir, benchRoot, authToken string) 
 	}
 
 	return metrics, nil
+}
+
+// knownRuleRef holds the identifiers a testcase may reference: the rule's
+// opaque id and its human-readable title.
+type ruleIdentity struct {
+	id    string
+	title string
+}
+
+// loadRuleIdentities walks the rules directory and returns the set of valid
+// rule references (ids and titles). This lets the harness fail loudly when a
+// testcase names a rule that does not exist, instead of silently treating the
+// must_trigger_rules assertion as satisfied-by-absence.
+func loadRuleIdentities(rulesDir string) (map[string]bool, error) {
+	valid := make(map[string]bool)
+	err := filepath.WalkDir(rulesDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if ext != ".yml" && ext != ".yaml" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var ri ruleIdentity
+		var raw struct {
+			ID    string `yaml:"id"`
+			Title string `yaml:"title"`
+		}
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			// Not a parseable rule file; skip rather than abort the whole run.
+			return nil
+		}
+		ri.id, ri.title = raw.ID, raw.Title
+		if ri.id != "" {
+			valid[ri.id] = true
+		}
+		if ri.title != "" {
+			valid[ri.title] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return valid, nil
+}
+
+// validateTestcaseReferences returns an error naming every must_trigger_rules
+// / must_not_trigger reference that does not match a loaded rule id or title.
+func validateTestcaseReferences(testcases []*Testcase, validRefs map[string]bool) error {
+	var unknown []string
+	for _, tc := range testcases {
+		for _, ref := range tc.Expected.MustTriggerRules {
+			if !validRefs[ref] {
+				unknown = append(unknown, fmt.Sprintf("%s: must_trigger_rules %q", tc.ID, ref))
+			}
+		}
+		for _, ref := range tc.Expected.MustNotTrigger {
+			if !validRefs[ref] {
+				unknown = append(unknown, fmt.Sprintf("%s: must_not_trigger %q", tc.ID, ref))
+			}
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("testcases reference %d unknown rule(s):\n  %s",
+			len(unknown), strings.Join(unknown, "\n  "))
+	}
+	return nil
 }
 
 func loadTestcase(path string) (*Testcase, error) {
@@ -439,11 +549,19 @@ func executeEvent(client *http.Client, endpoint, authToken string, tc *Testcase,
 		}
 	}
 
-	// Collect triggered rule IDs
+	// Collect triggered rule IDs (reported in output for readability).
 	var triggeredRules []string
+	// triggeredSet is keyed by BOTH rule id and rule name so must_trigger /
+	// must_not_trigger references can be written as either. Rule ids are
+	// opaque UUIDs; titles are the stable, human-readable identity.
+	triggeredSet := make(map[string]bool)
 	for _, a := range evalResp.Alerts {
 		if a.Matched {
 			triggeredRules = append(triggeredRules, a.RuleID)
+			triggeredSet[a.RuleID] = true
+			if a.RuleName != "" {
+				triggeredSet[a.RuleName] = true
+			}
 		}
 	}
 
@@ -460,10 +578,6 @@ func executeEvent(client *http.Client, endpoint, authToken string, tc *Testcase,
 	}
 
 	// Check must-trigger rules
-	triggeredSet := make(map[string]bool)
-	for _, r := range triggeredRules {
-		triggeredSet[r] = true
-	}
 	for _, required := range tc.Expected.MustTriggerRules {
 		if !triggeredSet[required] {
 			pass = false
