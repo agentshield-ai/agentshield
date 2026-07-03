@@ -457,10 +457,16 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 	// SECURITY: only allow test context from trusted headers; never from request body/args.
 	req.Context = resolveExecutionContext(r, cfg)
 
+	// SECURITY: drop client-supplied values for engine-derived keys so the
+	// request body cannot spoof the trusted execution context or the
+	// session-behavioural counters that Sigma rules match on.
+	stripReservedFieldKeys(req.Args)
+
 	// Build flat fields map for rule engine
 	if req.Fields == nil {
 		req.Fields = make(map[string]string)
 	}
+	stripReservedFieldKeys(req.Fields)
 	if req.Tool != "" {
 		if _, ok := req.Fields["tool"]; !ok {
 			req.Fields["tool"] = req.Tool
@@ -473,11 +479,10 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 			req.Fields["event_type"] = defaultEventTypeForTool(req.Tool)
 		}
 	}
-	if req.Context != "" {
-		if _, ok := req.Fields["context"]; !ok {
-			req.Fields["context"] = req.Context
-		}
-	}
+	// req.Context now holds the trusted header-derived value ("prod" unless a
+	// valid test-context token was presented), so it always wins over any
+	// value that arrived in the body.
+	req.Fields["context"] = req.Context
 	if req.Source != "" {
 		if _, ok := req.Fields["source"]; !ok {
 			req.Fields["source"] = req.Source
@@ -496,6 +501,24 @@ func normalizePluginRequest(req *models.EvaluationRequest, r *http.Request, cfg 
 	for k, v := range req.Args {
 		if _, exists := req.Fields[k]; !exists {
 			req.Fields[k] = v
+		}
+	}
+}
+
+// reservedFieldKey reports whether key names a field the engine derives
+// itself: the trusted execution context and the session-behavioural counters
+// injected by the session registry. Client-supplied values for these keys are
+// discarded so they cannot spoof or evade rules that match on derived state.
+func reservedFieldKey(key string) bool {
+	return key == "context" || strings.HasPrefix(key, "session.")
+}
+
+// stripReservedFieldKeys removes engine-reserved keys from a client-supplied
+// map. Safe to call with a nil map.
+func stripReservedFieldKeys(m map[string]string) {
+	for k := range m {
+		if reservedFieldKey(k) {
+			delete(m, k)
 		}
 	}
 }

@@ -190,6 +190,115 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	}
 }
 
+// TestReservedFieldsCannotBeSpoofed verifies that client-supplied values for
+// engine-derived keys (the trusted execution context and session.* counters)
+// are stripped before rule evaluation, regardless of whether they arrive via
+// fields, args, or the plugin-compat params alias.
+func TestReservedFieldsCannotBeSpoofed(t *testing.T) {
+	const testToken = "0123456789abcdef0123456789abcdef" // 32 chars
+
+	tests := []struct {
+		name        string
+		body        string
+		headers     map[string]string
+		testCtx     config.TestContextConfig
+		wantContext string
+		absentKeys  []string
+	}{
+		{
+			name:        "body fields.context cannot force test context",
+			body:        `{"event_id":"e1","tool":"Bash","fields":{"context":"test"}}`,
+			testCtx:     config.TestContextConfig{Enabled: true, Token: testToken},
+			wantContext: "prod",
+		},
+		{
+			name:        "body args context cannot force test context",
+			body:        `{"event_id":"e2","tool":"Bash","args":{"context":"test"}}`,
+			testCtx:     config.TestContextConfig{Enabled: true, Token: testToken},
+			wantContext: "prod",
+		},
+		{
+			name:       "session counters in fields are stripped",
+			body:       `{"event_id":"e3","tool":"Bash","fields":{"session.override_count":"99","session.cross_session_alert_count":"0"}}`,
+			absentKeys: []string{"session.override_count", "session.cross_session_alert_count"},
+		},
+		{
+			name:       "session counters in args are stripped",
+			body:       `{"event_id":"e4","tool":"Bash","args":{"session.alert_count":"0"}}`,
+			absentKeys: []string{"session.alert_count"},
+		},
+		{
+			name:       "session counters via params alias are stripped",
+			body:       `{"event_id":"e5","tool_name":"Bash","params":{"session.tool_count":"1"}}`,
+			absentKeys: []string{"session.tool_count"},
+		},
+		{
+			name: "trusted header with valid token still yields test context",
+			body: `{"event_id":"e6","tool":"Bash"}`,
+			headers: map[string]string{
+				"X-AgentShield-Context":       "test",
+				"X-AgentShield-Context-Token": testToken,
+			},
+			testCtx:     config.TestContextConfig{Enabled: true, Token: testToken},
+			wantContext: "test",
+		},
+		{
+			name: "valid token does not resurrect body-supplied session fields",
+			body: `{"event_id":"e7","tool":"Bash","fields":{"session.override_count":"99"}}`,
+			headers: map[string]string{
+				"X-AgentShield-Context":       "test",
+				"X-AgentShield-Context-Token": testToken,
+			},
+			testCtx:     config.TestContextConfig{Enabled: true, Token: testToken},
+			wantContext: "test",
+			absentKeys:  []string{"session.override_count"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testStore, err := store.NewStore(":memory:")
+			if err != nil {
+				t.Fatalf("creating test store: %v", err)
+			}
+			defer func() { _ = testStore.Close() }()
+
+			cfg := &config.Config{TestContext: tt.testCtx}
+			capturing := &mockFieldCapturingEngine{}
+			evaluator := evaluate.NewEvaluator(capturing, config.ModeAudit, "", nil, nil)
+
+			srv, err := NewServer(cfg, evaluator, testStore, nil)
+			if err != nil {
+				t.Fatalf("creating test server: %v", err)
+			}
+			router := srv.setupTestRouter()
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if capturing.capturedFields == nil {
+				t.Fatal("rule engine was never invoked")
+			}
+			if tt.wantContext != "" && capturing.capturedFields["context"] != tt.wantContext {
+				t.Errorf("engine saw context=%q, want %q", capturing.capturedFields["context"], tt.wantContext)
+			}
+			for _, key := range tt.absentKeys {
+				if v, ok := capturing.capturedFields[key]; ok {
+					t.Errorf("engine saw reserved key %s=%q, want it stripped", key, v)
+				}
+			}
+		})
+	}
+}
+
 // TestTriageCannotDowngradeBlock verifies C-1 regression: triage results
 // returning "allow" with high confidence must NOT downgrade a block action
 // in enforce mode.

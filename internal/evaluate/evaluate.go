@@ -116,10 +116,11 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			req.Fields["tool"] = req.Tool
 		}
 	}
+	// SECURITY: when the caller resolved an execution context (the server
+	// derives it from trusted headers only), it must win over any context
+	// value already present in the fields map.
 	if req.Context != "" {
-		if _, ok := req.Fields["context"]; !ok {
-			req.Fields["context"] = req.Context
-		}
+		req.Fields["context"] = req.Context
 	}
 	if req.EventType != "" {
 		if _, ok := req.Fields["event_type"]; !ok {
