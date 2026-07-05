@@ -19,11 +19,13 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/auth"
 	"github.com/agentshield-ai/agentshield/internal/cache"
 	"github.com/agentshield-ai/agentshield/internal/config"
+	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/evaluate"
 	"github.com/agentshield-ai/agentshield/internal/feedback"
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/store"
+	"github.com/agentshield-ai/agentshield/internal/toolresult"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/riandyrn/otelchi"
@@ -874,9 +876,66 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// handleAuditEvent accepts post-execution audit payloads from plugins.
+// handleAuditEvent accepts post-execution audit payloads from plugins and runs
+// a detection-only scan of the tool output before acknowledging.
 func (s *Server) handleAuditEvent(w http.ResponseWriter, r *http.Request) {
-	s.handleAcceptedEvent(w, r, "audit")
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+	defer func() { _ = r.Body.Close() }()
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
+		slog.Warn("Event JSON decode error", "kind", "audit", "error", err, "remote_addr", r.RemoteAddr)
+		return
+	}
+
+	// Scan tool output (the indirect-prompt-injection vector). The tool has
+	// already run, so this never blocks: it stores/logs alerts but still returns
+	// 202 Accepted, preserving the audit endpoint's contract.
+	s.scanAuditEventForInjection(payload)
+
+	writeAcceptedResponse(w, "audit")
+}
+
+// scanAuditEventForInjection reconciles a tool-result audit payload to the rule
+// engine's field vocabulary and runs a detection-only evaluation, storing any
+// matched alerts. Best-effort: any shortfall (no evaluator, non-tool payload,
+// no output text, no match) is a silent no-op.
+func (s *Server) scanAuditEventForInjection(payload map[string]interface{}) {
+	if s.evaluator == nil {
+		return
+	}
+	fields, ok := toolresult.DetectionFields(payload)
+	if !ok {
+		return
+	}
+	var matched []engine.RuleResult
+	for _, alert := range s.evaluator.MatchRules(fields) {
+		if alert.Matched {
+			matched = append(matched, alert)
+		}
+	}
+	if len(matched) == 0 {
+		return
+	}
+
+	auditStr := func(key string) string {
+		v, _ := payload[key].(string)
+		return v
+	}
+	resp := &evaluate.EvaluationResponse{
+		EventID:   auditStr("event_id"),
+		Action:    models.ActionLog, // detection-only, non-blocking
+		Alerts:    matched,
+		Timestamp: time.Now(),
+	}
+	req := &models.EvaluationRequest{
+		EventID:   auditStr("event_id"),
+		Tool:      auditStr("tool_name"),
+		Source:    auditStr("source"),
+		SessionID: auditStr("session_id"),
+	}
+	s.storeMatchedAlerts(resp, req)
 }
 
 // handleLifecycleEvent accepts lifecycle telemetry payloads from plugins.
@@ -896,6 +955,11 @@ func (s *Server) handleAcceptedEvent(w http.ResponseWriter, r *http.Request, kin
 		return
 	}
 
+	writeAcceptedResponse(w, kind)
+}
+
+// writeAcceptedResponse writes the standard 202 Accepted acknowledgement.
+func writeAcceptedResponse(w http.ResponseWriter, kind string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	if err := json.NewEncoder(w).Encode(map[string]string{
