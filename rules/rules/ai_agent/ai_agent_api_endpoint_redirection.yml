@@ -51,8 +51,13 @@ detection:
     request.headers|contains:
       - 'Authorization: Bearer sk-'
       - 'x-api-key:'
+  # Anchor the canonical-host allowlist to the end of the host so an attacker
+  # host that merely embeds a provider domain (e.g. api.anthropic.com.evil.tld)
+  # is NOT whitelisted. Also corrects the TLDs: mistral is .ai and x.ai has no
+  # .com — the previous '\.(...)\.com' both mis-suffixed those and allowed the
+  # embed bypass.
   filter_canonical_destination:
-    destination.host|re: '\.(anthropic|openai|googleapis|mistral|cohere|x\.ai)\.com'
+    destination.host|re: '(^|\.)(anthropic\.com|openai\.com|googleapis\.com|mistral\.ai|cohere\.com|x\.ai)$'
   condition: (selection_endpoint_override and selection_base_url_override and not filter_canonical_base_url) or (selection_auth_header_to_external and not filter_canonical_destination)
 falsepositives:
   - Approved enterprise LLM proxies (Portkey, LiteLLM gateway, Cloudflare AI Gateway) on internal hosts — allowlist via destination.host
