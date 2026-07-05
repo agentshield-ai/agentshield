@@ -1,0 +1,9 @@
+# gitleaks: suppress specific known false positives by fingerprint.
+# Fingerprint format: <commit>:<path>:<ruleID>:<startline>
+# Each entry is scoped to a single historical finding — this does NOT broaden
+# the .gitleaks.toml path/regex allowlists, so real secrets are still scanned.
+
+# Pre-existing false positive: a fake 32-char test token (const testToken) used
+# as a fixture in security_test.go, since removed but retained in git history.
+# Tracked in issue #74.
+9659d0fa463953268fdeff553b322c3f3e8ff339:internal/server/security_test.go:generic-api-key:198
