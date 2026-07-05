@@ -44,6 +44,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Rule semantics lint
+        run: go test ./internal/rulelint/...
+
       - name: go mod tidy drift
         run: |
           go mod tidy
