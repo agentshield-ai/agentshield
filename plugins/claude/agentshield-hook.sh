@@ -5,6 +5,7 @@
 # It branches on the `hook_event_name` field of the stdin JSON:
 #
 #   PreToolUse              -> synchronous evaluate; block via exit 2 / decision
+#   UserPromptSubmit        -> evaluate the prompt (user_input); notify, never block
 #   PostToolUse             -> fire-and-forget audit report (correlated)
 #   PostToolUseFailure      -> fire-and-forget audit report (is_error=true)
 #   SessionStart            -> lifecycle session_start + non-blocking health log
@@ -337,10 +338,65 @@ handle_lifecycle() {
 }
 
 # =========================================================================
+# UserPromptSubmit: evaluate the user's prompt for direct prompt injection and
+# semantic manipulation (authority hijacking, urgency pressure). Detection-only —
+# it NEVER blocks the prompt (always exit 0); on alerts meeting the notify
+# threshold it emits a non-blocking systemMessage. The prompt text is carried in
+# params.message, which the engine copies into the `message` field the
+# user_input rules match on.
+# =========================================================================
+handle_user_prompt_submit() {
+  local prompt event_id request response
+  prompt="$(printf '%s' "$INPUT" | jq -r '.prompt // .user_prompt // empty')"
+  [ -z "$prompt" ] && exit 0
+
+  # If the breaker is open, skip (fail open) so a degraded engine never delays
+  # prompt submission.
+  case "$(as_breaker_state)" in
+    open) exit 0 ;;
+    *) ;;
+  esac
+
+  event_id="$(as_uuid)"
+  request="$(jq -n \
+    --arg event_id "$event_id" \
+    --arg timestamp "$(as_now_iso)" \
+    --arg source "$AS_SOURCE" \
+    --arg message "$prompt" \
+    --argjson agent_id "$(as__json_or_null "$AGENT_ID")" \
+    --argjson session_id "$(as__json_or_null "$SESSION_ID")" \
+    --argjson working_dir "$(as__json_or_null "$WORKING_DIR")" \
+    '{
+      event_id: $event_id,
+      timestamp: $timestamp,
+      event_type: "user_input",
+      tool_name: "user_prompt",
+      source: $source,
+      params: {message: $message},
+      agent_id: $agent_id,
+      session_id: $session_id,
+      working_dir: $working_dir,
+      data: {}
+    }')"
+
+  response="$(as_post_sync "$(as_api_root)/evaluate" "$request")"
+  if [ $? -ne 0 ] || [ -z "$response" ]; then
+    as_record_failure
+    exit 0  # fail open: never disrupt prompt submission
+  fi
+  as_record_success
+
+  # Detection-only: surface a non-blocking notification, never block the prompt.
+  as_emit_notification "$response" "user prompt" "flagged"
+  exit 0
+}
+
+# =========================================================================
 # Dispatch
 # =========================================================================
 case "$EVENT" in
   PreToolUse)          handle_pre_tool_use ;;
+  UserPromptSubmit)    handle_user_prompt_submit ;;
   PostToolUse)         handle_post_tool_use "false" ;;
   PostToolUseFailure)  handle_post_tool_use "true" ;;
   SessionStart)        handle_lifecycle "session_start" ;;

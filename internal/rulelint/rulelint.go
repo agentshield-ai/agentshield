@@ -49,6 +49,7 @@ var EmittedEventTypes = map[string]string{
 	"session_start":     "plugins",
 	"tool_result":       "plugins (codex/gemini/claude/openclaw)",
 	"tool_response":     "server: handleAuditEvent canonicalizes tool_result->tool_response for detection-only scanning of tool output",
+	"user_input":        "plugins: Claude hook UserPromptSubmit posts the prompt as event_type user_input with params.message",
 	"content_retrieval": "replay",
 	"browser_action":    "replay",
 	"message_send":      "replay",
@@ -64,7 +65,6 @@ var EmittedEventTypes = map[string]string{
 //
 // The value is the rule/threat area affected, for traceability.
 var KnownUnemittedEventTypes = map[string]string{
-	"user_input":              "prompt_injection_direct, authority_hijacking, urgency_manipulation",
 	"document_retrieval":      "context_poisoning (real emitted type is content_retrieval)",
 	"tool_sequence":           "context_poisoning, lateral_movement, openclaw_prompt_injection (needs temporal-correlation producer)",
 	"tool_description":        "mcp_tool_poisoning, mcp_rug_pull",
