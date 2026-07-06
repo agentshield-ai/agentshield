@@ -29,7 +29,7 @@ detection:
       - 'nslookup -type=TXT'
   selection_long_subdomain:
     event_type: tool_call
-    command|re: 'dig\s+[a-zA-Z0-9]{30,}\.'
+    command|re: '(?i)dig\s+[a-zA-Z0-9]{30,}\.'
   selection_xxd_nc:
     event_type: tool_call
     command|contains:
