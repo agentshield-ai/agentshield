@@ -21,12 +21,14 @@ logsource:
   product: ai_agent
   category: agent_events
 detection:
+  # Match dig/nslookup TXT queries regardless of argument order: `dig TXT name`,
+  # `dig name TXT`, and `dig +short name TXT` are all common forms. The previous
+  # `contains: 'dig TXT'` only caught the type-first ordering.
   selection_dig_txt:
     event_type: tool_call
-    command|contains:
-      - 'dig TXT'
-      - 'dig +short TXT'
-      - 'nslookup -type=TXT'
+    command|re:
+      - '(?i)\bdig\b.*\btxt\b'
+      - '(?i)\bnslookup\b.*(-type=|-q=|-querytype=)txt\b'
   selection_long_subdomain:
     event_type: tool_call
     command|re: '(?i)dig\s+[a-zA-Z0-9]{30,}\.'

