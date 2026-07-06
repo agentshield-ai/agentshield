@@ -124,8 +124,9 @@ var KnownUnpopulatedSessionFields = map[string]string{
 // documenting the fix. A NEW malformed tag (bad format) still hard-fails. Extend
 // as more are confirmed; a full-catalog check could replace this list later.
 var ConfirmedInvalidMitreIDs = map[string]string{
-	"t1684.001": "authority_hijacking/urgency_manipulation — not a valid Enterprise technique; impersonation is t1656",
-	"t1685":     "context_poisoning/openclaw_prompt_injection — not a valid Enterprise technique",
+	// Empty: the previously-tracked invalid ids (t1684.001, t1685) were fixed —
+	// t1684.001 -> t1656 (Impersonation); t1685 removed (no valid mapping, t1566
+	// already covers the vector). New confirmed-invalid ids may be added here.
 }
 
 var mitreTechniqueRE = regexp.MustCompile(`^t\d{4}(\.\d{3})?$`)

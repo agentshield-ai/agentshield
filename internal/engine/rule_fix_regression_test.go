@@ -186,6 +186,17 @@ func TestBypassFixes(t *testing.T) {
 	if fires("Credential File Access Attempt", "cat environment.md") {
 		t.Errorf("credential-access rule must not fire on benign environment.md")
 	}
+
+	// IMDS reached via alternate IP encodings (SSRF filter bypass).
+	for _, c := range []string{
+		"curl http://2852039166/latest/meta-data/iam/",      // decimal
+		"curl http://0xa9fea9fe/latest/meta-data/",          // hex
+		"wget http://[fd00:ec2::254]/latest/meta-data/iam/", // IPv6 IMDS
+	} {
+		if !fires("Cloud Metadata Endpoint Access", c) {
+			t.Errorf("cloud-metadata rule should fire on encoded IMDS %q", c)
+		}
+	}
 }
 
 // TestCanonicalDestinationAllowlistRegex validates the corrected
