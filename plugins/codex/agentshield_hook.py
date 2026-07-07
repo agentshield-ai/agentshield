@@ -5,6 +5,8 @@ Codex invokes this script once per lifecycle event, passing a JSON object on
 stdin and reading a JSON decision (and/or an exit code) on stdout.  A single
 script handles every event by dispatching on ``hook_event_name``:
 
+- ``UserPromptSubmit`` -- evaluate the submitted prompt (user_input); detection
+  only, never blocks the prompt.
 - ``PreToolUse``      -- synchronous, blocking security evaluation. Emits a
   ``permissionDecision`` of ``allow`` or ``deny`` (deny == block).
 - ``PermissionRequest`` -- synchronous evaluation when Codex asks for approval.
@@ -70,6 +72,7 @@ if __package__ in (None, ""):
         build_audit_report,
         build_evaluation_request,
         build_lifecycle_event,
+        build_user_input_request,
     )
     from codex.normalise import normalise_tool_call
 else:  # pragma: no cover - exercised only under package import
@@ -81,6 +84,7 @@ else:  # pragma: no cover - exercised only under package import
         build_audit_report,
         build_evaluation_request,
         build_lifecycle_event,
+        build_user_input_request,
     )
     from .normalise import normalise_tool_call
 
@@ -511,6 +515,51 @@ def handle_session_end(
     client.send_lifecycle(build_lifecycle_event("session_end", session_id=session_id))
 
 
+def handle_user_prompt_submit(
+    event: Dict[str, Any],
+    config: AgentShieldConfig,
+    client: AgentShieldClient,
+    breaker: CircuitBreaker,
+) -> None:
+    """Handle a ``UserPromptSubmit`` event by evaluating the submitted prompt.
+
+    Detection-only: this NEVER blocks the prompt (returns nothing / implicit
+    allow). It posts the prompt as a ``user_input`` event so the direct
+    prompt-injection and semantic-manipulation rules can fire, and logs a
+    summary when alerts meet the notify threshold. Fails open on an empty
+    prompt, an open breaker, or an engine error.
+
+    Args:
+        event: The parsed stdin JSON.
+        config: The connector configuration.
+        client: The engine HTTP client.
+        breaker: The circuit breaker.
+    """
+    prompt = event.get("prompt") or event.get("user_prompt") or ""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return
+    if breaker.is_open():
+        return
+
+    session_id = event.get("session_id")
+    session_id = session_id if isinstance(session_id, str) else None
+    cwd = event.get("cwd")
+    cwd = cwd if isinstance(cwd, str) else None
+
+    request = build_user_input_request(prompt, session_id=session_id, working_dir=cwd)
+    try:
+        response = client.evaluate(request)
+        breaker.record_success()
+    except Exception as exc:  # noqa: BLE001 - any failure feeds the breaker
+        breaker.record_failure()
+        logger.warning("AgentShield prompt evaluation failed: %s", exc)
+        return
+
+    summary = _alert_summary(response, config.notify)
+    if summary:
+        logger.warning(summary)
+
+
 def _approval_mode_enabled() -> bool:
     """Return ``True`` if the operator opted into surfacing approval prompts.
 
@@ -553,6 +602,9 @@ def dispatch(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     if name == "PreToolUse":
         return handle_pre_tool_use(event, config, client, breaker, tracker)
+    if name == "UserPromptSubmit":
+        handle_user_prompt_submit(event, config, client, breaker)
+        return None
     if name == "PermissionRequest":
         return handle_permission_request(event, config, client, breaker)
     if name == "PostToolUse":

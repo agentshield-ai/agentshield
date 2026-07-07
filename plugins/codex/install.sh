@@ -42,6 +42,14 @@ command = '${PYTHON_BIN} "${HOOK_PATH}"'
 timeout = 5
 statusMessage = "AgentShield: evaluating tool call"
 
+[[hooks.UserPromptSubmit]]
+matcher = ".*"
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = '${PYTHON_BIN} "${HOOK_PATH}"'
+timeout = 5
+statusMessage = "AgentShield: evaluating prompt"
+
 [[hooks.PermissionRequest]]
 matcher = ".*"
 [[hooks.PermissionRequest.hooks]]
