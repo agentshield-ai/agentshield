@@ -175,6 +175,16 @@ func TestBypassFixes(t *testing.T) {
 			t.Errorf("dig TXT rule should fire on %q", c)
 		}
 	}
+	// A benign A-record query redirected to a .txt file must NOT match — "txt"
+	// in the output filename is not a TXT query type.
+	for _, c := range []string{
+		"dig example.com A > results.txt",
+		"dig @8.8.8.8 example.com A >> notes.txt",
+	} {
+		if fires("Potential DNS Tunneling or Encoded Data Transfer", c) {
+			t.Errorf("dig TXT rule must NOT fire on benign A-record to .txt file: %q", c)
+		}
+	}
 
 	// .env read with and without a leading path.
 	for _, c := range []string{"cat .env", "cat /app/.env", "head .env.local"} {

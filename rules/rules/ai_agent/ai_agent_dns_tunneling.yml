@@ -23,11 +23,13 @@ logsource:
 detection:
   # Match dig/nslookup TXT queries regardless of argument order: `dig TXT name`,
   # `dig name TXT`, and `dig +short name TXT` are all common forms. The previous
-  # `contains: 'dig TXT'` only caught the type-first ordering.
+  # `contains: 'dig TXT'` only caught the type-first ordering. The `[\s=]` before
+  # `txt` requires TXT to be a query-type argument, so a benign A-record query
+  # redirected to a `.txt` file (`dig example.com A > out.txt`) does not match.
   selection_dig_txt:
     event_type: tool_call
     command|re:
-      - '(?i)\bdig\b.*\btxt\b'
+      - '(?i)\bdig\b.*[\s=]txt\b'
       - '(?i)\bnslookup\b.*(-type=|-q=|-querytype=)txt\b'
   selection_long_subdomain:
     event_type: tool_call
