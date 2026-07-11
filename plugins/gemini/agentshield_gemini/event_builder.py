@@ -86,6 +86,38 @@ def build_evaluation_request(
     return envelope
 
 
+def build_user_input_request(
+    prompt: str,
+    *,
+    session_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    working_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a ``user_input`` EvaluationRequest for a submitted prompt.
+
+    The prompt text is carried in ``params.message``; the engine copies params
+    into the field map, populating the ``message`` field the prompt-injection and
+    semantic-manipulation rules match on.
+
+    Args:
+        prompt: The user's submitted prompt text.
+        session_id: The Gemini session id.
+        agent_id: Optional agent identifier.
+        working_dir: The Gemini ``cwd`` field.
+
+    Returns:
+        The evaluation request envelope.
+    """
+    envelope = _base_envelope("user_input", session_id=session_id, agent_id=agent_id)
+    envelope.update(
+        tool_name="user_prompt",
+        params={"message": prompt},
+        working_dir=working_dir,
+        data={},
+    )
+    return envelope
+
+
 def build_audit_report(
     tool_name: str,
     args: Dict[str, Any],

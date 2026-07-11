@@ -1,4 +1,4 @@
-.PHONY: build test clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay
+.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay
 
 # Go binary path
 GO ?= go
@@ -13,6 +13,11 @@ build:
 # Run tests
 test:
 	$(GO) test -v ./...
+
+# Lint detection rules against pipeline ground truth (emitted event types,
+# injected session fields, ATT&CK tags). Fast; no build needed.
+lint-rules:
+	$(GO) test ./internal/rulelint/...
 
 # Clean build artifacts
 clean:

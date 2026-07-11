@@ -5,6 +5,8 @@ stdin and acting on the hook's exit code and stdout JSON.  A single
 executable handles every event; it dispatches on the ``hook_event_name``
 field:
 
+* ``BeforeAgent`` -- evaluate the submitted prompt (user_input); detection
+  only, never blocks the prompt.
 * ``BeforeTool``  -- synchronous, blocking security evaluation. Emits
   ``{"decision": "deny", "reason": ...}`` and exits 0 to block a tool call
   (the engine's ``block`` and -- fail-closed -- ``require_approval`` verdicts).
@@ -39,6 +41,7 @@ from .event_builder import (
     build_audit_report,
     build_evaluation_request,
     build_lifecycle_event,
+    build_user_input_request,
 )
 from .normalise import normalise_tool_call
 
@@ -457,6 +460,55 @@ def _decision(block: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # Entry-point
 # ---------------------------------------------------------------------------
 
+def handle_before_agent(
+    payload: Dict[str, Any],
+    config: AgentShieldConfig,
+    client: _Client,
+) -> Dict[str, Any]:
+    """Evaluate a submitted prompt (``BeforeAgent``) for injection / manipulation.
+
+    Detection-only: it NEVER blocks the prompt (always returns ``{}``). It posts
+    the prompt as a ``user_input`` event so the direct prompt-injection and
+    semantic-manipulation rules can fire, and logs a summary when alerts meet the
+    notify threshold. Fails open on an empty prompt, an open breaker, or an
+    engine error.
+
+    Args:
+        payload: The parsed ``BeforeAgent`` payload.
+        config: The connector configuration.
+        client: The AgentShield HTTP client.
+
+    Returns:
+        Always ``{}`` (allow / no-op) — a prompt is never blocked.
+    """
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return {}
+
+    breaker = _breaker(config)
+    if breaker.is_open():
+        return {}
+
+    session_id = payload.get("session_id")
+    working_dir = payload.get("cwd")
+    request = build_user_input_request(
+        prompt, session_id=session_id, working_dir=working_dir
+    )
+
+    try:
+        response = client.evaluate(request)
+        breaker.record_success()
+    except Exception as exc:  # noqa: BLE001 - any failure feeds the breaker.
+        breaker.record_failure()
+        logger.warning("AgentShield prompt evaluation failed: %s", exc)
+        return {}
+
+    msg = _format_alert_message(response, "user prompt", "flagged in", config.notify)
+    if msg:
+        logger.warning(msg)
+    return {}
+
+
 def dispatch(
     payload: Dict[str, Any],
     config: Optional[AgentShieldConfig] = None,
@@ -477,6 +529,8 @@ def dispatch(
     event = payload.get("hook_event_name", "")
     client = AgentShieldClient(config)
 
+    if event == "BeforeAgent":
+        return handle_before_agent(payload, config, client)
     if event == "BeforeTool":
         return handle_before_tool(payload, config, client)
     if event == "AfterTool":
