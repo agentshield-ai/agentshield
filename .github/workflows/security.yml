@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run gosec
-        uses: securego/gosec@v2.21.4
+        uses: securego/gosec@v2.27.1
         with:
           args: '-no-fail -fmt sarif -out gosec.sarif ./...'
 
