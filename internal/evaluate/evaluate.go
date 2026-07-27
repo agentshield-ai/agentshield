@@ -101,6 +101,15 @@ func (e *Evaluator) Evaluate(req *models.EvaluationRequest) (*EvaluationResponse
 	return e.EvaluateWithContext(context.Background(), req)
 }
 
+// MatchRules runs a detection-only pass over a raw field map: it evaluates the
+// Sigma rules and returns the matched results, with no session injection,
+// caching, triage, verdict/mode logic, or metrics. It is used to scan post-hoc
+// events (e.g. tool results posted to /audit) for indirect prompt injection,
+// where the tool has already run so no blocking verdict can be produced.
+func (e *Evaluator) MatchRules(fields map[string]string) []engine.RuleResult {
+	return e.engine.Evaluate(fields)
+}
+
 // EvaluateWithContext processes an evaluation request and propagates caller
 // cancellation/deadlines to triage providers.
 func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.EvaluationRequest) (response *EvaluationResponse, err error) {

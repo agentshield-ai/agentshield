@@ -39,6 +39,9 @@ HOOK_CONFIG=$(cat <<EOF
     "PreToolUse": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "${HOOK_PATH}", "timeout": 10 } ] }
     ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "${HOOK_PATH}", "timeout": 10 } ] }
+    ],
     "PostToolUse": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "${HOOK_PATH}" } ] }
     ],

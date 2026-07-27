@@ -44,6 +44,10 @@ Add the following to ${SETTINGS_FILE} (merge with any existing "hooks"):
 
 {
   "hooks": {
+    "BeforeAgent": [
+      { "matcher": "", "hooks": [ { "type": "command",
+          "command": "PYTHONPATH=${INSTALL_DIR} ${HOOK_CMD}", "name": "agentshield" } ] }
+    ],
     "BeforeTool": [
       { "matcher": ".*", "hooks": [ { "type": "command",
           "command": "PYTHONPATH=${INSTALL_DIR} ${HOOK_CMD}", "name": "agentshield" } ] }
