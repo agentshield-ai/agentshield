@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"time"
 
 	retryablehttp "github.com/hashicorp/go-retryablehttp"
@@ -33,10 +34,26 @@ type HFFetcher struct {
 	client   *http.Client
 }
 
-// NewHFFetcher creates a fetcher for the given HF dataset.
+// NewHFFetcher creates a fetcher for the given HF dataset, using the dataset's
+// own Dataset Viewer config and split. The viewer's "default"/"train" defaults
+// do not exist for every corpus.
 func NewHFFetcher(dataset string, pageSize int) *HFFetcher {
+	view := ViewForDataset(dataset)
+	return NewHFFetcherWithView(dataset, pageSize, view.Config, view.Split)
+}
+
+// NewHFFetcherWithView creates a fetcher with an explicit config and split.
+// Empty config or split falls back to the dataset's registered view.
+func NewHFFetcherWithView(dataset string, pageSize int, config, split string) *HFFetcher {
 	if pageSize <= 0 || pageSize > maxPageSize {
 		pageSize = defaultPageSize
+	}
+	view := ViewForDataset(dataset)
+	if config == "" {
+		config = view.Config
+	}
+	if split == "" {
+		split = view.Split
 	}
 
 	rc := retryablehttp.NewClient()
@@ -47,17 +64,21 @@ func NewHFFetcher(dataset string, pageSize int) *HFFetcher {
 
 	return &HFFetcher{
 		dataset:  dataset,
-		config:   "default",
-		split:    "train",
+		config:   config,
+		split:    split,
 		pageSize: pageSize,
 		client:   rc.StandardClient(),
 	}
 }
 
+// View returns the config and split this fetcher will request.
+func (f *HFFetcher) View() (config, split string) { return f.config, f.split }
+
 // FetchPage retrieves a page of rows starting at offset.
 func (f *HFFetcher) FetchPage(offset int) ([]TraceRow, int, error) {
 	url := fmt.Sprintf("%s/rows?dataset=%s&config=%s&split=%s&offset=%d&length=%d",
-		hfBaseURL, f.dataset, f.config, f.split, offset, f.pageSize)
+		hfBaseURL, neturl.QueryEscape(f.dataset), neturl.QueryEscape(f.config),
+		neturl.QueryEscape(f.split), offset, f.pageSize)
 
 	slog.Debug("Fetching HF page", "url", url, "offset", offset)
 

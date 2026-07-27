@@ -1,4 +1,4 @@
-.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay
+.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score
 
 # Go binary path
 GO ?= go
@@ -60,6 +60,17 @@ replay-build:
 # Run replay (usage: make replay DATASET=nlile/misc-merged-claude-code-traces-v1)
 replay: replay-build
 	./bin/agentshield-replay run --dataset $(DATASET) --rules-dir rules/rules
+
+# Score the rule corpus against the labelled ATBench trajectories.
+#
+# The full split is deliberate: ATBench rows are ordered by label, so a partial
+# run returns a single-class prefix and reports a meaningless precision.
+replay-score: replay-build
+	./bin/agentshield-replay run \
+	  --dataset AI45Research/ATBench \
+	  --rules-dir rules/rules \
+	  --output replay-score-atbench.json
+	@echo "Report: replay-score-atbench.json"
 
 # Build Docker engine image
 docker-build:

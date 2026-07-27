@@ -57,13 +57,35 @@ func Run(cfg RunConfig) (*ReportData, error) {
 		loadedRules = eng.GetLoadedRules()
 	}
 
+	// Clamp the page size to what was actually asked for, so --max-traces 10
+	// fetches ten rows rather than a hundred.
+	pageSize := cfg.PageSize
+	if pageSize <= 0 || pageSize > maxPageSize {
+		pageSize = defaultPageSize
+	}
+	if cfg.MaxTraces > 0 && cfg.MaxTraces < pageSize {
+		pageSize = cfg.MaxTraces
+	}
+
 	// Create fetcher and aggregator
-	fetcher := NewHFFetcher(cfg.Dataset, cfg.PageSize)
+	fetcher := NewHFFetcherWithView(cfg.Dataset, pageSize, cfg.HFConfig, cfg.HFSplit)
+	hfConfig, hfSplit := fetcher.View()
+	slog.Info("Dataset view", "config", hfConfig, "split", hfSplit, "page_size", pageSize)
 	aggregator := NewReportAggregator(cfg.Dataset, cfg.Mode, loadedRules)
+
+	labelled, _ := adapter.(LabelledAdapter)
+
+	dumper, err := newFieldDumper(cfg.DumpFieldsPath, cfg.DumpFieldsLimit)
+	if err != nil {
+		return nil, fmt.Errorf("opening field dump: %w", err)
+	}
+	defer dumper.Close()
 
 	// Stream pages and process
 	offset := 0
 	totalRows := 0
+	processed := 0
+	limitReached := false
 	for {
 		rows, numTotal, err := fetcher.FetchPage(offset)
 		if err != nil {
@@ -75,15 +97,33 @@ func Run(cfg RunConfig) (*ReportData, error) {
 		}
 
 		for _, row := range rows {
+			// Enforce the trace limit per row, not per page, so the scoring
+			// denominators match what was requested.
+			if cfg.MaxTraces > 0 && processed >= cfg.MaxTraces {
+				limitReached = true
+				break
+			}
+			processed++
 			aggregator.RecordTrace()
 
-			events, err := adapter.Extract(row.Row)
+			var (
+				label  TraceLabel
+				events []ExtractedEvent
+			)
+			if labelled != nil {
+				label, events, err = labelled.ExtractLabelled(row.Row)
+			} else {
+				events, err = adapter.Extract(row.Row)
+			}
 			if err != nil {
 				slog.Debug("Skipping unparseable row", "index", row.RowIdx, "error", err)
 				aggregator.RecordSkip()
 				continue
 			}
 			if len(events) == 0 {
+				// A labelled trace with no events is still a trace that was
+				// asked about, and counts as undetected.
+				aggregator.RecordLabelledTrace(row.RowIdx, label)
 				aggregator.RecordSkip()
 				continue
 			}
@@ -112,24 +152,38 @@ func Run(cfg RunConfig) (*ReportData, error) {
 				}
 				duration := time.Since(start)
 
+				// Re-evaluate the production-shaped request. Whether a detection
+				// survives this is what separates real-world recall from recall
+				// that depends on fields no producer sends.
+				var prodAlerts []engine.RuleResult
+				var prodReq *models.EvaluationRequest
+				if eng != nil {
+					if prodReq = BuildProductionRequest(event); prodReq != nil {
+						prodAlerts = matchedOnly(eng.Evaluate(prodReq.Fields))
+					}
+				}
+
 				result := ReplayResult{
 					TraceIndex:     row.RowIdx,
 					EventIndex:     eventIdx,
 					SessionID:      event.SessionID,
+					Kind:           kindOf(event),
 					ToolName:       event.ToolName,
 					Command:        req.Fields["command"],
 					Action:         action,
 					Alerts:         alerts,
+					ProdAlerts:     prodAlerts,
 					EvalDurationNs: duration.Nanoseconds(),
+					Label:          label,
 				}
 				aggregator.Record(result)
+				dumper.Write(result, req, prodReq)
 			}
 		}
 
 		offset += len(rows)
-		processed := offset
-		if cfg.MaxTraces > 0 && processed >= cfg.MaxTraces {
-			slog.Info("Reached max traces limit", "limit", cfg.MaxTraces)
+		if limitReached || (cfg.MaxTraces > 0 && processed >= cfg.MaxTraces) {
+			slog.Info("Reached max traces limit", "limit", cfg.MaxTraces, "traces", processed)
 			break
 		}
 		if offset >= numTotal || len(rows) == 0 {
@@ -154,7 +208,59 @@ func Run(cfg RunConfig) (*ReportData, error) {
 		"rules_matched", report.Summary.UniqueRulesMatched,
 		"coverage", fmt.Sprintf("%.1f%%", report.RuleCoverage.CoveragePercent))
 
+	if s := report.Scoring; s != nil {
+		slog.Info("Scoring (per trace)",
+			"malicious", s.MaliciousTraces,
+			"benign", s.BenignTraces,
+			"recall", fmt.Sprintf("%.3f", s.Metrics.Recall),
+			"precision", fmt.Sprintf("%.3f", s.Metrics.Precision),
+			"f1", fmt.Sprintf("%.3f", s.Metrics.F1),
+			"recall_production_reproducible", fmt.Sprintf("%.3f", s.Production.Metrics.Recall))
+		for _, w := range s.SampleWarnings {
+			slog.Warn("Scoring sample warning", "detail", w)
+		}
+	}
+
 	return report, nil
+}
+
+// matchedOnly filters engine results down to actual matches, mirroring the
+// filter the server applies to its own detection-only audit scan.
+func matchedOnly(results []engine.RuleResult) []engine.RuleResult {
+	var out []engine.RuleResult
+	for _, r := range results {
+		if r.Matched {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// ThresholdBreach describes a --fail-under-* gate that was not met.
+type ThresholdBreach struct {
+	Metric    string
+	Threshold float64
+	Actual    float64
+}
+
+// CheckThresholds reports any recall or precision gate the report failed. It
+// returns nil for an unlabelled corpus, where the gates do not apply.
+func CheckThresholds(report *ReportData, cfg RunConfig) []ThresholdBreach {
+	if report == nil || report.Scoring == nil {
+		return nil
+	}
+	var breaches []ThresholdBreach
+	if cfg.FailUnderRecall > 0 && report.Scoring.Metrics.Recall < cfg.FailUnderRecall {
+		breaches = append(breaches, ThresholdBreach{
+			Metric: "recall", Threshold: cfg.FailUnderRecall, Actual: report.Scoring.Metrics.Recall,
+		})
+	}
+	if cfg.FailUnderPrecision > 0 && report.Scoring.Metrics.Precision < cfg.FailUnderPrecision {
+		breaches = append(breaches, ThresholdBreach{
+			Metric: "precision", Threshold: cfg.FailUnderPrecision, Actual: report.Scoring.Metrics.Precision,
+		})
+	}
+	return breaches
 }
 
 // evaluateHTTP sends an evaluation request to the engine HTTP API.
