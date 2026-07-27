@@ -2,3 +2,9 @@ node_modules/
 coverage/
 .vitest/
 dist/
+
+# This plugin is a published library with `openclaw` as a peerDependency.
+# npm resolves and pins the peer (and its transitive CVEs) into any committed
+# lockfile, which SCA scanners then flag against this repo. Libraries don't
+# commit lockfiles — the host app owns dependency resolution. See .npmrc.
+package-lock.json
