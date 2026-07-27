@@ -134,10 +134,20 @@ type ScoringReport struct {
 	// traces only and reports a precision of 1.0 that means nothing.
 	SampleWarnings []string `json:"sample_warnings,omitempty" yaml:"sample_warnings,omitempty"`
 
+	// DroppedEvents counts events that could not be evaluated at all. Every one
+	// is a chance for a malicious trace to be scored as undetected, so a
+	// non-zero value here makes recall a lower bound rather than a measurement.
+	DroppedEvents int `json:"dropped_events,omitempty" yaml:"dropped_events,omitempty"`
+
 	// Production restricts every detection to rules that still fire when the
 	// event carries only fields a shipped producer can supply. See
 	// FieldProvenance for what that excludes and why.
-	Production ProductionScoping `json:"production_reproducible" yaml:"production_reproducible"`
+	//
+	// It is a pointer, and omitted entirely, when production scoring was not
+	// performed. A zeroed section would read as a full set of false negatives
+	// with recall 0.000, which is byte-identical to a genuine finding; an absent
+	// section is honest, a zeroed one is not.
+	Production *ProductionScoping `json:"production_reproducible,omitempty" yaml:"production_reproducible,omitempty"`
 
 	// EventDiagnostics are descriptive per-event rates. They are NOT precision
 	// and make no ground-truth claim about individual events.

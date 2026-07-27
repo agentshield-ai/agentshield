@@ -13,11 +13,14 @@ import (
 )
 
 const (
-	hfBaseURL       = "https://datasets-server.huggingface.co"
 	defaultPageSize = 100
 	maxPageSize     = 100
 	pageDelay       = 500 * time.Millisecond
 )
+
+// hfBaseURL is the HF Dataset Viewer host. It is a var rather than a const so
+// tests can point the whole pipeline at a local server; nothing else reassigns it.
+var hfBaseURL = "https://datasets-server.huggingface.co"
 
 // Fetcher retrieves trace rows from HuggingFace datasets.
 type Fetcher interface {

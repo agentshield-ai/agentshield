@@ -64,6 +64,18 @@ func (a *ReportAggregator) RecordLabelledTrace(traceIndex int, label TraceLabel)
 	a.scoring.RecordEmptyTrace(traceIndex, label)
 }
 
+// SetProductionScored records whether production-shaped re-evaluation ran for
+// every eligible event. When it did not, the production section is omitted from
+// the report rather than serialised as a set of zeroes.
+func (a *ReportAggregator) SetProductionScored(ok bool) {
+	a.scoring.SetProductionScored(ok)
+}
+
+// SetDroppedEvents records how many events could not be evaluated at all.
+func (a *ReportAggregator) SetDroppedEvents(n int) {
+	a.scoring.SetDroppedEvents(n)
+}
+
 // RecordSkip increments the skipped event counter.
 func (a *ReportAggregator) RecordSkip() {
 	a.eventsSkipped++

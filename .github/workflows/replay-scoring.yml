@@ -59,17 +59,22 @@ jobs:
           {
             echo "## ATBench scoring"
             echo
+            # The production section is absent when production scoring did not
+            # run. Render that as "not scored" rather than letting jq print
+            # null, which would read as a recall of zero.
             jq -r '
               .scoring as $s |
+              ($s.production_reproducible // null) as $p |
+              def cell(f): if $p == null then "not scored" else (f | tostring) end;
               "Traces: \($s.traces_labelled) (\($s.malicious_traces) unsafe, \($s.benign_traces) safe)",
               "",
               "| Metric | Overall | Production-reproducible |",
               "| --- | --- | --- |",
-              "| Recall | \($s.metrics.recall) | \($s.production_reproducible.metrics.recall) |",
-              "| Precision | \($s.metrics.precision) | \($s.production_reproducible.metrics.precision) |",
-              "| F1 | \($s.metrics.f1) | \($s.production_reproducible.metrics.f1) |",
+              "| Recall | \($s.metrics.recall) | \(cell($p.metrics.recall)) |",
+              "| Precision | \($s.metrics.precision) | \(cell($p.metrics.precision)) |",
+              "| F1 | \($s.metrics.f1) | \(cell($p.metrics.f1)) |",
               "",
-              "Detections depending on replay-only fields: \($s.production_reproducible.detections_lost_to_replay_only_fields)"
+              "Detections depending on replay-only fields: \(cell($p.detections_lost_to_replay_only_fields))"
             ' atbench-scoring.json
             echo
             echo "### Detection rate by risk source, worst first"

@@ -392,6 +392,16 @@ func TestFPRegression_ShadowMCPCredentialHarvest(t *testing.T) {
 		{name: "vendor_prefixed_credit_check", command: "rivet_sms_get_credit_check", shouldAlert: false},
 		{name: "fetch_sshd_config_is_not_a_key_fetch", command: "fetch_sshd_config", shouldAlert: false},
 		{name: "get_tokenizer_is_an_nlp_tool", command: "get_tokenizer", shouldAlert: false},
+		// get_env was the last unbounded literal in this rule. All three of
+		// these contain it as a substring and all three are plausible tool
+		// names.
+		{name: "target_environment_contains_get_env", command: "target_environment", shouldAlert: false},
+		{name: "budget_env_contains_get_env", command: "budget_env", shouldAlert: false},
+		{name: "widget_envelope_contains_get_env", command: "widget_envelope", shouldAlert: false},
+		{name: "get_environment_is_not_an_env_dump", command: "get_environment", shouldAlert: false},
+		// list_secrets was also unbounded.
+		{name: "whitelist_secrets_contains_list_secrets", command: "whitelist_secrets", shouldAlert: false},
+		{name: "list_secretstore_contains_list_secrets", command: "list_secretstore", shouldAlert: false},
 
 		// === TRUE POSITIVES (must still fire) ===
 		{name: "get_creds", command: "get_creds", shouldAlert: true},
@@ -404,6 +414,11 @@ func TestFPRegression_ShadowMCPCredentialHarvest(t *testing.T) {
 		// should evade the rule.
 		{name: "prefixed_tool_name", command: "rivet_sms_get_creds", shouldAlert: true},
 		{name: "suffixed_tool_name", command: "dump_secrets_from_vault", shouldAlert: true},
+		{name: "get_env", command: "get_env", shouldAlert: true},
+		{name: "get_envs", command: "get_envs", shouldAlert: true},
+		{name: "prefixed_get_env", command: "rivet_get_env", shouldAlert: true},
+		{name: "list_secrets", command: "list_secrets", shouldAlert: true},
+		{name: "prefixed_list_secrets", command: "aws_list_secrets", shouldAlert: true},
 	}
 
 	for _, tc := range tests {

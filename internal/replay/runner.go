@@ -32,9 +32,13 @@ func Run(cfg RunConfig) (*ReportData, error) {
 	var httpClient *http.Client
 
 	if cfg.HTTPMode {
-		// HTTP mode: send requests to a running engine
+		// HTTP mode: send requests to a running engine. Each event costs two
+		// requests, the full one and the production-shaped one, so the engine
+		// sees twice the traffic a naive reading of --max-traces suggests.
 		httpClient = &http.Client{Timeout: 30 * time.Second}
-		slog.Info("Using HTTP mode", "endpoint", cfg.Endpoint)
+		slog.Info("Using HTTP mode", "endpoint", cfg.Endpoint,
+			"requests_per_event", 2,
+			"note", "each event is evaluated twice: full fields, then production-shaped")
 	} else {
 		// Library mode: load engine directly
 		eng, err = engine.NewEngine(cfg.RulesDir)
@@ -86,6 +90,8 @@ func Run(cfg RunConfig) (*ReportData, error) {
 	totalRows := 0
 	processed := 0
 	limitReached := false
+	prodEvalFailures := 0
+	droppedEvents := 0
 	for {
 		rows, numTotal, err := fetcher.FetchPage(offset)
 		if err != nil {
@@ -139,12 +145,14 @@ func Run(cfg RunConfig) (*ReportData, error) {
 					action, alerts, err = evaluateHTTP(httpClient, cfg.Endpoint, cfg.AuthToken, req)
 					if err != nil {
 						slog.Debug("HTTP evaluation failed", "error", err)
+						droppedEvents++
 						continue
 					}
 				} else {
 					resp, evalErr := evaluator.Evaluate(req)
 					if evalErr != nil {
 						slog.Debug("Evaluation failed", "error", evalErr)
+						droppedEvents++
 						continue
 					}
 					action = string(resp.Action)
@@ -155,10 +163,27 @@ func Run(cfg RunConfig) (*ReportData, error) {
 				// Re-evaluate the production-shaped request. Whether a detection
 				// survives this is what separates real-world recall from recall
 				// that depends on fields no producer sends.
+				//
+				// This must happen in both modes. HTTP mode is precisely how
+				// someone would point the tool at a deployed engine to ask the
+				// production question, and skipping it there would report a full
+				// set of false negatives at recall 0.000, which is
+				// byte-identical to a real finding.
 				var prodAlerts []engine.RuleResult
 				var prodReq *models.EvaluationRequest
-				if eng != nil {
-					if prodReq = BuildProductionRequest(event); prodReq != nil {
+				if prodReq = BuildProductionRequest(event); prodReq != nil {
+					if cfg.HTTPMode {
+						_, pa, perr := evaluateHTTP(httpClient, cfg.Endpoint, cfg.AuthToken, prodReq)
+						if perr != nil {
+							// A partial production score understates detections
+							// in exactly the direction that looks like a
+							// finding, so one failure disqualifies the section.
+							prodEvalFailures++
+							slog.Debug("Production HTTP evaluation failed", "error", perr)
+						} else {
+							prodAlerts = matchedOnly(pa)
+						}
+					} else {
 						prodAlerts = matchedOnly(eng.Evaluate(prodReq.Fields))
 					}
 				}
@@ -199,6 +224,21 @@ func Run(cfg RunConfig) (*ReportData, error) {
 		time.Sleep(PageDelay())
 	}
 
+	// Production scoring is only claimed when every eligible event was actually
+	// re-evaluated. Anything less is omitted rather than reported as zeroes.
+	if prodEvalFailures > 0 {
+		slog.Warn("Production scoring suppressed: some production-shaped evaluations failed",
+			"failures", prodEvalFailures,
+			"detail", "the production_reproducible section is omitted rather than under-reported")
+	}
+	aggregator.SetProductionScored(prodEvalFailures == 0)
+	if droppedEvents > 0 {
+		slog.Warn("Events dropped without evaluation",
+			"dropped", droppedEvents,
+			"detail", "a malicious trace whose events were dropped is scored as undetected, so recall is a lower bound")
+	}
+	aggregator.SetDroppedEvents(droppedEvents)
+
 	report := aggregator.Report()
 
 	slog.Info("Replay complete",
@@ -209,13 +249,19 @@ func Run(cfg RunConfig) (*ReportData, error) {
 		"coverage", fmt.Sprintf("%.1f%%", report.RuleCoverage.CoveragePercent))
 
 	if s := report.Scoring; s != nil {
+		// "not scored" rather than a number, because 0.000 here would read as
+		// the finding this report exists to make.
+		prodRecall := "not scored"
+		if s.Production != nil {
+			prodRecall = fmt.Sprintf("%.3f", s.Production.Metrics.Recall)
+		}
 		slog.Info("Scoring (per trace)",
 			"malicious", s.MaliciousTraces,
 			"benign", s.BenignTraces,
 			"recall", fmt.Sprintf("%.3f", s.Metrics.Recall),
 			"precision", fmt.Sprintf("%.3f", s.Metrics.Precision),
 			"f1", fmt.Sprintf("%.3f", s.Metrics.F1),
-			"recall_production_reproducible", fmt.Sprintf("%.3f", s.Production.Metrics.Recall))
+			"recall_production_reproducible", prodRecall)
 		for _, w := range s.SampleWarnings {
 			slog.Warn("Scoring sample warning", "detail", w)
 		}

@@ -90,6 +90,28 @@ field a rule matched on. `engine.RuleResult.MatchedFields` is a copy of the whol
 input map rather than the subset a rule keyed on, so it cannot answer the
 question; re-evaluation can, and is exact.
 
+The section is a pointer and is **omitted entirely** when the re-evaluation did
+not run for every eligible event. This matters more than it sounds: a zeroed
+production section reads as a full set of false negatives at recall 0.000, which
+is byte-identical to the genuine finding that no rule can fire on production
+fields. An absent section is honest, a zeroed one is not. Anything consuming the
+report must handle its absence rather than assume a number.
+
+### HTTP mode
+
+`--http` evaluates each event twice against the running engine, once with full
+fields and once production-shaped, so the production score is real rather than
+assumed. That doubles the request count per event.
+
+The engine rate-limits to roughly 1.7 requests per second per IP with a burst of
+10, and that limit is not configurable, so `--http` sustains under one event per
+second and drops the rest. Dropped events are counted in `scoring.dropped_events`
+and raise a sample warning, because a malicious trace whose events were dropped
+is scored as undetected, which makes recall a lower bound rather than a
+measurement. For bulk scoring use library mode, which is what `make replay-score`
+and the workflow do. Reserve `--http` for asking a specific deployed engine about
+a small sample.
+
 ### The safe label does not mean no attack
 
 Half the safe-labelled traces carry an attack. Only 250 of the 503 have

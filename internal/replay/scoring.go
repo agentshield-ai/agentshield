@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -24,11 +25,27 @@ type scoreAccumulator struct {
 	traces map[int]*traceScore
 	order  []int
 	seen   bool // any labelled trace observed at all
+	// prodScored records whether production-shaped re-evaluation actually ran
+	// for every eligible event. When it did not, the production section is
+	// omitted rather than reported as a set of zeroes.
+	prodScored bool
+	// dropped counts events that could not be evaluated at all.
+	dropped int
 }
 
 func newScoreAccumulator() *scoreAccumulator {
 	return &scoreAccumulator{traces: map[int]*traceScore{}}
 }
+
+// SetProductionScored records whether production-shaped re-evaluation was
+// performed. It must be called before Report; the default is false, so a caller
+// that forgets gets an omitted section rather than a fabricated one.
+func (s *scoreAccumulator) SetProductionScored(ok bool) { s.prodScored = ok }
+
+// SetDroppedEvents records how many events could not be evaluated. A dropped
+// event inside a malicious trace can turn a detection into a false negative, so
+// the count is surfaced rather than absorbed.
+func (s *scoreAccumulator) SetDroppedEvents(n int) { s.dropped = n }
 
 // Record folds one evaluated event into its trace's tally.
 func (s *scoreAccumulator) Record(result ReplayResult) {
@@ -87,6 +104,7 @@ func (s *scoreAccumulator) Report() *ScoringReport {
 		byRisk       = map[string]*RiskSourceScore{}
 		benignRisk   = map[string]*RiskSourceScore{}
 		lostToReplay int
+		prod         ProductionScoping
 	)
 
 	for _, idx := range s.order {
@@ -114,9 +132,9 @@ func (s *scoreAccumulator) Report() *ScoringReport {
 				}
 			}
 			if prodDetected {
-				rep.Production.Confusion.TruePositives++
+				prod.Confusion.TruePositives++
 			} else {
-				rep.Production.Confusion.FalseNegatives++
+				prod.Confusion.FalseNegatives++
 			}
 			if detected && !prodDetected {
 				lostToReplay++
@@ -145,9 +163,9 @@ func (s *scoreAccumulator) Report() *ScoringReport {
 				rep.Confusion.TrueNegatives++
 			}
 			if prodDetected {
-				rep.Production.Confusion.FalsePositives++
+				prod.Confusion.FalsePositives++
 			} else {
-				rep.Production.Confusion.TrueNegatives++
+				prod.Confusion.TrueNegatives++
 			}
 
 			bucket(benignRisk, t.label.RiskSource, detected)
@@ -158,13 +176,17 @@ func (s *scoreAccumulator) Report() *ScoringReport {
 	diag.AlertRatePer100EventsInBenign = per100(diag.AlertsInBenignTraces, diag.EventsInBenignTraces)
 
 	rep.Metrics = deriveMetrics(rep.Confusion)
-	rep.Production.Metrics = deriveMetrics(rep.Production.Confusion)
-	rep.Production.DetectionsLostToReplayOnlyFields = lostToReplay
-	rep.Production.FieldProvenance = FieldProvenanceReport()
+	if s.prodScored {
+		prod.Metrics = deriveMetrics(prod.Confusion)
+		prod.DetectionsLostToReplayOnlyFields = lostToReplay
+		prod.FieldProvenance = FieldProvenanceReport()
+		rep.Production = &prod
+	}
 	rep.EventDiagnostics = diag
 	rep.BenignAlertSpread = spread
 	rep.ByRiskSource = sortedRiskScores(byRisk)
 	rep.BenignByRiskSource = sortedRiskScores(benignRisk)
+	rep.DroppedEvents = s.dropped
 	rep.SampleWarnings = sampleWarnings(rep)
 
 	return rep
@@ -196,6 +218,12 @@ func sampleWarnings(rep *ScoringReport) []string {
 		out = append(out, "no malicious traces in this sample: recall is undefined.")
 	case float64(rep.MaliciousTraces)/float64(total) < minClassShare:
 		out = append(out, "fewer than 10% of sampled traces are malicious: recall is unreliable.")
+	}
+	if rep.DroppedEvents > 0 {
+		out = append(out, fmt.Sprintf("%d events could not be evaluated and were dropped: "+
+			"a malicious trace whose events were dropped is scored as undetected, so recall "+
+			"is a lower bound rather than a measurement. In HTTP mode the usual cause is the "+
+			"engine's rate limiter, since each event costs two requests.", rep.DroppedEvents))
 	}
 	return out
 }

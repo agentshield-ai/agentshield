@@ -1,6 +1,8 @@
 package replay
 
 import (
+	"bytes"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -107,8 +109,12 @@ func TestScoring_ProductionReproducibleIsAStrictSubset(t *testing.T) {
 	s.Record(event(1, true, "a", hit, nil))
 	// Missed by both.
 	s.Record(event(2, true, "a", nil, nil))
+	s.SetProductionScored(true)
 
 	rep := s.Report()
+	if rep.Production == nil {
+		t.Fatal("production section should be present when production scoring ran")
+	}
 	if rep.Confusion.TruePositives != 2 {
 		t.Errorf("overall TP = %d, want 2", rep.Confusion.TruePositives)
 	}
@@ -246,5 +252,52 @@ func TestScoring_BalancedSampleHasNoWarnings(t *testing.T) {
 	}
 	if got := s.Report().SampleWarnings; len(got) != 0 {
 		t.Errorf("balanced sample should not warn, got %v", got)
+	}
+}
+
+// TestScoring_ProductionSectionOmittedWhenNotScored is the safety net for the
+// worst failure mode this report has. A zeroed production section reads as a
+// full set of false negatives at recall 0.000, which is byte-identical to the
+// genuine finding that no rule can fire on production fields. It must be absent
+// rather than zero whenever the re-evaluation did not actually run.
+func TestScoring_ProductionSectionOmittedWhenNotScored(t *testing.T) {
+	s := newScoreAccumulator()
+	hit := []engine.RuleResult{alert("r1")}
+	s.Record(event(0, true, "a", hit, nil))
+	s.Record(event(1, false, "benign", nil, nil))
+	// SetProductionScored deliberately not called: the default must be safe.
+
+	rep := s.Report()
+	if rep == nil {
+		t.Fatal("expected a scoring section")
+	}
+	if rep.Production != nil {
+		t.Errorf("production section must be omitted when not scored, got %+v", rep.Production)
+	}
+	// The overall score is unaffected.
+	approx(t, "recall", rep.Metrics.Recall, 1.0)
+}
+
+// TestScoring_ProductionSectionAbsentFromJSON checks the omission survives
+// serialisation, since the report is consumed as JSON by CI and by humans.
+func TestScoring_ProductionSectionAbsentFromJSON(t *testing.T) {
+	s := newScoreAccumulator()
+	s.Record(event(0, true, "a", []engine.RuleResult{alert("r1")}, nil))
+
+	raw, err := json.Marshal(&ReportData{Scoring: s.Report()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("production_reproducible")) {
+		t.Errorf("unscored production section leaked into JSON: %s", raw)
+	}
+
+	s.SetProductionScored(true)
+	raw, err = json.Marshal(&ReportData{Scoring: s.Report()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("production_reproducible")) {
+		t.Error("scored production section missing from JSON")
 	}
 }
