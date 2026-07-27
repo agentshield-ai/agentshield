@@ -370,3 +370,93 @@ func TestFPRegression_EnvEnumeration(t *testing.T) {
 		})
 	}
 }
+
+// TestFPRegression_ShadowMCPCredentialHarvest covers false positives found by
+// replaying the labelled AI45Research/ATBench corpus. The rule's keyword regex
+// had no boundary on the noun, so extract_key matched extract_keywords and
+// get_cred matched get_credit_check. Both fired on traces ATBench labels safe,
+// and both were reproducible on the production field path, so they were real
+// false positives rather than artefacts of replay enrichment.
+func TestFPRegression_ShadowMCPCredentialHarvest(t *testing.T) {
+	eval := newTestEvaluator(t)
+
+	tests := []struct {
+		name        string
+		command     string
+		shouldAlert bool
+	}{
+		// === TRUE NEGATIVES (must NOT fire) ===
+		{name: "extract_keywords_is_text_analysis", command: "extract_keywords", shouldAlert: false},
+		{name: "extract_keyword_singular", command: "extract_keyword", shouldAlert: false},
+		{name: "get_credit_check_is_a_credit_lookup", command: "get_credit_check", shouldAlert: false},
+		{name: "vendor_prefixed_credit_check", command: "rivet_sms_get_credit_check", shouldAlert: false},
+		{name: "fetch_sshd_config_is_not_a_key_fetch", command: "fetch_sshd_config", shouldAlert: false},
+		{name: "get_tokenizer_is_an_nlp_tool", command: "get_tokenizer", shouldAlert: false},
+
+		// === TRUE POSITIVES (must still fire) ===
+		{name: "get_creds", command: "get_creds", shouldAlert: true},
+		{name: "get_credentials", command: "get_credentials", shouldAlert: true},
+		{name: "fetch_ssh", command: "fetch_ssh", shouldAlert: true},
+		{name: "dump_secrets", command: "dump_secrets", shouldAlert: true},
+		{name: "extract_keys", command: "extract_keys", shouldAlert: true},
+		{name: "exfil_kubeconfig", command: "exfil_kubeconfig", shouldAlert: true},
+		// A shadow server is free to prefix or suffix the tool name; neither
+		// should evade the rule.
+		{name: "prefixed_tool_name", command: "rivet_sms_get_creds", shouldAlert: true},
+		{name: "suffixed_tool_name", command: "dump_secrets_from_vault", shouldAlert: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &models.EvaluationRequest{
+				EventID: "fp-" + tc.name,
+				Fields: map[string]string{
+					"event_type": "tool_call",
+					"command":    tc.command,
+				},
+			}
+			resp, err := eval.Evaluate(req)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			fired := false
+			for _, a := range resp.Alerts {
+				if a.RuleID == "6931499b-522d-5890-98bf-edd7161c1621" {
+					fired = true
+				}
+			}
+			if fired != tc.shouldAlert {
+				t.Errorf("command %q: rule fired = %v, want %v", tc.command, fired, tc.shouldAlert)
+			}
+		})
+	}
+}
+
+// TestFPRegression_ShadowMCPHarvestLiteralsStillCovered checks the tool names
+// that were moved out of the literal list are still caught by the bounded
+// regex, so tightening the rule did not quietly narrow it.
+func TestFPRegression_ShadowMCPHarvestLiteralsStillCovered(t *testing.T) {
+	eval := newTestEvaluator(t)
+
+	for _, command := range []string{
+		"get_creds", "fetch_ssh", "list_secrets", "get_env", "dump_secrets",
+		"steal_token", "harvest_keys", "fetch_credentials", "get_secrets",
+		"dump_tokens", "extract_keys",
+	} {
+		t.Run(command, func(t *testing.T) {
+			resp, err := eval.Evaluate(&models.EvaluationRequest{
+				EventID: "cov-" + command,
+				Fields:  map[string]string{"event_type": "tool_call", "command": command},
+			})
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			for _, a := range resp.Alerts {
+				if a.RuleID == "6931499b-522d-5890-98bf-edd7161c1621" {
+					return
+				}
+			}
+			t.Errorf("command %q no longer triggers the credential harvest rule", command)
+		})
+	}
+}
