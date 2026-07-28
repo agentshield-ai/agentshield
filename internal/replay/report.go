@@ -27,6 +27,8 @@ type ReportAggregator struct {
 	latencies      []int64         // nanoseconds per evaluation
 
 	fpCandidates []FPCandidate // bounded to maxFPCandidates
+
+	scoring *scoreAccumulator
 }
 
 const maxFPCandidates = 100
@@ -47,12 +49,31 @@ func NewReportAggregator(dataset, mode string, loadedRules []engine.RuleResult) 
 		severityCounts: make(map[string]int),
 		actionCounts:   make(map[string]int),
 		matchedRules:   make(map[string]bool),
+		scoring:        newScoreAccumulator(),
 	}
 }
 
 // RecordTrace increments the trace counter.
 func (a *ReportAggregator) RecordTrace() {
 	a.tracesProcessed++
+}
+
+// RecordLabelledTrace registers a labelled trace that produced no evaluable
+// events, keeping the scoring denominators equal to the traces requested.
+func (a *ReportAggregator) RecordLabelledTrace(traceIndex int, label TraceLabel) {
+	a.scoring.RecordEmptyTrace(traceIndex, label)
+}
+
+// SetProductionScored records whether production-shaped re-evaluation ran for
+// every eligible event. When it did not, the production section is omitted from
+// the report rather than serialised as a set of zeroes.
+func (a *ReportAggregator) SetProductionScored(ok bool) {
+	a.scoring.SetProductionScored(ok)
+}
+
+// SetDroppedEvents records how many events could not be evaluated at all.
+func (a *ReportAggregator) SetDroppedEvents(n int) {
+	a.scoring.SetDroppedEvents(n)
 }
 
 // RecordSkip increments the skipped event counter.
@@ -65,6 +86,7 @@ func (a *ReportAggregator) Record(result ReplayResult) {
 	a.eventsEvaluated++
 	a.actionCounts[result.Action]++
 	a.latencies = append(a.latencies, result.EvalDurationNs)
+	a.scoring.Record(result)
 
 	for _, alert := range result.Alerts {
 		a.totalAlerts++
@@ -158,6 +180,7 @@ func (a *ReportAggregator) Report() *ReportData {
 			UniqueRulesMatched: matchedCount,
 			BlockRate:          blockRate,
 		},
+		Scoring: a.scoring.Report(),
 		RuleCoverage: RuleCoverageReport{
 			TotalRules:      totalRules,
 			MatchedRules:    matchedCount,

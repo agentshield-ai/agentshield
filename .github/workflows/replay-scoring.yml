@@ -1,0 +1,93 @@
+name: Replay scoring
+
+# Deliberately not a PR gate. This workflow depends on the HuggingFace Dataset
+# Viewer API, a third-party service, so a network failure must not be able to
+# block a merge. It tracks detection quality over time instead.
+on:
+  schedule:
+    # 04:00 UTC on the first of each month.
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+    inputs:
+      fail_under_recall:
+        description: "Fail the run if per-trace recall is below this (0 disables)"
+        required: false
+        default: "0"
+      fail_under_precision:
+        description: "Fail the run if per-trace precision is below this (0 disables)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  score:
+    name: Score rules against ATBench
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build replay tool
+        run: make replay-build
+
+      - name: Score against ATBench
+        id: score
+        run: |
+          # The full split is required: ATBench rows are ordered by label, so a
+          # partial run scores a single-class prefix.
+          ./bin/agentshield-replay run \
+            --dataset AI45Research/ATBench \
+            --rules-dir rules/rules \
+            --output atbench-scoring.json \
+            --fail-under-recall "${{ inputs.fail_under_recall || 0 }}" \
+            --fail-under-precision "${{ inputs.fail_under_precision || 0 }}"
+
+      - name: Summarise
+        if: always()
+        run: |
+          if [ ! -f atbench-scoring.json ]; then
+            echo "No report produced." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## ATBench scoring"
+            echo
+            # The production section is absent when production scoring did not
+            # run. Render that as "not scored" rather than letting jq print
+            # null, which would read as a recall of zero.
+            jq -r '
+              .scoring as $s |
+              ($s.production_reproducible // null) as $p |
+              def cell(f): if $p == null then "not scored" else (f | tostring) end;
+              "Traces: \($s.traces_labelled) (\($s.malicious_traces) unsafe, \($s.benign_traces) safe)",
+              "",
+              "| Metric | Overall | Production-reproducible |",
+              "| --- | --- | --- |",
+              "| Recall | \($s.metrics.recall) | \(cell($p.metrics.recall)) |",
+              "| Precision | \($s.metrics.precision) | \(cell($p.metrics.precision)) |",
+              "| F1 | \($s.metrics.f1) | \(cell($p.metrics.f1)) |",
+              "",
+              "Detections depending on replay-only fields: \(cell($p.detections_lost_to_replay_only_fields))"
+            ' atbench-scoring.json
+            echo
+            echo "### Detection rate by risk source, worst first"
+            echo
+            echo "| risk_source | detected | traces |"
+            echo "| --- | --- | --- |"
+            jq -r '.scoring.by_risk_source[] | "| \(.risk_source) | \(.detected) | \(.traces) |"' atbench-scoring.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atbench-scoring
+          path: atbench-scoring.json
+          retention-days: 90

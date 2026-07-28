@@ -38,9 +38,16 @@ func newRunCmd() *cobra.Command {
 evaluates them against AgentShield Sigma rules, and produces a coverage/quality report.
 
 Supported datasets:
-  - nlile/misc-merged-claude-code-traces-v1  (32K Claude Code conversations)
-  - sammshen/wildclaw-opus-traces            (OpenClaw + Claude Opus HTTP traces)
-  - smolagents/synthetic-traces-toolcalling  (Synthetic smolagents traces)`,
+  - AI45Research/ATBench                     (1,000 labelled agent trajectories, ~50/50 safe/unsafe)
+  - nlile/misc-merged-claude-code-traces-v1  (32K Claude Code conversations, unlabelled)
+  - sammshen/wildclaw-opus-traces            (OpenClaw + Claude Opus HTTP traces, unlabelled)
+  - smolagents/synthetic-traces-toolcalling  (Synthetic smolagents traces, unlabelled)
+
+Labelled corpora additionally produce a scoring section with a per-trace
+confusion matrix, precision, recall, F1 and a per-risk_source breakdown, plus
+the same metrics restricted to detections a shipped producer could reproduce.
+
+Exit codes: 0 success, 1 error, 2 a --fail-under-* threshold was breached.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cfg.Dataset == "" {
 				return fmt.Errorf("--dataset is required")
@@ -78,6 +85,20 @@ Supported datasets:
 				fmt.Println(string(output))
 			}
 
+			// Threshold gates are checked after the report is written, so a
+			// breach still leaves the evidence behind. Exit 2 distinguishes a
+			// quality gate from an operational failure.
+			if breaches := replay.CheckThresholds(report, cfg); len(breaches) > 0 {
+				for _, b := range breaches {
+					fmt.Fprintf(os.Stderr, "FAIL: %s %.3f is below threshold %.3f\n",
+						b.Metric, b.Actual, b.Threshold)
+				}
+				// Suppress cobra's usage dump for a threshold breach.
+				cmd.SilenceUsage = true
+				cmd.SilenceErrors = true
+				os.Exit(2)
+			}
+
 			return nil
 		},
 	}
@@ -95,7 +116,13 @@ Supported datasets:
 
 	// Data
 	cmd.Flags().IntVar(&cfg.MaxTraces, "max-traces", 0, "Maximum traces to process (0 = all)")
-	cmd.Flags().IntVar(&cfg.PageSize, "page-size", 100, "HF API page size (max 100)")
+	cmd.Flags().IntVar(&cfg.PageSize, "page-size", 100, "HF API page size (max 100; clamped down to --max-traces)")
+	cmd.Flags().StringVar(&cfg.HFConfig, "hf-config", "", "HF dataset config (default: per-dataset)")
+	cmd.Flags().StringVar(&cfg.HFSplit, "hf-split", "", "HF dataset split (default: per-dataset)")
+
+	// Scoring thresholds (labelled corpora only)
+	cmd.Flags().Float64Var(&cfg.FailUnderRecall, "fail-under-recall", 0, "Exit 2 if per-trace recall is below this (0 = no gate)")
+	cmd.Flags().Float64Var(&cfg.FailUnderPrecision, "fail-under-precision", 0, "Exit 2 if per-trace precision is below this (0 = no gate)")
 
 	// Output
 	cmd.Flags().StringVar(&cfg.OutputFormat, "format", "json", "Output format: json, yaml")
@@ -109,6 +136,8 @@ Supported datasets:
 
 	// Debug
 	cmd.Flags().BoolVar(&cfg.Verbose, "verbose", false, "Verbose output")
+	cmd.Flags().StringVar(&cfg.DumpFieldsPath, "dump-fields", "", "Write the field maps handed to the rule engine as JSONL (malicious traces only)")
+	cmd.Flags().IntVar(&cfg.DumpFieldsLimit, "dump-fields-limit", 200, "Maximum events to write with --dump-fields")
 
 	return cmd
 }

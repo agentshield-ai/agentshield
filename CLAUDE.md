@@ -48,6 +48,7 @@ Requires engine running on `localhost:8433`. Suites live in `bench/suites/`, tes
 ```bash
 make replay-build                              # Build bin/agentshield-replay
 make replay DATASET=nlile/misc-merged-claude-code-traces-v1  # Build + run
+make replay-score                              # Score rules against labelled ATBench
 
 # Full usage:
 ./bin/agentshield-replay run \
@@ -73,6 +74,13 @@ make replay DATASET=nlile/misc-merged-claude-code-traces-v1  # Build + run
 ```
 
 Downloads public agent trace datasets from HuggingFace, extracts tool calls, replays through the Sigma rule engine, and reports rule coverage/quality. No auth needed for public datasets.
+
+**Labelled scoring.** `AI45Research/ATBench` carries ground-truth labels, which unlocks a scoring section: a per-trace confusion matrix, precision/recall/F1/accuracy, and a per-`risk_source` breakdown. Two things about it are easy to get wrong, both documented in [docs/replay-scoring.md](docs/replay-scoring.md):
+
+- Recall is reported **twice** — overall, and restricted to detections a shipped producer could reproduce. Replay can populate `description`, `arguments` and `response_text`, which no plugin sends, so the headline recall overstates what the deployed system would catch. Never quote the overall figure alone.
+- ATBench rows are **ordered by label**, so `--max-traces` below ~450 scores a single-class prefix and reports a meaningless precision of 1.0. Run the full split. The report emits `sample_warnings` when the sample is skewed.
+
+Use `--dump-fields` to tell a genuine rule-corpus blind spot from a field-mapping artefact; the two are indistinguishable in the summary metrics.
 
 ### Docker
 

@@ -2,10 +2,14 @@
 useDefault = true
 
 [allowlist]
-description = "Documentation placeholders and vendored detection rules"
+description = "Documentation placeholders, vendored detection rules, and attack-corpus fixtures"
 paths = [
     '''rules/.*''',
     '''bench/testcases/.*''',
+    # Verbatim rows from public labelled attack corpora, used as replay adapter
+    # fixtures. The scenarios are synthetic by construction and are full of
+    # invented tokens, API keys and wallet keys, which is the point of them.
+    '''internal/replay/testdata/.*''',
     '''docs/.*''',
     '''.*\.md$''',
 ]
