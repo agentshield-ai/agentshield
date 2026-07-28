@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -108,7 +110,7 @@ export class McpGateway {
     this.server.oninitialized = () => {
       const clientInfo = this.server?.getClientVersion();
       this.agentId = clientInfo?.name ?? null;
-      this.sessionId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      this.sessionId = `mcp-${Date.now()}-${randomUUID().slice(0, 8)}`;
       this.lifecycleStarted = true;
       this.pipeline.recordLifecycle("session_start", this.ctx());
       this.logger.info(

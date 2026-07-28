@@ -38,10 +38,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: plugins/openclaw/package-lock.json
+          cache-dependency-path: plugins/openclaw/package.json
 
       - name: Install dependencies
-        run: npm ci
+        # No committed lockfile: this plugin is a published library and its
+        # `openclaw` peerDependency must not be pinned here (.npmrc omits it).
+        run: npm install --no-audit --no-fund
 
       - name: Type check
         run: npx tsc --noEmit
