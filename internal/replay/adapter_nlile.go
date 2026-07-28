@@ -96,7 +96,7 @@ func (a *NlileAdapter) Extract(row map[string]interface{}) ([]ExtractedEvent, er
 					event.Content = truncate(resultContent, 10000)
 				}
 			}
-			events = append(events, event)
+			events = appendCallWithResult(events, event)
 		}
 	}
 
@@ -136,7 +136,7 @@ func (a *NlileAdapter) extractFromPromptResponse(row map[string]interface{}) ([]
 		if u := firstOf(event.Args, "url", "uri"); u != "" {
 			event.URL = u
 		}
-		events = append(events, event)
+		events = appendCallWithResult(events, event)
 	}
 	return events, nil
 }

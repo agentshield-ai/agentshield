@@ -82,3 +82,35 @@ func SelectAdapter(dataset string) (TraceAdapter, error) {
 	}
 	return nil, fmt.Errorf("no adapter found for dataset %q; supported prefixes: nlile/, sammshen/, smolagents/, AI45Research/", dataset)
 }
+
+// appendCallWithResult appends a tool-call event and, when the call carries the
+// tool's output, a second event representing that output.
+//
+// Production delivers a call and its result down two different paths: the call
+// to /api/v1/evaluate before execution, and the result to /api/v1/audit after,
+// where internal/toolresult.DetectionFields turns it into an event_type of
+// tool_response carrying response and content. A corpus that only ever yields
+// call events therefore cannot exercise any rule keyed on tool output, and
+// cannot measure what such a rule would cost on benign traffic.
+//
+// The output text is deliberately left on the call event as well. It is marked
+// replay-only there, because a pre-execution evaluation cannot have seen the
+// tool's output yet, and dropping it would silently change what the existing
+// corpora detect. See fieldmap.go for how the two are told apart.
+func appendCallWithResult(events []ExtractedEvent, call ExtractedEvent) []ExtractedEvent {
+	if call.Kind == "" {
+		call.Kind = EventKindCall
+	}
+	events = append(events, call)
+	if call.Content == "" {
+		return events
+	}
+	return append(events, ExtractedEvent{
+		SessionID: call.SessionID,
+		Kind:      EventKindResult,
+		ToolName:  call.ToolName,
+		Args:      map[string]string{},
+		Response:  call.Content,
+		Content:   call.Content,
+	})
+}

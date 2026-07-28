@@ -97,6 +97,25 @@ is byte-identical to the genuine finding that no rule can fire on production
 fields. An absent section is honest, a zeroed one is not. Anything consuming the
 report must handle its absence rather than assume a number.
 
+### Result events
+
+Every adapter emits a tool call and, when the corpus records the tool's output, a
+separate result event shaped like the `/api/v1/audit` detection scan. That
+matters because the two reach the engine down different paths in production, and
+a corpus yielding only call events cannot exercise a rule keyed on tool output,
+nor measure what such a rule would cost on benign traffic.
+
+Until this was added only the ATBench adapter emitted result events, so any rule
+keyed on `tool_response` was untestable against the two benign corpora. Adding
+them roughly doubles the event count on those corpora, 472 to 944 for 100
+wildclaw traces and 156 to 312 for 200 nlile traces, and produced no new alerts.
+
+The output text stays on the call event as well, marked replay-only, because a
+pre-execution evaluation cannot have seen it yet. Dropping it would silently
+change what the existing corpora detect. The provenance split keeps the two
+apart: output on a call is replay-only, output on a result is what production
+supplies.
+
 ### HTTP mode
 
 `--http` evaluates each event twice against the running engine, once with full

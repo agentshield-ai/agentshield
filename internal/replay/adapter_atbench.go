@@ -143,18 +143,7 @@ func (a *ATBenchAdapter) ExtractLabelled(row map[string]interface{}) (TraceLabel
 				}
 			}
 			call.Content = response
-			events = append(events, call)
-
-			if response != "" {
-				events = append(events, ExtractedEvent{
-					SessionID: sessionID,
-					Kind:      EventKindResult,
-					ToolName:  name,
-					Args:      map[string]string{},
-					Response:  response,
-					Content:   response,
-				})
-			}
+			events = appendCallWithResult(events, call)
 		}
 	}
 
