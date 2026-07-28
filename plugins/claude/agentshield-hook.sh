@@ -71,16 +71,20 @@ as_apply_pretool_policy() {
   local reason="$1" policy
   policy="$(as_timeout_policy)"
   case "$policy" in
-    block)
+    log|allow)
+      # fail-open: allow execution.
+      >&2 echo "[AgentShield] ${reason} -- allowing (fail-open: ${policy})"
+      exit 0
+      ;;
+    block|*)
+      # Anything not explicitly recognised as fail-open blocks. as_timeout_policy
+      # already resolves unknown values to "block"; this arm keeps the safe
+      # branch as the default here too, so a future policy value added in one
+      # place cannot silently become fail-open in the other.
       jq -n --arg reason "AgentShield unavailable (fail-closed policy): ${reason}" \
         '{decision: "block", reason: $reason}'
       >&2 echo "[AgentShield] ${reason} -- blocking (fail-closed)"
       exit 2
-      ;;
-    log|allow|*)
-      # fail-open: allow execution.
-      >&2 echo "[AgentShield] ${reason} -- allowing (fail-open: ${policy})"
-      exit 0
       ;;
   esac
 }

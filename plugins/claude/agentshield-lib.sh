@@ -83,11 +83,25 @@ as_timeout_secs() {
 # defaults to "allow" (fail-open) so that a missing or crashed local engine
 # never wedges an interactive Claude Code session. Operators who want
 # fail-closed parity with OpenClaw/Hermes set AGENTSHIELD_TIMEOUT_POLICY=block.
+#
+# The divergence is in the default only. An explicitly set but unrecognised
+# value resolves to "block", matching every other connector, because a typo in
+# a security control must not silently select the weakest behaviour: an
+# operator who wrote AGENTSHIELD_TIMEOUT_POLICY=blok was asking for
+# fail-closed, and resolving that to fail-open would disable enforcement with
+# no indication. The coercion is announced on stderr so the typo is findable.
 as_timeout_policy() {
-  local p="${AGENTSHIELD_TIMEOUT_POLICY:-allow}"
-  case "$p" in
-    allow|block|log) printf '%s' "$p" ;;
-    *) printf 'allow' ;;
+  if [ -z "${AGENTSHIELD_TIMEOUT_POLICY:-}" ]; then
+    printf 'allow'
+    return
+  fi
+  case "$AGENTSHIELD_TIMEOUT_POLICY" in
+    allow|block|log) printf '%s' "$AGENTSHIELD_TIMEOUT_POLICY" ;;
+    *)
+      >&2 echo "[AgentShield] invalid AGENTSHIELD_TIMEOUT_POLICY" \
+        "'${AGENTSHIELD_TIMEOUT_POLICY}' -- falling back to 'block' (fail-closed)."
+      printf 'block'
+      ;;
   esac
 }
 

@@ -159,8 +159,24 @@ esac
 ( export AGENTSHIELD_TIMEOUT_MS=99999; assert_eq "timeout clamps high" "5000" "$(as_timeout_ms)" )
 ( export AGENTSHIELD_TIMEOUT_MS=abc; assert_eq "timeout invalid -> default" "2000" "$(as_timeout_ms)" )
 ( export AGENTSHIELD_TIMEOUT_POLICY=block; assert_eq "policy block" "block" "$(as_timeout_policy)" )
-( export AGENTSHIELD_TIMEOUT_POLICY=bogus; assert_eq "policy invalid -> allow" "allow" "$(as_timeout_policy)" )
+( export AGENTSHIELD_TIMEOUT_POLICY=allow; assert_eq "policy allow" "allow" "$(as_timeout_policy)" )
+( export AGENTSHIELD_TIMEOUT_POLICY=log;   assert_eq "policy log"   "log"   "$(as_timeout_policy)" )
+# An explicitly set but unrecognised value must resolve to the safe branch.
+# Resolving a typo to fail-open would silently disable enforcement for an
+# operator who was asking for fail-closed.
+( export AGENTSHIELD_TIMEOUT_POLICY=bogus; assert_eq "policy invalid -> block" "block" "$(as_timeout_policy 2>/dev/null)" )
+( export AGENTSHIELD_TIMEOUT_POLICY=blok;  assert_eq "policy typo of block -> block" "block" "$(as_timeout_policy 2>/dev/null)" )
+( export AGENTSHIELD_TIMEOUT_POLICY=""; assert_eq "policy empty = default allow (divergence)" "allow" "$(as_timeout_policy)" )
 ( unset AGENTSHIELD_TIMEOUT_POLICY; assert_eq "policy default = allow (divergence)" "allow" "$(as_timeout_policy)" )
+# The coercion must be announced, or the typo is undiscoverable.
+(
+  export AGENTSHIELD_TIMEOUT_POLICY=bogus
+  err="$(as_timeout_policy 2>&1 >/dev/null)"
+  case "$err" in
+    *"invalid AGENTSHIELD_TIMEOUT_POLICY"*) assert_eq "policy invalid warns on stderr" "warned" "warned" ;;
+    *) assert_eq "policy invalid warns on stderr" "warned" "silent" ;;
+  esac
+)
 
 # --- endpoint derivation ---------------------------------------------------
 ( export AGENTSHIELD_ENDPOINT="http://h:1/api/v1/evaluate"; unset AGENTSHIELD_URL
@@ -234,6 +250,13 @@ wait_for_file() { for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do [ -s "$1" ] &
 ( export AS_CURL_RC=7 AGENTSHIELD_TIMEOUT_POLICY=block
   run_hook '{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash","tool_input":{"command":"ls"}}' >/dev/null 2>&1; rc=$?
   assert_eq "unreachable+block exit 2" "2" "$rc" )
+
+# engine unreachable + typo'd policy -> fail closed (exit 2)
+# The operator asked for fail-closed and mistyped it. Resolving that to
+# fail-open would disable enforcement precisely when the engine is down.
+( export AS_CURL_RC=7 AGENTSHIELD_TIMEOUT_POLICY=blok
+  run_hook '{"hook_event_name":"PreToolUse","session_id":"s1b","tool_name":"Bash","tool_input":{"command":"ls"}}' >/dev/null 2>&1; rc=$?
+  assert_eq "unreachable+typo exit 2" "2" "$rc" )
 
 # engine unreachable + policy=allow (default) -> fail open (exit 0)
 ( export AS_CURL_RC=7
