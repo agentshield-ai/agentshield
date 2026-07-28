@@ -68,7 +68,7 @@ func (a *SmolAgentsAdapter) extractFromConversation(raw interface{}) ([]Extracte
 					if tcMap, ok := tc.(map[string]interface{}); ok {
 						event := a.extractToolCall(tcMap)
 						if event != nil {
-							events = append(events, *event)
+							events = appendCallWithResult(events, *event)
 						}
 					}
 				}
@@ -80,7 +80,7 @@ func (a *SmolAgentsAdapter) extractFromConversation(raw interface{}) ([]Extracte
 					Args:     extractArgs(msg),
 				}
 				setFileAndURL(&event)
-				events = append(events, event)
+				events = appendCallWithResult(events, event)
 			}
 			// Check for name + arguments pattern
 			if name, ok := msg["name"].(string); ok && name != "" {
@@ -93,7 +93,7 @@ func (a *SmolAgentsAdapter) extractFromConversation(raw interface{}) ([]Extracte
 					Args:     args,
 				}
 				setFileAndURL(&event)
-				events = append(events, event)
+				events = appendCallWithResult(events, event)
 			}
 		}
 	}
@@ -118,7 +118,7 @@ func (a *SmolAgentsAdapter) extractFromToolCalls(raw interface{}) ([]ExtractedEv
 		if tcMap, ok := tc.(map[string]interface{}); ok {
 			event := a.extractToolCall(tcMap)
 			if event != nil {
-				events = append(events, *event)
+				events = appendCallWithResult(events, *event)
 			}
 		}
 	}

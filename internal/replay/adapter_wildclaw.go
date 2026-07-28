@@ -146,7 +146,7 @@ func (a *WildClawAdapter) extractFromMessages(msgs interface{}) ([]ExtractedEven
 					event.Content = truncate(content, 10000)
 				}
 			}
-			events = append(events, event)
+			events = appendCallWithResult(events, event)
 		}
 	}
 
