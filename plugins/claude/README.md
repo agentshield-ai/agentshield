@@ -148,6 +148,12 @@ or the failure short-circuit is open, the connector applies
 - **`block`** — fail-closed: `PreToolUse` returns a block decision with the reason `AgentShield unavailable (fail-closed policy)`.
 - **`log`** — fail-open, but the failure is recorded against the short-circuit.
 
+The divergence is in the **default only**. If `AGENTSHIELD_TIMEOUT_POLICY` is set
+to anything other than `allow`, `block` or `log`, it resolves to `block` and the
+coercion is reported on stderr. An operator who wrote `blok` was asking for
+fail-closed, so resolving a typo to fail-open would silently disable enforcement.
+Leaving the variable unset or empty still gives the documented `allow` default.
+
 > **Deliberate divergence from the shared contract.** The OpenClaw and Hermes
 > connectors default to **fail-closed** (`timeout_policy: block`). This Claude
 > Code hook defaults to **fail-open** (`allow`) so that a missing or crashed
