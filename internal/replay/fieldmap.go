@@ -107,8 +107,12 @@ func BuildProductionRequest(event ExtractedEvent) *models.EvaluationRequest {
 
 // buildBase populates only the fields a production path can supply.
 func buildBase(event ExtractedEvent) *models.EvaluationRequest {
-	args := make(map[string]string, len(event.Args)+1)
-	fields := make(map[string]string, len(event.Args)+8)
+	// Sized from the argument count alone. Adding a constant for the handful of
+	// derived fields would be arithmetic on a length taken from untrusted
+	// dataset input, which CodeQL flags as a possible allocation overflow, and
+	// the difference is a capacity hint rather than a correctness property.
+	args := make(map[string]string, len(event.Args))
+	fields := make(map[string]string, len(event.Args))
 
 	fields["source"] = "huggingface"
 	fields["tool"] = event.ToolName
