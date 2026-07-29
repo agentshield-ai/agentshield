@@ -1,0 +1,45 @@
+title: Egress to Suspicious / Low-Reputation TLD
+id: 9e5a4f0c-3d6b-6f1e-bc41-egress-tld001
+status: test
+description: |
+  Detects tool calls whose URL host ends in a TLD with disproportionately
+  high abuse rates: the historically free Freenom TLDs (.tk, .ml, .ga, .cf,
+  .gq) and a small set of low-reputation TLDs commonly observed in malware
+  C2, phishing kits, and exfiltration. Static list — keep narrow to limit
+  false positives. Severity is medium so enforce mode requires user approval
+  rather than blocking outright.
+references:
+  - https://www.spamhaus.org/statistics/tlds/
+  - https://attack.mitre.org/techniques/T1583/001/
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+author: AgentShield
+date: "2026-04-26"
+tags:
+  - attack.command-and-control
+  - attack.resource-development
+  - attack.t1583.001
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_freenom:
+    event_type: tool_call
+    url.host|endswith:
+      - .tk
+      - .ml
+      - .ga
+      - .cf
+      - .gq
+  selection_low_reputation:
+    event_type: tool_call
+    url.host|endswith:
+      - .country
+      - .gdn
+      - .review
+      - .stream
+      - .party
+  condition: selection_freenom or selection_low_reputation
+falsepositives:
+  - Legitimate but rare use of these TLDs (treat as medium → require approval)
+  - Security research probing C2 infrastructure
+level: medium

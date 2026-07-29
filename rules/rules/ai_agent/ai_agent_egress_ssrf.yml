@@ -1,0 +1,37 @@
+title: SSRF — Tool Call Targeting Internal Network
+id: 7c3e2d8a-1b4f-4d9c-9e2f-egress-ssrf01
+status: test
+description: |
+  Detects tool calls whose embedded URL targets an internal network endpoint:
+  cloud metadata services (link-local 169.254/16, fe80::/10, or well-known
+  metadata hostnames), or RFC 1918 private addresses. Distinguishes from
+  loopback (127.0.0.0/8, ::1, localhost) which is excluded — local dev tools
+  legitimately hit loopback. Relies on url.* fields populated by AgentShield's
+  URL enrichment pass; rules using only command|contains miss URL-encoded or
+  obfuscated destinations.
+references:
+  - https://attack.mitre.org/techniques/T1552/005/
+  - https://owasp.org/www-community/attacks/Server_Side_Request_Forgery
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+author: AgentShield
+date: "2026-04-26"
+tags:
+  - attack.credential-access
+  - attack.t1552.005
+  - attack.discovery
+  - attack.t1580
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_link_local:
+    event_type: tool_call
+    url.is_link_local: 'true'
+  selection_private:
+    event_type: tool_call
+    url.is_private_ip: 'true'
+  condition: selection_link_local or selection_private
+falsepositives:
+  - Internal automation that legitimately hits private endpoints (consider override + audit-trail)
+  - Cloud-init / configuration management tools
+level: high

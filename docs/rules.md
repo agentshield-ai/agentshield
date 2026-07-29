@@ -234,6 +234,31 @@ AgentShield events have these fields:
 
 You can match fields in the `data` dict using dot notation or direct field names.
 
+### URL enrichment fields
+
+When a tool call's args contain an `http://`, `https://`, or `file://` URL, the
+server parses the first one found and injects structured fields. Rules can
+match these directly instead of doing regex on the raw command — cleaner and
+robust to URL-encoded or quoted forms.
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `url.scheme` | URL scheme (lowercased) | `https`, `http`, `file` |
+| `url.host` | Hostname or IP literal (lowercased) | `api.github.com`, `10.0.0.5`, `::1` |
+| `url.port` | Port (empty if scheme default) | `8080` |
+| `url.path` | URL path (defaults to `/`) | `/repos/foo/bar` |
+| `url.is_loopback` | `true` for `127.0.0.0/8`, `::1`, or `localhost` | `true`, `false` |
+| `url.is_private_ip` | `true` for RFC 1918 / IPv6 ULA host literals | `true`, `false` |
+| `url.is_link_local` | `true` for `169.254/16`, `fe80::/10`, or known cloud-metadata hostnames | `true`, `false` |
+
+The three boolean fields are orthogonal — `localhost` is loopback only;
+`10.0.0.5` is private only; `169.254.169.254` is link-local only. Rules that
+should fire on internal-network access (SSRF) typically combine
+`url.is_link_local` and `url.is_private_ip` while excluding `url.is_loopback`
+so local development isn't flagged. Hostnames are not resolved via DNS — to
+match `*.internal` or other private hostnames, pattern-match on `url.host`
+directly.
+
 ## Alert Levels
 
 Choose an appropriate level:

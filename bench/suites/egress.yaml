@@ -1,0 +1,11 @@
+name: egress
+description: Egress detection rules — SSRF / exfil destinations / suspicious TLDs (P3-A + P3-B).
+testcases:
+  - egress/ssrf_aws_metadata_pos.yaml
+  - egress/ssrf_rfc1918_pos.yaml
+  - egress/ssrf_loopback_neg.yaml
+  - egress/exfil_discord_webhook_pos.yaml
+  - egress/exfil_pastebin_pos.yaml
+  - egress/exfil_normal_api_neg.yaml
+  - egress/tld_freenom_pos.yaml
+  - egress/tld_normal_neg.yaml

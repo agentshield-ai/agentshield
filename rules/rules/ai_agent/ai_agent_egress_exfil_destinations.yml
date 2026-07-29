@@ -1,0 +1,65 @@
+title: Egress to Known Exfiltration / Anonymous-Share Destination
+id: 8d4f3e9b-2c5a-5e0d-af30-egress-exfil01
+status: test
+description: |
+  Detects tool calls whose URL targets a host commonly used for data
+  exfiltration by AI agents and adversaries: webhook delivery services
+  (Discord, Telegram bots, webhook.site), anonymous paste/share sites
+  (pastebin, paste.ee, hastebin, transfer.sh, file.io), and request-bin
+  inspection services. These are nearly never legitimate destinations from
+  agent-driven tool calls inside a target environment.
+references:
+  - https://attack.mitre.org/techniques/T1567/
+  - https://attack.mitre.org/techniques/T1041/
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+author: AgentShield
+date: "2026-04-26"
+tags:
+  - attack.exfiltration
+  - attack.t1567
+  - attack.t1041
+  - attack.command-and-control
+  - attack.t1102
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  selection_webhooks:
+    event_type: tool_call
+    url.host:
+      - discord.com
+      - discordapp.com
+      - webhook.site
+      - api.telegram.org
+  selection_paste:
+    event_type: tool_call
+    url.host:
+      - pastebin.com
+      - paste.ee
+      - hastebin.com
+      - dpaste.com
+      - rentry.co
+  selection_anon_share:
+    event_type: tool_call
+    url.host:
+      - transfer.sh
+      - file.io
+      - anonfiles.com
+      - bashupload.com
+      - 0x0.st
+  selection_requestbins:
+    event_type: tool_call
+    url.host|contains:
+      - 'requestbin.io'
+      - 'requestbin.com'
+      - 'webhook.site'
+      - 'pipedream.net'
+  filter_telegram_browse:
+    event_type: tool_call
+    url.host: t.me
+    url.path|contains: '/c/'
+  condition: (selection_webhooks or selection_paste or selection_anon_share or selection_requestbins) and not filter_telegram_browse
+falsepositives:
+  - Operator-approved integrations that intentionally post to webhooks
+  - Documentation pages on these domains (rare; usually a different host)
+level: high
