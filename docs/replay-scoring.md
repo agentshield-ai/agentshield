@@ -146,6 +146,27 @@ looks for is absent from the field it reads, the corpus does not contain that
 attack pattern and the miss is real. If the literal is present but in a different
 field, the mapping is at fault.
 
+## Catching the gap at build time instead
+
+A labelled replay run is the only thing that can *measure* the production gap,
+but it is a poor place to first *discover* one. `internal/rulelint` carries the
+same ground truth as a build-time invariant: every ordinary field a rule matches
+on must either appear in `ProducibleFields`, naming the producer that populates
+it, or in `KnownUnpopulatedFields`, naming the rule area it blocks.
+
+The two lists are kept honest from both directions. A rule introducing a field
+that is in neither fails the build, so a fresh phantom field cannot land without
+a reviewer consciously classifying it. A gap entry no rule references any more
+also fails, so the list cannot rot into a description of a corpus that no longer
+exists. `TestProducibleFieldsMatchProducers` pins the field names the server and
+audit paths derive for themselves, so removing one from
+`normalizePluginRequest` or `toolresult.DetectionFields` fails there rather than
+silently muting whichever rules depended on it.
+
+The lint cannot decide whether a field is worth having — that judgement is what
+the scoring run and the `production_reproducible` split are for. It only
+guarantees that the answer is written down somewhere a reviewer will see.
+
 ## Tool surface
 
 ATBench's tools are SaaS-shaped: event logging, calendars, web extraction, SMS,

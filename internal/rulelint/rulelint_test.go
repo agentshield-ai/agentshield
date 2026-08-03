@@ -67,6 +67,32 @@ func TestGroundTruthSetsConsistent(t *testing.T) {
 			t.Errorf("session field %q is in both InjectedSessionFields and KnownUnpopulatedSessionFields", f)
 		}
 	}
+	for f := range KnownUnpopulatedFields {
+		if _, ok := ProducibleFields[f]; ok {
+			t.Errorf("field %q is in both ProducibleFields and KnownUnpopulatedFields", f)
+		}
+	}
+}
+
+// TestProducibleFieldsMatchProducers pins the field names the two production
+// paths derive for themselves, independent of the verbatim parameter copy. If a
+// change to server.normalizePluginRequest or toolresult.DetectionFields adds or
+// removes one, this fails and forces ProducibleFields to be updated with it —
+// which is the whole point, since a rule keyed on a field nothing sets is silent
+// rather than broken.
+//
+// Parameter-derived entries are deliberately excluded: they are producible
+// because some tool sends a parameter of that name, which is asserted by the
+// provenance string on each entry rather than by this test.
+func TestProducibleFieldsMatchProducers(t *testing.T) {
+	serverDerived := []string{"tool", "event_type", "context", "source", "command", "file_path"}
+	auditDerived := []string{"event_type", "response", "content", "source", "tool"}
+
+	for _, f := range append(serverDerived, auditDerived...) {
+		if _, ok := ProducibleFields[f]; !ok {
+			t.Errorf("field %q is derived by a production path but missing from ProducibleFields", f)
+		}
+	}
 }
 
 // TestGapListsAreNotStale ensures every documented gap is still referenced by at
@@ -88,6 +114,12 @@ func TestGapListsAreNotStale(t *testing.T) {
 				"remove it, or move it to InjectedSessionFields if the registry now injects it", f, area)
 		}
 	}
+	for f, area := range KnownUnpopulatedFields {
+		if !res.ReferencedFields[f] {
+			t.Errorf("KnownUnpopulatedFields[%q] (%s) is no longer referenced by any rule — "+
+				"remove it, or move it to ProducibleFields if a producer now populates it", f, area)
+		}
+	}
 	for id, reason := range ConfirmedInvalidMitreIDs {
 		if !res.ReferencedMitreIDs[id] {
 			t.Errorf("ConfirmedInvalidMitreIDs[%q] (%s) is no longer referenced by any rule — "+
@@ -104,8 +136,10 @@ func TestGapListsAreNotStale(t *testing.T) {
 // TestReportSummary prints a coverage snapshot. Informational; never fails.
 func TestReportSummary(t *testing.T) {
 	res := lintCorpus(t)
-	t.Logf("rule lint: %d event_types referenced (%d documented gaps), %d session fields referenced (%d documented gaps), %d findings",
+	t.Logf("rule lint: %d event_types referenced (%d documented gaps), %d session fields referenced (%d documented gaps), "+
+		"%d ordinary fields referenced (%d documented gaps), %d findings",
 		len(res.ReferencedEventTypes), len(KnownUnemittedEventTypes),
 		len(res.ReferencedSessionFields), len(KnownUnpopulatedSessionFields),
+		len(res.ReferencedFields), len(KnownUnpopulatedFields),
 		len(res.Findings))
 }

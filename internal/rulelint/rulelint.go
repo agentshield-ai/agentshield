@@ -6,14 +6,17 @@
 // silent: the rule loads, reports no error, and simply never alerts. This package
 // makes that class of defect a build-time error.
 //
-// It checks three invariants:
+// It checks four invariants:
 //
 //  1. Every event_type a rule matches on is emitted by some producer (plugin,
 //     server, or replay), OR is explicitly listed as a known, documented gap
 //     pending a producer (see KnownUnemittedEventTypes).
 //  2. Every session.* field a rule matches on is injected by the session
 //     registry, OR is a documented gap (see KnownUnpopulatedSessionFields).
-//  3. Every MITRE ATT&CK tag is well-formed and not on the confirmed-invalid list.
+//  3. Every ordinary field a rule matches on can be populated by a shipped
+//     producer (see ProducibleFields), OR is a documented gap (see
+//     KnownUnpopulatedFields).
+//  4. Every MITRE ATT&CK tag is well-formed and not on the confirmed-invalid list.
 //
 // The ground-truth sets below are the single source of truth. When a producer
 // starts emitting a new event_type (Phase 2), move it from KnownUnemitted* into
@@ -118,6 +121,122 @@ var KnownUnpopulatedSessionFields = map[string]string{
 	"session.project_first_open":        "settings_hook_injection",
 }
 
+// ProducibleFields is the closed set of ordinary (non-event_type, non-session.*)
+// field names a shipped producer can cause the rule engine to see. Two paths
+// reach the engine and both are enumerated here.
+//
+// Pre-execution: a plugin posts an evaluation request and
+// server.normalizePluginRequest derives tool, event_type, context, source,
+// command and file_path, then copies every call parameter into fields verbatim
+// under its own key.
+//
+// Post-execution: a plugin posts a tool result to /api/v1/audit and
+// toolresult.DetectionFields maps it to event_type tool_response plus response,
+// content, source and tool.
+//
+// The verbatim parameter copy means a field is producible whenever some shipped
+// tool sends a parameter of that name. Those entries name the tool, so the claim
+// can be checked rather than assumed; a field reachable only in principle, with
+// no shipped caller, belongs in KnownUnpopulatedFields instead.
+var ProducibleFields = map[string]string{
+	"tool":       "server: normalizePluginRequest, from tool or the tool_name alias",
+	"event_type": "server: normalizePluginRequest; audit: toolresult.DetectionFields",
+	"context":    "server: normalizePluginRequest, from resolveExecutionContext",
+	"source":     "server: normalizePluginRequest; audit: toolresult.DetectionFields",
+	"command":    "server: normalizePluginRequest, from the command arg",
+	"file_path":  "server: normalizePluginRequest, from file_path/filePath/path",
+	"response":   "audit: toolresult.DetectionFields, from result_summary",
+	"content":    "audit: toolresult.DetectionFields, from result_summary",
+	"url":        "verbatim param copy: the openclaw browser tool sends params.url",
+	"action":     "verbatim param copy: the openclaw browser tool sends params.action",
+	"message":    "verbatim param copy: the Claude hook posts UserPromptSubmit as params.message",
+}
+
+// KnownUnpopulatedFields are ordinary field names rules match on that no shipped
+// producer populates. Each is a documented detection gap: the selection cannot
+// fire until a producer supplies the field or the rule is rewritten onto one
+// that exists. Keeping them listed — rather than silently tolerating any
+// unrecognised field — means a NEW rule cannot introduce a fresh phantom field
+// without a reviewer consciously adding it here.
+//
+// Three kinds of entry appear below, and they are worth distinguishing when
+// deciding what to fix:
+//
+//   - Fields with no producer that a producer could plausibly supply
+//     (description, arguments, response_text, tool_name). These are the subject
+//     of the measured production-reproducibility gap; see docs/replay-scoring.md.
+//   - Custom engine constructs the evaluator does not implement at all
+//     (time_window, time_between, tools_used, suspicious_pattern and the
+//     analysis scores). These need engine features, not a producer.
+//   - Structured sub-fields of an event shape the pipeline never builds
+//     (message.*, handoff.*, request.headers, destination.host).
+//
+// The value is the rule area affected, for traceability.
+var KnownUnpopulatedFields = map[string]string{
+	// No producer today; a producer is conceivable. Tracked as the
+	// production-reproducibility gap.
+	"arguments":     "export_dir_credential_redirect, memory_poisoning, tool_arg_approval_ui_xss, tool_registry_tampering (no producer sends a JSON blob of call args; params arrive individually)",
+	"description":   "mcp_tool_poisoning (no producer carries a tool's declared description)",
+	"response_text": "rag_image_exfiltration (the audit path supplies response and content, not response_text)",
+	"tool_name":     "mcp_rug_pull (the server sets tool, not tool_name, from the tool_name request alias)",
+
+	// Custom constructs requiring engine features that do not exist.
+	"time_window":                         "context_poisoning, lateral_movement, openclaw_prompt_injection (temporal correlation engine)",
+	"time_between":                        "openclaw_prompt_injection (temporal correlation engine)",
+	"tools_used":                          "context_poisoning, lateral_movement, openclaw_prompt_injection (temporal correlation engine)",
+	"tools_sequence":                      "lateral_movement (temporal correlation engine)",
+	"previous_tool":                       "openclaw_prompt_injection (temporal correlation engine)",
+	"next_tool":                           "openclaw_prompt_injection (temporal correlation engine)",
+	"suspicious_pattern":                  "openclaw_prompt_injection (behavioural analysis engine)",
+	"suspicious_data_pattern":             "context_poisoning (behavioural analysis engine)",
+	"cross_plugin_data_flow":              "context_poisoning (behavioural analysis engine)",
+	"visibility_analysis":                 "rules_file_backdoor (content analysis engine)",
+	"byte_size_to_visible_char_ratio":     "rules_file_backdoor (content analysis engine)",
+	"size_increase_ratio":                 "steganographic_exfil (content analysis engine)",
+	"description_hash_changed":            "mcp_rug_pull (tool-registry diffing engine)",
+	"description_similarity_score":        "mcp_rug_pull (tool-registry diffing engine)",
+	"description_length_ratio":            "mcp_rug_pull (tool-registry diffing engine)",
+	"previous_description_exists":         "mcp_rug_pull (tool-registry diffing engine)",
+	"new_description":                     "mcp_rug_pull (tool-registry diffing engine)",
+	"actual_behavior_matches_description": "mcp_rug_pull (tool-registry diffing engine)",
+	"query_length":                        "exfil_via_dns (network analysis engine)",
+	"subdomain_count":                     "exfil_via_dns (network analysis engine)",
+	"domain_entropy":                      "exfil_via_dns (network analysis engine)",
+	"hosts_count":                         "lateral_movement (network analysis engine)",
+	"destination_discovered_recently":     "lateral_movement (network analysis engine)",
+	"signature_verification":              "openclaw_mcp_manipulation (supply-chain verification engine)",
+
+	// Structured sub-fields of event shapes the pipeline never constructs.
+	"message.claimed_role":           "inter_agent_spoofing (no agent-message producer)",
+	"message.claimed_sender_id":      "inter_agent_spoofing (no agent-message producer)",
+	"message.verified_sender_id":     "inter_agent_spoofing (no agent-message producer)",
+	"message.peer_identity_verified": "inter_agent_spoofing (no agent-message producer)",
+	"message.identity_match":         "inter_agent_spoofing (no agent-message producer)",
+	"message.directive":              "inter_agent_spoofing (no agent-message producer)",
+	"handoff.signature_valid":        "inter_agent_spoofing (no agent-handoff producer)",
+	"request.headers":                "api_endpoint_redirection (no network-request producer)",
+	"destination.host":               "api_endpoint_redirection (no network-request producer)",
+
+	// Plain names with no producer: no shipped tool sends a param of this name,
+	// and the server derives nothing of the kind.
+	"code":                  "steganographic_exfil (no code_execution producer)",
+	"file_extension":        "steganographic_exfil",
+	"query":                 "exfil_via_dns (no dns_query producer)",
+	"source_url":            "openclaw_mcp_manipulation",
+	"permissions":           "openclaw_mcp_manipulation",
+	"configuration_section": "openclaw_mcp_manipulation",
+	"tool_input":            "mcp_command_injection (the server flattens params; it does not preserve a tool_input blob)",
+	"tool_source":           "mcp_command_injection",
+	"credential_source":     "lateral_movement",
+	"operation_type":        "lateral_movement",
+	"parent_agent_context":  "lateral_movement",
+	"sensitive_files":       "lateral_movement",
+	"target_host":           "lateral_movement",
+	"target":                "lateral_movement",
+	"location":              "lateral_movement",
+	"pattern":               "lateral_movement",
+}
+
 // ConfirmedInvalidMitreIDs are ATT&CK technique IDs found in rules that are not
 // valid Enterprise ATT&CK techniques. These are tracked debt, not live build
 // failures: they pre-date this linter, so listing them here keeps CI green while
@@ -163,7 +282,7 @@ var NonStandardTactics = map[string]string{
 type Finding struct {
 	File    string
 	Rule    string
-	Kind    string // "event_type", "session_field", "mitre"
+	Kind    string // "event_type", "session_field", "field", "mitre"
 	Message string
 }
 
@@ -177,6 +296,7 @@ type Result struct {
 	Findings                []Finding
 	ReferencedEventTypes    map[string]bool
 	ReferencedSessionFields map[string]bool
+	ReferencedFields        map[string]bool
 	ReferencedMitreIDs      map[string]bool
 	ReferencedTactics       map[string]bool
 }
@@ -186,6 +306,7 @@ func LintDir(dir string) (*Result, error) {
 	res := &Result{
 		ReferencedEventTypes:    map[string]bool{},
 		ReferencedSessionFields: map[string]bool{},
+		ReferencedFields:        map[string]bool{},
 		ReferencedMitreIDs:      map[string]bool{},
 		ReferencedTactics:       map[string]bool{},
 	}
@@ -259,6 +380,25 @@ func lintRule(path string, rule *sigma.Rule, res *Result) {
 				File: base, Rule: rule.Title, Kind: "session_field",
 				Message: fmt.Sprintf("matches %q which the session registry does not inject; "+
 					"inject it in internal/session/registry.go or add it to KnownUnpopulatedSessionFields", field),
+			})
+
+		default:
+			field := strings.ToLower(strings.TrimSpace(a.Field))
+			if field == "" {
+				continue
+			}
+			res.ReferencedFields[field] = true
+			if _, ok := ProducibleFields[field]; ok {
+				continue
+			}
+			if _, ok := KnownUnpopulatedFields[field]; ok {
+				continue
+			}
+			res.Findings = append(res.Findings, Finding{
+				File: base, Rule: rule.Title, Kind: "field",
+				Message: fmt.Sprintf("matches field %q which no producer populates and is not a documented gap; "+
+					"populate it from a producer and add it to ProducibleFields, or add it to "+
+					"KnownUnpopulatedFields with justification", field),
 			})
 		}
 	}

@@ -122,6 +122,7 @@ Internal packages follow clear separation:
 - `telemetry/` — OpenTelemetry TracerProvider, MeterProvider, and metrics recorder
 - `session/` — Per-session event window registry for behavioural sequencing
 - `replay/` — HuggingFace traces replay engine (fetch, extract, evaluate, report)
+- `rulelint/` — Build-time guardrail: fails the build when a rule matches an `event_type`, a `session.*` field or an ordinary field that no producer populates, unless the gap is documented in the ground-truth lists
 
 ### OpenTelemetry Export (`internal/telemetry/`)
 
