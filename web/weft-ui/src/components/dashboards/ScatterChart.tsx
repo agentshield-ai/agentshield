@@ -35,10 +35,11 @@ export function ScatterPanel({
     queryKey: ['calls-scatter', projectId, panel.filter, panel.query, panel.search, panel.time_range, dash?.filter, dash?.query, dash?.time_range],
     queryFn: () => {
       const range = timeRangeBounds(panel.time_range || dash?.time_range)
-      const timeOps: Operation[] = []
+      // Like the traces table, leave out Weft's own judge and monitor calls.
+      const timeOps: Operation[] = [{ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] }]
       if (range.start) timeOps.push({ $gte: [{ $getField: 'started_at' }, { $literal: range.start }] })
       if (range.end) timeOps.push({ $lt: [{ $getField: 'started_at' }, { $literal: range.end }] })
-      const timeQuery = timeOps.length ? ({ $expr: timeOps.length === 1 ? timeOps[0] : { $and: timeOps } } as Query) : undefined
+      const timeQuery = { $expr: timeOps.length === 1 ? timeOps[0] : { $and: timeOps } } as Query
       const needsFeedback = [xField, yField].some((f) => f.startsWith('feedback.'))
       return api.callsQuery({
         project_id: projectId,

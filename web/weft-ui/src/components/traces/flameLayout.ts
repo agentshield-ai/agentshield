@@ -6,6 +6,8 @@ export interface FlameRect {
   id: string
   call: Call
   depth: number
+  /** Display row: concurrent calls at one depth get their own lanes. */
+  row: number
   /** Start and end as fractions (0..1) of the trace span. */
   x0: number
   x1: number
@@ -15,6 +17,7 @@ export interface FlameRect {
 export interface FlameLayout {
   rects: FlameRect[]
   depth: number
+  rows: number
   t0: number
   spanMs: number
 }
@@ -36,7 +39,7 @@ export function flameLayout(roots: TreeNode[], now: number = Date.now()): FlameL
     }
   }
   walkBounds(roots)
-  if (!Number.isFinite(min)) return { rects: [], depth: 0, t0: 0, spanMs: 0 }
+  if (!Number.isFinite(min)) return { rects: [], depth: 0, rows: 0, t0: 0, spanMs: 0 }
   const span = Math.max(1, max - min)
   const rects: FlameRect[] = []
   let depth = 0
@@ -46,13 +49,34 @@ export function flameLayout(roots: TreeNode[], now: number = Date.now()): FlameL
       const e = endMs(n.call, now)
       const x0 = Math.min(Math.max((s - min) / span, lo), hi)
       const x1 = Math.max(Math.min((e - min) / span, hi), x0)
-      rects.push({ id: n.call.id, call: n.call, depth: d, x0, x1, ms: Math.max(0, e - s) })
+      rects.push({ id: n.call.id, call: n.call, depth: d, row: 0, x0, x1, ms: Math.max(0, e - s) })
       depth = Math.max(depth, d + 1)
       walk(n.children, d + 1, x0, x1)
     }
   }
   walk(roots, 0, 0, 1)
-  return { rects, depth, t0: min, spanMs: span }
+  // Lanes: calls that overlap in time at the same depth (parallel work)
+  // stack into extra rows instead of drawing over each other.
+  const lanesAt: number[] = []
+  const laneOf = new Map<FlameRect, number>()
+  for (let d = 0; d < depth; d++) {
+    const ends: number[] = []
+    for (const r of rects.filter((x) => x.depth === d).sort((a, b) => a.x0 - b.x0)) {
+      let lane = ends.findIndex((end) => end <= r.x0 + 1e-9)
+      if (lane < 0) lane = ends.push(0) - 1
+      ends[lane] = r.x1
+      laneOf.set(r, lane)
+    }
+    lanesAt[d] = Math.max(1, ends.length)
+  }
+  const base: number[] = []
+  let rows = 0
+  for (let d = 0; d < depth; d++) {
+    base[d] = rows
+    rows += lanesAt[d]
+  }
+  for (const r of rects) r.row = base[r.depth] + (laneOf.get(r) ?? 0)
+  return { rects, depth, rows, t0: min, spanMs: span }
 }
 
 export interface ComposedOp {

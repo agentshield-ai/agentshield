@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { opDisplayName } from '../../api/refs'
 import { callStatus, fmtDuration } from '../../lib/format'
 import { callLabel, type TreeNode } from './callUtils'
 import { composeOps, flameLayout, flattenComposed } from './flameLayout'
@@ -48,7 +49,7 @@ export function FlameGraph({ roots, selectedId, onSelect }: { roots: TreeNode[];
           </span>
         ))}
       </div>
-      <div className="flame" role="list" aria-label="Flame graph" style={{ height: layout.depth * ROW_H }}>
+      <div className="flame" role="list" aria-label="Flame graph" style={{ height: layout.rows * ROW_H }}>
         {layout.rects.map((r) => {
           const left = (r.x0 - z0) / zw
           const width = (r.x1 - r.x0) / zw
@@ -63,7 +64,7 @@ export function FlameGraph({ roots, selectedId, onSelect }: { roots: TreeNode[];
               key={r.id}
               role="listitem"
               className={`flame-bar ${r.id === selectedId ? 'selected' : ''} ${r.call.ended_at ? '' : 'running'}`}
-              style={{ left: `${l * 100}%`, width: `max(${w * 100}%, 2px)`, top: r.depth * ROW_H, background: bg }}
+              style={{ left: `${l * 100}%`, width: `max(${w * 100}%, 2px)`, top: r.row * ROW_H, background: bg }}
               title={`${label} · ${fmtDuration(r.ms)} · starts +${fmtDuration(r.x0 * layout.spanMs)}`}
               onClick={() => onSelect(r.id)}
               onDoubleClick={() => setZoom({ x0: r.x0, x1: Math.max(r.x1, r.x0 + 1e-6), label })}
@@ -85,7 +86,8 @@ export function FlameGraph({ roots, selectedId, onSelect }: { roots: TreeNode[];
  * line to step through its calls.
  */
 export function CodeComposition({ roots, selectedId, onSelect }: { roots: TreeNode[]; selectedId: string; onSelect: (id: string) => void }) {
-  const ops = useMemo(() => composeOps(roots, callLabel), [roots])
+  // Fold by op (not display name) so renamed calls of one op still merge.
+  const ops = useMemo(() => composeOps(roots, (c) => opDisplayName(c.op_name)), [roots])
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const rows = flattenComposed(ops, (k) => !closed.has(k))
   const rootMs = ops.reduce((s, o) => s + o.totalMs, 0) || 1

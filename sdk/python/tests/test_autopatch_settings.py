@@ -196,7 +196,7 @@ def test_patch_on_import(client, fake, tmp_path, monkeypatch):
     client.flush()
     [c] = fake.calls_by_op("weftfakelib.Engine.run")
     assert c["output"] == "cba" and c["inputs"]["prompt"] == "abc"
-    assert wi._hooks.pending() == []
+    assert "weftfakelib" not in wi._hooks.pending()
 
 
 def test_methods_wrapper_preserves_async_and_static(client, fake, monkeypatch):

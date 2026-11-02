@@ -89,6 +89,8 @@ def _model_methods(mod: Any) -> List[Method]:
                           module=cls.__module__, usage=model_usage, inputs=_model_inputs,
                           # user-defined Model subclasses (created after weft.init) are traced too
                           subclasses=cls is base))
+    # the base class last, so the library's own model classes keep their own op names
+    out.sort(key=lambda m: m.subclasses)
     return out
 
 

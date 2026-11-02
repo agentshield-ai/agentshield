@@ -8,7 +8,7 @@ const apiPrefixes = [
   '/call/', '/calls/', '/obj/', '/objs/', '/table/', '/refs/', '/file/', '/feedback/',
   '/cost/', '/completions/', '/llm/', '/secrets/', '/evaluate_model', '/evaluation_status',
   '/evaluations/', '/leaderboard/', '/threads/', '/project/', '/projects', '/server_info',
-  '/health', '/auth/', '/otel/', '/agents/',
+  '/health', '/auth/', '/otel/', '/agents/', '/image/',
   '/annotation_queues', '/automations/', '/embeddings/',
   '/api_keys/', '/users/', '/teams/', '/audit/', '/dataset_sources/', '/files/', '/trace/', '/v2/', '^/(tags|aliases)(\\?.*)?$',
 ]

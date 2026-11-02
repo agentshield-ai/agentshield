@@ -43,6 +43,16 @@ describe('flame layout', () => {
     // Child clipped to its parent's end.
     expect(by.d.x1).toBeCloseTo(1000 / 1200)
     expect(by.d.ms).toBe(700)
+    // No overlaps here: one row per depth.
+    expect(l.rows).toBe(3)
+    expect(by.e.row).toBe(2)
+  })
+  it('stacks concurrent calls into lanes', () => {
+    const par = [call('r', null, 'agent', 0, 100), call('a', 'r', 'x', 0, 60), call('b', 'r', 'x', 10, 70), call('c', 'r', 'x', 60, 90), call('k', 'b', 'y', 20, 30)]
+    const l = flameLayout(buildTree(par))
+    const by = Object.fromEntries(l.rects.map((r) => [r.id, r.row]))
+    expect(by).toEqual({ r: 0, a: 1, b: 2, c: 1, k: 3 })
+    expect(l.rows).toBe(4)
   })
   it('handles empty traces', () => {
     expect(flameLayout([]).rects).toEqual([])
