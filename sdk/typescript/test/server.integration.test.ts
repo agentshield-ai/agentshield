@@ -157,5 +157,58 @@ describe.skipIf(!URL)('real server', () => {
     expect(lb.rows[0].values['0'].value).toBe(0.5);
     expect((await client.whoami()).user_id).toBeTruthy();
   });
+
+  it('batch 3 features against the real server', async () => {
+    const planner = weft.op(function planner(q: string) {
+      return q;
+    }, { kind: 'agent', color: 'green' });
+    planner('x');
+    const [p] = await client.getCalls({ filter: { op_names: ['planner'] } });
+    expect(p.attributes.weft).toMatchObject({ span_kind: 'agent', color: 'green' });
+    const q = await client.getCalls({ query: { $eq: [{ $getField: 'attributes.weft.span_kind' }, { $literal: 'agent' }] } });
+    expect(q.map((c) => c.id)).toEqual([p.id]);
+
+    const report = weft.op(function report() {
+      return { doc: weft.Content.fromText('hello', { filename: 'a.txt' }), md: new weft.Markdown('# T') };
+    });
+    report();
+    const [r] = await client.getCalls({ filter: { op_names: ['report'] } });
+    const doc = r.output as any;
+    expect(doc.doc._type).toBe('Content');
+    const content = await client.http.raw('POST', '/file/content', JSON.stringify({ project_id: client.projectId, digest: doc.doc.file_digest }));
+    expect(await content.text()).toBe('hello');
+
+    const r0 = await weft.publish({ v: 0 }, 'ts-mgmt');
+    const r1 = await weft.publish({ v: 1 }, 'ts-mgmt');
+    await client.setAliases(r1, 'production');
+    expect(await client.getAliases(r1)).toContain('production');
+    expect(await weft.ref('ts-mgmt:production').get()).toEqual({ v: 1 });
+    await client.removeAliases('ts-mgmt', 'production');
+    expect(await client.getAliases(r1)).not.toContain('production');
+    await client.addTags(r1, ['golden', 'reviewed']);
+    await client.removeTags(r1, ['reviewed']);
+    expect(await client.getTags(r1)).toEqual(['golden']);
+    expect(await client.listTags()).toContain('golden');
+    expect(await client.deleteObjectVersion(r0)).toBe(1);
+    expect(await client.deleteAllObjectVersions('ts-mgmt')).toBe(1);
+
+    const ds = new weft.Dataset({ name: 'ts-linked', rows: [{ q: 'a' }, { q: 'b' }] });
+    const ev = new weft.EvaluationLogger({ model: 'm', dataset: ds, name: 'ts-linked-eval' });
+    ev.logExample({ q: 'b' }, 'B', { ok: true });
+    await ev.logSummary();
+    const [pas] = await client.getCalls({ filter: { op_names: ['Evaluation.predict_and_score'] }, sortBy: [{ field: 'started_at', direction: 'desc' }], limit: 1 });
+    const vals = (await client.http.post('/refs/read_batch', { refs: [pas.inputs.example] })).vals;
+    expect(vals).toEqual([{ q: 'b' }]);
+
+    for (const sc of [new weft.ValidXMLScorer({ name: 'ts-xml' }), new weft.RuleScorer({ name: 'ts-rule', rule: { $eq: [1, 1] } }), new weft.HallucinationFreeScorer({ name: 'ts-hall' })]) {
+      await weft.publish(sc);
+      const obj = (await client.http.post('/obj/read', { project_id: client.projectId, object_id: sc.name, digest: 'latest' })).obj;
+      expect(obj.val._class_name).toBe(sc.className);
+      expect(obj.digest).toBe(sc.ref!.digest);
+    }
+    const hall: any = await new weft.HallucinationFreeScorer({ model: 'mock/json' }).scoreOp({ modelOutput: 'x', datasetRow: { q: 'y' } });
+    expect(hall).toBeTruthy();
+    await expect(new weft.EmbeddingSimilarityScorer().score({ modelOutput: 'a', datasetRow: { expected: 'b' } })).rejects.toThrow(/embeddings/);
+  });
 });
 

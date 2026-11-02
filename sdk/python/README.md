@@ -50,6 +50,20 @@ explicitly).
 | Evaluation concurrency | | `WEFT_PARALLELISM` | 10 |
 | Exit flush timeout (s) | | `WEFT_FLUSH_TIMEOUT` | 10 |
 | Redaction | `settings={"redact_keys": [...], "redact_pii": True}` | `WEFT_REDACT_KEYS=0` disables | credential keys |
+| Attributes on every call | `settings={"global_attributes": {...}}` | | none |
+| Print a link per root call | `settings={"print_call_link": False}` | `WEFT_PRINT_CALL_LINK` | on |
+| Store op source code | `settings={"capture_code": False}` | `WEFT_CAPTURE_CODE` | on |
+| On-disk write-ahead log | `settings={"enable_disk_fallback": True, "wal_dir": ...}` | `WEFT_ENABLE_WAL`, `WEFT_WAL_DIR` | off (`~/.weft/wal`) |
+| Send queue size | `settings={"max_queue_size": 10000}` | | 10000 |
+| Retries | `settings={"retry_max_attempts": 3, "retry_backoff": 0.25, "retry_max_backoff": 4.0}` | | as shown |
+
+Root calls print `weft: <server>/<entity>/<project>/calls/<id>` to stderr
+(`call.ui_url` gives the same link).
+
+**Durability.** With `enable_disk_fallback`, anything that cannot be sent goes
+to a JSONL file instead of being dropped. That covers batches that still fail
+after retries, items that overflow the queue, and whatever is still queued at
+exit. The next `weft.init()` against the same server and project replays it.
 
 A bare project name `"p"` is stored as `"default/p"`. When the server uses
 `user=key` API keys, calls, objects and feedback are attributed to that user
@@ -85,6 +99,9 @@ async def stream_tokens(prompt: str):
     postprocess_inputs=lambda d: {k: v for k, v in d.items() if k != "api_key"},
     postprocess_output=lambda out: out[:10],
     tracing_sample_rate=0.1,               # applies to root calls; children follow the root
+    kind="retriever",                      # agent|llm|tool|chain|retriever|embedding|scorer|guardrail|...
+    color="blue",                          # red|orange|yellow|green|blue|purple
+    enable_code_capture=False,             # don't store this op's source
 )
 def search(q: str, api_key: str) -> list: ...
 
@@ -99,7 +116,15 @@ with weft.attributes({"env": "prod", "user_id": "u1"}):
 with weft.thread("conversation-42"):       # thread_id; top-level calls are turns
     answer("hi")
     answer("and then?")
+
+with weft.tracing_disabled():              # run without recording anything
+    answer("off the record")
 ```
+
+`kind` and `color` are stored on every call as `attributes.weft.span_kind` and
+`attributes.weft.color`. They are mirrored to `attributes.weave.kind` and
+`.color` for Weave tooling. The integrations below tag LLM calls with
+`kind="llm"`, and built-in scorers use `kind="scorer"`.
 
 - **Exceptions** are recorded (`"ValueError: message"` plus the traceback) and
   re-raised.
@@ -115,33 +140,93 @@ with weft.thread("conversation-42"):       # thread_id; top-level calls are turn
 - **Values** are converted to JSON: pydantic models and dataclasses become
   dicts. Published objects, ops and dataset rows become ref strings. `bytes` and
   PIL images are uploaded via `/file/create` and stored as
-  `{"_type": "Image", "file_digest", "mime_type"}`.
+  `{"_type": "Image", "file_digest", "mime_type"}`. Video, PDF and audio bytes
+  are detected the same way.
+
+### Files and rich media
+
+```python
+weft.Content.from_path("report.pdf")              # {"_type": "Content", "mimetype", "filename", "file_digest"}
+weft.Content.from_bytes(data, mimetype="application/zip", filename="a.zip")
+weft.Content.from_text("plain text", filename="notes.txt")
+weft.Video.from_path("demo.mp4"); weft.PDF.from_path("paper.pdf")
+weft.Html("<b>rendered</b>"); weft.Markdown("# rendered")   # {"_type": "Html"|..., "file_digest", "mime_type", "filename"}
+client.read_file(file_digest)                     # bytes back
+```
+
+Any of these can be returned from or passed to an op, or stored in objects and
+dataset rows.
 
 ## Integrations (auto-patched by `weft.init`)
 
-When the `openai` or `anthropic` packages are installed, `weft.init()` patches
-them (pass `autopatch=False` to opt out):
+`weft.init()` patches every supported library that is installed. Patching is
+idempotent, and nothing happens for libraries that are not installed. Pass
+`autopatch=False` to opt out.
 
-| Library | Methods | Op name |
+| Library | Traced | Op name(s) |
 |---|---|---|
-| openai | `chat.completions.create` (sync/async, `stream=True`) | `openai.chat.completions.create` |
-| openai | `responses.create` (sync/async, streaming) | `openai.responses.create` |
-| anthropic | `messages.create` (sync/async, `stream=True`) | `anthropic.messages.create` |
-| anthropic | `messages.stream()` context manager | `anthropic.messages.stream` |
+| openai | `chat.completions.create`, `responses.create` (sync/async/stream) | `openai.chat.completions.create`, `openai.responses.create` |
+| anthropic | `messages.create` (sync/async/`stream=True`), `messages.stream()` | `anthropic.messages.create`, `anthropic.messages.stream` |
+| litellm | `completion`, `acompletion` (incl. stream) | `litellm.completion`, `litellm.acompletion` |
+| google-genai | `models.generate_content(_stream)`, sync and `client.aio` | `google.genai.models.generate_content(_stream)` |
+| boto3 (Bedrock) | `converse`, `converse_stream`, `invoke_model`, `invoke_model_with_response_stream` | `bedrock.converse`, ... |
+| mistralai | `chat.complete`, `chat.stream` (+ `_async`) | `mistralai.chat.complete`, `mistralai.chat.stream` |
+| cohere | `ClientV2`/`Client` `chat`, `chat_stream` (sync/async) | `cohere.chat`, `cohere.chat_stream` |
+| groq, together | `chat.completions.create` (OpenAI-compatible) | `groq.chat.completions.create`, `together...` |
+| langchain-core | every chain, chat model/LLM, tool and retriever run | `langchain.<Type>.<name>` |
+| openai-agents | traces and agent/function/generation/response/handoff/guardrail spans | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, ... |
+| dspy | modules, LM calls, tools | `dspy.<Module>`, `dspy.LM`, `dspy.Tool.<name>` |
 
-Each LLM request becomes a call with the request kwargs as inputs, the response
-as output (streams are accumulated into a single response), and
-`summary.usage = {model: {requests, prompt_tokens, completion_tokens, total_tokens}}`.
+Each LLM request becomes a call (`kind="llm"`):
+- **Inputs** are the request kwargs.
+- **Output** is the response; streams are accumulated into a single response.
+- **Usage** is recorded as
+  `summary.usage = {model: {requests, prompt_tokens, completion_tokens, total_tokens}}`.
+
 For streamed OpenAI chat completions the SDK adds
 `stream_options={"include_usage": True}` unless you set `stream_options`
-yourself.
+yourself. Groq reports streamed usage in `x_groq.usage`. Bedrock usage comes
+from the response, the stream metadata or the
+`x-amzn-bedrock-*-token-count` headers.
 
-To trace a single client instance of any OpenAI-shaped SDK (Groq, Together,
-vLLM, ...):
+**No double counting.** Wrapper libraries call provider SDKs that are also
+patched:
+- **LiteLLM:** the provider calls it makes are not traced again.
+- **LangChain, OpenAI Agents and DSPy:** the framework run's call is the
+  parent, so provider calls and your own ops nest under it. The framework's LLM
+  run records usage only when no nested call already did.
+
+**LangChain.** `weft.init()` registers `WeftTracer` through LangChain's
+configure hook, so every run is traced. Set `WEFT_TRACE_LANGCHAIN=false` to
+opt out. You can also pass it explicitly:
+
+```python
+from weft.integrations.langchain import WeftTracer
+chain.invoke({"question": "..."}, config={"callbacks": [WeftTracer()]})
+```
+
+**OpenAI Agents SDK.** The integration calls
+`agents.add_trace_processor(WeftTracingProcessor())`. Each agent trace becomes
+a root call; spans become nested calls with kinds `agent`, `tool`, `llm` and
+`guardrail`.
+
+**DSPy.** The integration appends `WeftDSPyCallback` to
+`dspy.settings.callbacks`. LM usage is recorded by the LiteLLM integration.
+
+**LlamaIndex** (and any other OpenInference-instrumented framework) goes
+through OpenTelemetry:
+
+```python
+import weft.otel
+from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+LlamaIndexInstrumentor().instrument(tracer_provider=weft.otel.configure(project="my-project"))
+```
+
+To trace a single client instance of any OpenAI-shaped SDK (vLLM, Ollama, ...):
 
 ```python
 from weft.integrations import patch_openai_compatible
-patch_openai_compatible(groq_client, name="groq")   # -> groq.chat.completions.create
+patch_openai_compatible(client, name="vllm")   # -> vllm.chat.completions.create
 ```
 
 ## Objects, refs and prompts
@@ -260,6 +345,40 @@ Summary shapes: booleans → `{"true_count", "true_fraction"}`, numbers →
 Built-in scorers serialise in the server's format, so the same `Evaluation`
 can run server side with `/evaluate_model` or be attached to a Monitor.
 
+### Built-in scorers
+
+All built-in scorers run locally. Every one except `PydanticScorer` also
+serialises for server-side runs.
+
+| Scorer | Fields | Result |
+|---|---|---|
+| `ExactMatchScorer` / `ContainsScorer` / `LevenshteinScorer` | `target_column` (+ `case_insensitive`) | bool / bool / similarity 0..1 |
+| `RegexScorer` | `pattern` | bool |
+| `JSONValidScorer` / `ValidXMLScorer` | | bool |
+| `JSONSchemaScorer` | `schema` | bool (output validates) |
+| `LLMAsAJudgeScorer` | `model`, `scoring_prompt`, `response_format` | judge JSON |
+| `HallucinationFreeScorer` / `SummarizationScorer` / `RelevanceScorer` | `model`, `scoring_prompt` (preset) | `{hallucination_free}` / `{summarization_score, is_faithful}` / `{is_relevant, relevance_score}` + `reasoning` |
+| `OpenAIModerationScorer` | | `{flagged, categories}` (locally needs `openai` and `OPENAI_API_KEY`) |
+| `EmbeddingSimilarityScorer` | `target_column`, `model` | cosine similarity (locally needs a server `/embeddings/create`) |
+| `RuleScorer` | `rule` (query-language operation), `threshold` | the rule's value; with `threshold`, numbers score `value >= threshold` |
+| `RemoteScorer` | `url`, `headers_secret`, `timeout` | JSON response of `POST url {"output", "inputs"}` |
+| `PydanticScorer` (local only) | `model` (a pydantic class) | bool (output parses) |
+
+Judge prompts can use `{output}`, `{inputs}` (all columns as JSON) and any
+column name. They run through the server's `/completions/create`, so
+`model="mock/json"` works offline. `RuleScorer` evaluates its rule against
+`{"output": ..., "inputs": {...}, <columns>}`, for example:
+
+```python
+scorers.RuleScorer(rule={"$contains": {"input": {"$getField": "output"},
+                                       "substr": {"$getField": "expected"}, "case_insensitive": True}})
+```
+
+`RemoteScorer` reads its headers from the server secret named
+`headers_secret`. Locally it reads the environment variable of the same name,
+which holds either a JSON object of headers or a bare token sent as a bearer
+token.
+
 ### EvaluationLogger
 
 When you run predictions yourself:
@@ -270,7 +389,15 @@ pred = ev.log_prediction(inputs={"question": "2+2"}, output="4")
 pred.log_score("correct", True)
 pred.finish()
 ev.log_summary()            # same call structure as Evaluation
+
+# one-liner per example; scores as a dict
+ev.log_example({"question": "3+3"}, "6", {"correct": True})
 ```
+
+Pass a `Dataset` or a dataset ref/URI as `dataset=` to link predictions to its
+rows. When a prediction's inputs equal a row, its `example` input is that row's
+ref (`.../attr/rows/id/<row digest>`), as in `Evaluation`. Comparisons and
+leaderboards then line up rows across runs.
 
 ## Guardrails and online scoring
 
@@ -291,6 +418,24 @@ call.apply_scorer_sync(weft.scorers.RegexScorer(pattern=r"^\w"))   # sync helper
 The result is an `ApplyScorerResult(result, score_call, feedback_id)`. Runnable
 feedback can be queried, for example
 `feedback.wandb.runnable.toxicity.output.flagged`.
+
+## Object versions: aliases, tags, deletion
+
+```python
+ref = weft.publish(ds)
+client.set_aliases(ref, "production")          # then weft.ref("qa:production").get()
+client.remove_aliases("qa", "production")
+client.get_aliases(ref)
+client.add_tags(ref, ["reviewed"]); client.remove_tags(ref, ["reviewed"]); client.get_tags(ref)
+client.list_tags()                             # all tags in the project
+client.delete_object_version(ref)              # or "qa:v0"
+client.delete_object_versions("qa", ["v1", "<digest>"])
+client.delete_all_object_versions("qa")
+```
+
+`obj_ref` arguments accept a ref, a URI, `"name:v1"`, `"name:latest"` or a
+published object. Aliases use Weave's `/objs/{id}/aliases` routes and fall
+back to `/obj/alias/set` on older servers.
 
 ## Annotations, monitors, leaderboards and saved views
 

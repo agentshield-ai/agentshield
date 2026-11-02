@@ -14,12 +14,12 @@ import weft
 client = weft.init("agent-demo")
 
 
-@weft.op
+@weft.op(kind="tool")
 def get_weather(city: str) -> dict:
     return {"city": city, "forecast": "sunny", "temp_c": 21}
 
 
-@weft.op
+@weft.op(kind="tool")
 def calculator(expression: str) -> float:
     allowed = set("0123456789+-*/(). ")
     if not set(expression) <= allowed:
@@ -30,7 +30,7 @@ def calculator(expression: str) -> float:
 TOOLS = {"get_weather": get_weather, "calculator": calculator}
 
 
-@weft.op
+@weft.op(kind="llm")
 def llm(messages: list) -> str:
     if os.environ.get("OPENAI_API_KEY"):
         from openai import OpenAI  # traced automatically as openai.chat.completions.create
@@ -56,7 +56,7 @@ def plan(question: str) -> list:
     return steps
 
 
-@weft.op(call_display_name=lambda call: f"turn: {call.inputs['question'][:30]}")
+@weft.op(kind="agent", color="purple", call_display_name=lambda call: f"turn: {call.inputs['question'][:30]}")
 def agent_turn(question: str) -> str:
     observations = []
     for tool_name, args in plan(question):

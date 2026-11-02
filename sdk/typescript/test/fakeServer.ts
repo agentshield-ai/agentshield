@@ -18,6 +18,11 @@ export class FakeWeft {
   files = new Map<string, Buffer>();
   feedback: any[] = [];
   failPaths = new Map<string, number>();
+  failStatus: number | null = null;
+  tags = new Map<string, string[]>(); // `${object}|${digest}`
+  aliases = new Map<string, string>(); // `${object}|${alias}` -> digest
+  embeddingsEnabled = false;
+  weaveRoutes = true;
   url = '';
   private server: Server;
 
@@ -28,6 +33,11 @@ export class FakeWeft {
       const raw = Buffer.concat(chunks);
       const ctype = req.headers['content-type'] ?? '';
       const body = ctype.startsWith('application/json') && raw.length ? JSON.parse(raw.toString()) : null;
+      if (this.failStatus) {
+        this.requests.push({ method: req.method ?? '', path: req.url ?? '', body, headers: req.headers });
+        res.writeHead(this.failStatus, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ reason: 'injected' }));
+      }
       const path = req.url ?? '';
       this.requests.push({ method: req.method ?? '', path, body, headers: req.headers });
       const send = (status: number, data: unknown, type = 'application/json') => {
@@ -40,6 +50,27 @@ export class FakeWeft {
         return send(503, { reason: 'injected' });
       }
       try {
+        if (req.method === 'GET' && path.startsWith('/tags?')) return send(200, { tags: [...new Set([...this.tags.values()].flat())].sort() });
+        if (req.method === 'PUT') {
+          let m = /^\/objs\/([^/]+)\/aliases$/.exec(path);
+          if (m && this.weaveRoutes) {
+            for (const a of body.aliases) this.aliases.set(`${decodeURIComponent(m[1])}|${a}`, body.digest);
+            return send(200, {});
+          }
+          m = /^\/objs\/([^/]+)\/versions\/([^/]+)\/tags$/.exec(path);
+          if (m && this.weaveRoutes) {
+            const key = `${decodeURIComponent(m[1])}|${m[2]}`;
+            const cur = this.tags.get(key) ?? [];
+            for (const t of body.tags) if (!cur.includes(t)) cur.push(t);
+            this.tags.set(key, cur);
+            return send(200, {});
+          }
+          return send(404, { reason: 'no route' });
+        }
+        if (path === '/file/content') {
+          res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+          return res.end(this.files.get(body.digest));
+        }
         if (req.method === 'GET' && path === '/auth/whoami') return send(200, { user_id: 'anonymous', auth_required: false });
         if (req.method === 'GET' && path === '/server_info') return send(200, { version: 'fake', auth_required: false, otel_endpoint: '/otel/v1/traces' });
         const out = this.handle(path, body, raw, ctype);
@@ -75,7 +106,37 @@ export class FakeWeft {
   }
 
   private handle(path: string, body: any, raw: Buffer, ctype: string): unknown {
+    let m = /^\/objs\/([^/]+)\/aliases\/remove$/.exec(path);
+    if (m && this.weaveRoutes) {
+      for (const a of body.aliases) this.aliases.delete(`${decodeURIComponent(m[1])}|${a}`);
+      return {};
+    }
+    m = /^\/objs\/([^/]+)\/versions\/([^/]+)\/tags\/remove$/.exec(path);
+    if (m && this.weaveRoutes) {
+      const key = `${decodeURIComponent(m[1])}|${m[2]}`;
+      this.tags.set(key, (this.tags.get(key) ?? []).filter((t) => !body.tags.includes(t)));
+      return {};
+    }
     switch (path) {
+      case '/obj/alias/set':
+        this.aliases.set(`${body.object_id}|${body.alias}`, body.digest);
+        return {};
+      case '/obj/alias/remove':
+        this.aliases.delete(`${body.object_id}|${body.alias}`);
+        return {};
+      case '/obj/delete': {
+        const versions = this.objs.get(body.object_id) ?? [];
+        const ds: string[] | undefined = body.digests;
+        const keep = ds ? versions.filter((v) => !ds.includes(v.digest) && !ds.includes(`v${v.version_index}`)) : [];
+        this.objs.set(body.object_id, keep);
+        return { num_deleted: versions.length - keep.length };
+      }
+      case '/embeddings/create': {
+        if (!this.embeddingsEnabled) throw new Error('no route');
+        return { response: { model: body.inputs.model, data: body.inputs.input.map((t: string) => ({ embedding: [t.length, 1] })) } };
+      }
+      case '/remote/score':
+        return { score: 0.9, received: body };
       case '/call/upsert_batch':
         return {
           res: body.batch.map((it: any) => {
@@ -99,7 +160,13 @@ export class FakeWeft {
         const dg: string = body.digest;
         const v = dg === 'latest' ? versions.at(-1) : /^v\d+$/.test(dg) ? versions[Number(dg.slice(1))] : versions.find((x) => x.digest === dg);
         if (!v) throw new Error('not found');
-        return { obj: { ...v, project_id: body.project_id, object_id: body.object_id } };
+        const extra = body.include_tags_and_aliases
+          ? {
+              tags: this.tags.get(`${body.object_id}|${v.digest}`) ?? [],
+              aliases: [...this.aliases.entries()].filter(([k, d]) => k.startsWith(`${body.object_id}|`) && d === v.digest).map(([k]) => k.split('|')[1]).sort(),
+            }
+          : {};
+        return { obj: { ...v, project_id: body.project_id, object_id: body.object_id, ...extra } };
       }
       case '/table/create': {
         const rows = body.table.rows;

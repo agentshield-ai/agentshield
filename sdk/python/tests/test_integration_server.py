@@ -389,3 +389,83 @@ def test_parity_features_live(live):
     live.purge_costs(ids)
     assert not live.query_costs(["tmp-model"])
     assert live.whoami()["user_id"]
+
+
+def test_batch3_features_live(live, tmp_path):
+    # kind/color and global attributes
+    @weft.op(kind="agent", color="green")
+    def planner(q: str) -> str:
+        return q
+
+    planner("x")
+    live.flush()
+    [p] = _calls(live, op_names=["planner"])
+    assert p.attributes["weft"]["span_kind"] == "agent" and p.attributes["weft"]["color"] == "green"
+    assert p.ui_url.endswith(f"/{live.project_id}/calls/{p.id}")
+    q = list(live.get_calls(query={"$eq": [{"$getField": "attributes.weft.span_kind"}, {"$literal": "agent"}]}))
+    assert [c.id for c in q] == [p.id]
+
+    # Content and media round trip through /file/create
+    @weft.op
+    def report() -> dict:
+        return {"doc": weft.Content.from_text("hello", filename="a.txt"), "md": weft.Markdown("# T"), "pdf": weft.PDF(b"%PDF-1.4 x")}
+
+    report()
+    live.flush()
+    [r] = _calls(live, op_names=["report"])
+    assert r.output["doc"]["_type"] == "Content" and live.read_file(r.output["doc"]["file_digest"]) == b"hello"
+    assert r.output["md"]["_type"] == "Markdown" and live.read_file(r.output["md"]["file_digest"]) == b"# T"
+    assert r.output["pdf"]["_type"] == "PDF"
+
+    # object management
+    r0 = weft.publish({"v": 0}, name="mgmt")
+    r1 = weft.publish({"v": 1}, name="mgmt")
+    live.set_aliases(r1, ["production"])
+    assert "production" in live.get_aliases(r1)
+    assert weft.ref("mgmt:production").get() == {"v": 1}
+    live.remove_aliases("mgmt", "production")
+    assert "production" not in live.get_aliases(r1)
+    live.add_tags(r1, ["golden", "reviewed"])
+    assert sorted(live.get_tags(r1)) == ["golden", "reviewed"]
+    live.remove_tags(r1, ["reviewed"])
+    assert live.get_tags(r1) == ["golden"]
+    assert "golden" in live.list_tags()
+    assert live.delete_object_version(r0) == 1
+    assert live.delete_all_object_versions("mgmt") == 1
+
+    # EvaluationLogger.log_example linked to dataset rows (refs resolve server side)
+    ds = weft.Dataset(name="live-linked", rows=[{"q": "a"}, {"q": "b"}])
+    weft.publish(ds)
+    ev = weft.EvaluationLogger(model="m", dataset=ds, name="live-linked-eval")
+    ev.log_example({"q": "b"}, "B", {"ok": True})
+    ev.log_summary()
+    live.flush()
+    [pas] = _calls(live, op_names=["Evaluation.predict_and_score"])
+    assert live._http.post("/refs/read_batch", {"refs": [pas.inputs["example"]]})["vals"] == [{"q": "b"}]
+
+    # new scorer classes publish with the expected class names
+    for sc in (scorers.ValidXMLScorer(name="xml"), scorers.JSONSchemaScorer(name="js", schema={"type": "object"}),
+               scorers.RuleScorer(name="rule", rule={"$eq": [1, 1]}), scorers.HallucinationFreeScorer(name="hall"),
+               scorers.RemoteScorer(name="remote", url="https://example.invalid"), scorers.EmbeddingSimilarityScorer(name="emb"),
+               scorers.OpenAIModerationScorer(name="mod"), scorers.RelevanceScorer(name="rel"), scorers.SummarizationScorer(name="sum")):
+        weft.publish(sc)
+        obj = live._http.post("/obj/read", {"project_id": live.project_id, "object_id": sc.name, "digest": "latest"})["obj"]
+        assert obj["leaf_object_class"] in (type(sc).__name__, None) and obj["val"]["_class_name"] == type(sc).__name__
+    assert scorers.HallucinationFreeScorer(model="mock/json").score(output="x", q="y")
+    with pytest.raises(RuntimeError, match="embeddings"):
+        scorers.EmbeddingSimilarityScorer().score(output="a", expected="b")
+
+    # write-ahead log: unsent items replay against the live server
+    wal = {"enable_disk_fallback": True, "wal_dir": str(tmp_path), "retry_max_attempts": 0}
+    dead = weft.init(live.project_id, server_url="http://127.0.0.1:9", autopatch=False, settings=wal)
+    weft.op(lambda: 1, name="wal_op")()
+    dead.flush(5)
+    weft.finish()
+    import shutil
+
+    [f] = list(tmp_path.iterdir())
+    key = f.name.replace("http_127.0.0.1_9", URL.replace("://", "_").replace(":", "_").replace("/", "_"))
+    shutil.move(str(f), str(tmp_path / key))
+    again = weft.init(live.project_id, server_url=URL, api_key=os.environ.get("WEFT_TEST_API_KEY"), autopatch=False, settings=wal)
+    again.flush(10)
+    assert len(list(again.get_calls(filter={"op_names": ["wal_op"]}))) == 1

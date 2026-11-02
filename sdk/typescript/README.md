@@ -48,15 +48,40 @@ await weft.init('my-project', { settings: { redactKeys: ['api_key', 'ssn'], reda
 `redactPii` also masks emails, phone, card and SSN numbers, and IP addresses
 inside strings.
 
+### Settings
+
+```ts
+await weft.init('my-project', {
+  settings: {
+    globalAttributes: { app: 'support-bot' },   // added to every call
+    printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root call (WEFT_PRINT_CALL_LINK)
+    captureCode: true,                           // store op source (WEFT_CAPTURE_CODE)
+    enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
+    maxQueueSize: 10_000,
+    retryMaxAttempts: 3, retryBackoffMs: 250, retryMaxBackoffMs: 4000,
+  },
+});
+```
+
+With `enableDiskFallback`, anything that cannot be sent goes to a JSONL file
+instead of being dropped. That covers batches that still fail after retries,
+queue overflow, and what is still queued when the process exits. The next
+`init()` for the same server and project replays it.
+
 ## Tracing
 
-- `weft.op(fn, { name, callDisplayName, parameterNames, postprocessInputs, postprocessOutput, accumulator })`
+- `weft.op(fn, { name, kind, color, tracingSampleRate, enableCodeCapture, callDisplayName, parameterNames, postprocessInputs, postprocessOutput, accumulator })`
   traces sync and async functions, generators, async generators and functions
   returning async iterables. Streamed items are accumulated into the output (an
   array by default).
 - Input names come from the function's parameter list. A single destructured
   object parameter (`async ({ datasetRow }) => ...`) records that object's
   keys. Override with `parameterNames`.
+- `kind` (`agent`, `llm`, `tool`, `chain`, `retriever`, `embedding`,
+  `scorer`, ...) and `color` are stored as `attributes.weft.span_kind` and
+  `attributes.weft.color`, mirrored to `attributes.weave.kind` and `.color`.
+  `tracingSampleRate` samples root calls, and a root's children follow it.
+  `weft.withTracingDisabled(() => ...)` runs code without recording anything.
 - `weft.op(this, fn)` traces a method and records the instance as `self` (its
   ref when it has been published).
 - `await myOp.call(...args)` resolves to `[result, call]`. Errors are captured
@@ -83,9 +108,18 @@ import Anthropic from '@anthropic-ai/sdk';
 const openai = weft.wrapOpenAI(new OpenAI());          // chat.completions.create, responses.create
 const groq = weft.wrapOpenAI(groqClient, { name: 'groq' });
 const anthropic = weft.wrapAnthropic(new Anthropic()); // messages.create, messages.stream
+const ai = weft.wrapGoogleGenAI(new GoogleGenAI({}));  // models.generateContent(Stream)
+const together = weft.wrapOpenAICompatible(new OpenAI({ baseURL: 'https://api.together.xyz/v1' }), { name: 'together' });
+
+// Vercel AI SDK
+import { wrapLanguageModel } from 'ai';
+const model = wrapLanguageModel({ model: openai('gpt-4o-mini'), middleware: weft.weftMiddleware() });
 ```
 
-Each request becomes a call (for example `openai.chat.completions.create`).
+Each request becomes a call with `kind: 'llm'` (for example
+`openai.chat.completions.create`, `google.genai.models.generate_content`,
+`vercel_ai.generate` or `vercel_ai.stream`). `wrapOpenAICompatible` does not
+add `stream_options`; Groq's `x_groq.usage` is picked up automatically.
 The request body is recorded as inputs and the response as output. Streams are
 accumulated into one response. `summary.usage` is
 `{model: {requests, prompt_tokens, completion_tokens, total_tokens}}`. Streamed
@@ -103,6 +137,24 @@ ref.uri();                               // weft:///default/my-project/object/qa
 const loaded = await weft.ref('qa:latest').get();   // Dataset (also "qa", "qa:v0", full URIs)
 const ds2 = await loaded.addRows([{ question: '3+3', expected: '6' }]);   // /table/update + new version
 await weft.publish({ temperature: 0.2 }, 'config');
+```
+
+Files and rich media are uploaded through `/file/create`:
+
+```ts
+weft.Content.fromPath('report.pdf');     // {_type: 'Content', mimetype, filename, file_digest}
+weft.Content.fromText('notes', { filename: 'notes.txt' });
+weft.Video.fromPath('demo.mp4'); weft.PDF.fromBytes(bytes); new weft.Html('<b>x</b>'); new weft.Markdown('# x');
+```
+
+Object versions:
+
+```ts
+await client.setAliases(ref, 'production');      // then weft.ref('qa:production')
+await client.removeAliases('qa', 'production');
+await client.addTags(ref, ['reviewed']); await client.removeTags(ref, ['reviewed']);
+await client.getTags(ref); await client.getAliases(ref); await client.listTags();
+await client.deleteObjectVersion('qa:v0'); await client.deleteObjectVersions('qa', ['v1']); await client.deleteAllObjectVersions('qa');
 ```
 
 **Loading ops evaluates stored code.** `await weft.ref('myOp').get()` returns a
@@ -171,6 +223,21 @@ scorers: [
 ]
 ```
 
+More built-ins serialise exactly like their Python counterparts:
+- `HallucinationFreeScorer`, `SummarizationScorer` and `RelevanceScorer`:
+  LLM-judge presets with `model` and `scoringPrompt`.
+- `ValidXMLScorer`.
+- `JSONSchemaScorer({ schema })`.
+- `OpenAIModerationScorer`. Locally it needs `OPENAI_API_KEY`.
+- `EmbeddingSimilarityScorer({ targetColumn, model })`. Locally it needs a
+  server `/embeddings/create` endpoint; without one it fails with a clear
+  error.
+- `RuleScorer({ rule, threshold })`: a query-language operation evaluated on
+  `{output, inputs, ...columns}`.
+- `RemoteScorer({ url, headersSecret, timeout })`: POSTs `{output, inputs}` to
+  `url`. Locally the headers come from the environment variable named by
+  `headersSecret`.
+
 `LLMAsAJudgeScorer` runs through the server's `/completions/create` with
 `track_llm_call: false`, so provider keys stay on the server and usage is
 recorded on the scorer call. For a custom scorer object, subclass
@@ -183,8 +250,13 @@ const ev = new weft.EvaluationLogger({ model: 'my-model', dataset: 'qa', name: '
 const pred = ev.logPrediction({ question: '2+2' }, '4');
 pred.logScore('correct', true);
 pred.finish();
+ev.logExample({ question: '3+3' }, '6', { correct: true });   // prediction + scores in one call
 const summary = await ev.logSummary();     // same call structure as Evaluation
 ```
+
+Pass a `Dataset` as `dataset` to link predictions to its rows. Load a
+published one with `await weft.ref('qa').get()` first. A prediction whose
+inputs equal a row references that row's ref.
 
 Objects are published with locally computed digests, which match the
 server's, so logging never waits on the network.

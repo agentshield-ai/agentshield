@@ -12,9 +12,12 @@ import * as weft from '../../../sdk/typescript/dist/index.js';
 const client = await weft.init('ts-quickstart');
 
 // --- tracing -----------------------------------------------------------------
-const retrieve = weft.op(async function retrieve(query: string) {
-  return [`doc about ${query}`, 'another doc'];
-});
+const retrieve = weft.op(
+  async function retrieve(query: string) {
+    return [`doc about ${query}`, 'another doc'];
+  },
+  { kind: 'retriever' },
+);
 
 // A stand-in for `new OpenAI()`; wrapOpenAI works the same on the real client.
 const llmClient = weft.wrapOpenAI({
@@ -45,7 +48,7 @@ const answer = weft.op(
     });
     return res.choices[0].message.content;
   },
-  { callDisplayName: (call) => `answer: ${String(call.inputs.question).slice(0, 20)}` },
+  { kind: 'agent', color: 'blue', callDisplayName: (call) => `answer: ${String(call.inputs.question).slice(0, 20)}` },
 );
 
 await weft.withThread('demo-conversation', async () => {
@@ -78,12 +81,25 @@ const lengthDelta = weft.op(function lengthDelta({ modelOutput, datasetRow }: { 
   return { delta: Math.abs(modelOutput.length - datasetRow.expected.length) };
 });
 
-const evaluation = new weft.Evaluation({ name: 'capitals-ts-eval', dataset, scorers: [exactMatch, lengthDelta] });
+const evaluation = new weft.Evaluation({
+  name: 'capitals-ts-eval',
+  dataset,
+  scorers: [exactMatch, lengthDelta, new weft.ExactMatchScorer({ name: 'exact_builtin' }), new weft.LevenshteinScorer({ name: 'similarity' })],
+});
 console.log('summary:', JSON.stringify(await evaluation.evaluate({ model: capitalModel })));
 
 // --- reading data back ---------------------------------------------------------
 const [latest] = await client.getCalls({ filter: { op_names: ['answer'] }, sortBy: [{ field: 'started_at', direction: 'desc' }], limit: 1 });
 await latest.feedback.addReaction('👍');
+const guard = await latest.applyScorer(new weft.RuleScorer({ name: 'non_empty', rule: { $gt: [{ $getField: 'output' }, { $literal: '' }] } }));
+console.log('guardrail:', guard.result);
+
+// attach a document, then tag the dataset version
+const attach = weft.op(function attachNotes() {
+  return weft.Content.fromText('Capitals reviewed by the geography team.', { filename: 'notes.txt' });
+});
+attach();
+await client.addTags(dataset.ref!, ['reviewed']);
 console.log('latest answer call:', latest.id, 'usage:', JSON.stringify(latest.summary.usage));
 
 await weft.finish();
