@@ -15,6 +15,7 @@ import { TraceTree } from '../../components/traces/TraceTree'
 import { Timeline } from '../../components/traces/Timeline'
 import { TraceGraph } from '../../components/traces/TraceGraph'
 import { CodeComposition, FlameGraph } from '../../components/traces/FlameGraph'
+import { LinkedCalls } from '../../components/traces/LinkedCalls'
 import { OpCodeView } from '../../components/traces/OpCodeView'
 import { FeedbackPanel, Reactions, ScoresPanel, useCallFeedback } from '../../components/traces/FeedbackPanel'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
@@ -132,7 +133,7 @@ export function CallPage() {
             onChange={setLeftView}
           />
           <span className="grow" />
-          <span className="faint small">
+          <span className="faint small" style={{ whiteSpace: 'nowrap' }}>
             {traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} call${traceCalls.length === 1 ? '' : 's'}`}
           </span>
         </div>
@@ -646,6 +647,7 @@ function AttributesTab({ projectId, call }: { projectId: string; call: Call }) {
   const { otel, ...attrs } = call.attributes ?? {}
   return (
     <div className="col" style={{ gap: 14 }}>
+      <LinkedCalls projectId={projectId} attributes={call.attributes} />
       <Section title="Attributes">
         {Object.keys(attrs).length ? <ValueView value={attrs} projectId={projectId} /> : <span className="faint">No attributes</span>}
       </Section>

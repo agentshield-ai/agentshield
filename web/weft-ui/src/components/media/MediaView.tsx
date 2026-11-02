@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
 import { api, fileUrl, getApiKey } from '../../api/client'
+import { mediaApi } from '../../api/media'
 import { fmtBytes } from '../../lib/format'
 import { dataUrlText, detectMedia, resolveContent, type MediaSpec } from './mediaUtils'
 import './media.css'
@@ -61,7 +62,8 @@ function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
   return { url, error }
 }
 
-function srcOf(projectId: string, spec: MediaSpec): string | undefined {
+function srcOf(projectId: string, spec: MediaSpec & { resolvedUrl?: string }): string | undefined {
+  if (spec.resolvedUrl) return spec.resolvedUrl
   if (spec.dataUrl) return spec.dataUrl
   if (spec.digest) return fileUrl(projectId, spec.digest)
   return undefined
@@ -145,8 +147,48 @@ function WeaveContent({ projectId, spec }: { projectId: string; spec: MediaSpec 
   return <MediaBlock projectId={projectId} spec={resolveContent(spec, parsed)} />
 }
 
+/**
+ * Media stored outside Weft (s3://, gs://, https://): resolve a download URL
+ * with /files/resolve_url, render images, audio and video from it, and fall
+ * back to a link for everything else or when the uri cannot be resolved.
+ */
+function ExternalMedia({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
+  const q = useQuery({
+    queryKey: ['resolve-url', projectId, spec.uri],
+    queryFn: () => mediaApi.resolveUrls(projectId, [spec.uri!]).then((r) => r.download_urls[0] ?? null),
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+  const direct = /^https?:\/\//i.test(spec.uri ?? '') ? spec.uri : undefined
+  const url = q.data ?? (q.error ? direct : undefined)
+  const label = spec.filename ?? spec.uri
+  const playable = spec.kind === 'image' || spec.kind === 'audio' || spec.kind === 'video'
+  if (q.isLoading) return <div className="faint small">Resolving {label}…</div>
+  return (
+    <div className={`media media-${spec.kind}`}>
+      {url && playable ? <Rendered projectId={projectId} spec={{ ...spec, resolvedUrl: url } as MediaSpec} /> : null}
+      <div className="media-caption">
+        <span className="truncate mono" title={spec.uri}>
+          {label}
+        </span>
+        {spec.mimetype && <span className="faint">{spec.mimetype}</span>}
+        {url ? (
+          <a href={url} className="media-dl" target="_blank" rel="noreferrer noopener">
+            {playable ? 'Open' : 'Open file'}
+          </a>
+        ) : (
+          <span className="faint small" title={q.error instanceof Error ? q.error.message : undefined}>
+            not resolvable
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MediaBlock({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   if (spec.kind === 'content') return <WeaveContent projectId={projectId} spec={spec} />
+  if (spec.uri && !spec.digest && !spec.dataUrl) return <ExternalMedia projectId={projectId} spec={spec} />
   const showCaption = spec.kind !== 'image' || !!spec.filename
   return (
     <div className={`media media-${spec.kind}`}>

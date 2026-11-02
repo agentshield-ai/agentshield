@@ -27,13 +27,13 @@ Status key: **Impl** = implemented, **Partial** = present with stated gaps, **Mi
 
 | Feature group | Impl | Partial | Missing |
 |---|---|---|---|
-| 1. Tracing | 21 | 3 | 0 |
-| 2. Integrations | 11 | 2 | 2 |
+| 1. Tracing | 22 | 2 | 0 |
+| 2. Integrations | 14 | 0 | 1 |
 | 3. Objects and versioning | 8 | 0 | 0 |
 | 4. Datasets | 6 | 0 | 1 |
 | 5. Models | 4 | 0 | 0 |
 | 6. Prompts | 3 | 0 | 0 |
-| 7. Evaluations, scorers, guardrails | 10 | 2 | 1 |
+| 7. Evaluations, scorers, guardrails | 11 | 2 | 0 |
 | 8. Leaderboards | 2 | 1 | 0 |
 | 9. Feedback, annotations, queues | 7 | 0 | 0 |
 | 10. Monitors, signals, automations | 2 | 3 | 0 |
@@ -43,7 +43,7 @@ Status key: **Impl** = implemented, **Partial** = present with stated gaps, **Mi
 | 14. UI views | 9 | 3 | 1 |
 | 15. SDKs and client APIs | 6 | 2 | 1 |
 | 16. Admin, settings, security | 6 | 1 | 2 |
-| **Total (140 rows)** | **110** | **20** | **10** |
+| **Total (140 rows)** | **115** | **17** | **8** |
 
 API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in Weft (was 116 at the audit). That includes **118 of 118** in the vendored client SDK. See §17.
 
@@ -68,7 +68,7 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | Media: image, audio, video, PDF, HTML, Markdown, `Content` API | core-types/media | Impl | `_content.py`, `content.ts`, `components/media/MediaView.tsx` (sandboxed HTML iframe); `media.test.ts` |
 | BYOB media references (own bucket) | tracking/byob-references, agents-byob-references | Partial | server: `--files-backend s3://bucket/prefix` stores file contents in an S3-compatible bucket (SigV4, `objstore/s3.go`), `/files/resolve_url` presigns digests and `s3://` keys (`server/files_media.go`; `TestFilesS3Backend`, `objstore/s3_test.go`). The Weft SDKs do not log references to media already in a user bucket |
 | Key redaction | tracking/redact-pii | Impl | `_redact.py`, `redact.ts` |
-| PII redaction | tracking/redact-pii | Partial | SDK: 5 regex entities; server: 6 regex entities (`store/redact.go`, `TestSensitiveDataRedaction`). No Presidio/NER entities (PERSON, LOCATION, …) |
+| PII redaction | tracking/redact-pii | Impl | Python SDK: regex entities plus NER entities (PERSON, LOCATION, ORGANIZATION and Presidio's list) through Presidio (`weft[pii]`), a transformers NER pipeline or a custom analyzer; `redact_pii_fields`/`redact_pii_exclude_fields`/`redact_pii_engine` and `WEFT_REDACT_PII*` env (`_redact.py`; `tests/test_local_scorers.py`, live test in `test_integrations_live.py`). Server: 6 regex entities (`store/redact.go`, `TestSensitiveDataRedaction`); the TS SDK is regex only |
 | OTLP ingest `/otel/v1/traces` (protobuf, JSON, gzip) | tracking/otel | Impl | `internal/weft/otlp/otlp.go`; `TestOTLPJSONOverHTTP`, `otlp_test.go` |
 | OTel conventions | tracking/otel | Partial | GenAI, OpenInference, OpenLLMetry, Vercel `ai.*`, MLflow, Pydantic AI/Logfire, Vertex `gcp.vertex.agent.*` and OpenLit are mapped (`otlp/frameworks.go`, `frameworks_test.go`). Langfuse `langfuse.startTime/endTime` is not mapped |
 | OTel thread and turn attributes | tracking/otel | Impl | `wandb.thread_id`, `wandb.is_turn` (`otlp.go`) |
@@ -91,9 +91,9 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | OpenAI Agents SDK | integrations/agents/openai-agents-sdk | Impl | `integrations/openai_agents.py` |
 | Vercel AI SDK (TS) | integrations/vercel_ai_sdk | Impl | `integrations/vercel_ai.ts` middleware, plus OTel `ai.*` mapping |
 | OpenAI-compatible clients (OpenRouter, local, Azure) | integrations/openrouter, local_models, azure | Impl | `patch_openai_compatible`, TS `wrapOpenAICompatible`. Azure is not tested |
-| Autopatch control | integrations/autopatching | Partial | `init(autopatch=False)` and `unpatch_all`; no per-integration settings |
-| LlamaIndex, CrewAI, smolagents, Instructor, Haystack, AutoGen, Agno, MCP, Claude Agent SDK, Google ADK, Pydantic AI, Koog, verifiers/verl, NIM, Cerebras, HF | integrations | Partial | no native patches. These work only through their OTel/OpenInference instrumentors, whose spans are mapped |
-| OpenAI Realtime audio | integrations/openai-realtime-audio | Missing | no code |
+| Autopatch control | integrations/autopatching | Impl | `init(autopatch_settings={name: {"enabled", "op_settings": {name, call_display_name, postprocess_inputs, postprocess_output, kind, color, attributes}}})` (also `AutopatchSettings`/`IntegrationSettings`/`OpSettings`), `WEFT_AUTOPATCH`, `WEFT_DISABLED_INTEGRATIONS`, `WEFT_AUTOPATCH_<NAME>`; libraries imported after `init` are patched on import (`integrations/_settings.py`, `_hooks.py`; `tests/test_autopatch_settings.py`). Python only |
+| LlamaIndex, CrewAI, smolagents, Instructor, Haystack, AutoGen, Agno, MCP, Claude Agent SDK, Google ADK, Pydantic AI, Koog, verifiers/verl, NIM, Cerebras, HF | integrations | Impl | Native Python integrations: `llamaindex.py` (span handler), `crewai.py`, `smolagents.py`, `instructor.py`, `haystack.py` (tracer), `autogen.py`, `agno.py`, `mcp.py` (mcp 1.x/2.x client and server, fastmcp server), `claude_agent_sdk.py` (query/turn, LLM and tool spans, usage), `vertexai.py`, `huggingface.py`, `cerebras` (`other_llms.py`), NVIDIA NIM via the OpenAI patch (`weft.provider`), LangGraph via the LangChain tracer, and Google ADK, Pydantic AI, verifiers, GEPA, Not Diamond (`frameworks.py`); `tests/test_framework_integrations.py` (fake modules) plus offline smoke runs against the real LlamaIndex, Haystack, MCP 2.3, Instructor, smolagents, AutoGen, Pydantic AI, LangGraph, Claude Agent SDK and OpenAI SDKs. Koog (Kotlin) and verl still go through OTel; the TS SDK has none of these |
+| OpenAI Realtime audio | integrations/openai-realtime-audio | Impl | `integrations/openai_realtime.py`: the `openai` SDK's realtime connections (GA and beta, sync/async) become session, response (usage incl. cached/audio tokens) and function-call spans; audio is sized, not stored; `RealtimeTracer` for raw websockets. Python only |
 | Agent harness plugins (Claude Code, Codex, OpenClaw, Pi) | integrations/agents/*-harness | Missing | no Weft plugins (the repo's AgentShield plugins do not target Weft) |
 
 ## 3. Objects and versioning
@@ -145,7 +145,7 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | `Evaluation` (dataset, scorers, trials, preprocess, parallelism) | core-types/evaluations | Impl | `_evaluation.py`, `evaluation.ts`; `test_evaluation.py` |
 | Function and class scorers, `summarize`, `column_map` | evaluation/scorers | Impl | `scorers.py`, `scorers.ts` |
 | Built-in LLM and rule scorers | evaluation/builtin_scorers | Impl | server-runnable ExactMatch, Contains, Regex, JSONValid, Levenshtein, LLMAsAJudge (`evals/scorers.go`), HallucinationFree, Summarization, Relevance, ValidXML, JSONSchema, OpenAIModeration, EmbeddingSimilarity, Rule (`evals/scorers_extra.go`); `TestExtraScorers` |
-| Local SLM scorers (toxicity, bias, coherence, fluency, context relevance, Presidio) | evaluation/weave_local_scorers | Missing | no code |
+| Local SLM scorers (toxicity, bias, coherence, fluency, context relevance, Presidio) | evaluation/weave_local_scorers | Impl | `weft/local_scorers.py` (also `weft.scorers.<Name>`): `WeaveToxicityScorerV1`, `WeaveBiasScorerV1`, `WeaveCoherenceScorerV1`, `WeaveFluencyScorerV1`, `WeaveHallucinationScorerV1`, `WeaveContextRelevanceScorerV1`, `WeaveTrustScorerV1`, `PresidioScorer`; optional `weft[scorers]` extra with lazy imports and a clear error. They serialise for display but run client side only; `tests/test_local_scorers.py` (model loading mocked) |
 | `EvaluationLogger` (`log_prediction`, `log_score`, `log_example`, `log_summary`, dataset link) | evaluation/evaluation_logger | Impl | `_evaluation.py` `EvaluationLogger`, TS `logExample` |
 | Link existing calls or agent traces to an EvaluationLogger run | evaluation/evaluation_logger, agent-evals | Partial | the logger always creates new predict calls; no way to attach existing calls |
 | Evaluate from the UI on the server | tools/evaluation_playground | Partial | `/evaluate_model` runs `LLMStructuredCompletionModel`, any model with a `predict_url`, and models bound to a custom runtime (`evals/runtimes.go`; `TestEvaluateModelWithPredictURL`, `TestEvaluateModelBoundToRuntime`). The UI picker (`NewEvaluationPage.tsx`) still lists only `LLMStructuredCompletionModel` models |
@@ -325,8 +325,8 @@ Ordered by importance.
    - Normalise tags and ratings, and add OAuth for remote scorers.
 3. ~~**`/calls/stats` in Weave's shape**, `has_more` on `/calls/query_stats`, `total_count` on `/feedback/query`.~~ Done.
 4. **Server-side evaluation of any model.** ~~Custom runtimes and remote predict URLs~~ done (`PUT /v2/.../runtimes/{name}`, `predict_url`). Remaining: let the New Evaluation page pick such models.
-5. **Native integrations.** Add LlamaIndex, CrewAI, smolagents, Instructor, MCP, Claude Agent SDK, native Pydantic AI and Google ADK, Haystack, AutoGen, Agno and OpenAI Realtime. Add agent harness plugins (Claude Code, Codex, OpenClaw). Add per-integration autopatch settings.
-6. **Local SLM scorers and NER-based PII redaction.** Weave uses Presidio-style entities; add them in the SDKs and the server.
+5. **Agent harness plugins and TS integrations.** Add agent harness plugins (Claude Code, Codex, OpenClaw). The native framework integrations, OpenAI Realtime and per-integration autopatch settings exist in the Python SDK only.
+6. **NER-based PII redaction on the server and in the TS SDK.** The Python SDK has local SLM scorers and Presidio/transformers NER redaction; the server and TS SDK still redact with regular expressions only.
 7. **Media extras.** ~~`/files/resolve_url`, `/image/create`, an S3-compatible files backend~~ done. Remaining: SDK-side BYOB references (logging media that already sits in a user bucket) and an image-generation mode in the playground UI.
 8. **Evaluation extras.** Link existing calls or agent traces to EvaluationLogger runs and agent evals. Save dynamic leaderboards as objects.
 9. **Dataset helpers.** Add `from_hf`/`to_hf` and `select()`.

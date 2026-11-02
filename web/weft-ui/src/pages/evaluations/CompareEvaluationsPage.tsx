@@ -9,6 +9,7 @@ import { ValueView } from '../../components/ValueView'
 import { Drawer } from '../../components/objects/bits'
 import { defaultLowerIsBetter, evalRunInfo, flattenScores, fmtMetric, seriesColor, sortMetricKeys, toNum, useEvalRuns } from '../../components/evals/evalUtils'
 import { InlineLeaderboard } from '../../components/evals/InlineLeaderboard'
+import { LinkedCallsFor } from '../../components/traces/LinkedCalls'
 import { DELTA_FORMATS, fmtDeltaAs, parseDeltaFormat, type DeltaFormat } from '../../components/traces/diffUtils'
 import { decodeLb, encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
@@ -790,6 +791,7 @@ function RowsSection({
                         <span className="grow" />
                         {t.call_id && <Link to={callUrl(projectId, t.call_id)}>predict_and_score call →</Link>}
                       </div>
+                      {t.call_id && <LinkedCallsFor projectId={projectId} callId={t.call_id} />}
                       <div>
                         <div className="small muted">Output</div>
                         <ValueView value={t.output} projectId={projectId} markdown />

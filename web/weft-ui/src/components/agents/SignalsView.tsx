@@ -250,7 +250,7 @@ function RunPanel({ projectId, agent, signals, model, onModel, onDone }: { proje
         <ErrorBox error={run.error} />
         {res && (
           <div className="small">
-            Scored <b>{fmtNumber(res.scored)}</b> of {fmtNumber(res.turns)} turn{res.turns === 1 ? '' : 's'} × signals
+            Checked {fmtNumber(res.turns)} turn{res.turns === 1 ? '' : 's'}: <b>{fmtNumber(res.scored)}</b> new result{res.scored === 1 ? '' : 's'}
             {res.skipped > 0 && <> · skipped {fmtNumber(res.skipped)} already scored</>}
             {res.failed > 0 && (
               <span style={{ color: 'var(--error)' }}>

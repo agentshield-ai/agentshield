@@ -21,6 +21,26 @@ export interface MediaSpec {
   text?: string
   /** For weave Content: the metadata.json digest, read to learn the mimetype. */
   metaDigest?: string
+  /** External storage (s3://, gs://, https://) resolved through /files/resolve_url. */
+  uri?: string
+}
+
+const FILE_URI_RE = /^(?:weft|weave)-file:\/\/(?:[^/]+\/)*([A-Za-z0-9_-]{8,})$/
+const EXTERNAL_URI_RE = /^(?:s3|gs|az|https?):\/\/\S+$/i
+
+/** A media value's uri: a file digest for weft-file:// and weave-file://, else an external uri. */
+export function mediaUri(uri: string | undefined): { digest?: string; uri?: string } | null {
+  if (!uri) return null
+  const f = FILE_URI_RE.exec(uri.trim())
+  if (f) return { digest: f[1] }
+  if (EXTERNAL_URI_RE.test(uri.trim())) return { uri: uri.trim() }
+  return null
+}
+
+function uriFilename(uri: string): string | undefined {
+  const path = uri.split(/[?#]/)[0]
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  return name && name.includes('.') ? decodeURIComponent(name) : undefined
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -107,11 +127,14 @@ export function detectMedia(v: unknown): MediaSpec | null {
   const mime = str(o.mimetype) ?? str(o.mime_type) ?? str(o.content_type)
   const filename = str(o.filename) ?? str(o.name)
   const size = typeof o.size === 'number' ? o.size : undefined
-  const digest = str(o.file_digest) ?? str(o.digest)
+  const ref = mediaUri(str(o.uri) ?? str(o.url))
+  const digest = str(o.file_digest) ?? str(o.digest) ?? ref?.digest
+  const uri = digest ? undefined : ref?.uri
   if (type === 'Content') {
-    const mt = mime ?? mimeFromFilename(filename) ?? 'application/octet-stream'
+    const mt = mime ?? mimeFromFilename(filename) ?? (uri ? mimeFromFilename(uriFilename(uri)) : undefined) ?? 'application/octet-stream'
     const kind = kindFromMime(mt)
     if (digest) return { kind, mimetype: mt, filename, size, digest }
+    if (uri) return { kind, mimetype: mt, filename: filename ?? uriFilename(uri), size, uri }
     const data = str(o.data)
     if (data) return { kind, mimetype: mt, filename, size, dataUrl: `data:${mt};base64,${data}` }
     return null
@@ -121,10 +144,10 @@ export function detectMedia(v: unknown): MediaSpec | null {
   // Inline text for Markdown/Html values.
   const inline = str(o.markup) ?? str(o.content) ?? str(o.html) ?? str(o.text)
   if ((known === 'markdown' || known === 'html') && inline && !digest) return { kind: known, text: inline, mimetype: mime, filename }
-  if (digest) {
-    const mt = mime ?? mimeFromFilename(filename)
+  if (digest || uri) {
+    const mt = mime ?? mimeFromFilename(filename) ?? (uri ? mimeFromFilename(uriFilename(uri)) : undefined)
     const kind = known === 'file' ? kindFromMime(mt) : known
-    return { kind, mimetype: mt, filename, size, digest }
+    return digest ? { kind, mimetype: mt, filename, size, digest } : { kind, mimetype: mt, filename: filename ?? uriFilename(uri!), size, uri }
   }
   const data = str(o.data)
   if (data && mime) return { kind: known === 'file' ? kindFromMime(mime) : known, mimetype: mime, filename, size, dataUrl: data.startsWith('data:') ? data : `data:${mime};base64,${data}` }

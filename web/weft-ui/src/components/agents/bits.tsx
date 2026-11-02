@@ -1,4 +1,4 @@
-import { Bar, BarChart, Line, LineChart, ResponsiveContainer } from 'recharts'
+import { Bar, BarChart, Line, LineChart, ResponsiveContainer, YAxis } from 'recharts'
 import { RANGES } from './agentUtils'
 import { fmtScore, scoreTone, type TrendPoint } from './signalUtils'
 
@@ -55,8 +55,9 @@ export function Sparkline({ points, kind, width = 90, height = 22 }: { points: T
     <div style={{ width, height }} aria-hidden>
       <ResponsiveContainer width="100%" height="100%">
         {kind === 'rating' ? (
-          <LineChart data={points} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
-            <Line dataKey="value" stroke="var(--c2)" dot={false} strokeWidth={1.5} isAnimationActive={false} connectNulls />
+          <LineChart data={points} margin={{ top: 3, right: 3, bottom: 3, left: 3 }}>
+            <YAxis hide domain={[0, (max: number) => Math.max(1, max)]} />
+            <Line dataKey="value" stroke="var(--c2)" dot={{ r: 1.5, fill: 'var(--c2)', strokeWidth: 0 }} strokeWidth={1.5} isAnimationActive={false} connectNulls />
           </LineChart>
         ) : (
           <BarChart data={points} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>

@@ -241,3 +241,14 @@
   text-align: right;
   flex: none;
 }
+
+/* linked calls (evaluation predictions ↔ existing traces) */
+.linked-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
