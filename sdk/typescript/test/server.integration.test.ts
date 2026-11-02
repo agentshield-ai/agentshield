@@ -1,0 +1,161 @@
+/**
+ * Runs against a real Weft server when WEFT_TEST_SERVER_URL is set:
+ *   WEFT_TEST_SERVER_URL=http://127.0.0.1:6348 npx vitest run test/server.integration.test.ts
+ */
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import * as weft from '../src/index.js';
+import { digest } from '../src/canonical.js';
+
+const URL = process.env.WEFT_TEST_SERVER_URL;
+let client: weft.WeftClient;
+
+describe.skipIf(!URL)('real server', () => {
+  beforeAll(async () => {
+    client = await weft.init(`it/ts-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY });
+  });
+  afterAll(() => weft.finish());
+
+  it('traces, rolls up usage and agrees on digests', async () => {
+    const llm = weft.op(function llm(prompt: string) {
+      weft.addUsage(weft.getCurrentCall(), 'gpt-4o-mini', 100, 20);
+      return prompt.split('').reverse().join('');
+    });
+    const agent = weft.op(async function agent(q: string) {
+      return llm(llm(q));
+    });
+    expect(await weft.withThread('ts-thread', () => agent('hello <&> é'))).toBe('hello <&> é');
+    const [root] = await client.getCalls({ filter: { op_names: ['agent'] } });
+    expect(root.summary.usage['gpt-4o-mini'].requests).toBe(2);
+    expect(root.summary.usage['gpt-4o-mini'].total_tokens).toBe(240);
+    expect(root.threadId).toBe('ts-thread');
+    expect(root.turnId).toBe(root.id);
+    const meta = (agent as any).__weftOp;
+    const obj = (await client.http.post('/obj/read', { project_id: client.projectId, object_id: 'agent', digest: 'latest' })).obj;
+    expect(obj.digest).toBe(client.opRef(meta).digest);
+    expect(obj.digest).toBe(digest({ _type: 'Op', name: 'agent', code: meta.code, language: 'javascript', signature: meta.signature }));
+    const kids = await client.getCalls({ filter: { parent_ids: [root.id] } });
+    expect(kids.map((k) => k.opBaseName)).toEqual(['llm', 'llm']);
+  });
+
+  it('runs an evaluation whose rows resolve server side', async () => {
+    const model = weft.op(async function upper({ datasetRow }: any) {
+      return String(datasetRow.q).toUpperCase();
+    });
+    const exact = weft.op(function exact({ modelOutput, datasetRow }: any) {
+      return modelOutput === datasetRow.expected;
+    });
+    const ev = new weft.Evaluation({
+      name: 'ts-eval',
+      dataset: new weft.Dataset({ name: 'ts-ds', rows: [{ q: 'a', expected: 'A' }, { q: 'b', expected: 'c' }] }),
+      scorers: [exact],
+    });
+    const summary = await ev.evaluate({ model });
+    expect(summary.exact).toEqual({ true_count: 1, true_fraction: 0.5 });
+    await client.flush();
+    const [root] = await client.getCalls({ filter: { op_names: ['Evaluation.evaluate'] } });
+    expect(root.output).toEqual(summary);
+    const pas = await client.getCalls({ filter: { op_names: ['Evaluation.predict_and_score'] } });
+    const vals = (await client.http.post('/refs/read_batch', { refs: pas.map((p) => p.inputs.example) })).vals;
+    expect(vals.map((v: any) => v.q).sort()).toEqual(['a', 'b']);
+    const cmp = await client.http.post('/evaluations/compare', { project_id: client.projectId, evaluation_call_ids: [root.id] });
+    expect(cmp.rows).toHaveLength(2);
+    const ds = await weft.ref('ts-ds').get();
+    expect(ds.rows).toHaveLength(2);
+  });
+
+  it('uploads files and attaches feedback', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9]);
+    const f = weft.op(function img(data: Uint8Array) {
+      return data.length;
+    });
+    const [, call] = await f.call(png);
+    await call!.feedback.addReaction('👍');
+    const got = (await client.getCall(call!.id, { includeFeedback: true }))!;
+    expect(got.raw.feedback).toHaveLength(1);
+    const media = got.inputs.data as any;
+    const res = await client.http.raw('POST', '/file/content', JSON.stringify({ project_id: client.projectId, digest: media.file_digest }));
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([...png]);
+  });
+
+  it('parity features against the real server', async () => {
+    // redaction
+    const login = weft.op(function login(user: string, password: string) {
+      return { ok: true, token: 't-1' };
+    });
+    login('bob', 'hunter2');
+    const [lc] = await client.getCalls({ filter: { op_names: ['login'] } });
+    expect(lc.inputs.password).toBe('REDACTED');
+    expect(lc.output).toEqual({ ok: true, token: 'REDACTED' });
+
+    // op loading
+    const triple = weft.op(function triple(x: number) {
+      return 3 * x;
+    });
+    const tref = await weft.publish(triple);
+    await client.flush();
+    const loaded = await weft.ref('triple').get();
+    const [res, call] = await loaded.call(3);
+    expect(res).toBe(9);
+    expect(call.opName).toBe(tref.uri());
+
+    // built-in scorer classes + EvaluationLogger + server-side compare
+    const model = weft.op(async function upper({ datasetRow }: any) {
+      return String(datasetRow.q).toUpperCase();
+    });
+    const ev = new weft.Evaluation({
+      name: 'ts-builtin',
+      dataset: [{ q: 'a', expected: 'A' }, { q: 'b', expected: 'x' }],
+      scorers: [new weft.ExactMatchScorer({ name: 'exact' }), new weft.LLMAsAJudgeScorer({ name: 'judge', model: 'mock/json', scoringPrompt: '{"correct": true} {output}' })],
+    });
+    const summary = await ev.evaluate({ model });
+    expect(summary.exact).toEqual({ true_count: 1, true_fraction: 0.5 });
+    expect(summary.judge).toBeTruthy();
+    const logger = new weft.EvaluationLogger({ model: 'ts-logged', dataset: 'ts-logged-ds', name: 'ts-logger' });
+    for (let i = 0; i < 3; i++) {
+      const p = logger.logPrediction({ i }, i * 2);
+      p.logScore('even', i % 2 === 0);
+      p.finish();
+    }
+    const ls = await logger.logSummary();
+    expect(ls.even).toEqual({ true_count: 2, true_fraction: 2 / 3 });
+    await client.flush();
+    const roots = await client.getCalls({ filter: { op_names: ['Evaluation.evaluate'] } });
+    const loggerRoot = roots.find((r) => r.displayName === 'ts-logger')!;
+    expect(loggerRoot.output).toEqual(ls);
+    const evObj = (await client.http.post('/obj/read', { project_id: client.projectId, object_id: 'ts-logger', digest: 'latest' })).obj;
+    expect(loggerRoot.inputs.self).toBe(`weft:///${client.projectId}/object/ts-logger:${evObj.digest}`);
+    const cmp = await client.http.post('/evaluations/compare', { project_id: client.projectId, evaluation_call_ids: [loggerRoot.id] });
+    expect(cmp.evaluations[0].model_name).toBe('ts-logged');
+
+    // addRows
+    const ds = new weft.Dataset({ name: 'ts-grow', rows: [{ i: 0 }] });
+    await weft.publish(ds);
+    const ds2 = await ds.addRows([{ i: 1 }]);
+    const back = await weft.ref('ts-grow:latest').get();
+    expect(back.rows).toEqual([{ i: 0 }, { i: 1 }]);
+    expect(back.rowDigests).toEqual(ds2.rowDigests);
+
+    // applyScorer + annotations
+    const reply = weft.op(function reply(prompt: string) {
+      return 'no way';
+    });
+    const [, rc] = await reply.call('hi');
+    const polite = weft.op(function polite({ modelOutput }: any) {
+      return String(modelOutput).includes('please');
+    });
+    const r = await rc!.applyScorer(polite);
+    expect(r.result).toBe(false);
+    const spec = new weft.AnnotationSpec({ name: 'ts-stars', fieldSchema: { type: 'integer', minimum: 1, maximum: 5 } });
+    await rc!.feedback.addAnnotation(spec, 5);
+    const fb = await rc!.feedback.list();
+    expect(fb.map((f) => f.feedback_type).sort()).toEqual(['wandb.annotation.ts-stars', 'wandb.runnable.polite']);
+    const runnable = fb.find((f) => f.feedback_type === 'wandb.runnable.polite');
+    expect(runnable.call_ref).toBe(r.scoreCall!.uri());
+    await weft.publish(new weft.Leaderboard({ name: 'ts-lb', columns: [{ evaluationObjectRef: ev, scorerName: 'exact', summaryMetricPath: 'true_fraction' }] }));
+    const lb = await client.http.post('/leaderboard/compute', { project_id: client.projectId, object_id: 'ts-lb' });
+    expect(lb.rows[0].values['0'].value).toBe(0.5);
+    expect((await client.whoami()).user_id).toBeTruthy();
+  });
+});
+
