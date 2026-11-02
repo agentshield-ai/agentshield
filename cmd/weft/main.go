@@ -1,0 +1,108 @@
+// Command weft runs the Weft trace server: an OpenTelemetry-native LLM
+// tracing and evaluation backend with a built-in web UI.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/agentshield-ai/agentshield/internal/weft/server"
+	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/webui"
+)
+
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
+func defaultDB() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".weft", "weft.db")
+	}
+	return "weft.db"
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func main() {
+	addr := flag.String("addr", envOr("WEFT_ADDR", "127.0.0.1:6345"), "listen address (env WEFT_ADDR)")
+	dbPath := flag.String("db", envOr("WEFT_DB", defaultDB()), "SQLite database path (env WEFT_DB)")
+	apiKeys := flag.String("api-keys", os.Getenv("WEFT_API_KEYS"), "comma-separated API keys required on requests (env WEFT_API_KEYS); empty disables auth")
+	cors := flag.String("cors-origins", os.Getenv("WEFT_CORS_ORIGINS"), "comma-separated browser origins allowed to call the API (env WEFT_CORS_ORIGINS)")
+	noUI := flag.Bool("no-ui", false, "do not serve the web UI")
+	logLevel := flag.String("log-level", envOr("WEFT_LOG_LEVEL", "info"), "debug, info, warn or error")
+	flag.Parse()
+
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(*logLevel)); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid log level %q\n", *logLevel)
+		os.Exit(2)
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+	slog.SetDefault(log)
+
+	if dir := filepath.Dir(*dbPath); dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			log.Error("creating database directory", "err", err)
+			os.Exit(1)
+		}
+	}
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		log.Error("opening database", "err", err)
+		os.Exit(1)
+	}
+	defer st.Close()
+
+	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log}
+	if !*noUI {
+		cfg.UI = webui.Handler()
+	}
+	srv := server.New(cfg, st)
+	defer srv.Close()
+
+	if len(cfg.APIKeys) == 0 {
+		if host, _, err := net.SplitHostPort(*addr); err == nil {
+			if ip := net.ParseIP(host); host == "" || (ip != nil && !ip.IsLoopback()) {
+				log.Warn("authentication is disabled and the server listens on a non-loopback address; set --api-keys")
+			}
+		}
+	}
+
+	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdown)
+	}()
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "auth", len(cfg.APIKeys) > 0)
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("server failed", "err", err)
+		os.Exit(1)
+	}
+}
