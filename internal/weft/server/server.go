@@ -137,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/calls/delete", handle(s.callsDelete))
 		r.Post("/calls/stats", handle(s.callsStats))
 		r.Post("/calls/op_counts", handle(s.opCounts))
+		r.Post("/calls/score", handle(s.callsScore))
 		r.Post("/threads/query", handle(s.threadsQuery))
 
 		r.Post("/obj/create", handle(s.objCreate))
@@ -617,6 +618,25 @@ type callsStatsReq struct {
 
 func (s *Server) callsStats(ctx context.Context, _ *http.Request, req *callsStatsReq) (any, error) {
 	return s.store.ComputeCallsStats(ctx, req.ProjectID, req.Filter, req.Query, req.Search, req.Start, req.End, req.BucketSeconds)
+}
+
+type callsScoreReq struct {
+	ProjectID  string   `json:"project_id"`
+	CallIDs    []string `json:"call_ids"`
+	ScorerRefs []string `json:"scorer_refs"`
+	WBUserID   *string  `json:"wb_user_id"`
+}
+
+func (s *Server) callsScore(ctx context.Context, r *http.Request, req *callsScoreReq) (any, error) {
+	pid, err := project(req.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.engine.ScoreCalls(ctx, pid, req.CallIDs, req.ScorerRefs, userFrom(r, req.WBUserID))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"results": res}, nil
 }
 
 type opCountsReq struct {

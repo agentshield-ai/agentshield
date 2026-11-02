@@ -98,6 +98,7 @@ descendants, so `summary.usage` on a root call is the total for the trace.
 | `/calls/delete` | `{project_id, call_ids, wb_user_id?}` | `{}` (soft delete, cascades to descendants) |
 | `/call/update` | `{project_id, call_id, display_name}` | `{}` |
 | `/calls/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | see below |
+| `/calls/score` | `{project_id, call_ids, scorer_refs}` (server-runnable scorers) | `{"results": [{"call_id","scorer","output","scorer_call_id","feedback_id","error"?}]}`; each result is also stored as `wandb.runnable.<scorer>` feedback on the call |
 | `/calls/op_counts` | `{project_id, trace_roots_only?}` | `{"ops": [{"op_name","op_base_name","count","error_count","last_called"}]}` |
 
 **CallsQuery**

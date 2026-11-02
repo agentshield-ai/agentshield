@@ -324,3 +324,28 @@ func TestNamedKeysAndWhoami(t *testing.T) {
 		t.Fatalf("stats search ignored: %v", st)
 	}
 }
+
+func TestScoreCallsOnDemand(t *testing.T) {
+	e := newEnv(t)
+	sc := publish(e, "has-paris", map[string]any{"_class_name": "ContainsScorer", "_bases": []any{"Scorer", "Object", "BaseModel"},
+		"target_column": "expected"})
+	e.post("/call/upsert_batch", map[string]any{"batch": []any{
+		map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": "s1", "op_name": "qa",
+			"started_at": "2026-01-01T00:00:00Z", "inputs": map[string]any{"expected": "Paris"}}}},
+		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": "s1",
+			"ended_at": "2026-01-01T00:00:01Z", "output": "It is Paris."}}},
+	}})
+	res := e.post("/calls/score", map[string]any{"project_id": pid, "call_ids": []any{"s1"}, "scorer_refs": []any{sc}})
+	r0 := res["results"].([]any)[0].(map[string]any)
+	if r0["output"] != true || r0["feedback_id"] == "" {
+		t.Fatalf("score result = %v", r0)
+	}
+	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "s1", "include_feedback": true})["call"].(map[string]any)
+	fb := c["feedback"].([]any)
+	if len(fb) != 1 || fb[0].(map[string]any)["feedback_type"] != "wandb.runnable.has-paris" {
+		t.Fatalf("feedback = %v", fb)
+	}
+	if code, _ := e.raw("/calls/score", map[string]any{"project_id": pid, "call_ids": []any{"s1"}, "scorer_refs": []any{"weft:///" + pid + "/object/nope:x"}}, nil); code != 400 {
+		t.Fatalf("unknown scorer should be 400, got %d", code)
+	}
+}

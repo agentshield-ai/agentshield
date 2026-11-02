@@ -394,7 +394,60 @@ function FeedbackTable({ projectId, rows }: { projectId: string; rows: Feedback[
 
 // ---------------------------------------------------------------- scores
 
+const RUNNABLE_SCORERS = ['LLMAsAJudgeScorer', 'ExactMatchScorer', 'ContainsScorer', 'RegexScorer', 'JSONValidScorer', 'LevenshteinScorer']
+
+/** Runs a server-runnable scorer on this call; the result lands as feedback. */
+function RunScorerBar({ projectId, call }: { projectId: string; call: Call }) {
+  const qc = useQueryClient()
+  const scorers = useQuery({
+    queryKey: ['objs', projectId, 'runnable-scorers'],
+    queryFn: () =>
+      api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['Scorer'], leaf_object_classes: RUNNABLE_SCORERS, latest_only: true }, metadata_only: true }),
+  })
+  const [sel, setSel] = useState('')
+  const run = useMutation({
+    mutationFn: (ref: string) => api.callsScore(projectId, [call.id], [ref]),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['feedback', projectId] }),
+  })
+  const list = scorers.data?.objs ?? []
+  if (!scorers.isLoading && !list.length)
+    return (
+      <div className="small muted">
+        Create an LLM judge or rule-based scorer under <Link to={`/${projectId}/scorers`}>Scorers</Link> to score calls on demand.
+      </div>
+    )
+  return (
+    <div className="col" style={{ gap: 6 }}>
+      <div className="row wrap">
+        <select className="input" value={sel} onChange={(e) => setSel(e.target.value)} aria-label="Scorer">
+          <option value="">Choose a scorer…</option>
+          {list.map((o) => (
+            <option key={o.object_id} value={objectRef(o.project_id, o.object_id, o.digest)}>
+              {o.object_id} ({o.leaf_object_class})
+            </option>
+          ))}
+        </select>
+        <button className="btn primary" disabled={!sel || run.isPending} onClick={() => run.mutate(sel)}>
+          {run.isPending ? 'Scoring…' : 'Run scorer'}
+        </button>
+        {run.isSuccess && !run.data.results.some((r) => r.error) && <span className="small muted">Score added.</span>}
+      </div>
+      {run.data?.results.filter((r) => r.error).map((r) => <ErrorBox key={r.scorer} error={`${r.scorer}: ${r.error}`} />)}
+      {run.error && <ErrorBox error={run.error} />}
+    </div>
+  )
+}
+
 export function ScoresPanel({ projectId, call }: { projectId: string; call: Call }) {
+  return (
+    <div className="col" style={{ gap: 14 }}>
+      <RunScorerBar projectId={projectId} call={call} />
+      <ScoresList projectId={projectId} call={call} />
+    </div>
+  )
+}
+
+function ScoresList({ projectId, call }: { projectId: string; call: Call }) {
   const fb = useCallFeedback(projectId, call.id)
   if (fb.isLoading) return <Loading />
   if (fb.error) return <ErrorBox error={fb.error} />

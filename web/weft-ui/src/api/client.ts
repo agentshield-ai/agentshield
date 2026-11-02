@@ -133,6 +133,11 @@ export const api = {
     post<object>('/call/update', { project_id, call_id, display_name }),
   callsStats: (req: { project_id: string; filter?: CallsFilter; query?: Query; search?: string; start?: string; end?: string; bucket_seconds?: number }) =>
     post<CallsStatsRes>('/calls/stats', req),
+  callsScore: (project_id: string, call_ids: string[], scorer_refs: string[]) =>
+    post<{ results: { call_id: string; scorer: string; output: Any; scorer_call_id?: string; feedback_id?: string; error?: string }[] }>(
+      '/calls/score',
+      { project_id, call_ids, scorer_refs },
+    ),
   opCounts: (project_id: string, trace_roots_only = false) =>
     post<{ ops: OpCount[] }>('/calls/op_counts', { project_id, trace_roots_only }),
   threadsQuery: (req: {

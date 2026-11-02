@@ -146,6 +146,71 @@ func monitorMatchesOp(val map[string]any, call *store.Call) bool {
 	return false
 }
 
+// ScoreResult is the outcome of scoring one call on demand.
+type ScoreResult struct {
+	CallID       string `json:"call_id"`
+	Scorer       string `json:"scorer"`
+	Output       any    `json:"output"`
+	ScorerCallID string `json:"scorer_call_id,omitempty"`
+	FeedbackID   string `json:"feedback_id,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// ScoreCalls runs server-runnable scorers on existing calls and stores the
+// results as wandb.runnable.<scorer> feedback.
+func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scorerRefs []string, user *string) ([]ScoreResult, error) {
+	if len(callIDs) == 0 || len(callIDs) > 100 {
+		return nil, store.Invalidf("call_ids must list 1 to 100 calls")
+	}
+	if len(scorerRefs) == 0 || len(scorerRefs) > 10 {
+		return nil, store.Invalidf("scorer_refs must list 1 to 10 scorers")
+	}
+	scorers := make([]*Scorer, 0, len(scorerRefs))
+	for _, r := range scorerRefs {
+		sc, err := e.loadScorer(ctx, refs.Normalize(r))
+		if err != nil {
+			return nil, err
+		}
+		scorers = append(scorers, sc)
+	}
+	var out []ScoreResult
+	for _, id := range callIDs {
+		call, err := e.Store.GetCall(ctx, projectID, id, false, false, false)
+		if err != nil {
+			return nil, store.Invalidf("call %q not found", id)
+		}
+		for _, sc := range scorers {
+			res := ScoreResult{CallID: id, Scorer: sc.Name}
+			example := map[string]any{}
+			for k, v := range call.Inputs {
+				example[k] = v
+			}
+			attrs := map[string]any{"weft": map[string]any{"internal": true, "scored_call_id": id}}
+			score, rec, err := e.RunScorer(ctx, projectID, sc, example, call.Output, nil, attrs)
+			if rec != nil {
+				res.ScorerCallID = rec.id
+			}
+			if err != nil {
+				res.Error = err.Error()
+				out = append(out, res)
+				continue
+			}
+			res.Output = jsonSafe(score)
+			callRef := refs.CallRef(projectID, rec.id)
+			fb, err := e.Store.CreateFeedback(ctx, store.FeedbackCreate{
+				ProjectID: projectID, WeaveRef: refs.CallRef(projectID, id), FeedbackType: "wandb.runnable." + sc.Name,
+				Payload: map[string]any{"output": res.Output}, WBUserID: user, RunnableRef: &sc.Ref, CallRef: &callRef,
+			})
+			if err != nil {
+				return nil, err
+			}
+			res.FeedbackID = fb.ID
+			out = append(out, res)
+		}
+	}
+	return out, nil
+}
+
 func (e *Engine) scoreForMonitor(ctx context.Context, monitor *store.Obj, scorerRef string, call *store.Call) error {
 	sc, err := e.loadScorer(ctx, scorerRef)
 	if err != nil {
