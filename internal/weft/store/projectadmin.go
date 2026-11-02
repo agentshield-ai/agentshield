@@ -3,8 +3,8 @@ package store
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"

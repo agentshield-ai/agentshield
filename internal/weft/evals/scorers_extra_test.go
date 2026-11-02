@@ -76,3 +76,28 @@ func TestIsEmptyOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestEvalExpr(t *testing.T) {
+	doc := map[string]any{"output": "Sorry, I can't", "inputs": map[string]any{"n": "7", "tags": []any{"a", "b"}}, "n": 2.0}
+	lit := func(v any) any { return map[string]any{"$literal": v} }
+	get := func(p string) any { return map[string]any{"$getField": p} }
+	for i, c := range []struct {
+		expr any
+		want any
+	}{
+		{map[string]any{"$contains": map[string]any{"input": get("output"), "substr": lit("sorry"), "case_insensitive": true}}, true},
+		{map[string]any{"$contains": map[string]any{"input": get("output"), "substr": lit("sorry")}}, false},
+		{map[string]any{"$expr": map[string]any{"$gt": []any{map[string]any{"$convert": map[string]any{"input": get("inputs.n"), "to": "double"}}, lit(5.0)}}}, true},
+		{map[string]any{"$and": []any{map[string]any{"$eq": []any{get("n"), lit(2.0)}}, map[string]any{"$in": []any{get("inputs.tags.1"), []any{lit("b")}}}}}, true},
+		{map[string]any{"$not": []any{map[string]any{"$lt": []any{get("missing"), lit(1.0)}}}}, true},
+		{get("inputs.n"), "7"},
+	} {
+		got, err := EvalExpr(c.expr, doc)
+		if err != nil || got != c.want {
+			t.Errorf("case %d: got %v (%v), want %v", i, got, err, c.want)
+		}
+	}
+	if _, err := EvalExpr(map[string]any{"$bogus": 1}, doc); err == nil {
+		t.Error("unknown operator accepted")
+	}
+}

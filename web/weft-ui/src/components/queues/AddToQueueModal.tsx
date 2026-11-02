@@ -76,7 +76,7 @@ export function AddToQueueModal({ projectId, callIds, onClose }: { projectId: st
         <div className="col" style={{ gap: 12 }}>
           {queues.isLoading && <Spinner label="Loading queues…" />}
           {!noQueues && queues.isSuccess && (
-            <div className="seg" role="radiogroup">
+            <div className="seg" role="radiogroup" style={{ flex: 'none', alignSelf: 'flex-start' }}>
               <button className={mode === 'existing' ? 'on' : ''} onClick={() => setMode('existing')}>
                 Existing queue
               </button>

@@ -360,18 +360,21 @@ func TestAgentConversationsAndChat(t *testing.T) {
 		t.Fatalf("conversation = %v", res)
 	}
 	t1 := turns[0].(map[string]any)
-	if got := chatTypes(t1); got != "user_message,tool_call,assistant_message" {
+	if got := chatTypes(t1); got != "user_message,assistant_message,tool_call,assistant_message" {
 		t.Fatalf("turn 1 timeline = %s", got)
 	}
 	msgs := t1["messages"].([]any)
 	if msgs[0].(map[string]any)["user_message"].(map[string]any)["text"] != "What's the weather in Paris?" {
 		t.Fatalf("user message = %v", msgs[0])
 	}
-	tc := msgs[1].(map[string]any)["tool_call"].(map[string]any)
+	if req := msgs[1].(map[string]any)["assistant_message"].(map[string]any); req["text"] != "" || req["requested_tools"].([]any)[0] != "get_weather" {
+		t.Fatalf("tool request = %v", req)
+	}
+	tc := msgs[2].(map[string]any)["tool_call"].(map[string]any)
 	if tc["tool_name"] != "get_weather" || tc["tool_arguments"] != `{"city":"Paris"}` || tc["duration_ms"].(float64) != 200 {
 		t.Fatalf("tool call = %v", tc)
 	}
-	am := msgs[2].(map[string]any)["assistant_message"].(map[string]any)
+	am := msgs[3].(map[string]any)["assistant_message"].(map[string]any)
 	if am["text"] != "It is 18°C and sunny in Paris." || am["model"] != "gpt-4o" || am["input_tokens"].(float64) != 160 {
 		t.Fatalf("assistant = %v", am)
 	}
@@ -380,10 +383,10 @@ func TestAgentConversationsAndChat(t *testing.T) {
 		t.Fatalf("turn 1 = %v", t1)
 	}
 	t2 := turns[1].(map[string]any)
-	if got := chatTypes(t2); got != "user_message,tool_call,assistant_message" {
+	if got := chatTypes(t2); got != "user_message,assistant_message,tool_call,assistant_message" {
 		t.Fatalf("turn 2 timeline = %s", got)
 	}
-	if t2["messages"].([]any)[1].(map[string]any)["status_code"] != "ERROR" {
+	if t2["messages"].([]any)[2].(map[string]any)["status_code"] != "ERROR" {
 		t.Fatalf("failed tool not marked: %v", t2["messages"])
 	}
 	// Paging: offset skips the most recent turns.
@@ -396,7 +399,7 @@ func TestAgentConversationsAndChat(t *testing.T) {
 	// Vercel trace as a chat; the model-requested tool call is only shown on request.
 	vt := hexID("tv", 32)
 	tr := e.post("/agents/traces/chat", map[string]any{"project_id": pid, "trace_id": vt})
-	if got := chatTypes(tr); got != "user_message,tool_call,assistant_message" {
+	if got := chatTypes(tr); got != "user_message,assistant_message,tool_call,assistant_message" {
 		t.Fatalf("vercel timeline = %s (%v)", got, tr["messages"])
 	}
 	if tr["messages"].([]any)[0].(map[string]any)["user_message"].(map[string]any)["text"] != "Write a haiku about the sea" ||

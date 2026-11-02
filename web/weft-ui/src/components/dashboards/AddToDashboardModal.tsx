@@ -32,7 +32,7 @@ export function AddToDashboardModal({
   const [done, setDone] = useState<{ id: string; label: string } | null>(null)
   const dashboards = list.data ?? []
   const chosen = target || (dashboards[0]?.object_id ?? '__new')
-  const initial: DashboardPanel = { ...blankPanel(), filter, query, search, chart: 'line', metrics: [{ agg: 'count', name: 'calls' }] }
+  const initial: DashboardPanel = { ...blankPanel(), filter, query, search, chart: 'line', metrics: [{ agg: 'count' }] }
 
   const save = useMutation({
     mutationFn: async (panel: DashboardPanel) => {

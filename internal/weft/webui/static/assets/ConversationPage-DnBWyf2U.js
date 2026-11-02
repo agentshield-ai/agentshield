@@ -1,1 +1,0 @@
-import{j as e}from"./index--OE6rQkW.js";function r(s){return e.jsxs("div",{className:"page",children:[e.jsx("h1",{children:"ConversationPage"}),e.jsx("p",{className:"muted",children:"Not implemented yet."})]})}export{r as ConversationPage};

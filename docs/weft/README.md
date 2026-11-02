@@ -148,6 +148,7 @@ monitor and feedback, using offline mock models.
 | Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a call from its Scores tab (`/calls/score`). |
 | Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
 | Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
+| Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest, project delete. Settings tabs for each; Weave paths (`/project/ttl_settings/*`, …). |
 
 ## Layout
 
@@ -182,8 +183,10 @@ committed UI build is stale.
 
 - Without `--api-keys` the server is open to anyone who can reach it. It
   binds to loopback by default and logs a warning on other addresses.
-- All API keys are equal: any key holder can read every project and use the
-  stored provider secrets through the playground and LLM judges. A `Provider`
+- Static `--api-keys` keys and managed admin keys can do everything. Managed
+  keys (**Settings → API keys**, stored hashed) can be limited to projects and
+  made read-only. Any key that can write to a project can use the stored
+  provider secrets through the playground and LLM judges. A `Provider`
   object sends the secret named in `api_key_name` to its `base_url`, so only
   give keys to people you would trust with those secrets.
 - Provider secrets are encrypted at rest with AES-256-GCM. The key comes

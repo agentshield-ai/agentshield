@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Empty, ErrorBox, Loading } from '../../components/common'
 import { AliasEditor, ConfirmButton } from '../../components/objects/bits'
+import { TagEditor } from '../../components/objects/TagEditor'
 import { KIND_META, kindOf, objClass, useObjectVersions } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtDate, fmtRelative } from '../../lib/format'
@@ -81,6 +82,7 @@ export function ObjectVersionsPage() {
                 <th>Digest</th>
                 <th>Created</th>
                 <th>Aliases</th>
+                <th>Tags</th>
                 <th className="num">Size</th>
                 <th style={{ width: 40 }} />
               </tr>
@@ -103,6 +105,9 @@ export function ObjectVersionsPage() {
                   <td title={fmtDate(v.created_at)}>{fmtRelative(v.created_at)}</td>
                   <td>
                     <AliasEditor projectId={projectId} objectId={objectId} digest={v.digest} aliases={v.aliases.filter((a) => a !== 'latest')} compact />
+                  </td>
+                  <td>
+                    <TagEditor projectId={projectId} objectId={objectId} digest={v.digest} tags={v.tags ?? []} compact />
                   </td>
                   <td className="num muted">{fmtBytes(v.size_bytes)}</td>
                   <td onClick={(e) => e.stopPropagation()}>

@@ -102,8 +102,8 @@ describe('signals', () => {
   })
   it('uses the mock moderation model offline', () => {
     const plan = planSignal(SIGNALS.find((s) => s.id === 'safety')!, opts, new Set())
-    expect(plan.scorer.val.model_id).toBe('mock/moderation')
-    expect(planSignal(SIGNALS.find((s) => s.id === 'safety')!, { ...opts, model: 'gpt-4o' }, new Set()).scorer.val.model_id).toBe('omni-moderation-latest')
+    expect(plan.scorer.val.model).toBe('mock/moderation')
+    expect(planSignal(SIGNALS.find((s) => s.id === 'safety')!, { ...opts, model: 'gpt-4o' }, new Set()).scorer.val.model).toBeUndefined()
   })
   it('publishes the scorer, then a monitor that references it', async () => {
     const published: [string, Record<string, unknown>][] = []

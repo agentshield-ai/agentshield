@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { Call } from '../../api/types'
 import { callLatencyMs, callStatus, fmtDuration } from '../../lib/format'
 import { callLabel } from './callUtils'
+import { opStyle } from './opStyle'
 import { layoutOpGraph, nextCallFor, opPath, type GraphCall } from './graphLayout'
 import './traceViews.css'
 
@@ -13,6 +14,7 @@ export function toGraphCalls(calls: Call[]): GraphCall[] {
     error: callStatus(c) === 'error',
     latency_ms: callLatencyMs(c),
     started_at: c.started_at,
+    ...opStyle(c),
   }))
 }
 
@@ -83,11 +85,13 @@ export function TraceGraph({ calls, selectedId, onSelect }: { calls: Call[]; sel
                 {n.label} — {n.count} call{n.count === 1 ? '' : 's'}, {fmtDuration(n.totalMs)} total{err ? `, ${n.errors} error${n.errors === 1 ? '' : 's'}` : ''}
               </title>
               <rect width={n.w} height={n.h} rx={7} style={err ? { stroke: 'var(--error)' } : undefined} />
+              {n.color && <rect width={4} height={n.h - 12} x={3} y={6} rx={2} style={{ fill: n.color, stroke: 'none' }} />}
               {err && <circle cx={n.w - 10} cy={10} r={3.5} fill="var(--error)" />}
               <text x={10} y={18}>
                 {clip(n.label, n.w)}
               </text>
               <text x={10} y={34} className="sub">
+                {n.kind ? `${n.kind} · ` : ''}
                 {n.count > 1 ? `×${n.count} · ` : ''}
                 {fmtDuration(n.totalMs)}
                 {sel && n.count > 1 ? ` · ${n.callIds.indexOf(selectedId) + 1}/${n.count}` : ''}

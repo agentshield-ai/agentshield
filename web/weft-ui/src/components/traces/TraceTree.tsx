@@ -3,6 +3,7 @@ import type { Call } from '../../api/types'
 import { opDisplayName } from '../../api/refs'
 import { callLatencyMs, callStatus, callTokens, fmtDuration, fmtNumber } from '../../lib/format'
 import { StatusDot } from '../common'
+import { OpKind } from './OpKind'
 import { callLabel, flattenTree, type TreeNode } from './callUtils'
 
 function matches(c: Call, q: string) {
@@ -159,6 +160,7 @@ export function TraceTree({
               <StatusDot status={st} />
               <span className="tree-label" title={c.op_name}>
                 {callLabel(c)}
+                <OpKind call={c} />
                 {!open && n.children.length > 0 && <span className="faint small"> ({n.children.length})</span>}
               </span>
               <span className="tree-meta">

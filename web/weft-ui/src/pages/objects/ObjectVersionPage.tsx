@@ -11,6 +11,8 @@ import { CallsMiniTable, EvalRunsTable } from '../../components/evals/EvalRunsTa
 import { objectRefPrefix, useEvalRuns } from '../../components/evals/evalUtils'
 import { AliasEditor, CodeBlock, MessageList, TemplateText, TemplateVarChips, UsePanel } from '../../components/objects/bits'
 import { DatasetRowsView } from '../../components/objects/DatasetRowsView'
+import { DatasetSources } from '../../components/objects/DatasetSources'
+import { TagEditor } from '../../components/objects/TagEditor'
 import { ModelFormModal, PromptFormModal, ScorerFormModal, type Created } from '../../components/objects/ObjectForms'
 import {
   isDataset,
@@ -162,6 +164,10 @@ export function ObjectVersionPage() {
             <span className="small muted">Aliases</span>
             <AliasEditor projectId={projectId} objectId={objectId} digest={o.digest} aliases={o.aliases.filter((a) => a !== 'latest')} />
           </div>
+          <div className="row wrap">
+            <span className="small muted">Tags</span>
+            <TagEditor projectId={projectId} objectId={objectId} digest={o.digest} tags={o.tags ?? []} />
+          </div>
         </div>
       </div>
       <Tabs<Tab>
@@ -222,6 +228,7 @@ function DatasetView({ o, projectId, onPublished }: { o: ObjSchema; projectId: s
     <div className="col" style={{ gap: 12 }}>
       <Description val={o.val} />
       <DatasetRowsView projectId={projectId} obj={o} onPublished={onPublished} />
+      <DatasetSources projectId={projectId} objectId={o.object_id} />
     </div>
   )
 }

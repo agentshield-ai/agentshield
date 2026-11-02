@@ -99,3 +99,14 @@
   font-size: 11px;
   color: var(--text-3);
 }
+.op-kind {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--text-2);
+  vertical-align: 1px;
+}

@@ -121,7 +121,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
       </label>
 
       <h3 style={{ margin: '6px 0 0' }}>When</h3>
-      <div className="seg" role="radiogroup" aria-label="Trigger">
+      <div className="seg" role="radiogroup" aria-label="Trigger" style={{ flex: 'none', alignSelf: 'flex-start' }}>
         {(Object.keys(TRIGGER_LABELS) as TriggerType[]).map((k) => (
           <button key={k} className={t.type === k ? 'on' : ''} onClick={() => setT({ type: k, threshold: k === 'error_rate' ? 0.1 : t.type === 'error_rate' ? 0.5 : t.threshold })}>
             {TRIGGER_LABELS[k]}
@@ -144,7 +144,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
             <label className="field">
               Score field
               <input className="input mono" value={t.path ?? ''} onChange={(e) => setT({ path: e.target.value })} placeholder="score (empty: the score itself)" />
-              <span className="hint">Dotted path inside the score, e.g. score, flagged, has_hallucination. true counts as 1, false as 0.</span>
+              <span className="hint">Dotted path inside the score, e.g. score, flagged, hallucination_free. true counts as 1, false as 0.</span>
             </label>
           </div>
           <div className="form-grid">
@@ -228,7 +228,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
       )}
 
       <h3 style={{ margin: '6px 0 0' }}>Then</h3>
-      <div className="row" style={{ gap: 12 }}>
+      <div className="row" style={{ gap: 12, flex: 'none' }}>
         <div className="seg" role="radiogroup" aria-label="Action">
           <button className={v.action.type === 'slack' ? 'on' : ''} onClick={() => setA({ type: 'slack' })}>
             Slack message

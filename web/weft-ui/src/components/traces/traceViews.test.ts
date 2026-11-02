@@ -124,3 +124,17 @@ describe('trace graph', () => {
     expect(g.nodes).toHaveLength(2)
   })
 })
+
+describe('op kind and colour', () => {
+  it('keeps the first kind/colour per op node', async () => {
+    const { nodes } = buildOpGraph([
+      { id: 'r', parent_id: null, op: 'agent', kind: 'agent', color: '#e8590c' },
+      { id: 't', parent_id: 'r', op: 'search', kind: 'tool' },
+    ])
+    expect(nodes.find((n) => n.id === 'agent')).toMatchObject({ kind: 'agent', color: '#e8590c' })
+    const { opStyle, safeColor } = await import('./opStyle')
+    expect(opStyle({ attributes: { weave: { kind: 'llm', color: 'blue' } } })).toEqual({ kind: 'llm', color: 'var(--c6)' })
+    expect(safeColor('red; background:url(x)')).toBeUndefined()
+    expect(safeColor('#ABC')).toBe('#abc')
+  })
+})

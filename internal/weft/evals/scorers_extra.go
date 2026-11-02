@@ -31,11 +31,11 @@ type scorerFunc func(e *Engine, ctx context.Context, projectID string, val, exam
 
 var extraScorers = map[string]scorerFunc{
 	"RemoteScorer":            scoreRemote,
-	"HallucinationFreeScorer": scoreHallucination,
-	"SummarizationScorer":     scoreSummarization,
-	"RelevanceScorer":         scoreRelevance,
+	"HallucinationFreeScorer": judgePreset(hallucinationPrompt, "hallucination_free", ""),
+	"SummarizationScorer":     judgePreset(summarizationPrompt, "is_faithful", "summarization_score"),
+	"RelevanceScorer":         judgePreset(relevancePrompt, "is_relevant", "relevance_score"),
 	"ValidXMLScorer": func(_ *Engine, _ context.Context, _ string, _, _ map[string]any, out any, _ *callRec, _ map[string]any) (any, error) {
-		return map[string]any{"xml_valid": validXML(out)}, nil
+		return validXML(out), nil
 	},
 	"JSONSchemaScorer":          scoreJSONSchema,
 	"OpenAIModerationScorer":    scoreModeration,
@@ -87,16 +87,6 @@ func (e *Engine) scoredCall(ctx context.Context, projectID string, attrs map[str
 		return nil
 	}
 	return c
-}
-
-func inputsText(example map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := example[k]; ok && v != nil {
-			return Stringify(v)
-		}
-	}
-	b, _ := json.Marshal(example)
-	return string(b)
 }
 
 // ---------------------------------------------------------------- LLM judge presets

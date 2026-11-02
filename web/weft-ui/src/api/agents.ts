@@ -200,6 +200,7 @@ export interface ChatMessage {
     reasoning_content: string | null
     total_cost_usd: number | null
     status: StatusCode | null
+    requested_tools?: string[]
   } | null
   tool_call: {
     tool_name: string | null

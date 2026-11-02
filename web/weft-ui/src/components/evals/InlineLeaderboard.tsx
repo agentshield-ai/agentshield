@@ -162,7 +162,7 @@ export function InlineLeaderboard({
                       {r.missing.length > 0 && <div className="small faint">missing {r.missing.length}</div>}
                     </td>
                     {active.map((s) => (
-                      <td key={s.key} className={`num mono ${r.parts[s.key] === 1 && ranked.length > 1 ? 'best' : ''}`}>
+                      <td key={s.key} className={`num mono ${r.parts[s.key] === 1 && ranked.some((o) => (o.parts[s.key] ?? 0) < 1) ? 'best' : ''}`}>
                         {fmtVal(byKey[s.key]?.values[r.id], byKey[s.key]?.kind ?? 'other')}
                       </td>
                     ))}

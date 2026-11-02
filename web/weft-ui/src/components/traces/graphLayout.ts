@@ -11,12 +11,16 @@ export interface GraphCall {
   error?: boolean
   latency_ms?: number | null
   started_at?: string
+  kind?: string
+  color?: string
 }
 
 export interface OpNode {
   id: string
   label: string
   callIds: string[]
+  kind?: string
+  color?: string
   count: number
   errors: number
   totalMs: number
@@ -83,6 +87,8 @@ export function buildOpGraph(calls: GraphCall[]): { nodes: OpNode[]; edges: Omit
       n = { id: c.op, label: c.op, callIds: [], count: 0, errors: 0, totalMs: 0, layer: depth(c), order: nodes.size, x: 0, y: 0, w: nodeWidth(c.op), h: NODE_H }
       nodes.set(c.op, n)
     }
+    n.kind ??= c.kind
+    n.color ??= c.color
     n.layer = Math.min(n.layer, depth(c))
     n.callIds.push(c.id)
     n.count++

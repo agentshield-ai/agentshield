@@ -32,6 +32,10 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #fff;
+  resize: vertical;
+}
+.media-html {
+  height: 260px;
 }
 .media-loading {
   display: flex;

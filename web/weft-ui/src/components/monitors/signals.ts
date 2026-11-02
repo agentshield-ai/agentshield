@@ -25,8 +25,8 @@ export interface SignalTemplate {
   model: 'judge' | 'moderation' | null
   /** Scorer name; feedback lands as wandb.runnable.<scorer>. */
   scorer: string
-  /** Score field that is "bad" when true, used in summaries and alerts. */
-  flagPath: string
+  /** Score field to alert on, e.g. in an Automation's score_threshold trigger. */
+  scorePath: string
   scorerVal: (o: SignalOptions) => Record<string, Any>
 }
 
@@ -46,8 +46,8 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Quality',
     model: 'judge',
     scorer: 'hallucination',
-    flagPath: 'has_hallucination',
-    scorerVal: (o) => cls('HallucinationFreeScorer', { name: 'hallucination', description: null, model_id: o.model, temperature: 0 }),
+    scorePath: 'hallucination_free',
+    scorerVal: (o) => cls('HallucinationFreeScorer', { name: 'hallucination', description: null, model: o.model }),
   },
   {
     id: 'relevance',
@@ -56,8 +56,8 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Quality',
     model: 'judge',
     scorer: 'relevance',
-    flagPath: 'relevant',
-    scorerVal: (o) => cls('RelevanceScorer', { name: 'relevance', description: null, model_id: o.model, temperature: 0 }),
+    scorePath: 'is_relevant',
+    scorerVal: (o) => cls('RelevanceScorer', { name: 'relevance', description: null, model: o.model }),
   },
   {
     id: 'task_completion',
@@ -66,7 +66,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Quality',
     model: 'judge',
     scorer: 'task_completion',
-    flagPath: 'completed',
+    scorePath: 'completed',
     scorerVal: (o) =>
       judge(
         'task_completion',
@@ -81,7 +81,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Quality',
     model: 'judge',
     scorer: 'refusal',
-    flagPath: 'refused',
+    scorePath: 'refused',
     scorerVal: (o) =>
       judge(
         'refusal',
@@ -96,7 +96,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Quality',
     model: 'judge',
     scorer: 'user_frustration',
-    flagPath: 'frustrated',
+    scorePath: 'frustrated',
     scorerVal: (o) =>
       judge(
         'user_frustration',
@@ -111,9 +111,10 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Safety',
     model: 'moderation',
     scorer: 'safety',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: (o) =>
-      cls('OpenAIModerationScorer', { name: 'safety', description: null, model_id: o.model.startsWith('mock/') ? 'mock/moderation' : 'omni-moderation-latest' }),
+      // `model` is a Weft extension; the server defaults to omni-moderation-latest.
+      cls('OpenAIModerationScorer', { name: 'safety', description: null, ...(o.model.startsWith('mock/') ? { model: 'mock/moderation' } : {}) }),
   },
   {
     id: 'pii',
@@ -122,7 +123,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Safety',
     model: null,
     scorer: 'pii',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: () => rule('pii', 'pii_detected'),
   },
   {
@@ -132,7 +133,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Reliability',
     model: null,
     scorer: 'error',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: () => rule('error', 'exception'),
   },
   {
@@ -142,7 +143,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Reliability',
     model: null,
     scorer: 'tool_error',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: () => rule('tool_error', 'tool_error'),
   },
   {
@@ -152,7 +153,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Reliability',
     model: null,
     scorer: 'latency',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: (o) => rule('latency', 'latency_gt', o.latencySeconds ?? 10),
   },
   {
@@ -162,7 +163,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Reliability',
     model: null,
     scorer: 'empty_output',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: () => rule('empty_output', 'empty_output'),
   },
   {
@@ -172,7 +173,7 @@ export const SIGNALS: SignalTemplate[] = [
     category: 'Reliability',
     model: null,
     scorer: 'invalid_json',
-    flagPath: 'flagged',
+    scorePath: 'flagged',
     scorerVal: () => rule('invalid_json', 'invalid_json'),
   },
 ]

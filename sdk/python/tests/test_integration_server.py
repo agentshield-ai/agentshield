@@ -452,8 +452,10 @@ def test_batch3_features_live(live, tmp_path):
         obj = live._http.post("/obj/read", {"project_id": live.project_id, "object_id": sc.name, "digest": "latest"})["obj"]
         assert obj["leaf_object_class"] in (type(sc).__name__, None) and obj["val"]["_class_name"] == type(sc).__name__
     assert scorers.HallucinationFreeScorer(model="mock/json").score(output="x", q="y")
-    with pytest.raises(RuntimeError, match="embeddings"):
-        scorers.EmbeddingSimilarityScorer().score(output="a", expected="b")
+    # The server provides /embeddings/create; mock/* models embed offline.
+    same = scorers.EmbeddingSimilarityScorer(model="mock/embed").score(output="the cat sat", expected="the cat sat")
+    other = scorers.EmbeddingSimilarityScorer(model="mock/embed").score(output="the cat sat", expected="quantum chromodynamics")
+    assert same == pytest.approx(1.0, abs=1e-6) and 0 <= other < same
 
     # write-ahead log: unsent items replay against the live server
     wal = {"enable_disk_fallback": True, "wal_dir": str(tmp_path), "retry_max_attempts": 0}

@@ -1,0 +1,159 @@
+{
+ "emb": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "EmbeddingSimilarityScorer",
+  "_type": "EmbeddingSimilarityScorer",
+  "column_map": null,
+  "description": null,
+  "model": "mock/embed",
+  "name": "emb",
+  "target_column": "target"
+ },
+ "hall": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "HallucinationFreeScorer",
+  "_type": "HallucinationFreeScorer",
+  "column_map": null,
+  "description": null,
+  "model": "mock/json",
+  "name": "hall",
+  "scoring_prompt": "You are verifying an AI response against its input and context.\n\n<input>\n{inputs}\n</input>\n\n<response>\n{output}\n</response>\n\nIs every factual claim in the response supported by the input/context? Reply with JSON: {{\"hallucination_free\": true|false, \"reasoning\": \"...\"}}"
+ },
+ "mod": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "OpenAIModerationScorer",
+  "_type": "OpenAIModerationScorer",
+  "column_map": null,
+  "description": null,
+  "name": "mod"
+ },
+ "rel": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "RelevanceScorer",
+  "_type": "RelevanceScorer",
+  "column_map": null,
+  "description": null,
+  "model": "mock/json",
+  "name": "rel",
+  "scoring_prompt": "You are judging whether a response is relevant to the request.\n\n<request>\n{inputs}\n</request>\n\n<response>\n{output}\n</response>\n\nReply with JSON: {{\"is_relevant\": true|false, \"relevance_score\": <number 0..1>, \"reasoning\": \"...\"}}"
+ },
+ "remote": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "RemoteScorer",
+  "_type": "RemoteScorer",
+  "column_map": null,
+  "description": null,
+  "headers_secret": "REMOTE_TOKEN",
+  "name": "remote",
+  "timeout": 5.0,
+  "url": "http://REMOTE_URL"
+ },
+ "rule": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "RuleScorer",
+  "_type": "RuleScorer",
+  "column_map": null,
+  "description": null,
+  "name": "rule",
+  "rule": {
+   "$contains": {
+    "input": {
+     "$getField": "output"
+    },
+    "substr": {
+     "$literal": "cat"
+    }
+   }
+  },
+  "threshold": null
+ },
+ "rulet": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "RuleScorer",
+  "_type": "RuleScorer",
+  "column_map": null,
+  "description": null,
+  "name": "rulet",
+  "rule": {
+   "$convert": {
+    "input": {
+     "$getField": "inputs.n"
+    },
+    "to": "double"
+   }
+  },
+  "threshold": 3.0
+ },
+ "schema": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "JSONSchemaScorer",
+  "_type": "JSONSchemaScorer",
+  "column_map": null,
+  "description": null,
+  "name": "schema",
+  "schema": {
+   "required": [
+    "name"
+   ],
+   "type": "object"
+  }
+ },
+ "summ": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "SummarizationScorer",
+  "_type": "SummarizationScorer",
+  "column_map": null,
+  "description": null,
+  "model": "mock/json",
+  "name": "summ",
+  "scoring_prompt": "You are grading a summary of a source text.\n\n<source>\n{inputs}\n</source>\n\n<summary>\n{output}\n</summary>\n\nRate how faithful, complete and concise the summary is from 0 (useless) to 1 (excellent). Reply with JSON: {{\"summarization_score\": <number 0..1>, \"is_faithful\": true|false, \"reasoning\": \"...\"}}"
+ },
+ "xml": {
+  "_bases": [
+   "Scorer",
+   "Object",
+   "BaseModel"
+  ],
+  "_class_name": "ValidXMLScorer",
+  "_type": "ValidXMLScorer",
+  "column_map": null,
+  "description": null,
+  "name": "xml"
+ }
+}

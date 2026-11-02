@@ -73,6 +73,9 @@ type AgentChatAssistant struct {
 	Status           *string  `json:"status"`
 	Text             string   `json:"text"`
 	TotalCostUSD     *float64 `json:"total_cost_usd"`
+	// Weft extension: tools the model asked for in this response. LLM calls
+	// that only request tools appear as assistant messages with empty text.
+	RequestedTools []string `json:"requested_tools,omitempty"`
 }
 
 // AgentChatToolCall is a tool execution (or, with include_model_tool_calls,
@@ -233,12 +236,13 @@ func (b *chatBuilder) userText(root string) (string, []any) {
 	return "", nil
 }
 
-func (b *chatBuilder) emitAssistant(sp *agentSpan, text, reasoning string, media []any, withUsage bool) {
-	if text == "" && reasoning == "" && len(media) == 0 {
+func (b *chatBuilder) emitAssistant(sp *agentSpan, text, reasoning string, media []any, tools []string, withUsage bool) {
+	if text == "" && reasoning == "" && len(media) == 0 && len(tools) == 0 {
 		return
 	}
 	m := b.base(sp, "assistant_message")
-	a := &AgentChatAssistant{ContentRefs: []string{}, Text: text, Model: ptrIf(sp.RequestModel), Status: m.StatusCode, DurationMS: durPtr(sp)}
+	a := &AgentChatAssistant{ContentRefs: []string{}, Text: text, Model: ptrIf(sp.RequestModel), Status: m.StatusCode, DurationMS: durPtr(sp),
+		RequestedTools: tools}
 	if reasoning != "" {
 		a.ReasoningContent = &reasoning
 	}
@@ -301,10 +305,14 @@ func (b *chatBuilder) walk(id string, isRoot bool) {
 			outs := OutputMessages(c.Output)
 			text, reasoning := assistantText(outs)
 			var media []any
+			var tools []string
 			for _, o := range outs {
 				media = append(media, o.Media...)
+				for _, tc := range o.ToolCalls {
+					tools = append(tools, tc.Name)
+				}
 			}
-			b.emitAssistant(sp, text, reasoning, media, true)
+			b.emitAssistant(sp, text, reasoning, media, tools, true)
 			if b.modelToolCalls {
 				for _, o := range outs {
 					for _, tc := range o.ToolCalls {
@@ -340,7 +348,7 @@ func (b *chatBuilder) walk(id string, isRoot bool) {
 			text = OutputText(c.Output)
 		}
 		if text != "" && strings.TrimSpace(text) != strings.TrimSpace(b.lastAssistant) {
-			b.emitAssistant(sp, text, reasoning, nil, false)
+			b.emitAssistant(sp, text, reasoning, nil, nil, false)
 		}
 	}
 }
@@ -941,6 +949,14 @@ func searchRole(m ChatMsg) string {
 	return m.Role
 }
 
+// compactArgs re-encodes JSON arguments compactly so equal calls compare equal.
+func compactArgs(s string) string {
+	if v := decodeJSON(s); v != nil {
+		return jsonString(v)
+	}
+	return s
+}
+
 func snippet(text, q string, n int) string {
 	text = strings.Join(strings.Fields(text), " ")
 	r := []rune(text)
@@ -1000,7 +1016,7 @@ func (s *Store) SearchAgentMessages(ctx context.Context, req AgentSearchReq) ([]
 		where = append(where, "(instr(lower(c.inputs), lower(?)) > 0 OR instr(lower(COALESCE(c.output, '')), lower(?)) > 0)")
 		args = append(args, q, q)
 	}
-	rows, err := s.r.QueryContext(ctx, `SELECT s.id, s.trace_id, s.conversation_id, s.conversation_name, s.agent_name, s.operation_name,
+	rows, err := s.r.QueryContext(ctx, `SELECT s.id, s.trace_id, s.conversation_id, s.conversation_name, s.agent_name, s.operation_name, s.tool_name,
 			c.started_at, c.ended_at, c.inputs, c.output
 		FROM agent_spans s JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
 		WHERE `+strings.Join(where, " AND ")+` ORDER BY c.started_at LIMIT 50000`, args...)
@@ -1021,11 +1037,11 @@ func (s *Store) SearchAgentMessages(ctx context.Context, req AgentSearchReq) ([]
 	}
 	convs := map[string]*convAcc{}
 	for rows.Next() {
-		var id, trace, conv, convName, agent, op, inputs string
+		var id, trace, conv, convName, agent, op, toolName, inputs string
 		var started int64
 		var ended *int64
 		var output *string
-		if err := rows.Scan(&id, &trace, &conv, &convName, &agent, &op, &started, &ended, &inputs, &output); err != nil {
+		if err := rows.Scan(&id, &trace, &conv, &convName, &agent, &op, &toolName, &started, &ended, &inputs, &output); err != nil {
 			return nil, 0, err
 		}
 		type msg struct{ role, content string }
@@ -1036,13 +1052,20 @@ func (s *Store) SearchAgentMessages(ctx context.Context, req AgentSearchReq) ([]
 			out = decodeJSON(*output)
 		}
 		if op == OpExecuteTool {
-			msgs = append(msgs, msg{"tool_call", jsonString(in)})
+			msgs = append(msgs, msg{"tool_call", toolName + "(" + jsonString(in) + ")"})
 			if out != nil {
 				msgs = append(msgs, msg{"tool_result", OutputText(out)})
 			}
 		} else {
 			for _, m := range append(InputMessages(in), OutputMessages(out)...) {
-				msgs = append(msgs, msg{searchRole(m), messageContent(m)})
+				role := searchRole(m)
+				if role == "tool_call" {
+					for _, tc := range m.ToolCalls {
+						msgs = append(msgs, msg{role, tc.Name + "(" + compactArgs(tc.Arguments) + ")"})
+					}
+					continue
+				}
+				msgs = append(msgs, msg{role, messageContent(m)})
 			}
 		}
 		acc := convs[conv]
