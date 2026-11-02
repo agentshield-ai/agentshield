@@ -81,7 +81,7 @@ def test_op_digest_matches_server(live):
     assert obj["digest"] == ref.digest == digest(f.op_val())
     assert obj["kind"] == "op"
     loaded = ref.get()
-    assert loaded["_type"] == "Op" and "def f" in loaded["code"]
+    assert isinstance(loaded, weft.Op) and loaded("x") == "x"
 
 
 def test_exceptions_and_status(live):
@@ -294,3 +294,98 @@ def test_otel_configure_exports_spans(live):
 def test_auth_check_endpoint():
     with urllib.request.urlopen(URL + "/server_info") as r:
         assert json.loads(r.read())["otel_endpoint"] == "/otel/v1/traces"
+
+
+def test_parity_features_live(live):
+    # redaction
+    @weft.op
+    def login(user: str, password: str) -> dict:
+        return {"ok": True, "token": "t-123"}
+
+    login("bob", "hunter2")
+    live.flush()
+    [c] = _calls(live, op_names=["login"])
+    assert c.inputs["password"] == "REDACTED" and c.output == {"ok": True, "token": "REDACTED"}
+
+    # op loading round trip, linked to the same op ref
+    @weft.op
+    def triple(x: int) -> int:
+        return 3 * x
+
+    ref = weft.publish(triple)
+    loaded = weft.ref("triple").get()
+    res, call = loaded.call(3)
+    assert res == 9 and call.op_name == ref.uri()
+
+    # unknown Model subclass with op-ref methods
+    class LiveModel(weft.Model):
+        suffix: str = "!"
+
+        @weft.op
+        def predict(self, q: str) -> str:
+            return q + self.suffix
+
+    weft.publish(LiveModel(name="live-model", suffix="?"))
+    from weft import _object
+
+    del _object._REGISTRY["LiveModel"]
+    m = weft.ref("live-model").get()
+    assert m.predict("hi") == "hi?"
+
+    # add_rows through /table/update
+    ds = weft.Dataset(name="live-grow", rows=[{"i": 0}])
+    weft.publish(ds)
+    ds2 = ds.add_rows([{"i": 1}, {"i": 2}])
+    back = weft.ref("live-grow:latest").get()
+    assert list(back.rows) == [{"i": 0}, {"i": 1}, {"i": 2}]
+    assert back.rows.row_digests == ds2.rows.row_digests
+    assert ds2.ref.digest != ds.ref.digest
+
+    # apply_scorer -> runnable feedback
+    @weft.op
+    def reply(prompt: str) -> str:
+        return "no way"
+
+    @weft.op
+    def polite(output: str) -> bool:
+        return "please" in output
+
+    _, rc = reply.call("hi")
+    r = rc.apply_scorer_sync(polite)
+    assert r.result is False
+    fb = [f for f in live.get_feedback() if f["weave_ref"] == rc.uri()]
+    assert fb[0]["feedback_type"] == "wandb.runnable.polite"
+    assert fb[0]["runnable_ref"].startswith(f"weft:///{live.project_id}/op/polite:")
+    assert fb[0]["call_ref"] == r.score_call.uri()
+    got = list(live.get_calls(query={"$eq": [{"$getField": "feedback.wandb.runnable.polite.output"}, {"$literal": False}]}))
+    assert [g.id for g in got] == [rc.id]
+
+    # annotations, platform objects, leaderboard, compare, server eval
+    spec = weft.AnnotationSpec(name="stars", field_schema={"type": "integer", "minimum": 1, "maximum": 5})
+    rc.feedback.add_annotation(spec, 4)
+    obj = live._http.post("/obj/read", {"project_id": live.project_id, "object_id": "stars", "digest": "latest"})["obj"]
+    assert obj["base_object_class"] == "AnnotationSpec"
+    model = weft.LLMStructuredCompletionModel(
+        name="echo", llm_model_id="mock/echo",
+        default_params={"messages_template": [{"role": "user", "content": "{q}"}]},
+    )
+    ev = weft.Evaluation(name="live-srv", dataset=[{"q": "a", "expected": "a"}, {"q": "b", "expected": "c"}],
+                         scorers=[scorers.ExactMatchScorer(name="exact")])
+    out = live.evaluate_model(ev, model, poll_interval=0.1, timeout=60)
+    assert out["summary"]["exact"] == {"true_count": 1, "true_fraction": 0.5}
+    weft.publish(weft.Leaderboard(name="live-lb", columns=[
+        weft.LeaderboardColumn(evaluation_object_ref=ev, scorer_name="exact", summary_metric_path="true_fraction")]))
+    lb = live.leaderboard("live-lb")
+    assert lb["rows"][0]["model_name"] == "echo"
+    assert lb["rows"][0]["values"]["0"]["value"] == 0.5
+    cmp = live.compare_evaluations([out["call_id"]])
+    assert cmp["evaluations"][0]["call_id"] == out["call_id"]
+    mon = weft.Monitor(name="live-mon", op_names=["reply"], scorers=[scorers.ContainsScorer(name="has_no", target_column="prompt")], active=False)
+    weft.publish(mon)
+    assert live._http.post("/obj/read", {"project_id": live.project_id, "object_id": "live-mon", "digest": "latest"})["obj"]["base_object_class"] == "Monitor"
+    weft.publish(weft.SavedView(name="live-view", label="Errors", definition={"filter": {"trace_roots_only": True}}))
+    assert isinstance(weft.ref("live-view").get(), weft.SavedView)
+    ids = live.add_cost("tmp-model", 1e-6, 1e-6)
+    live.purge_costs(ids)
+    assert not live.query_costs(["tmp-model"])
+    assert live.whoami()["user_id"]

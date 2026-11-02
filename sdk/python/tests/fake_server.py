@@ -53,6 +53,8 @@ class FakeWeft:
                     fake.requests.append({"method": "GET", "path": self.path, "body": None, "headers": dict(self.headers)})
                 if self.path == "/server_info":
                     return self._send(200, {"version": "fake", "auth_required": False, "otel_endpoint": "/otel/v1/traces"})
+                if self.path == "/auth/whoami":
+                    return self._send(200, {"user_id": "anonymous", "auth_required": False})
                 if self.path == "/health":
                     return self._send(200, {"status": "ok"})
                 return self._send(404, {"reason": "not found"})
@@ -224,6 +226,26 @@ class FakeWeft:
         if path == "/cost/create":
             self.costs.update(body["costs"])
             return {"ids": [[f"c{i}", k] for i, k in enumerate(body["costs"])]}
+        if path == "/cost/query":
+            return {"results": [{"id": f"c{i}", "llm_id": k, **v} for i, (k, v) in enumerate(self.costs.items())]}
+        if path == "/cost/purge":
+            ids = set(body.get("ids") or [])
+            self.costs = {k: v for i, (k, v) in enumerate(self.costs.items()) if f"c{i}" not in ids}
+            return {}
+        if path == "/leaderboard/compute":
+            return {"leaderboard": {"object_id": body["object_id"]}, "columns": [], "rows": [], "_request": body}
+        if path == "/evaluations/compare":
+            return {"evaluations": [{"call_id": c} for c in body["evaluation_call_ids"]], "metrics": [], "rows": []}
+        if path == "/evaluate_model":
+            cid = "srv-eval-1"
+            self.calls[cid] = {"id": cid, "op_name": "Evaluation.evaluate", "output": {"exact": {"true_count": 1, "true_fraction": 1.0}},
+                               "project_id": body["project_id"], "trace_id": "t", "inputs": {"self": body["evaluation_ref"], "model": body["model_ref"]}}
+            self.eval_polls = 0
+            return {"call_id": cid}
+        if path == "/evaluation_status":
+            self.eval_polls = getattr(self, "eval_polls", 0) + 1
+            code = "complete" if self.eval_polls >= 2 else "running"
+            return {"status": {"code": code, "completed_rows": self.eval_polls, "total_rows": 2}}
         if path == "/completions/create":
             inputs = body["inputs"]
             last = [m for m in inputs["messages"] if m.get("role") == "user"][-1]["content"]

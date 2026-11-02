@@ -40,6 +40,7 @@ export class FakeWeft {
         return send(503, { reason: 'injected' });
       }
       try {
+        if (req.method === 'GET' && path === '/auth/whoami') return send(200, { user_id: 'anonymous', auth_required: false });
         if (req.method === 'GET' && path === '/server_info') return send(200, { version: 'fake', auth_required: false, otel_endpoint: '/otel/v1/traces' });
         const out = this.handle(path, body, raw, ctype);
         if (typeof out === 'string') return send(200, out, 'application/jsonl');
@@ -160,6 +161,19 @@ export class FakeWeft {
       }
       case '/cost/create':
         return { ids: Object.keys(body.costs).map((k, i) => [`c${i}`, k]) };
+      case '/completions/create': {
+        const inputs = body.inputs;
+        const last = inputs.messages.filter((m: any) => m.role === 'user').at(-1).content;
+        const content = inputs.response_format?.type === 'json_object' ? JSON.stringify({ correct: true, echo: last }) : last;
+        return {
+          response: {
+            id: 'x',
+            model: inputs.model,
+            choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+          },
+        };
+      }
       case '/refs/read_batch':
         return { vals: body.refs.map(() => null) };
     }

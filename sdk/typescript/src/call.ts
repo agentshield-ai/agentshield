@@ -1,5 +1,14 @@
 import type { WeftClient } from './client.js';
+import { currentContext, storage } from './context.js';
+import { isOp, op } from './op.js';
 import { Ref, isRefUri } from './refs.js';
+import { Scorer } from './scorers.js';
+
+export interface ApplyScorerResult {
+  result: unknown;
+  scoreCall: Call | null;
+  feedbackId: string | null;
+}
 
 export interface CallData {
   id: string;
@@ -39,7 +48,11 @@ export class Call {
   attributes: Record<string, unknown>;
   summary: Record<string, any>;
   raw: CallData;
+  /** Unserialised inputs/output of calls traced in this process. */
+  rawInputs?: Record<string, unknown>;
+  rawOutput?: unknown;
   /** @internal */ ended = false;
+  /** @internal */ fetched = false;
 
   constructor(
     data: CallData,
@@ -96,6 +109,44 @@ export class Call {
     await c.http.post('/calls/delete', { project_id: this.projectId, call_ids: [this.id] });
   }
 
+  /**
+   * Score this call (guardrails / online evaluation). The scorer receives
+   * `{ modelOutput: <call output>, datasetRow: <call inputs + additionalScorerKwargs> }`;
+   * its call is recorded as its own trace and `wandb.runnable.<scorer>` feedback
+   * (with runnable_ref and call_ref) is attached to this call. Resolves to the result.
+   */
+  async applyScorer(
+    scorer: Scorer | ((args: { modelOutput: unknown; datasetRow: Record<string, unknown> }) => unknown),
+    opts: { additionalScorerKwargs?: Record<string, unknown> } = {},
+  ): Promise<ApplyScorerResult> {
+    const client = this.c();
+    const row: Record<string, unknown> = { ...(this.rawInputs ?? this.inputs) };
+    delete row.self;
+    Object.assign(row, opts.additionalScorerKwargs ?? {});
+    const output = this.fetched ? this.output : this.rawOutput !== undefined ? this.rawOutput : this.output;
+    let name: string;
+    let runnableRef: string;
+    let fn: any;
+    let datasetRow = row;
+    if (scorer instanceof Scorer) {
+      name = scorer.scorerName;
+      runnableRef = (await client.publish(scorer)).uri();
+      fn = scorer.scoreOp;
+      datasetRow = scorer.mapRow(row);
+    } else {
+      fn = isOp(scorer) ? scorer : op(scorer);
+      name = fn.__weftOp.name;
+      runnableRef = client.opRef(fn.__weftOp).uri();
+    }
+    const [result, scoreCall] = (await storage.run({ ...currentContext(), stack: [] }, () => fn.call({ modelOutput: output, datasetRow }))) as [unknown, Call | null];
+    if (scoreCall?.exception) throw new Error(`scorer ${name} failed: ${scoreCall.exception.split('\n')[0]}`);
+    let feedbackId: string | null = null;
+    if (scoreCall) {
+      feedbackId = await this.feedback.add(`wandb.runnable.${name}`, { output: result }, { runnable_ref: runnableRef, call_ref: scoreCall.uri() });
+    }
+    return { result, scoreCall, feedbackId };
+  }
+
   get feedback(): CallFeedback {
     return new CallFeedback(this, this.c());
   }
@@ -125,6 +176,13 @@ export class CallFeedback {
 
   addNote(note: string): Promise<string> {
     return this.add('wandb.note.1', { note });
+  }
+
+  /** Human annotation following an AnnotationSpec (published if needed). */
+  async addAnnotation(spec: { __weftRef?: Ref; name?: string; valueIsValid?: (v: unknown) => boolean }, value: unknown): Promise<string> {
+    const ref = spec.__weftRef ?? (await this.client.publish(spec));
+    if (spec.valueIsValid && !spec.valueIsValid(value)) throw new Error(`value ${JSON.stringify(value)} does not match annotation spec ${ref.name}`);
+    return this.add(`wandb.annotation.${ref.name}`, { value }, { annotation_ref: ref.uri() });
   }
 
   async list(): Promise<any[]> {

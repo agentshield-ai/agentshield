@@ -1,4 +1,5 @@
 import type { WeftClient } from './client.js';
+import { requireClient } from './global.js';
 import { Ref } from './refs.js';
 import { toJson, type Publishable } from './serialize.js';
 
@@ -36,6 +37,13 @@ export abstract class WeftObject implements Publishable {
   toVal(client: WeftClient | null, _publishNested = false): unknown {
     const val = this.header();
     for (const [k, v] of Object.entries(this.fields())) val[k] = toJson(v, client);
+    return val;
+  }
+
+  /** Stored value with nested objects published locally (no network wait). */
+  localVal(client: WeftClient): Record<string, unknown> {
+    const val = this.header();
+    for (const [k, v] of Object.entries(this.fields())) val[k] = client.publishNestedLocal(v);
     return val;
   }
 
@@ -85,10 +93,58 @@ export class Dataset<R extends Record<string, unknown> = Record<string, unknown>
     return { ...this.header(), rows: this.tableRef.uri() };
   }
 
+  localVal(client: WeftClient): Record<string, unknown> {
+    if (!this.tableRef || !this.rowDigests || this.tableRef.projectId !== client.projectId) {
+      const { ref, rowDigests } = client.publishTableLocal(this.rows);
+      this.tableRef = ref;
+      this.rowDigests = rowDigests;
+    }
+    return { ...this.header(), rows: this.tableRef.uri() };
+  }
+
+  /**
+   * A new dataset version with `rows` appended. When this dataset is
+   * published the rows are appended server side (/table/update) and the new
+   * version is published under the same name.
+   */
+  async addRows(rows: R[]): Promise<Dataset<R>> {
+    const next = new Dataset<R>({ name: this.name, description: this.description, rows: [...this.rows, ...rows] });
+    if (!this.__weftRef) return next;
+    const client = requireClient();
+    if (!this.tableRef || !this.rowDigests || this.tableRef.projectId !== client.projectId) {
+      const t = await client.publishTable(this.rows);
+      this.tableRef = t.ref;
+      this.rowDigests = t.rowDigests;
+    }
+    const { ref, appended } = await client.appendTable(this.tableRef, rows);
+    next.tableRef = ref;
+    next.rowDigests = [...this.rowDigests, ...appended];
+    await client.publish(next, this.__weftRef.name);
+    return next;
+  }
+
   /** Ref to one row (`.../attr/rows/id/<row digest>`), available once published. */
   rowRef(index: number): Ref | undefined {
     const d = this.rowDigests?.[index];
     return this.__weftRef && d ? this.__weftRef.withExtra('attr', 'rows', 'id', d) : undefined;
+  }
+}
+
+/** A generic model object (name plus free-form attributes), as created by EvaluationLogger. */
+export class Model extends WeftObject {
+  attributes: Record<string, unknown>;
+
+  constructor(opts: { name?: string; description?: string | null; attributes?: Record<string, unknown> } = {}) {
+    super(opts);
+    this.attributes = opts.attributes ?? {};
+  }
+
+  get className(): string {
+    return 'Model';
+  }
+
+  fields(): Record<string, unknown> {
+    return { ...this.attributes };
   }
 }
 

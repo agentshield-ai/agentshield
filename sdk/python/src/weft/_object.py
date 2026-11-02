@@ -47,7 +47,8 @@ class Object(BaseModel):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        _REGISTRY[cls.__name__] = cls
+        if cls.__module__ != "weft_loaded":  # classes rebuilt from the server stay unregistered
+            _REGISTRY[cls.__name__] = cls
 
     @property
     def ref(self) -> Optional[ObjectRef]:
@@ -79,7 +80,7 @@ class Object(BaseModel):
                     continue
                 data[k] = resolve_ref_value(r, client)
             elif isinstance(v, list):
-                data[k] = [resolve_ref_value(parse_uri(x), client) if _is_obj_or_table_ref(x) else x for x in v]
+                data[k] = [_resolve_list_item(x, client) for x in v]
             else:
                 data[k] = v
         obj = cls(**data)
@@ -88,6 +89,22 @@ class Object(BaseModel):
 
 
 _REGISTRY["Object"] = Object
+
+
+def _resolve_list_item(x: Any, client: "WeftClient") -> Any:
+    if _is_obj_or_table_ref(x):
+        return resolve_ref_value(parse_uri(x), client)
+    if isinstance(x, str) and is_ref_uri(x):
+        try:
+            r = parse_uri(x)
+        except ValueError:
+            return x
+        if isinstance(r, OpRef):
+            try:
+                return client.get(r)
+            except Exception as e:
+                logger.warning("weft: could not load op %s: %s", x, e)
+    return x
 
 
 def _is_obj_or_table_ref(x: Any) -> bool:
@@ -263,12 +280,27 @@ class Dataset(Object):
         return pd.DataFrame(list(self.rows))
 
     def add_rows(self, rows: Iterable[Any]) -> "Dataset":
-        """Return a new dataset version with ``rows`` appended (published if this one was)."""
-        new = Dataset(name=self.name, description=self.description, rows=list(self.rows) + list(rows))
-        if self._weft_ref is not None:
-            from ._client import require_client
+        """Return a new dataset version with ``rows`` appended.
 
-            require_client().publish(new, name=self._weft_ref.name)
+        When this dataset is published, the rows are appended server side with
+        ``/table/update`` and the new version (pointing at the new table
+        digest) is published under the same name.
+        """
+        new_rows = list(rows)
+        if self._weft_ref is None:
+            return Dataset(name=self.name, description=self.description, rows=list(self.rows) + new_rows)
+        from ._client import require_client
+
+        client = require_client()
+        table: Table = self.rows
+        base = table.ref if table.ref is not None and table.ref.project_id == client.project_id else None
+        if base is None:
+            base = client._publish_table(table)
+        tref, appended = client._append_table(base, new_rows)
+        new_table = Table(list(table.rows) + new_rows, ref=tref, client=client)
+        new_table.row_digests = list(table.row_digests or []) + appended
+        new = Dataset(name=self.name, description=self.description, rows=new_table)
+        client.publish(new, name=self._weft_ref.name)
         return new
 
 

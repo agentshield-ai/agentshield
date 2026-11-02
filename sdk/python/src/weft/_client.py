@@ -19,6 +19,7 @@ from ._http import HTTPClient, WeftHTTPError, env_flag
 from ._ids import uuid7
 from ._object import Object, Table, WeftObject, registered_class, resolve_ref_value, _is_obj_or_table_ref
 from ._op import BoundOp, Op
+from ._redact import Redactor
 from ._refs import CallRef, ObjectRef, OpRef, Ref, TableRef, is_ref_uri, parse_name_version, parse_uri, split_project
 from ._sender import Sender
 from ._serialize import object_val, to_json
@@ -109,6 +110,7 @@ class WeftClient:
         timeout: float = 30.0,
         max_queue: int = 10_000,
         batch_size: int = 100,
+        settings: Optional[Dict[str, Any]] = None,
     ):
         self.entity, self.project = split_project(project)
         self.server_url = (server_url or os.environ.get("WEFT_SERVER_URL") or DEFAULT_SERVER_URL).rstrip("/")
@@ -118,6 +120,12 @@ class WeftClient:
         self._sender = Sender(self._http, max_queue=max_queue, batch_size=batch_size)
         self._uploaded: set = set()
         self._warned_digest = False
+        self.settings: Dict[str, Any] = dict(settings or {})
+        self._redact = Redactor(
+            keys=self.settings.get("redact_keys"),
+            pii=bool(self.settings.get("redact_pii", False)),
+            enabled=self.settings.get("redact_enabled"),
+        )
 
     # ------------------------------------------------------------------ basics
     @property
@@ -176,6 +184,11 @@ class WeftClient:
         ser_inputs: Dict[str, Any] = {}
         for k, v in raw_inputs.items():
             ser_inputs[k] = self._serialize_self(v) if k == "self" else to_json(v, self)
+        if self._redact.active:
+            self_val = ser_inputs.pop("self", _UNSET)
+            ser_inputs = self._redact(ser_inputs)
+            if self_val is not _UNSET:
+                ser_inputs = {"self": self_val, **ser_inputs}
 
         attrs: Dict[str, Any] = dict(_context.current_attributes())
         if attributes:
@@ -197,6 +210,7 @@ class WeftClient:
             attributes=attrs,
         )
         call._client = self
+        call._raw_inputs = dict(inputs)
         if call.display_name is None and op.call_display_name is not None:
             try:
                 dn = op.call_display_name
@@ -235,8 +249,9 @@ class WeftClient:
             except Exception as e:
                 logger.warning("weft: postprocess_output failed for %s: %s", op.name, e)
         call.ended_at = now_iso()
+        call._raw_output = output
         try:
-            call.output = to_json(output, self)
+            call.output = self._redact(to_json(output, self))
         except Exception as e:  # pragma: no cover - to_json is defensive already
             call.output = repr(e)
         end: Dict[str, Any] = {"project_id": call.project_id, "id": call.id, "ended_at": call.ended_at, "output": call.output}
@@ -334,6 +349,77 @@ class WeftClient:
     def get_evaluation_calls(self, limit: Optional[int] = None) -> CallsIter:
         return self.get_calls(filter={"op_names": ["Evaluation.evaluate"]}, limit=limit)
 
+    def whoami(self) -> Dict[str, Any]:
+        """``GET /auth/whoami``: the user the API key acts as."""
+        return self._http.get("/auth/whoami")
+
+    # ------------------------------------------------------------------ evaluations (server side)
+    def _uri_of(self, obj: Any) -> str:
+        if isinstance(obj, str):
+            return obj if is_ref_uri(obj) else self.ref(obj).uri()
+        if isinstance(obj, Ref):
+            return obj.uri()
+        return self.publish(obj).uri()
+
+    def evaluate_model(
+        self,
+        evaluation: Any,
+        model: Any,
+        *,
+        wait: bool = True,
+        timeout: float = 600.0,
+        poll_interval: float = 0.5,
+    ) -> Dict[str, Any]:
+        """Run an evaluation server side (``/evaluate_model``).
+
+        ``evaluation`` and ``model`` may be objects (published first), refs or
+        names. The model must be an ``LLMStructuredCompletionModel`` and the
+        scorers server-runnable. With ``wait`` the status is polled until the
+        run finishes; returns ``{"call_id", "status", "summary"}``.
+        """
+        import time
+
+        body = {"project_id": self.project_id, "evaluation_ref": self._uri_of(evaluation), "model_ref": self._uri_of(model)}
+        call_id = self._http.post("/evaluate_model", body)["call_id"]
+        result: Dict[str, Any] = {"call_id": call_id, "status": {"code": "running"}, "summary": None}
+        if not wait:
+            return result
+        deadline = time.monotonic() + timeout
+        while True:
+            st = self._http.post("/evaluation_status", {"project_id": self.project_id, "call_id": call_id}).get("status") or {}
+            result["status"] = st
+            if st.get("code") in ("complete", "failed"):
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"evaluation {call_id} still running after {timeout}s")
+            time.sleep(poll_interval)
+        if st.get("code") == "failed":
+            raise RuntimeError(f"server evaluation {call_id} failed: {st.get('error')}")
+        call = self.get_call(call_id)
+        result["summary"] = call.output if call is not None else None
+        return result
+
+    def evaluation_status(self, call_id: str) -> Dict[str, Any]:
+        return self._http.post("/evaluation_status", {"project_id": self.project_id, "call_id": call_id}).get("status") or {}
+
+    def compare_evaluations(self, call_ids: List[str]) -> Dict[str, Any]:
+        """``/evaluations/compare`` for ``Evaluation.evaluate`` call ids."""
+        self.flush()
+        return self._http.post("/evaluations/compare", {"project_id": self.project_id, "evaluation_call_ids": list(call_ids)})
+
+    def leaderboard(self, object_id: Any, digest: Optional[str] = None) -> Dict[str, Any]:
+        """Compute a leaderboard (``/leaderboard/compute``) by name, ref or Leaderboard object."""
+        if not isinstance(object_id, str) or is_ref_uri(object_id):
+            r = parse_uri(object_id) if isinstance(object_id, str) else (object_id if isinstance(object_id, Ref) else getattr(object_id, "_weft_ref", None))
+            if r is None:
+                r = self.publish(object_id)
+            object_id, digest = r.name, digest or r.digest
+        body: Dict[str, Any] = {"project_id": self.project_id, "object_id": object_id}
+        if digest:
+            body["digest"] = digest
+        self.flush()
+        return self._http.post("/leaderboard/compute", body)
+
     # ------------------------------------------------------------------ costs
     def add_cost(
         self,
@@ -366,8 +452,10 @@ class WeftClient:
             body["query"] = {"$expr": {"$in": [{"$getField": "llm_id"}, [{"$literal": x} for x in llm_ids]]}}
         return list(self._http.post("/cost/query", body).get("results") or [])
 
-    def purge_costs(self, ids: List[str]) -> None:
-        self._http.post("/cost/purge", {"project_id": self.project_id, "ids": list(ids)})
+    def purge_costs(self, ids: List[Any]) -> None:
+        """Delete project prices by id (``query_costs`` rows or ``add_cost`` ``[id, llm_id]`` pairs)."""
+        flat = [i[0] if isinstance(i, (list, tuple)) else (i.get("id") if isinstance(i, dict) else i) for i in ids]
+        self._http.post("/cost/purge", {"project_id": self.project_id, "ids": flat})
 
     # ------------------------------------------------------------------ objects
     def _op_ref(self, op: Op) -> OpRef:
@@ -451,6 +539,18 @@ class WeftClient:
         table.row_digests = row_digests
         return table.ref
 
+    def _append_table(self, base: TableRef, rows: List[Any]) -> "tuple[TableRef, List[str]]":
+        """Append rows to a published table with /table/update; returns (new ref, appended row digests)."""
+        tdigest = base.digest
+        appended: List[str] = []
+        json_rows = [to_json(r, self) for r in rows]
+        for i in range(0, len(json_rows), Table.PAGE):
+            updates = [{"append": {"row": r}} for r in json_rows[i : i + Table.PAGE]]
+            res = self._http.post("/table/update", {"project_id": self.project_id, "base_digest": tdigest, "updates": updates})
+            tdigest = res["digest"]
+            appended.extend(res.get("updated_row_digests") or [])
+        return TableRef(self.entity, self.project, tdigest), appended
+
     def _upload_file(self, data: bytes, mime: str) -> str:
         d = b64digest(data)
         if d in self._uploaded:
@@ -465,6 +565,13 @@ class WeftClient:
 
         self._sender.enqueue("multipart", ("/file/create", {"project_id": self.project_id}, {"file": (f"file.{ext}", data, mime)}), check)
         return d
+
+    def _read_obj_val(self, r: ObjectRef) -> Any:
+        res = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest})
+        obj = res.get("obj")
+        if obj is None:
+            raise LookupError(f"object not found: {r.uri()}")
+        return obj.get("val")
 
     def ref(self, s: Union[str, Ref]) -> Ref:
         if isinstance(s, Ref):
@@ -509,12 +616,12 @@ class WeftClient:
 
 
 def from_val(val: Any, client: WeftClient, ref: Optional[ObjectRef]) -> Any:
+    from ._loader import load_dynamic_object, load_op
+
     if not isinstance(val, dict):
         return val
     if val.get("_type") == "Op":
-        o = WeftObject(val)
-        o._weft_ref = ref
-        return o
+        return load_op(val, ref, client)
     cls_name = val.get("_class_name")
     if not cls_name:
         return val
@@ -524,6 +631,11 @@ def from_val(val: Any, client: WeftClient, ref: Optional[ObjectRef]) -> Any:
             return cls._weft_from_val(val, client, ref)  # type: ignore[attr-defined]
         except Exception as e:
             logger.debug("weft: could not rebuild %s: %s", cls_name, e)
+    elif any(registered_class(b) is not None for b in (val.get("_bases") or []) if b not in ("Object", "BaseModel")):
+        try:
+            return load_dynamic_object(val, client, ref)
+        except Exception as e:
+            logger.warning("weft: could not rebuild %s as a runnable object: %s", cls_name, e)
     out = WeftObject()
     for k, v in val.items():
         out[k] = resolve_ref_value(parse_uri(v), client) if _is_obj_or_table_ref(v) else v

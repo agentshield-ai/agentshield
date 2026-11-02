@@ -4,9 +4,12 @@ import { currentContext, getCurrentCall } from './context.js';
 import { getClient, setGlobalClient } from './global.js';
 import { HttpClient, VERSION, WeftHTTPError } from './http.js';
 import { uuid7 } from './ids.js';
+import { loadOp } from './loader.js';
 import { Dataset, WeftObject } from './objects.js';
+import { loadPlatformObject } from './platform.js';
 import { op as makeOp, isOp, type OpMeta } from './op.js';
 import { Ref, isRefUri, splitProject } from './refs.js';
+import { Redactor, type RedactSettings } from './redact.js';
 import { Sender, type SenderOptions } from './sender.js';
 import { getRef, toJson } from './serialize.js';
 
@@ -18,6 +21,8 @@ export interface InitOptions {
   /** Disable tracing (also WEFT_DISABLED=true). */
   disabled?: boolean;
   sender?: SenderOptions;
+  /** Redaction settings (default: redact credential-like keys). */
+  settings?: RedactSettings;
 }
 
 export interface GetCallsOptions {
@@ -69,6 +74,7 @@ export class WeftClient {
   readonly http: HttpClient;
   readonly sender: Sender;
   disabled: boolean;
+  readonly redactor: Redactor;
   private uploaded = new Set<string>();
 
   constructor(project: string, opts: InitOptions = {}) {
@@ -77,6 +83,7 @@ export class WeftClient {
     this.http = new HttpClient(this.serverUrl, opts.apiKey ?? process.env.WEFT_API_KEY);
     this.sender = new Sender(this.http, opts.sender);
     this.disabled = !!opts.disabled;
+    this.redactor = new Redactor(opts.settings);
   }
 
   get projectId(): string {
@@ -120,7 +127,9 @@ export class WeftClient {
       }
     }
     const ser: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(raw)) ser[k] = k === 'self' ? this.serializeSelf(v) : toJson(v, this);
+    for (const [k, v] of Object.entries(raw)) if (k !== 'self') ser[k] = toJson(v, this);
+    const redacted = this.redactor.apply(ser) as Record<string, unknown>;
+    const finalInputs: Record<string, unknown> = 'self' in raw ? { self: this.serializeSelf(raw.self), ...redacted } : redacted;
     const attributes = toJson({ ...ctx.attributes, ...(opts.attributes ?? {}) }, this) as Record<string, unknown>;
     if (!('weft' in attributes)) attributes.weft = { client_version: VERSION, source: 'typescript-sdk', node_version: process.version };
     const data: CallData = {
@@ -131,9 +140,10 @@ export class WeftClient {
       parent_id: parent ? parent.id : null,
       started_at: nowIso(),
       attributes,
-      inputs: ser,
+      inputs: finalInputs,
     };
     const call = new Call(data, this);
+    call.rawInputs = { ...inputs };
     call.threadId = threadId;
     call.turnId = turnId;
     let dn = opts.displayName ?? null;
@@ -166,7 +176,8 @@ export class WeftClient {
       }
     }
     call.endedAt = nowIso();
-    call.output = toJson(out, this);
+    call.rawOutput = out;
+    call.output = this.redactor.apply(toJson(out, this));
     const end: Record<string, unknown> = { project_id: call.projectId, id: call.id, ended_at: call.endedAt, output: call.output };
     if (error !== undefined) {
       call.exception = formatError(error);
@@ -213,6 +224,7 @@ export class WeftClient {
   private fetched(d: CallData): Call {
     const c = new Call(d, this);
     c.ended = true;
+    c.fetched = true;
     return c;
   }
 
@@ -267,6 +279,75 @@ export class WeftClient {
       d = digest(val);
     }
     return new Ref(this.entity, this.project, 'object', objectId, d);
+  }
+
+  /**
+   * Publish without waiting: digests are computed locally (they match the
+   * server's) and the writes are queued on the background sender in order.
+   */
+  publishLocal(obj: WeftObject, name?: string): Ref {
+    const val = obj.localVal(this);
+    const objectId = sanitizeName(name ?? obj.name ?? obj.className);
+    const d = digest(val);
+    this.sender.enqueue({
+      kind: 'post',
+      path: '/obj/create',
+      payload: { obj: { project_id: this.projectId, object_id: objectId, val } },
+      cb: (res) => {
+        if (res?.digest && res.digest !== d) console.warn(`weft: server digest for ${objectId} differs from local digest`);
+      },
+    });
+    const ref = new Ref(this.entity, this.project, 'object', objectId, d);
+    obj.__weftRef = ref;
+    return ref;
+  }
+
+  /** Field value for publishLocal: nested objects are published locally too. */
+  publishNestedLocal(v: unknown): unknown {
+    if (v instanceof WeftObject) return (v.__weftRef && v.__weftRef.projectId === this.projectId ? v.__weftRef : this.publishLocal(v)).uri();
+    if (isOp(v)) return this.opRef(v.__weftOp).uri();
+    if (Array.isArray(v)) return v.map((x) => this.publishNestedLocal(x));
+    return toJson(v, this);
+  }
+
+  /** Queue a table create (and appends) with locally computed digests. */
+  publishTableLocal(rows: unknown[]): { ref: Ref; rowDigests: string[] } {
+    const json = rows.map((r) => toJson(r, this));
+    const rowDigests = json.map((r) => digest(r));
+    const chunk = 1000;
+    let td = digest(rowDigests.slice(0, chunk));
+    this.sender.enqueue({ kind: 'post', path: '/table/create', payload: { table: { project_id: this.projectId, rows: json.slice(0, chunk) } } });
+    for (let i = chunk; i < json.length; i += chunk) {
+      this.sender.enqueue({
+        kind: 'post',
+        path: '/table/update',
+        payload: { project_id: this.projectId, base_digest: td, updates: json.slice(i, i + chunk).map((row) => ({ append: { row } })) },
+      });
+      td = digest(rowDigests.slice(0, i + chunk));
+    }
+    return { ref: new Ref(this.entity, this.project, 'table', td), rowDigests };
+  }
+
+  /** Append rows to a published table with /table/update. */
+  async appendTable(base: Ref, rows: unknown[]): Promise<{ ref: Ref; appended: string[] }> {
+    let td = base.name;
+    const appended: string[] = [];
+    const json = rows.map((r) => toJson(r, this));
+    for (let i = 0; i < json.length; i += 1000) {
+      const res = await this.http.post('/table/update', {
+        project_id: this.projectId,
+        base_digest: td,
+        updates: json.slice(i, i + 1000).map((row) => ({ append: { row } })),
+      });
+      td = res.digest;
+      appended.push(...(res.updated_row_digests ?? []));
+    }
+    return { ref: new Ref(this.entity, this.project, 'table', td), appended };
+  }
+
+  /** `GET /auth/whoami`. */
+  whoami(): Promise<{ user_id: string; auth_required: boolean }> {
+    return this.http.get('/auth/whoami');
   }
 
   /** Value for a field of an object being published: nested objects become refs. */
@@ -358,6 +439,9 @@ export class WeftClient {
   }
 
   private async fromVal(val: any, ref: Ref | undefined): Promise<any> {
+    if (val && typeof val === 'object' && val._type === 'Op') return loadOp(val, ref, this);
+    const platform = val && typeof val === 'object' ? loadPlatformObject(val, ref) : null;
+    if (platform) return platform;
     if (val && typeof val === 'object' && val._class_name === 'Dataset' && isRefUri(val.rows)) {
       const t = Ref.parse(val.rows);
       const { rows, digests } = await this.readTable(t);

@@ -35,7 +35,10 @@ from ._object import (
     Table,
     WeftObject,
 )
+from ._call import ApplyScorerResult
+from ._loader import OpLoadError
 from ._op import BoundOp, Op, op
+from ._platform import AnnotationSpec, Leaderboard, LeaderboardColumn, Monitor, SavedView
 from ._refs import CallRef, ObjectRef, OpRef, TableRef, parse_uri
 from ._usage import add_usage
 from .scorers import Scorer
@@ -83,4 +86,11 @@ __all__ = [
     "parse_uri",
     "WeftObject",
     "add_usage",
+    "AnnotationSpec",
+    "Monitor",
+    "Leaderboard",
+    "LeaderboardColumn",
+    "SavedView",
+    "ApplyScorerResult",
+    "OpLoadError",
 ]

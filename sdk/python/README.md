@@ -49,8 +49,27 @@ explicitly).
 | Disable tracing | | `WEFT_DISABLED=true` | off |
 | Evaluation concurrency | | `WEFT_PARALLELISM` | 10 |
 | Exit flush timeout (s) | | `WEFT_FLUSH_TIMEOUT` | 10 |
+| Redaction | `settings={"redact_keys": [...], "redact_pii": True}` | `WEFT_REDACT_KEYS=0` disables | credential keys |
 
-A bare project name `"p"` is stored as `"default/p"`.
+A bare project name `"p"` is stored as `"default/p"`. When the server uses
+`user=key` API keys, calls, objects and feedback are attributed to that user
+(`client.whoami()` shows it).
+
+### Redaction
+
+By default, values under dict keys named `api_key`, `apikey`, `authorization`,
+`auth`, `password`, `secret`, `token` or `access_token` are replaced with
+`"REDACTED"`. Matching is case-insensitive and on the exact key, at any depth
+in call inputs and outputs, and happens before anything leaves the process.
+
+```python
+weft.init("my-project", settings={
+    "redact_keys": ["api_key", "ssn"],   # replaces the default list
+    "redact_pii": True,                  # also mask emails, phone/card/SSN numbers, IPs in strings
+})
+```
+
+Set `WEFT_REDACT_KEYS=0` to turn key redaction off.
 
 ## Tracing
 
@@ -147,7 +166,18 @@ weft.publish(chat, name="chat-prompt")
 ```
 
 Publishing is content-addressed: publishing an identical object again gives
-the same digest, and the server keeps one version. Nested objects are published
+the same digest, and the server keeps one version.
+
+**Loading ops runs stored code.** `weft.ref("my_fn").get()` returns a runnable
+`weft.Op`. The SDK rebuilds it from the stored source by `exec`-ing it in a
+fresh namespace, strips its decorators and wraps it with `@weft.op` again. Its
+calls are linked to the same op ref. A published `Model`/`Scorer` subclass
+that is not defined in the loading process comes back as a rebuilt class whose
+op-ref methods are loaded the same way, so `loaded_model.predict(...)` works.
+Only self-contained functions can be rebuilt; anything they reference from
+their original module (imports, helpers) has to exist at call time. When the
+code can't be rebuilt you get `weft.OpLoadError`. **Only load ops from servers
+and projects you trust.** Nested objects are published
 first and stored as refs. Objects whose class is not defined locally load as
 `weft.WeftObject`, a dict that also supports attribute access.
 
@@ -158,7 +188,7 @@ ds = weft.Dataset(name="qa", rows=[{"question": "2+2", "expected": "4"}])
 weft.publish(ds)                     # rows uploaded as a table
 for row in weft.ref("qa").get().rows:
     ...
-ds2 = ds.add_rows([{"question": "3+3", "expected": "6"}])   # new version
+ds2 = ds.add_rows([{"question": "3+3", "expected": "6"}])   # /table/update + new version
 weft.Dataset.from_calls(client.get_calls(filter={"op_names": ["answer"]}))
 
 class MyModel(weft.Model):
@@ -242,6 +272,48 @@ pred.finish()
 ev.log_summary()            # same call structure as Evaluation
 ```
 
+## Guardrails and online scoring
+
+`call.apply_scorer` scores an existing call. Argument names are matched to the
+call's inputs and `output` receives its output. The scorer call is recorded as
+its own trace, and `wandb.runnable.<scorer>` feedback with `runnable_ref` and
+`call_ref` is attached to the scored call. The result is returned, so an app
+can block on it:
+
+```python
+result, call = generate.call(prompt)
+check = await call.apply_scorer(toxicity, additional_scorer_kwargs={"threshold": 0.8})
+if check.result["flagged"]:
+    result = "Sorry, I can't help with that."
+call.apply_scorer_sync(weft.scorers.RegexScorer(pattern=r"^\w"))   # sync helper
+```
+
+The result is an `ApplyScorerResult(result, score_call, feedback_id)`. Runnable
+feedback can be queried, for example
+`feedback.wandb.runnable.toxicity.output.flagged`.
+
+## Annotations, monitors, leaderboards and saved views
+
+```python
+spec = weft.AnnotationSpec(name="quality", field_schema={"type": "integer", "minimum": 1, "maximum": 5})
+call.feedback.add_annotation(spec, 4)            # validated; feedback wandb.annotation.quality
+
+weft.publish(weft.Monitor(name="judge-chats", op_names=["openai.chat.completions.create"],
+                          sampling_rate=0.2, scorers=[judge]))     # server scores matching calls
+
+weft.publish(weft.Leaderboard(name="qa-board", columns=[
+    weft.LeaderboardColumn(evaluation_object_ref=evaluation, scorer_name="exact",
+                           summary_metric_path="true_fraction"),
+]))
+board = client.leaderboard("qa-board")           # /leaderboard/compute
+
+weft.publish(weft.SavedView(name="errors", label="Errors",
+                            definition={"filter": {"trace_roots_only": True}}))
+```
+
+All four serialise in the shapes documented in API.md and load back as their
+classes.
+
 ## Querying calls and feedback
 
 ```python
@@ -260,9 +332,19 @@ list(call.feedback)
 call.set_display_name("golden example")
 call.delete()
 
+call.children()
+call.feedback.add("wandb.annotation.quality", {"value": 4}, annotation_ref=spec_ref)
+
+client.get_calls(columns=["id", "inputs.question"], expand_columns=["inputs.example"],
+                 include_costs=True, include_feedback=True)
+client.get_feedback(query={"$eq": [{"$getField": "feedback_type"}, {"$literal": "wandb.note.1"}]}, limit=50)
 client.get_evaluations()                         # Evaluation objects
-client.add_cost("my-model", prompt_token_cost=1e-6, completion_token_cost=2e-6)
-client.server_info()
+client.compare_evaluations([eval_call_id_a, eval_call_id_b])
+client.evaluate_model(evaluation, llm_model)     # server-side run; polls until done
+                                                 # -> {"call_id", "status", "summary"}
+ids = client.add_cost("my-model", prompt_token_cost=1e-6, completion_token_cost=2e-6)
+client.query_costs(["my-model"]); client.purge_costs(ids)
+client.server_info(); client.whoami()
 ```
 
 ## OpenTelemetry

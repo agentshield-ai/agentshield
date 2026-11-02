@@ -35,6 +35,8 @@ class Call:
     _client: Optional["WeftClient"] = field(default=None, repr=False, compare=False)
     _ended: bool = field(default=False, repr=False, compare=False)
     _fetched: bool = field(default=False, repr=False, compare=False)
+    _raw_inputs: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
+    _raw_output: Any = field(default=None, repr=False, compare=False)
 
     # ---- convenience -----------------------------------------------------
     @property
@@ -90,6 +92,91 @@ class Call:
         client = self._require_client()
         return list(client.get_calls(filter={"parent_ids": [self.id]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
 
+    # ---- guardrails / online scoring -------------------------------------
+    def _scorer_plan(self, scorer: Any, additional_scorer_kwargs: Optional[Dict[str, Any]]) -> Any:
+        from ._evaluation import _scorer_args, _scorer_fn, scorer_name
+        from ._op import BoundOp, Op, op as make_op
+        from .scorers import Scorer
+
+        if not isinstance(scorer, (Scorer, Op, BoundOp)):
+            if callable(scorer):
+                scorer = make_op(scorer)
+            else:
+                raise TypeError("scorer must be a weft.Scorer or an op/function")
+        client = self._require_client()
+        if isinstance(scorer, Scorer):
+            runnable_ref = client.publish(scorer).uri()
+        else:
+            runnable_ref = client._op_ref(scorer if isinstance(scorer, Op) else scorer.op).uri()
+        inputs = self._raw_inputs if self._raw_inputs is not None else self.inputs
+        row = {k: v for k, v in (inputs or {}).items() if k != "self"}
+        row.update(additional_scorer_kwargs or {})
+        output = self._raw_output if self._ended and not self._fetched else self.output
+        fn, cmap = _scorer_fn(scorer)
+        return client, fn, _scorer_args(fn, row, output, cmap), scorer_name(scorer), runnable_ref
+
+    def _scorer_done(self, client: "WeftClient", res: Any, score_call: Any, name: str, runnable_ref: str) -> "ApplyScorerResult":
+        if score_call is not None and score_call.exception:
+            raise RuntimeError(f"scorer {name} failed: {score_call.exception.splitlines()[0]}")
+        fid = None
+        if score_call is not None:
+            fid = self.feedback.add(
+                f"wandb.runnable.{name}",
+                {"output": res},
+                runnable_ref=runnable_ref,
+                call_ref=score_call.uri(),
+            )
+        return ApplyScorerResult(result=res, score_call=score_call, feedback_id=fid)
+
+    async def apply_scorer(self, scorer: Any, additional_scorer_kwargs: Optional[Dict[str, Any]] = None) -> "ApplyScorerResult":
+        """Score this call (guardrail / online evaluation).
+
+        Runs ``scorer`` on the call's inputs and output (argument names are
+        matched to input names; ``output`` receives the call output), records
+        the scorer call, and attaches ``wandb.runnable.<scorer>`` feedback with
+        ``runnable_ref`` and ``call_ref``. Returns the result so callers can
+        block on it.
+        """
+        import inspect
+
+        from . import _context
+
+        client, fn, args, name, runnable_ref = self._scorer_plan(scorer, additional_scorer_kwargs)
+        token = _context._call_stack.set(())  # scorer calls are their own traces
+        try:
+            out = fn.call(**args)
+            if inspect.isawaitable(out):
+                out = await out
+        finally:
+            _context._call_stack.reset(token)
+        res, score_call = out
+        return self._scorer_done(client, res, score_call, name, runnable_ref)
+
+    def apply_scorer_sync(self, scorer: Any, additional_scorer_kwargs: Optional[Dict[str, Any]] = None) -> "ApplyScorerResult":
+        """Synchronous ``apply_scorer`` (async scorers run in a new event loop)."""
+        import asyncio
+        import inspect
+
+        from . import _context
+
+        client, fn, args, name, runnable_ref = self._scorer_plan(scorer, additional_scorer_kwargs)
+        token = _context._call_stack.set(())
+        try:
+            out = fn.call(**args)
+        finally:
+            _context._call_stack.reset(token)
+        if inspect.isawaitable(out):
+            async def _run() -> Any:
+                t = _context._call_stack.set(())
+                try:
+                    return await out
+                finally:
+                    _context._call_stack.reset(t)
+
+            out = asyncio.run(_run())
+        res, score_call = out
+        return self._scorer_done(client, res, score_call, name, runnable_ref)
+
     @classmethod
     def from_server(cls, d: Dict[str, Any], client: Optional["WeftClient"]) -> "Call":
         c = cls(
@@ -119,6 +206,15 @@ class Call:
         return c
 
 
+@dataclass
+class ApplyScorerResult:
+    """Result of ``Call.apply_scorer``: the score, the scorer's call and the feedback id."""
+
+    result: Any
+    score_call: Optional[Call]
+    feedback_id: Optional[str]
+
+
 class CallFeedback:
     """Feedback attached to a call: iterate it, or add reactions/notes/payloads."""
 
@@ -128,7 +224,22 @@ class CallFeedback:
     def _client(self) -> "WeftClient":
         return self.call._require_client()
 
-    def add(self, feedback_type: str, payload: Any, *, creator: Optional[str] = None, **extra: Any) -> str:
+    def add(
+        self,
+        feedback_type: str,
+        payload: Any,
+        *,
+        creator: Optional[str] = None,
+        annotation_ref: Optional[str] = None,
+        runnable_ref: Optional[str] = None,
+        call_ref: Optional[str] = None,
+        trigger_ref: Optional[str] = None,
+        **extra: Any,
+    ) -> str:
+        """Attach feedback. ``annotation_ref``/``runnable_ref``/``call_ref``/``trigger_ref`` accept refs or URIs."""
+        for k, v in (("annotation_ref", annotation_ref), ("runnable_ref", runnable_ref), ("call_ref", call_ref), ("trigger_ref", trigger_ref)):
+            if v is not None:
+                extra[k] = v.uri() if hasattr(v, "uri") else str(v)
         client = self._client()
         client.flush()
         body: Dict[str, Any] = {
@@ -148,6 +259,14 @@ class CallFeedback:
 
     def add_note(self, note: str, creator: Optional[str] = None) -> str:
         return self.add("wandb.note.1", {"note": note}, creator=creator)
+
+    def add_annotation(self, spec: Any, value: Any, creator: Optional[str] = None) -> str:
+        """Human annotation following an ``AnnotationSpec`` (published if needed)."""
+        client = self._client()
+        ref = getattr(spec, "_weft_ref", None) or client.publish(spec)
+        if hasattr(spec, "value_is_valid") and not spec.value_is_valid(value):
+            raise ValueError(f"value {value!r} does not match annotation spec {ref.name}")
+        return self.add(f"wandb.annotation.{ref.name}", {"value": value}, creator=creator, annotation_ref=ref)
 
     def purge(self, feedback_id: str) -> None:
         client = self._client()

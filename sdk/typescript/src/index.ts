@@ -1,11 +1,33 @@
 export { init, finish, flush, WeftClient, DEFAULT_SERVER_URL, type InitOptions, type GetCallsOptions } from './client.js';
 export { getClient, requireClient } from './global.js';
 export { op, isOp, type Op, type OpOptions } from './op.js';
-export { Call, CallFeedback, type CallData } from './call.js';
+export { Call, CallFeedback, type CallData, type ApplyScorerResult } from './call.js';
 export { attributes, withThread, getCurrentCall } from './context.js';
 export { Ref } from './refs.js';
-export { WeftObject, Dataset } from './objects.js';
-export { Evaluation, autoSummarize, type EvaluationOptions, type EvalRowResult } from './evaluation.js';
+export { WeftObject, Dataset, Model } from './objects.js';
+export {
+  Evaluation,
+  EvaluationLogger,
+  ScoreLogger,
+  autoSummarize,
+  type EvaluationOptions,
+  type EvaluationLoggerOptions,
+  type EvalRowResult,
+} from './evaluation.js';
+export {
+  Scorer,
+  ExactMatchScorer,
+  ContainsScorer,
+  RegexScorer,
+  JSONValidScorer,
+  LevenshteinScorer,
+  LLMAsAJudgeScorer,
+  levenshtein,
+  type ScoreArgs,
+} from './scorers.js';
+export { AnnotationSpec, Leaderboard, Monitor, SavedView, type LeaderboardColumn } from './platform.js';
+export { OpLoadError } from './loader.js';
+export { Redactor, REDACTED, DEFAULT_REDACT_KEYS, redactPiiText, type RedactSettings } from './redact.js';
 export { addUsage } from './usage.js';
 export { WeftHTTPError, VERSION } from './http.js';
 export { wrapOpenAI, type WrapOpenAIOptions } from './integrations/openai.js';
