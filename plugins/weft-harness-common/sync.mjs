@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-export const PLUGINS = ['weft-claude-code', 'weft-codex', 'weft-openclaw'];
+export const PLUGINS = ['weft-claude-code', 'weft-codex', 'weft-openclaw', 'weft-pi'];
 for (const p of PLUGINS) {
   const dst = join(here, '..', p, 'lib', 'weft.mjs');
   mkdirSync(dirname(dst), { recursive: true });

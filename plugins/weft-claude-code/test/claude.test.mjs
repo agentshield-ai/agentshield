@@ -170,7 +170,7 @@ test('installer merges hooks idempotently and uninstalls cleanly', () => {
 
 test('the vendored core matches plugins/weft-harness-common/weft.mjs', () => {
   const canon = readFileSync(join(here, '..', '..', 'weft-harness-common', 'weft.mjs'), 'utf8');
-  for (const p of ['weft-claude-code', 'weft-codex', 'weft-openclaw']) {
+  for (const p of ['weft-claude-code', 'weft-codex', 'weft-openclaw', 'weft-pi']) {
     const f = join(here, '..', '..', p, 'lib', 'weft.mjs');
     assert.equal(readFileSync(f, 'utf8'), canon, `${p}/lib/weft.mjs is stale: run node plugins/weft-harness-common/sync.mjs`);
   }

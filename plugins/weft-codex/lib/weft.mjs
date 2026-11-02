@@ -1,4 +1,4 @@
-// Shared core for the Weft agent harness plugins (Claude Code, Codex, OpenClaw).
+// Shared core for the Weft agent harness plugins (Claude Code, Codex, OpenClaw, Pi).
 //
 // The canonical copy lives in plugins/weft-harness-common/weft.mjs and is
 // vendored into each plugin as lib/weft.mjs (scripts: `node

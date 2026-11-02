@@ -12,7 +12,7 @@
 //   │                          with the context messages, the response and token usage
 //   └─ execute_tool <tool>     tool_execution_start .. tool_execution_end
 
-import { callItems, chatOutput, loadConfig, newId, sendItems, shortText, stableId, toolDisplay, truncate, usageSummary } from './weft.mjs';
+import { callItems, chatOutput, loadConfig, makeLogger, newId, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
 
 export const PLUGIN = 'weft-pi';
 export const PLUGIN_VERSION = '0.1.0';
@@ -197,8 +197,8 @@ export class WeftPiTracer {
   }
 
   onAgentStart(_event = {}, ctx = {}) {
-    if (this.run && !this.pending) return; // already started by an earlier event
-    if (this.run) this.finishRun({ reason: 'superseded' });
+    // agent_start/agent_end pair up; an open run with activity lost its agent_end.
+    if (this.run && (this.pending || this.run.llms.length || this.run.toolOrder.length)) this.finishRun({ reason: 'superseded' });
     this.ensureRun(ctx);
   }
 
@@ -440,7 +440,7 @@ export class WeftPiTracer {
 
   /** UI link of the current conversation. */
   conversationUrl() {
-    return `${this.cfg.serverUrl}/${this.cfg.project}/threads/${encodeURIComponent(this.session.id ?? '')}`;
+    return `${this.cfg.serverUrl}/${this.cfg.project}/conversations/${encodeURIComponent(this.session.id ?? '')}`;
   }
 
   warn(msg) {
@@ -467,16 +467,6 @@ export const EVENTS = {
   agent_end: 'onAgentEnd',
 };
 
-/** A quiet logger: Pi's TUI owns the terminal, so warnings go to the plugin log file. */
-function fileLogger(cfg) {
-  try {
-    // makeLogger lives in the shared core; imported lazily to keep this module's surface small.
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Register the tracer with a Pi `ExtensionAPI`. Returns the tracer (null when
  * no project is configured or the plugin is disabled).
@@ -484,7 +474,8 @@ function fileLogger(cfg) {
 export function registerWeft(pi, options = {}, { env = process.env, fetchImpl, now, logger } = {}) {
   const cfg = resolveConfig(options, env);
   if (cfg.disabled) return null;
-  const tracer = new WeftPiTracer(cfg, { logger: logger ?? options.logger ?? fileLogger(cfg) ?? console, fetchImpl, now });
+  // Pi's TUI owns the terminal, so warnings go to <stateDir>/logs/weft-pi.log by default.
+  const tracer = new WeftPiTracer(cfg, { logger: logger ?? options.logger ?? makeLogger(cfg, PLUGIN), fetchImpl, now });
   for (const [name, method] of Object.entries(EVENTS)) {
     try {
       pi.on(name, (event, ctx) => {
@@ -527,4 +518,3 @@ export function registerWeft(pi, options = {}, { env = process.env, fetchImpl, n
   return tracer;
 }
 
-export { truncate };

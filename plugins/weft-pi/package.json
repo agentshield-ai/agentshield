@@ -1,0 +1,21 @@
+{
+  "name": "weft-pi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Weft agent harness extension for the Pi coding agent (no dependencies)",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": ["index.js", "lib/", "README.md"],
+  "keywords": ["pi-package", "weft", "tracing"],
+  "engines": { "node": ">=18" },
+  "pi": {
+    "extensions": ["./index.js"]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "Apache-2.0"
+}
