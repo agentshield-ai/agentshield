@@ -116,6 +116,7 @@ type predictor struct {
 	url      string
 	headers  map[string]string
 	secret   string // secret sent as a bearer token
+	oauth    map[string]any // the model's auth_config; token_url selects OAuth client credentials (oauth.go)
 	timeout  time.Duration
 	extra    map[string]any // extra request fields (runtime_id)
 }
@@ -146,6 +147,7 @@ func (e *Engine) predictorFor(ctx context.Context, projectID string, modelVal ma
 		if ac, ok := modelVal["auth_config"].(map[string]any); ok && p.secret == "" {
 			p.secret = strField(ac, "bearer_secret_name")
 		}
+		p.oauth, _ = modelVal["auth_config"].(map[string]any)
 		return p, checkURL(p.url)
 	}
 	name := strField(modelVal, "runtime", "runtime_ref", "runtime_name")
@@ -169,6 +171,7 @@ func (e *Engine) predictorFor(ctx context.Context, projectID string, modelVal ma
 		if runtimeID != "" {
 			p.extra["runtime_id"] = runtimeID
 		}
+		p.oauth, _ = modelVal["auth_config"].(map[string]any)
 		return p, checkURL(p.url)
 	}
 	if runtimeID == "" {
@@ -257,6 +260,11 @@ func (e *Engine) remotePredict(ctx context.Context, projectID string, p *predict
 			return nil, nil, fmt.Errorf("secret %q is not set", p.secret)
 		}
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(sv))
+	}
+	if tok, err := e.oauthToken(ctx, p.oauth); err != nil {
+		return nil, nil, err
+	} else if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := remoteHTTP.Do(req)
 	if err != nil {

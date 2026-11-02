@@ -7,7 +7,8 @@ import { getClient, setGlobalClient } from './global.js';
 import { HttpClient, VERSION, WeftHTTPError } from './http.js';
 import { uuid7 } from './ids.js';
 import { loadOp } from './loader.js';
-import { Dataset, WeftObject } from './objects.js';
+import { Dataset, WeftObject, loadPromptOrModel } from './objects.js';
+import { SavedView } from './savedView.js';
 import { loadPlatformObject } from './platform.js';
 import { op as makeOp, isOp, type OpMeta } from './op.js';
 import { Ref, isRefUri, splitProject } from './refs.js';
@@ -39,6 +40,8 @@ export interface ClientSettings extends RedactSettings {
   /** WAL directory (default ~/.weft/wal; env WEFT_WAL_DIR). */
   walDir?: string;
   maxQueueSize?: number;
+  /** Calls per /call/upsert_batch request. */
+  batchSize?: number;
   retryMaxAttempts?: number;
   retryBackoffMs?: number;
   retryMaxBackoffMs?: number;
@@ -62,6 +65,10 @@ export interface GetCallsOptions {
   search?: string;
   includeCosts?: boolean;
   includeFeedback?: boolean;
+  /** Projection hint (dotted paths). */
+  columns?: string[];
+  /** Resolve refs at these paths (e.g. "inputs.example"). */
+  expandColumns?: string[];
 }
 
 const NAME_RE = /[^A-Za-z0-9_.-]+/g;
@@ -127,6 +134,7 @@ export class WeftClient {
     this.sender = new Sender(this.http, {
       ...opts.sender,
       ...(st.maxQueueSize !== undefined ? { maxQueue: st.maxQueueSize } : {}),
+      ...(st.batchSize !== undefined ? { batchSize: st.batchSize } : {}),
       ...(st.retryMaxAttempts !== undefined ? { maxRetries: st.retryMaxAttempts } : {}),
       ...(st.retryBackoffMs !== undefined ? { backoffMs: st.retryBackoffMs } : {}),
       ...(st.retryMaxBackoffMs !== undefined ? { maxBackoffMs: st.retryMaxBackoffMs } : {}),
@@ -272,8 +280,151 @@ export class WeftClient {
     if (opts.search) body.search = opts.search;
     if (opts.includeCosts) body.include_costs = true;
     if (opts.includeFeedback) body.include_feedback = true;
+    if (opts.columns?.length) body.columns = opts.columns;
+    if (opts.expandColumns?.length) body.expand_columns = opts.expandColumns;
     const rows = await this.http.postJsonl<CallData>('/calls/stream_query', body);
     return rows.map((d) => this.fetched(d));
+  }
+
+  /** Number of calls matching `filter`/`query`/`search` (`/calls/query_stats`). */
+  async countCalls(opts: Pick<GetCallsOptions, 'filter' | 'query' | 'search'> = {}): Promise<number> {
+    await this.flush();
+    const body: Record<string, unknown> = { project_id: this.projectId };
+    if (opts.filter) body.filter = opts.filter;
+    if (opts.query) body.query = '$expr' in opts.query ? opts.query : { $expr: opts.query };
+    if (opts.search) body.search = opts.search;
+    return Number((await this.http.post('/calls/query_stats', body)).count ?? 0);
+  }
+
+  /** Soft-delete calls (and their descendants). */
+  async deleteCalls(callIds: string[]): Promise<void> {
+    await this.flush();
+    await this.http.post('/calls/delete', { project_id: this.projectId, call_ids: callIds });
+  }
+
+  /** Query feedback (`/feedback/query`); `query` is an operation or `{$expr}`. */
+  async getFeedback(opts: { query?: Record<string, unknown>; limit?: number; offset?: number; sortBy?: Array<{ field: string; direction: 'asc' | 'desc' }> } = {}): Promise<any[]> {
+    await this.flush();
+    const body: Record<string, unknown> = { project_id: this.projectId };
+    if (opts.query) body.query = '$expr' in opts.query ? opts.query : { $expr: opts.query };
+    if (opts.limit !== undefined) body.limit = opts.limit;
+    if (opts.offset !== undefined) body.offset = opts.offset;
+    if (opts.sortBy) body.sort_by = opts.sortBy;
+    return (await this.http.post('/feedback/query', body)).result ?? [];
+  }
+
+  /** Conversation threads (`/threads/query`). */
+  async getThreads(opts: { limit?: number; offset?: number; threadIds?: string[]; after?: string; before?: string; sortBy?: Array<{ field: string; direction: 'asc' | 'desc' }> } = {}): Promise<any[]> {
+    await this.flush();
+    const filter: Record<string, unknown> = {};
+    if (opts.threadIds) filter.thread_ids = opts.threadIds;
+    if (opts.after) filter.after_datetime = opts.after;
+    if (opts.before) filter.before_datetime = opts.before;
+    const body: Record<string, unknown> = { project_id: this.projectId };
+    if (Object.keys(filter).length) body.filter = filter;
+    if (opts.limit !== undefined) body.limit = opts.limit;
+    if (opts.offset !== undefined) body.offset = opts.offset;
+    if (opts.sortBy) body.sort_by = opts.sortBy;
+    return (await this.http.post('/threads/query', body)).threads ?? [];
+  }
+
+  /** Latest version of every Evaluation object (loaded values). */
+  async getEvaluations(): Promise<any[]> {
+    return this.latestObjects('Evaluation');
+  }
+
+  /** `Evaluation.evaluate` calls (newest first). */
+  getEvaluationCalls(limit?: number): Promise<Call[]> {
+    return this.getCalls({ filter: { op_names: ['Evaluation.evaluate'] }, limit });
+  }
+
+  /** Latest version of every SavedView (optionally of one view type). */
+  async getSavedViews(viewType?: string): Promise<SavedView[]> {
+    const out: SavedView[] = [];
+    for (const v of await this.latestObjects('SavedView')) {
+      const sv = v instanceof SavedView ? v : new SavedView({ name: v.name, viewType: v.view_type, label: v.label, definition: v.definition ?? {} });
+      if (!(v instanceof SavedView)) sv.__weftRef = v.__weftRef;
+      if (!viewType || sv.viewType === viewType) out.push(sv);
+    }
+    return out;
+  }
+
+  /** Load a SavedView by name, `name:version` or ref. */
+  getSavedView(name: string | Ref): Promise<SavedView> {
+    return SavedView.load(name);
+  }
+
+  private async latestObjects(cls: string): Promise<any[]> {
+    await this.flush();
+    const res = await this.http.post('/objs/query', { project_id: this.projectId, filter: { base_object_classes: [cls], latest_only: true } });
+    const out: any[] = [];
+    for (const o of res.objs ?? []) out.push(await this.fromVal(o.val, new Ref(this.entity, this.project, 'object', o.object_id, o.digest)));
+    return out;
+  }
+
+  private async uriOf(obj: unknown): Promise<string> {
+    if (typeof obj === 'string') return isRefUri(obj) ? obj : this.ref(obj).uri();
+    if (obj instanceof Ref) return obj.uri();
+    return (await this.publish(obj)).uri();
+  }
+
+  /**
+   * Run an evaluation server side (`/evaluate_model`). The model must be an
+   * LLMStructuredCompletionModel and the scorers server-runnable. With `wait`
+   * (default) polls until done; resolves to `{callId, status, summary}`.
+   */
+  async evaluateModel(
+    evaluation: unknown,
+    model: unknown,
+    opts: { wait?: boolean; timeoutMs?: number; pollIntervalMs?: number } = {},
+  ): Promise<{ callId: string; status: Record<string, any>; summary: unknown }> {
+    const body = { project_id: this.projectId, evaluation_ref: await this.uriOf(evaluation), model_ref: await this.uriOf(model) };
+    const callId: string = (await this.http.post('/evaluate_model', body)).call_id;
+    const result = { callId, status: { code: 'running' } as Record<string, any>, summary: null as unknown };
+    if (opts.wait === false) return result;
+    const deadline = Date.now() + (opts.timeoutMs ?? 600_000);
+    for (;;) {
+      const st = await this.evaluationStatus(callId);
+      result.status = st;
+      if (st.code === 'complete' || st.code === 'failed') break;
+      if (Date.now() > deadline) throw new Error(`evaluation ${callId} still running after ${opts.timeoutMs ?? 600_000}ms`);
+      await new Promise((r) => setTimeout(r, opts.pollIntervalMs ?? 500));
+    }
+    if (result.status.code === 'failed') throw new Error(`server evaluation ${callId} failed: ${result.status.error}`);
+    result.summary = (await this.getCall(callId))?.output ?? null;
+    return result;
+  }
+
+  async evaluationStatus(callId: string): Promise<Record<string, any>> {
+    return (await this.http.post('/evaluation_status', { project_id: this.projectId, call_id: callId })).status ?? {};
+  }
+
+  /** `/evaluations/compare` for Evaluation.evaluate call ids. */
+  async compareEvaluations(callIds: string[]): Promise<any> {
+    await this.flush();
+    return this.http.post('/evaluations/compare', { project_id: this.projectId, evaluation_call_ids: callIds });
+  }
+
+  /** Compute a leaderboard (`/leaderboard/compute`) by name, ref or Leaderboard object. */
+  async leaderboard(obj: string | Ref | WeftObject, digest?: string): Promise<any> {
+    let objectId: string;
+    if (typeof obj === 'string' && !isRefUri(obj)) objectId = obj;
+    else {
+      const r = typeof obj === 'string' ? Ref.parse(obj) : obj instanceof Ref ? obj : (obj.__weftRef ?? (await this.publish(obj)));
+      objectId = r.name;
+      digest ??= r.digest;
+    }
+    const body: Record<string, unknown> = { project_id: this.projectId, object_id: objectId };
+    if (digest && digest !== 'latest') body.digest = digest;
+    await this.flush();
+    return this.http.post('/leaderboard/compute', body);
+  }
+
+  /** Raw bytes of an uploaded file (a Content/media `file_digest`). */
+  async readFile(fileDigest: string): Promise<Uint8Array> {
+    await this.flush();
+    const res = await this.http.raw('POST', '/file/content', JSON.stringify({ project_id: this.projectId, digest: fileDigest }));
+    return new Uint8Array(await res.arrayBuffer());
   }
 
   async getCall(id: string, opts: { includeCosts?: boolean; includeFeedback?: boolean } = {}): Promise<Call | null> {
@@ -300,6 +451,19 @@ export class WeftClient {
       costs: { [llmId]: { prompt_token_cost: promptTokenCost, completion_token_cost: completionTokenCost, ...extra } },
     });
     return res.ids ?? [];
+  }
+
+  /** Project prices (optionally only some LLM ids; `includeDefaults` adds the built-in prices). */
+  async queryCosts(opts: { llmIds?: string[]; includeDefaults?: boolean } = {}): Promise<any[]> {
+    const body: Record<string, unknown> = { project_id: this.projectId, include_defaults: !!opts.includeDefaults };
+    if (opts.llmIds?.length) body.query = { $expr: { $in: [{ $getField: 'llm_id' }, opts.llmIds.map((x) => ({ $literal: x }))] } };
+    return (await this.http.post('/cost/query', body)).results ?? [];
+  }
+
+  /** Delete project prices by id (`queryCosts` rows, `addCost` `[id, llmId]` pairs or ids). */
+  async purgeCosts(ids: Array<string | [string, string] | { id: string }>): Promise<void> {
+    const flat = ids.map((i) => (Array.isArray(i) ? i[0] : typeof i === 'object' ? i.id : i));
+    await this.http.post('/cost/purge', { project_id: this.projectId, ids: flat });
   }
 
   // ---------------------------------------------------------------- objects
@@ -601,7 +765,7 @@ export class WeftClient {
 
   private async fromVal(val: any, ref: Ref | undefined): Promise<any> {
     if (val && typeof val === 'object' && val._type === 'Op') return loadOp(val, ref, this);
-    const platform = val && typeof val === 'object' ? loadPlatformObject(val, ref) : null;
+    const platform = val && typeof val === 'object' ? (loadPlatformObject(val, ref) ?? loadPromptOrModel(val, ref)) : null;
     if (platform) return platform;
     if (val && typeof val === 'object' && val._class_name === 'Dataset' && isRefUri(val.rows)) {
       const t = Ref.parse(val.rows);
