@@ -9,6 +9,7 @@ import { ValueView } from '../../components/ValueView'
 import { Drawer } from '../../components/objects/bits'
 import { defaultLowerIsBetter, evalRunInfo, flattenScores, fmtMetric, seriesColor, sortMetricKeys, toNum, useEvalRuns } from '../../components/evals/evalUtils'
 import { InlineLeaderboard } from '../../components/evals/InlineLeaderboard'
+import { DELTA_FORMATS, fmtDeltaAs, parseDeltaFormat, type DeltaFormat } from '../../components/traces/diffUtils'
 import { decodeLb, encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
@@ -247,13 +248,19 @@ function CompareBody({
 
 // ---------------------------------------------------------------- metrics
 
-function Delta({ v, base, lower, kind }: { v: number | null; base: number | null; lower: boolean; kind: CompareMetric['kind'] }) {
+function Delta({ v, base, lower, kind, dfmt = 'both' }: { v: number | null; base: number | null; lower: boolean; kind: CompareMetric['kind']; dfmt?: DeltaFormat }) {
   if (v == null || base == null) return null
   const d = v - base
-  if (Math.abs(d) < 1e-12) return <span className="delta-same">±0</span>
+  if (Math.abs(d) < 1e-12) return <span className="delta-same">{dfmt === 'ratio' ? '1×' : '±0'}</span>
   const good = lower ? d < 0 : d > 0
-  const txt = kind === 'fraction' ? `${d > 0 ? '+' : ''}${(d * 100).toFixed(1)}pp` : `${d > 0 ? '+' : ''}${fmtMetric(d)}`
-  const rel = base !== 0 && kind !== 'fraction' ? ` (${d > 0 ? '+' : ''}${((d / Math.abs(base)) * 100).toFixed(0)}%)` : ''
+  const abs = kind === 'fraction' ? `${d > 0 ? '+' : ''}${(d * 100).toFixed(1)}pp` : `${d > 0 ? '+' : ''}${fmtMetric(d)}`
+  let txt = abs
+  let rel = base !== 0 && kind !== 'fraction' ? ` (${d > 0 ? '+' : ''}${((d / Math.abs(base)) * 100).toFixed(0)}%)` : ''
+  if (dfmt !== 'both') {
+    // Fractions in absolute mode keep percentage points; the other formats are relative.
+    txt = dfmt === 'absolute' ? abs : (fmtDeltaAs(base, v, dfmt) ?? abs)
+    rel = ''
+  }
   return (
     <span className={good ? 'delta-up' : 'delta-down'}>
       {good ? '▲' : '▼'} {txt}
@@ -285,6 +292,8 @@ function MetricsSection({
   toggleLower: (k: string) => void
 }) {
   const [showCharts, setShowCharts] = useState(true)
+  const [dparams, setDparams] = useSearchParams()
+  const dfmt = parseDeltaFormat(dparams.get('nfmt'))
   const keys = new Set(metrics.map((m) => m.key))
   const numeric = metrics.filter(
     (m) => Object.values(m.values).some((v) => toNum(v) != null) && !(m.key.endsWith('.true_count') && keys.has(m.key.replace(/true_count$/, 'true_fraction'))),
@@ -299,9 +308,34 @@ function MetricsSection({
     <Section
       title="Summary metrics"
       actions={
-        <label className="checkbox small">
-          <input type="checkbox" checked={showCharts} onChange={(e) => setShowCharts(e.target.checked)} /> Charts
-        </label>
+        <div className="row" style={{ gap: 8 }}>
+          <div className="seg" role="group" aria-label="Change vs baseline format">
+            {DELTA_FORMATS.map((f) => (
+              <button
+                key={f.id}
+                className={dfmt === f.id ? 'on' : ''}
+                aria-pressed={dfmt === f.id}
+                title={f.title}
+                onClick={() =>
+                  setDparams(
+                    (p) => {
+                      const n = new URLSearchParams(p)
+                      if (f.id === 'both') n.delete('nfmt')
+                      else n.set('nfmt', f.id)
+                      return n
+                    },
+                    { replace: true },
+                  )
+                }
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <label className="checkbox small">
+            <input type="checkbox" checked={showCharts} onChange={(e) => setShowCharts(e.target.checked)} /> Charts
+          </label>
+        </div>
       }
     >
       <div className="col" style={{ gap: 14 }}>
@@ -377,7 +411,7 @@ function MetricsSection({
                       return (
                         <td key={e.call_id} className={`num ${best != null && v === best ? 'best' : ''}`}>
                           <div className="mono">{fmtMetricValue(raw, m.kind)}</div>
-                          {e.call_id !== baselineId && <Delta v={v} base={base} lower={lower} kind={m.kind} />}
+                          {e.call_id !== baselineId && <Delta v={v} base={base} lower={lower} kind={m.kind} dfmt={dfmt} />}
                         </td>
                       )
                     })}

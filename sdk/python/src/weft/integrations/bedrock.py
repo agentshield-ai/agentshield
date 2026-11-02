@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 from .._context import pop_call, push_call
 from .._usage import add_usage
-from ._common import _tracing, patch_attr
+from ._common import LLMSpec, _tracing, finish_call, patch_attr, start_call
 
 OPS = {
     "Converse": "bedrock.converse",
@@ -116,7 +116,7 @@ class _StreamProxy:
         if self.usage is not None:
             add_usage(self._call, self._model, self.usage["p"], self.usage["c"])
         out = {"text": self.text, "stop_reason": self.stop_reason, "events": self.events}
-        self._client.finish_call(self._call, output=out, exception=exc)
+        finish_call(self._client, self._call, out, exc)
 
     def __iter__(self) -> Any:
         try:
@@ -145,28 +145,26 @@ def _wrap(orig: Any) -> Any:
     def _make_api_call(self: Any, operation_name: str, api_params: Dict[str, Any]) -> Any:
         meta = getattr(self, "meta", None)
         service = getattr(getattr(meta, "service_model", None), "service_name", "")
-        client = _tracing() if service == "bedrock-runtime" and operation_name in OPS else None
+        client = _tracing("bedrock") if service == "bedrock-runtime" and operation_name in OPS else None
         if client is None:
             return orig(self, operation_name, api_params)
-        from .._client import _synthetic_op
-
         inputs = dict(api_params)
         if "body" in inputs:
             inputs["body"] = _decode_body(inputs["body"])
         model = str(api_params.get("modelId", ""))
-        call = client.create_call(_synthetic_op(OPS[operation_name], "llm"), inputs)
+        call = start_call(client, LLMSpec(OPS[operation_name], integration="bedrock"), inputs)
         token = push_call(call)
         try:
             res = orig(self, operation_name, api_params)
         except BaseException as e:
             pop_call(token)
-            client.finish_call(call, exception=e)
+            finish_call(client, call, None, e)
             raise
         pop_call(token)
         try:
             return _handle(client, call, operation_name, model, res)
         except Exception as e:  # pragma: no cover - never break the caller
-            client.finish_call(call, output=None)
+            finish_call(client, call, None)
             import logging
 
             logging.getLogger("weft").debug("weft: bedrock response handling failed: %s", e)
@@ -180,7 +178,7 @@ def _handle(client: Any, call: Any, op: str, model: str, res: Dict[str, Any]) ->
     if op == "Converse":
         u = res.get("usage") or {}
         add_usage(call, model, _int(u.get("inputTokens")), _int(u.get("outputTokens")), u.get("totalTokens"))
-        client.finish_call(call, output=out)
+        finish_call(client, call, out)
         return res
     if op == "ConverseStream":
         res["stream"] = _StreamProxy(res["stream"], client, call, model, converse=True)
@@ -203,7 +201,7 @@ def _handle(client: Any, call: Any, op: str, model: str, res: Dict[str, Any]) ->
         u = _usage_from_body(parsed)
         if u is not None:
             add_usage(call, model, u["p"], u["c"])
-    client.finish_call(call, output=out)
+    finish_call(client, call, out)
     return res
 
 

@@ -53,6 +53,8 @@ func main() {
 	cors := flag.String("cors-origins", os.Getenv("WEFT_CORS_ORIGINS"), "comma-separated browser origins allowed to call the API (env WEFT_CORS_ORIGINS)")
 	noUI := flag.Bool("no-ui", false, "do not serve the web UI")
 	logLevel := flag.String("log-level", envOr("WEFT_LOG_LEVEL", "info"), "debug, info, warn or error")
+	filesCfg := registerFilesFlags() // files.go
+	iamCfg := registerIAMFlags()     // iam.go
 	flag.Parse()
 
 	var lvl slog.Level
@@ -69,14 +71,31 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if err := store.PrepareDBFile(*dbPath); err != nil {
+		log.Error("creating database file", "err", err)
+		os.Exit(1)
+	}
 	st, err := store.Open(*dbPath)
 	if err != nil {
 		log.Error("opening database", "err", err)
 		os.Exit(1)
 	}
 	defer st.Close()
+	filesBackend, err := filesCfg.apply(st)
+	if err != nil {
+		log.Error("configuring files backend", "err", err)
+		os.Exit(2)
+	}
+
+	for _, w := range store.DBPermissionWarnings(*dbPath) {
+		log.Warn("database file permissions: the database is not encrypted at rest; restrict access or use an encrypted volume", "problem", w)
+	}
 
 	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log}
+	if err := iamCfg.apply(&cfg, *dbPath, log); err != nil {
+		log.Error("configuring SSO and sessions", "err", err)
+		os.Exit(2)
+	}
 	if !*noUI {
 		cfg.UI = webui.Handler()
 	}
@@ -100,7 +119,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "auth", len(cfg.APIKeys) > 0)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "auth", len(cfg.APIKeys) > 0, "files", filesBackend)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

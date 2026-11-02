@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -319,15 +318,7 @@ func (s *Store) CreateFile(ctx context.Context, projectID string, content []byte
 		return "", Invalidf("file too large")
 	}
 	d := refs.DigestBytes(content)
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		if err := s.touchProject(ctx, tx, pid); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO files(project_id, digest, content, size_bytes, created_at) VALUES(?,?,?,?,?)`,
-			pid, d, content, len(content), nowMicros())
-		return err
-	})
-	return d, err
+	return d, s.createFile(ctx, pid, d, content) // filebackend.go
 }
 
 // FileContent reads a file and sniffs its content type.
@@ -336,15 +327,7 @@ func (s *Store) FileContent(ctx context.Context, projectID, digest string) ([]by
 	if err != nil {
 		return nil, "", &InvalidError{Msg: err.Error()}
 	}
-	var b []byte
-	err = s.r.QueryRowContext(ctx, `SELECT content FROM files WHERE project_id = ? AND digest = ?`, pid, digest).Scan(&b)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, "", ErrNotFound
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	return b, http.DetectContentType(b), nil
+	return s.fileContent(ctx, pid, digest) // filebackend.go
 }
 
 // ---------------------------------------------------------------- refs

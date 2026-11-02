@@ -46,6 +46,21 @@ func chatFeedback(fs []Feedback) []AgentChatFeedback {
 			cf.ScorerRatings[r.Name] = r.Value
 		}
 		cf.ScorerTags = append(cf.ScorerTags, feedbackTags(f)...)
+		// Signal feedback keeps Weave's scorer_* fields in its payload.
+		if sc, ok := signalScoresOf(f.Payload); ok {
+			for k, v := range sc.ScorerRatingConfidences {
+				cf.ScorerRatingConfidences[k] = v
+			}
+			for k, v := range sc.ScorerRatingReasons {
+				cf.ScorerRatingReasons[k] = v
+			}
+			for k, v := range sc.ScorerTagConfidences {
+				cf.ScorerTagConfidences[k] = v
+			}
+			for k, v := range sc.ScorerTagReasons {
+				cf.ScorerTagReasons[k] = v
+			}
+		}
 		out = append(out, cf)
 	}
 	return out
@@ -690,6 +705,9 @@ type ConversationSpans struct {
 
 // feedbackRatings maps scorer and annotation feedback onto numeric ratings.
 func feedbackRatings(f Feedback) []ConversationRating {
+	if sc, ok := signalScoresOf(f.Payload); ok {
+		return signalRatings(sc)
+	}
 	p := asMap(f.Payload)
 	var out []ConversationRating
 	add := func(name string, v any) {
@@ -728,6 +746,9 @@ func feedbackRatings(f Feedback) []ConversationRating {
 }
 
 func feedbackTags(f Feedback) []string {
+	if sc, ok := signalScoresOf(f.Payload); ok {
+		return sc.ScorerTags
+	}
 	p := asMap(f.Payload)
 	switch {
 	case f.FeedbackType == "wandb.reaction.1":

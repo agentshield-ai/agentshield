@@ -65,17 +65,19 @@ export function compact(n: number | null | undefined): string {
 
 /** ISO start of a look-back window. */
 export function windowStart(range: string): string {
-  const ms: Record<string, number> = { '1h': 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 }
+  const ms: Record<string, number> = { '1h': 3_600_000, '6h': 6 * 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 }
   return new Date(Date.now() - (ms[range] ?? ms['7d'])).toISOString()
 }
 
-export const RANGES = ['1h', '24h', '7d', '30d'] as const
+export const RANGES = ['1h', '6h', '24h', '7d', '30d'] as const
 export type Range = (typeof RANGES)[number]
 
 export function granularityFor(range: string): number {
   switch (range) {
     case '1h':
       return 60
+    case '6h':
+      return 600
     case '24h':
       return 1800
     case '30d':

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { cloneElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -18,6 +18,8 @@ import { callLabel, discoverFeedbackFields, discoverFields, exportCalls, getDott
 import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/ExportModal'
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
+import '../../components/traces/columns.css'
+import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
 
 // ---------------------------------------------------------------- URL state
 
@@ -53,6 +55,9 @@ interface ViewState {
   expr: Operation | null
   sort: SortBy
   cols: string[]
+  /** Column display order and pinned (sticky) columns, by column id. */
+  order: string[]
+  pin: string[]
   hidden: Set<string>
   offset: number
   limit: number
@@ -79,6 +84,8 @@ function parseState(p: URLSearchParams): ViewState {
     expr,
     sort: { field: sf || 'started_at', direction: sd === 'asc' ? 'asc' : 'desc' },
     cols: (p.get('cols') ?? '').split(',').filter(Boolean),
+    order: decodeIds(p.get('order')),
+    pin: decodeIds(p.get('pin')),
     hidden: new Set((p.get('hide') ?? '').split(',').filter(Boolean)),
     offset: Math.max(0, Number(p.get('offset') ?? 0) || 0),
     limit: PAGE_SIZES.includes(Number(p.get('limit'))) ? Number(p.get('limit')) : 50,
@@ -148,6 +155,9 @@ interface SavedViewDef {
   query?: Query
   sort_by?: SortBy[]
   cols?: string[]
+  /** Column order and pinned columns (column ids: base names or field paths). */
+  col_order?: string[]
+  pinned_cols?: string[]
   search?: string
   ui_params?: Record<string, string>
 }
@@ -364,6 +374,46 @@ export function TracesPage() {
   }, [cursor])
 
   const visibleBase = BASE_COLS.filter((c) => !s.hidden.has(c))
+  // Column order and pinning: pinned columns stick to the left while scrolling.
+  const slots = useMemo(() => layoutColumns([...visibleBase, ...s.cols], s.order, s.pin), [visibleBase.join(','), s.cols, s.order, s.pin]) // eslint-disable-line react-hooks/exhaustive-deps
+  const slotIds = slots.map((c) => c.id)
+  const setOrder = (ids: string[]) => update({ order: encodeIds(ids) || null }, false)
+  const setPin = (ids: string[]) => update({ pin: encodeIds(ids) || null }, false)
+  const headRef = useRef<HTMLTableRowElement>(null)
+  const [colWidths, setColWidths] = useState<Record<string, number>>({})
+  useLayoutEffect(() => {
+    if (!s.pin.length || !headRef.current) return
+    const w: Record<string, number> = {}
+    headRef.current.querySelectorAll<HTMLElement>('th[data-col]').forEach((th) => (w[th.dataset.col!] = th.offsetWidth))
+    if (JSON.stringify(w) !== JSON.stringify(colWidths)) setColWidths(w)
+  })
+  const leadWidth = 28
+  const offsets = pinnedOffsets(slots, colWidths, leadWidth)
+  const [dragCol, setDragCol] = useState<string | null>(null)
+  const colHeadProps = (slot: ColumnSlot) => ({
+    'data-col': slot.id,
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      setDragCol(slot.id)
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', slot.id)
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (dragCol && dragCol !== slot.id) e.preventDefault()
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      if (!dragCol) return
+      // Dropping onto a pinned column pins the dragged one too, and vice versa.
+      if (slot.pinned !== s.pin.includes(dragCol)) setPin(togglePin(s.pin, dragCol))
+      setOrder(moveBefore(slotIds, dragCol, slot.id))
+      setDragCol(null)
+    },
+    onDragEnd: () => setDragCol(null),
+    className: `${slot.pinned ? 'col-pinned' : ''} ${dragCol === slot.id ? 'col-dragging' : ''}`,
+    style: slot.pinned ? { left: offsets[slot.id] ?? 0 } : undefined,
+    title: 'Drag to reorder',
+  })
   const setSort = (field: string) => {
     const dir = s.sort.field === field && s.sort.direction === 'desc' ? 'asc' : 'desc'
     update({ sort: field === 'started_at' && dir === 'desc' ? null : `${field}:${dir}` })
@@ -381,6 +431,8 @@ export function TracesPage() {
     if (def.filter?.op_names?.[0]) p.op = def.filter.op_names[0]
     if (def.sort_by?.[0]) p.sort = `${def.sort_by[0].field}:${def.sort_by[0].direction}`
     if (def.cols?.length) p.cols = def.cols.join(',')
+    if (def.col_order?.length) p.order = encodeIds(def.col_order)
+    if (def.pinned_cols?.length) p.pin = encodeIds(def.pinned_cols)
     if (def.search) p.q = def.search
     if (def.query?.$expr) p.expr = JSON.stringify(def.query.$expr)
     setParams(new URLSearchParams(p))
@@ -390,7 +442,7 @@ export function TracesPage() {
     params.forEach((v, k) => {
       if (k !== 'view' && k !== 'offset') ui[k] = v
     })
-    return { filter: req.filter, query: req.query, sort_by: sortBy, cols: s.cols, search: req.search, ui_params: ui }
+    return { filter: req.filter, query: req.query, sort_by: sortBy, cols: s.cols, col_order: s.order.length ? s.order : undefined, pinned_cols: s.pin.length ? s.pin : undefined, search: req.search, ui_params: ui }
   }
   const activeView = traceViews.find((v) => v.object_id === s.view)
   const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots)
@@ -537,6 +589,30 @@ export function TracesPage() {
               </label>
             ))}
           </div>
+          <div className="dd-section">Order &amp; pinning</div>
+          <div style={{ maxHeight: 260, overflow: 'auto' }}>
+            {slots.map((c, i) => (
+              <div key={c.id} className="dd-check col-order-row">
+                <span className={`grow truncate ${c.id.includes('.') ? 'mono small' : ''}`} title={c.id}>
+                  {(BASE_COL_LABEL as Record<string, string>)[c.id] || (c.id === 'status' ? 'Status' : c.id)}
+                </span>
+                <button className="btn ghost sm icon" aria-label={`Move ${c.id} left`} disabled={i === 0} onClick={() => setOrder(moveStep(slotIds, c.id, -1))}>
+                  ↑
+                </button>
+                <button className="btn ghost sm icon" aria-label={`Move ${c.id} right`} disabled={i === slots.length - 1} onClick={() => setOrder(moveStep(slotIds, c.id, 1))}>
+                  ↓
+                </button>
+                <button className={`btn sm ${c.pinned ? 'primary' : 'ghost'}`} aria-pressed={c.pinned} aria-label={`${c.pinned ? 'Unpin' : 'Pin'} ${c.id}`} onClick={() => setPin(togglePin(s.pin, c.id))}>
+                  {c.pinned ? 'Pinned' : 'Pin'}
+                </button>
+              </div>
+            ))}
+          </div>
+          {(s.order.length > 0 || s.pin.length > 0) && (
+            <button className="btn ghost sm" style={{ margin: '4px 8px' }} onClick={() => update({ order: null, pin: null }, false)}>
+              Reset order and pins
+            </button>
+          )}
         </Dropdown>
       </div>
 
@@ -605,17 +681,40 @@ export function TracesPage() {
         <div className="table-wrap grow-table">
           <table className="table traces-table">
             <thead>
-              <tr>
-                <th style={{ width: 28 }}>
+              <tr ref={headRef}>
+                <th style={{ width: 28 }} className={s.pin.length ? 'col-pinned col-lead' : ''}>
                   <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select page" />
                 </th>
-                {visibleBase.map((c) => {
+                {slots.map((slot) => {
+                  if (!(BASE_COLS as readonly string[]).includes(slot.id)) {
+                    const p = slot.id
+                    const hp = colHeadProps(slot)
+                    return (
+                      <th key={p} {...hp} className={`sortable mono ${hp.className}`} onClick={() => setSort(p)}>
+                        {colLabel(p)}
+                        {sortArrow(p)}
+                        <button
+                          className="th-x"
+                          aria-label={`Remove column ${p}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            update({ cols: s.cols.filter((x) => x !== p).join(',') || null }, false)
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </th>
+                    )
+                  }
+                  const c = slot.id as BaseCol
+                  const hp = colHeadProps(slot)
                   const sf = SORT_FIELD[c]
                   const num = c === 'latency' || c === 'tokens' || c === 'cost'
                   return (
                     <th
                       key={c}
-                      className={`${sf ? 'sortable' : ''} ${num ? 'num' : ''}`}
+                      {...hp}
+                      className={`${sf ? 'sortable' : ''} ${num ? 'num' : ''} ${hp.className}`}
                       onClick={sf ? () => setSort(sf) : undefined}
                       aria-sort={sf && s.sort.field === sf ? (s.sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
@@ -624,22 +723,6 @@ export function TracesPage() {
                     </th>
                   )
                 })}
-                {s.cols.map((p) => (
-                  <th key={p} className="sortable mono" onClick={() => setSort(p)}>
-                    {colLabel(p)}
-                    {sortArrow(p)}
-                    <button
-                      className="th-x"
-                      aria-label={`Remove column ${p}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        update({ cols: s.cols.filter((x) => x !== p).join(',') || null }, false)
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </th>
-                ))}
               </tr>
             </thead>
             <tbody>
@@ -649,8 +732,9 @@ export function TracesPage() {
                   call={c}
                   index={i}
                   projectId={projectId}
-                  cols={visibleBase}
-                  extra={s.cols}
+                  slots={slots}
+                  offsets={offsets}
+                  leadPinned={s.pin.length > 0}
                   selected={selected.has(c.id)}
                   focused={cursor === i}
                   onToggle={() => toggleSel(c)}
@@ -761,8 +845,9 @@ function CallRow({
   call: c,
   index,
   projectId,
-  cols,
-  extra,
+  slots,
+  offsets,
+  leadPinned,
   selected,
   focused,
   onToggle,
@@ -772,8 +857,9 @@ function CallRow({
   call: Call
   index: number
   projectId: string
-  cols: readonly BaseCol[]
-  extra: string[]
+  slots: ColumnSlot[]
+  offsets: Record<string, number>
+  leadPinned: boolean
   selected: boolean
   focused: boolean
   onToggle: () => void
@@ -892,17 +978,23 @@ function CallRow({
   }
   return (
     <tr className={`clickable ${selected ? 'selected' : ''} ${focused ? 'focused' : ''}`} data-row={index} onClick={onOpen}>
-      <td onClick={(e) => e.stopPropagation()}>
+      <td onClick={(e) => e.stopPropagation()} className={leadPinned ? 'col-pinned col-lead' : ''}>
         <input type="checkbox" checked={selected} onChange={onToggle} aria-label="Select call" />
       </td>
-      {cols.map(cell)}
-      {extra.map((p) => (
-        <td key={p}>
-          <span className="cell-preview" style={{ maxWidth: 220 }}>
-            {preview(getDotted(c, p), 80)}
-          </span>
-        </td>
-      ))}
+      {slots.map((slot) => {
+        const el: ReactElement<{ className?: string; style?: React.CSSProperties }> | undefined = (BASE_COLS as readonly string[]).includes(slot.id) ? (
+          cell(slot.id as BaseCol)
+        ) : (
+          <td key={slot.id}>
+            <span className="cell-preview" style={{ maxWidth: 220 }}>
+              {preview(getDotted(c, slot.id), 80)}
+            </span>
+          </td>
+        )
+        if (!slot.pinned || !el) return el
+        // Pinned cells stick to the left edge of the scrolling table.
+        return cloneElement(el, { className: `${el.props.className ?? ''} col-pinned`, style: { ...(el.props.style ?? {}), left: offsets[slot.id] ?? 0 } })
+      })}
     </tr>
   )
 }

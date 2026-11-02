@@ -27,7 +27,7 @@ Status key: **Impl** = implemented, **Partial** = present with stated gaps, **Mi
 
 | Feature group | Impl | Partial | Missing |
 |---|---|---|---|
-| 1. Tracing | 21 | 2 | 1 |
+| 1. Tracing | 21 | 3 | 0 |
 | 2. Integrations | 11 | 2 | 2 |
 | 3. Objects and versioning | 8 | 0 | 0 |
 | 4. Datasets | 6 | 0 | 1 |
@@ -37,15 +37,15 @@ Status key: **Impl** = implemented, **Partial** = present with stated gaps, **Mi
 | 8. Leaderboards | 2 | 1 | 0 |
 | 9. Feedback, annotations, queues | 7 | 0 | 0 |
 | 10. Monitors, signals, automations | 2 | 3 | 0 |
-| 11. Agents | 4 | 2 | 2 |
-| 12. Playground | 6 | 0 | 3 |
+| 11. Agents | 4 | 3 | 1 |
+| 12. Playground | 8 | 0 | 1 |
 | 13. Costs | 3 | 0 | 0 |
 | 14. UI views | 9 | 3 | 1 |
 | 15. SDKs and client APIs | 6 | 2 | 1 |
 | 16. Admin, settings, security | 6 | 1 | 2 |
-| **Total (140 rows)** | **108** | **18** | **14** |
+| **Total (140 rows)** | **110** | **20** | **10** |
 
-API endpoints: **116 of 127** Weave OpenAPI method/path pairs are registered in Weft (91%). That includes **115 of 118** in the vendored client SDK. See §17.
+API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in Weft (was 116 at the audit). That includes **118 of 118** in the vendored client SDK. See §17.
 
 ## 1. Tracing
 
@@ -66,7 +66,7 @@ API endpoints: **116 of 127** Weave OpenAPI method/path pairs are registered in 
 | Per-call and global attributes | tools/attributes | Impl | `weft.attributes()`, `settings.global_attributes` (`_client.py`) |
 | Threads and turns (SDK and UI) | tracking/threads | Impl | `weft.thread()`, TS `withThread`; `pages/threads/*`; `/threads/query`, `/threads/stream_query`; `TestThreadsMixedTurnIDs` |
 | Media: image, audio, video, PDF, HTML, Markdown, `Content` API | core-types/media | Impl | `_content.py`, `content.ts`, `components/media/MediaView.tsx` (sandboxed HTML iframe); `media.test.ts` |
-| BYOB media references (own bucket) | tracking/byob-references, agents-byob-references | Missing | no code |
+| BYOB media references (own bucket) | tracking/byob-references, agents-byob-references | Partial | server: `--files-backend s3://bucket/prefix` stores file contents in an S3-compatible bucket (SigV4, `objstore/s3.go`), `/files/resolve_url` presigns digests and `s3://` keys (`server/files_media.go`; `TestFilesS3Backend`, `objstore/s3_test.go`). The Weft SDKs do not log references to media already in a user bucket |
 | Key redaction | tracking/redact-pii | Impl | `_redact.py`, `redact.ts` |
 | PII redaction | tracking/redact-pii | Partial | SDK: 5 regex entities; server: 6 regex entities (`store/redact.go`, `TestSensitiveDataRedaction`). No Presidio/NER entities (PERSON, LOCATION, …) |
 | OTLP ingest `/otel/v1/traces` (protobuf, JSON, gzip) | tracking/otel | Impl | `internal/weft/otlp/otlp.go`; `TestOTLPJSONOverHTTP`, `otlp_test.go` |
@@ -148,7 +148,7 @@ API endpoints: **116 of 127** Weave OpenAPI method/path pairs are registered in 
 | Local SLM scorers (toxicity, bias, coherence, fluency, context relevance, Presidio) | evaluation/weave_local_scorers | Missing | no code |
 | `EvaluationLogger` (`log_prediction`, `log_score`, `log_example`, `log_summary`, dataset link) | evaluation/evaluation_logger | Impl | `_evaluation.py` `EvaluationLogger`, TS `logExample` |
 | Link existing calls or agent traces to an EvaluationLogger run | evaluation/evaluation_logger, agent-evals | Partial | the logger always creates new predict calls; no way to attach existing calls |
-| Evaluate from the UI on the server | tools/evaluation_playground | Partial | `NewEvaluationPage.tsx`, `/evaluate_model`, `/evaluations/evaluate_model`. Only `LLMStructuredCompletionModel` runs (`evals/evaluate.go:147`) |
+| Evaluate from the UI on the server | tools/evaluation_playground | Partial | `/evaluate_model` runs `LLMStructuredCompletionModel`, any model with a `predict_url`, and models bound to a custom runtime (`evals/runtimes.go`; `TestEvaluateModelWithPredictURL`, `TestEvaluateModelBoundToRuntime`). The UI picker (`NewEvaluationPage.tsx`) still lists only `LLMStructuredCompletionModel` models |
 | Re-score an evaluation | OpenAPI `/evaluations/rescore` | Impl | `evals/rescore.go`; `TestCompatExtraEndpoints` |
 | Evaluation status | OpenAPI | Impl | `/evaluation_status`, `/evaluations/status` |
 | Compare evaluations (summary, per-example diffs, baseline) | evaluation/compare_evals | Impl | `CompareEvaluationsPage.tsx`, `/evaluations/compare`; `TestServerSideEvaluationCompareLeaderboard` |
@@ -197,7 +197,7 @@ API endpoints: **116 of 127** Weave OpenAPI method/path pairs are registered in 
 | Agents list, agent page, conversation page | tracking/view-agent-activity | Impl | `pages/agents/AgentsPage.tsx`, `AgentPage.tsx`, `ConversationPage.tsx`; `agents.test.ts` |
 | Agents view: project Dashboard, global Spans tab, Signals tab | tracking/view-agent-activity | Partial | per-agent charts (`AgentCharts.tsx`) only; no project-wide dashboard, no cross-agent span table, and signals sit under Monitors |
 | Agent evals | agent-evals | Partial | evaluations work on calls; no linking of agent conversations to eval runs |
-| Agents BYOB references | agents-byob-references | Missing | see §1 |
+| Agents BYOB references | agents-byob-references | Partial | see §1 |
 
 ## 12. Playground
 
@@ -209,9 +209,9 @@ API endpoints: **116 of 127** Weave OpenAPI method/path pairs are registered in 
 | Side-by-side model comparison | tools/playground | Impl | `PlaygroundPage.tsx` panes |
 | Load from call or prompt; template variables | tools/playground | Impl | `fillVars`, `?call=`/`?prompt=` |
 | Save as model | tools/playground | Impl | saves an `LLMStructuredCompletionModel` |
-| Custom runtimes REST (`PUT /v2/{e}/{p}/runtimes/{name}`) | tools/custom-runtimes | Missing | no route (returns 404) |
+| Custom runtimes REST (`PUT /v2/{e}/{p}/runtimes/{name}`) | tools/custom-runtimes | Impl | `server/runtimes.go`: a `Provider` object plus one `ProviderModel` per runtime ID; `TestCustomRuntimeApply`; official `client.register_custom_runtime` verified |
 | History of past playground runs | tools/playground | Missing | runs are logged as calls but there is no history panel |
-| Image generation (`/image/create`) | OpenAPI | Missing | no route (returns 404) |
+| Image generation (`/image/create`) | OpenAPI | Impl | `server/files_media.go`, `llm/images.go` (OpenAI-compatible `/images/generations`, offline `mock/*`); `TestImageCreateMock`, `TestImageCreateOpenAICompatible`. No playground UI for it |
 
 ## 13. Costs
 
@@ -271,37 +271,28 @@ API endpoints: **116 of 127** Weave OpenAPI method/path pairs are registered in 
 
 The audit script compared Weft's registered routes with every method/path pair in the live OpenAPI spec and the vendored server SDK.
 
-- **OpenAPI (`trace.wandb.ai/openapi.json`): 116 / 127 covered.** Every OpenAPI tag group is complete except these: Inference 0/5, Custom Runtimes 0/1, Images 0/1, Files 3/4, Registry 0/1 and Service 3/5.
-- **Vendored SDK (weave 0.54.0): 115 / 118 covered.** The SDK has no pairs that are absent from the OpenAPI spec.
-  - Complete groups: agents 9/9, annotation_queues 9/9, calls 11/11, completions 2/2, costs 3/3, dataset_sources 3/3, evaluations 3/3, feedback 8/8, objects 10/10, otel 1/1, projects 5/5, refs 1/1, services 3/3, tables 6/6, threads 1/1, trace 1/1, and all `v2_*` groups.
-  - Incomplete groups: files 3/4, images 0/1, v2_runtimes 0/1.
+- **OpenAPI (`trace.wandb.ai/openapi.json`): 127 / 127 covered** (116 at the audit). Every OpenAPI tag group is complete.
+- **Vendored SDK (weave 0.54.0): 118 / 118 covered** (115 at the audit). The SDK has no pairs that are absent from the OpenAPI spec.
 - No covered path is registered under the wrong method.
 
-Missing paths (11):
+The 11 paths added after the audit, and how Weft implements them (details in [API.md](API.md#weave-api-parity-additions)):
 
-| Method and path | Note |
+| Method and path | Weft implementation |
 |---|---|
-| `PUT /v2/{entity}/{project}/runtimes/{runtime_name}` | custom runtimes; Weft uses `Provider` objects instead |
-| `POST /image/create` | image generation |
-| `POST /files/resolve_url` | presigned/BYOB file URLs |
-| `GET /version` | the request falls through to the SPA and returns the UI's HTML with status 200 |
-| `GET /geolocate` | W&B cloud service |
-| `POST /link_to_registry` | W&B Registry |
-| `GET /inference/catalog/models` | CoreWeave inference catalog |
-| `GET /inference/modelsdev/models` | CoreWeave inference catalog |
-| `GET /inference/router/openrouter/models` | CoreWeave inference catalog |
-| `GET /inference/analysis/artificialanalysis/models` | CoreWeave inference catalog |
-| `GET /inference/nvidia/v2/hardware` | CoreWeave inference catalog |
+| `PUT /v2/{entity}/{project}/runtimes/{runtime_name}` | a `Provider` object plus `ProviderModel`s, so `<runtime>/<id>` works in the playground, completions and judges; Weft kind `predict` for model predict endpoints |
+| `POST /image/create` | image generation through OpenAI-compatible providers, `Provider`s and runtimes; `mock/*` offline |
+| `POST /files/resolve_url` | presigned URLs from the S3 files backend, else `/file/content` URLs |
+| `GET /version` | JSON version, no API key needed (it used to fall through to the UI's HTML) |
+| `GET /geolocate` | deterministic local answer: the IP, `location: null`, `allowed: true` |
+| `POST /link_to_registry` | project-level registry collections with version indexes and aliases; read back with `POST /registry/query` |
+| `GET /inference/catalog/models`, `/inference/modelsdev/models`, `/inference/router/openrouter/models`, `/inference/analysis/artificialanalysis/models`, `/inference/nvidia/v2/hardware` | Weft's own model catalog (built-in models with list prices, plus the project's `ProviderModel`s) in each spec shape |
 
-**Shape checks.** Path coverage does not prove schema compatibility. Of 27 response shapes checked against the spec, 24 matched, including:
-- calls usage, feedback stats, ttl, ingest sampling, queues, agents, files, tables, refs, objects and costs.
+**Shape checks.** Path coverage does not prove schema compatibility. All 27 response shapes from the audit now match the spec, and so do the responses of the 11 added paths (checked with valid requests against a fresh server). The three audit mismatches are fixed:
+- `/calls/stats` accepts Weave's request (`granularity`, `usage_metrics`, `call_metrics`, `timezone`) and returns `usage_buckets`/`call_buckets`. Requests without those fields keep Weft's shape, which the UI uses.
+- `/calls/query_stats` returns `has_more` and honours `limit`.
+- `/feedback/query` returns `total_count`.
 
-These did not match:
-- `/calls/stats`: Weft's own request and response shape. It ignores `usage_metrics`/`call_metrics` and returns `buckets`/`totals`, not `usage_buckets`/`call_buckets`.
-- `/calls/query_stats`: no `has_more`.
-- `/feedback/query`: no `total_count`.
-
-**Weft-only routes.** There are 46 method/path pairs not in Weave. They include `/calls/query`, `/calls/metrics`, `/calls/export`, `/evaluations/compare`, `/leaderboard/compute`, `/automations/*`, `/api_keys/*`, `/secrets/*`, `/llm/models`, `/embeddings/create`, `/graphql`, `/obj/alias/*` and POST variants of the alias and tag routes.
+**Weft-only routes.** Besides the 46 method/path pairs not in Weave listed by the audit (`/calls/query`, `/calls/metrics`, `/calls/export`, `/evaluations/compare`, `/leaderboard/compute`, `/automations/*`, `/api_keys/*`, `/secrets/*`, `/llm/models`, `/embeddings/create`, `/graphql`, `/obj/alias/*`, POST variants of the alias and tag routes, ...), Weft adds `GET /v2/{entity}/{project}/runtimes` and `POST /registry/query`.
 
 ## 18. Known differences
 
@@ -313,14 +304,14 @@ These are deliberate design choices, not gaps.
   - Static `--api-keys` keys and admin keys can do everything.
   - Any key that can write to a project can use the stored provider secrets.
   - The `/graphql` endpoint is a minimal W&B login shim.
-- **Storage.** Everything lives in one SQLite file (`modernc.org/sqlite`, no CGO). That means one writer at a time, no horizontal scaling, and data size bounded by one disk. Uploaded files live in the same database.
+- **Storage.** Everything lives in one SQLite file (`modernc.org/sqlite`, no CGO). That means one writer at a time, no horizontal scaling, and data size bounded by one disk. Uploaded files live in the same database unless `--files-backend s3://…` sends their contents to an S3-compatible bucket.
   - TTL purge and error-rate automations run as in-process background loops.
 - **Asynchronous agent index.** Agents are derived from ordinary calls through the store's span index, not stored as a separate data model.
   - In one run, `/agents/query` issued right after `weave.finish()` returned no agents. A query about two seconds later returned the agent. The cause was not determined.
 - **Signals as monitors.** Weave Signals are implemented as monitor templates. They write `wandb.runnable.<scorer>` feedback on calls and are not scored per turn.
-- **Server-side evaluation.** Only `LLMStructuredCompletionModel` models (built-in or `Provider` LLMs) run on the server. Other models must be evaluated client-side.
-- **`/calls/stats`.** This endpoint keeps Weft's shape (fixed metrics). Configurable metrics are served by `/calls/metrics`.
-- **Inference.** Weft has no CoreWeave inference catalog. `/llm/models` and `Provider` objects take its place.
+- **Server-side evaluation.** The server runs `LLMStructuredCompletionModel`s, models with a `predict_url`, and models bound to a custom runtime (OpenAI-compatible or Weft's `predict` kind). It never executes a model's Python or TypeScript `predict` code; other models must be evaluated client-side.
+- **`/calls/stats`.** Weave's request fields select Weave's shape; otherwise the endpoint keeps Weft's shape (fixed metrics), which the UI uses. Grouped custom metrics are served by `/calls/metrics`.
+- **Inference, registry, geolocation.** Weft has no CoreWeave inference service or W&B Registry. `/inference/*` serve Weft's own model catalog in the spec's shapes (and need an API key when auth is on), `/link_to_registry` links into Weft registry collections, and `/geolocate` answers locally without a GeoIP database.
 - **SDK naming.** The SDKs are `weft.*` with `WEFT_*` environment variables, not `weave.*`. The official `weave` client is supported as a second client.
 
 ## 19. Remaining gaps
@@ -332,14 +323,14 @@ Ordered by importance.
    - Add a project-wide Dashboard and a cross-agent Spans tab.
    - Add a Signals tab that scores turns, using Weave's preset set: frustration, jailbreak, NSFW and low-quality tags; satisfaction, intent, safety and quality ratings.
    - Normalise tags and ratings, and add OAuth for remote scorers.
-3. **`/calls/stats` in Weave's shape.** Support `usage_metrics`/`call_metrics` → `usage_buckets`/`call_buckets`. Also add `has_more` to `/calls/query_stats` and `total_count` to `/feedback/query`.
-4. **Server-side evaluation of any model.** Support `Provider` and other models, plus custom runtimes (`PUT /v2/.../runtimes/{name}`).
+3. ~~**`/calls/stats` in Weave's shape**, `has_more` on `/calls/query_stats`, `total_count` on `/feedback/query`.~~ Done.
+4. **Server-side evaluation of any model.** ~~Custom runtimes and remote predict URLs~~ done (`PUT /v2/.../runtimes/{name}`, `predict_url`). Remaining: let the New Evaluation page pick such models.
 5. **Native integrations.** Add LlamaIndex, CrewAI, smolagents, Instructor, MCP, Claude Agent SDK, native Pydantic AI and Google ADK, Haystack, AutoGen, Agno and OpenAI Realtime. Add agent harness plugins (Claude Code, Codex, OpenClaw). Add per-integration autopatch settings.
 6. **Local SLM scorers and NER-based PII redaction.** Weave uses Presidio-style entities; add them in the SDKs and the server.
-7. **Media extras.** Add BYOB references, `/files/resolve_url` and `/image/create` (playground image generation).
+7. **Media extras.** ~~`/files/resolve_url`, `/image/create`, an S3-compatible files backend~~ done. Remaining: SDK-side BYOB references (logging media that already sits in a user bucket) and an image-generation mode in the playground UI.
 8. **Evaluation extras.** Link existing calls or agent traces to EvaluationLogger runs and agent evals. Save dynamic leaderboards as objects.
 9. **Dataset helpers.** Add `from_hf`/`to_hf` and `select()`.
 10. **UI polish.** Add column pinning, flame-graph and code-composition trace views, scatter charts, numeric diff formats in call comparison, and a playground history panel.
 11. **Platform security.** Add user accounts, teams and roles, SSO, an audit log, and optional database encryption at rest.
 12. **SDK extras.** Add a client-side server-response cache, a SavedView query/apply API, and broader TypeScript coverage (`deleteCalls`, feedback and cost queries, OTel helper).
-13. **Minor endpoints.** Add a JSON `GET /version`. `/geolocate`, `/link_to_registry` and `/inference/*` depend on W&B or CoreWeave services and are out of scope.
+13. ~~**Minor endpoints.**~~ Done: JSON `GET /version`, and Weft implementations of `/geolocate`, `/link_to_registry` and `/inference/*`.

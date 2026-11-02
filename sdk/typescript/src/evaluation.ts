@@ -1,4 +1,6 @@
-import type { Call } from './call.js';
+import { Call as CallClass, type Call } from './call.js';
+import { currentContext, runWith, type WeftContext } from './context.js';
+import { Conversation, SpanBase } from './conversation.js';
 import type { WeftClient } from './client.js';
 import { tracingClient } from './global.js';
 import { Dataset, Model, WeftObject } from './objects.js';
@@ -6,7 +8,7 @@ import { isOp, op, type Op } from './op.js';
 import { Scorer } from './scorers.js';
 import { autoSummarizeValues } from './summarize.js';
 import { digest } from './canonical.js';
-import { isRefUri } from './refs.js';
+import { Ref, isRefUri } from './refs.js';
 import { toJson } from './serialize.js';
 
 type AnyFn = (...args: any[]) => any;
@@ -155,18 +157,94 @@ export class Evaluation extends WeftObject {
 // ---------------------------------------------------------------------------
 // imperative logger
 
-/** Returned by `EvaluationLogger.logPrediction`; log scores, then `finish()`. */
+/** Options of `EvaluationLogger.logPrediction`. */
+export interface LogPredictionOptions {
+  modelLatency?: number | null;
+  /**
+   * Link the prediction to traces that already exist instead of re-recording
+   * them: a Call, a call id or call URI, a conversation span (Turn, LLM, ...),
+   * a `LogResult`, a `Conversation`, or a list of these. The links are stored
+   * on the prediction as `attributes.weft.linked_calls`,
+   * `attributes.weft.genai_span_ref` (`[{trace_id, span_id}]`, as in Weave's
+   * v2 predictions API) and `attributes.weft.linked_conversation_ids`. Without
+   * an explicit output, a linked Call's output (and duration) is used.
+   */
+  call?: unknown;
+  exampleId?: string;
+  rowDigest?: string;
+  trialIndex?: number;
+  /** Eval kind stamped on linked spans (default "agent", as in Weave). */
+  evalKind?: string | null;
+}
+
+interface Linked {
+  calls: Array<{ call_id: string; trace_id?: string }>;
+  conversationIds: string[];
+  callObjects: Array<Call | string>;
+}
+
+function linkedCalls(link: unknown): Linked {
+  const out: Linked = { calls: [], conversationIds: [], callObjects: [] };
+  const items = Array.isArray(link) ? link : [link];
+  for (const it of items) {
+    if (it === null || it === undefined) continue;
+    if (it instanceof CallClass) {
+      out.calls.push({ call_id: it.id, trace_id: it.traceId });
+      out.callObjects.push(it);
+    } else if (typeof it === 'string') {
+      if (isRefUri(it)) {
+        const r = Ref.parse(it);
+        if (r.kind !== 'call') throw new Error(`${it} is not a call ref`);
+        out.calls.push({ call_id: r.name });
+      } else out.calls.push({ call_id: it });
+      out.callObjects.push(it);
+    } else if (it instanceof SpanBase) {
+      it.start();
+      if (it.call) {
+        out.calls.push({ call_id: it.call.id, trace_id: it.call.traceId });
+        out.callObjects.push(it.call);
+      }
+    } else if (it instanceof Conversation) {
+      out.conversationIds.push(it.conversationId);
+    } else if (typeof it === 'object' && Array.isArray((it as any).rootSpanIds)) {
+      const lr = it as { rootSpanIds: string[]; traceIds?: string[]; conversationId?: string };
+      lr.rootSpanIds.forEach((id, i) => out.calls.push({ call_id: id, ...(lr.traceIds?.[i] ? { trace_id: lr.traceIds[i] } : {}) }));
+      if (lr.conversationId) out.conversationIds.push(lr.conversationId);
+    } else throw new Error(`cannot link ${typeof it === 'object' ? (it as object).constructor?.name : typeof it} to a prediction`);
+  }
+  out.conversationIds = [...new Set(out.conversationIds)];
+  return out;
+}
+
+/**
+ * Returned by `EvaluationLogger.logPrediction`; log scores, then `finish()`.
+ * `await pred.run(async () => { ...; pred.output = x })` runs code as children
+ * of the predict call (and stamps `weave.eval.*` on conversation spans started
+ * inside), then finishes the prediction.
+ */
 export class ScoreLogger {
   readonly scores: Record<string, unknown> = {};
+  output: unknown;
+  modelLatency: number | null;
   private finished = false;
+  private readonly t0 = performance.now();
 
   constructor(
     private readonly ev: EvaluationLogger,
     private readonly call: Call | null,
     readonly inputs: Record<string, unknown>,
-    readonly output: unknown,
-    readonly modelLatency: number | null,
-  ) {}
+    output: unknown,
+    modelLatency: number | null,
+    readonly predictCall: Call | null = null,
+    private readonly evalContext: Record<string, unknown> | null = null,
+  ) {
+    this.output = output;
+    this.modelLatency = modelLatency;
+  }
+
+  get predictAndScoreCall(): Call | null {
+    return this.call;
+  }
 
   logScore(scorer: string | Scorer, score: unknown): void {
     if (this.finished) throw new Error('cannot log a score after finish()');
@@ -183,9 +261,31 @@ export class ScoreLogger {
     this.ev.scorerNames.add(name);
   }
 
+  private finishPredict(): void {
+    const pc = this.predictCall;
+    if (this.ev.client && pc && !pc.ended) {
+      if (this.modelLatency === null) this.modelLatency = (performance.now() - this.t0) / 1000;
+      this.ev.client.finishCall(pc, this.output);
+    }
+  }
+
+  /** Run `fn` inside the prediction (calls become children of its predict call), then finish it. */
+  async run<T>(fn: (pred: this) => T | Promise<T>): Promise<T> {
+    const ctx = currentContext();
+    const patch: Partial<WeftContext> = {};
+    if (this.predictCall && !this.predictCall.ended) patch.stack = [...ctx.stack, this.predictCall];
+    if (this.evalContext) patch.evalSpan = this.evalContext;
+    try {
+      return await runWith(patch, () => fn(this));
+    } finally {
+      this.finish();
+    }
+  }
+
   finish(): void {
     if (this.finished) return;
     this.finished = true;
+    this.finishPredict();
     if (this.ev.client && this.call) {
       this.ev.client.finishCall(this.call, { output: this.output, scores: { ...this.scores }, model_latency: this.modelLatency });
     }
@@ -271,15 +371,55 @@ export class EvaluationLogger {
     return pred;
   }
 
-  logPrediction(inputs: Record<string, unknown>, output: unknown, modelLatency: number | null = null): ScoreLogger {
+  /**
+   * Log one prediction. Without an output (and without a link) the predict
+   * call stays open: set `pred.output` inside `pred.run(...)`. The third
+   * argument is the model latency in seconds, or LogPredictionOptions.
+   */
+  logPrediction(inputs: Record<string, unknown>, output?: unknown, modelLatencyOrOpts: number | null | LogPredictionOptions = null): ScoreLogger {
     if (this.finished) throw new Error('evaluation already finished');
-    let pas: Call | null = null;
-    if (this.client && this.call) {
-      pas = this.client.createCall(predictAndScore.__weftOp, { self: this.evaluation, model: this.model, example: this.example(inputs) }, { parent: this.call });
-      const pc = this.client.createCall(`${this.model.name ?? 'Model'}.predict`, { self: this.model, ...inputs }, { parent: pas });
-      this.client.finishCall(pc, output);
+    const opts: LogPredictionOptions =
+      modelLatencyOrOpts !== null && typeof modelLatencyOrOpts === 'object' ? modelLatencyOrOpts : { modelLatency: modelLatencyOrOpts as number | null };
+    let modelLatency = opts.modelLatency ?? null;
+    const linked = opts.call !== undefined ? linkedCalls(opts.call) : { calls: [], conversationIds: [], callObjects: [] };
+    if (linked.calls.length && output === undefined && linked.callObjects.length === 1 && linked.callObjects[0] instanceof CallClass) {
+      const c = linked.callObjects[0] as Call;
+      output = !c.fetched && c.rawOutput !== undefined ? c.rawOutput : c.output;
+      if (modelLatency === null && c.startedAt && c.endedAt) modelLatency = Math.max(0, (Date.parse(c.endedAt) - Date.parse(c.startedAt)) / 1000);
     }
-    const sl = new ScoreLogger(this, pas, { ...inputs }, output, modelLatency);
+    const evalKind = opts.evalKind === undefined ? 'agent' : opts.evalKind;
+    const weft: Record<string, unknown> = {};
+    if (linked.calls.length) {
+      weft.linked_calls = linked.calls;
+      weft.genai_span_ref = linked.calls.map((c) => ({ trace_id: c.trace_id ?? null, span_id: c.call_id }));
+    }
+    if (linked.conversationIds.length) weft.linked_conversation_ids = linked.conversationIds;
+    const evalMeta: Record<string, unknown> = {};
+    if (opts.exampleId !== undefined) evalMeta.example_id = opts.exampleId;
+    if (opts.rowDigest !== undefined) evalMeta.row_digest = opts.rowDigest;
+    if (opts.trialIndex !== undefined) evalMeta.trial_index = opts.trialIndex;
+    if (evalKind) evalMeta.kind = evalKind;
+    if (Object.keys(evalMeta).length) weft.eval = evalMeta;
+    const attributes = Object.keys(weft).length ? { weft } : undefined;
+    let pas: Call | null = null;
+    let pc: Call | null = null;
+    let evalContext: Record<string, unknown> | null = null;
+    if (this.client && this.call) {
+      pas = this.client.createCall(predictAndScore.__weftOp, { self: this.evaluation, model: this.model, example: this.example(inputs) }, { parent: this.call, attributes });
+      pc = this.client.createCall(`${this.model.name ?? 'Model'}.predict`, { self: this.model, ...inputs }, { parent: pas, attributes });
+      if (output !== undefined || linked.calls.length) this.client.finishCall(pc, output ?? null);
+      evalContext = {
+        run_id: this.call.id,
+        predict_and_score_call_id: pas.id,
+        project_id: this.client.projectId,
+        kind: evalKind,
+        row_digest: opts.rowDigest ?? digest(toJson(inputs)),
+        example_id: opts.exampleId ?? null,
+        trial_index: opts.trialIndex ?? null,
+        evaluation_name: this.evaluation.name ?? null,
+      };
+    }
+    const sl = new ScoreLogger(this, pas, { ...inputs }, output ?? null, modelLatency, pc, evalContext);
     this.predictions.push(sl);
     return sl;
   }

@@ -12,6 +12,12 @@ export interface WeftContext {
   attributes: Record<string, unknown>;
   thread: ThreadContext | null;
   suppressed: boolean;
+  /** Active agent conversation / turn / LLM span (see conversation.ts). */
+  conversation?: unknown;
+  turn?: unknown;
+  llm?: unknown;
+  /** `weave.eval.*` link attributes of the EvaluationLogger prediction being recorded. */
+  evalSpan?: Record<string, unknown> | null;
 }
 
 const EMPTY: WeftContext = { stack: [], attributes: {}, thread: null, suppressed: false };

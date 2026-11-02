@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 
 from ._spans import RunTracker
 
+INTEGRATION = "dspy"
+
 _registered = False
 
 
@@ -31,7 +33,7 @@ def _build() -> Any:
 
     class WeftDSPyCallback(_base()):  # type: ignore[misc]
         def __init__(self) -> None:
-            self.tracker = RunTracker()
+            self.tracker = RunTracker(INTEGRATION)
 
         def on_module_start(self, call_id: str, instance: Any, inputs: Dict[str, Any]) -> None:
             self.tracker.start(call_id, f"dspy.{type(instance).__name__}", dict(inputs or {}), kind="chain")

@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { ScorePill } from './bits'
+import { turnSignals } from './signalUtils'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -225,20 +227,25 @@ export function TurnView({ turn, index, projectId }: { turn: TraceChat; index: n
           turn.messages.map((m, i) => <EventView key={`${m.span_id}-${m.type}-${i}`} m={m} projectId={projectId} agentName={turn.agent_name} />)
         )}
         {!!turn.feedback?.length && (
-          <div className="chips">
-            {turn.feedback.map((f) =>
-              f.feedback_type === 'wandb.reaction.1' ? (
+          <div className="chips" style={{ flexWrap: 'wrap' }}>
+            {turn.feedback
+              .filter((f) => f.feedback_type === 'wandb.reaction.1')
+              .map((f) => (
                 <span key={f.id} className="chip">
                   {String(f.payload.emoji ?? '')}
                 </span>
-              ) : Object.entries(f.scorer_ratings).length ? (
-                Object.entries(f.scorer_ratings).map(([k, v]) => (
-                  <span key={f.id + k} className="chip" title={f.feedback_type}>
-                    {k}: {Number.isInteger(v) ? v : v.toFixed(2)}
-                  </span>
-                ))
-              ) : null,
-            )}
+              ))}
+            {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'wandb.reaction.1')).ratings.map((r, i) => (
+              <span key={`r${i}`} className="chip row" style={{ gap: 6 }} title={[r.reason, r.confidence != null ? `confidence ${Math.round(r.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
+                {r.name}
+                <ScorePill value={r.value} />
+              </span>
+            ))}
+            {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'wandb.reaction.1')).tags.map((t) => (
+              <span key={`t${t.name}`} className="chip tag-chip" title={[t.reason, t.confidence != null ? `confidence ${Math.round(t.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
+                {t.name}
+              </span>
+            ))}
           </div>
         )}
       </div>

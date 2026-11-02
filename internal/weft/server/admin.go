@@ -26,10 +26,10 @@ import (
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
 		r.Get("/auth/principal", s.authPrincipal)
-		r.Post("/api_keys/create", handle(s.apiKeyCreate))
+		r.Post("/api_keys/create", handleIAM(s.apiKeyCreate))
 		r.Get("/api_keys/list", s.apiKeyList)
 		r.Post("/api_keys/list", s.apiKeyList)
-		r.Post("/api_keys/revoke", handle(s.apiKeyRevoke))
+		r.Post("/api_keys/revoke", handleIAM(s.apiKeyRevoke))
 
 		r.Post("/project/ttl_settings/read", handle(s.ttlRead))
 		r.Post("/project/ttl_settings/update", handle(s.ttlUpdate))
@@ -47,15 +47,21 @@ func init() {
 
 // ---------------------------------------------------------------- principal
 
-// principal is the caller authenticated by a managed key. Requests with a
-// static --api-keys key, or to a server without auth, carry no principal and
-// are treated as admin.
+// principal is the caller authenticated by a managed key or a session
+// cookie. Requests with a static --api-keys key, or to a server without
+// auth, carry no principal and are treated as admin. See iam.go.
 type principal struct {
 	keyID    string
 	user     string
-	admin    bool
+	super    bool // admin key, or a key/session of a server-admin user
 	readOnly bool
-	projects map[string]bool // nil: all projects
+	projects map[string]bool // key scope; nil: all projects
+	// rbac principals (user-bound keys and sessions) take their access from
+	// the user's team and project roles.
+	rbac    bool
+	roles   *store.UserRoles
+	method  string // "api_key" or "session"
+	session *store.Session
 }
 
 type principalKey struct{}
@@ -106,10 +112,10 @@ func (s *Server) invalidateKeys() {
 	c.mu.Unlock()
 }
 
-// authRequired reports whether requests need a key: static keys are
-// configured or at least one managed key is active.
+// authRequired reports whether requests need a key: static keys or SSO are
+// configured, or at least one managed key is active.
 func (s *Server) authRequired() bool {
-	if len(s.keys) > 0 {
+	if len(s.keys) > 0 || s.cfg.IAM.OIDC != nil {
 		return true
 	}
 	ks, _ := s.activeKeys()
@@ -134,26 +140,28 @@ func (s *Server) dbKeyAuth(w http.ResponseWriter, r *http.Request, presented str
 		writeError(w, http.StatusUnauthorized, "missing or invalid API key")
 		return nil
 	}
-	p := &principal{keyID: match.ID, user: match.UserID, admin: match.Admin, readOnly: match.ReadOnly}
+	p := &principal{keyID: match.ID, user: match.UserID, super: match.Admin, readOnly: match.ReadOnly, method: "api_key"}
 	if !match.AllProjects {
 		p.projects = map[string]bool{}
 		for _, pid := range match.Projects {
 			p.projects[pid] = true
 		}
 	}
+	if match.UserBound {
+		u, roles, err := s.identity(r.Context(), match.UserID)
+		if err != nil || u.Disabled() {
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				writeErr(w, err)
+				return nil
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="weft"`)
+			writeError(w, http.StatusUnauthorized, "the user of this API key is disabled")
+			return nil
+		}
+		p.rbac, p.roles, p.super = true, roles, u.Admin
+	}
 	s.touchKey(match.ID)
-	ctx := context.WithValue(r.Context(), principalKey{}, p)
-	ctx = context.WithValue(ctx, ctxKey{}, p.user)
-	r = r.WithContext(ctx)
-	if msg := s.checkScope(w, r, p); msg != "" {
-		writeError(w, http.StatusForbidden, msg)
-		return nil
-	}
-	if r.Method == http.MethodGet && r.URL.Path == "/projects" && p.projects != nil {
-		s.listProjectsScoped(w, r, p)
-		return nil
-	}
-	return r
+	return s.finishAuth(w, r, p)
 }
 
 // touchKey records last use at most once a minute per key.
@@ -174,20 +182,6 @@ func (s *Server) touchKey(id string) {
 			s.log.Debug("recording API key use", "err", err)
 		}
 	}()
-}
-
-// adminPaths need an admin principal.
-var adminPaths = []string{"/api_keys/", "/secrets/set", "/secrets/delete", "/project/delete",
-	"/project/ttl_settings/update", "/project/ttl_settings/purge", "/project/ingest_sampling_settings/update",
-	"/project/sensitive_data_settings/update"}
-
-func isAdminPath(path string) bool {
-	for _, p := range adminPaths {
-		if path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) {
-			return true
-		}
-	}
-	return false
 }
 
 // readSegments are final path segments of POST endpoints that only read.
@@ -213,34 +207,6 @@ func isReadRequest(r *http.Request) bool {
 // projectFreePaths may be called by project-scoped keys without naming a project.
 var projectFreePaths = map[string]bool{"/auth/check": true, "/auth/whoami": true, "/auth/principal": true, "/projects": true,
 	"/llm/models": true, "/graphql": true, "/secrets/list": true, "/server_info": true, "/health": true}
-
-func (s *Server) checkScope(w http.ResponseWriter, r *http.Request, p *principal) string {
-	if !p.admin && isAdminPath(r.URL.Path) {
-		return "this API key is not an admin key"
-	}
-	if p.readOnly && !isReadRequest(r) {
-		return "this API key is read-only"
-	}
-	if p.projects == nil {
-		return ""
-	}
-	pids, err := requestProjects(w, r)
-	if err != nil {
-		return err.Error()
-	}
-	if len(pids) == 0 {
-		if projectFreePaths[r.URL.Path] {
-			return ""
-		}
-		return "this API key is limited to specific projects; the request must name a project"
-	}
-	for _, pid := range pids {
-		if !p.projects[pid] {
-			return "this API key has no access to project " + pid
-		}
-	}
-	return ""
-}
 
 // requestProjects finds every project a request names: the project_id query
 // parameter and headers, the /v2/{entity}/{project}/ path, and project_id
@@ -399,7 +365,7 @@ func (s *Server) listProjectsScoped(w http.ResponseWriter, r *http.Request, p *p
 	}
 	out := ps[:0]
 	for _, x := range ps {
-		if p.projects[x.ProjectID] {
+		if p.roleFor(x.ProjectID).Rank() > 0 {
 			out = append(out, x)
 		}
 	}
@@ -412,9 +378,16 @@ func (s *Server) authPrincipal(w http.ResponseWriter, r *http.Request) {
 	if u := userFrom(r, nil); u != nil {
 		out["user_id"] = *u
 	}
+	out["rbac"], out["auth_method"] = false, "none"
+	if note := auditNoteFrom(r); note != nil && note.authMethod != "" {
+		out["auth_method"] = note.authMethod
+	}
 	if p := principalFrom(r); p != nil {
-		out["admin"], out["read_only"], out["key_id"] = p.admin, p.readOnly, p.keyID
-		if k, err := s.store.GetAPIKey(r.Context(), p.keyID); err == nil {
+		out["admin"], out["read_only"], out["rbac"], out["auth_method"] = p.isAdmin(), p.readOnly, p.rbac, p.method
+		if p.keyID != "" {
+			out["key_id"] = p.keyID
+		}
+		if k, err := s.store.GetAPIKey(r.Context(), p.keyID); p.keyID != "" && err == nil {
 			out["key_name"] = k.Name
 		}
 		if p.projects != nil {
@@ -436,18 +409,68 @@ type apiKeyCreateReq struct {
 	store.APIKeyCreate
 }
 
+// keyIsAdmin reports whether a key has server-admin powers.
+func (s *Server) keyIsAdmin(ctx context.Context, k store.APIKey) bool {
+	if !k.UserBound {
+		return k.Admin
+	}
+	if !k.AllProjects || k.ReadOnly {
+		return false
+	}
+	u, _, err := s.identity(ctx, k.UserID)
+	return err == nil && u.Admin && !u.Disabled()
+}
+
+// apiKeyCreate: server admins create keys for anyone; other users (sessions
+// and user-bound keys) create keys for themselves, no broader than the
+// credential they use. A key whose user_id names a user is bound to it.
 func (s *Server) apiKeyCreate(ctx context.Context, r *http.Request, req *apiKeyCreateReq) (any, error) {
 	c := req.APIKeyCreate
 	c.CreatedBy = userFrom(r, nil)
+	p := principalFrom(r)
+	if p != nil && !p.isAdmin() {
+		if c.UserID != "" && c.UserID != p.user {
+			return nil, forbidden("you can only create API keys for yourself")
+		}
+		c.UserID = p.user
+		if c.Admin {
+			return nil, forbidden("only server admins can create admin keys")
+		}
+		if p.readOnly && !c.ReadOnly {
+			return nil, forbidden("a read-only credential can only create read-only keys")
+		}
+		if p.projects != nil {
+			ps, err := normalizeProjects(c.Projects)
+			if err != nil {
+				return nil, err
+			}
+			if len(ps) == 0 {
+				return nil, forbidden("this API key is limited to projects; list the new key's projects")
+			}
+			for _, pid := range ps {
+				if !p.projects[pid] {
+					return nil, forbidden("this API key has no access to project %s", pid)
+				}
+			}
+		}
+	}
+	if c.UserID != "" {
+		if u, _, err := s.identity(ctx, c.UserID); err == nil {
+			if u.Disabled() {
+				return nil, store.Invalidf("user %s is disabled", u.ID)
+			}
+			c.UserBound = true
+		}
+	}
 	if len(s.keys) == 0 && !c.Admin {
-		// Without static keys, managed admin keys are the only way back in:
-		// the first key must be one.
+		// Without static keys, admin keys (or keys of admin users) are the
+		// only way back in: the first key must be one.
 		hasAdmin := false
 		ks, _ := s.activeKeys()
 		for _, k := range ks {
-			hasAdmin = hasAdmin || k.Admin
+			hasAdmin = hasAdmin || s.keyIsAdmin(ctx, k)
 		}
-		if !hasAdmin {
+		if !hasAdmin && !s.keyIsAdmin(ctx, store.APIKey{UserBound: c.UserBound, UserID: c.UserID, AllProjects: len(c.Projects) == 0, ReadOnly: c.ReadOnly}) {
 			return nil, store.Invalidf("the first API key must be an admin key: creating it turns authentication on, and only admin keys can manage keys")
 		}
 	}
@@ -456,6 +479,7 @@ func (s *Server) apiKeyCreate(ctx context.Context, r *http.Request, req *apiKeyC
 		return nil, err
 	}
 	s.invalidateKeys()
+	auditDetail(r, "created API key %s (%s) for %s", k.Name, k.ID, k.UserID)
 	return map[string]any{"key": k, "secret": secret}, nil
 }
 
@@ -476,6 +500,15 @@ func (s *Server) apiKeyList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if p := principalFrom(r); p != nil && !p.isAdmin() {
+		own := ks[:0]
+		for _, k := range ks {
+			if k.UserBound && k.UserID == p.user {
+				own = append(own, k)
+			}
+		}
+		ks = own
+	}
 	writeJSON(w, map[string]any{"keys": ks, "static_key_count": len(s.keys)})
 }
 
@@ -483,22 +516,25 @@ type apiKeyRevokeReq struct {
 	ID string `json:"id"`
 }
 
-func (s *Server) apiKeyRevoke(ctx context.Context, _ *http.Request, req *apiKeyRevokeReq) (any, error) {
+func (s *Server) apiKeyRevoke(ctx context.Context, r *http.Request, req *apiKeyRevokeReq) (any, error) {
 	k, err := s.store.GetAPIKey(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
-	if len(s.keys) == 0 && k.Admin && k.RevokedAt == nil {
+	if p := principalFrom(r); p != nil && !p.isAdmin() && !(k.UserBound && k.UserID == p.user) {
+		return nil, store.ErrNotFound
+	}
+	if len(s.keys) == 0 && s.keyIsAdmin(ctx, *k) && k.RevokedAt == nil {
 		admins, others := 0, 0
 		ks, _ := s.activeKeys()
 		for _, x := range ks {
-			if x.Admin {
+			if s.keyIsAdmin(ctx, x) {
 				admins++
 			} else {
 				others++
 			}
 		}
-		if admins == 1 && others > 0 {
+		if admins == 1 && others > 0 && s.cfg.IAM.OIDC == nil {
 			return nil, store.Invalidf("cannot revoke the last admin key while other keys are active: revoke them first or create another admin key")
 		}
 	}
@@ -506,6 +542,7 @@ func (s *Server) apiKeyRevoke(ctx context.Context, _ *http.Request, req *apiKeyR
 		return nil, err
 	}
 	s.invalidateKeys()
+	auditDetail(r, "revoked API key %s (%s) of %s", k.Name, k.ID, k.UserID)
 	k, err = s.store.GetAPIKey(ctx, req.ID)
 	if err != nil {
 		return nil, err

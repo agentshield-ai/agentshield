@@ -28,6 +28,48 @@ export function fmtDelta(d: NumericDelta, fmt: (n: number) => string = fmtPlain)
   return `${sign}${fmt(Math.abs(d.delta))}${pct}`
 }
 
+/** How numeric changes against the baseline are shown in compare views. */
+export type DeltaFormat = 'both' | 'absolute' | 'percent' | 'ratio'
+export const DELTA_FORMATS: { id: DeltaFormat; label: string; title: string }[] = [
+  { id: 'both', label: 'Δ + %', title: 'Absolute change and percentage' },
+  { id: 'absolute', label: 'Δ', title: 'Absolute change' },
+  { id: 'percent', label: '%', title: 'Percentage change' },
+  { id: 'ratio', label: '×', title: 'Ratio to the baseline' },
+]
+
+export function parseDeltaFormat(s: string | null | undefined): DeltaFormat {
+  return DELTA_FORMATS.some((f) => f.id === s) ? (s as DeltaFormat) : 'both'
+}
+
+function fmtPct(p: number): string {
+  const a = Math.abs(p)
+  return `${p > 0 ? '+' : p < 0 ? '−' : '±'}${a >= 100 ? Math.round(a) : a.toFixed(1)}%`
+}
+
+/**
+ * Formats the change from `base` to `v`: absolute ("+50"), percentage
+ * ("+50.0%"), ratio ("1.50×") or both ("+50 (+50.0%)"). Null when either
+ * side is not a number; "—" when the percentage or ratio is undefined
+ * because the baseline is 0.
+ */
+export function fmtDeltaAs(base: unknown, v: unknown, format: DeltaFormat, fmt: (n: number) => string = fmtPlain): string | null {
+  const d = numericDelta(base, v)
+  if (!d) return null
+  switch (format) {
+    case 'absolute':
+      return d.delta === 0 ? '±0' : `${d.delta > 0 ? '+' : '−'}${fmt(Math.abs(d.delta))}`
+    case 'percent':
+      return d.pct == null ? '—' : fmtPct(d.pct)
+    case 'ratio': {
+      const a = base as number
+      if (a === 0) return d.delta === 0 ? '1×' : '—'
+      const r = (v as number) / a
+      return `${Number(r.toPrecision(3)).toLocaleString()}×`
+    }
+  }
+  return fmtDelta(d, fmt)
+}
+
 function fmtPlain(n: number): string {
   if (Number.isInteger(n)) return n.toLocaleString()
   return Number(n.toPrecision(4)).toLocaleString()

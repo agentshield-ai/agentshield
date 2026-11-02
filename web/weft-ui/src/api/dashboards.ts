@@ -48,7 +48,8 @@ export interface MetricsRes {
   truncated: boolean
 }
 
-export type ChartType = 'line' | 'bar' | 'stacked' | 'area' | 'table' | 'stat'
+/** `scatter` plots metrics[0].field (x) against metrics[1].field (y), one point per call. */
+export type ChartType = 'line' | 'bar' | 'stacked' | 'area' | 'table' | 'stat' | 'scatter'
 
 export interface DashboardPanel {
   id: string

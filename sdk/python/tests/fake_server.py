@@ -14,7 +14,7 @@ from weft._canonical import b64digest, digest, table_digest
 def _base_class(val: Any) -> Optional[str]:
     if not isinstance(val, dict):
         return None
-    known = ["Dataset", "Model", "Evaluation", "Scorer", "Prompt", "LLMStructuredCompletionModel", "Op"]
+    known = ["Dataset", "Model", "Evaluation", "Scorer", "Prompt", "LLMStructuredCompletionModel", "Op", "SavedView"]
     for c in [val.get("_class_name")] + list(val.get("_bases") or []):
         if c in known:
             return c

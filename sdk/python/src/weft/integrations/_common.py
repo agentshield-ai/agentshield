@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .. import _context
 from .._context import pop_call, push_call, tracing_suppressed
+from . import _settings
 
 logger = logging.getLogger("weft")
 
@@ -86,8 +87,20 @@ class LLMSpec:
         skip_first_arg: bool = True,
         kind: Optional[str] = "llm",
         suppress_nested: bool = False,
+        integration: Optional[str] = None,
+        arg_names: Tuple[str, ...] = (),
+        self_inputs: Optional[Callable[[Any], Dict[str, Any]]] = None,
+        attributes: Optional[Callable[[Tuple[Any, ...], Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
     ):
         self.op_name = op_name
+        # Integration name for autopatch settings (defaults to the op name prefix).
+        self.integration = _settings.canonical(integration or _INTEGRATION_OF.get(op_name.split(".")[0], op_name.split(".")[0]))
+        # Names for positional arguments (after ``self``), so inputs are keyed by name.
+        self.arg_names = tuple(arg_names)
+        # Extra inputs read from the client instance (e.g. the model name held by it).
+        self.self_inputs = self_inputs
+        # Extra call attributes computed from (args, kwargs), e.g. the provider of an OpenAI-compatible client.
+        self.attributes = attributes
         self.prepare_kwargs = prepare_kwargs
         self.is_stream = is_stream or (lambda kw, res: bool(kw.get("stream")))
         self.accumulator = accumulator
@@ -99,10 +112,31 @@ class LLMSpec:
         self.suppress_nested = suppress_nested
 
 
-def start_call(client: Any, spec: "LLMSpec", inputs: Dict[str, Any]) -> Any:
-    from .._client import _synthetic_op
+_INTEGRATION_OF = {"mistralai": "mistral", "google": "google_genai", "bedrock": "bedrock"}
 
-    return client.create_call(_synthetic_op(spec.op_name, spec.kind), inputs)
+
+def start_call(client: Any, spec: "LLMSpec", inputs: Dict[str, Any], args: Tuple[Any, ...] = (), kwargs: Optional[Dict[str, Any]] = None) -> Any:
+    op = _settings.integration_op(spec.integration, spec.op_name, spec.kind)
+    attrs = _settings.integration_attributes(spec.integration)
+    if spec.attributes is not None:
+        try:
+            extra = spec.attributes(args, kwargs or {})
+        except Exception:  # pragma: no cover
+            extra = None
+        if extra:
+            for k, v in extra.items():
+                if k == "weft" and isinstance(v, dict):
+                    attrs["weft"].update(v)
+                else:
+                    attrs[k] = v
+    call = client.create_call(op, inputs, attributes=attrs)
+    call._weft_op = op
+    return call
+
+
+def finish_call(client: Any, call: Any, output: Any = None, exception: Optional[BaseException] = None) -> None:
+    """Finish an integration call, applying the integration's ``postprocess_output``."""
+    client.finish_call(call, output=output, exception=exception, op=getattr(call, "_weft_op", None))
 
 
 class _Enter:
@@ -122,20 +156,32 @@ class _Enter:
         pop_call(self.t1)
 
 
-def _tracing() -> Any:
+def _tracing(integration: Optional[str] = None) -> Any:
     from .._client import tracing_client
 
     c = tracing_client()
     if c is None or tracing_suppressed():
         return None
+    if integration is not None and not _settings.is_enabled(integration):
+        return None
     return c
 
 
 def _inputs(spec: LLMSpec, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    inputs = {k: v for k, v in kwargs.items() if not _is_not_given(v)}
-    extra = args[1:] if spec.skip_first_arg else args
+    inputs: Dict[str, Any] = {}
+    if spec.self_inputs is not None and spec.skip_first_arg and args:
+        try:
+            inputs.update({k: v for k, v in (spec.self_inputs(args[0]) or {}).items() if v is not None})
+        except Exception:  # pragma: no cover
+            pass
+    extra = list(args[1:] if spec.skip_first_arg else args)
+    for name in spec.arg_names:
+        if not extra:
+            break
+        inputs[name] = extra.pop(0)
+    inputs.update({k: v for k, v in kwargs.items() if not _is_not_given(v)})
     if extra:
-        inputs["args"] = list(extra)
+        inputs["args"] = extra
     return inputs
 
 
@@ -149,7 +195,7 @@ def _finish(client: Any, call: Any, spec: LLMSpec, out: Any, exc: Optional[BaseE
             spec.record_usage(call, out)
         except Exception as e:  # pragma: no cover
             logger.debug("weft: usage extraction failed: %s", e)
-    client.finish_call(call, output=out, exception=exc)
+    finish_call(client, call, out, exc)
 
 
 class SyncStreamProxy:
@@ -285,17 +331,17 @@ def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None, retu
 
         @functools.wraps(orig)
         def iwrapper(*args: Any, **kwargs: Any) -> Any:
-            client = _tracing()
+            client = _tracing(spec.integration)
             if client is None:
                 return orig(*args, **kwargs)
             if spec.prepare_kwargs is not None:
                 kwargs = spec.prepare_kwargs(dict(kwargs))
-            call = start_call(client, spec, _inputs(spec, args, kwargs))
+            call = start_call(client, spec, _inputs(spec, args, kwargs), args, kwargs)
             try:
                 with _Enter(call, spec.suppress_nested):
                     res = orig(*args, **kwargs)
             except BaseException as e:
-                client.finish_call(call, exception=e)
+                finish_call(client, call, None, e)
                 raise
             return AsyncStreamProxy(res, client, call, spec)
 
@@ -305,19 +351,19 @@ def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None, retu
 
         @functools.wraps(orig)
         async def awrapper(*args: Any, **kwargs: Any) -> Any:
-            client = _tracing()
+            client = _tracing(spec.integration)
             if client is None:
                 return await orig(*args, **kwargs)
             if spec.prepare_kwargs is not None:
                 kwargs = spec.prepare_kwargs(dict(kwargs))
-            call = start_call(client, spec, _inputs(spec, args, kwargs))
+            call = start_call(client, spec, _inputs(spec, args, kwargs), args, kwargs)
             try:
                 with _Enter(call, spec.suppress_nested):
                     res = orig(*args, **kwargs)
                     if inspect.isawaitable(res):
                         res = await res
             except BaseException as e:
-                client.finish_call(call, exception=e)
+                finish_call(client, call, None, e)
                 raise
             if spec.is_stream(kwargs, res):
                 return AsyncStreamProxy(res, client, call, spec)
@@ -328,17 +374,17 @@ def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None, retu
 
     @functools.wraps(orig)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        client = _tracing()
+        client = _tracing(spec.integration)
         if client is None:
             return orig(*args, **kwargs)
         if spec.prepare_kwargs is not None:
             kwargs = spec.prepare_kwargs(dict(kwargs))
-        call = start_call(client, spec, _inputs(spec, args, kwargs))
+        call = start_call(client, spec, _inputs(spec, args, kwargs), args, kwargs)
         try:
             with _Enter(call, spec.suppress_nested):
                 res = orig(*args, **kwargs)
         except BaseException as e:
-            client.finish_call(call, exception=e)
+            finish_call(client, call, None, e)
             raise
         if spec.is_stream(kwargs, res):
             return SyncStreamProxy(res, client, call, spec)

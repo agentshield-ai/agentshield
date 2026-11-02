@@ -14,6 +14,7 @@ import { CallChatView, extractChat, findInputMessages } from '../../components/t
 import { TraceTree } from '../../components/traces/TraceTree'
 import { Timeline } from '../../components/traces/Timeline'
 import { TraceGraph } from '../../components/traces/TraceGraph'
+import { CodeComposition, FlameGraph } from '../../components/traces/FlameGraph'
 import { OpCodeView } from '../../components/traces/OpCodeView'
 import { FeedbackPanel, Reactions, ScoresPanel, useCallFeedback } from '../../components/traces/FeedbackPanel'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
@@ -24,7 +25,8 @@ import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 
 type Tab = 'call' | 'feedback' | 'scores' | 'summary' | 'attributes' | 'code' | 'use' | 'raw'
 const TABS: Tab[] = ['call', 'feedback', 'scores', 'summary', 'attributes', 'code', 'use', 'raw']
-type LeftView = 'tree' | 'timeline' | 'graph'
+type LeftView = 'tree' | 'code' | 'flame' | 'timeline' | 'graph'
+const LEFT_VIEWS: LeftView[] = ['tree', 'code', 'flame', 'timeline', 'graph']
 const TRACE_LIMIT = 5000
 
 export function CallPage() {
@@ -33,7 +35,7 @@ export function CallPage() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'call') as Tab
-  const leftView: LeftView = params.get('view') === 'timeline' ? 'timeline' : params.get('view') === 'graph' ? 'graph' : 'tree'
+  const leftView: LeftView = LEFT_VIEWS.includes(params.get('view') as LeftView) ? (params.get('view') as LeftView) : 'tree'
 
   const qc = useQueryClient()
   const callQ = useQuery({
@@ -121,6 +123,8 @@ export function CallPage() {
           <Tabs<LeftView>
             tabs={[
               { id: 'tree', label: 'Tree' },
+              { id: 'code', label: 'Code' },
+              { id: 'flame', label: 'Flame' },
               { id: 'timeline', label: 'Timeline' },
               { id: 'graph', label: 'Graph' },
             ]}
@@ -137,6 +141,10 @@ export function CallPage() {
           <TraceTree roots={roots} selectedId={call.id} onSelect={select} collapsed={collapsed} setCollapsed={setCollapsed} />
         ) : leftView === 'graph' ? (
           <TraceGraph calls={traceCalls} selectedId={call.id} onSelect={select} />
+        ) : leftView === 'flame' ? (
+          <FlameGraph roots={roots} selectedId={call.id} onSelect={select} />
+        ) : leftView === 'code' ? (
+          <CodeComposition roots={roots} selectedId={call.id} onSelect={select} />
         ) : (
           <Timeline roots={roots} selectedId={call.id} onSelect={select} />
         )}

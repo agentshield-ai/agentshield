@@ -260,6 +260,7 @@ Media values: `{"_type":"Image","file_digest":"<d>","mime_type":"image/png"}`,
 | `/file/create` | multipart form: `project_id`, `file` | `{"digest"}` |
 | `/file/content` | `{project_id, digest}` | raw bytes |
 | `GET /file/content?project_id=..&digest=..` | | raw bytes with sniffed content type (for `<img src>`) |
+| `/files/resolve_url` | `{project_id, uris, expires_in?}` | `{"download_urls", "expires_at"}`; see [Files and media](#files-and-media) |
 
 ## Feedback
 
@@ -327,7 +328,7 @@ The SDKs run evaluations client side and record calls with these op names
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/evaluate_model` | `{project_id, evaluation_ref, model_ref, wb_user_id?}` | `{"call_id"}` — runs server side in the background; model must be `LLMStructuredCompletionModel`, scorers must be server-runnable |
+| `/evaluate_model` | `{project_id, evaluation_ref, model_ref, wb_user_id?}` | `{"call_id"}` — runs server side in the background; the model must be an `LLMStructuredCompletionModel`, have a `predict_url`, or be bound to a runtime (see [Server-side evaluation of any model](#server-side-evaluation-of-any-model)); scorers must be server-runnable |
 | `/evaluation_status` | `{project_id, call_id}` | `{"status": {"code": "running\|complete\|failed\|unknown", "completed_rows", "total_rows", "error"?}}` |
 | `/evaluations/compare` | `{project_id, evaluation_call_ids}` | see below |
 | `/leaderboard/compute` | `{project_id, object_id, digest?}` | see below |
@@ -965,4 +966,177 @@ Not implemented: `signal_filters` and `insight_filters` are accepted and
 ignored; `agent_handoff` and `context_compacted` messages are never produced;
 `content_refs`, `artifact_refs` and `object_refs` are always empty. Queries
 aggregate up to 200,000 spans in memory.
+
+## Weave API parity additions
+
+These endpoints complete Weave's API surface (every path of
+`trace.wandb.ai/openapi.json` is registered). Where Weave depends on a W&B or
+CoreWeave service, Weft implements the endpoint in its own terms, as noted.
+
+### Custom runtimes
+
+`PUT /v2/{entity}/{project}/runtimes/{runtime_name}` (Weave's
+`client.register_custom_runtime`) creates or replaces a runtime:
+
+```jsonc
+// body
+{"base_url": "https://vllm.internal/v1",       // OpenAI-compatible base URL
+ "api_key_secret": "VLLM_KEY",                  // name of a secret (Settings → Secrets or env); sent as a bearer token
+ "headers": {"X-Team": "ml"},                    // literal headers
+ "runtime_ids": [{"id": "llama-3-8b", "max_tokens": 8192}, {"id": "qwen2-7b"}],  // complete list; max_tokens defaults to 4096
+ "kind": "openai"}                               // Weft: "openai" (default) or "predict"
+// response
+{"name", "base_url", "api_key_secret", "headers",
+ "runtime_ids": [{"id", "max_tokens", "playground_id": "<runtime>/<id>"}],
+ "kind", "ref"}                                  // kind and ref are Weft additions
+```
+
+The name must match Weave's pattern (no whitespace; `:` only between
+segments) and must not be a built-in provider prefix (`openai`, `anthropic`,
+`mock`, ...). Weft stores the runtime as a `Provider` object (object id = the
+name with characters outside `[A-Za-z0-9_.-]` replaced by `-`) and one
+`ProviderModel` per runtime ID; IDs omitted on a later PUT are deleted. So
+`<runtime>/<id>` works everywhere a model id does: the playground,
+`/completions/create`, `/image/create`, LLM judges, `LLMStructuredCompletionModel`
+and `GET /llm/models?project_id=`. Updates apply immediately (Weave allows up to
+60 s). *Weft*: `GET /v2/{entity}/{project}/runtimes` → `{"runtimes": [...]}`.
+
+A `"kind": "predict"` runtime is an HTTP endpoint that serves a model's
+predict (below); it has no `ProviderModel` objects.
+
+### Server-side evaluation of any model
+
+`/evaluate_model` runs these models on the server, recording one
+`<ModelClass>.predict` call per row (inputs `self` = model ref plus the row's
+columns) under each `Evaluation.predict_and_score`:
+
+| Model value | How it is predicted |
+|---|---|
+| `LLMStructuredCompletionModel` | chat completion of `llm_model_id` (built-in, Provider or runtime model id) |
+| any class with `predict_url` | `POST predict_url` (see protocol). Optional: `predict_headers` (literal), `predict_api_key_secret` or `auth_config.bearer_secret_name` (secret sent as `Authorization: Bearer`), `predict_timeout` (seconds, default 120) |
+| any class with `runtime` = a `predict` runtime (name or ref) | `POST` to the runtime's `base_url` with its headers and `api_key_secret`; `runtime_id` (or the runtime's first ID) is sent too |
+| any class with `runtime` = an OpenAI-compatible runtime | chat completion of `<runtime>/<runtime_id>` (default: the first ID). Messages come from `default_params.messages_template` if set, else `system_prompt` and `prompt_template` (`{column}` placeholders), else the row's `input`/`question`/`prompt`/`query`/`text` column; `temperature`, `max_tokens`, `top_p`, `response_format` attributes are passed on |
+
+Other models are rejected with 400, as before. A Python `weave.Model`
+subclass works as long as its published attributes include `predict_url` or
+`runtime`; its own `predict` op is not executed by the server.
+
+Predict protocol:
+
+```jsonc
+// request: POST <url>, Content-Type: application/json
+{"inputs": {"question": "paris", "expected": "PARIS"},   // the dataset row
+ "model_ref": "weft:///acme/app/object/my-model:…", "project_id": "acme/app",
+ "runtime_id": "upper-v2"}                                // predict runtimes only
+// response: any JSON. {"output": X, ...} predicts X; any other JSON value or
+// text body is the prediction. An OpenAI-style "usage" (with "model") is
+// recorded as the predict call's token usage. Non-2xx fails the row.
+```
+
+### Files and media
+
+`POST /files/resolve_url` `{project_id, uris, expires_in?}` →
+`{"download_urls": [...], "expires_at": "<RFC 3339>" | null}`, one URL per uri:
+
+- a file digest from `/file/create` (also `weft-file://<digest>` or
+  `weave-file://<digest>`): a presigned URL when the file is in the S3 backend,
+  otherwise this server's `GET /file/content?project_id=..&digest=..` URL
+  (built from the request host, honouring `X-Forwarded-Proto/Host`);
+- `s3://<backend bucket>/<key>` where the key is under this project's prefix:
+  a presigned URL; other buckets, projects and `..` are refused;
+- `http(s)://…`: returned unchanged.
+
+`expires_at` is the earliest expiry of the presigned URLs (default lifetime 1 h;
+*Weft*: `expires_in` seconds, 1 s to 7 days). Unknown digests and other
+schemes are a 400.
+
+**Bring your own bucket.** `--files-backend s3://bucket/prefix` (env
+`WEFT_FILES_BACKEND`) writes new file contents to an S3-compatible store
+instead of SQLite; the `files` table keeps the project, digest, size and the
+object key (`<prefix>/<project_id>/<digest>`). Reads (`/file/content`, the UI)
+go through the server, and `/files/resolve_url` returns presigned GET URLs.
+Files stored before the backend was enabled stay in SQLite and remain
+readable. SQLite stays the default.
+
+| Flag | Env | Default |
+|---|---|---|
+| `--files-backend` | `WEFT_FILES_BACKEND` | empty (SQLite) |
+| `--s3-endpoint` | `WEFT_S3_ENDPOINT`, `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | AWS (`https://s3.<region>.amazonaws.com`) |
+| `--s3-region` | `WEFT_S3_REGION`, `AWS_REGION`, `AWS_DEFAULT_REGION` | `us-east-1` |
+| `--s3-path-style` | `WEFT_S3_PATH_STYLE` | `true` with a custom endpoint (MinIO, R2, Ceph), else virtual-hosted |
+| | `WEFT_S3_ACCESS_KEY_ID` / `AWS_ACCESS_KEY_ID`, `WEFT_S3_SECRET_ACCESS_KEY` / `AWS_SECRET_ACCESS_KEY`, `WEFT_S3_SESSION_TOKEN` / `AWS_SESSION_TOKEN` | required with `--files-backend` |
+
+Requests are signed with AWS Signature Version 4 (stdlib only,
+`internal/weft/objstore`); only static credentials are supported (no instance
+profiles or SSO).
+
+`POST /image/create` `{project_id, inputs: {model, prompt, n?}, track_llm_call?}`
+→ `{"response": {...} | {"error": "..."}, "weave_call_id": "..." | null}`.
+The model is routed like chat models; OpenAI-compatible providers, `Provider`
+objects and runtimes call `<base_url>/images/generations` (Weft also passes
+`size`, `quality`, `style`, `response_format`, `background`, `output_format`
+from `inputs`). `mock/<anything>` returns deterministic 64×64 PNGs
+(`data[].b64_json`) offline; Anthropic models are an error. Tracked requests
+are `weft.images.generate` calls with the response as output and token usage
+(plus `images`) in the summary.
+
+### Weave response shapes
+
+- **`/calls/stats`**: a request with any of `granularity`, `usage_metrics`,
+  `call_metrics` or `timezone` gets Weave's shape; otherwise Weft's own shape
+  (`bucket_seconds` → `buckets`/`totals`, used by the UI) is unchanged.
+  Weave shape: `{project_id, start, end?, granularity?, usage_metrics?: [{metric, aggregations?, percentiles?}], call_metrics?: [...], filter?, timezone?}`
+  → `{start, end, granularity, timezone, usage_buckets, call_buckets}`.
+  Usage metrics (`input_tokens`, `output_tokens`, `total_tokens`,
+  `cache_read_input_tokens`, `cache_creation_input_tokens`, `input_cost`,
+  `output_cost`, `total_cost`) are grouped by bucket and model; call metrics
+  (`latency_ms`, `call_count`, `error_count`) by bucket. Columns are
+  `<agg>_<metric>` (`sum`, `avg`, `min`, `max`, `count`, `count_true`,
+  `count_false`; default `sum`) and `p<pct>_<metric>`, plus `timestamp`,
+  `count` and `model`. `sum`/`count`/`avg` are 0 in empty buckets,
+  `min`/`max`/percentiles null; every bucket × model pair is listed. Granularity
+  defaults like Weave (5 min up to 2 h, 1 h up to 12 h, 6 h up to 3 d, 12 h up
+  to 14 d, else 1 d) and is widened to keep at most 10,000 buckets. Buckets
+  align to the interval in `timezone`. Token usage is each call's own usage
+  (the whole trace's with `filter.trace_roots_only`); costs use the project's
+  price book, and unpriced models have null costs. At most 200,000 calls are
+  read.
+- **`/calls/query_stats`** accepts `limit`: `count` stops at the limit and
+  `has_more` says whether more calls match (always present).
+- **`/feedback/query`** returns `total_count`: feedback matching `query`,
+  ignoring `limit` and `offset`.
+- **`GET /version`** → `{"version", "server": "weft", "trace_server_version"}`,
+  no API key needed.
+
+### W&B and CoreWeave services, Weft implementations
+
+**Registry.** `POST /link_to_registry` `{ref, target: {portfolio_name, entity_name, project_name}, aliases?}`
+→ `{"version_index"}` links an object version (any project) into the
+collection `portfolio_name` of the registry project
+`<entity_name>/<project_name>`. Versions are numbered from 0 per collection;
+linking a ref that is already in the collection returns its index. Aliases
+move to the version they are last given to; `latest` (newest version) and
+`v<N>` are implicit and cannot be assigned. With auth, the key needs write access to
+both the ref's project and the registry project.
+*Weft*: `POST /registry/query` `{project_id (registry project), portfolio_name?, alias?, version_index?}`
+→ `{"collections": [{"name", "versions": [{"version_index", "version", "ref", "source_project_id", "object_id", "digest", "base_object_class", "aliases", "created_at", "wb_user_id"}]}]}`
+(newest first); `alias`/`version_index` need `portfolio_name` and give 404 when
+nothing matches.
+
+**Inference catalog.** Weft's own model catalog: the built-in models of
+`/llm/models` with Weft's list prices, plus the project's `ProviderModel`
+objects (custom providers and runtimes) when `?project_id=` is given. Unlike
+Weave these need an API key when auth is on.
+
+| Endpoint | Shape |
+|---|---|
+| `GET /inference/catalog/models` | `{"models": [LLMModelDetails]}`: `id`/`idPlayground` are Weft model ids; prices in cents per billion tokens; `status` is `unavailable` when no provider key is configured; fields Weft cannot know are empty, 0, `false` or `"bf16"` (quantization) |
+| `GET /inference/modelsdev/models` | models.dev `api.json`: `{"<provider>": {id, name, npm, env, doc, api, models: {"<model id>": {..., cost: {input, output} USD per million tokens, limit}}}}` |
+| `GET /inference/router/openrouter/models`, `GET /inference/analysis/artificialanalysis/models` | `{"data": [{id, name, context_length, max_output_length, pricing: {prompt, completion} USD per token as strings, supported_features, ...}]}` |
+| `GET /inference/nvidia/v2/hardware?model=` | `{"hardware": [{"id": "weft-<provider>", "type": "serverless", "pricing": {cents_per_million_input_tokens, cents_per_million_output_tokens}, "specs"}]}` for catalog models whose name matches; `model` is required |
+
+**Geolocation.** `GET /geolocate?ip=` (no API key needed) →
+`{"ip": <ip or the caller's address>, "location": null, "allowed": true}`.
+Weft has no GeoIP database and no regional restrictions; an invalid `ip` is
+a 400.
 

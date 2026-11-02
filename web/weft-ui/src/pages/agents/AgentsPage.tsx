@@ -5,7 +5,10 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { agentsApi, agentUrl, conversationUrl, type AgentStats, type SearchResult } from '../../api/agents'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
-import { Empty, ErrorBox, Spinner } from '../../components/common'
+import { Empty, ErrorBox, Spinner, Tabs } from '../../components/common'
+import { AgentsDashboard } from '../../components/agents/AgentsDashboard'
+import { SpansTable } from '../../components/agents/SpansTable'
+import { SignalsView } from '../../components/agents/SignalsView'
 import { compact, errorRate, fmtPct } from '../../components/agents/agentUtils'
 import '../../components/agents/agents.css'
 
@@ -145,7 +148,7 @@ function SearchResults({ projectId, q }: { projectId: string; q: string }) {
   )
 }
 
-export function AgentsPage() {
+function AgentsGrid() {
   const projectId = useProjectId()
   const [params, setParams] = useSearchParams()
   const sortId = params.get('sort') ?? 'recent'
@@ -204,9 +207,8 @@ export function AgentsPage() {
     { conv: 0, inv: 0, err: 0, tok: 0, cost: 0 },
   )
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1>Agents</h1>
+    <div className="col" style={{ gap: 16 }}>
+      <div className="row wrap">
         {q.isFetching && <Spinner />}
         <span className="spacer" />
         <form
@@ -303,6 +305,52 @@ export function AgentsPage() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+type AgentsTab = 'dashboard' | 'agents' | 'spans' | 'signals'
+const AGENT_TABS: { id: AgentsTab; label: string }[] = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'spans', label: 'Spans' },
+  { id: 'signals', label: 'Signals' },
+]
+
+/** Agents: project dashboard, agent cards, cross-agent spans and signals. */
+export function AgentsPage() {
+  const projectId = useProjectId()
+  const [params, setParams] = useSearchParams()
+  const tab = (AGENT_TABS.some((t) => t.id === params.get('tab')) ? params.get('tab') : 'dashboard') as AgentsTab
+  const update = (patch: Record<string, string | null>) =>
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p)
+        for (const [k, v] of Object.entries(patch)) (v == null || v === '' ? n.delete(k) : n.set(k, v))
+        return n
+      },
+      { replace: true },
+    )
+  const switchTab = (t: AgentsTab, extra: Record<string, string> = {}) => {
+    // Each tab keeps its own filters; only the time range carries over.
+    const n = new URLSearchParams(extra)
+    if (t !== 'dashboard') n.set('tab', t)
+    const range = params.get('range')
+    if (range && !n.has('range')) n.set('range', range)
+    setParams(n)
+  }
+  return (
+    <div className="page">
+      <div className="page-header">
+        <h1>Agents</h1>
+      </div>
+      <Tabs<AgentsTab> tabs={AGENT_TABS} value={tab} onChange={(t) => switchTab(t)} />
+      {tab === 'dashboard' && (
+        <AgentsDashboard projectId={projectId} range={params.get('range') ?? '24h'} setRange={(r) => update({ range: r === '24h' ? null : r })} onFilterSpans={(patch) => switchTab('spans', patch)} />
+      )}
+      {tab === 'agents' && <AgentsGrid />}
+      {tab === 'spans' && <SpansTable projectId={projectId} params={params} update={update} />}
+      {tab === 'signals' && <SignalsView projectId={projectId} params={params} update={update} />}
     </div>
   )
 }

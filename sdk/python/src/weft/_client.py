@@ -128,7 +128,12 @@ class WeftClient:
         self.disabled = disabled
         self.settings: Dict[str, Any] = dict(settings or {})
         st = self.settings
-        self._http = HTTPClient(self.server_url, self.api_key, timeout=timeout, project_id=self.project_id)
+        from ._cache import CachingHTTPClient, build_cache
+
+        cache, cache_on = build_cache(st)
+        self._http: HTTPClient = CachingHTTPClient(
+            self.server_url, self.api_key, timeout=timeout, project_id=self.project_id, cache=cache, enabled=cache_on
+        )
         self.capture_code = _setting_bool(st, "capture_code", "WEFT_CAPTURE_CODE", True)
         self.print_call_link = _setting_bool(st, "print_call_link", "WEFT_PRINT_CALL_LINK", True)
         self.global_attributes: Dict[str, Any] = dict(st.get("global_attributes") or {})
@@ -154,8 +159,9 @@ class WeftClient:
                 logger.info("weft: replaying %d unsent items from %s", n, wal_path)
         self._redact = Redactor(
             keys=self.settings.get("redact_keys"),
-            pii=bool(self.settings.get("redact_pii", False)),
+            pii=self.settings.get("redact_pii"),
             enabled=self.settings.get("redact_enabled"),
+            settings=self.settings,
         )
 
     # ------------------------------------------------------------------ basics
@@ -175,6 +181,17 @@ class WeftClient:
 
     def server_info(self) -> Dict[str, Any]:
         return self._http.get("/server_info")
+
+    # ------------------------------------------------------------------ server-response cache
+    def cache_stats(self) -> Dict[str, int]:
+        """Hits, misses and skips of the client-side cache of immutable reads."""
+        return dict(getattr(self._http, "stats", {"hits": 0, "misses": 0, "skips": 0}))
+
+    def clear_server_cache(self) -> None:
+        """Empty the memory and on-disk cache of server responses."""
+        cache = getattr(self._http, "cache", None)
+        if cache is not None:
+            cache.clear()
 
     # ------------------------------------------------------------------ calls
     def create_call(
@@ -396,6 +413,35 @@ class WeftClient:
             ref = ObjectRef(self.entity, self.project, o["object_id"], o["digest"])
             out.append(from_val(o.get("val"), self, ref))
         return out
+
+    def get_saved_views(self, view_type: Optional[str] = None) -> List[Any]:
+        """Latest version of every SavedView in the project (optionally one ``view_type``)."""
+        from ._saved_view import SavedView
+
+        self.flush()
+        res = self._http.post(
+            "/objs/query",
+            {"project_id": self.project_id, "filter": {"base_object_classes": ["SavedView"], "latest_only": True}},
+        )
+        out = []
+        for o in res.get("objs") or []:
+            val = o.get("val") or {}
+            if view_type and val.get("view_type") != view_type:
+                continue
+            ref = ObjectRef(self.entity, self.project, o["object_id"], o["digest"])
+            v = from_val(val, self, ref)
+            if not isinstance(v, SavedView):
+                v = SavedView(view_type=val.get("view_type") or "traces", label=val.get("label"), name=val.get("name") or o["object_id"],
+                              definition=val.get("definition") or {})
+                v._weft_ref = ref
+            out.append(v)
+        return out
+
+    def get_saved_view(self, name: str) -> Any:
+        """Load a SavedView by name, ``name:version`` or ref."""
+        from ._saved_view import SavedView
+
+        return SavedView.load(name)
 
     def get_evaluation_calls(self, limit: Optional[int] = None) -> CallsIter:
         return self.get_calls(filter={"op_names": ["Evaluation.evaluate"]}, limit=limit)
@@ -839,18 +885,31 @@ def init(
     Environment: ``WEFT_SERVER_URL`` (default http://localhost:6345),
     ``WEFT_API_KEY``, ``WEFT_PROJECT``, ``WEFT_DISABLED``.
 
+    ``autopatch_settings`` (dict keyed by integration, e.g. ``{"openai":
+    {"enabled": False}}``): per-integration ``enabled`` and ``op_settings``;
+    see ``weft.integrations``. PII redaction settings (``redact_pii``,
+    ``redact_pii_fields``, ``redact_pii_exclude_fields``, ``redact_pii_engine``)
+    are described in ``weft._redact``.
+
     ``settings`` (dict): ``global_attributes``, ``print_call_link`` (default
     True, env ``WEFT_PRINT_CALL_LINK``), ``capture_code`` (default True, env
     ``WEFT_CAPTURE_CODE``), ``enable_disk_fallback`` (env ``WEFT_ENABLE_WAL``)
     with ``wal_dir`` (env ``WEFT_WAL_DIR``), ``max_queue_size``,
     ``retry_max_attempts``, ``retry_backoff``, ``retry_max_backoff``,
-    ``redact_keys``, ``redact_pii``.
+    ``redact_keys``, ``redact_pii``, and the cache of immutable server
+    responses: ``use_server_cache`` (default True, env
+    ``WEFT_USE_SERVER_CACHE``), ``server_cache_dir`` (default
+    ``~/.cache/weft``, env ``WEFT_SERVER_CACHE_DIR``) and
+    ``server_cache_size_limit`` (bytes, default 1 GB, env
+    ``WEFT_SERVER_CACHE_SIZE_LIMIT``).
     """
     global _global_client, _atexit_registered
     project = project or os.environ.get("WEFT_PROJECT")
     if not project:
         raise ValueError("weft.init requires a project name (or WEFT_PROJECT)")
     disabled = env_flag("WEFT_DISABLED") or bool(kwargs.pop("disabled", False))
+    # Per-integration settings (Weave's autopatch_settings), see integrations/_settings.py.
+    autopatch_settings = kwargs.pop("autopatch_settings", None)
     client = WeftClient(project, server_url=server_url, api_key=api_key, disabled=disabled, **kwargs)
     with _global_lock:
         old = _global_client
@@ -860,6 +919,10 @@ def init(
             _atexit_registered = True
     if old is not None and old is not client:
         old.flush(timeout=5)
+    if autopatch_settings is not None:
+        from .integrations import configure as _configure_integrations
+
+        _configure_integrations(autopatch_settings)
     if autopatch and not disabled:
         from .integrations import autopatch as _autopatch
 

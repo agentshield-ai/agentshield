@@ -6,13 +6,16 @@ import type { Query } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { tracesUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Pager, Section, Spinner } from '../../components/common'
+import { Empty, ErrorBox, Pager, Section, Spinner, Tabs } from '../../components/common'
+import { SpansTable } from '../../components/agents/SpansTable'
+import { SignalsView } from '../../components/agents/SignalsView'
 import { AgentCharts } from '../../components/agents/AgentCharts'
 import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
 import { compact, errorRate, fmtPct, RANGES, windowStart } from '../../components/agents/agentUtils'
 import '../../components/agents/agents.css'
 
 const CONV_LIMIT = 25
+type AgentTab = 'overview' | 'spans' | 'signals'
 
 function withConversation(q: Query | undefined): Query {
   const exists = { $convert: { input: { $getField: 'conversation_id' }, to: 'exists' } }
@@ -248,6 +251,16 @@ export function AgentPage() {
   const { agentName = '' } = useParams()
   const [params, setParams] = useSearchParams()
   const range = (RANGES as readonly string[]).includes(params.get('range') ?? '') ? params.get('range')! : '7d'
+  const tab: AgentTab = params.get('tab') === 'spans' || params.get('tab') === 'signals' ? (params.get('tab') as AgentTab) : 'overview'
+  const update = (patch: Record<string, string | null>) =>
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p)
+        for (const [k, v] of Object.entries(patch)) (v == null || v === '' ? n.delete(k) : n.set(k, v))
+        return n
+      },
+      { replace: true },
+    )
   const since = windowStart(range)
   const summary = useQuery({
     queryKey: ['agent-summary', projectId, agentName],
@@ -274,16 +287,36 @@ export function AgentPage() {
         <Link className="btn sm" to={tracesUrl(projectId)}>
           Traces
         </Link>
-        <div className="seg" role="group" aria-label="Time range">
-          {RANGES.map((r) => (
-            <button key={r} className={r === range ? 'on' : ''} onClick={() => setParams((p) => (p.set('range', r), p), { replace: true })}>
-              {r}
-            </button>
-          ))}
-        </div>
+        {tab === 'overview' && (
+          <div className="seg" role="group" aria-label="Time range">
+            {RANGES.map((r) => (
+              <button key={r} className={r === range ? 'on' : ''} onClick={() => setParams((p) => (p.set('range', r), p), { replace: true })}>
+                {r}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+      <Tabs<AgentTab>
+        tabs={[
+          { id: 'overview', label: 'Overview' },
+          { id: 'spans', label: 'Spans' },
+          { id: 'signals', label: 'Signals' },
+        ]}
+        value={tab}
+        onChange={(t) => {
+          const n = new URLSearchParams()
+          if (t !== 'overview') n.set('tab', t)
+          if (params.get('range')) n.set('range', params.get('range')!)
+          setParams(n)
+        }}
+      />
       <ErrorBox error={summary.error} />
-      {summary.isLoading ? (
+      {tab === 'spans' ? (
+        <SpansTable projectId={projectId} params={params} update={update} agent={agentName} />
+      ) : tab === 'signals' ? (
+        <SignalsView projectId={projectId} params={params} update={update} agent={agentName} />
+      ) : summary.isLoading ? (
         <Spinner />
       ) : !a ? (
         <Empty>No spans recorded for agent “{agentName}”.</Empty>

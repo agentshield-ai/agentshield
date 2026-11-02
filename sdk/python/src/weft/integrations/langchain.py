@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 from ._spans import RunTracker
 
+INTEGRATION = "langchain"
+
 _TRACER_CLS: Any = None
 _registered = False
 _tracer_var: Any = None
@@ -31,6 +33,20 @@ def _name(serialized: Optional[Dict[str, Any]], kwargs: Dict[str, Any], default:
     if isinstance(ids, list) and ids:
         return str(ids[-1])
     return default
+
+
+def _langgraph_info(meta: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(meta, dict) or "langgraph_node" not in meta:
+        return None
+    info = {
+        "node": meta.get("langgraph_node"),
+        "step": meta.get("langgraph_step"),
+        "triggers": meta.get("langgraph_triggers"),
+        "path": meta.get("langgraph_path"),
+        "checkpoint_ns": meta.get("langgraph_checkpoint_ns") or meta.get("checkpoint_ns"),
+        "thread_id": meta.get("thread_id"),
+    }
+    return {k: v for k, v in info.items() if v is not None}
 
 
 def _llm_usage(response: Any) -> Optional[Dict[str, Any]]:
@@ -72,13 +88,25 @@ def _build() -> Any:
 
         def __init__(self) -> None:
             super().__init__()
-            self.tracker = RunTracker()
+            self.tracker = RunTracker(INTEGRATION)
 
         def _start(self, kind: str, prefix: str, serialized: Any, inputs: Any, run_id: Any, parent_run_id: Any, kwargs: Dict[str, Any]) -> None:
             name = _name(serialized, kwargs, kind)
-            attrs: Dict[str, Any] = {"langchain": {"run_id": str(run_id), "tags": kwargs.get("tags") or [], "metadata": kwargs.get("metadata") or {}}}
-            self.tracker.start(run_id, f"langchain.{prefix}.{name}", inputs if isinstance(inputs, dict) else {"input": inputs},
-                               parent_id=parent_run_id, kind=kind, attributes=attrs)
+            meta = kwargs.get("metadata") or {}
+            attrs: Dict[str, Any] = {"langchain": {"run_id": str(run_id), "tags": kwargs.get("tags") or [], "metadata": meta}}
+            op_name = f"langchain.{prefix}.{name}"
+            display = None
+            lg = _langgraph_info(meta)
+            if lg is not None:
+                # LangGraph runs its graph, nodes and their LLM/tool calls through
+                # LangChain callbacks; tag node runs so the trace reads as the graph.
+                attrs["langgraph"] = lg
+                if kind == "chain" and lg.get("node") == name:
+                    op_name, display = f"langgraph.node.{name}", name
+            elif kind == "chain" and name == "LangGraph" and parent_run_id is None:
+                op_name, kind = "langgraph.graph", "agent"
+            self.tracker.start(run_id, op_name, inputs if isinstance(inputs, dict) else {"input": inputs},
+                               parent_id=parent_run_id, kind=kind, attributes=attrs, display_name=display)
 
         # chains
         def on_chain_start(self, serialized: Any, inputs: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any) -> None:

@@ -215,3 +215,157 @@
 .tool-bar-track > span {
   height: 100%;
 }
+
+/* Agents tabs: dashboard, spans table and signals. */
+.agents-dash-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .agents-dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 560px;
+  overflow: auto;
+  margin: -4px -8px;
+}
+.recent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  min-width: 0;
+}
+.recent-item:last-child {
+  border-bottom: none;
+}
+.recent-item:hover {
+  background: var(--panel-2);
+  text-decoration: none;
+}
+.kind-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.spans-table td {
+  vertical-align: top;
+}
+.spans-table tr.trace-hl td {
+  background: var(--accent-2);
+}
+.tag-chip {
+  background: color-mix(in srgb, var(--c4) 14%, transparent);
+  border-color: color-mix(in srgb, var(--c4) 40%, transparent);
+  color: var(--text);
+}
+.score-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.score-bar {
+  display: inline-block;
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.score-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--text-3);
+}
+.score-pill.tone-good .score-bar > span {
+  background: var(--success);
+}
+.score-pill.tone-mid .score-bar > span {
+  background: var(--warn);
+}
+.score-pill.tone-bad .score-bar > span {
+  background: var(--error);
+}
+.signal-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.signal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.signal-card:hover {
+  border-color: var(--border-strong);
+}
+.signal-card.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.signal-card-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.signal-preset {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.signal-preset.on {
+  border-color: var(--accent);
+  background: var(--accent-2);
+}
+.signal-preset.have {
+  opacity: 0.6;
+  cursor: default;
+}
+.signal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.legend-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

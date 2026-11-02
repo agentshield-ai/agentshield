@@ -136,12 +136,7 @@ class Leaderboard(Object):
     columns: List[LeaderboardColumn] = []
 
 
-class SavedView(Object):
-    """A saved traces/evaluations view: filter, query, sort and columns."""
-
-    view_type: str = "traces"
-    label: Optional[str] = None
-    definition: Dict[str, Any] = {}
+from ._saved_view import SavedView  # noqa: E402  (fluent query API; see _saved_view.py)
 
 
 __all__ = ["AnnotationSpec", "Monitor", "Leaderboard", "LeaderboardColumn", "SavedView"]

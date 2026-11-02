@@ -276,9 +276,70 @@ class Dataset(Object):
         return cls(name=name, rows=df.to_dict(orient="records"))
 
     def to_pandas(self) -> Any:
-        import pandas as pd  # type: ignore
+        try:
+            import pandas as pd  # type: ignore
+        except ImportError:
+            raise ImportError("pandas is required for Dataset.to_pandas(); install it with `pip install pandas`") from None
 
         return pd.DataFrame(list(self.rows))
+
+    @classmethod
+    def from_hf(cls, hf_dataset: Any, name: Optional[str] = None, split: Optional[str] = None) -> "Dataset":
+        """Build a dataset from a Hugging Face ``datasets.Dataset`` (or a ``DatasetDict``: ``split``,
+        default ``"train"``). Requires ``pip install datasets``."""
+        try:
+            from datasets import Dataset as HFDataset  # type: ignore
+            from datasets import DatasetDict as HFDatasetDict  # type: ignore
+        except ImportError:
+            raise ImportError("huggingface datasets is required for Dataset.from_hf(); install it with `pip install datasets`") from None
+        if isinstance(hf_dataset, HFDatasetDict):
+            key = split or "train"
+            if key not in hf_dataset:
+                raise ValueError(
+                    f"the DatasetDict has no {key!r} split (splits: {sorted(hf_dataset.keys())}); pass split=... or a datasets.Dataset"
+                )
+            if split is None and len(hf_dataset) > 1:
+                import warnings
+
+                warnings.warn("Input dataset has multiple splits. Using 'train' split by default.", stacklevel=2)
+            hf_dataset = hf_dataset[key]
+        elif not isinstance(hf_dataset, HFDataset):
+            raise TypeError(f"expected a datasets.Dataset or datasets.DatasetDict, got {type(hf_dataset).__name__}")
+        return cls(name=name, rows=hf_dataset.to_list())
+
+    def to_hf(self) -> Any:
+        """Convert to a Hugging Face ``datasets.Dataset``. Requires ``pip install datasets``."""
+        try:
+            from datasets import Dataset as HFDataset  # type: ignore
+        except ImportError:
+            raise ImportError("huggingface datasets is required for Dataset.to_hf(); install it with `pip install datasets`") from None
+        rows = list(self.rows)
+        if not rows:
+            return HFDataset.from_dict({})
+        keys: List[str] = []
+        for r in rows:
+            for k in r:
+                if k not in keys:
+                    keys.append(k)
+        return HFDataset.from_dict({k: [r.get(k) for r in rows] for k in keys})
+
+    def select(self, indices: Iterable[int]) -> "Dataset":
+        """A new (unpublished) dataset with the rows at ``indices``, in that order."""
+        idx = list(indices)
+        if not idx:
+            raise ValueError("Cannot select rows with an empty set of indices.")
+        rows = self.rows
+        return Dataset(name=self.name, description=self.description, rows=[rows[i] for i in idx])
+
+    @property
+    def columns_names(self) -> List[str]:
+        """Column names (keys of the first row)."""
+        rows = self.rows
+        return list(rows[0].keys()) if len(rows) and isinstance(rows[0], dict) else []
+
+    @property
+    def num_rows(self) -> int:
+        return len(self.rows)
 
     def add_rows(self, rows: Iterable[Any]) -> "Dataset":
         """Return a new dataset version with ``rows`` appended.

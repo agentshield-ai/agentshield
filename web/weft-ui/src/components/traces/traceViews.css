@@ -110,3 +110,134 @@
   color: var(--text-2);
   vertical-align: 1px;
 }
+
+/* flame graph */
+.flame-wrap {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 6px;
+}
+.flame-axis {
+  position: relative;
+  height: 16px;
+  margin: 2px 0 4px;
+  font-size: 10px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+.flame-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.flame-axis span:first-child {
+  transform: none;
+}
+.flame-axis span:last-child {
+  transform: translateX(-100%);
+}
+.flame {
+  position: relative;
+  min-width: 240px;
+}
+.flame-bar {
+  position: absolute;
+  height: 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: hidden;
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+  padding: 0 4px;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel) 35%, transparent);
+  opacity: 0.88;
+}
+.flame-bar:hover {
+  opacity: 1;
+}
+.flame-bar.selected {
+  opacity: 1;
+  outline: 2px solid var(--text);
+  outline-offset: -1px;
+  z-index: 1;
+}
+.flame-bar.running {
+  background-image: repeating-linear-gradient(45deg, transparent 0 6px, rgba(255, 255, 255, 0.18) 6px 12px);
+}
+.flame-bar span {
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+}
+.flame-ms {
+  opacity: 0.8;
+}
+
+/* code composition */
+.code-comp {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 4px;
+}
+.code-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.code-line:hover {
+  background: var(--panel-2);
+}
+.code-line.selected {
+  background: var(--accent-2);
+}
+.code-indent {
+  flex: none;
+  align-self: stretch;
+  border-right: 1px dotted var(--border-strong);
+}
+.code-toggle {
+  border: none;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0;
+  width: 12px;
+  font: inherit;
+}
+.code-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.code-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.code-share {
+  width: 60px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+  flex: none;
+}
+.code-share > span {
+  display: block;
+  height: 100%;
+  background: var(--c2);
+}
+.code-ms {
+  width: 60px;
+  text-align: right;
+  flex: none;
+}

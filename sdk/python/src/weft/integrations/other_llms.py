@@ -129,3 +129,10 @@ def patch_together() -> bool:
     return _patch_openai_shaped("together.resources.chat.completions", {"ChatCompletions": False, "AsyncChatCompletions": True}, "together", False)
 
 
+
+
+def patch_cerebras() -> bool:
+    """Cerebras Cloud SDK (``cerebras.cloud.sdk``): OpenAI-shaped chat completions."""
+    a = _patch_openai_shaped("cerebras.cloud.sdk.resources.chat.completions", {"CompletionsResource": False, "AsyncCompletionsResource": True}, "cerebras", False)
+    b = _patch_openai_shaped("cerebras.cloud.sdk.resources.chat", {"CompletionsResource": False, "AsyncCompletionsResource": True}, "cerebras", False)
+    return a or b

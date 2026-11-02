@@ -4,7 +4,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -32,6 +31,9 @@ import (
 // their own files: func init() { routeExtensions = append(routeExtensions, ...) }.
 var routeExtensions []func(*Server, chi.Router)
 
+// publicRouteExtensions register routes that need no authentication (SSO).
+var publicRouteExtensions []func(*Server, chi.Router)
+
 // startExtensions start background work for feature modules when a server is
 // built; the returned stop functions run on Close.
 var startExtensions []func(*Server) (stop func())
@@ -51,6 +53,8 @@ type Config struct {
 	// UI serves the web app; nil disables it.
 	UI     http.Handler
 	Logger *slog.Logger
+	// IAM configures users, sessions, SSO and the audit log (iam.go).
+	IAM IAMConfig
 }
 
 // Server is the HTTP API.
@@ -137,7 +141,11 @@ func (s *Server) Handler() http.Handler {
 			"min_required_weave_python_version": "0.0.0", "trace_server_version": Version})
 	})
 
+	for _, ext := range publicRouteExtensions {
+		ext(s, r)
+	}
 	r.Group(func(r chi.Router) {
+		r.Use(s.auditLog) // audit.go; records the outcome of auth too
 		r.Use(s.auth)
 		r.Get("/auth/check", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"ok": true}) })
 		r.Get("/auth/whoami", func(w http.ResponseWriter, r *http.Request) {
@@ -320,31 +328,13 @@ func parseKeys(raw []string) []apiKey {
 
 type ctxKey struct{}
 
+// auth authenticates (static keys, managed keys, session cookies) and
+// enforces roles; see authenticate in iam.go.
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authRequired() {
+		if r = s.authenticate(w, r); r != nil {
 			next.ServeHTTP(w, r)
-			return
 		}
-		k := []byte(presentedKey(r))
-		ok := false
-		user := ""
-		for _, want := range s.keys {
-			if len(k) > 0 && subtle.ConstantTimeCompare(k, want.key) == 1 {
-				ok, user = true, want.user
-			}
-		}
-		if ok && user != "" {
-			r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, user))
-		}
-		if !ok {
-			// Managed keys (admin.go) are hashed and may be scoped; on rejection
-			// dbKeyAuth writes the 401/403 itself and returns nil.
-			if r = s.dbKeyAuth(w, r, string(k)); r == nil {
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
 	})
 }
 
@@ -634,6 +624,7 @@ type queryStatsReq struct {
 	Filter    *store.CallsFilter `json:"filter"`
 	Query     any                `json:"query"`
 	Search    string             `json:"search"`
+	Limit     *int64             `json:"limit"`
 }
 
 func (s *Server) callsQueryStats(ctx context.Context, _ *http.Request, req *queryStatsReq) (any, error) {
@@ -641,7 +632,12 @@ func (s *Server) callsQueryStats(ctx context.Context, _ *http.Request, req *quer
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"count": n, "total_storage_size_bytes": size}, nil
+	// Weave: with a limit, count stops at the limit and has_more says whether more match.
+	hasMore := false
+	if req.Limit != nil && *req.Limit >= 0 && n > *req.Limit {
+		n, hasMore = *req.Limit, true
+	}
+	return map[string]any{"count": n, "has_more": hasMore, "total_storage_size_bytes": size}, nil
 }
 
 type callsDeleteReq struct {
@@ -665,9 +661,15 @@ type callsStatsReq struct {
 	Start         string             `json:"start"`
 	End           string             `json:"end"`
 	BucketSeconds int64              `json:"bucket_seconds"`
+	// Weave's CallStatsReq fields; when any is present the response uses
+	// Weave's shape (usage_buckets/call_buckets), see apishape.go.
+	weaveCallStatsFields
 }
 
 func (s *Server) callsStats(ctx context.Context, _ *http.Request, req *callsStatsReq) (any, error) {
+	if req.isWeave() {
+		return s.weaveCallsStats(ctx, req)
+	}
 	return s.store.ComputeCallsStats(ctx, req.ProjectID, req.Filter, req.Query, req.Search, req.Start, req.End, req.BucketSeconds)
 }
 
@@ -959,7 +961,11 @@ func (s *Server) feedbackQuery(ctx context.Context, _ *http.Request, req *feedba
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"result": fs}, nil
+	total, err := s.store.CountFeedback(ctx, req.ProjectID, req.Query)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"result": fs, "total_count": total}, nil
 }
 
 type feedbackPurgeReq struct {

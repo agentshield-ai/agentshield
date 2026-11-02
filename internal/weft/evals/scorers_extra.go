@@ -495,6 +495,12 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 			}
 			headers["Authorization"] = "Bearer " + strings.TrimSpace(sv)
 		}
+		// OAuth client credentials (token_url, client_id, client_secret_secret, scopes): oauth.go.
+		if tok, err := e.oauthToken(ctx, ac); err != nil {
+			return nil, err
+		} else if tok != "" {
+			headers["Authorization"] = "Bearer " + tok
+		}
 	}
 	b, err := json.Marshal(jsonSafe(body))
 	if err != nil {

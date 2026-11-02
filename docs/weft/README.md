@@ -33,6 +33,7 @@ make weft         # build bin/weft
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
+| `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
 
 Provider keys for the playground, LLM judges and monitors come from the

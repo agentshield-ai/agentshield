@@ -11,7 +11,7 @@ import { Empty, ErrorBox, Loading, StatusBadge } from '../../components/common'
 import { ValueView } from '../../components/ValueView'
 import { callLabel } from '../../components/traces/callUtils'
 import { ChatView, isChatMessages } from '../../components/traces/ChatView'
-import { diffStrings, fmtDelta, leafDiffs, numericDelta, similarity, type DiffOp } from '../../components/traces/diffUtils'
+import { DELTA_FORMATS, diffStrings, fmtDeltaAs, leafDiffs, numericDelta, parseDeltaFormat, similarity, type DeltaFormat, type DiffOp } from '../../components/traces/diffUtils'
 import '../../components/traces/traceViews.css'
 
 function stable(v: unknown): string {
@@ -50,6 +50,7 @@ export function CompareCallsPage() {
   const [diffOnly, setDiffOnly] = useState(false)
   const mode: Mode = params.get('mode') === 'diff' ? 'diff' : 'values'
   const baselineId = ids.includes(params.get('baseline') ?? '') ? params.get('baseline')! : ids[0]
+  const dfmt = parseDeltaFormat(params.get('nfmt'))
   const setParam = (k: string, v: string | null) =>
     setParams(
       (p) => {
@@ -125,6 +126,13 @@ export function CompareCallsPage() {
             Diff vs baseline
           </button>
         </div>
+        <div className="seg" role="group" aria-label="Numeric change format">
+          {DELTA_FORMATS.map((f) => (
+            <button key={f.id} className={dfmt === f.id ? 'on' : ''} aria-pressed={dfmt === f.id} title={f.title} onClick={() => setParam('nfmt', f.id === 'both' ? null : f.id)}>
+              {f.label}
+            </button>
+          ))}
+        </div>
         <label className="checkbox">
           <input type="checkbox" checked={diffOnly} onChange={(e) => setDiffOnly(e.target.checked)} /> Only differences
         </label>
@@ -188,11 +196,11 @@ export function CompareCallsPage() {
                       return (
                         <td key={i} className={`${d && changed ? 'diff-cell' : ''} ${i === baseIdx ? 'cmp-baseline-col' : ''}`}>
                           {mode === 'diff' && i !== baseIdx ? (
-                            <DiffCell row={r} base={base} value={v} projectId={projectId} />
+                            <DiffCell row={r} base={base} value={v} projectId={projectId} dfmt={dfmt} />
                           ) : (
                             <>
                               <PlainValue row={r} value={v} projectId={projectId} />
-                              {r.num && i !== baseIdx && <NumDelta base={base} value={v} num={r.num} />}
+                              {r.num && i !== baseIdx && <NumDelta base={base} value={v} num={r.num} dfmt={dfmt} />}
                             </>
                           )}
                         </td>
@@ -216,12 +224,12 @@ function PlainValue({ row, value: v, projectId }: { row: Row; value: Any; projec
   return <ValueView value={v} projectId={projectId} />
 }
 
-function NumDelta({ base, value, num }: { base: Any; value: Any; num?: Row['num'] }) {
+function NumDelta({ base, value, num, dfmt }: { base: Any; value: Any; num?: Row['num']; dfmt: DeltaFormat }) {
   const d = numericDelta(base, value)
   if (!d) return null
-  if (d.delta === 0) return <div className="delta-same small">±0</div>
+  if (d.delta === 0) return <div className="delta-same small">{dfmt === 'ratio' ? '1×' : '±0'}</div>
   const better = num ? (num.lowerBetter ? d.delta < 0 : d.delta > 0) : null
-  return <div className={`small ${better == null ? 'cmp-delta' : better ? 'delta-up' : 'delta-down'}`}>{fmtDelta(d, num?.fmt)}</div>
+  return <div className={`small ${better == null ? 'cmp-delta' : better ? 'delta-up' : 'delta-down'}`}>{fmtDeltaAs(base, value, dfmt, num?.fmt)}</div>
 }
 
 export function StringDiff({ ops }: { ops: DiffOp[] }) {
@@ -244,7 +252,7 @@ export function StringDiff({ ops }: { ops: DiffOp[] }) {
   )
 }
 
-function DiffCell({ row, base, value, projectId }: { row: Row; base: Any; value: Any; projectId: string }) {
+function DiffCell({ row, base, value, projectId, dfmt }: { row: Row; base: Any; value: Any; projectId: string; dfmt: DeltaFormat }) {
   if (stable(base) === stable(value))
     return (
       <span className="faint small" title="Same as the baseline">
@@ -277,7 +285,7 @@ function DiffCell({ row, base, value, projectId }: { row: Row; base: Any; value:
     return (
       <>
         <PlainValue row={row} value={value} projectId={projectId} />
-        <NumDelta base={base} value={value} num={row.num} />
+        <NumDelta base={base} value={value} num={row.num} dfmt={dfmt} />
       </>
     )
   if (typeof value === 'string' && typeof base === 'string') {
@@ -305,7 +313,7 @@ function DiffCell({ row, base, value, projectId }: { row: Row; base: Any; value:
               <span className="tdiff-del small">{preview(l.base, 80)}</span>
             ) : l.numeric ? (
               <span className="small">
-                {preview(l.value, 40)} <span className="cmp-delta">{fmtDelta(l.numeric)}</span>
+                {preview(l.value, 40)} <span className="cmp-delta">{fmtDeltaAs(l.base, l.value, dfmt)}</span>
               </span>
             ) : typeof l.base === 'string' && typeof l.value === 'string' ? (
               <span className="small tdiff-block">

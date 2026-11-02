@@ -1,5 +1,8 @@
 import { WeftObject } from './objects.js';
 import { Ref } from './refs.js';
+import { SavedView } from './savedView.js';
+
+export { SavedView };
 
 function refUri(v: unknown): string {
   if (v instanceof Ref) return v.uri();
@@ -113,28 +116,6 @@ export class Monitor extends WeftObject {
 
   fields(): Record<string, unknown> {
     return { active: this.active, sampling_rate: this.samplingRate, op_names: this.opNames, query: this.query, scorers: this.scorers };
-  }
-}
-
-/** A saved traces/evaluations view. */
-export class SavedView extends WeftObject {
-  viewType: string;
-  label: string | null;
-  definition: Record<string, unknown>;
-
-  constructor(opts: { name?: string; description?: string | null; viewType?: string; label?: string | null; definition?: Record<string, unknown> }) {
-    super(opts);
-    this.viewType = opts.viewType ?? 'traces';
-    this.label = opts.label ?? null;
-    this.definition = opts.definition ?? {};
-  }
-
-  get className(): string {
-    return 'SavedView';
-  }
-
-  fields(): Record<string, unknown> {
-    return { view_type: this.viewType, label: this.label, definition: this.definition };
   }
 }
 

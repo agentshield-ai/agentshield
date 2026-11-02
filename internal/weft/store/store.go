@@ -38,6 +38,8 @@ type Store struct {
 	w    *sql.DB
 	r    *sql.DB
 	aead cipher.AEAD // encrypts secrets; see secrets.go
+	// files, when set, holds file contents outside SQLite; see filebackend.go.
+	files FileBackend
 }
 
 const schema = `

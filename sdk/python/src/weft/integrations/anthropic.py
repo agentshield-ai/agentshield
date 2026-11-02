@@ -7,7 +7,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from .._usage import add_usage
-from ._common import Accumulator, LLMSpec, _inputs, _tracing, make_wrapper, patch_attr, to_dict
+from ._common import Accumulator, LLMSpec, _inputs, _tracing, finish_call, make_wrapper, patch_attr, start_call, to_dict
 
 
 class MessageAccumulator(Accumulator):
@@ -102,11 +102,9 @@ class _StreamManagerProxy:
         self._stream: Any = None
 
     def _start(self) -> None:
-        self._client = _tracing()
+        self._client = _tracing("anthropic")
         if self._client is not None:
-            from .._client import _synthetic_op
-
-            self._call = self._client.create_call(_synthetic_op("anthropic.messages.stream", "llm"), self._inputs)
+            self._call = start_call(self._client, LLMSpec("anthropic.messages.stream"), self._inputs)
 
     def _end(self, exc: Optional[BaseException]) -> None:
         if self._call is None:
@@ -118,7 +116,7 @@ class _StreamManagerProxy:
         except Exception:
             out = None
         record_anthropic_usage(self._call, out)
-        self._client.finish_call(self._call, output=out, exception=exc)
+        finish_call(self._client, self._call, out, exc)
 
     def __enter__(self) -> Any:
         self._start()
@@ -147,7 +145,7 @@ def _stream_wrapper(orig: Any) -> Any:
 
     def stream(*args: Any, **kwargs: Any) -> Any:
         mgr = orig(*args, **kwargs)
-        if _tracing() is None:
+        if _tracing("anthropic") is None:
             return mgr
         return _StreamManagerProxy(mgr, _inputs(spec, args, kwargs))
 

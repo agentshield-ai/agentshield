@@ -1,5 +1,7 @@
 // Pure helpers for dashboards and custom charts (unit tested in dashboards.test.ts).
-import type { CallsFilter, Operation, Query } from '../../api/types'
+import type { Call, CallsFilter, Operation, Query } from '../../api/types'
+import { opDisplayName } from '../../api/refs'
+import { callCost, callLatencyMs, callStatus, callTokens, getPath } from '../../lib/format'
 import type { ChartType, DashboardPanel, DashboardVal, MetricAgg, MetricSpec, MetricsReq, MetricsRes } from '../../api/dashboards'
 
 export const TIME_RANGES: { id: string; label: string; seconds: number | null }[] = [
@@ -269,5 +271,84 @@ export function movePanel(panels: DashboardPanel[], id: string, dir: -1 | 1): Da
   if (i < 0 || j < 0 || j >= panels.length) return panels
   const out = [...panels]
   ;[out[i], out[j]] = [out[j], out[i]]
+  return out
+}
+
+// ---------------------------------------------------------------- scatter (metric vs metric per call)
+
+function numOf(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'boolean') return v ? 1 : 0
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v)
+  return null
+}
+
+/** A per-call value for a metric field: built-in fields, feedback.<type>.<path>, or a dotted call path. */
+export function callFieldValue(c: Call, field: string): number | null {
+  switch (field) {
+    case 'latency_ms':
+      return callLatencyMs(c)
+    case 'total_tokens':
+      return callTokens(c).total || null
+    case 'prompt_tokens':
+      return callTokens(c).prompt || null
+    case 'completion_tokens':
+      return callTokens(c).completion || null
+    case 'cost':
+    case 'cost_usd':
+      return callCost(c)
+  }
+  if (field.startsWith('feedback.')) {
+    const rest = field.slice('feedback.'.length)
+    const fb = (c.feedback ?? []).find((f) => rest === f.feedback_type || rest.startsWith(f.feedback_type + '.'))
+    if (!fb) return null
+    const sub = rest.slice(fb.feedback_type.length + 1)
+    return numOf(sub ? getPath(fb.payload, sub) : fb.payload)
+  }
+  return numOf(getPath(c, field))
+}
+
+/** The scatter series a call belongs to for a dashboard group-by. */
+export function callGroupValue(c: Call, groupBy: string | undefined): string {
+  switch (groupBy || '') {
+    case '':
+      return ''
+    case 'op_name':
+      return opDisplayName(c.op_name)
+    case 'status':
+      return callStatus(c)
+    case 'model': {
+      const models = Object.keys(c.summary?.usage ?? {})
+      return models.length === 1 ? models[0] : models.length ? 'multiple' : '(none)'
+    }
+    case 'thread':
+      return c.thread_id ?? '(none)'
+    case 'user':
+      return c.wb_user_id ?? '(none)'
+  }
+  const v = getPath(c, groupBy!)
+  return v == null ? '(none)' : String(v)
+}
+
+export interface ScatterSeries {
+  group: string
+  points: { x: number; y: number; id: string; label: string }[]
+}
+
+/** Points per group for calls that have both values; at most `maxGroups` groups, the rest folded into "Other". */
+export function scatterSeries(calls: Call[], xField: string, yField: string, groupBy?: string, maxGroups = 6): ScatterSeries[] {
+  const by = new Map<string, ScatterSeries['points']>()
+  for (const c of calls) {
+    const x = callFieldValue(c, xField)
+    const y = callFieldValue(c, yField)
+    if (x == null || y == null) continue
+    const g = callGroupValue(c, groupBy)
+    if (!by.has(g)) by.set(g, [])
+    by.get(g)!.push({ x, y, id: c.id, label: c.display_name || opDisplayName(c.op_name) })
+  }
+  const groups = [...by.entries()].sort((a, b) => b[1].length - a[1].length)
+  const out: ScatterSeries[] = groups.slice(0, maxGroups).map(([group, points]) => ({ group, points }))
+  const rest = groups.slice(maxGroups).flatMap(([, p]) => p)
+  if (rest.length) out.push({ group: '__other__', points: rest })
   return out
 }

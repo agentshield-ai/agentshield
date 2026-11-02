@@ -105,22 +105,76 @@ def _usage(call: Any, out: Any) -> None:
         record_openai_usage(out, None, call)
 
 
-def chat_spec(prefix: str = "openai", include_usage: bool = True, skip_first_arg: bool = True) -> LLMSpec:
+# Known OpenAI-compatible endpoints, matched against the client's base URL host.
+PROVIDER_HOSTS = (
+    ("api.openai.com", "openai"),
+    ("openai.azure.com", "azure_openai"),
+    ("azure.com", "azure"),
+    ("integrate.api.nvidia.com", "nvidia_nim"),
+    ("ai.api.nvidia.com", "nvidia_nim"),
+    ("nvidia.com", "nvidia_nim"),
+    ("openrouter.ai", "openrouter"),
+    ("api.groq.com", "groq"),
+    ("together.xyz", "together"),
+    ("api.together.ai", "together"),
+    ("cerebras.ai", "cerebras"),
+    ("fireworks.ai", "fireworks"),
+    ("deepseek.com", "deepseek"),
+    ("api.x.ai", "xai"),
+    ("api.mistral.ai", "mistral"),
+    ("generativelanguage.googleapis.com", "google"),
+    ("api.perplexity.ai", "perplexity"),
+    ("inference.wandb.ai", "wandb_inference"),
+    ("router.huggingface.co", "huggingface"),
+    ("localhost", "local"),
+    ("127.0.0.1", "local"),
+)
+
+
+def provider_of(resource: Any) -> Optional[Dict[str, Any]]:
+    """``{"weft": {"provider": ..., "base_url": ...}}`` for the client behind a resource.
+
+    Lets self-hosted or hosted NVIDIA NIM, Azure, OpenRouter, vLLM ... endpoints
+    used through the ``openai`` SDK be told apart (op names stay ``openai.*``).
+    """
+    c = getattr(resource, "_client", None)
+    base = getattr(c, "base_url", None)
+    if base is None:
+        return None
+    url = str(base)
+    host = getattr(base, "host", None) or url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    host = str(host).lower()
+    provider = next((p for h, p in PROVIDER_HOSTS if host == h or host.endswith("." + h) or h in host), None)
+    if provider is None:
+        # a self-hosted NIM is served under /v1 like any other OpenAI-compatible server
+        provider = "openai_compatible"
+    return {"weft": {"provider": provider, "base_url": url}}
+
+
+def _provider_attrs(args: Any, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return provider_of(args[0]) if args else None
+
+
+def chat_spec(prefix: str = "openai", include_usage: bool = True, skip_first_arg: bool = True, integration: Optional[str] = None) -> LLMSpec:
     return LLMSpec(
         f"{prefix}.chat.completions.create",
         prepare_kwargs=_chat_prepare(include_usage),
         accumulator=ChatCompletionAccumulator,
         record_usage=_usage,
         skip_first_arg=skip_first_arg,
+        integration=integration,
+        attributes=_provider_attrs if (skip_first_arg and prefix == "openai") else None,
     )
 
 
-def responses_spec(prefix: str = "openai", skip_first_arg: bool = True) -> LLMSpec:
+def responses_spec(prefix: str = "openai", skip_first_arg: bool = True, integration: Optional[str] = None) -> LLMSpec:
     return LLMSpec(
         f"{prefix}.responses.create",
         accumulator=ResponsesAccumulator,
         record_usage=_usage,
         skip_first_arg=skip_first_arg,
+        integration=integration,
+        attributes=_provider_attrs if (skip_first_arg and prefix == "openai") else None,
     )
 
 

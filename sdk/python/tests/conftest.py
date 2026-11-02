@@ -9,6 +9,13 @@ import weft  # noqa: E402
 from fake_server import FakeWeft  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolated_server_cache(tmp_path_factory, monkeypatch):
+    """Keep the on-disk server-response cache per test (and out of ~/.cache)."""
+    if not os.environ.get("WEFT_TEST_KEEP_CACHE_DIR"):
+        monkeypatch.setenv("WEFT_SERVER_CACHE_DIR", str(tmp_path_factory.mktemp("weft-cache")))
+
+
 @pytest.fixture
 def fake():
     srv = FakeWeft()

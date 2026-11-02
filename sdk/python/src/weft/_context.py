@@ -121,6 +121,26 @@ def current_thread_context() -> Optional[ThreadContext]:
     return _thread.get()
 
 
+# Eval metadata of the EvaluationLogger prediction being recorded (``weave.eval.*``
+# span attributes: run_id, predict_and_score_call_id, project_id, kind, ...).
+_eval_span: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("weft_eval_span", default=None)
+
+
+def current_eval_span_context() -> Optional[Dict[str, Any]]:
+    return _eval_span.get()
+
+
+def set_eval_span_context(ctx: Optional[Dict[str, Any]]) -> contextvars.Token:
+    return _eval_span.set(ctx)
+
+
+def reset_eval_span_context(token: contextvars.Token) -> None:
+    try:
+        _eval_span.reset(token)
+    except ValueError:
+        _eval_span.set(None)
+
+
 class ThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     """A ThreadPoolExecutor that propagates the weft call context to workers."""
 

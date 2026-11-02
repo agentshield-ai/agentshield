@@ -65,7 +65,9 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 	where := []string{"s.project_id = ?", "c.deleted_at IS NULL"}
 	args := []any{projectID}
 	if !f.AllCalls {
-		where = append(where, "(s.agent_name != '' OR s.conversation_id != '' OR s.operation_name != '')")
+		where = append(where, "(s.agent_name != '' OR s.conversation_id != '' OR s.operation_name != '')",
+			// Judge, monitor and signal LLM calls Weft makes itself are not agent activity.
+			"COALESCE(json_extract(c.attributes, '$.weft.internal'), 0) = 0")
 	}
 	if f.After > 0 {
 		where = append(where, "c.started_at >= ?")
@@ -1257,12 +1259,12 @@ type AgentSpansQueryReq struct {
 	GroupFilters       []AgentGroupFilter      `json:"group_filters"`
 	IncludeCosts       bool                    `json:"include_costs"`
 	IncludeDetails     bool                    `json:"include_details"`
-	InsightFilters     []any                   `json:"insight_filters"`
+	InsightFilters     []AgentInsightFilter    `json:"insight_filters"`
 	Limit              *int                    `json:"limit"`
 	Measures           []AgentMeasureSpec      `json:"measures"`
 	Offset             int                     `json:"offset"`
 	Query              any                     `json:"query"`
-	SignalFilters      any                     `json:"signal_filters"`
+	SignalFilters      *AgentSignalFilters     `json:"signal_filters"`
 	SortBy             []SortBy                `json:"sort_by"`
 	StartedAfter       *string                 `json:"started_after"`
 	StartedBefore      *string                 `json:"started_before"`
@@ -1548,6 +1550,9 @@ func (s *Store) QueryAgentSpans(ctx context.Context, req AgentSpansQueryReq) (*A
 	}
 	spans, err := s.filteredSpans(ctx, pid, req.Query, req.StartedAfter, req.StartedBefore, needAttrs, agentSpanFilter{})
 	if err != nil {
+		return nil, err
+	}
+	if spans, err = s.applySignalFilters(ctx, pid, spans, req.SignalFilters, req.InsightFilters); err != nil {
 		return nil, err
 	}
 	res := &AgentSpansQueryRes{Groups: []*AgentSpanGroup{}, Spans: []*AgentSpan{}}
@@ -2079,19 +2084,19 @@ type AgentBucketBy struct {
 
 // AgentSpanStatsReq is the body of /agents/spans/stats.
 type AgentSpanStatsReq struct {
-	ProjectID      string             `json:"project_id"`
-	Start          string             `json:"start"`
-	End            *string            `json:"end"`
-	BucketBy       *AgentBucketBy     `json:"bucket_by"`
-	Granularity    *int64             `json:"granularity"`
-	GroupBy        []AgentValueRef    `json:"group_by"`
-	GroupFilters   []AgentGroupFilter `json:"group_filters"`
-	GroupLimit     int                `json:"group_limit"`
-	InsightFilters []any              `json:"insight_filters"`
-	Metrics        []AgentStatsMetric `json:"metrics"`
-	Query          any                `json:"query"`
-	SignalFilters  any                `json:"signal_filters"`
-	Timezone       string             `json:"timezone"`
+	ProjectID      string               `json:"project_id"`
+	Start          string               `json:"start"`
+	End            *string              `json:"end"`
+	BucketBy       *AgentBucketBy       `json:"bucket_by"`
+	Granularity    *int64               `json:"granularity"`
+	GroupBy        []AgentValueRef      `json:"group_by"`
+	GroupFilters   []AgentGroupFilter   `json:"group_filters"`
+	GroupLimit     int                  `json:"group_limit"`
+	InsightFilters []AgentInsightFilter `json:"insight_filters"`
+	Metrics        []AgentStatsMetric   `json:"metrics"`
+	Query          any                  `json:"query"`
+	SignalFilters  *AgentSignalFilters  `json:"signal_filters"`
+	Timezone       string               `json:"timezone"`
 }
 
 // AgentStatsColumn describes one column of the stats rows.
@@ -2206,6 +2211,9 @@ func (s *Store) SpanStats(ctx context.Context, req AgentSpanStatsReq) (*AgentSpa
 	startStr, endStr := FormatMicros(startUS), FormatMicros(endUS)
 	spans, err := s.filteredSpans(ctx, pid, req.Query, &startStr, &endStr, needAttrs, agentSpanFilter{})
 	if err != nil {
+		return nil, err
+	}
+	if spans, err = s.applySignalFilters(ctx, pid, spans, req.SignalFilters, req.InsightFilters); err != nil {
 		return nil, err
 	}
 

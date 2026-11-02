@@ -1,4 +1,4 @@
-import { post } from './client'
+import { get, post } from './client'
 import type { Any, Query, SortBy } from './types'
 
 // Weave's Agents API (/agents/*). Shapes follow the weave server SDK, plus
@@ -82,6 +82,13 @@ export interface AgentSpan {
   custom_attrs_float: Record<string, number>
   custom_attrs_bool: Record<string, boolean>
   is_turn: boolean
+  error_type?: string | null
+  finish_reasons?: string[] | null
+  span_kind?: string | null
+  reasoning_tokens?: number | null
+  cache_read_input_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+  response_model?: string | null
 }
 
 export interface MessagePreview {
@@ -115,9 +122,30 @@ export interface SpanGroup {
   trace_count: number
 }
 
+export interface SignalRatingFilter {
+  op: 'gte' | 'gt' | 'lte' | 'lt' | 'eq'
+  scorer_key: string
+  value: number
+}
+
+export interface SignalFilters {
+  ratings?: SignalRatingFilter[]
+  tags?: string[]
+}
+
+export type InsightField = 'intent_category' | 'intent_sentiment' | 'failure_category' | 'failure_severity' | 'intent_topic_id' | 'failure_topic_id'
+
+export interface InsightFilter {
+  field: InsightField
+  values: string[]
+  exclude?: boolean
+}
+
 export interface SpansQueryReq {
   project_id: string
   query?: Query
+  signal_filters?: SignalFilters
+  insight_filters?: InsightFilter[]
   group_by?: ValueRef[]
   measures?: MeasureSpec[]
   sort_by?: SortBy[]
@@ -153,6 +181,8 @@ export interface SpanStatsReq {
   group_limit?: number
   metrics?: StatsMetric[]
   timezone?: string
+  signal_filters?: SignalFilters
+  insight_filters?: InsightFilter[]
 }
 
 export interface SpanStatsRes {
@@ -174,6 +204,10 @@ export interface ChatFeedback {
   created_at: string | null
   scorer_ratings: Record<string, number>
   scorer_tags: string[]
+  scorer_rating_confidences?: Record<string, number>
+  scorer_rating_reasons?: Record<string, string>
+  scorer_tag_confidences?: Record<string, number>
+  scorer_tag_reasons?: Record<string, string>
 }
 
 export interface ChatMessage {
@@ -278,6 +312,126 @@ export interface SearchResult {
   matched_messages: { content_digest: string; content_preview: string; role: string; span_id: string; started_at: string; trace_id: string }[]
 }
 
+// ---------------------------------------------------------------- signals (Weft extensions)
+
+export type SignalKind = 'tag' | 'rating'
+
+export interface SignalPreset {
+  id: string
+  name: string
+  kind: SignalKind
+  description: string
+}
+
+/** A signal to run: a preset id, or a custom definition. */
+export interface SignalSpec {
+  id?: string
+  preset?: string
+  name?: string
+  kind?: SignalKind
+  description?: string
+}
+
+export interface SignalRunReq {
+  project_id: string
+  signals: SignalSpec[]
+  model: string
+  agent_name?: string
+  conversation_id?: string
+  trace_ids?: string[]
+  started_after?: string
+  started_before?: string
+  limit?: number
+  rescore?: boolean
+}
+
+export interface SignalRunRes {
+  turns: number
+  scored: number
+  skipped: number
+  failed: number
+  results: { span_id: string; trace_id: string; signal: string; kind: SignalKind; score?: number; matched?: boolean; confidence?: number; reason?: string; feedback_id?: string; error?: string }[]
+}
+
+export interface SignalResult {
+  feedback_id: string
+  feedback_type: string
+  kind: SignalKind
+  signal: string
+  signal_id: string | null
+  signal_name: string | null
+  score: number | null
+  tags: string[]
+  confidence: number | null
+  reason: string | null
+  creator: string | null
+  created_at: string
+  span_id: string
+  trace_id: string
+  conversation_id: string | null
+  conversation_name: string | null
+  agent_name: string | null
+  agent_version: string | null
+  turn_started_at: string | null
+  turn_status: StatusCode
+  last_message: MessagePreview | null
+  scorer_call_id: string | null
+}
+
+export interface SignalSummary {
+  signal: string
+  signal_name: string | null
+  kind: SignalKind
+  count: number
+  matched: number
+  avg: number | null
+  tag_counts?: Record<string, number>
+}
+
+export interface SignalsQueryReq {
+  project_id: string
+  agent_name?: string
+  conversation_id?: string
+  trace_ids?: string[]
+  signal?: string
+  kind?: SignalKind
+  tag?: string
+  min_score?: number
+  max_score?: number
+  matched_only?: boolean
+  started_after?: string
+  started_before?: string
+  limit?: number
+  offset?: number
+}
+
+export interface SignalsQueryRes {
+  results: SignalResult[]
+  summary: SignalSummary[]
+  total_count: number
+}
+
+/** One item of Weave's feedback batch schema (scorer and span fields included). */
+export interface AgentFeedbackItem {
+  project_id: string
+  weave_ref: string
+  feedback_type: string
+  payload: Record<string, Any>
+  scorer_ratings?: Record<string, number>
+  scorer_rating_confidences?: Record<string, number>
+  scorer_rating_reasons?: Record<string, string>
+  scorer_tags?: string[]
+  scorer_tag_confidences?: Record<string, number>
+  scorer_tag_reasons?: Record<string, string>
+}
+
+export const signalsApi = {
+  presets: () => get<{ presets: SignalPreset[] }>('/agents/signals/presets'),
+  run: (body: SignalRunReq) => post<SignalRunRes>('/agents/signals/run', body),
+  query: (body: SignalsQueryReq) => post<SignalsQueryRes>('/agents/signals/query', body),
+  feedback: (batch: AgentFeedbackItem[]) => post<{ res: { id: string }[] }>('/agents/feedback/batch/create', { batch }),
+}
+
 export const agentsApi = {
   query: (body: { project_id: string; filters?: { agent_name?: string }; include_costs?: boolean; limit?: number; offset?: number; sort_by?: SortBy[] }) =>
     post<{ agents: AgentStats[]; total_count: number }>('/agents/query', body),
@@ -285,6 +439,11 @@ export const agentsApi = {
     post<{ versions: AgentStats[]; total_count: number }>('/agents/agent-versions/query', body),
   spans: (body: SpansQueryReq) => post<SpansQueryRes>('/agents/spans/query', body),
   stats: (body: SpanStatsReq) => post<SpanStatsRes>('/agents/spans/stats', body),
+  customAttrs: (body: { project_id: string; started_after?: string; limit?: number }) =>
+    post<{ attributes: { key: string; source: NonNullable<ValueRef['source']>; value_type: string; span_count: number }[]; has_more: boolean }>(
+      '/agents/spans/custom-attrs/schema',
+      body,
+    ),
   conversationChat: (body: { project_id: string; conversation_id: string; include_feedback?: boolean; include_model_tool_calls?: boolean; limit?: number; offset?: number }) =>
     post<ConversationChat>('/agents/conversations/chat', body),
   conversationSpans: (body: { project_id: string; conversation_ids: string[] }) =>

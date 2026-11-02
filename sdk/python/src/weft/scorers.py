@@ -501,3 +501,19 @@ __all__ = [
     "PydanticScorer",
     "levenshtein",
 ]
+
+
+_LOCAL = (
+    "WeaveToxicityScorerV1", "WeaveBiasScorerV1", "WeaveCoherenceScorerV1", "WeaveFluencyScorerV1",
+    "WeaveHallucinationScorerV1", "WeaveContextRelevanceScorerV1", "WeaveTrustScorerV1", "PresidioScorer",
+    "WeaveScorerResult",
+)
+
+
+def __getattr__(name: str) -> Any:
+    """Local small-model scorers live in ``weft.local_scorers`` (imported lazily; optional deps)."""
+    if name in _LOCAL:
+        from . import local_scorers
+
+        return getattr(local_scorers, name)
+    raise AttributeError(f"module 'weft.scorers' has no attribute {name!r}")

@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from ._spans import RunTracker, as_exception
 
+INTEGRATION = "openai_agents"
+
 _registered = False
 
 
@@ -81,7 +83,7 @@ def _build() -> Any:
         """Maps OpenAI Agents SDK traces and spans to weft calls."""
 
         def __init__(self) -> None:
-            self.tracker = RunTracker()
+            self.tracker = RunTracker(INTEGRATION)
 
         def on_trace_start(self, trace: Any) -> None:
             name = getattr(trace, "name", None) or "agent_run"

@@ -127,6 +127,7 @@ type evalPlan struct {
 	rows       []store.TableRow
 	scorers    []*Scorer
 	trials     int
+	pred       *predictor // how the model runs (runtimes.go)
 }
 
 // EvaluateModel validates inputs, records the root call and runs the
@@ -144,10 +145,11 @@ func (e *Engine) EvaluateModel(ctx context.Context, projectID, evaluationRef, mo
 	if err != nil {
 		return "", err
 	}
-	if c := className(modelVal); c != "LLMStructuredCompletionModel" {
-		return "", store.Invalidf("model class %q cannot run on the server; use an LLMStructuredCompletionModel", c)
+	pred, err := e.predictorFor(ctx, pid, modelVal)
+	if err != nil {
+		return "", err
 	}
-	plan := &evalPlan{projectID: pid, evalRef: evalObj.Ref(), modelRef: modelObj.Ref(), model: modelVal, trials: 1}
+	plan := &evalPlan{projectID: pid, evalRef: evalObj.Ref(), modelRef: modelObj.Ref(), model: modelVal, trials: 1, pred: pred}
 	if t, ok := store.ToFloat(evalVal["trials"]); ok && t >= 1 {
 		plan.trials = min(int(t), 20)
 	}
@@ -296,18 +298,29 @@ func (e *Engine) predictAndScore(ctx context.Context, plan *evalPlan, root *call
 	return scores, latency
 }
 
-// predict runs an LLMStructuredCompletionModel on one example.
+// predict runs the model on one example, recorded as a <Class>.predict call.
 func (e *Engine) predict(ctx context.Context, plan *evalPlan, parent *callRec, example map[string]any) (any, error) {
 	inputs := map[string]any{"self": plan.modelRef}
 	for k, v := range example {
 		inputs[k] = v
 	}
-	rec, err := e.startCall(ctx, plan.projectID, "LLMStructuredCompletionModel.predict", parent, inputs, nil, nil)
+	pred := plan.pred
+	if pred == nil {
+		pred = &predictor{kind: "llm", opName: "LLMStructuredCompletionModel.predict", llmModel: plan.model}
+	}
+	rec, err := e.startCall(ctx, plan.projectID, pred.opName, parent, inputs, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	output, predErr := e.PredictWith(ctx, plan.projectID, plan.model, example, rec)
-	if err := rec.end(ctx, output, nil, predErr); err != nil {
+	var output any
+	var summary map[string]any
+	var predErr error
+	if pred.kind == "remote" {
+		output, summary, predErr = e.remotePredict(ctx, plan.projectID, pred, plan.modelRef, example)
+	} else {
+		output, predErr = e.PredictWith(ctx, plan.projectID, pred.llmModel, example, rec)
+	}
+	if err := rec.end(ctx, output, summary, predErr); err != nil {
 		return nil, err
 	}
 	return output, predErr
@@ -343,6 +356,9 @@ func (e *Engine) PredictWith(ctx context.Context, projectID string, model map[st
 			text = string(b)
 		}
 		messages = []any{map[string]any{"role": "user", "content": text}}
+		if sp, ok := params["system_prompt"].(string); ok && sp != "" {
+			messages = append([]any{map[string]any{"role": "system", "content": Render(sp, vars)}}, messages...)
+		}
 	}
 	inputs := map[string]any{"model": modelID, "messages": messages}
 	jsonMode := false
