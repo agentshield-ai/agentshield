@@ -1,0 +1,1 @@
+import{j as e}from"./index-DKMvee-B.js";function r(a){return e.jsxs("div",{className:"page",children:[e.jsx("h1",{children:"CompareEvaluationsPage"}),e.jsx("p",{className:"muted",children:"Not implemented yet."})]})}export{r as CompareEvaluationsPage};

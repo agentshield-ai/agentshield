@@ -1,0 +1,1 @@
+import{j as e}from"./index-DKMvee-B.js";function a(r){return e.jsxs("div",{className:"page",children:[e.jsx("h1",{children:"PlaygroundPage"}),e.jsx("p",{className:"muted",children:"Not implemented yet."})]})}export{a as PlaygroundPage};

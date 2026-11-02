@@ -1,0 +1,1 @@
+import{j as e}from"./index-DKMvee-B.js";function i(s){return e.jsxs("div",{className:"page",children:[e.jsx("h1",{children:"ObjectDiffPage"}),e.jsx("p",{className:"muted",children:"Not implemented yet."})]})}export{i as ObjectDiffPage};
