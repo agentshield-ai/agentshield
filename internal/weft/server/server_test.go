@@ -269,3 +269,30 @@ func TestBadRequests(t *testing.T) {
 		t.Errorf("missing object -> %d, want 404", code)
 	}
 }
+
+func TestKeyOrderPreserved(t *testing.T) {
+	e := newEnv(t)
+	code, out := e.raw("/table/create", []byte(`{"table":{"project_id":"`+pid+`","rows":[{"question":"q","expected":"a","b":1}]}}`), nil)
+	if code != 200 {
+		t.Fatal(string(out))
+	}
+	var tc map[string]any
+	_ = json.Unmarshal(out, &tc)
+	_, rows := e.raw("/table/query", map[string]any{"project_id": pid, "digest": tc["digest"]}, nil)
+	if !strings.Contains(string(rows), `{"question":"q","expected":"a","b":1}`) {
+		t.Fatalf("row order lost: %s", rows)
+	}
+	code, out = e.raw("/obj/create", []byte(`{"obj":{"project_id":"`+pid+`","object_id":"o","val":{"zeta":1,"alpha":{"y":2,"x":3}}}}`), nil)
+	if code != 200 {
+		t.Fatal(string(out))
+	}
+	_, obj := e.raw("/obj/read", map[string]any{"project_id": pid, "object_id": "o", "digest": "latest"}, nil)
+	if !strings.Contains(string(obj), `"val":{"zeta":1,"alpha":{"y":2,"x":3}}`) {
+		t.Fatalf("object order lost: %s", obj)
+	}
+	// Same content in another order dedupes to the same digest.
+	_, out2 := e.raw("/obj/create", []byte(`{"obj":{"project_id":"`+pid+`","object_id":"o","val":{"alpha":{"x":3,"y":2},"zeta":1}}}`), nil)
+	if !strings.Contains(string(out2), `"version_index":0`) {
+		t.Fatalf("reordered content should dedupe: %s", out2)
+	}
+}

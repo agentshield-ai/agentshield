@@ -277,7 +277,7 @@ func TestObjectsAndRefs(t *testing.T) {
 	if err != nil || len(objs) != 1 || *objs[0].VersionCount != 2 {
 		t.Fatalf("objs = %v %v", objs, err)
 	}
-	nd, upd, err := s.UpdateTable(ctx, proj, tdig, []TableUpdate{{Append: &struct{ Row any }{map[string]any{"q": "c"}}}})
+	nd, upd, err := s.UpdateTable(ctx, proj, tdig, []TableUpdate{{Append: &struct{ Row json.RawMessage }{json.RawMessage(`{"q":"c"}`)}}})
 	if err != nil || len(upd) != 1 {
 		t.Fatal(err)
 	}

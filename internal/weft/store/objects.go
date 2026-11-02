@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strconv"
@@ -28,6 +30,20 @@ type Obj struct {
 	Aliases         []string `json:"aliases"`
 	SizeBytes       int64    `json:"size_bytes"`
 	VersionCount    *int     `json:"version_count,omitempty"`
+
+	valRaw string // stored JSON with the publisher's key order
+}
+
+// MarshalJSON emits val with its original key order.
+func (o *Obj) MarshalJSON() ([]byte, error) {
+	type plain Obj
+	if o.valRaw == "" || !json.Valid([]byte(o.valRaw)) {
+		return json.Marshal((*plain)(o))
+	}
+	return json.Marshal(struct {
+		*plain
+		Val json.RawMessage `json:"val"`
+	}{(*plain)(o), json.RawMessage(o.valRaw)})
 }
 
 // Ref returns the object's ref URI.
@@ -138,6 +154,39 @@ func SanitizeObjectID(name string) string {
 // CreateObject stores a new object version (or returns the existing one with
 // the same digest). Returns digest and version index.
 func (s *Store) CreateObject(ctx context.Context, projectID, objectID string, val any, forcedClass string, userID *string) (string, int, error) {
+	return s.CreateObjectRaw(ctx, projectID, objectID, val, nil, forcedClass, userID)
+}
+
+// prepValue normalises a value and returns it, its digest and the text to
+// store. When raw JSON is supplied its key order is preserved in storage;
+// the digest always uses canonical (sorted) JSON.
+func prepValue(val any, raw []byte) (any, string, string, error) {
+	if raw != nil {
+		raw = bytes.ReplaceAll(raw, []byte(`"weave:///`), []byte(`"weft:///`))
+		v, err := refs.Decode(raw)
+		if err != nil {
+			return nil, "", "", err
+		}
+		d, _, err := refs.Digest(v)
+		if err != nil {
+			return nil, "", "", err
+		}
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, raw); err != nil {
+			return nil, "", "", err
+		}
+		return v, d, buf.String(), nil
+	}
+	val = refs.NormalizeValue(val)
+	d, canon, err := refs.Digest(val)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return val, d, string(canon), nil
+}
+
+// CreateObjectRaw is CreateObject with the value's original JSON bytes.
+func (s *Store) CreateObjectRaw(ctx context.Context, projectID, objectID string, val any, raw []byte, forcedClass string, userID *string) (string, int, error) {
 	pid, err := refs.NormalizeProject(projectID)
 	if err != nil {
 		return "", 0, &InvalidError{Msg: err.Error()}
@@ -145,8 +194,7 @@ func (s *Store) CreateObject(ctx context.Context, projectID, objectID string, va
 	if !objectIDRe.MatchString(objectID) {
 		return "", 0, Invalidf("invalid object_id %q: use letters, digits, '_', '-', '.' (max 128)", objectID)
 	}
-	val = refs.NormalizeValue(val)
-	digest, canon, err := refs.Digest(val)
+	val, digest, canon, err := prepValue(val, raw)
 	if err != nil {
 		return "", 0, Invalidf("val is not JSON-serialisable: %v", err)
 	}
@@ -177,7 +225,7 @@ func (s *Store) CreateObject(ctx context.Context, projectID, objectID string, va
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO objects(project_id, object_id, digest, version_index, kind, base_object_class, leaf_object_class,
 			val, created_at, wb_user_id, size_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			pid, objectID, digest, version, kind, nullStr(base), nullStr(leaf), string(canon), nowMicros(), nullStr(userID), len(canon))
+			pid, objectID, digest, version, kind, nullStr(base), nullStr(leaf), canon, nowMicros(), nullStr(userID), len(canon))
 		return err
 	})
 	return digest, version, err
@@ -204,6 +252,7 @@ func scanObj(rows interface{ Scan(...any) error }, withVal bool) (*Obj, error) {
 	o.IsLatest = latest.Valid && latest.Bool
 	if withVal {
 		o.Val = decodeJSON(val)
+		o.valRaw = val
 	}
 	o.Aliases = []string{}
 	return &o, nil

@@ -17,20 +17,44 @@ type TableRow struct {
 	Digest        string `json:"digest"`
 	Val           any    `json:"val"`
 	OriginalIndex int    `json:"original_index"`
+
+	valRaw string
+}
+
+// MarshalJSON emits val with its original key order.
+func (r TableRow) MarshalJSON() ([]byte, error) {
+	type plain TableRow
+	if r.valRaw == "" || !json.Valid([]byte(r.valRaw)) {
+		return json.Marshal(plain(r))
+	}
+	return json.Marshal(struct {
+		plain
+		Val json.RawMessage `json:"val"`
+	}{plain(r), json.RawMessage(r.valRaw)})
 }
 
 const maxTableRows = 1_000_000
 
-func (s *Store) insertRows(ctx context.Context, tx *sql.Tx, projectID string, rows []any) ([]string, error) {
-	digests := make([]string, len(rows))
-	for i, r := range rows {
-		r = refs.NormalizeValue(r)
-		d, canon, err := refs.Digest(r)
+func (s *Store) insertRows(ctx context.Context, tx *sql.Tx, projectID string, rows []any, raws []json.RawMessage) ([]string, error) {
+	n := len(rows)
+	if raws != nil {
+		n = len(raws)
+	}
+	digests := make([]string, n)
+	for i := 0; i < n; i++ {
+		var row any
+		var raw []byte
+		if raws != nil {
+			raw = raws[i]
+		} else {
+			row = rows[i]
+		}
+		_, d, canon, err := prepValue(row, raw)
 		if err != nil {
 			return nil, Invalidf("row %d is not JSON-serialisable", i)
 		}
 		digests[i] = d
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO table_rows(project_id, digest, val) VALUES(?,?,?)`, projectID, d, string(canon)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO table_rows(project_id, digest, val) VALUES(?,?,?)`, projectID, d, canon); err != nil {
 			return nil, err
 		}
 	}
@@ -52,11 +76,23 @@ func (s *Store) insertTable(ctx context.Context, tx *sql.Tx, projectID string, r
 
 // CreateTable stores rows and returns the table digest and row digests.
 func (s *Store) CreateTable(ctx context.Context, projectID string, rows []any) (string, []string, error) {
+	return s.createTable(ctx, projectID, rows, nil)
+}
+
+// CreateTableRaw stores rows given as raw JSON, preserving key order.
+func (s *Store) CreateTableRaw(ctx context.Context, projectID string, rows []json.RawMessage) (string, []string, error) {
+	if rows == nil {
+		rows = []json.RawMessage{}
+	}
+	return s.createTable(ctx, projectID, nil, rows)
+}
+
+func (s *Store) createTable(ctx context.Context, projectID string, rows []any, raws []json.RawMessage) (string, []string, error) {
 	pid, err := refs.NormalizeProject(projectID)
 	if err != nil {
 		return "", nil, &InvalidError{Msg: err.Error()}
 	}
-	if len(rows) > maxTableRows {
+	if len(rows) > maxTableRows || len(raws) > maxTableRows {
 		return "", nil, Invalidf("too many rows")
 	}
 	var digest string
@@ -66,7 +102,7 @@ func (s *Store) CreateTable(ctx context.Context, projectID string, rows []any) (
 			return err
 		}
 		var err error
-		if rowDigests, err = s.insertRows(ctx, tx, pid, rows); err != nil {
+		if rowDigests, err = s.insertRows(ctx, tx, pid, rows, raws); err != nil {
 			return err
 		}
 		digest, err = s.insertTable(ctx, tx, pid, rowDigests)
@@ -95,15 +131,15 @@ func (s *Store) tableRowDigests(ctx context.Context, q interface {
 
 // TableUpdate is one /table/update operation.
 type TableUpdate struct {
-	Append *struct{ Row any }   `json:"append"`
-	Pop    *struct{ Index int } `json:"pop"`
+	Append *struct{ Row json.RawMessage } `json:"append"`
+	Pop    *struct{ Index int }           `json:"pop"`
 	Insert *struct {
 		Index int
-		Row   any
+		Row   json.RawMessage
 	} `json:"insert"`
 	Replace *struct {
 		Index int
-		Row   any
+		Row   json.RawMessage
 	} `json:"replace"`
 }
 
@@ -123,7 +159,7 @@ func (s *Store) UpdateTable(ctx context.Context, projectID, baseDigest string, u
 		for i, u := range updates {
 			switch {
 			case u.Append != nil:
-				ds, err := s.insertRows(ctx, tx, pid, []any{u.Append.Row})
+				ds, err := s.insertRows(ctx, tx, pid, nil, []json.RawMessage{rowOrNull(u.Append.Row)})
 				if err != nil {
 					return err
 				}
@@ -138,7 +174,7 @@ func (s *Store) UpdateTable(ctx context.Context, projectID, baseDigest string, u
 				if u.Insert.Index < 0 || u.Insert.Index > len(rows) {
 					return Invalidf("update %d: insert index %d out of range", i, u.Insert.Index)
 				}
-				ds, err := s.insertRows(ctx, tx, pid, []any{u.Insert.Row})
+				ds, err := s.insertRows(ctx, tx, pid, nil, []json.RawMessage{rowOrNull(u.Insert.Row)})
 				if err != nil {
 					return err
 				}
@@ -148,7 +184,7 @@ func (s *Store) UpdateTable(ctx context.Context, projectID, baseDigest string, u
 				if u.Replace.Index < 0 || u.Replace.Index >= len(rows) {
 					return Invalidf("update %d: replace index %d out of range", i, u.Replace.Index)
 				}
-				ds, err := s.insertRows(ctx, tx, pid, []any{u.Replace.Row})
+				ds, err := s.insertRows(ctx, tx, pid, nil, []json.RawMessage{rowOrNull(u.Replace.Row)})
 				if err != nil {
 					return err
 				}
@@ -165,6 +201,13 @@ func (s *Store) UpdateTable(ctx context.Context, projectID, baseDigest string, u
 		return err
 	})
 	return digest, nonNil(updated), err
+}
+
+func rowOrNull(r json.RawMessage) json.RawMessage {
+	if len(r) == 0 {
+		return json.RawMessage("null")
+	}
+	return r
 }
 
 // TableQuery is the body of /table/query.
@@ -233,7 +276,7 @@ func (s *Store) QueryTable(ctx context.Context, q TableQuery) ([]TableRow, error
 		if err := rows.Scan(&idx, &d, &val); err != nil {
 			return nil, err
 		}
-		out = append(out, TableRow{Digest: d, Val: decodeJSON(val), OriginalIndex: idx})
+		out = append(out, TableRow{Digest: d, Val: decodeJSON(val), OriginalIndex: idx, valRaw: val})
 	}
 	return out, rows.Err()
 }

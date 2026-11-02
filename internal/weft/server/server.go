@@ -605,11 +605,11 @@ func (s *Server) threadsQuery(ctx context.Context, _ *http.Request, req *store.T
 
 type objCreateReq struct {
 	Obj struct {
-		ProjectID          string  `json:"project_id"`
-		ObjectID           string  `json:"object_id"`
-		Val                any     `json:"val"`
-		BuiltinObjectClass string  `json:"builtin_object_class"`
-		WBUserID           *string `json:"wb_user_id"`
+		ProjectID          string          `json:"project_id"`
+		ObjectID           string          `json:"object_id"`
+		Val                json.RawMessage `json:"val"`
+		BuiltinObjectClass string          `json:"builtin_object_class"`
+		WBUserID           *string         `json:"wb_user_id"`
 	} `json:"obj"`
 }
 
@@ -619,10 +619,10 @@ func (s *Server) objCreate(ctx context.Context, r *http.Request, req *objCreateR
 	if err != nil {
 		return nil, err
 	}
-	if o.Val == nil {
+	if len(o.Val) == 0 || string(o.Val) == "null" {
 		return nil, store.Invalidf("val is required")
 	}
-	d, v, err := s.store.CreateObject(ctx, pid, o.ObjectID, o.Val, o.BuiltinObjectClass, userFrom(r, o.WBUserID))
+	d, v, err := s.store.CreateObjectRaw(ctx, pid, o.ObjectID, nil, o.Val, o.BuiltinObjectClass, userFrom(r, o.WBUserID))
 	if err != nil {
 		return nil, err
 	}
@@ -687,13 +687,13 @@ func (s *Server) aliasRemove(ctx context.Context, _ *http.Request, req *aliasReq
 
 type tableCreateReq struct {
 	Table struct {
-		ProjectID string `json:"project_id"`
-		Rows      []any  `json:"rows"`
+		ProjectID string            `json:"project_id"`
+		Rows      []json.RawMessage `json:"rows"`
 	} `json:"table"`
 }
 
 func (s *Server) tableCreate(ctx context.Context, _ *http.Request, req *tableCreateReq) (any, error) {
-	d, rows, err := s.store.CreateTable(ctx, req.Table.ProjectID, req.Table.Rows)
+	d, rows, err := s.store.CreateTableRaw(ctx, req.Table.ProjectID, req.Table.Rows)
 	if err != nil {
 		return nil, err
 	}
