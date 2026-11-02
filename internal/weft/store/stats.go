@@ -387,8 +387,8 @@ func (s *Store) QueryThreads(ctx context.Context, q ThreadsQuery) ([]*Thread, er
 		}
 	}
 	rows, err := s.r.QueryContext(ctx, `SELECT c.thread_id, c.id, c.started_at, c.ended_at,
-		(c.turn_id = c.id OR (c.turn_id IS NULL AND (c.parent_id IS NULL OR NOT EXISTS (
-			SELECT 1 FROM calls p WHERE p.project_id = c.project_id AND p.id = c.parent_id AND p.thread_id = c.thread_id)))) AS is_turn,
+		COALESCE(c.turn_id = c.id OR (c.turn_id IS NULL AND (c.parent_id IS NULL OR NOT EXISTS (
+			SELECT 1 FROM calls p WHERE p.project_id = c.project_id AND p.id = c.parent_id AND p.thread_id = c.thread_id))), 0) AS is_turn,
 		c.summary, c.rollup FROM calls c WHERE `+strings.Join(conds, " AND ")+` ORDER BY c.started_at LIMIT 500000`, args...)
 	if err != nil {
 		return nil, err

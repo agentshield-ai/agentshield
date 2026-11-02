@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 
+const LS = new RegExp(String.fromCharCode(0x2028), 'g');
+const PS = new RegExp(String.fromCharCode(0x2029), 'g');
+
 /**
  * Canonical JSON as computed by the Weft server: keys sorted (UTF-8 byte
  * order), no whitespace, no HTML escaping, numbers in the text form the client
@@ -8,9 +11,9 @@ import { createHash } from 'node:crypto';
  */
 export function canonicalJson(value: unknown): string {
   return encode(value)
-    .replace(/ /g, '\\u2028')
-    .replace(/ /g, '\\u2029')
-    .replace(/\\ud[89a-f][0-9a-f]{2}/g, '�');
+    .replace(LS, '\\u2028')
+    .replace(PS, '\\u2029')
+    .replace(/\\ud[89a-f][0-9a-f]{2}/g, '\ufffd');
 }
 
 function encode(v: unknown): string {

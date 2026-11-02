@@ -79,7 +79,7 @@ export class HttpClient {
   async postFile(path: string, fields: Record<string, string>, data: Uint8Array, filename: string, mime: string): Promise<any> {
     const form = new FormData();
     for (const [k, v] of Object.entries(fields)) form.append(k, v);
-    form.append('file', new Blob([data], { type: mime }), filename);
+    form.append('file', new Blob([new Uint8Array(data)], { type: mime }), filename);
     const res = await this.raw('POST', path, form, null);
     const text = await res.text();
     return text.trim() ? JSON.parse(text) : {};

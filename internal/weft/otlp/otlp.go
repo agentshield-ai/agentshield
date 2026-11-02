@@ -761,6 +761,11 @@ func extractUsage(attrs map[string]any) (string, map[string]any) {
 	if len(u) == 0 {
 		return "", nil
 	}
+	if _, ok := u["total_tokens"]; !ok {
+		p, _ := store.ToFloat(u["prompt_tokens"])
+		c, _ := store.ToFloat(u["completion_tokens"])
+		u["total_tokens"] = json.Number(strconv.FormatFloat(p+c, 'f', -1, 64))
+	}
 	if model == "" {
 		model = "unknown"
 	}

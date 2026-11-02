@@ -42,6 +42,7 @@ const STATUSES = ['success', 'error', 'running', 'descendant_error'] as const
 
 interface ViewState {
   roots: boolean
+  system: boolean
   op: string
   status: string
   q: string
@@ -67,6 +68,7 @@ function parseState(p: URLSearchParams): ViewState {
   }
   return {
     roots: p.get('roots') !== '0',
+    system: p.get('system') === '1',
     op: p.get('op') ?? '',
     status: p.get('status') ?? '',
     q: p.get('q') ?? '',
@@ -88,6 +90,8 @@ function buildRequest(s: ViewState): { filter: CallsFilter; query?: Query; searc
   if (s.roots) filter.trace_roots_only = true
   if (s.op) filter.op_names = [s.op]
   const ops: Operation[] = []
+  // Monitor scorers and server-side LLM calls are tagged internal; hide them unless asked.
+  if (!s.system) ops.push({ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] })
   if (s.status) ops.push({ $eq: [{ $getField: 'summary.weave.status' }, { $literal: s.status }] })
   for (const c of s.clauses) if (clauseValid(c)) ops.push(clauseToOperation(c))
   if (s.expr) ops.push(s.expr)
@@ -477,6 +481,9 @@ export function TracesPage() {
         </select>
         <label className="checkbox small" title="Only show root calls of each trace">
           <input type="checkbox" checked={s.roots} onChange={(e) => update({ roots: e.target.checked ? null : '0' })} /> Roots only
+        </label>
+        <label className="checkbox small" title="Include scorer calls made by monitors and other internal server calls">
+          <input type="checkbox" checked={s.system} onChange={(e) => update({ system: e.target.checked ? '1' : null })} /> System calls
         </label>
         <FilterBuilder clauses={s.clauses} fields={filterFields} onChange={(cs) => update({ f: encodeClauses(cs) || null })} />
         {s.expr && (

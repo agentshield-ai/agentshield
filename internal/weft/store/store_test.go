@@ -301,3 +301,27 @@ func TestDeleteCascades(t *testing.T) {
 		t.Fatalf("expected all deleted, %d left", n)
 	}
 }
+
+func TestThreadsMixedTurnIDs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	th := "conv"
+	r := start("turn1", "", "agent")
+	r.ThreadID, r.TurnID = &th, ptr("turn1")
+	child := start("kid", "turn1", "llm")
+	child.ThreadID = &th // no turn_id, parent in same thread
+	other := start("turn2", "", "agent")
+	other.ThreadID = &th // no turn_id, no parent
+	for _, st := range []CallStart{r, child, other} {
+		if err := s.StartCall(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts, err := s.QueryThreads(ctx, ThreadsQuery{ProjectID: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 1 || ts[0].TurnCount != 2 || ts[0].CallCount != 3 {
+		t.Fatalf("threads = %+v", ts[0])
+	}
+}

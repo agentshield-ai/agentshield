@@ -20,7 +20,7 @@ live in `sdk/`.
 ## Run it
 
 ```bash
-make weft-ui      # build the React UI into internal/weft/webui/static (needs Node 18+)
+make weft-ui      # rebuild the React UI into internal/weft/webui/static (Node 20.19+; the built UI is committed)
 make weft         # build bin/weft
 ./bin/weft        # http://127.0.0.1:6345, data in ~/.weft/weft.db
 ```
@@ -72,8 +72,38 @@ Spans that follow the GenAI semantic conventions, OpenInference or
 OpenLLMetry become calls with chat-formatted inputs and outputs, token usage
 and costs. The full mapping is in [API.md](API.md#opentelemetry-ingest).
 
-**TypeScript SDK** (`sdk/typescript`): `init`, `op`, `wrapOpenAI`, `Dataset`,
-`Evaluation`.
+Datasets, models, scorers and evaluations follow the same pattern:
+
+```python
+dataset = weft.Dataset(name="capitals", rows=[{"question": "France?", "expected": "Paris"}])
+
+@weft.op
+def exact(expected: str, output: str) -> bool:
+    return expected == output
+
+evaluation = weft.Evaluation(dataset=dataset, scorers=[exact, weft.scorers.LevenshteinScorer()])
+await evaluation.evaluate(my_model)        # recorded as an evaluation run, comparable in the UI
+```
+
+`weft.otel.configure(project=...)` installs an OpenTelemetry tracer provider
+that exports to Weft, so OpenInference or OpenLLMetry instrumentation needs no
+further setup. See [sdk/python/README.md](../../sdk/python/README.md).
+
+**TypeScript SDK** (`sdk/typescript`, package `weft-sdk`):
+
+```ts
+import * as weft from 'weft-sdk'
+await weft.init('my-team/my-app')
+const answer = weft.op(async function answer(question: string) { /* ... */ })
+const openai = weft.wrapOpenAI(new OpenAI())
+```
+
+It also provides `Dataset`, `Evaluation`, `publish`/`ref`, `wrapAnthropic`,
+`attributes` and `withThread`. See [sdk/typescript/README.md](../../sdk/typescript/README.md).
+
+**Demo data:** `python3 scripts/weft_seed_demo.py` fills `demo/support-bot` with
+agent traces, threads, OTLP spans, datasets, evaluations, a leaderboard, a
+monitor and feedback, using offline mock models.
 
 ## Feature map
 
@@ -102,7 +132,22 @@ and costs. The full mapping is in [API.md](API.md#opentelemetry-ingest).
 | `internal/weft/server` | HTTP API, auth, UI serving |
 | `web/weft-ui` | React UI |
 | `sdk/python`, `sdk/typescript` | client SDKs |
+| `examples/weft` | runnable SDK examples |
+| `scripts/weft_seed_demo.py` | demo data seeding |
 | `docs/weft/API.md` | API contract |
+
+## Testing
+
+```bash
+make weft-test                                     # Go, UI type check, Python SDK unit tests
+cd web/weft-ui && npm test                         # UI unit tests
+WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 \
+  python -m pytest sdk/python                      # SDK integration tests against a running server
+cd sdk/typescript && WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 npx vitest run
+```
+
+CI runs all of these in `.github/workflows/weft.yml` and fails if the
+committed UI build is stale.
 
 ## Security notes
 

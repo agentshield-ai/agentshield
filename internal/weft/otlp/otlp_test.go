@@ -60,7 +60,7 @@ func TestProtobufGenAISpan(t *testing.T) {
 		t.Fatalf("exception = %v", c.End.Exception)
 	}
 	u := c.End.Summary["usage"].(map[string]any)["gpt-4o"].(map[string]any)
-	if u["prompt_tokens"].(interface{ String() string }).String() != "3" {
+	if u["prompt_tokens"].(interface{ String() string }).String() != "3" || u["total_tokens"].(interface{ String() string }).String() != "5" {
 		t.Fatalf("usage = %v", u)
 	}
 	if c.Start.Attributes["env"] != "test" || c.Start.Attributes["otel"] == nil {
