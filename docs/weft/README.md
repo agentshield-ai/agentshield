@@ -116,9 +116,9 @@ monitor and feedback, using offline mock models.
 | Datasets | Row tables with paging and editing; create from CSV/JSON or from selected calls. |
 | Evaluations | SDK-run evaluations (`weft.Evaluation`, `EvaluationLogger`) and server-run evaluations of prompt-based models with built-in scorers and LLM judges. Comparison view with metric deltas and per-example diffs. |
 | Leaderboards | Columns of evaluation × scorer × metric, computed from the latest run per model. |
-| Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. |
+| Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a call from its Scores tab (`/calls/score`). |
 | Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
-| Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, load from a call or saved prompt, save as prompt. |
+| Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
 
 ## Layout
 
