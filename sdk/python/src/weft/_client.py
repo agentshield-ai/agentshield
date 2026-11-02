@@ -64,6 +64,66 @@ def _setting_bool(settings: Dict[str, Any], key: str, env: str, default: bool) -
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_raw(env: str) -> Optional[str]:
+    raw = os.environ.get(env)
+    return raw.strip() if raw is not None and raw.strip() != "" else None
+
+
+def _setting_num(settings: Dict[str, Any], key: str, env: str, default: Any, cast: Any = float, explicit: Any = None) -> Any:
+    """``settings[key]``, else an explicit argument, else ``$env``, else ``default`` (bad env values warn)."""
+    if key in settings and settings[key] is not None:
+        return cast(settings[key])
+    if explicit is not None:
+        return cast(explicit)
+    raw = _env_raw(env)
+    if raw is None:
+        return default
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        logger.warning("weft: ignoring %s=%r (not a number)", env, raw)
+        return default
+
+
+_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def _apply_log_level(settings: Dict[str, Any]) -> Optional[str]:
+    """Set the ``weft`` logger level from ``settings["log_level"]`` or ``WEFT_LOG_LEVEL``."""
+    raw = settings.get("log_level") or _env_raw("WEFT_LOG_LEVEL")
+    if not raw:
+        return None
+    level = str(raw).strip().upper()
+    if level == "WARN":
+        level = "WARNING"
+    if level not in _LOG_LEVELS:
+        logger.warning("weft: ignoring log level %r (use one of %s)", raw, ", ".join(_LOG_LEVELS))
+        return None
+    lg = logging.getLogger("weft")
+    lg.setLevel(level)
+    if not lg.handlers and not logging.getLogger().handlers:
+        h = logging.StreamHandler()
+        h.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        lg.addHandler(h)
+    return level
+
+
+def _wandb_run_context() -> Optional["tuple[str, Optional[int]]"]:
+    """(run id, step) of an active ``wandb`` run when wandb is already imported (as Weave does)."""
+    wandb = sys.modules.get("wandb")
+    run = getattr(wandb, "run", None) if wandb is not None else None
+    if run is None:
+        return None
+    run_id = getattr(run, "id", None)
+    if not run_id:
+        return None
+    try:
+        step: Optional[int] = int(run.step)
+    except Exception:
+        step = None
+    return str(run_id), step
+
+
 def get_client() -> Optional["WeftClient"]:
     return _global_client
 
@@ -108,6 +168,28 @@ class CallsIter:
     def to_list(self) -> List[Call]:
         return list(self)
 
+    def to_records(self) -> List[Dict[str, Any]]:
+        """Every matching call as a plain dict (``Call.to_dict()``)."""
+        return [c.to_dict() for c in self]
+
+    def to_pandas(self, flatten: bool = False) -> Any:
+        """The matching calls as a pandas DataFrame, one row per call.
+
+        Columns are the call fields (``id``, ``op_name``, ``inputs``, ``output``,
+        ``summary``, ``status``, ...). With ``flatten=True`` nested dicts become
+        dotted columns (``inputs.x``, ``summary.usage...``) via
+        ``pandas.json_normalize``. Fetches every page, so use ``limit`` or a
+        filter for large projects. Needs pandas (``pip install pandas``).
+        """
+        try:
+            import pandas as pd  # type: ignore
+        except ImportError:
+            raise ImportError("CallsIter.to_pandas() needs pandas: pip install pandas") from None
+        records = self.to_records()
+        if flatten:
+            return pd.json_normalize(records)
+        return pd.DataFrame(records)
+
 
 class WeftClient:
     def __init__(
@@ -117,8 +199,8 @@ class WeftClient:
         api_key: Optional[str] = None,
         *,
         disabled: bool = False,
-        timeout: float = 30.0,
-        max_queue: int = 10_000,
+        timeout: Optional[float] = None,
+        max_queue: Optional[int] = None,
         batch_size: int = 100,
         settings: Optional[Dict[str, Any]] = None,
     ):
@@ -128,11 +210,20 @@ class WeftClient:
         self.disabled = disabled
         self.settings: Dict[str, Any] = dict(settings or {})
         st = self.settings
+        self.log_level = _apply_log_level(st)
         from ._cache import CachingHTTPClient, build_cache
 
+        # Weave's settings and env variables, WEFT_-prefixed (see init()).
+        self.http_timeout = _setting_num(st, "http_timeout", "WEFT_HTTP_TIMEOUT", 30.0, float, timeout)
+        queue_env = "WEFT_MAX_CALLS_QUEUE_SIZE" if _env_raw("WEFT_MAX_CALLS_QUEUE_SIZE") is not None else "WEFT_MAX_QUEUE_SIZE"
+        queue = _setting_num(st, "max_queue_size", queue_env, 10_000, int, max_queue)
+        self.max_queue_size = queue if queue > 0 else sys.maxsize  # 0 = unbounded, as in Weave
+        self.retry_max_attempts = _setting_num(st, "retry_max_attempts", "WEFT_RETRY_MAX_ATTEMPTS", 3, int)
+        self.retry_backoff = _setting_num(st, "retry_backoff", "WEFT_RETRY_BACKOFF", 0.25, float)
+        self.retry_max_backoff = _setting_num(st, "retry_max_backoff", "WEFT_RETRY_MAX_INTERVAL", 4.0, float)
         cache, cache_on = build_cache(st)
         self._http: HTTPClient = CachingHTTPClient(
-            self.server_url, self.api_key, timeout=timeout, project_id=self.project_id, cache=cache, enabled=cache_on
+            self.server_url, self.api_key, timeout=self.http_timeout, project_id=self.project_id, cache=cache, enabled=cache_on
         )
         self.capture_code = _setting_bool(st, "capture_code", "WEFT_CAPTURE_CODE", True)
         self.print_call_link = _setting_bool(st, "print_call_link", "WEFT_PRINT_CALL_LINK", True)
@@ -144,11 +235,11 @@ class WeftClient:
             wal_path = os.path.join(wal_dir, key + ".jsonl")
         self._sender = Sender(
             self._http,
-            max_queue=int(st.get("max_queue_size", max_queue)),
+            max_queue=self.max_queue_size,
             batch_size=int(st.get("batch_size", batch_size)),
-            max_retries=int(st.get("retry_max_attempts", 3)),
-            backoff=float(st.get("retry_backoff", 0.25)),
-            max_backoff=float(st.get("retry_max_backoff", 4.0)),
+            max_retries=self.retry_max_attempts,
+            backoff=self.retry_backoff,
+            max_backoff=self.retry_max_backoff,
             wal_path=wal_path,
         )
         self._uploaded: set = set()
@@ -157,12 +248,53 @@ class WeftClient:
             n = self._sender.replay_wal()
             if n:
                 logger.info("weft: replaying %d unsent items from %s", n, wal_path)
+        # W&B run linkage (wb_run_id / wb_run_step); see set_wb_run().
+        self._wb_run: Optional[Any] = None
+        if st.get("wb_run_id"):
+            self.set_wb_run(st["wb_run_id"], st.get("wb_run_step"))
         self._redact = Redactor(
             keys=self.settings.get("redact_keys"),
             pii=self.settings.get("redact_pii"),
             enabled=self.settings.get("redact_enabled"),
             settings=self.settings,
         )
+
+    # ------------------------------------------------------------------ W&B run linkage
+    def set_wb_run(self, run_id: Optional[str], step: Any = None) -> None:
+        """Link calls started from now on to a W&B run (``wb_run_id``, ``wb_run_step``).
+
+        ``run_id`` is a run id (sent as ``<entity>/<project>/<run_id>``, as Weave
+        does) or a full ``entity/project/run_id``. ``step`` is an int or a
+        callable returning the current step; it is read at call start
+        (``wb_run_step``) and end (``wb_run_step_end``). ``None`` clears it.
+        Without an explicit run, an active ``wandb.run`` is used when ``wandb``
+        is imported.
+        """
+        if not run_id:
+            self._wb_run = None
+            return
+        rid = str(run_id)
+        if rid.count("/") < 2:
+            rid = f"{self.entity}/{self.project}/{rid}"
+        self._wb_run = (rid, step)
+
+    def _wb_run_now(self) -> "Optional[tuple[str, Optional[int]]]":
+        if self._wb_run is not None:
+            rid, step = self._wb_run
+            if callable(step):
+                try:
+                    step = step()
+                except Exception:
+                    step = None
+            try:
+                step = int(step) if step is not None else None
+            except (TypeError, ValueError):
+                step = None
+            return rid, step
+        ctx = _wandb_run_context()
+        if ctx is None:
+            return None
+        return f"{self.entity}/{self.project}/{ctx[0]}", ctx[1]
 
     # ------------------------------------------------------------------ basics
     @property
@@ -296,6 +428,12 @@ class WeftClient:
         for k in ("display_name", "thread_id", "turn_id"):
             if getattr(call, k) is not None:
                 start[k] = getattr(call, k)
+        wb = self._wb_run_now()
+        if wb is not None:
+            call.wb_run_id, call.wb_run_step = wb
+            start["wb_run_id"] = call.wb_run_id
+            if call.wb_run_step is not None:
+                start["wb_run_step"] = call.wb_run_step
         self._sender.enqueue("call_start", start)
         if parent is None and self.print_call_link:
             print(f"weft: {call.ui_url}", file=sys.stderr)
@@ -328,6 +466,11 @@ class WeftClient:
             end["exception"] = call.exception
         if call.summary:
             end["summary"] = to_json(call.summary, self)
+        if call.wb_run_id is not None:
+            wb = self._wb_run_now()
+            if wb is not None and wb[1] is not None:
+                call.wb_run_step_end = wb[1]
+                end["wb_run_step_end"] = wb[1]
         self._sender.enqueue("call_end", end)
 
     def _serialize_self(self, v: Any) -> Any:
@@ -354,6 +497,8 @@ class WeftClient:
         include_feedback: bool = False,
         columns: Optional[List[str]] = None,
         expand_columns: Optional[List[str]] = None,
+        include_usernames: bool = False,
+        include_storage_size: bool = False,
     ) -> CallsIter:
         """Query calls. ``filter`` follows the CallsQuery filter (op_names, trace_ids, ...)."""
         body: Dict[str, Any] = {"project_id": self.project_id}
@@ -377,14 +522,28 @@ class WeftClient:
             body["columns"] = columns
         if expand_columns:
             body["expand_columns"] = expand_columns
+        if include_usernames:
+            body["include_usernames"] = True
+        if include_storage_size:
+            body["include_storage_size"] = True
         return CallsIter(self, body)
 
-    def get_call(self, call_id: str, *, include_costs: bool = False, include_feedback: bool = False) -> Optional[Call]:
+    def get_call(
+        self,
+        call_id: str,
+        *,
+        include_costs: bool = False,
+        include_feedback: bool = False,
+        include_usernames: bool = False,
+        include_storage_size: bool = False,
+    ) -> Optional[Call]:
         self.flush()
-        res = self._http.post(
-            "/call/read",
-            {"project_id": self.project_id, "id": call_id, "include_costs": include_costs, "include_feedback": include_feedback},
-        )
+        body: Dict[str, Any] = {"project_id": self.project_id, "id": call_id, "include_costs": include_costs, "include_feedback": include_feedback}
+        if include_usernames:
+            body["include_usernames"] = True
+        if include_storage_size:
+            body["include_storage_size"] = True
+        res = self._http.post("/call/read", body)
         d = res.get("call")
         return Call.from_server(d, self) if d else None
 
@@ -550,6 +709,93 @@ class WeftClient:
     def list_tags(self) -> List[str]:
         """All tags used in the project."""
         return list(self._http.request("GET", "/tags", query={"project_id": self.project_id}).get("tags") or [])
+
+    # ------------------------------------------------------------------ registry
+    def _registry_target(self, target_path: str) -> "tuple[str, str, str]":
+        """``<registry_project>/<collection>`` or ``<entity>/<registry_project>/<collection>``."""
+        parts = [p for p in str(target_path).strip().strip("/").split("/")]
+        if len(parts) == 2 and all(parts):
+            return self.entity, parts[0], parts[1]
+        if len(parts) == 3 and all(parts):
+            return parts[0], parts[1], parts[2]
+        raise ValueError(
+            "target_path must be '<registry_project>/<collection>' (e.g. 'wandb-registry-prompts/support-bot') "
+            "or '<entity>/<registry_project>/<collection>'"
+        )
+
+    def link_to_registry(self, obj: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Link a published object version into a registry collection (``POST /link_to_registry``).
+
+        ``obj`` is a published object (or one to publish now), a ref, a
+        ``weft:///`` / ``weave:///`` URI or ``"name:version"``. ``target_path`` is
+        ``<registry_project>/<collection>`` (the registry project is in this
+        client's entity) or ``<entity>/<registry_project>/<collection>``.
+        ``aliases`` move to the new registry version (``latest`` and ``v<N>``
+        are implicit). Returns ``{"version_index", "ref", "target_path"}``;
+        linking a version already in the collection returns its index.
+        """
+        entity, reg_project, collection = self._registry_target(target_path)
+        if isinstance(obj, str) and not is_ref_uri(obj):
+            r: Any = self._obj_ref(obj)
+        elif isinstance(obj, (str, Ref)):
+            r = self.ref(obj) if isinstance(obj, str) else obj
+        else:
+            r = getattr(obj, "_weft_ref", None) or getattr(obj, "ref", None)
+            if not isinstance(r, Ref):
+                r = self.publish(obj)
+        if isinstance(r, ObjectRef) and (r.digest == "latest" or re.fullmatch(r"v\d+", r.digest or "")):
+            r = self._obj_ref(r)
+        if not isinstance(r, (ObjectRef, OpRef)):
+            raise TypeError(f"only object versions can be linked to a registry, got {r!r}")
+        self.flush()
+        body = {
+            "ref": r.uri(),
+            "target": {"portfolio_name": collection, "entity_name": entity, "project_name": reg_project},
+            "aliases": list(aliases or []),
+        }
+        res = self._http.post("/link_to_registry", body)
+        return {"version_index": res.get("version_index"), "ref": r.uri(), "target_path": f"{entity}/{reg_project}/{collection}"}
+
+    def link_prompt_to_registry(self, prompt: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Weave's ``link_prompt_to_registry``: link a published prompt version into a registry collection."""
+        return self.link_to_registry(prompt, target_path=target_path, aliases=aliases)
+
+    def query_registry(
+        self,
+        registry_project: str,
+        collection: Optional[str] = None,
+        *,
+        alias: Optional[str] = None,
+        version_index: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Collections of a registry project and their versions (``POST /registry/query``), newest first.
+
+        ``registry_project`` is a project name in this entity or
+        ``entity/project``; ``alias``/``version_index`` need ``collection``.
+        """
+        pid = registry_project if "/" in registry_project else f"{self.entity}/{registry_project}"
+        body: Dict[str, Any] = {"project_id": pid}
+        if collection:
+            body["portfolio_name"] = collection
+        if alias:
+            body["alias"] = alias
+        if version_index is not None:
+            body["version_index"] = int(version_index)
+        return list(self._http.post("/registry/query", body).get("collections") or [])
+
+    def get_from_registry(self, target_path: str, version: Union[str, int] = "latest") -> Any:
+        """Load the object a registry version points to (``version``: ``"latest"``, ``"v2"``, ``2`` or an alias)."""
+        entity, reg_project, collection = self._registry_target(target_path)
+        kw: Dict[str, Any] = {}
+        if isinstance(version, int) or (isinstance(version, str) and re.fullmatch(r"v?\d+", version)):
+            kw["version_index"] = int(str(version).lstrip("v"))
+        elif version and version != "latest":
+            kw["alias"] = str(version)
+        cols = self.query_registry(f"{entity}/{reg_project}", collection, **kw)
+        versions = (cols[0].get("versions") if cols else None) or []
+        if not versions:
+            raise LookupError(f"no version {version!r} in registry collection {entity}/{reg_project}/{collection}")
+        return self.get(versions[0]["ref"])
 
     def read_file(self, file_digest: str) -> bytes:
         """Raw bytes of an uploaded file (``Content``/media ``file_digest``)."""
@@ -920,9 +1166,15 @@ def init(
     ``settings`` (dict): ``global_attributes``, ``print_call_link`` (default
     True, env ``WEFT_PRINT_CALL_LINK``), ``capture_code`` (default True, env
     ``WEFT_CAPTURE_CODE``), ``enable_disk_fallback`` (env ``WEFT_ENABLE_WAL``)
-    with ``wal_dir`` (env ``WEFT_WAL_DIR``), ``max_queue_size``,
-    ``retry_max_attempts``, ``retry_backoff``, ``retry_max_backoff``,
-    ``redact_keys``, ``redact_pii``, and the cache of immutable server
+    with ``wal_dir`` (env ``WEFT_WAL_DIR``), ``max_queue_size`` (default
+    10000, 0 = unbounded; env ``WEFT_MAX_CALLS_QUEUE_SIZE``),
+    ``retry_max_attempts`` (default 3, env ``WEFT_RETRY_MAX_ATTEMPTS``),
+    ``retry_backoff`` (first retry delay in seconds, default 0.25, env
+    ``WEFT_RETRY_BACKOFF``), ``retry_max_backoff`` (default 4, env
+    ``WEFT_RETRY_MAX_INTERVAL``), ``http_timeout`` (seconds, default 30, env
+    ``WEFT_HTTP_TIMEOUT``), ``log_level`` (``DEBUG`` ... ``CRITICAL`` for the
+    ``weft`` logger, env ``WEFT_LOG_LEVEL``), ``wb_run_id``/``wb_run_step``
+    (see ``set_wb_run``), ``redact_keys``, ``redact_pii``, and the cache of immutable server
     responses: ``use_server_cache`` (default True, env
     ``WEFT_USE_SERVER_CACHE``), ``server_cache_dir`` (default
     ``~/.cache/weft``, env ``WEFT_SERVER_CACHE_DIR``) and
@@ -984,4 +1236,19 @@ def ref(s: Union[str, Ref]) -> Ref:
 
 def get(s: Union[str, Ref]) -> Any:
     return require_client().get(s)
+
+
+def link_to_registry(obj: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Link any published object version into a registry collection; see ``WeftClient.link_to_registry``."""
+    return require_client().link_to_registry(obj, target_path=target_path, aliases=aliases)
+
+
+def link_prompt_to_registry(prompt: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Weave's ``weave.link_prompt_to_registry``: link a published prompt version into a registry collection."""
+    return require_client().link_prompt_to_registry(prompt, target_path=target_path, aliases=aliases)
+
+
+def set_wb_run(run_id: Optional[str], step: Any = None) -> None:
+    """Link calls of the global client to a W&B run; see ``WeftClient.set_wb_run``."""
+    require_client().set_wb_run(run_id, step)
 

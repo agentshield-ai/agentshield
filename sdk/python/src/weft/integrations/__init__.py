@@ -13,7 +13,7 @@ does not import every framework you have installed).
 | ``litellm`` | litellm | completion, acompletion (incl. stream) |
 | ``google_genai`` | google-genai | models.generate_content(_stream), sync and async |
 | ``vertexai`` | google-cloud-aiplatform | GenerativeModel.generate_content(_async), ChatSession.send_message(_async), ImageGenerationModel |
-| ``bedrock`` | boto3 | converse, converse_stream, invoke_model(_with_response_stream) |
+| ``bedrock`` | boto3 | converse, converse_stream, invoke_model(_with_response_stream); Bedrock Agents invoke_agent / invoke_inline_agent (agent, LLM, tool, knowledge-base, collaborator and guardrail spans from the trace events) |
 | ``mistral`` | mistralai | chat.complete/stream (+ _async) |
 | ``cohere`` | cohere | ClientV2/Client chat, chat_stream (sync/async) |
 | ``groq``, ``together``, ``cerebras`` | groq, together, cerebras-cloud-sdk | chat.completions.create (OpenAI-shaped) |
@@ -28,6 +28,7 @@ does not import every framework you have installed).
 | ``mcp`` | mcp, fastmcp | client and server tool/resource/prompt calls |
 | ``claude_agent_sdk`` | claude-agent-sdk | query() and ClaudeSDKClient turns, LLM messages, tools |
 | ``haystack`` | haystack-ai | WeftHaystackTracer (pipelines and components) |
+| ``verdict`` | verdict | pipelines and units (judges) via Verdict's tracer interface |
 | ``autogen`` | autogen-agentchat | agents, teams, model clients, tools, memory |
 | ``agno`` | agno | agents, teams, workflows, models, tools |
 | ``google_adk`` | google-adk | runner, agents, tools, LLM calls |
@@ -71,6 +72,7 @@ from .openai_agents import patch_openai_agents
 from .openai_realtime import RealtimeTracer, patch_openai_realtime
 from .other_llms import patch_cerebras, patch_cohere, patch_groq, patch_mistral, patch_together
 from .smolagents import patch_smolagents
+from .verdict import patch_verdict, unpatch_verdict
 from .vertexai import patch_vertexai
 
 logger = logging.getLogger("weft")
@@ -112,6 +114,7 @@ INTEGRATIONS: Dict[str, Integration] = {
         Integration("mcp", patch_mcp, ("mcp", "fastmcp")),
         Integration("claude_agent_sdk", patch_claude_agent_sdk, ("claude_agent_sdk",)),
         Integration("haystack", patch_haystack, ("haystack",)),
+        Integration("verdict", patch_verdict, ("verdict",)),
         Integration("autogen", patch_autogen, _AUTOGEN_TRIGGERS),
         Integration("agno", patch_agno, ("agno",)),
         Integration("google_adk", patch_google_adk, ("google.adk",)),
@@ -187,6 +190,7 @@ def unpatch_all() -> None:
     _unpatch_attrs()
     unpatch_llamaindex()
     unpatch_haystack()
+    unpatch_verdict()
     _hooks.clear()
     PATCHED.clear()
 
@@ -235,6 +239,7 @@ __all__ = [
     "patch_mcp",
     "patch_claude_agent_sdk",
     "patch_haystack",
+    "patch_verdict",
     "patch_autogen",
     "patch_agno",
     "patch_google_adk",

@@ -13,6 +13,7 @@
  * attributes; `agent-start/end` become agent calls. Events arrive in the async
  * context that emitted them, so they nest under the current op.
  */
+import { logger } from '../log.js';
 import { asError, RunTracker } from './runs.js';
 import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
@@ -171,7 +172,7 @@ export function instrumentLlamaIndex(settingsOrManager: any, opts: IntegrationOp
       try {
         h(ev);
       } catch (e) {
-        console.warn(`weft: llamaindex ${name} handler failed: ${(e as Error).message}`);
+        logger.warn(`weft: llamaindex ${name} handler failed: ${(e as Error).message}`);
       }
     };
     handlers[name] = safe;

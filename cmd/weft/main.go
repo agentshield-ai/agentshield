@@ -47,6 +47,9 @@ func splitList(s string) []string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "db" {
+		os.Exit(runDB(os.Args[2:], os.Stdout, os.Stderr)) // db.go
+	}
 	addr := flag.String("addr", envOr("WEFT_ADDR", "127.0.0.1:6345"), "listen address (env WEFT_ADDR)")
 	dbPath := flag.String("db", envOr("WEFT_DB", defaultDB()), "SQLite database path (env WEFT_DB)")
 	apiKeys := flag.String("api-keys", os.Getenv("WEFT_API_KEYS"), "comma-separated API keys required on requests (env WEFT_API_KEYS); empty disables auth")
@@ -56,6 +59,8 @@ func main() {
 	filesCfg := registerFilesFlags() // files.go
 	iamCfg := registerIAMFlags()     // iam.go
 	piiCfg := registerPIIFlags()     // pii.go
+
+	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
 	flag.Parse()
 
 	var lvl slog.Level
@@ -76,7 +81,15 @@ func main() {
 		log.Error("creating database file", "err", err)
 		os.Exit(1)
 	}
-	st, err := store.Open(*dbPath)
+	dbKey, err := dbKeyCfg.resolve()
+	if err != nil {
+		log.Error("database encryption key", "err", err)
+		os.Exit(2)
+	}
+	for _, w := range keyWarnings(dbKey, *dbKeyCfg.keyFile) {
+		log.Warn("database encryption key", "problem", w)
+	}
+	st, err := store.OpenWith(*dbPath, store.OpenOptions{EncryptionKey: dbKey})
 	if err != nil {
 		log.Error("opening database", "err", err)
 		os.Exit(1)
@@ -94,8 +107,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	permMsg := "database file permissions: the database is not encrypted at rest; restrict access, use an encrypted volume or set --db-encryption-key-file"
+	if st.Encrypted() {
+		permMsg = "database file permissions: restrict access to the database files"
+	}
 	for _, w := range store.DBPermissionWarnings(*dbPath) {
-		log.Warn("database file permissions: the database is not encrypted at rest; restrict access or use an encrypted volume", "problem", w)
+		log.Warn(permMsg, "problem", w)
 	}
 
 	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log}
@@ -126,7 +143,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

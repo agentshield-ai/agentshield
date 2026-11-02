@@ -1,3 +1,4 @@
+import { logger } from '../log.js';
 import type { Call } from '../call.js';
 import { getCurrentCall } from '../context.js';
 import { getClient } from '../global.js';
@@ -55,7 +56,7 @@ export class RunTracker {
       this.runs.set(runId, { call, meta, children: 0 });
       return call;
     } catch (e) {
-      console.warn(`weft: could not start ${opName}: ${(e as Error).message}`);
+      logger.warn(`weft: could not start ${opName}: ${(e as Error).message}`);
       return null;
     }
   }
@@ -85,7 +86,7 @@ export class RunTracker {
       const client = getClient();
       client?.finishCall(r.call, output, error ?? undefined, r.meta, endedAt);
     } catch (e) {
-      console.warn(`weft: could not finish run: ${(e as Error).message}`);
+      logger.warn(`weft: could not finish run: ${(e as Error).message}`);
     }
     return r.call;
   }

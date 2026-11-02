@@ -47,6 +47,12 @@ export class Call {
   exception: string | null;
   attributes: Record<string, unknown>;
   summary: Record<string, any>;
+  /** W&B linkage (`wb_user_id`, `wb_username` with `includeUsernames`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`). */
+  wbUserId: string | null;
+  wbUsername: string | null;
+  wbRunId: string | null;
+  wbRunStep: number | null;
+  wbRunStepEnd: number | null;
   raw: CallData;
   /** Unserialised inputs/output of calls traced in this process. */
   rawInputs?: Record<string, unknown>;
@@ -74,6 +80,40 @@ export class Call {
     this.exception = data.exception ?? null;
     this.attributes = data.attributes ?? {};
     this.summary = data.summary ?? {};
+    this.wbUserId = (data.wb_user_id as string | undefined) ?? null;
+    this.wbUsername = (data.wb_username as string | undefined) ?? null;
+    this.wbRunId = (data.wb_run_id as string | undefined) ?? null;
+    this.wbRunStep = (data.wb_run_step as number | undefined) ?? null;
+    this.wbRunStepEnd = (data.wb_run_step_end as number | undefined) ?? null;
+  }
+
+  /** The call as a plain record with the server's field names (one row of a table / DataFrame). */
+  toRecord(): Record<string, unknown> {
+    const r: Record<string, unknown> = {
+      id: this.id,
+      project_id: this.projectId,
+      op_name: this.opName,
+      display_name: this.displayName,
+      trace_id: this.traceId,
+      parent_id: this.parentId,
+      thread_id: this.threadId,
+      turn_id: this.turnId,
+      started_at: this.startedAt ?? null,
+      ended_at: this.endedAt,
+      inputs: this.inputs,
+      output: this.output,
+      exception: this.exception,
+      attributes: this.attributes,
+      summary: this.summary,
+      status: this.status,
+      wb_user_id: this.wbUserId,
+      wb_username: this.wbUsername,
+      wb_run_id: this.wbRunId,
+      wb_run_step: this.wbRunStep,
+      wb_run_step_end: this.wbRunStepEnd,
+    };
+    for (const k of ['deleted_at', 'storage_size_bytes', 'feedback']) if (this.raw[k] !== undefined) r[k] = this.raw[k];
+    return r;
   }
 
   get opBaseName(): string {

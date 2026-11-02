@@ -35,6 +35,7 @@ class FakeWeft:
         self.fail_paths: Dict[str, int] = {}  # path -> number of upcoming requests to fail with 503
         self.tags: Dict[tuple, List[str]] = {}
         self.aliases: Dict[tuple, str] = {}  # (object_id, alias) -> digest
+        self.registry: Dict[tuple, List[Dict[str, Any]]] = {}  # (project_id, collection) -> versions
         self.embeddings_enabled = False
         self.weave_routes = True  # serve /objs/{id}/aliases and tag routes
         self.lock = threading.Lock()
@@ -198,6 +199,32 @@ class FakeWeft:
             return self._upsert("start", body["start"])
         if path == "/call/end":
             return self._upsert("end", body["end"])
+        if path == "/link_to_registry":
+            t = body["target"]
+            key = (f"{t['entity_name']}/{t['project_name']}", t["portfolio_name"])
+            versions = self.registry.setdefault(key, [])
+            v = next((x for x in versions if x["ref"] == body["ref"]), None)
+            if v is None:
+                v = {"version_index": len(versions), "ref": body["ref"], "aliases": []}
+                versions.append(v)
+            for a in body.get("aliases") or []:
+                for x in versions:
+                    if a in x["aliases"]:
+                        x["aliases"].remove(a)
+                v["aliases"].append(a)
+            return {"version_index": v["version_index"]}
+        if path == "/registry/query":
+            out = []
+            for (pid, name), versions in self.registry.items():
+                if pid != body["project_id"] or (body.get("portfolio_name") and name != body["portfolio_name"]):
+                    continue
+                vs = [dict(v, version=f"v{v['version_index']}") for v in reversed(versions)]
+                if body.get("alias"):
+                    vs = [v for v in vs if body["alias"] in v["aliases"]]
+                if body.get("version_index") is not None:
+                    vs = [v for v in vs if v["version_index"] == body["version_index"]]
+                out.append({"name": name, "versions": vs})
+            return {"collections": out}
         if path == "/obj/create":
             o = body["obj"]
             d = digest(o["val"])

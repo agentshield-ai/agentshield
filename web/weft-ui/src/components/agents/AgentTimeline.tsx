@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ScorePill } from './bits'
 import { turnSignals } from './signalUtils'
 import { Link } from 'react-router-dom'
@@ -194,7 +194,7 @@ function EventView({ m, projectId, agentName }: { m: ChatMessage; projectId: str
 }
 
 /** One turn: user prompt, LLM and tool spans inline, final answer. */
-export function TurnView({ turn, index, projectId }: { turn: TraceChat; index: number; projectId: string }) {
+export function TurnView({ turn, index, projectId, badges }: { turn: TraceChat; index: number; projectId: string; badges?: ReactNode }) {
   const tools = turn.messages.filter((m) => m.type === 'tool_call').length
   const replies = turn.messages.filter((m) => m.type === 'assistant_message').length
   return (
@@ -205,6 +205,7 @@ export function TurnView({ turn, index, projectId }: { turn: TraceChat; index: n
           {turn.root_span_name ?? turn.root_span_id}
         </Link>
         <Status code={turn.status_code} />
+        {badges}
         <span className="grow" />
         <span className="small muted">
           {replies} {replies === 1 ? 'response' : 'responses'} · {tools} tool {tools === 1 ? 'call' : 'calls'}

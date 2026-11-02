@@ -389,7 +389,11 @@ func indexAgentSpanTx(ctx context.Context, tx dbtx, projectID, id string) error 
 	if opName == "" { // end arrived before start; the start will index it
 		return nil
 	}
-	d := DeriveSpan(opName, display.String, strPtr(thread), strPtr(turn), id, decodeMap(attrs), decodeMap(inputs), decodeMap(summary))
+	attrMap := decodeMap(attrs)
+	d := DeriveSpan(opName, display.String, strPtr(thread), strPtr(turn), id, attrMap, decodeMap(inputs), decodeMap(summary))
+	if err := indexEvalLinksTx(ctx, tx, projectID, id, opName, strPtr(parent), attrMap); err != nil {
+		return err
+	}
 
 	eff := inherited{d.AgentName, d.AgentID, d.AgentVersion, d.AgentDescription, d.ConversationID, d.ConversationName}
 	if parent.Valid && parent.String != "" && (!d.OwnAgent || d.ConversationID == "") {

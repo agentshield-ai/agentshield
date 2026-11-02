@@ -63,6 +63,11 @@ export function compact(n: number | null | undefined): string {
   return Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
 }
 
+/** ISO start of a look-back window; undefined for "all" (no lower bound). */
+export function windowStartOrAll(range: string): string | undefined {
+  return range === 'all' ? undefined : windowStart(range)
+}
+
 /** ISO start of a look-back window. */
 export function windowStart(range: string): string {
   const ms: Record<string, number> = { '1h': 3_600_000, '6h': 6 * 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 }

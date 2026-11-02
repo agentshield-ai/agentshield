@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
-
-	_ "modernc.org/sqlite" // pure-Go SQLite driver
 )
 
 // ErrNotFound is returned when a requested record does not exist.
@@ -42,6 +40,8 @@ type Store struct {
 	files FileBackend
 	// pii, when set, is the NER analyzer used by sensitive-data redaction; see ner.go.
 	pii *piiState
+	// encrypted reports whether the database file is encrypted; see dbcrypt.go.
+	encrypted bool
 }
 
 const schema = `
@@ -171,12 +171,24 @@ CREATE TABLE IF NOT EXISTS secrets (
 );
 `
 
-// Open opens (creating if needed) the database at path.
-func Open(path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(off)&_pragma=synchronous(NORMAL)"
-	w, err := sql.Open("sqlite", dsn)
+// Open opens (creating if needed) the database at path, encrypted when
+// WEFT_DB_ENCRYPTION_KEY is set; see OpenWith.
+func Open(path string) (*Store, error) { return OpenWith(path, OpenOptionsFromEnv()) }
+
+// OpenWith opens (creating if needed) the database at path. With
+// opts.EncryptionKey the file is encrypted at rest (dbcrypt.go); a key that
+// does not match the file is an error before anything is written.
+func OpenWith(path string, opts OpenOptions) (*Store, error) {
+	var key []byte
+	if opts.EncryptionKey != "" {
+		key = deriveDBKey(opts.EncryptionKey)
+	}
+	if err := checkDBFile(path, key != nil); err != nil {
+		return nil, err
+	}
+	w, err := openDB(path, key, false)
 	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
+		return nil, err
 	}
 	w.SetMaxOpenConns(1)
 	if _, err := w.Exec(schema); err != nil {
@@ -191,24 +203,27 @@ func Open(path string) (*Store, error) {
 		_ = w.Close()
 		return nil, fmt.Errorf("migrating schema: %w", err)
 	}
-	r, err := sql.Open("sqlite", dsn+"&_pragma=query_only(true)")
+	r, err := openDB(path, key, true)
 	if err != nil {
 		_ = w.Close()
 		return nil, fmt.Errorf("opening read handle: %w", err)
 	}
 	r.SetMaxOpenConns(8)
-	st := &Store{w: w, r: r}
-	key, err := LoadSecretKey(os.Getenv("WEFT_SECRET_KEY"), SecretKeyFile(path))
+	st := &Store{w: w, r: r, encrypted: key != nil}
+	key2, err := LoadSecretKey(os.Getenv("WEFT_SECRET_KEY"), SecretKeyFile(path))
 	if err != nil {
 		_ = st.Close()
 		return nil, err
 	}
-	if err := st.SetSecretKey(context.Background(), key); err != nil {
+	if err := st.SetSecretKey(context.Background(), key2); err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("initialising secret encryption: %w", err)
 	}
 	return st, nil
 }
+
+// Encrypted reports whether the database file is encrypted at rest.
+func (s *Store) Encrypted() bool { return s.encrypted }
 
 // Close closes both handles.
 func (s *Store) Close() error {

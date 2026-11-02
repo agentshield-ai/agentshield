@@ -160,6 +160,10 @@ type completeCall struct {
 	Exception   *string        `json:"exception"`
 	WBUserID    *string        `json:"wb_user_id"`
 	WBRunID     *string        `json:"wb_run_id"`
+
+	// W&B run steps (store/callfields.go).
+	WBRunStep    *int64 `json:"wb_run_step"`
+	WBRunStepEnd *int64 `json:"wb_run_step_end"`
 }
 
 // callsComplete ingests finished calls in one request (weave's calls_complete
@@ -181,9 +185,9 @@ func (s *Server) callsComplete(w http.ResponseWriter, r *http.Request) {
 		}
 		st := storeCallStart{ProjectID: pid, ID: c.ID, OpName: c.OpName, DisplayName: c.DisplayName, TraceID: c.TraceID,
 			ParentID: c.ParentID, ThreadID: c.ThreadID, TurnID: c.TurnID, StartedAt: c.StartedAt, Attributes: c.Attributes,
-			Inputs: c.Inputs, WBUserID: userFrom(r, c.WBUserID), WBRunID: c.WBRunID}
+			Inputs: c.Inputs, WBUserID: userFrom(r, c.WBUserID), WBRunID: c.WBRunID, WBRunStep: c.WBRunStep}
 		en := &storeCallEnd{ProjectID: pid, ID: c.ID, EndedAt: c.EndedAt, Exception: c.Exception, Output: c.Output,
-			Summary: c.Summary, Cumulative: true}
+			Summary: c.Summary, Cumulative: true, WBRunStepEnd: c.WBRunStepEnd}
 		calls = append(calls, storeCompleteCall{Start: st, End: en})
 	}
 	ended, err := s.store.UpsertComplete(r.Context(), calls)

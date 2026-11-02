@@ -46,6 +46,8 @@ ALIASES: Dict[str, str] = {
     "google-genai": "google_genai",
     "genai": "google_genai",
     "boto3": "bedrock",
+    "bedrock_agents": "bedrock",
+    "bedrock-agent-runtime": "bedrock",
     "mistralai": "mistral",
     "langchain_core": "langchain",
     "openai-agents": "openai_agents",

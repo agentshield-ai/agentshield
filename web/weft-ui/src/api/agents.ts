@@ -143,7 +143,13 @@ export interface InsightFilter {
   exclude?: boolean
 }
 
-export interface SpansQueryReq {
+/** Weft extension: keep the spans of an evaluation run (or one of its predictions). */
+export interface EvalSpanFilter {
+  evaluation_run_id?: string
+  predict_and_score_call_id?: string
+}
+
+export interface SpansQueryReq extends EvalSpanFilter {
   project_id: string
   query?: Query
   signal_filters?: SignalFilters
@@ -173,7 +179,7 @@ export interface StatsMetric {
   percentiles?: number[]
 }
 
-export interface SpanStatsReq {
+export interface SpanStatsReq extends EvalSpanFilter {
   project_id: string
   start: string
   end?: string
@@ -312,6 +318,80 @@ export interface SearchResult {
   conversation_name: string
   last_activity: string
   matched_messages: { content_digest: string; content_preview: string; role: string; span_id: string; started_at: string; trace_id: string }[]
+}
+
+// ---------------------------------------------------------------- agent evals (Weft extensions)
+
+/** A prediction (predict_and_score call) of an evaluation run with agent spans. */
+export interface AgentEvalPrediction {
+  predict_and_score_call_id: string
+  status: string
+  example: Any
+  output: Any
+  scores: Any
+  model_latency: number | null
+  kind?: string
+  row_digest?: string
+  example_id?: string
+  trial_index?: number | null
+  conversation_ids: string[]
+  trace_ids: string[]
+  span_count: number
+}
+
+/** An evaluation run with the agent activity linked to it. */
+export interface AgentEvalRun {
+  call_id: string
+  display_name: string | null
+  evaluation_ref: string | null
+  evaluation_name: string
+  model_ref: string | null
+  model_name: string
+  started_at: string | null
+  ended_at: string | null
+  status: string
+  summary: Any
+  prediction_count: number
+  span_count: number
+  error_count: number
+  turn_count: number
+  trace_count: number
+  conversation_count: number
+  conversation_ids: string[]
+  agent_names: string[]
+  first_seen: string | null
+  last_seen: string | null
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost_usd: number | null
+  predictions?: AgentEvalPrediction[]
+}
+
+export interface AgentEvalsQueryReq {
+  project_id: string
+  agent_name?: string
+  conversation_id?: string
+  trace_ids?: string[]
+  evaluation_run_ids?: string[]
+  include_costs?: boolean
+  include_predictions?: boolean
+  limit?: number
+  offset?: number
+}
+
+export type AgentEvalConversation = SpanGroup & { conversation_id: string; predictions: AgentEvalPrediction[] }
+
+export interface AgentEvalConversationsRes {
+  conversations: AgentEvalConversation[]
+  total_count: number
+  span_count: number
+  other_span_count: number
+}
+
+export const agentEvalsApi = {
+  query: (body: AgentEvalsQueryReq) => post<{ evaluations: AgentEvalRun[]; total_count: number }>('/agents/evals/query', body),
+  conversations: (body: EvalSpanFilter & { project_id: string; agent_name?: string; include_costs?: boolean; limit?: number; offset?: number; sort_by?: SortBy[] }) =>
+    post<AgentEvalConversationsRes>('/agents/evals/conversations', body),
 }
 
 // ---------------------------------------------------------------- signals (Weft extensions)
@@ -467,5 +547,16 @@ export function eqQuery(fields: Record<string, string | boolean | number | null 
 
 export const agentUrl = (projectId: string, name: string) => `/${projectId}/agents/${encodeURIComponent(name)}`
 export const agentsUrl = (projectId: string) => `/${projectId}/agents`
+/**
+ * The Agents Spans tab filtered to an evaluation run (or one prediction), over
+ * all time; `conversations` groups the spans by conversation. With `agent`,
+ * the agent's own Spans tab.
+ */
+export function evalSpansUrl(projectId: string, runId: string, opts: { pred?: string; conversations?: boolean; agent?: string } = {}): string {
+  const p = new URLSearchParams({ tab: 'spans', eval: runId, range: 'all' })
+  if (opts.pred) p.set('pred', opts.pred)
+  if (opts.conversations) p.set('group', 'conversation_id')
+  return `${opts.agent ? agentUrl(projectId, opts.agent) : agentsUrl(projectId)}?${p}`
+}
 export const conversationUrl = (projectId: string, id: string, turn?: number) =>
   `/${projectId}/conversations/${encodeURIComponent(id)}${turn != null ? `#turn-${turn}` : ''}`

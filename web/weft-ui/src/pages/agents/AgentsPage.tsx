@@ -9,6 +9,7 @@ import { Empty, ErrorBox, Spinner, Tabs } from '../../components/common'
 import { AgentsDashboard } from '../../components/agents/AgentsDashboard'
 import { SpansTable } from '../../components/agents/SpansTable'
 import { SignalsView } from '../../components/agents/SignalsView'
+import { AgentEvalsView } from '../../components/agents/AgentEvals'
 import { compact, errorRate, fmtPct } from '../../components/agents/agentUtils'
 import '../../components/agents/agents.css'
 
@@ -309,12 +310,13 @@ function AgentsGrid() {
   )
 }
 
-type AgentsTab = 'dashboard' | 'agents' | 'spans' | 'signals'
+type AgentsTab = 'dashboard' | 'agents' | 'spans' | 'signals' | 'evals'
 const AGENT_TABS: { id: AgentsTab; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'agents', label: 'Agents' },
   { id: 'spans', label: 'Spans' },
   { id: 'signals', label: 'Signals' },
+  { id: 'evals', label: 'Evals' },
 ]
 
 /** Agents: project dashboard, agent cards, cross-agent spans and signals. */
@@ -336,7 +338,8 @@ export function AgentsPage() {
     const n = new URLSearchParams(extra)
     if (t !== 'dashboard') n.set('tab', t)
     const range = params.get('range')
-    if (range && !n.has('range')) n.set('range', range)
+    // "all" (no time bound) exists only in the Spans tab.
+    if (range && !n.has('range') && (range !== 'all' || t === 'spans')) n.set('range', range)
     setParams(n)
   }
   return (
@@ -351,6 +354,7 @@ export function AgentsPage() {
       {tab === 'agents' && <AgentsGrid />}
       {tab === 'spans' && <SpansTable projectId={projectId} params={params} update={update} />}
       {tab === 'signals' && <SignalsView projectId={projectId} params={params} update={update} />}
+      {tab === 'evals' && <AgentEvalsView projectId={projectId} />}
     </div>
   )
 }

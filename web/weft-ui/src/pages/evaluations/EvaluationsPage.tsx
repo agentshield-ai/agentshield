@@ -8,6 +8,7 @@ import { Dropdown, MenuItem } from '../../components/traces/Menu'
 import { slugify } from '../../components/traces/callUtils'
 import { EvalRunsTable } from '../../components/evals/EvalRunsTable'
 import { evalRunInfo, useEvalRuns } from '../../components/evals/evalUtils'
+import { useAgentEvalRuns } from '../../components/agents/AgentEvals'
 import { useProjectId } from '../../hooks/useProject'
 import { callStatus } from '../../lib/format'
 import { compareEvaluationsUrl, newEvaluationUrl } from '../../lib/urls'
@@ -54,6 +55,8 @@ export function EvaluationsPage() {
   const runs = useEvalRuns(projectId, { limit: 500, pollWhileRunning: true })
   const all = useMemo(() => runs.data ?? [], [runs.data])
   const anyRunning = all.some((c) => !c.ended_at)
+  const allIds = useMemo(() => all.map((c) => c.id), [all])
+  const agentRuns = useAgentEvalRuns(projectId, allIds)
 
   const infos = useMemo(() => all.map((c) => ({ c, i: evalRunInfo(c) })), [all])
   const evalNames = useMemo(() => [...new Set(infos.map((x) => x.i.evalName))].sort(), [infos])
@@ -180,7 +183,7 @@ export function EvaluationsPage() {
           <Empty>No runs match these filters.</Empty>
         </div>
       ) : (
-        <EvalRunsTable projectId={projectId} calls={filtered} selected={sel} onSelect={setSel} />
+        <EvalRunsTable projectId={projectId} calls={filtered} selected={sel} onSelect={setSel} agentRuns={agentRuns.data} />
       )}
       {saving && (
         <SaveEvalViewModal

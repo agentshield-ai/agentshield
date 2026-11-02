@@ -1,5 +1,5 @@
 // Pure helpers for agent signals and the spans table (unit tested in signals.test.ts).
-import type { InsightFilter, SignalFilters, SignalKind, SignalPreset, SignalRatingFilter, SignalResult, SignalSpec } from '../../api/agents'
+import type { EvalSpanFilter, InsightFilter, SignalFilters, SignalKind, SignalPreset, SignalRatingFilter, SignalResult, SignalSpec } from '../../api/agents'
 import type { Query } from '../../api/types'
 
 /** A signal the project has turned on, stored in the `agent-signals` object. */
@@ -159,9 +159,12 @@ export interface SpanFilterState {
   tags: string[]
   ratings: SignalRatingFilter[]
   sentiment: string[]
+  /** Evaluation run (call id) and prediction (predict_and_score call id) the spans belong to. */
+  evalRun: string
+  evalPred: string
 }
 
-export const EMPTY_SPAN_FILTERS: SpanFilterState = { op: '', agent: '', model: '', tool: '', status: '', tags: [], ratings: [], sentiment: [] }
+export const EMPTY_SPAN_FILTERS: SpanFilterState = { op: '', agent: '', model: '', tool: '', status: '', tags: [], ratings: [], sentiment: [], evalRun: '', evalPred: '' }
 
 const RATING_OPS: SignalRatingFilter['op'][] = ['gte', 'gt', 'lte', 'lt', 'eq']
 export const RATING_OP_LABEL: Record<SignalRatingFilter['op'], string> = { gte: '≥', gt: '>', lte: '≤', lt: '<', eq: '=' }
@@ -196,6 +199,8 @@ export function readSpanFilters(p: URLSearchParams): SpanFilterState {
     tags: list(p.get('tags')),
     ratings: decodeRatings(p.get('ratings')),
     sentiment: list(p.get('sentiment')),
+    evalRun: p.get('eval') ?? '',
+    evalPred: p.get('pred') ?? '',
   }
 }
 
@@ -209,13 +214,15 @@ export function writeSpanFilters(f: SpanFilterState): Record<string, string | nu
     tags: f.tags.join(',') || null,
     ratings: encodeRatings(f.ratings) || null,
     sentiment: f.sentiment.join(',') || null,
+    eval: f.evalRun || null,
+    pred: f.evalPred || null,
   }
 }
 
 const eq = (field: string, v: string | boolean) => ({ $eq: [{ $getField: field }, { $literal: v }] })
 
 /** The /agents/spans/query filter parts for a filter state. `agent` pins the agent. */
-export function spanQueryParts(f: SpanFilterState, agent?: string): { query?: Query; signal_filters?: SignalFilters; insight_filters?: InsightFilter[] } {
+export function spanQueryParts(f: SpanFilterState, agent?: string): { query?: Query; signal_filters?: SignalFilters; insight_filters?: InsightFilter[] } & EvalSpanFilter {
   const parts: unknown[] = []
   const a = agent ?? f.agent
   if (a) parts.push(eq('agent_name', a))
@@ -227,11 +234,13 @@ export function spanQueryParts(f: SpanFilterState, agent?: string): { query?: Qu
   if (parts.length) out.query = { $expr: parts.length === 1 ? parts[0] : { $and: parts } } as Query
   if (f.tags.length || f.ratings.length) out.signal_filters = { ...(f.tags.length ? { tags: f.tags } : {}), ...(f.ratings.length ? { ratings: f.ratings } : {}) }
   if (f.sentiment.length) out.insight_filters = [{ field: 'intent_sentiment', values: f.sentiment }]
+  if (f.evalRun) out.evaluation_run_id = f.evalRun
+  if (f.evalPred) out.predict_and_score_call_id = f.evalPred
   return out
 }
 
 export function activeFilterCount(f: SpanFilterState): number {
-  return [f.op, f.agent, f.model, f.tool, f.status].filter(Boolean).length + f.tags.length + f.ratings.length + (f.sentiment.length ? 1 : 0)
+  return [f.op, f.agent, f.model, f.tool, f.status].filter(Boolean).length + f.tags.length + f.ratings.length + (f.sentiment.length ? 1 : 0) + (f.evalRun || f.evalPred ? 1 : 0)
 }
 
 export const SENTIMENTS = ['frustrated', 'dissatisfied', 'neutral', 'satisfied', 'delighted'] as const

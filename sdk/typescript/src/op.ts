@@ -1,3 +1,4 @@
+import { logger } from './log.js';
 import { Call } from './call.js';
 import { currentContext, storage, type WeftContext } from './context.js';
 import { tracingClient } from './global.js';
@@ -215,7 +216,7 @@ function startTracer(meta: OpMeta, self: unknown, args: unknown[]): Tracer {
     const ctx = { ...currentContext(), stack: [...currentContext().stack, call] };
     return { call, ctx, finish: (output, err) => client.finishCall(call, output, err, meta) };
   } catch (e) {
-    console.warn(`weft: failed to start call for ${meta.name}: ${(e as Error).message}`);
+    logger.warn(`weft: failed to start call for ${meta.name}: ${(e as Error).message}`);
     return { call: null, ctx: null, finish: () => {} };
   }
 }

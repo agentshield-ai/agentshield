@@ -43,6 +43,8 @@ var fileDigestRe = regexp.MustCompile(`^[A-Za-z0-9]{20,64}$`)
 //     "weave-file://<digest>" are accepted too): a presigned URL when the file
 //     lives in a presigning backend (S3), otherwise this server's /file/content URL;
 //   - s3://<backend bucket>/<key> under this project's prefix: a presigned URL;
+//   - s3:// and gs:// URIs in a reference bucket registered for the project
+//     or its team (refbuckets.go): a presigned (S3) or V4 signed (GCS) URL;
 //   - http(s) URLs: returned unchanged.
 //
 // expires_at is the earliest expiry of the presigned URLs, or null.
@@ -81,6 +83,20 @@ func (s *Server) filesResolveURL(ctx context.Context, r *http.Request, req *file
 		switch {
 		case strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://"):
 			out = append(out, uri)
+			continue
+		case strings.HasPrefix(uri, "gs://") || (strings.HasPrefix(uri, "s3://") && !s.inFilesBackend(uri)):
+			// Registered reference buckets (refbuckets.go).
+			signed, exp, ok, err := s.presignReference(ctx, pid, uri, ttl)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, store.Invalidf("cannot resolve %q: the bucket is not registered as a reference bucket for %s", uri, pid)
+			}
+			if earliest == nil || exp.Before(*earliest) {
+				earliest = &exp
+			}
+			out = append(out, signed)
 			continue
 		case strings.HasPrefix(uri, "s3://"):
 			if backend == nil || presigner == nil {

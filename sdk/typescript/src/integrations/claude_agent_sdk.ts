@@ -18,6 +18,7 @@
  * message's cost, turns and duration are kept on the query call; when no
  * assistant message carried usage, the result's usage is recorded there.
  */
+import { logger } from '../log.js';
 import type { Call } from '../call.js';
 import type { WeftClient } from '../client.js';
 import { currentContext, runWith } from '../context.js';
@@ -214,7 +215,7 @@ function wrapIterator(gen: any, tracer: QueryTracer): any {
     try {
       tracer.finish(e);
     } catch (x) {
-      console.warn(`weft: claude agent sdk tracing failed: ${(x as Error).message}`);
+      logger.warn(`weft: claude agent sdk tracing failed: ${(x as Error).message}`);
     }
   };
   const it = gen[Symbol.asyncIterator]();

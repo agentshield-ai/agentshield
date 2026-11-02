@@ -30,6 +30,7 @@
  * too; children created with `turn.startLLM()` & co. always nest under their
  * parent.
  */
+import { logger } from './log.js';
 import { randomUUID } from 'node:crypto';
 import { Call, type CallData } from './call.js';
 import { formatError, syntheticOp, type WeftClient } from './client.js';
@@ -419,7 +420,7 @@ export abstract class SpanBase {
   /** Mark the span failed (it still has to end). */
   recordError(error: unknown): this {
     if (this.ended) {
-      console.warn('weft: recordError ignored: span already ended');
+      logger.warn('weft: recordError ignored: span already ended');
       return this;
     }
     this.exception = formatError(error);
@@ -430,7 +431,7 @@ export abstract class SpanBase {
   /** Add attributes to the span (any time before it ends). */
   setAttributes(attributes: Record<string, unknown>): this {
     if (this.ended) {
-      console.warn(`weft: setAttributes(${Object.keys(attributes).join(', ')}) ignored: span already ended`);
+      logger.warn(`weft: setAttributes(${Object.keys(attributes).join(', ')}) ignored: span already ended`);
       return this;
     }
     Object.assign(this.extraAttrs, attributes);
@@ -447,7 +448,7 @@ export abstract class SpanBase {
     try {
       [inputs, output, gen, summary] = this.payload(conv, client);
     } catch (e) {
-      console.warn(`weft: could not record ${this.opName} span: ${(e as Error).message}`);
+      logger.warn(`weft: could not record ${this.opName} span: ${(e as Error).message}`);
       return;
     }
     const flat: Record<string, unknown> = { ...gen };

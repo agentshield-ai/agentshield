@@ -48,6 +48,8 @@ type agentSpanFilter struct {
 	WithAttrs       bool
 	// AllCalls includes calls with no agent, conversation or operation.
 	AllCalls bool
+	// Eval keeps the spans of an evaluation run (applied by filteredSpans).
+	Eval *AgentEvalFilter
 }
 
 func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpanFilter) ([]*agentSpan, error) {
@@ -1256,7 +1258,8 @@ type AgentDistributionSpec struct {
 
 // AgentSpansQueryReq is the body of /agents/spans/query.
 type AgentSpansQueryReq struct {
-	ProjectID          string                  `json:"project_id"`
+	ProjectID string `json:"project_id"`
+	AgentEvalFilter
 	CustomAttrColumns  []AgentValueRef         `json:"custom_attr_columns"`
 	GroupBy            []AgentValueRef         `json:"group_by"`
 	GroupDistributions []AgentDistributionSpec `json:"group_distributions"`
@@ -1418,6 +1421,11 @@ func (s *Store) filteredSpans(ctx context.Context, pid string, query any, after,
 	if err != nil {
 		return nil, err
 	}
+	if extra.Eval.active() {
+		if spans, err = s.filterByEval(ctx, pid, spans, extra.Eval); err != nil {
+			return nil, err
+		}
+	}
 	if exprOf(query) == nil {
 		return spans, nil
 	}
@@ -1555,7 +1563,7 @@ func (s *Store) QueryAgentSpans(ctx context.Context, req AgentSpansQueryReq) (*A
 			return nil, err
 		}
 	}
-	spans, err := s.filteredSpans(ctx, pid, req.Query, req.StartedAfter, req.StartedBefore, needAttrs, agentSpanFilter{})
+	spans, err := s.filteredSpans(ctx, pid, req.Query, req.StartedAfter, req.StartedBefore, needAttrs, agentSpanFilter{Eval: &req.AgentEvalFilter})
 	if err != nil {
 		return nil, err
 	}
@@ -2014,7 +2022,8 @@ func partsTextOf(s string) string {
 
 // AgentCustomAttrsSchemaReq is the body of /agents/spans/custom-attrs/schema.
 type AgentCustomAttrsSchemaReq struct {
-	ProjectID     string  `json:"project_id"`
+	ProjectID string `json:"project_id"`
+	AgentEvalFilter
 	Limit         *int    `json:"limit"`
 	Offset        int     `json:"offset"`
 	Query         any     `json:"query"`
@@ -2036,7 +2045,7 @@ func (s *Store) CustomAttrsSchema(ctx context.Context, req AgentCustomAttrsSchem
 	if err != nil {
 		return nil, false, 0, &InvalidError{Msg: err.Error()}
 	}
-	spans, err := s.filteredSpans(ctx, pid, req.Query, req.StartedAfter, req.StartedBefore, true, agentSpanFilter{})
+	spans, err := s.filteredSpans(ctx, pid, req.Query, req.StartedAfter, req.StartedBefore, true, agentSpanFilter{Eval: &req.AgentEvalFilter})
 	if err != nil {
 		return nil, false, 0, err
 	}
@@ -2092,7 +2101,8 @@ type AgentBucketBy struct {
 
 // AgentSpanStatsReq is the body of /agents/spans/stats.
 type AgentSpanStatsReq struct {
-	ProjectID      string               `json:"project_id"`
+	ProjectID string `json:"project_id"`
+	AgentEvalFilter
 	Start          string               `json:"start"`
 	End            *string              `json:"end"`
 	BucketBy       *AgentBucketBy       `json:"bucket_by"`
@@ -2217,7 +2227,7 @@ func (s *Store) SpanStats(ctx context.Context, req AgentSpanStatsReq) (*AgentSpa
 		needAttrs = needAttrs || strings.HasPrefix(m.Value.Source, "custom_attrs")
 	}
 	startStr, endStr := FormatMicros(startUS), FormatMicros(endUS)
-	spans, err := s.filteredSpans(ctx, pid, req.Query, &startStr, &endStr, needAttrs, agentSpanFilter{})
+	spans, err := s.filteredSpans(ctx, pid, req.Query, &startStr, &endStr, needAttrs, agentSpanFilter{Eval: &req.AgentEvalFilter})
 	if err != nil {
 		return nil, err
 	}

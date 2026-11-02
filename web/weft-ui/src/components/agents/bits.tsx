@@ -5,10 +5,11 @@ import { fmtScore, scoreTone, type TrendPoint } from './signalUtils'
 export const TOOLTIP_STYLE = { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text)' }
 
 /** Time window selector shared by the agent tabs. */
-export function RangePicker({ value, onChange }: { value: string; onChange: (r: string) => void }) {
+export function RangePicker({ value, onChange, allowAll }: { value: string; onChange: (r: string) => void; allowAll?: boolean }) {
+  const ranges: string[] = allowAll ? [...RANGES, 'all'] : [...RANGES]
   return (
     <div className="seg" role="group" aria-label="Time range">
-      {RANGES.map((r) => (
+      {ranges.map((r) => (
         <button key={r} className={r === value ? 'on' : ''} aria-pressed={r === value} onClick={() => onChange(r)}>
           {r}
         </button>

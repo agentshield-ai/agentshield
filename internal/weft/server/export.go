@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -88,30 +89,7 @@ func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
 	// pages calls fn for each page; the first page is read before anything is
 	// written so a bad query still gets a proper error status.
 	pages := func(fn func([]*store.Call) error) error {
-		done := 0
-		for remaining < 0 || done < remaining {
-			n := exportPageSize
-			if remaining >= 0 {
-				n = min(n, remaining-done)
-			}
-			pq := q
-			pq.Limit = &n
-			pq.Offset = baseOffset + done
-			page, err := s.store.ListCalls(r.Context(), pq)
-			if err != nil {
-				return err
-			}
-			if len(page) > 0 {
-				if err := fn(page); err != nil {
-					return err
-				}
-			}
-			done += len(page)
-			if len(page) < n {
-				return nil
-			}
-		}
-		return nil
+		return forEachCallPage(r.Context(), s.store, q, baseOffset, remaining, fn)
 	}
 
 	// Validate the query up front.
@@ -248,6 +226,36 @@ func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
 		// Headers are gone; all we can do is log and stop.
 		s.log.Warn("calls export stopped", "err", err)
 	}
+}
+
+// forEachCallPage reads the calls of q page by page (exportPageSize at a
+// time, starting at offset, at most limit calls when limit >= 0) and calls fn
+// with each non-empty page. Also used by bulk export jobs (bulkexport.go).
+func forEachCallPage(ctx context.Context, st *store.Store, q store.CallsQuery, offset, limit int, fn func([]*store.Call) error) error {
+	done := 0
+	for limit < 0 || done < limit {
+		n := exportPageSize
+		if limit >= 0 {
+			n = min(n, limit-done)
+		}
+		pq := q
+		pq.Limit = &n
+		pq.Offset = offset + done
+		page, err := st.ListCalls(ctx, pq)
+		if err != nil {
+			return err
+		}
+		if len(page) > 0 {
+			if err := fn(page); err != nil {
+				return err
+			}
+		}
+		done += len(page)
+		if len(page) < n {
+			return nil
+		}
+	}
+	return nil
 }
 
 // andQuery adds an operation to a CallsQuery query ({"$expr": op} or a bare op).

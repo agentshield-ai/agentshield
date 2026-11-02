@@ -219,9 +219,13 @@ func (s *S3) scope(t time.Time) string {
 
 // sign adds SigV4 headers (Authorization, x-amz-date, x-amz-content-sha256).
 func (s *S3) sign(req *http.Request, payload []byte) {
-	now := s.cfg.Now().UTC()
 	sum := sha256.Sum256(payload)
-	payloadHash := hex.EncodeToString(sum[:])
+	s.signHash(req, hex.EncodeToString(sum[:]))
+}
+
+// signHash signs a request whose body has the given hex SHA-256.
+func (s *S3) signHash(req *http.Request, payloadHash string) {
+	now := s.cfg.Now().UTC()
 	req.Header.Set("X-Amz-Date", now.Format(amzDateFormat))
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	if s.cfg.Creds.SessionToken != "" {

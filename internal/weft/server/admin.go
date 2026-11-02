@@ -233,6 +233,11 @@ func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 	if parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/"); len(parts) >= 3 && parts[0] == "v2" {
 		add(parts[1] + "/" + parts[2])
 	}
+	// Bulk export: /v1/entities/{entity}/projects/{project}[:export|/exports/...]
+	if parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/"); len(parts) >= 5 && parts[0] == "v1" && parts[1] == "entities" && parts[3] == "projects" {
+		p, _, _ := strings.Cut(parts[4], ":")
+		add(parts[2] + "/" + p)
+	}
 	ct := r.Header.Get("Content-Type")
 	switch {
 	case strings.HasPrefix(ct, "multipart/form-data"):

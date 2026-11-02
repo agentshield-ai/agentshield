@@ -24,6 +24,7 @@ type CallStart struct {
 	Inputs      map[string]any `json:"inputs"`
 	WBUserID    *string        `json:"wb_user_id"`
 	WBRunID     *string        `json:"wb_run_id"`
+	WBRunStep   *int64         `json:"wb_run_step"`
 }
 
 // CallEnd is the end half of a call.
@@ -34,6 +35,8 @@ type CallEnd struct {
 	Exception *string        `json:"exception"`
 	Output    any            `json:"output"`
 	Summary   map[string]any `json:"summary"`
+	// WBRunStepEnd is the W&B run step when the call ended.
+	WBRunStepEnd *int64 `json:"wb_run_step_end"`
 	// Cumulative marks a summary that already includes descendants' usage.
 	Cumulative bool `json:"-"`
 }
@@ -320,6 +323,9 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 	if err != nil {
 		return err
 	}
+	if err := setRunStep(ctx, tx, st.ProjectID, st.ID, "wb_run_step", st.WBRunStep); err != nil { // callfields.go
+		return err
+	}
 	if err := s.absorbChildren(ctx, tx, st.ProjectID, st.ID); err != nil {
 		return err
 	}
@@ -353,6 +359,9 @@ func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
 			storage_size = calls.storage_size - length(COALESCE(calls.output, '')) - length(calls.summary) + excluded.storage_size`,
 		en.ProjectID, en.ID, en.ID, ended, nullStr(en.Exception), output, summary, outRefs, len(outStr)+len(summary), en.Cumulative)
 	if err != nil {
+		return err
+	}
+	if err := setRunStep(ctx, tx, en.ProjectID, en.ID, "wb_run_step_end", en.WBRunStepEnd); err != nil { // callfields.go
 		return err
 	}
 	if err := s.refreshTotalTokens(ctx, tx, en.ProjectID, en.ID); err != nil {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { agentsApi, agentsUrl, agentUrl } from '../../api/agents'
@@ -9,6 +9,7 @@ import { Empty, ErrorBox, Spinner } from '../../components/common'
 import { TurnView } from '../../components/agents/AgentTimeline'
 import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
 import { compact } from '../../components/agents/agentUtils'
+import { ConversationEvals, predictionsByTrace, TurnEvalBadge, useConversationEvals } from '../../components/agents/AgentEvals'
 import '../../components/agents/agents.css'
 
 const PAGE = 20
@@ -28,6 +29,8 @@ export function ConversationPage() {
     queryKey: ['agent-conv-spans', projectId, [conversationId]],
     queryFn: () => agentsApi.conversationSpans({ project_id: projectId, conversation_ids: [conversationId] }),
   })
+  const evals = useConversationEvals(projectId, conversationId)
+  const predByTrace = useMemo(() => predictionsByTrace(evals.data?.evaluations), [evals.data])
   const c = chat.data
   const firstTurn = c ? c.total_turns - c.turns.length : 0
   // Jump to #turn-N once the turns are rendered.
@@ -111,6 +114,7 @@ export function ConversationPage() {
               </div>
             </div>
           </div>
+          <ConversationEvals projectId={projectId} runs={evals.data?.evaluations ?? []} />
           {spans.data?.conversations[0]?.spans.length ? (
             <div className="col" style={{ gap: 4 }}>
               <div className="row small muted">
@@ -129,7 +133,13 @@ export function ConversationPage() {
           )}
           <div className="col" style={{ gap: 12 }}>
             {c.turns.map((t, i) => (
-              <TurnView key={`${t.trace_id}-${t.root_span_id}`} turn={t} index={firstTurn + i} projectId={projectId} />
+              <TurnView
+                key={`${t.trace_id}-${t.root_span_id}`}
+                turn={t}
+                index={firstTurn + i}
+                projectId={projectId}
+                badges={<TurnEvalBadge projectId={projectId} items={predByTrace.get(t.trace_id) ?? []} />}
+              />
             ))}
           </div>
         </>

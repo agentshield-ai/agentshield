@@ -1,9 +1,10 @@
+import { logger } from './log.js';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { HttpClient, WeftHTTPError } from './http.js';
 
 export type Item =
-  | { kind: 'call_start' | 'call_end'; payload: Record<string, unknown>; cb?: (r: any) => void }
+  | { kind: 'call_start' | 'call_end'; payload: Record<string, unknown>; cb?: (r: any) => void; prepared?: boolean }
   | { kind: 'post'; path: string; payload: unknown; cb?: (r: any) => void }
   | { kind: 'file'; path: string; fields: Record<string, string>; data: Uint8Array; filename: string; mime: string; cb?: (r: any) => void };
 
@@ -94,13 +95,20 @@ export class Sender {
   maxBackoffMs: number;
   readonly wal: WriteAheadLog | null;
   walWritten = 0;
+  /**
+   * Async step run on call start/end items just before they are sent (e.g.
+   * NER redaction through a remote analyzer). It may mutate the payloads;
+   * an item is prepared once.
+   */
+  prepare: ((items: Item[]) => Promise<void>) | null = null;
   private lastFailureRetryable = false;
 
   constructor(
     private readonly http: HttpClient,
     opts: SenderOptions = {},
   ) {
-    this.maxQueue = opts.maxQueue ?? 10_000;
+    const mq = opts.maxQueue ?? 10_000;
+    this.maxQueue = mq > 0 ? mq : Number.POSITIVE_INFINITY; // 0 = unbounded, as in Weave
     this.batchSize = opts.batchSize ?? 100;
     this.flushIntervalMs = opts.flushIntervalMs ?? 100;
     this.maxRetries = opts.maxRetries ?? 3;
@@ -166,7 +174,7 @@ export class Sender {
     const now = Date.now();
     if (now - this.lastWarn > 5000) {
       this.lastWarn = now;
-      console.warn(msg);
+      logger.warn(msg);
     }
   }
 
@@ -191,6 +199,17 @@ export class Sender {
           const items: Item[] = [];
           while (items.length < this.batchSize && this.queue.length && (this.queue[0].kind === 'call_start' || this.queue[0].kind === 'call_end')) {
             items.push(this.queue.shift()!);
+          }
+          if (this.prepare) {
+            const todo = items.filter((it) => !(it as { prepared?: boolean }).prepared);
+            if (todo.length) {
+              try {
+                await this.prepare(todo);
+              } catch (e) {
+                this.warn(`weft: preparing calls failed: ${(e as Error).message}`);
+              }
+              for (const it of todo) (it as { prepared?: boolean }).prepared = true;
+            }
           }
           const batch = items.map((it) => {
             const mode = it.kind === 'call_start' ? 'start' : 'end';

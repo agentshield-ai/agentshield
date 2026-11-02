@@ -9,13 +9,14 @@ import { tracesUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Section, Spinner, Tabs } from '../../components/common'
 import { SpansTable } from '../../components/agents/SpansTable'
 import { SignalsView } from '../../components/agents/SignalsView'
+import { AgentEvalsView } from '../../components/agents/AgentEvals'
 import { AgentCharts } from '../../components/agents/AgentCharts'
 import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
 import { compact, errorRate, fmtPct, RANGES, windowStart } from '../../components/agents/agentUtils'
 import '../../components/agents/agents.css'
 
 const CONV_LIMIT = 25
-type AgentTab = 'overview' | 'spans' | 'signals'
+type AgentTab = 'overview' | 'spans' | 'signals' | 'evals'
 
 function withConversation(q: Query | undefined): Query {
   const exists = { $convert: { input: { $getField: 'conversation_id' }, to: 'exists' } }
@@ -251,7 +252,7 @@ export function AgentPage() {
   const { agentName = '' } = useParams()
   const [params, setParams] = useSearchParams()
   const range = (RANGES as readonly string[]).includes(params.get('range') ?? '') ? params.get('range')! : '7d'
-  const tab: AgentTab = params.get('tab') === 'spans' || params.get('tab') === 'signals' ? (params.get('tab') as AgentTab) : 'overview'
+  const tab: AgentTab = (['spans', 'signals', 'evals'] as const).includes(params.get('tab') as 'spans') ? (params.get('tab') as AgentTab) : 'overview'
   const update = (patch: Record<string, string | null>) =>
     setParams(
       (p) => {
@@ -302,12 +303,13 @@ export function AgentPage() {
           { id: 'overview', label: 'Overview' },
           { id: 'spans', label: 'Spans' },
           { id: 'signals', label: 'Signals' },
+          { id: 'evals', label: 'Evals' },
         ]}
         value={tab}
         onChange={(t) => {
           const n = new URLSearchParams()
           if (t !== 'overview') n.set('tab', t)
-          if (params.get('range')) n.set('range', params.get('range')!)
+          if (params.get('range') && (params.get('range') !== 'all' || t === 'spans')) n.set('range', params.get('range')!)
           setParams(n)
         }}
       />
@@ -316,6 +318,8 @@ export function AgentPage() {
         <SpansTable projectId={projectId} params={params} update={update} agent={agentName} />
       ) : tab === 'signals' ? (
         <SignalsView projectId={projectId} params={params} update={update} agent={agentName} />
+      ) : tab === 'evals' ? (
+        <AgentEvalsView projectId={projectId} agent={agentName} />
       ) : summary.isLoading ? (
         <Spinner />
       ) : !a ? (

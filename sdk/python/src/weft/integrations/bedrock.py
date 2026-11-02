@@ -1,5 +1,7 @@
 """AWS Bedrock via boto3: ``converse``, ``converse_stream``, ``invoke_model`` and
-``invoke_model_with_response_stream`` on ``bedrock-runtime`` clients.
+``invoke_model_with_response_stream`` on ``bedrock-runtime`` clients, and
+Bedrock Agents (``invoke_agent``, ``invoke_inline_agent`` on
+``bedrock-agent-runtime``; see ``bedrock_agents.py``).
 
 Patches ``botocore.client.BaseClient._make_api_call`` so every bedrock-runtime
 client is traced, whenever it was created.
@@ -141,10 +143,40 @@ class _StreamProxy:
         return getattr(self._stream, item)
 
 
+def _agent_call(orig: Any, self: Any, client: Any, operation_name: str, api_params: Dict[str, Any]) -> Any:
+    from .bedrock_agents import handle_agent_response, start_agent_call
+
+    try:
+        call, proc = start_agent_call(client, operation_name, api_params)
+    except Exception as e:  # pragma: no cover - never break the caller
+        import logging
+
+        logging.getLogger("weft").debug("weft: could not start a bedrock agent call: %s", e)
+        return orig(self, operation_name, api_params)
+    token = push_call(call)
+    try:
+        res = orig(self, operation_name, api_params)
+    except BaseException as e:
+        pop_call(token)
+        proc.finish(e)
+        raise
+    pop_call(token)
+    try:
+        return handle_agent_response(proc, res)
+    except Exception:  # pragma: no cover
+        proc.finish(None)
+        return res
+
+
 def _wrap(orig: Any) -> Any:
     def _make_api_call(self: Any, operation_name: str, api_params: Dict[str, Any]) -> Any:
         meta = getattr(self, "meta", None)
         service = getattr(getattr(meta, "service_model", None), "service_name", "")
+        if service == "bedrock-agent-runtime" and operation_name in ("InvokeAgent", "InvokeInlineAgent"):
+            agent_client = _tracing("bedrock")
+            if agent_client is None:
+                return orig(self, operation_name, api_params)
+            return _agent_call(orig, self, agent_client, operation_name, api_params)
         client = _tracing("bedrock") if service == "bedrock-runtime" and operation_name in OPS else None
         if client is None:
             return orig(self, operation_name, api_params)

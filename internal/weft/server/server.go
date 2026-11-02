@@ -547,6 +547,9 @@ type callReadReq struct {
 	IncludeCosts       bool   `json:"include_costs"`
 	IncludeFeedback    bool   `json:"include_feedback"`
 	IncludeStorageSize bool   `json:"include_storage_size"`
+	// Optional fields (store/callfields.go).
+	IncludeTotalStorageSize bool `json:"include_total_storage_size"`
+	IncludeUsernames        bool `json:"include_usernames"`
 }
 
 func (s *Server) callRead(ctx context.Context, _ *http.Request, req *callReadReq) (any, error) {
@@ -554,7 +557,8 @@ func (s *Server) callRead(ctx context.Context, _ *http.Request, req *callReadReq
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.store.GetCall(ctx, pid, req.ID, req.IncludeCosts, req.IncludeFeedback, req.IncludeStorageSize)
+	c, err := s.store.GetCallWith(ctx, store.CallsQuery{ProjectID: pid, IncludeCosts: req.IncludeCosts, IncludeFeedback: req.IncludeFeedback,
+		IncludeStorageSize: req.IncludeStorageSize, IncludeTotalStorageSize: req.IncludeTotalStorageSize, IncludeUsernames: req.IncludeUsernames}, req.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		return map[string]any{"call": nil}, nil
 	}

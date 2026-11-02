@@ -30,7 +30,11 @@ class Call:
     summary: Dict[str, Any] = field(default_factory=dict)
     wb_user_id: Optional[str] = None
     wb_run_id: Optional[str] = None
+    wb_run_step: Optional[int] = None
+    wb_run_step_end: Optional[int] = None
+    wb_username: Optional[str] = None
     deleted_at: Optional[str] = None
+    storage_size_bytes: Optional[int] = None
     raw_feedback: Optional[List[Dict[str, Any]]] = None
     _client: Optional["WeftClient"] = field(default=None, repr=False, compare=False)
     _ended: bool = field(default=False, repr=False, compare=False)
@@ -40,6 +44,22 @@ class Call:
     _child_count: int = field(default=0, repr=False, compare=False)
 
     # ---- convenience -----------------------------------------------------
+    _DICT_FIELDS = (
+        "id", "project_id", "op_name", "display_name", "trace_id", "parent_id", "thread_id", "turn_id",
+        "started_at", "ended_at", "inputs", "output", "exception", "attributes", "summary",
+        "wb_user_id", "wb_username", "wb_run_id", "wb_run_step", "wb_run_step_end", "deleted_at",
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The call as a plain dict (server field names), as used by ``CallsIter.to_pandas()``."""
+        d: Dict[str, Any] = {k: getattr(self, k) for k in self._DICT_FIELDS}
+        d["status"] = self.status
+        if self.storage_size_bytes is not None:
+            d["storage_size_bytes"] = self.storage_size_bytes
+        if self.raw_feedback is not None:
+            d["feedback"] = self.raw_feedback
+        return d
+
     @property
     def op_base_name(self) -> str:
         if is_ref_uri(self.op_name):
@@ -204,7 +224,11 @@ class Call:
             summary=d.get("summary") or {},
             wb_user_id=d.get("wb_user_id"),
             wb_run_id=d.get("wb_run_id"),
+            wb_run_step=d.get("wb_run_step"),
+            wb_run_step_end=d.get("wb_run_step_end"),
+            wb_username=d.get("wb_username"),
             deleted_at=d.get("deleted_at"),
+            storage_size_bytes=d.get("storage_size_bytes"),
             raw_feedback=d.get("feedback"),
         )
         c._client = client

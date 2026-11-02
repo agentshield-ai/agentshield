@@ -6,6 +6,8 @@ import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtD
 import { callUrl, objectUrl } from '../../lib/urls'
 import { parseRef } from '../../api/refs'
 import { evalRunInfo, flattenScores, fmtMetric, sortMetricKeys, useDatasetSizes } from './evalUtils'
+import type { AgentEvalRun } from '../../api/agents'
+import { EvalAgentLinks } from '../agents/AgentEvals'
 
 function RefLink({ refStr, label }: { refStr: string | null; label: string }) {
   const p = refStr ? parseRef(refStr) : null
@@ -25,6 +27,7 @@ export function EvalRunsTable({
   hideEval,
   hideModel,
   maxMetrics = 12,
+  agentRuns,
 }: {
   projectId: string
   calls: Call[]
@@ -33,6 +36,8 @@ export function EvalRunsTable({
   hideEval?: boolean
   hideModel?: boolean
   maxMetrics?: number
+  /** Agent activity per run (Weft agent evals); adds an Agents column when any run has some. */
+  agentRuns?: Map<string, AgentEvalRun>
 }) {
   const nav = useNavigate()
   const infos = useMemo(() => calls.map((c) => ({ c, i: evalRunInfo(c), m: flattenScores(c.output) })), [calls])
@@ -45,6 +50,7 @@ export function EvalRunsTable({
   }, [infos, maxMetrics])
   const sizes = useDatasetSizes(infos.map(({ i }) => i.evalRef).filter(Boolean) as string[])
   const sel = selected ?? []
+  const showAgents = !!agentRuns && calls.some((c) => agentRuns.has(c.id))
   const toggle = (id: string) => onSelect?.(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id])
 
   return (
@@ -87,6 +93,7 @@ export function EvalRunsTable({
             })}
             <th className="num">Tokens</th>
             <th className="num">Cost</th>
+            {showAgents && <th title="Agent spans and conversations recorded or linked by this run's predictions">Agents</th>}
           </tr>
         </thead>
         <tbody>
@@ -122,6 +129,20 @@ export function EvalRunsTable({
               ))}
               <td className="num muted">{fmtNumber(callTokens(c).total || null)}</td>
               <td className="num muted">{fmtCost(callCost(c))}</td>
+              {showAgents && (
+                <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                  {agentRuns?.get(c.id) ? (
+                    <div className="col" style={{ gap: 2 }}>
+                      <span className="small muted">
+                        {fmtNumber(agentRuns.get(c.id)!.conversation_count)} conv · {fmtNumber(agentRuns.get(c.id)!.span_count)} spans
+                      </span>
+                      <EvalAgentLinks projectId={projectId} runId={c.id} compact />
+                    </div>
+                  ) : (
+                    <span className="faint">—</span>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

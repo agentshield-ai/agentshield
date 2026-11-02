@@ -18,8 +18,11 @@ from ._client import (
     get,
     get_client,
     init,
+    link_prompt_to_registry,
+    link_to_registry,
     publish,
     ref,
+    set_wb_run,
 )
 from ._content import PDF, Audio, Content, Html, Image, Markdown, Video
 from ._context import ThreadPoolExecutor, Thread, attributes, get_current_call, thread, tracing_disabled
@@ -91,6 +94,9 @@ __all__ = [
     "publish",
     "ref",
     "get",
+    "link_to_registry",
+    "link_prompt_to_registry",
+    "set_wb_run",
     "Object",
     "Dataset",
     "Table",

@@ -10,6 +10,8 @@ import { Drawer } from '../../components/objects/bits'
 import { defaultLowerIsBetter, evalRunInfo, flattenScores, fmtMetric, seriesColor, sortMetricKeys, toNum, useEvalRuns } from '../../components/evals/evalUtils'
 import { InlineLeaderboard } from '../../components/evals/InlineLeaderboard'
 import { LinkedCallsFor } from '../../components/traces/LinkedCalls'
+import { EvalAgentLinks, PredictionAgentLinks, useAgentEvalRuns } from '../../components/agents/AgentEvals'
+import type { AgentEvalRun } from '../../api/agents'
 import { DELTA_FORMATS, fmtDeltaAs, parseDeltaFormat, type DeltaFormat } from '../../components/traces/diffUtils'
 import { decodeLb, encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
@@ -158,6 +160,10 @@ function CompareBody({
       { replace: true },
     )
   const labels = useLabels(evals)
+  const agentRuns = useAgentEvalRuns(
+    projectId,
+    useMemo(() => evals.map((e) => e.call_id), [evals]),
+  ).data
   const colorOf = useMemo(() => Object.fromEntries(evals.map((e, i) => [e.call_id, seriesColor(i)])), [evals])
   const baseline = evals.find((e) => e.call_id === baselineId) ?? evals[0]
   const [lowerOverrides, setLowerOverrides] = useState<Record<string, boolean>>({})
@@ -214,6 +220,7 @@ function CompareBody({
                 <span className="muted">Duration {fmtDuration(evalDurationMs(e))}</span>
                 {ml != null && <span className="muted">Model latency {fmtDuration(ml * 1000)}</span>}
               </div>
+              {agentRuns?.get(e.call_id) && <AgentActivity projectId={projectId} run={agentRuns.get(e.call_id)!} />}
               <div className="row">
                 {isBase ? (
                   <span className="badge accent">Baseline</span>
@@ -242,8 +249,23 @@ function CompareBody({
         toggleLower={(k) => setLowerOverrides((o) => ({ ...o, [k]: !lowerBetter(k) }))}
       />
       {data.rows.length > 0 && <ScatterSection data={data} labels={labels} colorOf={colorOf} baselineId={baseline.call_id} />}
-      <RowsSection data={data} projectId={projectId} labels={labels} colorOf={colorOf} baselineId={baseline.call_id} metrics={metrics} lowerBetter={lowerBetter} />
+      <RowsSection data={data} projectId={projectId} labels={labels} colorOf={colorOf} baselineId={baseline.call_id} metrics={metrics} lowerBetter={lowerBetter} agentRuns={agentRuns} />
     </>
+  )
+}
+
+/** The agent activity an evaluation run recorded or linked, with links to the filtered Agents views. */
+function AgentActivity({ projectId, run }: { projectId: string; run: AgentEvalRun }) {
+  return (
+    <div className="col" style={{ gap: 4 }}>
+      <div className="row wrap small" style={{ gap: 10 }}>
+        <span className="muted">
+          Agents: {fmtNumber(run.conversation_count)} conversations · {fmtNumber(run.span_count)} spans
+          {run.error_count > 0 && <span style={{ color: 'var(--error)' }}> · {fmtNumber(run.error_count)} failed</span>}
+        </span>
+      </div>
+      <EvalAgentLinks projectId={projectId} runId={run.call_id} />
+    </div>
   )
 }
 
@@ -604,6 +626,7 @@ function RowsSection({
   baselineId,
   metrics,
   lowerBetter,
+  agentRuns,
 }: {
   data: CompareEvaluationsRes
   projectId: string
@@ -612,6 +635,7 @@ function RowsSection({
   baselineId: string
   metrics: CompareMetric[]
   lowerBetter: (k: string) => boolean
+  agentRuns?: Map<string, AgentEvalRun>
 }) {
   const evals = data.evaluations
   const [filter, setFilter] = useState<RowFilter>('all')
@@ -792,6 +816,7 @@ function RowsSection({
                         {t.call_id && <Link to={callUrl(projectId, t.call_id)}>predict_and_score call →</Link>}
                       </div>
                       {t.call_id && <LinkedCallsFor projectId={projectId} callId={t.call_id} />}
+                      {t.call_id && agentRuns?.has(e.call_id) && <PredictionAgentLinks projectId={projectId} runId={e.call_id} pasId={t.call_id} />}
                       <div>
                         <div className="small muted">Output</div>
                         <ValueView value={t.output} projectId={projectId} markdown />

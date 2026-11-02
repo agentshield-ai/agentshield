@@ -5,7 +5,8 @@ import { agentsApi, agentUrl, conversationUrl, signalsApi, type AgentSpan, type 
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { callUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Spinner } from '../common'
-import { compact, errorRate, fmtPct, kindClass, windowStart } from './agentUtils'
+import { compact, errorRate, fmtPct, kindClass, windowStartOrAll } from './agentUtils'
+import { EvalFilterBanner } from './AgentEvals'
 import { RangePicker, ScorePill } from './bits'
 import {
   activeFilterCount,
@@ -121,7 +122,7 @@ function FilterChips({ f, set, pinnedAgent }: { f: SpanFilterState; set: (f: Spa
           </button>
         </span>
       ))}
-      <button className="btn ghost sm" onClick={() => set({ ...EMPTY_SPAN_FILTERS, agent: pinnedAgent ?? '' })}>
+      <button className="btn ghost sm" onClick={() => set({ ...EMPTY_SPAN_FILTERS, agent: pinnedAgent ?? '', evalRun: f.evalRun, evalPred: f.evalPred })}>
         Clear all
       </button>
     </div>
@@ -167,7 +168,7 @@ function SortTh({ id, label, sort, setSort, num }: { id: string; label: string; 
  */
 export function SpansTable({ projectId, params, update, agent }: { projectId: string; params: URLSearchParams; update: Update; agent?: string }) {
   const range = params.get('range') ?? '24h'
-  const since = useMemo(() => windowStart(range), [range])
+  const since = useMemo(() => windowStartOrAll(range), [range])
   const f = readSpanFilters(params)
   const setF = (nf: SpanFilterState) => update({ ...writeSpanFilters(nf), offset: null })
   const group = params.get('group') ?? ''
@@ -193,9 +194,16 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
   })() : null
 
   const facets = useQuery({
-    queryKey: ['agent-span-facets', projectId, since, agent],
+    queryKey: ['agent-span-facets', projectId, since, agent, f.evalRun, f.evalPred],
     queryFn: async () => {
-      const base = { project_id: projectId, started_after: since, query: agent ? spanQueryParts(EMPTY_SPAN_FILTERS, agent).query : undefined, limit: 100 }
+      const base = {
+        project_id: projectId,
+        started_after: since,
+        query: agent ? spanQueryParts(EMPTY_SPAN_FILTERS, agent).query : undefined,
+        evaluation_run_id: f.evalRun || undefined,
+        predict_and_score_call_id: f.evalPred || undefined,
+        limit: 100,
+      }
       const [ops, models, tools, agents] = await Promise.all(
         ['operation_name', 'request_model', 'tool_name', 'agent_name'].map((k) => agentsApi.spans({ ...base, group_by: [{ key: k }], sort_by: [{ field: 'span_count', direction: 'desc' }] })),
       )
@@ -235,6 +243,7 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
   }, [sig.data])
 
   const nFilters = activeFilterCount({ ...f, agent: agent ? '' : f.agent })
+  const evalFiltered = !!(f.evalRun || f.evalPred)
   const drill = (g: SpanGroup) => {
     const k = Object.keys(g.group_keys)[0]
     const v = g.group_keys[k]
@@ -251,7 +260,7 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
   return (
     <div className="col" style={{ gap: 10 }}>
       <div className="toolbar row wrap">
-        <RangePicker value={range} onChange={(r) => update({ range: r === '24h' ? null : r, offset: null })} />
+        <RangePicker value={range} allowAll onChange={(r) => update({ range: r === '24h' ? null : r, offset: null })} />
         {!agent && <FilterSelect label="Agent" value={f.agent} options={facets.data?.agents ?? []} onChange={(v) => setF({ ...f, agent: v })} />}
         <FilterSelect label="Operation" value={f.op} options={facets.data?.ops ?? []} onChange={(v) => setF({ ...f, op: v })} />
         <FilterSelect label="Model" value={f.model} options={facets.data?.models ?? []} onChange={(v) => setF({ ...f, model: v })} />
@@ -288,16 +297,19 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
           </div>
         </div>
       )}
-      {nFilters > 0 && <FilterChips f={f} set={setF} pinnedAgent={agent} />}
+      {evalFiltered && (
+        <EvalFilterBanner projectId={projectId} runId={f.evalRun} pred={f.evalPred || undefined} agent={agent} onClear={() => setF({ ...f, evalRun: '', evalPred: '' })} />
+      )}
+      {nFilters > (evalFiltered ? 1 : 0) && <FilterChips f={f} set={setF} pinnedAgent={agent} />}
       <ErrorBox error={q.error} />
       {q.isLoading ? (
         <div className="empty">
           <Spinner label="Loading spans…" />
         </div>
       ) : group ? (
-        <GroupTable projectId={projectId} groups={q.data?.groups ?? []} groupKey={groupRef?.key ?? group} sort={sort} setSort={setSort} onDrill={drill} />
+        <GroupTable projectId={projectId} groups={q.data?.groups ?? []} groupKey={groupRef?.key ?? group} sort={sort} setSort={setSort} onDrill={drill} allTime={range === 'all'} />
       ) : spans.length === 0 ? (
-        <Empty>No spans match{nFilters ? ' these filters' : ' in this period'}.</Empty>
+        <Empty>{evalFiltered ? `No agent spans of this evaluation${range === 'all' ? '' : ' in this period'}${nFilters > 1 ? ' match these filters' : ''}.` : `No spans match${nFilters ? ' these filters' : ' in this period'}.`}</Empty>
       ) : (
         <div className="table-wrap">
           <table className="table spans-table">
@@ -402,6 +414,7 @@ function GroupTable({
   sort,
   setSort,
   onDrill,
+  allTime,
 }: {
   projectId: string
   groups: SpanGroup[]
@@ -409,8 +422,9 @@ function GroupTable({
   sort: { col: string; direction: string }
   setSort: (c: string) => void
   onDrill: (g: SpanGroup) => void
+  allTime?: boolean
 }) {
-  if (!groups.length) return <Empty>No spans to group in this period.</Empty>
+  if (!groups.length) return <Empty>No spans to group{allTime ? '' : ' in this period'}.</Empty>
   const label = (g: SpanGroup) => {
     const v = Object.values(g.group_keys)[0]
     return v == null || v === '' ? '(none)' : String(v)

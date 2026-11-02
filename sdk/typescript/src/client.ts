@@ -1,3 +1,4 @@
+import { logger, parseLogLevel, setLogLevel, type LogLevel } from './log.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Call, type CallData } from './call.js';
@@ -51,9 +52,44 @@ export interface ClientSettings extends RedactSettings {
   maxQueueSize?: number;
   /** Calls per /call/upsert_batch request. */
   batchSize?: number;
+  /** Retries of a failed request (default 3; env WEFT_RETRY_MAX_ATTEMPTS). */
   retryMaxAttempts?: number;
+  /** First retry delay (default 250 ms; env WEFT_RETRY_BACKOFF, seconds). */
   retryBackoffMs?: number;
+  /** Longest retry delay (default 4000 ms; env WEFT_RETRY_MAX_INTERVAL, seconds). */
   retryMaxBackoffMs?: number;
+  /** HTTP request timeout (default 30000 ms; env WEFT_HTTP_TIMEOUT, seconds). */
+  httpTimeoutMs?: number;
+  /** SDK log level: debug, info, warning (default), error, critical (env WEFT_LOG_LEVEL). */
+  logLevel?: LogLevel | string;
+  /** Link calls to a W&B run (`wb_run_id`, `wb_run_step`); see `WeftClient.setWbRun`. */
+  wbRunId?: string;
+  wbRunStep?: number | (() => number | undefined);
+}
+
+function envNumber(name: string, scale = 1): number | undefined {
+  const raw = (process.env[name] ?? '').trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    logger.warn(`weft: ignoring ${name}=${JSON.stringify(raw)} (not a number)`);
+    return undefined;
+  }
+  return n * scale;
+}
+
+/** Sender options from WEFT_RETRY_MAX_ATTEMPTS, WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL, WEFT_MAX_CALLS_QUEUE_SIZE. */
+export function senderOptionsFromEnv(): SenderOptions {
+  const out: SenderOptions = {};
+  const retries = envNumber('WEFT_RETRY_MAX_ATTEMPTS');
+  if (retries !== undefined) out.maxRetries = Math.max(0, Math.floor(retries));
+  const backoff = envNumber('WEFT_RETRY_BACKOFF', 1000);
+  if (backoff !== undefined) out.backoffMs = backoff;
+  const maxBackoff = envNumber('WEFT_RETRY_MAX_INTERVAL', 1000);
+  if (maxBackoff !== undefined) out.maxBackoffMs = maxBackoff;
+  const queue = envNumber('WEFT_MAX_CALLS_QUEUE_SIZE') ?? envNumber('WEFT_MAX_QUEUE_SIZE');
+  if (queue !== undefined) out.maxQueue = Math.floor(queue);
+  return out;
 }
 
 function settingBool(v: boolean | undefined, env: string, dflt: boolean): boolean {
@@ -78,6 +114,29 @@ export interface GetCallsOptions {
   columns?: string[];
   /** Resolve refs at these paths (e.g. "inputs.example"). */
   expandColumns?: string[];
+  /** Ask the server for `wb_username` (Weave's `include_usernames`). */
+  includeUsernames?: boolean;
+  /** Ask the server for `storage_size_bytes`. */
+  includeStorageSize?: boolean;
+}
+
+/** A registry version as returned by `/registry/query`. */
+export interface RegistryVersion {
+  version_index: number;
+  version: string;
+  ref: string;
+  source_project_id?: string;
+  object_id?: string;
+  digest?: string;
+  base_object_class?: string | null;
+  aliases: string[];
+  created_at?: string;
+  wb_user_id?: string | null;
+}
+
+export interface RegistryCollection {
+  name: string;
+  versions: RegistryVersion[];
 }
 
 const NAME_RE = /[^A-Za-z0-9_.-]+/g;
@@ -132,12 +191,19 @@ export class WeftClient {
   readonly captureCode: boolean;
   readonly printCallLink: boolean;
   readonly globalAttributes: Record<string, unknown>;
+  private wbRun: { runId: string; step?: number | (() => number | undefined) } | null = null;
 
   constructor(project: string, opts: InitOptions = {}) {
     [this.entity, this.project] = splitProject(project);
     this.serverUrl = (opts.serverUrl ?? process.env.WEFT_SERVER_URL ?? DEFAULT_SERVER_URL).replace(/\/+$/, '');
-    this.http = new HttpClient(this.serverUrl, opts.apiKey ?? process.env.WEFT_API_KEY);
     const st = (this.settings = opts.settings ?? {});
+    if (st.logLevel !== undefined) {
+      const l = parseLogLevel(st.logLevel);
+      if (l) setLogLevel(l);
+      else logger.warn(`weft: ignoring log level ${JSON.stringify(st.logLevel)}`);
+    }
+    const timeoutMs = st.httpTimeoutMs ?? envNumber('WEFT_HTTP_TIMEOUT', 1000) ?? 30_000;
+    this.http = new HttpClient(this.serverUrl, opts.apiKey ?? process.env.WEFT_API_KEY, timeoutMs);
     this.captureCode = settingBool(st.captureCode, 'WEFT_CAPTURE_CODE', true);
     this.printCallLink = settingBool(st.printCallLink, 'WEFT_PRINT_CALL_LINK', true);
     this.globalAttributes = { ...(st.globalAttributes ?? {}) };
@@ -147,6 +213,7 @@ export class WeftClient {
       walPath = join(dir, `${this.serverUrl}_${this.projectId}`.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') + '.jsonl');
     }
     this.sender = new Sender(this.http, {
+      ...senderOptionsFromEnv(),
       ...opts.sender,
       ...(st.maxQueueSize !== undefined ? { maxQueue: st.maxQueueSize } : {}),
       ...(st.batchSize !== undefined ? { batchSize: st.batchSize } : {}),
@@ -157,7 +224,38 @@ export class WeftClient {
     });
     this.disabled = !!opts.disabled;
     this.redactor = new Redactor(st);
+    if (this.redactor.ner) this.sender.prepare = (items) => this.redactor.redactItems(items);
+    if (st.wbRunId) this.setWbRun(st.wbRunId, st.wbRunStep);
     if (walPath && !this.disabled) this.sender.replayWal();
+  }
+
+  /**
+   * Link calls started from now on to a W&B run: `wb_run_id` (sent as
+   * `<entity>/<project>/<runId>` unless already qualified) and `wb_run_step`
+   * / `wb_run_step_end` (an int, or a function read at call start and end).
+   * `null` clears it.
+   */
+  setWbRun(runId: string | null, step?: number | (() => number | undefined)): void {
+    if (!runId) {
+      this.wbRun = null;
+      return;
+    }
+    const id = runId.split('/').length >= 3 ? runId : `${this.projectId}/${runId}`;
+    this.wbRun = { runId: id, step };
+  }
+
+  private wbRunNow(): { runId: string; step?: number } | null {
+    if (!this.wbRun) return null;
+    let step: unknown = this.wbRun.step;
+    if (typeof step === 'function') {
+      try {
+        step = (step as () => unknown)();
+      } catch {
+        step = undefined;
+      }
+    }
+    const n = Number(step);
+    return { runId: this.wbRun.runId, step: step === undefined || step === null || !Number.isFinite(n) ? undefined : Math.trunc(n) };
   }
 
   /** UI link for a call. */
@@ -202,7 +300,7 @@ export class WeftClient {
       try {
         raw = meta.options.postprocessInputs({ ...inputs });
       } catch (e) {
-        console.warn(`weft: postprocessInputs failed for ${meta.name}: ${(e as Error).message}`);
+        logger.warn(`weft: postprocessInputs failed for ${meta.name}: ${(e as Error).message}`);
       }
     }
     const ser: Record<string, unknown> = {};
@@ -240,7 +338,7 @@ export class WeftClient {
         const f = meta.options.callDisplayName;
         dn = typeof f === 'function' ? f(call) : f;
       } catch (e) {
-        console.warn(`weft: callDisplayName failed for ${meta.name}: ${(e as Error).message}`);
+        logger.warn(`weft: callDisplayName failed for ${meta.name}: ${(e as Error).message}`);
       }
     }
     call.displayName = dn;
@@ -248,6 +346,11 @@ export class WeftClient {
     if (dn) start.display_name = dn;
     if (threadId) start.thread_id = threadId;
     if (turnId) start.turn_id = turnId;
+    const wb = this.wbRunNow();
+    if (wb) {
+      call.wbRunId = start.wb_run_id = wb.runId;
+      if (wb.step !== undefined) call.wbRunStep = start.wb_run_step = wb.step;
+    }
     this.sender.enqueue({ kind: 'call_start', payload: start });
     if (!parent && this.printCallLink) process.stderr.write(`weft: ${this.callUrl(call)}\n`);
     return call;
@@ -261,7 +364,7 @@ export class WeftClient {
       try {
         out = meta.options.postprocessOutput(out);
       } catch (e) {
-        console.warn(`weft: postprocessOutput failed for ${meta.name}: ${(e as Error).message}`);
+        logger.warn(`weft: postprocessOutput failed for ${meta.name}: ${(e as Error).message}`);
       }
     }
     call.endedAt = endedAt ? toIso(endedAt) : nowIso();
@@ -273,6 +376,10 @@ export class WeftClient {
       end.exception = call.exception;
     }
     if (Object.keys(call.summary).length) end.summary = toJson(call.summary, this);
+    if (call.wbRunId) {
+      const wb = this.wbRunNow();
+      if (wb?.step !== undefined) call.wbRunStepEnd = end.wb_run_step_end = wb.step;
+    }
     this.sender.enqueue({ kind: 'call_end', payload: end });
   }
 
@@ -297,8 +404,15 @@ export class WeftClient {
     if (opts.includeFeedback) body.include_feedback = true;
     if (opts.columns?.length) body.columns = opts.columns;
     if (opts.expandColumns?.length) body.expand_columns = opts.expandColumns;
+    if (opts.includeUsernames) body.include_usernames = true;
+    if (opts.includeStorageSize) body.include_storage_size = true;
     const rows = await this.http.postJsonl<CallData>('/calls/stream_query', body);
     return rows.map((d) => this.fetched(d));
+  }
+
+  /** `getCalls` as plain records (`Call.toRecord()`), e.g. for a table or a CSV (the TS `to_pandas`). */
+  async getCallsRecords(opts: GetCallsOptions = {}): Promise<Array<Record<string, unknown>>> {
+    return (await this.getCalls(opts)).map((c) => c.toRecord());
   }
 
   /** Number of calls matching `filter`/`query`/`search` (`/calls/query_stats`). */
@@ -462,14 +576,12 @@ export class WeftClient {
     return new Uint8Array(await res.arrayBuffer());
   }
 
-  async getCall(id: string, opts: { includeCosts?: boolean; includeFeedback?: boolean } = {}): Promise<Call | null> {
+  async getCall(id: string, opts: { includeCosts?: boolean; includeFeedback?: boolean; includeUsernames?: boolean; includeStorageSize?: boolean } = {}): Promise<Call | null> {
     await this.flush();
-    const res = await this.http.post('/call/read', {
-      project_id: this.projectId,
-      id,
-      include_costs: !!opts.includeCosts,
-      include_feedback: !!opts.includeFeedback,
-    });
+    const body: Record<string, unknown> = { project_id: this.projectId, id, include_costs: !!opts.includeCosts, include_feedback: !!opts.includeFeedback };
+    if (opts.includeUsernames) body.include_usernames = true;
+    if (opts.includeStorageSize) body.include_storage_size = true;
+    const res = await this.http.post('/call/read', body);
     return res.call ? this.fetched(res.call) : null;
   }
 
@@ -517,7 +629,7 @@ export class WeftClient {
       path: '/obj/create',
       payload: { obj: { project_id: this.projectId, object_id: name, val } },
       cb: (res) => {
-        if (res?.digest && res.digest !== d) console.warn(`weft: server digest for op ${name} differs from local digest`);
+        if (res?.digest && res.digest !== d) logger.warn(`weft: server digest for op ${name} differs from local digest`);
       },
     });
     return ref;
@@ -541,7 +653,7 @@ export class WeftClient {
       d = res.digest;
     } catch (e) {
       if (!(e instanceof WeftHTTPError)) throw e;
-      console.warn(`weft: could not publish ${objectId} (${e.message}); using a local digest`);
+      logger.warn(`weft: could not publish ${objectId} (${e.message}); using a local digest`);
       d = digest(val);
     }
     return new Ref(this.entity, this.project, 'object', objectId, d);
@@ -560,7 +672,7 @@ export class WeftClient {
       path: '/obj/create',
       payload: { obj: { project_id: this.projectId, object_id: objectId, val } },
       cb: (res) => {
-        if (res?.digest && res.digest !== d) console.warn(`weft: server digest for ${objectId} differs from local digest`);
+        if (res?.digest && res.digest !== d) logger.warn(`weft: server digest for ${objectId} differs from local digest`);
       },
     });
     const ref = new Ref(this.entity, this.project, 'object', objectId, d);
@@ -621,6 +733,62 @@ export class WeftClient {
       r = new Ref(r.entity, r.project, r.kind, r.name, res.obj.digest);
     }
     return r;
+  }
+
+  // ---------------------------------------------------------------- registry
+  private registryTarget(targetPath: string): [string, string, string] {
+    const parts = String(targetPath).trim().replace(/^\/+|\/+$/g, '').split('/');
+    if (parts.length === 2 && parts.every(Boolean)) return [this.entity, parts[0], parts[1]];
+    if (parts.length === 3 && parts.every(Boolean)) return [parts[0], parts[1], parts[2]];
+    throw new Error(`targetPath must be '<registry_project>/<collection>' or '<entity>/<registry_project>/<collection>', got ${JSON.stringify(targetPath)}`);
+  }
+
+  /**
+   * Link an object version into a registry collection (`POST /link_to_registry`).
+   * `obj` is a published object (published now if needed), a ref, a URI or
+   * "name:version"; `targetPath` is `<registry_project>/<collection>` (in this
+   * client's entity) or `<entity>/<registry_project>/<collection>`.
+   */
+  async linkToRegistry(obj: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
+    const [entity, regProject, collection] = this.registryTarget(opts.targetPath);
+    let r: Ref;
+    if (obj instanceof Ref || typeof obj === 'string') r = await this.resolveObjectRef(obj);
+    else if (obj && typeof obj === 'object' && (obj as { __weftRef?: Ref }).__weftRef) r = await this.resolveObjectRef(obj as { __weftRef?: Ref });
+    else r = await this.publish(obj);
+    if (r.kind !== 'object' && r.kind !== 'op') throw new Error(`only object versions can be linked to a registry, got ${r.uri()}`);
+    await this.flush();
+    const res = await this.http.post('/link_to_registry', {
+      ref: r.uri(),
+      target: { portfolio_name: collection, entity_name: entity, project_name: regProject },
+      aliases: opts.aliases ?? [],
+    });
+    return { versionIndex: res.version_index, ref: r.uri(), targetPath: `${entity}/${regProject}/${collection}` };
+  }
+
+  /** Weave's `link_prompt_to_registry`: link a published prompt version into a registry collection. */
+  linkPromptToRegistry(prompt: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
+    return this.linkToRegistry(prompt, opts);
+  }
+
+  /** Collections and versions of a registry project (`POST /registry/query`), newest first. */
+  async queryRegistry(registryProject: string, opts: { collection?: string; alias?: string; versionIndex?: number } = {}): Promise<RegistryCollection[]> {
+    const body: Record<string, unknown> = { project_id: registryProject.includes('/') ? registryProject : `${this.entity}/${registryProject}` };
+    if (opts.collection) body.portfolio_name = opts.collection;
+    if (opts.alias) body.alias = opts.alias;
+    if (opts.versionIndex !== undefined) body.version_index = opts.versionIndex;
+    return (await this.http.post('/registry/query', body)).collections ?? [];
+  }
+
+  /** Load the object a registry version points to (`version`: "latest", "v2", 2 or an alias). */
+  async getFromRegistry(targetPath: string, version: string | number = 'latest'): Promise<any> {
+    const [entity, regProject, collection] = this.registryTarget(targetPath);
+    const opts: { collection: string; alias?: string; versionIndex?: number } = { collection };
+    if (typeof version === 'number' || /^v?\d+$/.test(version)) opts.versionIndex = Number(String(version).replace(/^v/, ''));
+    else if (version && version !== 'latest') opts.alias = version;
+    const cols = await this.queryRegistry(`${entity}/${regProject}`, opts);
+    const v = cols[0]?.versions?.[0];
+    if (!v) throw new Error(`no version ${JSON.stringify(version)} in registry collection ${entity}/${regProject}/${collection}`);
+    return this.get(v.ref);
   }
 
   async deleteObjectVersion(obj: Ref | string | { __weftRef?: Ref }): Promise<number> {
@@ -751,7 +919,7 @@ export class WeftClient {
       }
     } catch (e) {
       if (!(e instanceof WeftHTTPError)) throw e;
-      console.warn(`weft: could not publish table (${e.message}); using local digests`);
+      logger.warn(`weft: could not publish table (${e.message}); using local digests`);
       rowDigests = json.map((r) => digest(r));
       tdigest = tableDigest(rowDigests);
     }

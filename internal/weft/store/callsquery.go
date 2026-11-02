@@ -31,6 +31,12 @@ type Call struct {
 	DeletedAt        *string        `json:"deleted_at"`
 	Feedback         []Feedback     `json:"feedback,omitempty"`
 	StorageSizeBytes *int64         `json:"storage_size_bytes,omitempty"`
+	// Optional Weave CallSchema fields (callfields.go).
+	TotalStorageSizeBytes *int64  `json:"total_storage_size_bytes,omitempty"`
+	WBUsername            *string `json:"wb_username,omitempty"`
+	WBRunStep             *int64  `json:"wb_run_step"`
+	WBRunStepEnd          *int64  `json:"wb_run_step_end"`
+	ExpireAt              *string `json:"expire_at"`
 
 	// internal
 	opBaseName string
@@ -118,6 +124,10 @@ type CallsQuery struct {
 	IncludeFeedback    bool         `json:"include_feedback"`
 	IncludeStorageSize bool         `json:"include_storage_size"`
 	IncludeDeleted     bool         `json:"include_deleted"`
+	// IncludeTotalStorageSize adds total_storage_size_bytes to trace roots.
+	IncludeTotalStorageSize bool `json:"include_total_storage_size"`
+	// IncludeUsernames resolves wb_user_id to wb_username.
+	IncludeUsernames bool `json:"include_usernames"`
 }
 
 const statusSQL = `(CASE WHEN c.exception IS NOT NULL THEN 'error' WHEN c.ended_at IS NULL THEN 'running' WHEN COALESCE(json_extract(c.rollup, '$.status_counts.error'), 0) > 0 THEN 'descendant_error' ELSE 'success' END)`
@@ -315,7 +325,7 @@ func orderCalls(sorts []SortBy) (string, []any, error) {
 
 const callSelect = `SELECT c.project_id, c.id, c.op_name, c.op_base_name, c.display_name, c.trace_id, c.parent_id, c.thread_id, c.turn_id,
 	c.started_at, c.ended_at, c.exception, c.attributes, c.inputs, c.output, c.summary, c.rollup, c.wb_user_id, c.wb_run_id,
-	c.deleted_at, c.storage_size, c.cumulative FROM calls c`
+	c.deleted_at, c.storage_size, c.cumulative, c.wb_run_step, c.wb_run_step_end FROM calls c`
 
 func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 	var c Call
@@ -323,10 +333,13 @@ func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 	var started, ended, deleted sql.NullInt64
 	var attrs, inputs, summary, rollup string
 	var size int64
+	var step, stepEnd sql.NullInt64
 	if err := rows.Scan(&c.ProjectID, &c.ID, &c.OpName, &c.opBaseName, &display, &c.TraceID, &parent, &thread, &turn,
-		&started, &ended, &exc, &attrs, &inputs, &output, &summary, &rollup, &user, &run, &deleted, &size, &c.cumulative); err != nil {
+		&started, &ended, &exc, &attrs, &inputs, &output, &summary, &rollup, &user, &run, &deleted, &size, &c.cumulative,
+		&step, &stepEnd); err != nil {
 		return nil, err
 	}
+	c.WBRunStep, c.WBRunStepEnd = int64Ptr(step), int64Ptr(stepEnd)
 	c.DisplayName, c.ParentID, c.ThreadID, c.TurnID = strPtr(display), strPtr(parent), strPtr(thread), strPtr(turn)
 	c.Exception, c.WBUserID, c.WBRunID = strPtr(exc), strPtr(user), strPtr(run)
 	c.startedUS = started.Int64
@@ -540,6 +553,9 @@ func (s *Store) enrichCalls(ctx context.Context, projectID string, calls []*Call
 				c.Feedback = append(c.Feedback, f)
 			}
 		}
+	}
+	if err := s.enrichCallFields(ctx, projectID, calls, q); err != nil { // callfields.go
+		return err
 	}
 	if len(q.ExpandColumns) > 0 {
 		if err := s.expandCalls(ctx, calls, q.ExpandColumns); err != nil {
