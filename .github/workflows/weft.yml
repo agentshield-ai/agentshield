@@ -1,0 +1,99 @@
+name: Weft
+
+on:
+  push:
+    # Any branch, so feature branches get feedback before a PR is opened.
+    paths:
+      - 'cmd/weft/**'
+      - 'internal/weft/**'
+      - 'web/weft-ui/**'
+      - 'sdk/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/weft.yml'
+  pull_request:
+    paths:
+      - 'cmd/weft/**'
+      - 'internal/weft/**'
+      - 'web/weft-ui/**'
+      - 'sdk/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/weft.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    name: Web UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web/weft-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/weft-ui/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Type check
+        run: npx tsc -b
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npx vite build
+      - name: Embedded UI is up to date
+        # The Go binary embeds internal/weft/webui/static; rebuild with `make weft-ui` and commit.
+        run: git diff --exit-code -- ../../internal/weft/webui/static
+
+  sdks:
+    name: Server and SDKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Go tests
+        run: go test ./internal/weft/... ./cmd/weft/...
+      - name: Start server
+        run: |
+          go build -o bin/weft ./cmd/weft
+          ./bin/weft --addr 127.0.0.1:6345 --db "$RUNNER_TEMP/weft.db" &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:6345/health && break; sleep 1; done
+      - name: Python SDK tests (unit + against server)
+        working-directory: sdk/python
+        env:
+          WEFT_TEST_SERVER_URL: http://127.0.0.1:6345
+        run: |
+          python -m pip install -e '.[test,otel]'
+          python -m pytest -q
+      - name: TypeScript SDK tests (unit + against server)
+        working-directory: sdk/typescript
+        env:
+          WEFT_TEST_SERVER_URL: http://127.0.0.1:6345
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npx vitest run
+          npm run build
+      - name: Demo seed script
+        run: python3 scripts/weft_seed_demo.py --traces 5

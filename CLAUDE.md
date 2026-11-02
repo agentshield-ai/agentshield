@@ -191,6 +191,24 @@ Four possible actions returned by the evaluation pipeline:
 
 In-memory LRU cache (default 10,000 entries, 5-min TTL) avoids re-evaluating identical tool calls. Cache key is SHA-256 of tool name + sorted args. Cache is automatically invalidated on rule hot-reload (SIGHUP). Cache stats exposed on the health endpoint. Configured via `cache:` in config.yaml.
 
+### Weft (`cmd/weft`, `internal/weft/`, `web/weft-ui/`, `sdk/`)
+
+Standalone OpenTelemetry-native LLM tracing and evaluation server (a Weave-style feature set), separate from the detection engine. See [docs/weft/README.md](docs/weft/README.md); the API contract is [docs/weft/API.md](docs/weft/API.md) — keep it, `web/weft-ui/src/api/types.ts` and the SDKs in sync.
+
+```bash
+make weft && ./bin/weft                # server + embedded UI on 127.0.0.1:6345
+make weft-ui                           # rebuild UI into internal/weft/webui/static (commit the output)
+make weft-test                         # Go + UI typecheck + Python SDK tests
+python3 scripts/weft_seed_demo.py      # demo data (offline mock models)
+```
+
+- `store/` — SQLite; calls carry `rollup`/`propagated` contributions so usage and status counts sum up the tree regardless of arrival order (OTLP sends children first). `expr.go` compiles the `$expr` query language to parameterised SQL.
+- `otlp/` — `/otel/v1/traces` span → call mapping (GenAI semconv, OpenInference, OpenLLMetry, `weft.*` attributes).
+- `llm/` — provider routing (OpenAI-compatible, Anthropic, custom `Provider` objects, offline `mock/echo` and `mock/json`).
+- `evals/` — built-in scorers, LLM judges, server-side `evaluate_model`, comparisons, leaderboards, monitors.
+- Object digests are SHA-256 of canonical JSON (sorted keys); stored values keep the publisher's key order.
+- `web/weft-ui` needs `legacy-peer-deps` (`.npmrc`) because npm 10 crashes resolving vitest 4 optional peers.
+
 ## Key Environment Variables
 
 | Variable | Purpose |
