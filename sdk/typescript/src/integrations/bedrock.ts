@@ -8,6 +8,10 @@
  * // or every client: weft.instrumentBedrock(BedrockRuntimeClient)
  * ```
  *
+ * Bedrock Agents (`@aws-sdk/client-bedrock-agent-runtime` `InvokeAgentCommand`,
+ * `InvokeInlineAgentCommand`) are handled by the same wrapper; see
+ * `bedrock_agents.ts` (`wrapBedrockAgent` / `instrumentBedrockAgent` are aliases).
+ *
  * Request bodies are decoded from JSON; Converse usage comes from `usage`,
  * InvokeModel usage from the body (`usage`, `amazon-bedrock-invocationMetrics`,
  * Titan/Llama counters). Streams are passed through and accumulated (text,
@@ -15,6 +19,7 @@
  */
 import type { Call } from '../call.js';
 import { addUsage } from '../usage.js';
+import { agentCommandName, handleAgentResponse, startAgentCall, type AgentTraceProcessor } from './bedrock_agents.js';
 import { decodeBody, patchWith, proxyStream, withCall, type Accumulator } from './common.js';
 import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
@@ -118,6 +123,35 @@ function strip(res: any): any {
 
 function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | undefined) {
   return function (this: any, command: any, ...rest: any[]) {
+    const agentCmd = agentCommandName(command);
+    if (agentCmd) {
+      const ac = integrationClient(INTEGRATION);
+      if (!ac) return orig.call(this, command, ...rest);
+      let proc: AgentTraceProcessor;
+      try {
+        proc = startAgentCall(ac, agentCmd, { ...(command.input ?? {}) }, local);
+      } catch {
+        return orig.call(this, command, ...rest);
+      }
+      const failAgent = (e: unknown) => {
+        proc.finish(e);
+        throw e;
+      };
+      let ap: any;
+      try {
+        ap = withCall(proc.root, () => orig.call(this, command, ...rest));
+      } catch (e) {
+        failAgent(e);
+      }
+      return Promise.resolve(ap).then((res: any) => {
+        try {
+          return handleAgentResponse(proc, res);
+        } catch {
+          proc.finish();
+          return res;
+        }
+      }, failAgent);
+    }
     const name = commandName(command);
     const client = name ? integrationClient(INTEGRATION) : null;
     if (!client || !name) return orig.call(this, command, ...rest);
@@ -192,6 +226,9 @@ export function wrapBedrock<T>(client: T, opts: IntegrationOpSettings & { opSett
   return client;
 }
 
+/** Trace a `BedrockAgentRuntimeClient` instance (InvokeAgent / InvokeInlineAgent). Same as `wrapBedrock`. */
+export const wrapBedrockAgent = wrapBedrock;
+
 /** Patch `BedrockRuntimeClient.prototype.send` so every client is traced. */
 export function instrumentBedrock(BedrockRuntimeClient: any, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): boolean {
   const proto = BedrockRuntimeClient?.prototype;
@@ -199,3 +236,6 @@ export function instrumentBedrock(BedrockRuntimeClient: any, opts: IntegrationOp
   const local = pickOpSettings(opts);
   return patchWith(proto, 'send', (orig) => makeSend(orig, local));
 }
+
+/** Patch `BedrockAgentRuntimeClient.prototype.send` so every agent runtime client is traced. */
+export const instrumentBedrockAgent = instrumentBedrock;

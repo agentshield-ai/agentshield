@@ -1,0 +1,100 @@
+package server
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"testing"
+	"time"
+)
+
+func TestOptionalCallSchemaFields(t *testing.T) {
+	e := newEnv(t)
+	started := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	ts := started.Format(time.RFC3339Nano)
+	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "root", "trace_id": "t1", "op_name": "agent",
+		"started_at": ts, "inputs": map[string]any{"q": "hello"}, "wb_user_id": "alice", "wb_run_id": "run-1", "wb_run_step": 5}})
+	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "child", "trace_id": "t1", "parent_id": "root",
+		"op_name": "llm", "started_at": ts, "inputs": map[string]any{"prompt": "a longer prompt"}, "wb_user_id": "alice"}})
+	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "child", "ended_at": ts, "output": "x", "summary": map[string]any{}}})
+	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "root", "ended_at": ts, "output": "done",
+		"summary": map[string]any{}, "wb_run_step_end": 9}})
+	// The weave client's calls_complete path carries both steps.
+	code, b := e.raw("/v2/acme/evals/calls/complete", map[string]any{"batch": []any{map[string]any{"id": "c2", "op_name": "op",
+		"trace_id": "t2", "started_at": ts, "ended_at": ts, "inputs": map[string]any{}, "summary": map[string]any{},
+		"wb_run_id": "run-1", "wb_run_step": 11, "wb_run_step_end": 12, "wb_user_id": "svc/robot"}}}, nil)
+	if code != 200 {
+		t.Fatalf("calls/complete -> %d %s", code, b)
+	}
+
+	read := func(id string, extra map[string]any) map[string]any {
+		body := map[string]any{"project_id": pid, "id": id}
+		for k, v := range extra {
+			body[k] = v
+		}
+		return e.post("/call/read", body)["call"].(map[string]any)
+	}
+	c := read("root", nil)
+	if c["wb_run_step"] != float64(5) || c["wb_run_step_end"] != float64(9) {
+		t.Fatalf("steps = %v %v", c["wb_run_step"], c["wb_run_step_end"])
+	}
+	for _, k := range []string{"expire_at", "wb_run_step", "wb_run_step_end"} {
+		if _, ok := c[k]; !ok {
+			t.Fatalf("%s missing from %v", k, c)
+		}
+	}
+	if c["expire_at"] != nil {
+		t.Fatalf("expire_at without TTL = %v", c["expire_at"])
+	}
+	if _, ok := c["wb_username"]; ok {
+		t.Fatal("wb_username returned without include_usernames")
+	}
+	if _, ok := c["total_storage_size_bytes"]; ok {
+		t.Fatal("total_storage_size_bytes returned without include_total_storage_size")
+	}
+	c2 := read("c2", nil)
+	if c2["wb_run_step"] != float64(11) || c2["wb_run_step_end"] != float64(12) {
+		t.Fatalf("calls/complete steps = %v %v", c2["wb_run_step"], c2["wb_run_step_end"])
+	}
+
+	// Storage sizes: the root carries the trace total, children none.
+	c = read("root", map[string]any{"include_storage_size": true, "include_total_storage_size": true, "include_usernames": true})
+	child := read("child", map[string]any{"include_storage_size": true, "include_total_storage_size": true})
+	total, own, childOwn := c["total_storage_size_bytes"].(float64), c["storage_size_bytes"].(float64), child["storage_size_bytes"].(float64)
+	if total != own+childOwn || childOwn == 0 {
+		t.Fatalf("total %v, own %v, child %v", total, own, childOwn)
+	}
+	if _, ok := child["total_storage_size_bytes"]; ok {
+		t.Fatalf("child has a trace total: %v", child)
+	}
+	if c["wb_username"] != "alice" {
+		t.Fatalf("wb_username = %v", c["wb_username"])
+	}
+
+	// expire_at follows the project's retention.
+	e.post("/project/ttl_settings/update", map[string]any{"project_id": pid, "retention_days": 30})
+	c = read("root", nil)
+	if c["expire_at"] != started.Add(30*24*time.Hour).Format("2006-01-02T15:04:05.000000Z") {
+		t.Fatalf("expire_at = %v", c["expire_at"])
+	}
+
+	// calls/stream_query honours the same flags; an id that is not a handle has no username.
+	code, b = e.raw("/calls/stream_query", map[string]any{"project_id": pid, "include_usernames": true, "include_total_storage_size": true,
+		"sort_by": []any{map[string]any{"field": "started_at", "direction": "asc"}}}, nil)
+	if code != 200 {
+		t.Fatalf("stream_query -> %d %s", code, b)
+	}
+	got := map[string]map[string]any{}
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		var m map[string]any
+		_ = json.Unmarshal(sc.Bytes(), &m)
+		got[m["id"].(string)] = m
+	}
+	if got["root"]["wb_username"] != "alice" || got["root"]["total_storage_size_bytes"] == nil || got["root"]["expire_at"] == nil {
+		t.Fatalf("root = %v", got["root"])
+	}
+	if _, ok := got["c2"]["wb_username"]; ok {
+		t.Fatalf("c2 username = %v", got["c2"]["wb_username"])
+	}
+}

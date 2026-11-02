@@ -76,6 +76,9 @@ func openInferenceLLM(attrs map[string]any) bool {
 
 // preferredInputs runs before input.value.
 func preferredInputs(attrs map[string]any) map[string]any {
+	if in := langfuseInputs(attrs); in != nil { // langfuse.go
+		return in
+	}
 	if openInferenceLLM(attrs) {
 		if msgs := indexedMessages(attrs, "llm.input_messages.", "message."); msgs != nil {
 			return map[string]any{"messages": messagesToAny(msgs)}
@@ -89,8 +92,14 @@ func frameworkInputs(attrs map[string]any) map[string]any {
 	if v, ok := attrs["mlflow.spanInputs"]; ok {
 		return spreadInputs(v)
 	}
-	// GenAI / Pydantic AI / ADK tool spans.
-	for _, k := range []string{"gen_ai.tool.call.arguments", "tool_arguments", "gcp.vertex.agent.tool_call_args", "ai.toolCall.args", "ai.toolCall.input"} {
+	if in := koogInputs(attrs); in != nil { // langfuse.go
+		return in
+	}
+	if in := langfuseTraceInputs(attrs); in != nil {
+		return in
+	}
+	// GenAI / Pydantic AI / ADK / OpenLit tool spans.
+	for _, k := range []string{"gen_ai.tool.call.arguments", "gen_ai.tool.input", "tool_arguments", "gcp.vertex.agent.tool_call_args", "ai.toolCall.args", "ai.toolCall.input"} {
 		if v, ok := attrs[k]; ok {
 			if in := spreadInputs(v); in != nil {
 				return in
@@ -171,6 +180,9 @@ func frameworkInputs(attrs map[string]any) map[string]any {
 
 // preferredOutput runs before output.value.
 func preferredOutput(attrs map[string]any) any {
+	if out, ok := langfuseOutput(attrs); ok { // langfuse.go
+		return out
+	}
 	if openInferenceLLM(attrs) {
 		if msgs := indexedMessages(attrs, "llm.output_messages.", "message."); msgs != nil {
 			return choices(messagesToAny(msgs), attrs)
@@ -184,7 +196,13 @@ func frameworkOutput(attrs map[string]any) (any, bool) {
 	if v, ok := attrs["mlflow.spanOutputs"]; ok {
 		return decodeAny(v), true
 	}
-	for _, k := range []string{"gen_ai.tool.call.result", "tool_response", "gcp.vertex.agent.tool_response", "ai.toolCall.result", "ai.toolCall.output"} {
+	if out, ok := koogOutput(attrs); ok { // langfuse.go
+		return out, true
+	}
+	if out, ok := langfuseTraceOutput(attrs); ok {
+		return out, true
+	}
+	for _, k := range []string{"gen_ai.tool.call.result", "gen_ai.tool.output", "tool_response", "gcp.vertex.agent.tool_response", "ai.toolCall.result", "ai.toolCall.output"} {
 		if v, ok := attrs[k]; ok {
 			return decodeAny(v), true
 		}
@@ -679,6 +697,7 @@ func structuredUsage(attrs map[string]any, u map[string]any) {
 			u[name] = json.Number(strconv.FormatFloat(f, 'f', -1, 64))
 		}
 	}
+	langfuseUsage(attrs, put) // langfuse.go
 	if m, ok := decodeAny(attrs["mlflow.chat.tokenUsage"]).(map[string]any); ok {
 		put("prompt_tokens", m["input_tokens"])
 		put("completion_tokens", m["output_tokens"])
@@ -698,7 +717,7 @@ func structuredUsage(attrs map[string]any, u map[string]any) {
 
 // frameworkModel names the model for usage when GenAI attributes don't.
 func frameworkModel(attrs map[string]any) string {
-	if m := firstString(attrs, "ai.response.model", "ai.model.id", "model_name"); m != "" {
+	if m := firstString(attrs, "ai.response.model", "ai.model.id", "langfuse.observation.model.name", "model_name"); m != "" {
 		return m
 	}
 	if req, ok := decodeAny(attrs["gcp.vertex.agent.llm_request"]).(map[string]any); ok {

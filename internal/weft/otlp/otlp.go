@@ -267,6 +267,7 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 		"span_name": sp.GetName(), "kind": spanKinds[sp.GetKind()], "status": status, "resource": resource,
 		"scope": scope, "attributes": attrs, "events": events, "links": links,
 	}
+	applySpanMeta(attrs, &st, user) // langfuse.go
 	st.Attributes = user
 	st.Inputs = extractInputs(attrs, events)
 
@@ -287,6 +288,9 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 			msg = "error"
 		}
 		en.Exception = &msg
+	}
+	if en.Exception == nil {
+		en.Exception = langfuseError(attrs) // langfuse.go
 	}
 	return store.CompleteCall{Start: st, End: en}, nil
 }
@@ -419,6 +423,19 @@ func normalizeFlatMessage(f map[string]any) map[string]any {
 				fn["name"] = v
 			case "function.arguments", "arguments":
 				fn["arguments"] = v
+			case "function", "type":
+				if f, ok := decodeAny(v).(map[string]any); ok && field == "function" {
+					if n, ok := f["name"]; ok {
+						fn["name"] = n
+					}
+					if a, ok := f["arguments"]; ok {
+						fn["arguments"] = a
+					}
+				} else if field == "type" {
+					if t, ok := v.(string); ok && t != "" {
+						tc["type"] = t
+					}
+				}
 			}
 		}
 	}
@@ -460,7 +477,14 @@ func partsMessages(v any) []any {
 			out = append(out, m)
 			continue
 		}
-		msg := map[string]any{"role": m["role"]}
+		role := m["role"]
+		if r, ok := role.(string); ok {
+			role = strings.ToLower(r) // Koog sends Kotlin enum names ("User", "Assistant")
+		}
+		if len(parts) == 0 && role == "tool" {
+			continue // Koog emits an empty tool entry before each user message
+		}
+		msg := map[string]any{"role": role}
 		if fr, ok := m["finish_reason"]; ok {
 			msg["finish_reason"] = fr
 		}
@@ -579,7 +603,7 @@ func extractInputs(attrs map[string]any, events []map[string]any) map[string]any
 	if !found {
 		if v, ok := attrs["gen_ai.input.messages"]; ok {
 			if msgs := partsMessages(v); msgs != nil {
-				if sys, ok := attrs["gen_ai.system_instructions"]; ok {
+				if sys, ok := attrs["gen_ai.system_instructions"]; ok && !startsWithSystem(msgs) {
 					if s := partsText(sys); s != "" {
 						msgs = append([]any{map[string]any{"role": "system", "content": s}}, msgs...)
 					}

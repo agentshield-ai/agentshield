@@ -55,16 +55,32 @@ function RefName({ refStr, name }: { refStr: string | null; name: string }) {
   )
 }
 
-/** "View spans" / "View conversations" for an evaluation run (or one prediction). */
+/** "View spans" / "View conversations" for an evaluation run (or one prediction); `compact` renders text links for table cells. */
 export function EvalAgentLinks({ projectId, runId, pred, agent, compact: small }: { projectId: string; runId: string; pred?: string; agent?: string; compact?: boolean }) {
-  const cls = `btn sm ${small ? 'ghost' : ''}`
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
+  const spans = evalSpansUrl(projectId, runId, { pred, agent })
+  const convs = evalSpansUrl(projectId, runId, { pred, agent, conversations: true })
+  const spansTitle = 'Open the Agents Spans view filtered to this evaluation'
+  const convsTitle = "The conversations this evaluation's predictions recorded or linked"
+  if (small)
+    return (
+      <span className="small eval-agent-textlinks">
+        <Link to={spans} onClick={stop} title={spansTitle}>
+          Spans
+        </Link>
+        <span className="faint"> · </span>
+        <Link to={convs} onClick={stop} title={convsTitle}>
+          Conversations
+        </Link>
+      </span>
+    )
   return (
-    <span className="row" style={{ gap: 4, flexWrap: 'nowrap' }}>
-      <Link className={cls} to={evalSpansUrl(projectId, runId, { pred, agent })} onClick={(e) => e.stopPropagation()} title="Open the Agents Spans view filtered to this evaluation">
+    <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+      <Link className="btn sm" to={spans} onClick={stop} title={spansTitle}>
         View spans
       </Link>
-      <Link className={cls} to={evalSpansUrl(projectId, runId, { pred, agent, conversations: true })} onClick={(e) => e.stopPropagation()} title="The conversations this evaluation's predictions recorded or linked">
-        Conversations
+      <Link className="btn sm" to={convs} onClick={stop} title={convsTitle}>
+        View conversations
       </Link>
     </span>
   )
@@ -109,7 +125,7 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
   const metricKeys = useMemo(() => {
     const keys = new Set<string>()
     runs.forEach((r) => Object.keys(summaryMetrics(r.summary)).forEach((k) => keys.add(k)))
-    return sortMetricKeys([...keys]).slice(0, 6)
+    return sortMetricKeys([...keys]).slice(0, 4)
   }, [runs])
   const toggle = (id: string) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
 
@@ -153,6 +169,7 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
                 </th>
                 <th>Status</th>
                 <th>Evaluation · model</th>
+                <th>Agent views</th>
                 <th>Started</th>
                 <th className="num" title="Predictions with agent spans">
                   Predictions
@@ -179,7 +196,6 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
                 })}
                 <th className="num">Tokens</th>
                 <th className="num">Cost</th>
-                <th />
               </tr>
             </thead>
             <tbody>
@@ -201,12 +217,15 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
                         <RefName refStr={r.model_ref} name={r.model_name} />
                       </div>
                     </td>
+                    <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                      <EvalAgentLinks projectId={projectId} runId={r.call_id} agent={agent} compact />
+                    </td>
                     <td className="small" title={fmtDate(r.started_at)} style={{ whiteSpace: 'nowrap' }}>
                       {fmtRelative(r.started_at ?? r.first_seen)}
                     </td>
                     <td className="num">{fmtNumber(r.prediction_count)}</td>
                     <td className="num">{fmtNumber(r.conversation_count)}</td>
-                    <td className="num">
+                    <td className="num" style={{ whiteSpace: 'nowrap' }}>
                       {fmtNumber(r.span_count)}
                       {r.error_count > 0 && (
                         <span className="badge error" style={{ marginLeft: 6 }} title={`${r.error_count} failed spans`}>
@@ -228,9 +247,6 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
                     ))}
                     <td className="num muted">{compact(r.total_input_tokens + r.total_output_tokens)}</td>
                     <td className="num muted">{fmtCost(r.total_cost_usd)}</td>
-                    <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
-                      <EvalAgentLinks projectId={projectId} runId={r.call_id} agent={agent} compact />
-                    </td>
                   </tr>
                 )
               })}

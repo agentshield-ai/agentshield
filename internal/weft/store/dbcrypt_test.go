@@ -331,3 +331,13 @@ func TestSQLFeaturesBothDrivers(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenHonoursEnvKey proves which driver the rest of the suite ran on.
+func TestOpenHonoursEnvKey(t *testing.T) {
+	want := os.Getenv(DBEncryptionKeyEnv) != ""
+	s := newTestStore(t)
+	if s.Encrypted() != want {
+		t.Fatalf("Encrypted() = %v with %s set = %v", s.Encrypted(), DBEncryptionKeyEnv, want)
+	}
+	t.Logf("suite database encrypted at rest: %v", want)
+}

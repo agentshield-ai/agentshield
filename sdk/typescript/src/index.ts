@@ -1,4 +1,17 @@
-export { init, finish, flush, WeftClient, DEFAULT_SERVER_URL, type InitOptions, type ClientSettings, type GetCallsOptions } from './client.js';
+export {
+  init,
+  finish,
+  flush,
+  WeftClient,
+  DEFAULT_SERVER_URL,
+  senderOptionsFromEnv,
+  type InitOptions,
+  type ClientSettings,
+  type GetCallsOptions,
+  type RegistryCollection,
+  type RegistryVersion,
+} from './client.js';
+export { logger, setLogLevel, getLogLevel, parseLogLevel, type LogLevel } from './log.js';
 export { getClient, requireClient } from './global.js';
 export { op, isOp, type Op, type OpOptions } from './op.js';
 export { Call, CallFeedback, type CallData, type ApplyScorerResult } from './call.js';
@@ -82,7 +95,18 @@ export {
 } from './conversation.js';
 export * as otel from './otel.js';
 export { OpLoadError } from './loader.js';
-export { Redactor, REDACTED, DEFAULT_REDACT_KEYS, redactPiiText, type RedactSettings } from './redact.js';
+export {
+  Redactor,
+  REDACTED,
+  DEFAULT_REDACT_KEYS,
+  DEFAULT_PII_ENTITIES,
+  redactPiiText,
+  presidioAnalyzer,
+  applyPiiSpans,
+  type RedactSettings,
+  type PiiAnalyzer,
+  type PiiSpan,
+} from './redact.js';
 export { addUsage } from './usage.js';
 export { WeftHTTPError, VERSION } from './http.js';
 export { wrapOpenAI, wrapOpenAICompatible, wrapGroq, wrapTogether, wrapCerebras, type WrapOpenAIOptions } from './integrations/openai.js';
@@ -96,7 +120,9 @@ export { wrapClaudeAgentSDK, wrapClaudeAgentQuery } from './integrations/claude_
 export { WeftTracingProcessor, instrumentOpenAIAgents } from './integrations/openai_agents.js';
 export { wrapMistral, MistralStreamAccumulator } from './integrations/mistral.js';
 export { wrapCohere, CohereStreamAccumulator } from './integrations/cohere.js';
-export { wrapBedrock, instrumentBedrock } from './integrations/bedrock.js';
+export { wrapBedrock, instrumentBedrock, wrapBedrockAgent, instrumentBedrockAgent } from './integrations/bedrock.js';
+export { AgentTraceProcessor as BedrockAgentTraceProcessor } from './integrations/bedrock_agents.js';
+export { wrapOpenAIRealtime, instrumentOpenAIRealtime, RealtimeTracer } from './integrations/openai_realtime.js';
 export { wrapVertexAI, wrapVertexModel, wrapVertexChat } from './integrations/vertexai.js';
 export {
   configureIntegrations,
@@ -129,6 +155,24 @@ export function ref(s: string): Ref & { get: () => Promise<any> } {
 /** Load what a ref (or "name", "name:v3") points to. */
 export function get(s: string | Ref): Promise<any> {
   return requireClient().get(s);
+}
+
+/**
+ * Link any published object version into a registry collection
+ * (`targetPath`: `<registry_project>/<collection>` or `<entity>/<registry_project>/<collection>`).
+ */
+export function linkToRegistry(obj: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
+  return requireClient().linkToRegistry(obj, opts);
+}
+
+/** Weave's `link_prompt_to_registry`: link a published prompt version into a registry collection. */
+export function linkPromptToRegistry(prompt: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
+  return requireClient().linkPromptToRegistry(prompt, opts);
+}
+
+/** Link calls of the global client to a W&B run (`wb_run_id`, `wb_run_step`); `null` clears it. */
+export function setWbRun(runId: string | null, step?: number | (() => number | undefined)): void {
+  requireClient().setWbRun(runId, step);
 }
 
 /** Parse a `weft:///` (or `weave:///`) URI into a Ref. */

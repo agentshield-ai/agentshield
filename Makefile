@@ -1,4 +1,4 @@
-.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score weft weft-ui weft-run weft-test
+.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score weft weft-ui weft-run weft-test weft-test-encrypted
 
 # Go binary path
 GO ?= go
@@ -96,3 +96,7 @@ weft-test:
 	$(GO) test ./internal/weft/...
 	cd web/weft-ui && npx tsc -b
 	cd sdk/python && python -m pytest -q
+
+# Weft Go tests with the database encrypted at rest (go-sqlite3 adiantum VFS)
+weft-test-encrypted:
+	./scripts/weft_test_encrypted.sh

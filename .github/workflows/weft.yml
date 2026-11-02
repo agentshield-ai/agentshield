@@ -76,6 +76,8 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
       - name: Go tests
         run: go test ./internal/weft/... ./cmd/weft/...
+      - name: Go tests (database encrypted at rest)
+        run: ./scripts/weft_test_encrypted.sh
       - name: Start server
         run: |
           go build -o bin/weft ./cmd/weft

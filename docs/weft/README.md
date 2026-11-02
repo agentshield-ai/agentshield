@@ -37,6 +37,8 @@ make weft         # build bin/weft
 | `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error calls are stored with regex redaction only |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
+| `--db-encryption-key-file` | `WEFT_DB_ENCRYPTION_KEY_FILE` | empty (plaintext database); a file holding a passphrase encrypts the whole database at rest, see [Database encryption at rest](#database-encryption-at-rest) |
+| `--db-encryption-key` | `WEFT_DB_ENCRYPTION_KEY` | empty; the passphrase itself (prefer the key file or env var, flags show in process lists) |
 | `--oidc-issuer` | `WEFT_OIDC_ISSUER` | empty (no SSO); an OpenID Connect issuer URL turns on "Sign in with SSO" and makes authentication required |
 | `--oidc-client-id` | `WEFT_OIDC_CLIENT_ID` | required with `--oidc-issuer` |
 | `--oidc-client-secret` | `WEFT_OIDC_CLIENT_SECRET` | empty (public PKCE client); prefer the env var, flags show in process lists |
@@ -214,7 +216,63 @@ WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 \
 ```
 
 CI runs all of these in `.github/workflows/weft.yml` and fails if the
-committed UI build is stale.
+committed UI build is stale. It also runs the Go suite a second time with
+every test database encrypted at rest (`make weft-test-encrypted`, i.e.
+`scripts/weft_test_encrypted.sh`, which sets `WEFT_DB_ENCRYPTION_KEY`), so all
+SQL is checked on both SQLite drivers.
+
+## Database encryption at rest
+
+By default the database is a plaintext SQLite file. With a database
+encryption key Weft opens it through
+[`github.com/ncruces/go-sqlite3`](https://github.com/ncruces/go-sqlite3)
+(SQLite compiled to Wasm and translated to Go, no CGO) and its `adiantum`
+VFS, which encrypts every 4 KiB block of the database, its WAL and temporary
+files. The SQL is the same on both drivers.
+
+```bash
+openssl rand -base64 32 > ~/.weft/db.passphrase && chmod 600 ~/.weft/db.passphrase
+./bin/weft --db-encryption-key-file ~/.weft/db.passphrase
+```
+
+The passphrase is stretched with Argon2id (64 MiB, 3 passes; about 0.2 s once
+at startup). Startup fails with a clear error, before anything is written,
+when the key is wrong, when an encrypted database is opened without a key, or
+when a plaintext database is opened with one. **Losing the passphrase loses
+the data**; keep it in a secret manager, separately from database backups.
+
+Converting an existing database (stop the server first; the original is left
+untouched and the copy is verified with `quick_check` and per-table row
+counts before the command succeeds):
+
+```bash
+weft db encrypt --db ~/.weft/weft.db --out ~/.weft/weft-enc.db --db-encryption-key-file ~/.weft/db.passphrase
+mv ~/.weft/weft-enc.db ~/.weft/weft.db     # weft-enc.db.key is a copy of weft.db.key
+weft db decrypt --db ~/.weft/weft.db --out ~/.weft/plain.db --db-encryption-key-file ~/.weft/db.passphrase
+weft db rekey   --db ~/.weft/weft.db --out ~/.weft/weft-new.db --db-encryption-key-file old.passphrase --new-db-encryption-key-file new.passphrase
+```
+
+After `encrypt`, delete the plaintext original, its `-wal`/`-shm` files and
+any backups of it (on SSDs and copy-on-write filesystems deleted blocks may
+survive; an encrypted volume is the only full answer to that). The key is
+the same Argon2id derivation as the VFS's own `textkey` URI parameter, so
+any go-sqlite3 based tool can open the file with
+`file:weft.db?vfs=adiantum&textkey=<passphrase>`.
+
+Costs, measured on 10,000 calls (4 vCPUs, same workload on both drivers):
+
+| | plaintext (modernc) | encrypted |
+|---|---|---|
+| ingest, one transaction per start/end | 9.2 s | 16.1 s (+74%) |
+| ingest, batches of 100 calls | 5.4 s | 7.2 s (+33%) |
+| 50 call-list pages (100 roots, sorted) | 0.37 s | 0.77 s |
+| 1,000 single-call reads | 0.15 s | 0.18 s |
+| 10 JSON-filter scans of all calls | 0.62 s | 0.72 s |
+| 10 searches / 10 project stats | 0.47 s / 0.31 s | 0.76 s / 0.88 s |
+| binary size (stripped) | 22.3 MB | 29.8 MB (the second SQLite is linked into every build) |
+
+Peak memory is higher too (about 150 MB against 30 MB in that benchmark: the
+one-off Argon2id run plus a Wasm heap per connection).
 
 ## Security notes
 
@@ -265,12 +323,21 @@ committed UI build is stale.
   from older versions are re-encrypted at startup.
 - Uploaded files are served with `Content-Security-Policy: sandbox` and
   `nosniff` so they cannot run script in the UI's origin.
-- **The database is not encrypted at rest.** The pure-Go SQLite driver
-  (`modernc.org/sqlite`, no CGO) has no page-level encryption (SQLCipher
-  and SEE need CGO), so Weft does not encrypt the database file; only
-  provider secrets inside it are encrypted. Put the database on an
-  encrypted volume or filesystem (LUKS/dm-crypt, FileVault, BitLocker, an
-  encrypted cloud disk with KMS) and keep its permissions tight. New
-  databases are created mode 0600 (SQLite's `-wal` and `-shm` files follow),
-  and the server warns at startup when the database, its WAL/SHM files or
-  `<db>.key` are world-readable.
+- **The database is not encrypted at rest unless you set a database
+  encryption key** (`--db-encryption-key-file`, see
+  [Database encryption at rest](#database-encryption-at-rest)); by default
+  only provider secrets inside it are encrypted. With the key, the database,
+  WAL and temporary files are encrypted with Adiantum (XChaCha12, AES-256,
+  NH and Poly1305): a copy of the files shows no SQLite header and no
+  plaintext. What it does not do: it is length-preserving disk encryption,
+  so someone holding two snapshots (say, two backups) can tell which 4 KiB
+  blocks changed; pages are not authenticated, so tampering garbles data
+  instead of being reported (sign backups if forgery matters); the `-shm`
+  file holds only the WAL index, unencrypted; and the key sits in the
+  server's memory while it runs. An encrypted volume or filesystem
+  (LUKS/dm-crypt, FileVault, BitLocker, an encrypted cloud disk with KMS)
+  remains a good complement, and the only option for plaintext databases.
+  New databases are created mode 0600 (`-wal` and `-shm` follow), and the
+  server warns at startup when the database, its WAL/SHM files or
+  `<db>.key` are world-readable, or when the database key file is readable
+  by others.

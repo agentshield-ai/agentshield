@@ -1,12 +1,12 @@
 import { Fragment, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { agentsApi, agentUrl, conversationUrl, signalsApi, type AgentSpan, type SignalResult, type SpanGroup } from '../../api/agents'
+import { agentEvalsApi, agentsApi, agentUrl, conversationUrl, signalsApi, type AgentEvalPrediction, type AgentSpan, type SignalResult, type SpanGroup } from '../../api/agents'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { callUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Spinner } from '../common'
 import { compact, errorRate, fmtPct, kindClass, windowStartOrAll } from './agentUtils'
-import { EvalFilterBanner } from './AgentEvals'
+import { EvalFilterBanner, ScoreChips } from './AgentEvals'
 import { RangePicker, ScorePill } from './bits'
 import {
   activeFilterCount,
@@ -244,6 +244,15 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
 
   const nFilters = activeFilterCount({ ...f, agent: agent ? '' : f.agent })
   const evalFiltered = !!(f.evalRun || f.evalPred)
+  // Conversations of an evaluation: the predictions each belongs to, with scores.
+  const evalConvs = useQuery({
+    queryKey: ['agent-eval-convs', projectId, f.evalRun, f.evalPred, agent ?? null],
+    queryFn: () =>
+      agentEvalsApi.conversations({ project_id: projectId, evaluation_run_id: f.evalRun || undefined, predict_and_score_call_id: f.evalPred || undefined, agent_name: agent, limit: 1000 }),
+    enabled: evalFiltered && groupRef?.key === 'conversation_id',
+    staleTime: 15_000,
+  })
+  const predsByConv = useMemo(() => new Map((evalConvs.data?.conversations ?? []).map((c) => [c.conversation_id, c.predictions])), [evalConvs.data])
   const drill = (g: SpanGroup) => {
     const k = Object.keys(g.group_keys)[0]
     const v = g.group_keys[k]
@@ -307,7 +316,7 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
           <Spinner label="Loading spans…" />
         </div>
       ) : group ? (
-        <GroupTable projectId={projectId} groups={q.data?.groups ?? []} groupKey={groupRef?.key ?? group} sort={sort} setSort={setSort} onDrill={drill} allTime={range === 'all'} />
+        <GroupTable projectId={projectId} groups={q.data?.groups ?? []} groupKey={groupRef?.key ?? group} sort={sort} setSort={setSort} onDrill={drill} allTime={range === 'all'} predsByConv={evalFiltered ? predsByConv : undefined} />
       ) : spans.length === 0 ? (
         <Empty>{evalFiltered ? `No agent spans of this evaluation${range === 'all' ? '' : ' in this period'}${nFilters > 1 ? ' match these filters' : ''}.` : `No spans match${nFilters ? ' these filters' : ' in this period'}.`}</Empty>
       ) : (
@@ -415,6 +424,7 @@ function GroupTable({
   setSort,
   onDrill,
   allTime,
+  predsByConv,
 }: {
   projectId: string
   groups: SpanGroup[]
@@ -423,7 +433,9 @@ function GroupTable({
   setSort: (c: string) => void
   onDrill: (g: SpanGroup) => void
   allTime?: boolean
+  predsByConv?: Map<string, AgentEvalPrediction[]>
 }) {
+  const showPreds = !!predsByConv && groupKey === 'conversation_id'
   if (!groups.length) return <Empty>No spans to group{allTime ? '' : ' in this period'}.</Empty>
   const label = (g: SpanGroup) => {
     const v = Object.values(g.group_keys)[0]
@@ -435,6 +447,7 @@ function GroupTable({
         <thead>
           <tr>
             <th>{groupKey}</th>
+            {showPreds && <th>Prediction · scores</th>}
             <SortTh id="spans" label="Spans" sort={sort} setSort={setSort} num />
             <SortTh id="errors" label="Errors" sort={sort} setSort={setSort} num />
             <th>Agents</th>
@@ -462,6 +475,18 @@ function GroupTable({
                   </div>
                   {g.first_message && <div className="small muted truncate">{truncate(g.first_message.text, 100)}</div>}
                 </td>
+                {showPreds && (
+                  <td style={{ minWidth: 180, maxWidth: 320 }} onClick={(e) => e.stopPropagation()}>
+                    {(predsByConv!.get(label(g)) ?? []).map((p) => (
+                      <div key={p.predict_and_score_call_id} className="col" style={{ gap: 2 }}>
+                        <Link to={callUrl(projectId, p.predict_and_score_call_id)} className="small mono" title="predict_and_score call">
+                          {p.example_id ? `example ${p.example_id}` : `prediction ${p.predict_and_score_call_id.slice(-8)}`}
+                        </Link>
+                        <ScoreChips scores={p.scores} max={4} />
+                      </div>
+                    ))}
+                  </td>
+                )}
                 <td className="num">{fmtNumber(g.span_count)}</td>
                 <td className="num" style={g.error_count ? { color: 'var(--error)' } : undefined}>
                   {fmtNumber(g.error_count)} <span className="faint small">({fmtPct(errorRate(g.error_count, g.span_count))})</span>

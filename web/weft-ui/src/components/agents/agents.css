@@ -382,6 +382,9 @@
   background: var(--accent-2);
   min-width: 0;
 }
+.eval-filter-banner > .grow {
+  flex: 1 1 260px;
+}
 .eval-filter-banner b {
   max-width: 100%;
 }
@@ -412,4 +415,7 @@
   .eval-pred-row {
     margin-left: 0;
   }
+}
+.eval-agent-textlinks {
+  white-space: nowrap;
 }

@@ -6,12 +6,10 @@ import (
 	"path/filepath"
 )
 
-// Database encryption at rest: the pure-Go SQLite driver (modernc.org/sqlite)
-// has no page-level encryption (no SQLCipher or SEE without CGO), so Weft
-// does not encrypt the database file itself. Provider secrets inside it are
-// encrypted with AES-256-GCM (secrets.go). Protect the file with an
-// encrypted volume or filesystem and restrictive permissions; see
-// docs/weft/README.md "Security notes".
+// Database encryption at rest is opt-in (dbcrypt.go): by default the
+// database is a plaintext file (modernc.org/sqlite has no page-level
+// encryption), with only provider secrets inside it encrypted (secrets.go).
+// Either way keep the files private; see docs/weft/README.md "Security notes".
 
 // PrepareDBFile creates a new database file readable only by its owner, so
 // SQLite's -wal and -shm files (which copy the database's mode) are private

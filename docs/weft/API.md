@@ -77,9 +77,15 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
   },
   "wb_user_id": null, "wb_run_id": null, "deleted_at": null,
   "feedback": [ /* Feedback, only with include_feedback */ ],
-  "storage_size_bytes": 123          // only with include_storage_size
+  "storage_size_bytes": 123,         // only with include_storage_size
+  "total_storage_size_bytes": 456,   // trace roots, only with include_total_storage_size
+  "wb_username": "alice",            // only with include_usernames
+  "wb_run_step": 5, "wb_run_step_end": 9,
+  "expire_at": null                  // started_at + project retention_days, null without a TTL
 }
 ```
+
+The optional fields are described in [Optional call fields](#optional-call-fields).
 
 **Usage roll-up.** Clients report only a call's *own* LLM usage in
 `summary.usage` at call end. The server sums usage and `status_counts` from all
@@ -1360,8 +1366,248 @@ only.
 
 ### Database encryption at rest
 
-The SQLite database is **not** encrypted: the pure-Go driver has no page
-encryption without CGO. Provider secrets inside it are AES-256-GCM
-encrypted. Use an encrypted volume or filesystem. New database files are
-created mode 0600, and startup logs a warning for each of the database,
-`-wal`, `-shm` and `<db>.key` files that is world-readable.
+Opt-in. Without a key the SQLite database is a plaintext file (driver
+`modernc.org/sqlite`) and only provider secrets inside it are AES-256-GCM
+encrypted. With `--db-encryption-key-file` / `WEFT_DB_ENCRYPTION_KEY_FILE`
+(or `--db-encryption-key` / `WEFT_DB_ENCRYPTION_KEY`) the server opens the
+database through `github.com/ncruces/go-sqlite3` and its `adiantum` VFS: the
+database, WAL and temporary files are encrypted in 4 KiB blocks with a key
+derived from the passphrase by Argon2id. The API is unchanged. Startup fails
+before writing anything when the key is wrong, missing for an encrypted
+file, or set for a plaintext one. `weft db encrypt|decrypt|rekey --db PATH
+--out PATH` converts a stopped server's database into a new, verified copy.
+Adiantum is unauthenticated, deterministic disk encryption: it hides content,
+not which blocks changed between snapshots, and does not detect tampering;
+see [README](README.md#database-encryption-at-rest) for costs and caveats.
+New database files are created mode 0600, and startup logs a warning for
+each of the database, `-wal`, `-shm` and `<db>.key` files that is
+world-readable.
+
+### Agent evals (Weft)
+
+Evaluation runs and the agent spans and conversations they involve, for the
+Agents view's **Evals** tab and the **View spans** / **View conversations**
+actions on evaluations. A span belongs to evaluation run R and prediction P
+(an `Evaluation.predict_and_score` call under R) when:
+
+- it carries `weave.eval.run_id = R` and `weave.eval.predict_and_score_call_id = P`
+  (flat, nested under `attributes.weave.eval`, or as OTel span attributes);
+  spans the SDKs record inside `EvaluationLogger.log_prediction()` get them.
+  A span with only `predict_and_score_call_id` is linked to P's parent run;
+- P links it through `attributes.weft.linked_calls` or
+  `attributes.weft.genai_span_ref` (span or call id, `weft:///…/call/<id>`
+  ref, or `{call_id|span_id, trace_id}`), or links its conversation through
+  `attributes.weft.linked_conversation_ids` (v2 `POST /predictions` with
+  `genai_span_ref` and `evaluation_run_id` too);
+- or it descends from such a span (OTel attributes do not propagate, and
+  LLM integration calls inside a turn are not tagged).
+
+Links are indexed as calls are written (existing databases are backfilled
+once at startup). Links recorded by deleted calls, or pointing at deleted
+runs, are ignored.
+
+**Filters.** `/agents/spans/query`, `/agents/spans/stats` and
+`/agents/spans/custom-attrs/schema` accept `evaluation_run_id?` and
+`predict_and_score_call_id?` (both may be given). With `group_by:
+[{key: "conversation_id"}]` the spans query lists a run's conversations.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `/agents/evals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, evaluation_run_ids?, include_costs?, include_predictions?, limit? (50), offset?}` | `{"evaluations": [AgentEvalRun], "total_count"}`, runs with agent spans, newest first |
+| `/agents/evals/conversations` | `{project_id, evaluation_run_id? \| predict_and_score_call_id? (one required), agent_name?, include_costs?, sort_by? (last_seen desc), limit? (50), offset?}` | `{"conversations": [Group + conversation_id, predictions: [AgentEvalPrediction]], "total_count", "span_count", "other_span_count"}`; `other_span_count` counts the run's spans outside any conversation |
+
+**AgentEvalRun**: `call_id, display_name, evaluation_ref, evaluation_name,
+model_ref, model_name, started_at, ended_at, status
+(running|success|error|unknown), summary` (the run's output),
+`prediction_count` (predictions with agent spans), `span_count, error_count,
+turn_count, trace_count, conversation_count, conversation_ids` (up to 50),
+`agent_names, first_seen, last_seen, total_input_tokens, total_output_tokens,
+total_cost_usd` (with `include_costs`), and `predictions` with
+`include_predictions`, `conversation_id` or `trace_ids`. `agent_name`,
+`conversation_id` and `trace_ids` keep runs with a matching span, and the
+totals and predictions then cover matching spans only.
+
+**AgentEvalPrediction**: `predict_and_score_call_id, status, example,
+output, scores, model_latency` (from the call's inputs and output),
+`kind, row_digest, example_id, trial_index` (from `attributes.weft.eval`),
+`conversation_ids, trace_ids, span_count`.
+
+**UI.** Evaluations list (Agents column) and compare page (run cards, and
+each prediction in the row detail) link to the Agents Spans tab filtered to
+the run or prediction (`?tab=spans&eval=<run>&pred=<prediction>&range=all`,
+`&group=conversation_id` for conversations). The Agents view and each agent
+have an **Evals** tab, and a conversation page shows the evaluations and
+predictions it belongs to, with scores, and marks the turns of each
+prediction.
+
+## Bulk export (Weave paths)
+
+Weave's "Bulk Export" API exports a whole project as files.
+
+`POST /v1/entities/{entity}/projects/{project}:export` `{"targets": ["calls", "objects", "feedback"]}`
+(1 to 3 distinct targets; no other fields) → **202**
+`{"name": "entities/{entity}/projects/{project}/exports/{job_id}", "job_id": "<uuid>", "created_at": "<RFC 3339>"}`.
+
+`GET /v1/entities/{entity}/projects/{project}/exports/{job_id}` →
+
+```jsonc
+{"name": "...", "job_id": "...", "created_at": "...", "updated_at": "...",
+ "state": "in_progress" | "succeeded" | "failed",
+ "artifacts": [                                   // empty until succeeded: partial output is never returned
+   {"target": "calls", "uri": "s3://bucket/prefix/e/p/exports/<job_id>/calls.jsonl.gz",
+    "expected_rows": 1203, "written_rows": 1203,
+    "size_bytes": 48211, "format": "jsonl.gz"}],  // size_bytes and format are Weft extensions
+ "failure": null | {"code": "export_failed" | "interrupted", "message": "..."},
+ "targets": ["calls"]}                            // Weft extension
+```
+
+- The job runs in the background. Each target is one gzip-compressed JSON
+  Lines file with one row per line: calls as `/calls/stream_query` returns
+  them (with `summary.weave.costs` and `storage_size_bytes`), object versions
+  as `/objs/query` returns them (with `val`), feedback as `/feedback/query`
+  returns it. Rows created after the job started are left out, so
+  `expected_rows` (counted at the start) and `written_rows` differ only if rows
+  are deleted while the job runs. The spec names no file format; JSON Lines
+  was chosen because it streams and needs no library (no Parquet).
+- **Where artifacts go.** With an S3 `--files-backend`, artifacts are uploaded
+  (streamed from a temporary file) to `<prefix>/<project_id>/exports/<job_id>/<target>.jsonl.gz`
+  and `uri` is that `s3://` URI, which `/files/resolve_url` presigns.
+  Without one, they are stored in SQLite (1 MiB chunks) and `uri` is this
+  server's download URL.
+- *Weft*: `GET /v1/entities/{entity}/projects/{project}/exports/{job_id}/artifacts/{target}`
+  downloads an artifact (`application/gzip`); for S3 artifacts it redirects to
+  a presigned URL.
+- One job runs at a time per server: starting another while one is running is
+  a **409** `{"detail": {"code": "export_in_progress", "message": ...}}`. A job
+  interrupted by a restart is marked `failed` with code `interrupted` when the
+  server starts again.
+- **Access.** Starting a job and reading its status or artifacts need the
+  admin role on the project (team admin, project admin or server admin), or
+  member on a personal project whose entity is the caller's user id; 403 is
+  `{"detail": "<reason>"}`. Errors use Weave's shapes: 400/404/409/503
+  `{"detail": {"code", "message"}}` and 422 `{"detail": [{"loc", "msg", "type"}]}`
+  (missing or empty `targets`, unknown targets, extra fields, a job id that is
+  not a UUID).
+
+## Reference buckets (bring your own bucket)
+
+Media that already lives in a customer bucket can be logged by URI
+(`s3://bucket/key`, `gs://bucket/key`, in any call input, output or agent
+span) and rendered without importing the bytes, as in Weave's "Reference
+media in your own bucket". A bucket must be registered first, for a team
+(entity: every project of the team may use it) or for one project.
+`/files/resolve_url` then presigns any URI in a registered bucket that the
+request's project may use; the UI's media view resolves URIs through it, so
+images and video in those buckets render inline. URIs in buckets that are not
+registered (or outside a registration's `prefix`) are a 400.
+
+| Endpoint | Body | Access |
+|---|---|---|
+| `POST /reference_buckets/create` | `{entity \| project_id, provider: "s3"\|"gcs", bucket, prefix?, region?, endpoint?, path_style?, secret_name?, test_object_key, skip_test?}` → `{"bucket": ReferenceBucket}` | server admin |
+| `POST /reference_buckets/test` | same body → `{"ok": bool, "error": string\|null}` (nothing saved) | server admin |
+| `GET\|POST /reference_buckets/list` | `?project_id=` (the project's and its team's buckets) or `?entity=`; none lists all | viewer on the project; server admin otherwise |
+| `POST /reference_buckets/delete` | `{id}` | server admin |
+
+ReferenceBucket: `{"id", "scope": "entity"|"project", "entity", "project_id", "provider", "bucket", "prefix", "region", "endpoint", "path_style", "secret_name", "test_object_key", "verified_at", "created_at", "created_by"}`.
+Credentials are never returned.
+
+- `bucket` is the name only (`s3://` / `gs://` and a trailing `/` are
+  stripped). `prefix`, when set, limits which keys may be presigned.
+- **Test connection.** Unless `skip_test` is true, `create` first reads one
+  byte of `test_object_key` (an existing object) through a presigned URL, as
+  a browser would, and refuses the registration if that fails (bad
+  credentials, missing object, unreachable endpoint). Weave also checks the
+  bucket's CORS configuration; Weft does not, so configure CORS for the Weft
+  UI's origin yourself (`GET`, `HEAD`).
+- **S3** (`provider: "s3"`, also `"aws"`): presigned with SigV4
+  (`internal/weft/objstore`). `secret_name` names a stored secret
+  (Settings → Secrets, `/secrets/set`) holding
+  `{"access_key_id": "...", "secret_access_key": "...", "session_token": "..."}`
+  (AWS-style key names are accepted too); without `secret_name` the server's
+  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` are used.
+  `region` (default `AWS_REGION`, then `us-east-1`), `endpoint` and
+  `path_style` work as for `--files-backend` (MinIO, R2, Ceph).
+- **GCS** (`provider: "gcs"`, also `"gs"`): V4 signed URLs
+  (`GOOG4-RSA-SHA256`, RSA-SHA256 with the standard library). `secret_name`
+  is required and names a stored secret holding a service-account key file
+  (JSON with `client_email` and `private_key`); the service account needs
+  `roles/storage.objectViewer` on the bucket. `endpoint` defaults to
+  `https://storage.googleapis.com`.
+- When several registrations match, a project registration wins over the
+  team's, then the longest `prefix`. URIs in the S3 `--files-backend` bucket
+  keep the files-backend rule (only keys under the project's prefix).
+- Presigned URLs last 1 hour by default (`expires_in`, 1 s to 7 days);
+  `expires_at` is the earliest expiry in the batch.
+
+## Optional call fields
+
+Weave's `CallSchema` has optional fields that Weft now accepts, stores and
+returns (`/call/read`, `/calls/query`, `/calls/stream_query`):
+
+| Field | Written by | Returned |
+|---|---|---|
+| `wb_run_step` | `/call/start` (`start.wb_run_step`), `/call/upsert_batch`, `/v2/{e}/{p}/calls/complete` | always (null when not sent) |
+| `wb_run_step_end` | `/call/end` (`end.wb_run_step_end`), `/call/upsert_batch`, `/v2/{e}/{p}/calls/complete` | always (null when not sent) |
+| `expire_at` | derived: `started_at` + the project's `retention_days` (`/project/ttl_settings/update`) | always; null when the project keeps calls forever. It moves with the TTL, matching the purge, which deletes calls by `started_at` |
+| `total_storage_size_bytes` | derived: sum of `storage_size_bytes` over the trace | on trace roots, with `include_total_storage_size: true` (`/call/read`, `/calls/query`, `/calls/stream_query`) |
+| `wb_username` | derived from `wb_user_id` | with `include_usernames: true`: the Weft user id (handle) when `wb_user_id` names a user, the `wb_user_id` itself when it is a valid handle without a user row (static `user=key` names), otherwise omitted |
+
+`/calls/query_stats` already returns `total_storage_size_bytes` for the
+matching calls. The run steps are stored in two new `calls` columns, added by
+a migration on start.
+
+## OpenTelemetry: Langfuse, OpenLit, Koog and verl
+
+These layouts are mapped in `internal/weft/otlp/langfuse.go` (tests in
+`langfuse_test.go`), on top of the GenAI, OpenInference, OpenLLMetry, Vercel
+AI SDK, MLflow, Pydantic AI and ADK mappings in [OpenTelemetry ingest](#opentelemetry-ingest).
+
+**Langfuse** (Langfuse SDK v3+ and exporters that write Langfuse attributes,
+for example Koog's Langfuse exporter):
+
+| Attribute | Weft |
+|---|---|
+| `langfuse.observation.input` | inputs (a message list becomes `inputs.messages`, an object is spread, anything else is `inputs.input`); wins over `input.value` |
+| `langfuse.observation.output` | output; for `generation` observations a message, message list or string becomes a chat completion (`choices`) |
+| `langfuse.observation.model.name` | `inputs.model` and the usage/cost model |
+| `langfuse.observation.model.parameters` | merged into inputs (`temperature`, `max_tokens`, …) |
+| `langfuse.observation.usage_details` | `summary.usage`: `input`/`output`/`total` (or OpenAI names) to prompt/completion/total tokens, `input_cached_tokens` to `cache_read_input_tokens`, `output_reasoning_tokens` to `reasoning_tokens` |
+| `langfuse.observation.type` | `attributes["weft.span_kind"]` (`generation` = llm, agent, tool, chain, retriever, evaluator, embedding, guardrail), used by the Agents index unless `gen_ai.operation.name` is set |
+| `langfuse.observation.level` = `ERROR` | `exception` (= `status_message`) when the span status is not already an error |
+| `langfuse.observation.{level,status_message,prompt.name,prompt.version,completion_start_time,cost_details,metadata.*}`, `langfuse.trace.{tags,metadata.*}` | `attributes.langfuse` |
+| `langfuse.trace.name` | `display_name` of a root span |
+| `langfuse.trace.input` / `langfuse.trace.output` | inputs / output when the span has nothing more specific |
+| `langfuse.session.id`, `session.id` | `thread_id` |
+| `langfuse.user.id`, `user.id` | `wb_user_id` |
+
+**OpenLit** emits the GenAI conventions (`gen_ai.input.messages` /
+`gen_ai.output.messages` with parts, `gen_ai.usage.*`, request parameters),
+which were already mapped. The OpenLit fixture test found and fixed: the
+system prompt appeared twice (OpenLit puts it both in
+`gen_ai.system_instructions` and in the input messages; it is now prepended
+only when the messages do not start with one), `gen_ai.session.id` /
+`gen_ai.user.id` are now `thread_id` / `wb_user_id`, and tool spans'
+`gen_ai.tool.input` / `gen_ai.tool.output` are now inputs / output.
+`gen_ai.usage.cost` and `gen_ai.client.token.usage` stay in
+`attributes.otel`; Weft computes costs from its price book.
+
+**Koog** (JetBrains' Kotlin agent framework, `agents-features-opentelemetry`)
+emits GenAI spans (`invoke_agent <agent>`, `chat <model>`,
+`execute_tool <tool>`, `node <id>`), mapped generically, with fixes the Koog
+fixture found: message roles are Kotlin enum names (`User`, `Assistant`,
+`System`) and are lower-cased; the empty `tool` entry Koog writes before every
+user message is dropped; `koog.node.input/output` and
+`koog.subgraph.input/output` become inputs / output; and with Koog's Weave
+exporter, `gen_ai.completion.N.tool_calls.M.function` (`{"name","arguments"}`
+JSON) becomes an OpenAI tool call. `gen_ai.conversation.id` (the run id) is
+the thread.
+
+**verl** has no OTel layout of its own. With `trace.backend=weave` it traces
+rollouts through the official `weave` client (`create_call` with the method's
+qualified name and attributes `step`, `sample_index`, `rollout_n`,
+`validate`, `experiment_name`; outputs with token ids and, with
+`token2text`, `prompt_text` / `response_text`), which Weft serves unchanged
+(test `TestVerlWeaveCalls`, filtering by `attributes.step`). With
+`trace.backend=mlflow` and MLflow's OTLP exporter pointed at Weft, its spans
+use the MLflow mapping (`mlflow.spanInputs` / `mlflow.spanOutputs`; test
+`TestVerlMLflowFixture`).
