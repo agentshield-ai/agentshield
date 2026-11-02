@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -97,6 +96,11 @@ func uriPath(p string) string {
 	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(p)
 }
 
+// uriValue escapes a file: URI query parameter value (SQLite decodes %HH).
+func uriValue(v string) string {
+	return strings.NewReplacer("%", "%25", "&", "%26", "#", "%23", "+", "%2b").Replace(v)
+}
+
 const commonPragmas = "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(off)&_pragma=synchronous(NORMAL)"
 
 // dbDSN returns the driver name and DSN for the write handle; the read handle
@@ -110,7 +114,7 @@ func dbDSN(path string, key []byte) (driver, dsn string) {
 	// modeof gives the WAL the database file's permissions, as SQLite's own
 	// unix VFS (and so modernc) does; go-sqlite3 otherwise creates it 0666 &^ umask.
 	return encDriver, "file:" + uriPath(path) + "?vfs=" + encVFS + "&hexkey=" + hex.EncodeToString(key) +
-		"&modeof=" + url.QueryEscape(path) + "&" + commonPragmas + "&_pragma=temp_store(memory)"
+		"&modeof=" + uriValue(path) + "&" + commonPragmas + "&_pragma=temp_store(memory)"
 }
 
 // prepareSharedMemory creates the -shm file 0600 when it is missing: the

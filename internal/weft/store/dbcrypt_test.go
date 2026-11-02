@@ -341,3 +341,34 @@ func TestOpenHonoursEnvKey(t *testing.T) {
 	}
 	t.Logf("suite database encrypted at rest: %v", want)
 }
+
+func TestOddPathsEncrypted(t *testing.T) {
+	// The encrypted DSN escapes the path and its parameters. (The plaintext
+	// DSN is unchanged from before encryption existed and does not.)
+	dir := filepath.Join(t.TempDir(), "a dir & 50% #1+x=y")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "we?ft.db")
+	if err := PrepareDBFile(path); err != nil {
+		t.Fatal(err)
+	}
+	s := openMode(t, path, "k")
+	seedCalls(t, s, 2)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if enc, _ := DetectDBEncryption(path); !enc {
+		t.Fatal("database written somewhere else")
+	}
+	s = openMode(t, path, "k")
+	if got := countCalls(t, s); got != 2 {
+		t.Fatalf("calls = %d", got)
+	}
+	_ = s.Close()
+	plainDir := filepath.Join(t.TempDir(), "plain dir")
+	_ = os.MkdirAll(plainDir, 0o700)
+	if err := ConvertDB(path, filepath.Join(plainDir, "weft.db"), "k", ""); err != nil {
+		t.Fatal(err)
+	}
+}

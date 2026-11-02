@@ -24,7 +24,7 @@ func TestVerlWeaveCalls(t *testing.T) {
 				"op_name": "ToolAgentLoop.run", "started_at": ts, "attributes": attrs,
 				"inputs": map[string]any{"sampling_params": map[string]any{"temperature": 1.0}, "raw_prompt": []any{map[string]any{"role": "user", "content": "2+2?"}}}}}},
 			map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": id, "ended_at": ts,
-				"output": map[string]any{"prompt_ids": []any{1, 2}, "response_ids": []any{3}, "num_turns": 2, "prompt_text": "2+2?", "response_text": "4"},
+				"output":  map[string]any{"prompt_ids": []any{1, 2}, "response_ids": []any{3}, "num_turns": 2, "prompt_text": "2+2?", "response_text": "4"},
 				"summary": map[string]any{}}}})
 	}
 	e.post("/call/upsert_batch", map[string]any{"batch": batch})
