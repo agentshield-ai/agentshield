@@ -1,10 +1,9 @@
 import type { Call } from '../call.js';
-import { syntheticOp } from '../client.js';
 import { currentContext } from '../context.js';
-import { tracingClient } from '../global.js';
 import { toJson } from '../serialize.js';
 import { addUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
+import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
 export class MessageAccumulator implements Accumulator {
   private msg: any = {};
@@ -63,10 +62,15 @@ export function recordAnthropicUsage(call: Call, out: any): void {
  * Trace an Anthropic client instance: `messages.create` (incl. `stream: true`)
  * and `messages.stream()`. Returns the same client.
  */
-export function wrapAnthropic<T>(client: T): T {
+export function wrapAnthropic<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
   const c = client as any;
   const messages = c?.messages;
+  const opSettings = pickOpSettings(opts);
+  const attributes = () => ({ 'gen_ai.provider.name': 'anthropic' });
   patchMethod(messages, 'create', {
+    integration: 'anthropic',
+    opSettings,
+    attributes,
     opName: 'anthropic.messages.create',
     accumulator: () => new MessageAccumulator(),
     recordUsage: recordAnthropicUsage,
@@ -75,17 +79,21 @@ export function wrapAnthropic<T>(client: T): T {
   if (typeof origStream === 'function' && !origStream.__weftPatched) {
     const bound = origStream.bind(messages);
     const wrapped = (body: any, ...rest: any[]) => {
-      const wc = tracingClient();
+      const wc = integrationClient('anthropic');
       const s = bound(body, ...rest);
       if (!wc || !s || typeof s.finalMessage !== 'function') return s;
-      const call = wc.createCall(syntheticOp('anthropic.messages.stream', 'llm'), toJson(body ?? {}) as Record<string, unknown>, { parent: currentContext().stack.at(-1) ?? null });
+      const meta = integrationOp('anthropic', 'anthropic.messages.stream', 'llm', {}, opSettings);
+      const call = wc.createCall(meta, toJson(body ?? {}) as Record<string, unknown>, {
+        parent: currentContext().stack.at(-1) ?? null,
+        attributes: integrationAttributes('anthropic', attributes(), opSettings),
+      });
       s.finalMessage().then(
         (m: any) => {
           const out = toJson(m);
           recordAnthropicUsage(call, out);
-          wc.finishCall(call, out);
+          wc.finishCall(call, out, undefined, meta);
         },
-        (e: unknown) => wc.finishCall(call, undefined, e),
+        (e: unknown) => wc.finishCall(call, undefined, e, meta),
       );
       return s;
     };

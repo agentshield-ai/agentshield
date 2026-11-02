@@ -874,7 +874,7 @@ OpenInference `metadata` JSON flattens under `metadata.`.
 | *Weft*: `/agents/signals/presets` (GET or POST) | — | `{"presets": [{"id","name","kind": "tag"\|"rating","description"}]}` |
 | *Weft*: `/agents/signals/run` | `{project_id, model, signals: [{preset} \| {id, name?, kind, description}] (1–12), agent_name?, conversation_id?, trace_ids?, started_after?, started_before?, limit? (20 most recent turns, max 200), rescore?}` | `{"turns","scored","skipped","failed","results": [{"span_id","trace_id","signal","kind","score"?,"matched"?,"confidence"?,"reason"?,"feedback_id"?,"error"?}]}` |
 | *Weft*: `/agents/signals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, signal?, kind?, tag?, min_score?, max_score?, matched_only? (true), started_after?, started_before?, limit? (100), offset?}` | `{"results": [SignalResult], "summary": [{"signal","signal_name","kind","count","matched","avg","tag_counts"}], "total_count"}` |
-| *Weft*: `/agents/feedback/batch/create` | Weave's `FeedbackBatchCreateParams` (`{batch: [{project_id, weave_ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}`) | `{"res": [{"id","created_at","wb_user_id","payload"}]}` |
+| *Weft*: `/agents/feedback/batch/create` (same as `/feedback/batch/create`) | Weave's `FeedbackBatchCreateParams` (`{batch: [{project_id, weave_ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}`) | `{"res": [{"id","created_at","wb_user_id","payload"}]}` |
 
 **Signals.** A signal scores one *turn* (a conversation turn, or an agent
 invocation at the top of its trace outside conversations) with an LLM judge
@@ -885,8 +885,15 @@ the turn's root call with `feedback_type` `wandb.agent_monitor` and payload
 `{signal, signal_name, signal_kind, model, scorer_call_id, output, reason,
 scorer_ratings | scorer_tags, scorer_*_confidences, scorer_*_reasons,
 span_trace_id, span_conversation_id, span_agent_name, span_agent_version,
-span_status_code, scorer_trace_id}`. Already-scored turns are skipped unless
-`rescore`. The judge's own calls are internal (`attributes.weft.internal`)
+span_status_code, scorer_trace_id, signal_version}`. `signal_version` hashes the
+kind and description; turns already scored by the same signal version are
+skipped unless `rescore`, so editing a signal's description scores turns
+again. **Automatic signals:** the project's `agent-signals` object
+(`{model, auto? (true), signals: [{id, preset?, name, kind, description,
+enabled, sample_rate? (0–1, default 1)}]}`, edited in the Signals tab) scores
+every agent turn as its root call ends, through the same worker as monitors:
+enabled signals only, each at its sample rate, never internal calls, once
+per turn and signal version (creator `weft-signals-auto`). It needs `model`. The judge's own calls are internal (`attributes.weft.internal`)
 and are not agent spans. `/agents/feedback/batch/create` normalises like
 Weave: tags are lowercased, trimmed and de-duplicated (at most 10; a tag over
 36 characters rejects the item), reasons lose control and markup characters

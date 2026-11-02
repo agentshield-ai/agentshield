@@ -83,6 +83,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function toIso(t: string | Date): string {
+  if (t instanceof Date) return t.toISOString();
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? nowIso() : d.toISOString();
+}
+
 export function formatError(e: unknown): string {
   if (e instanceof Error) {
     const head = `${e.name}: ${e.message}`;
@@ -168,7 +174,7 @@ export class WeftClient {
   createCall(
     op: OpMeta | string,
     inputs: Record<string, unknown>,
-    opts: { parent?: Call | null; displayName?: string; attributes?: Record<string, unknown> } = {},
+    opts: { parent?: Call | null; displayName?: string; attributes?: Record<string, unknown>; startedAt?: string | Date } = {},
   ): Call {
     const meta = typeof op === 'string' ? syntheticOp(op) : op;
     const parent = opts.parent === undefined ? getCurrentCall() : opts.parent;
@@ -212,7 +218,7 @@ export class WeftClient {
       op_name: this.opRef(meta).uri(),
       trace_id: parent ? parent.traceId : uuid7(),
       parent_id: parent ? parent.id : null,
-      started_at: nowIso(),
+      started_at: opts.startedAt ? toIso(opts.startedAt) : nowIso(),
       attributes,
       inputs: finalInputs,
     };
@@ -239,7 +245,7 @@ export class WeftClient {
     return call;
   }
 
-  finishCall(call: Call, output?: unknown, error?: unknown, meta?: OpMeta): void {
+  finishCall(call: Call, output?: unknown, error?: unknown, meta?: OpMeta, endedAt?: string | Date): void {
     if (call.ended) return;
     call.ended = true;
     let out = output;
@@ -250,7 +256,7 @@ export class WeftClient {
         console.warn(`weft: postprocessOutput failed for ${meta.name}: ${(e as Error).message}`);
       }
     }
-    call.endedAt = nowIso();
+    call.endedAt = endedAt ? toIso(endedAt) : nowIso();
     call.rawOutput = out;
     call.output = this.redactor.apply(toJson(out, this));
     const end: Record<string, unknown> = { project_id: call.projectId, id: call.id, ended_at: call.endedAt, output: call.output };

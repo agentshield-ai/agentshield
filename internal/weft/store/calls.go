@@ -150,6 +150,7 @@ func (s *Store) StartCall(ctx context.Context, st CallStart) error {
 	if err := st.normalize(); err != nil {
 		return err
 	}
+	s.nerRedact(ctx, []*CallStart{&st}, nil)
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.touchProject(ctx, tx, st.ProjectID); err != nil {
 			return err
@@ -163,6 +164,7 @@ func (s *Store) EndCall(ctx context.Context, en CallEnd) error {
 	if err := en.normalize(); err != nil {
 		return err
 	}
+	s.nerRedact(ctx, nil, []*CallEnd{&en})
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.touchProject(ctx, tx, en.ProjectID); err != nil {
 			return err
@@ -193,6 +195,19 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 		default:
 			return nil, Invalidf("batch item %d: mode must be start or end", i)
 		}
+	}
+	if s.pii != nil {
+		var sts []*CallStart
+		var ens []*CallEnd
+		for _, it := range items {
+			if it.Start != nil {
+				sts = append(sts, it.Start)
+			}
+			if it.End != nil {
+				ens = append(ens, it.End)
+			}
+		}
+		s.nerRedact(ctx, sts, ens)
 	}
 	var ended []EndedCall
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -239,6 +254,17 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 				return nil, err
 			}
 		}
+	}
+	if s.pii != nil {
+		var sts []*CallStart
+		var ens []*CallEnd
+		for i := range calls {
+			sts = append(sts, &calls[i].Start)
+			if calls[i].End != nil {
+				ens = append(ens, calls[i].End)
+			}
+		}
+		s.nerRedact(ctx, sts, ens)
 	}
 	var ended []EndedCall
 	err := s.withTx(ctx, func(tx *sql.Tx) error {

@@ -55,6 +55,7 @@ func main() {
 	logLevel := flag.String("log-level", envOr("WEFT_LOG_LEVEL", "info"), "debug, info, warn or error")
 	filesCfg := registerFilesFlags() // files.go
 	iamCfg := registerIAMFlags()     // iam.go
+	piiCfg := registerPIIFlags()     // pii.go
 	flag.Parse()
 
 	var lvl slog.Level
@@ -84,6 +85,12 @@ func main() {
 	filesBackend, err := filesCfg.apply(st)
 	if err != nil {
 		log.Error("configuring files backend", "err", err)
+		os.Exit(2)
+	}
+
+	piiMode, err := piiCfg.apply(st)
+	if err != nil {
+		log.Error("configuring the PII analyzer", "err", err)
 		os.Exit(2)
 	}
 
@@ -119,7 +126,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "auth", len(cfg.APIKeys) > 0, "files", filesBackend)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

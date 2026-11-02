@@ -10,6 +10,8 @@ export interface SignalConfig {
   description: string
   preset?: string
   enabled: boolean
+  /** Share of new turns scored automatically (0–1, default 1). */
+  sample_rate?: number
 }
 
 export interface SignalsVal {
@@ -17,17 +19,19 @@ export interface SignalsVal {
   _bases: string[]
   name: string
   model?: string
+  /** Score new turns as they end (needs `model`); default true. */
+  auto?: boolean
   signals: SignalConfig[]
 }
 
 export const SIGNALS_OBJECT_ID = 'agent-signals'
 
-export function signalsVal(signals: SignalConfig[], model?: string): SignalsVal {
-  return { _class_name: 'AgentSignals', _bases: ['Object', 'BaseModel'], name: SIGNALS_OBJECT_ID, model, signals }
+export function signalsVal(signals: SignalConfig[], model?: string, auto = true): SignalsVal {
+  return { _class_name: 'AgentSignals', _bases: ['Object', 'BaseModel'], name: SIGNALS_OBJECT_ID, model, auto, signals }
 }
 
 /** Reads the stored config, tolerating older or hand-written shapes. */
-export function parseSignalsVal(v: unknown): { signals: SignalConfig[]; model?: string } {
+export function parseSignalsVal(v: unknown): { signals: SignalConfig[]; model?: string; auto: boolean } {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
   const list = Array.isArray(o.signals) ? o.signals : []
   const signals: SignalConfig[] = []
@@ -44,9 +48,10 @@ export function parseSignalsVal(v: unknown): { signals: SignalConfig[]; model?: 
       description: typeof s.description === 'string' ? s.description : '',
       preset: typeof s.preset === 'string' ? s.preset : undefined,
       enabled: s.enabled !== false,
+      ...(typeof s.sample_rate === 'number' && s.sample_rate >= 0 && s.sample_rate <= 1 ? { sample_rate: s.sample_rate } : {}),
     })
   }
-  return { signals, model: typeof o.model === 'string' ? o.model : undefined }
+  return { signals, model: typeof o.model === 'string' ? o.model : undefined, auto: o.auto !== false }
 }
 
 export function presetConfig(p: SignalPreset): SignalConfig {

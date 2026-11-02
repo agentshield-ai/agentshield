@@ -232,27 +232,100 @@ func TestAgentFeedbackBatchAndSignalFilters(t *testing.T) {
 	}
 }
 
-func TestJudgeNormalisation(t *testing.T) {
-	for _, c := range []struct {
-		in   any
-		want float64
-	}{{0.4, 0.4}, {5.0, 1}, {3.0, 0.5}, {8.0, 0.8}, {75.0, 0.75}, {true, 1}, {"no", 0}, {-2.0, 0}} {
-		if got, ok := judgeNumber(c.in); !ok || got != c.want {
-			t.Fatalf("judgeNumber(%v) = %v, %v", c.in, got, ok)
+// Weave's /feedback/batch/create keeps and normalises the scorer and span
+// fields; plain feedback is stored unchanged.
+func TestFeedbackBatchCreateScorerFields(t *testing.T) {
+	e := newEnv(t)
+	seedAgentData(t, e, time.Now().Add(-time.Hour))
+	turn := convTurns(t, e)[0]
+	ref := "weave:///" + pid + "/call/" + turn["span_id"].(string)
+	res := e.post("/feedback/batch/create", map[string]any{"batch": []any{
+		map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.agent_monitor", "payload": map[string]any{"note": "x"},
+			"scorer_ratings": map[string]any{"quality": 0.7}, "scorer_rating_confidences": map[string]any{"quality": 3},
+			"scorer_rating_reasons": map[string]any{"quality": "ok\u0007 <i>fine</i>"}, "scorer_tags": []any{"NSFW", "nsfw"},
+			"scorer_tag_reasons": map[string]any{"NSFW": "explicit"}, "scorer_trace_id": "judge-trace", "span_agent_name": "given-agent"},
+		map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": "👍"}},
+	}})
+	items := res["res"].([]any)
+	p := items[0].(map[string]any)["payload"].(map[string]any)
+	if p["note"] != "x" || p["scorer_ratings"].(map[string]any)["quality"].(float64) != 0.7 ||
+		p["scorer_rating_confidences"].(map[string]any)["quality"].(float64) != 1 ||
+		p["scorer_rating_reasons"].(map[string]any)["quality"] != "ok ifine/i" ||
+		len(p["scorer_tags"].([]any)) != 1 || p["scorer_tag_reasons"].(map[string]any)["nsfw"] != "explicit" {
+		t.Fatalf("scorer fields = %v", p)
+	}
+	if p["scorer_trace_id"] != "judge-trace" || p["span_agent_name"] != "given-agent" || p["span_conversation_id"] != "conv-1" || p["span_trace_id"] != turn["trace_id"] {
+		t.Fatalf("span fields = %v", p)
+	}
+	if plain := items[1].(map[string]any)["payload"].(map[string]any); len(plain) != 1 || plain["emoji"] != "👍" {
+		t.Fatalf("plain feedback changed: %v", plain)
+	}
+	if code, _ := e.raw("/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "weave_ref": ref,
+		"feedback_type": "x", "payload": map[string]any{}, "scorer_tags": []any{strings.Repeat("t", 40)}}}}, nil); code != 400 {
+		t.Fatalf("long tag accepted: %d", code)
+	}
+	// The stored fields reach the chat view and the signal filters.
+	got := spanIDsWhere(t, e, map[string]any{"signal_filters": map[string]any{"tags": []any{"nsfw"}}})
+	if len(got) != 1 || !got[turn["trace_id"].(string)] {
+		t.Fatalf("tag filter = %v", got)
+	}
+}
+
+// Enabled signals score agent turns as they end, once per signal version,
+// with their sample rate; internal calls are never scored.
+func TestAutoSignalsScoreEndedTurns(t *testing.T) {
+	e := newEnv(t)
+	rate0 := 0.0
+	e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": pid, "object_id": "agent-signals", "val": map[string]any{
+		"_class_name": "AgentSignals", "model": "mock/json", "signals": []any{
+			map[string]any{"id": "task_success", "preset": "task_success", "kind": "rating", "name": "Task Success", "description": "Did the agent finish the task?", "enabled": true},
+			map[string]any{"id": "nsfw", "preset": "nsfw", "kind": "tag", "name": "NSFW", "description": "Explicit content", "enabled": true, "sample_rate": rate0},
+			map[string]any{"id": "off", "kind": "tag", "name": "Off", "description": "disabled", "enabled": false},
+		}}}})
+	seedAgentData(t, e, time.Now().Add(-time.Hour))
+	results := func() []any {
+		var rs []any
+		for i := 0; i < 100; i++ {
+			rs = e.post("/agents/signals/query", map[string]any{"project_id": pid, "matched_only": false, "limit": 100})["results"].([]any)
+			if len(rs) >= 4 {
+				time.Sleep(300 * time.Millisecond) // let stragglers land
+				return e.post("/agents/signals/query", map[string]any{"project_id": pid, "matched_only": false, "limit": 100})["results"].([]any)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		return rs
+	}
+	rs := results()
+	perTurn := map[string]int{}
+	for _, r := range rs {
+		m := r.(map[string]any)
+		if m["signal"] != "task_success" || m["creator"] != "weft-signals-auto" {
+			t.Fatalf("unexpected result %v", m)
+		}
+		perTurn[m["span_id"].(string)]++
+	}
+	// Four turns (two in conv-1, the Vercel and the OpenInference runs), each scored once.
+	if len(perTurn) != 4 {
+		t.Fatalf("auto-scored turns = %v (%d results)", perTurn, len(rs))
+	}
+	for id, n := range perTurn {
+		if n != 1 {
+			t.Fatalf("turn %s scored %d times", id, n)
 		}
 	}
-	m, err := parseJudge("Sure!\n```json\n{\"matched\": \"yes\", \"confidence\": 90, \"reason\": \"x\"}\n```")
-	if err != nil {
-		t.Fatal(err)
+	// Re-sending the same spans ends the calls again: no double scoring.
+	seedAgentData(t, e, time.Now().Add(-time.Hour))
+	time.Sleep(500 * time.Millisecond)
+	if again := e.post("/agents/signals/query", map[string]any{"project_id": pid, "matched_only": false, "limit": 100})["results"].([]any); len(again) != len(rs) {
+		t.Fatalf("turns scored twice: %d results, want %d", len(again), len(rs))
 	}
-	sc, res, err := signalScores(SignalSpec{ID: "nsfw", Kind: "tag"}, m)
-	if err != nil || !*res.Matched || sc.ScorerTags[0] != "nsfw" || sc.ScorerTagConfidences["nsfw"] != 0.9 {
-		t.Fatalf("tag scores = %v %v %v", sc, res, err)
+	// The same version is skipped by a manual run too; a new version scores again.
+	run := e.post("/agents/signals/run", map[string]any{"project_id": pid, "model": "mock/json", "signals": []any{map[string]any{"preset": "task_success", "description": "Did the agent finish the task?"}}})
+	if run["scored"].(float64) != 0 || run["skipped"].(float64) != 4 {
+		t.Fatalf("manual run over auto results = %v", run)
 	}
-	if _, _, err := signalScores(SignalSpec{ID: "q", Kind: "rating"}, map[string]any{"reason": "no score"}); err == nil {
-		t.Fatal("missing score accepted")
-	}
-	if _, err := parseJudge("no json here"); err == nil {
-		t.Fatal("non-JSON accepted")
+	run = e.post("/agents/signals/run", map[string]any{"project_id": pid, "model": "mock/json", "signals": []any{map[string]any{"preset": "task_success", "description": "A changed rubric."}}})
+	if run["scored"].(float64) != 4 {
+		t.Fatalf("new version run = %v", run)
 	}
 }

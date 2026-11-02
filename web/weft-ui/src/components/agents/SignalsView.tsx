@@ -36,14 +36,15 @@ export function useSignalConfig(projectId: string) {
     queryFn: async () => {
       const r = await api.objsQuery({ project_id: projectId, filter: { object_ids: [SIGNALS_OBJECT_ID], latest_only: true }, limit: 1 })
       const o = r.objs.find((x) => !x.deleted_at)
-      return o ? parseSignalsVal(o.val) : { signals: [] as SignalConfig[], model: undefined as string | undefined }
+      return o ? parseSignalsVal(o.val) : { signals: [] as SignalConfig[], model: undefined as string | undefined, auto: true }
     },
   })
   const save = useMutation({
-    mutationFn: (next: { signals: SignalConfig[]; model?: string }) => api.objCreate(projectId, SIGNALS_OBJECT_ID, signalsVal(next.signals, next.model)),
+    mutationFn: (next: { signals: SignalConfig[]; model?: string; auto?: boolean }) =>
+      api.objCreate(projectId, SIGNALS_OBJECT_ID, signalsVal(next.signals, next.model, next.auto ?? q.data?.auto ?? true)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['obj', projectId, SIGNALS_OBJECT_ID] }),
   })
-  return { q, save, signals: q.data?.signals ?? [], model: q.data?.model }
+  return { q, save, signals: q.data?.signals ?? [], model: q.data?.model, auto: q.data?.auto ?? true }
 }
 
 function NewSignalModal({ existing, presets, onAdd, onClose }: { existing: SignalConfig[]; presets: SignalPreset[]; onAdd: (s: SignalConfig[]) => void; onClose: () => void }) {
@@ -175,6 +176,7 @@ function ActiveSignalsModal({ signals, onSave, onClose }: { signals: SignalConfi
                 <span className={`badge ${s.kind === 'tag' ? 'accent' : ''}`}>{s.kind}</span>
                 <b className="grow">{s.name}</b>
                 <span className="mono small faint">{s.id}</span>
+                {s.sample_rate != null && s.sample_rate < 1 && <span className="badge">{Math.round(s.sample_rate * 100)}%</span>}
                 <button className="btn ghost sm" onClick={() => setEditing(editing === s.id ? null : s.id)}>
                   {editing === s.id ? 'Done' : 'Edit'}
                 </button>
@@ -183,7 +185,24 @@ function ActiveSignalsModal({ signals, onSave, onClose }: { signals: SignalConfi
                 </button>
               </div>
               {editing === s.id ? (
-                <textarea className="input" rows={3} value={s.description} onChange={(e) => setList(list.map((x) => (x.id === s.id ? { ...x, description: e.target.value } : x)))} aria-label="Description" />
+                <>
+                  <textarea className="input" rows={3} value={s.description} onChange={(e) => setList(list.map((x) => (x.id === s.id ? { ...x, description: e.target.value } : x)))} aria-label="Description" />
+                  <label className="small muted row" style={{ gap: 6 }}>
+                    Score
+                    <input
+                      className="input sm"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={5}
+                      style={{ width: 70 }}
+                      value={Math.round((s.sample_rate ?? 1) * 100)}
+                      onChange={(e) => setList(list.map((x) => (x.id === s.id ? { ...x, sample_rate: Math.max(0, Math.min(100, Number(e.target.value) || 0)) / 100 } : x)))}
+                      aria-label="Sample rate (percent)"
+                    />
+                    % of new turns automatically. Changing the description makes a new version that scores turns again.
+                  </label>
+                </>
               ) : (
                 <div className="small muted">{s.description}</div>
               )}
@@ -195,7 +214,25 @@ function ActiveSignalsModal({ signals, onSave, onClose }: { signals: SignalConfi
   )
 }
 
-function RunPanel({ projectId, agent, signals, model, onModel, onDone }: { projectId: string; agent?: string; signals: SignalConfig[]; model?: string; onModel: (m: string) => void; onDone: () => void }) {
+function RunPanel({
+  projectId,
+  agent,
+  signals,
+  model,
+  auto,
+  onModel,
+  onAuto,
+  onDone,
+}: {
+  projectId: string
+  agent?: string
+  signals: SignalConfig[]
+  model?: string
+  auto: boolean
+  onModel: (m: string) => void
+  onAuto: (on: boolean) => void
+  onDone: () => void
+}) {
   const models = useQuery({ queryKey: ['llm-models'], queryFn: api.llmModels, staleTime: 60_000 })
   const options = useMemo(() => {
     const ms = (models.data?.models ?? []).filter((m) => m.available)
@@ -211,6 +248,8 @@ function RunPanel({ projectId, agent, signals, model, onModel, onDone }: { proje
     mutationFn: () => signalsApi.run({ project_id: projectId, signals: enabled.map(toSpec), model: chosen, agent_name: agent, limit, rescore }),
     onSuccess: (r) => {
       setRes(r)
+      // Remember the judge so new turns are scored with it too.
+      if (model !== chosen) onModel(chosen)
       onDone()
     },
   })
@@ -247,6 +286,10 @@ function RunPanel({ projectId, agent, signals, model, onModel, onDone }: { proje
             {run.isPending ? 'Scoring…' : `Run ${enabled.length} signal${enabled.length === 1 ? '' : 's'}`}
           </button>
         </div>
+        <label className="checkbox small" title="Active signals score each agent turn when it finishes, with the judge chosen here">
+          <input type="checkbox" checked={auto && !!model} disabled={!model} onChange={(e) => onAuto(e.target.checked)} /> Score new turns automatically
+          {!model && <span className="faint"> (run once, or pick a judge, to enable)</span>}
+        </label>
         <ErrorBox error={run.error} />
         {res && (
           <div className="small">
@@ -344,7 +387,16 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
       </div>
       <ErrorBox error={cfg.q.error ?? cfg.save.error} />
       {cfg.signals.length > 0 ? (
-        <RunPanel projectId={projectId} agent={agent} signals={cfg.signals} model={cfg.model} onModel={(m) => cfg.save.mutate({ signals: cfg.signals, model: m })} onDone={refresh} />
+        <RunPanel
+          projectId={projectId}
+          agent={agent}
+          signals={cfg.signals}
+          model={cfg.model}
+          auto={cfg.auto}
+          onModel={(m) => cfg.save.mutate({ signals: cfg.signals, model: m })}
+          onAuto={(on) => cfg.save.mutate({ signals: cfg.signals, model: cfg.model, auto: on })}
+          onDone={refresh}
+        />
       ) : (
         !cfg.q.isLoading && (
           <div className="info-box">

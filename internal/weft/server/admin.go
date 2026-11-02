@@ -640,8 +640,37 @@ func (s *Server) sensitiveSettings(ctx context.Context, projectID string) (map[s
 	if sd.CustomPatterns == nil {
 		sd.CustomPatterns = []store.RedactionPattern{}
 	}
+	return sensitiveView(sd, s.store.HasPIIAnalyzer()), nil
+}
+
+// sensitiveView is the read shape: Weave's fields plus Weft's NER settings.
+// available_entities lists the NER entities only when the server has a PII
+// analyzer (--pii-analyzer-url); ner_active says whether they apply now.
+func sensitiveView(sd store.SensitiveDataSettings, analyzer bool) map[string]any {
+	avail := append([]*store.RedactionEntity{}, store.RedactionEntities...)
+	if analyzer {
+		avail = append(avail, store.NEREntities...)
+	}
+	ner := map[string]any{"enabled": true, "score_threshold": 0.5, "language": "en"}
+	if sd.NER != nil {
+		if sd.NER.Enabled != nil {
+			ner["enabled"] = *sd.NER.Enabled
+		}
+		if sd.NER.ScoreThreshold != nil {
+			ner["score_threshold"] = *sd.NER.ScoreThreshold
+		}
+		if sd.NER.Language != "" {
+			ner["language"] = sd.NER.Language
+		}
+	}
+	active := false
+	nerEntities := []string{}
+	if rd, err := store.NewRedactor(sd); err == nil {
+		nerEntities = append(nerEntities, rd.NEREntities()...)
+		active = analyzer && sd.Policy != "off" && sd.Policy != "" && len(nerEntities) > 0
+	}
 	return map[string]any{"policy": sd.Policy, "entities": sd.Entities, "custom_patterns": sd.CustomPatterns,
-		"available_entities": store.RedactionEntities}, nil
+		"available_entities": avail, "ner": ner, "ner_available": analyzer, "ner_active": active, "ner_entities": nerEntities}
 }
 
 func (s *Server) sensitiveRead(w http.ResponseWriter, r *http.Request) {
@@ -676,7 +705,7 @@ func (s *Server) sensitiveUpdate(ctx context.Context, r *http.Request, req *sens
 		return nil, err
 	}
 	var val any = sd
-	if sd.Policy == "off" && len(sd.Entities) == 0 && len(sd.CustomPatterns) == 0 {
+	if sd.Policy == "off" && len(sd.Entities) == 0 && len(sd.CustomPatterns) == 0 && sd.NER == nil {
 		val = nil
 	}
 	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingSensitiveData, val, userFrom(r, req.WBUserID)); err != nil {
@@ -691,16 +720,17 @@ type sensitivePreviewReq struct {
 	Value any    `json:"value"`
 }
 
-// sensitivePreview redacts sample input with the given (unsaved) settings.
-func (s *Server) sensitivePreview(_ context.Context, _ *http.Request, req *sensitivePreviewReq) (any, error) {
+// sensitivePreview redacts sample input with the given (unsaved) settings,
+// NER entities included when the server has a PII analyzer.
+func (s *Server) sensitivePreview(ctx context.Context, _ *http.Request, req *sensitivePreviewReq) (any, error) {
 	if len(req.Text) > 1<<20 {
 		return nil, store.Invalidf("text too long")
 	}
-	rd, err := store.NewRedactor(req.SensitiveDataSettings)
+	text, value, ner, err := s.store.RedactPreview(ctx, req.SensitiveDataSettings, req.Text, req.Value)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"text": rd.String(req.Text), "value": rd.Value(req.Value)}, nil
+	return map[string]any{"text": text, "value": value, "ner_applied": ner}, nil
 }
 
 type projectDeleteReq struct {

@@ -1,6 +1,7 @@
 import type { Call } from '../call.js';
 import { recordOpenAIUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
+import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
 export class ChatCompletionAccumulator implements Accumulator {
   private base: Record<string, any> = {};
@@ -58,11 +59,17 @@ export class ResponsesAccumulator implements Accumulator {
 
 const usage = (call: Call, out: any) => recordOpenAIUsage(call, out);
 
-export interface WrapOpenAIOptions {
+export interface WrapOpenAIOptions extends Omit<IntegrationOpSettings, 'name'> {
   /** Op name prefix (default "openai"), e.g. "groq" for an OpenAI-compatible provider. */
   name?: string;
   /** Add stream_options.include_usage to streamed chat completions (default true). */
   includeUsage?: boolean;
+  /** Integration name for settings (default: `name`, else "openai"). */
+  integration?: string;
+  /** `gen_ai.provider.name` recorded on each call (default: `name`). */
+  providerName?: string;
+  /** Op settings for this client (same fields as `autopatchSettings.<name>.opSettings`). */
+  opSettings?: IntegrationOpSettings;
 }
 
 /**
@@ -73,14 +80,24 @@ export interface WrapOpenAIOptions {
 export function wrapOpenAI<T>(client: T, opts: WrapOpenAIOptions = {}): T {
   const prefix = opts.name ?? 'openai';
   const includeUsage = opts.includeUsage ?? true;
+  const integration = opts.integration ?? prefix;
+  const opSettings = pickOpSettings(opts);
+  const provider = opts.providerName ?? prefix;
+  const attributes = () => ({ 'gen_ai.provider.name': provider });
   const c = client as any;
   patchMethod(c?.chat?.completions, 'create', {
+    integration,
+    opSettings,
+    attributes,
     opName: `${prefix}.chat.completions.create`,
     prepare: (body) => (includeUsage && body.stream && body.stream_options === undefined ? { ...body, stream_options: { include_usage: true } } : body),
     accumulator: () => new ChatCompletionAccumulator(),
     recordUsage: usage,
   });
   patchMethod(c?.responses, 'create', {
+    integration,
+    opSettings,
+    attributes,
     opName: `${prefix}.responses.create`,
     accumulator: () => new ResponsesAccumulator(),
     recordUsage: usage,
@@ -94,4 +111,19 @@ export function wrapOpenAI<T>(client: T, opts: WrapOpenAIOptions = {}): T {
  */
 export function wrapOpenAICompatible<T>(client: T, opts: WrapOpenAIOptions = {}): T {
   return wrapOpenAI(client, { includeUsage: false, ...opts });
+}
+
+/** Groq (`groq-sdk`, or an OpenAI client pointed at Groq): `groq.chat.completions.create`; usage from `x_groq.usage`. */
+export function wrapGroq<T>(client: T, opts: WrapOpenAIOptions = {}): T {
+  return wrapOpenAICompatible(client, { name: 'groq', ...opts });
+}
+
+/** Together AI (`together-ai`, or an OpenAI client pointed at Together): `together.chat.completions.create`. */
+export function wrapTogether<T>(client: T, opts: WrapOpenAIOptions = {}): T {
+  return wrapOpenAICompatible(client, { name: 'together', ...opts });
+}
+
+/** Cerebras (`@cerebras/cerebras_cloud_sdk`, or an OpenAI client pointed at Cerebras): `cerebras.chat.completions.create`. */
+export function wrapCerebras<T>(client: T, opts: WrapOpenAIOptions = {}): T {
+  return wrapOpenAICompatible(client, { name: 'cerebras', ...opts });
 }

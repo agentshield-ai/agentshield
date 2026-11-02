@@ -15,10 +15,10 @@ type RedactionEntity struct {
 	Description string `json:"description"`
 	// Kind is "regex" for built-in pattern detectors and "ner" for named
 	// entities found by the PII analyzer (see ner.go).
-	Kind  string `json:"kind,omitempty"`
-	re    *regexp.Regexp
-	check       func(string) bool
-	defaultOn   bool // NER entities: redacted when the project lists no entities
+	Kind      string `json:"kind,omitempty"`
+	re        *regexp.Regexp
+	check     func(string) bool
+	defaultOn bool // NER entities: redacted when the project lists no entities
 }
 
 // RedactionEntities lists the built-in detectors in the order they run.

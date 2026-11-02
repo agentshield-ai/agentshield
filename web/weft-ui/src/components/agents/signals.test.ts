@@ -24,7 +24,10 @@ describe('signal config', () => {
       ['nsfw', true],
       ['q', false],
     ])
-    expect(parseSignalsVal(null)).toEqual({ signals: [], model: undefined })
+    expect(parseSignalsVal(null)).toEqual({ signals: [], model: undefined, auto: true })
+    const v2 = parseSignalsVal({ auto: false, signals: [{ id: 'a', kind: 'tag', sample_rate: 0.25 }, { id: 'b', kind: 'tag', sample_rate: 7 }] })
+    expect(v2.auto).toBe(false)
+    expect(v2.signals.map((x) => x.sample_rate)).toEqual([0.25, undefined])
   })
   it('builds run specs: presets by id, custom signals in full', () => {
     const p = presetConfig({ id: 'task_success', name: 'Task Success', kind: 'rating', description: 'd' })

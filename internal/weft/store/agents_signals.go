@@ -15,7 +15,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"regexp"
@@ -161,11 +163,13 @@ func (sc *SignalScores) Normalize() error {
 			return Invalidf("rating %q is not a finite number", k)
 		}
 	}
-	tags, err := NormalizeSignalTags(sc.ScorerTags)
-	if err != nil {
-		return err
+	if sc.ScorerTags != nil {
+		tags, err := NormalizeSignalTags(sc.ScorerTags)
+		if err != nil {
+			return err
+		}
+		sc.ScorerTags = tags
 	}
-	sc.ScorerTags = tags
 	normConf := func(m map[string]float64, lower bool) map[string]float64 {
 		out := map[string]float64{}
 		for k, v := range m {
@@ -331,14 +335,20 @@ func (s *Store) CreateAgentFeedback(ctx context.Context, it AgentFeedbackItem) (
 	for k, v := range it.Payload {
 		payload[k] = v
 	}
-	if !it.SignalScores.Empty() || it.Payload["scorer_tags"] != nil {
+	if !it.SignalScores.Empty() || it.Payload["scorer_tags"] != nil || it.ScorerTags != nil {
 		it.SignalScores.toPayload(payload)
 	}
 	span := map[string]string{
 		"span_agent_name": it.SpanAgentName, "span_agent_version": it.SpanAgentVersion, "span_conversation_id": it.SpanConversationID,
 		"span_status_code": it.SpanStatusCode, "span_trace_id": it.SpanTraceID, "scorer_trace_id": it.ScorerTraceID,
 	}
-	if r, err := refs.Parse(refs.Normalize(strings.TrimSpace(it.WeaveRef))); err == nil && r.Kind == refs.KindCall {
+	hasSpan := false
+	for _, v := range span {
+		hasSpan = hasSpan || v != ""
+	}
+	// Plain feedback (no scorer or span fields) is stored as given.
+	enrich := !it.SignalScores.Empty() || it.Payload["scorer_tags"] != nil || it.ScorerTags != nil || hasSpan
+	if r, err := refs.Parse(refs.Normalize(strings.TrimSpace(it.WeaveRef))); enrich && err == nil && r.Kind == refs.KindCall {
 		var trace, conv, agent, version string
 		var exc sql.NullString
 		var ended sql.NullInt64
@@ -477,6 +487,44 @@ func (s *Store) SignalTurns(ctx context.Context, projectID string, f SignalTurnF
 	return out, nil
 }
 
+// SignalTurnForCall returns the turn whose root is callID, when the call is
+// an agent turn (a conversation turn, or a top-level agent invocation
+// outside conversations). Turn detection uses the call's trace.
+func (s *Store) SignalTurnForCall(ctx context.Context, projectID, callID string) (SignalTurn, bool, error) {
+	pid, err := refs.NormalizeProject(projectID)
+	if err != nil {
+		return SignalTurn{}, false, &InvalidError{Msg: err.Error()}
+	}
+	var trace, conv, op, agent string
+	var isTurn bool
+	var parentConv sql.NullString
+	err = s.r.QueryRowContext(ctx, `SELECT s.trace_id, s.conversation_id, s.operation_name, s.agent_name, s.is_turn,
+		(SELECT p.conversation_id FROM agent_spans p WHERE p.project_id = s.project_id AND p.id = s.parent_id)
+		FROM agent_spans s WHERE s.project_id = ? AND s.id = ?`, pid, callID).Scan(&trace, &conv, &op, &agent, &isTurn, &parentConv)
+	if err == sql.ErrNoRows {
+		return SignalTurn{}, false, nil
+	}
+	if err != nil {
+		return SignalTurn{}, false, err
+	}
+	// Cheap pre-check: turns are flagged, or the top of their conversation
+	// or agent run.
+	top := !parentConv.Valid || parentConv.String != conv || (conv == "" && agent != "")
+	if !isTurn && !(top && (conv != "" || agent != "" || op == OpInvokeAgent)) {
+		return SignalTurn{}, false, nil
+	}
+	turns, err := s.SignalTurns(ctx, pid, SignalTurnFilter{TraceIDs: []string{trace}})
+	if err != nil {
+		return SignalTurn{}, false, err
+	}
+	for _, t := range turns {
+		if t.SpanID == callID {
+			return t, true, nil
+		}
+	}
+	return SignalTurn{}, false, nil
+}
+
 // TurnTranscript renders a turn as plain text for an LLM judge, keeping the
 // start and end of long transcripts.
 func TurnTranscript(chat *AgentTraceChat, maxChars int) string {
@@ -527,9 +575,19 @@ func TurnTranscript(chat *AgentTraceChat, maxChars int) string {
 	return text
 }
 
+// SignalsObjectID is the object holding a project's signal configuration.
+const SignalsObjectID = "agent-signals"
+
+// SignalVersion is a short hash of what a signal asks the judge.
+func SignalVersion(kind, description string) string {
+	h := sha256.Sum256([]byte(kind + "\x00" + strings.TrimSpace(description)))
+	return hex.EncodeToString(h[:6])
+}
+
 // SignalScoredTurns returns the turn span ids that already carry feedback
-// from the signal id.
-func (s *Store) SignalScoredTurns(ctx context.Context, projectID, signalID string, spanIDs []string) (map[string]bool, error) {
+// from the signal id at this version. Results recorded before versions were
+// stored count as any version; an empty version matches every result.
+func (s *Store) SignalScoredTurns(ctx context.Context, projectID, signalID, version string, spanIDs []string) (map[string]bool, error) {
 	pid, err := refs.NormalizeProject(projectID)
 	if err != nil {
 		return nil, &InvalidError{Msg: err.Error()}
@@ -546,7 +604,11 @@ func (s *Store) SignalScoredTurns(ctx context.Context, projectID, signalID strin
 	}
 	out := map[string]bool{}
 	for _, f := range fbs {
-		if p := asMap(f.Payload); p != nil && p["signal"] == signalID {
+		p := asMap(f.Payload)
+		if p == nil || p["signal"] != signalID {
+			continue
+		}
+		if v, _ := p["signal_version"].(string); version == "" || v == "" || v == version {
 			out[byRef[f.WeaveRef]] = true
 		}
 	}

@@ -31,6 +31,7 @@ func (e *Engine) InvalidateMonitors(projectID string) {
 	e.monMu.Lock()
 	delete(e.monitorCache, projectID)
 	e.monMu.Unlock()
+	e.invalidateSignals(projectID)
 }
 
 func (e *Engine) activeMonitors(ctx context.Context, projectID string) ([]*store.Obj, error) {
@@ -69,6 +70,9 @@ func (e *Engine) monitorWorker() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			if err := e.runMonitors(ctx, c); err != nil {
 				e.Log.Warn("monitor evaluation failed", "call_id", c.ID, "err", err)
+			}
+			if err := e.runAutoSignals(ctx, c); err != nil {
+				e.Log.Warn("signal evaluation failed", "call_id", c.ID, "err", err)
 			}
 			cancel()
 		}

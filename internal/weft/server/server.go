@@ -924,11 +924,10 @@ func (s *Server) feedbackCreate(ctx context.Context, r *http.Request, req *store
 	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload}, nil
 }
 
+// feedbackBatchReq is Weave's FeedbackBatchCreateParams. The scorer_* and
+// span_* fields are normalised and kept in the payload (store/agents_signals.go).
 type feedbackBatchReq struct {
-	Batch []struct {
-		store.FeedbackCreate
-		ID string `json:"id"`
-	} `json:"batch"`
+	Batch []store.AgentFeedbackItem `json:"batch"`
 }
 
 func (s *Server) feedbackBatchCreate(ctx context.Context, r *http.Request, req *feedbackBatchReq) (any, error) {
@@ -937,9 +936,8 @@ func (s *Server) feedbackBatchCreate(ctx context.Context, r *http.Request, req *
 	}
 	res := make([]any, 0, len(req.Batch))
 	for _, b := range req.Batch {
-		b.FeedbackCreate.WBUserID = userFrom(r, b.FeedbackCreate.WBUserID)
-		b.FeedbackCreate.ID = b.ID
-		f, err := s.store.CreateFeedback(ctx, b.FeedbackCreate)
+		b.WBUserID = userFrom(r, b.WBUserID)
+		f, err := s.store.CreateAgentFeedback(ctx, b)
 		if err != nil {
 			return nil, err
 		}
