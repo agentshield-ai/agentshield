@@ -41,6 +41,8 @@ type catalogEntry struct {
 	MaxTokens  int
 	Prompt     float64 // USD per token
 	Completion float64
+	CacheRead  float64 // USD per cache-read token (Prompt when not priced separately)
+	CacheWrite float64 // USD per cache-write token (Prompt when not priced separately)
 	Priced     bool
 	APIStyle   string
 	Source     string // builtin, provider
@@ -65,6 +67,13 @@ func (s *Server) catalogEntries(r *http.Request) []catalogEntry {
 		}
 		if d, ok := store.LookupDefaultPrice(name); ok && m.Provider != "mock" {
 			e.Prompt, e.Completion, e.Priced = d.Prompt, d.Completion, true
+			e.CacheRead, e.CacheWrite = d.CacheRead, d.CacheWrite
+			if e.CacheRead == 0 {
+				e.CacheRead = d.Prompt
+			}
+			if e.CacheWrite == 0 {
+				e.CacheWrite = d.Prompt
+			}
 		}
 		out = append(out, e)
 	}
@@ -123,7 +132,7 @@ func (s *Server) inferenceCatalog(w http.ResponseWriter, r *http.Request) {
 			"featureReasoning": false, "featureJsonMode": e.APIStyle == "openai", "featureStructuredOutput": e.APIStyle == "openai",
 			"featureToolCalling": e.Provider != "mock", "featureLoRA": false, "featureTrainableServerlessRL": false,
 			"parameterCountTotal": 0, "contextWindow": e.MaxTokens, "quantization": "bf16",
-			"priceCentsPerBillionTokensInput": centsPerBillion(e.Prompt), "priceCentsPerBillionTokensCached": centsPerBillion(e.Prompt),
+			"priceCentsPerBillionTokensInput": centsPerBillion(e.Prompt), "priceCentsPerBillionTokensCached": centsPerBillion(e.CacheRead),
 			"priceCentsPerBillionTokensOutput": centsPerBillion(e.Completion), "isAvailableOpenRouter": false, "apiStyle": e.APIStyle,
 			"modalities": []string{"text"}, "modalitiesInput": []string{"text"}, "modalitiesOutput": []string{"text"},
 			"tags": []string{e.Provider, e.Source}, "likesHuggingFace": 0, "downloadsHuggingFace": 0, "license": "",
@@ -153,7 +162,7 @@ func (s *Server) inferenceModelsDev(w http.ResponseWriter, r *http.Request) {
 			"limit":      map[string]any{"context": e.MaxTokens, "input": e.MaxTokens, "output": e.MaxTokens},
 			"modalities": map[string]any{"input": []string{"text"}, "output": []string{"text"}}}
 		if e.Priced {
-			m["cost"] = map[string]any{"input": e.Prompt * 1e6, "output": e.Completion * 1e6}
+			m["cost"] = map[string]any{"input": e.Prompt * 1e6, "output": e.Completion * 1e6, "cache_read": e.CacheRead * 1e6, "cache_write": e.CacheWrite * 1e6}
 		}
 		p["models"].(map[string]any)[e.ID] = m
 	}
@@ -176,7 +185,7 @@ func (s *Server) inferenceOpenRouter(w http.ResponseWriter, r *http.Request) {
 			"input_modalities": []string{"text"}, "output_modalities": []string{"text"}, "quantization": "bf16",
 			"context_length": e.MaxTokens, "max_output_length": e.MaxTokens,
 			"pricing": map[string]any{"prompt": price(e.Prompt), "completion": price(e.Completion), "image": "0", "request": "0",
-				"input_cache_read": price(e.Prompt)},
+				"input_cache_read": price(e.CacheRead)},
 			"supported_sampling_parameters": []string{"temperature", "top_p", "frequency_penalty", "presence_penalty", "stop", "seed"},
 			"supported_features":            features, "datacenters": []any{}, "deprecation_date": nil,
 		})

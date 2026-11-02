@@ -331,7 +331,7 @@ func (s *Store) ComputeWeaveCallStats(ctx context.Context, q WeaveCallStatsReq) 
 			}
 			models[model] = true
 			usageCount[k]++
-			price, priced := prices.lookup(model, st)
+			cost, _, priced := prices.ModelCost(model, m, st)
 			for j, sp := range usageSpecs {
 				var v *float64
 				switch sp.Metric {
@@ -343,17 +343,17 @@ func (s *Store) ComputeWeaveCallStats(ctx context.Context, q WeaveCallStatsReq) 
 					v = f(total)
 				case "cache_read_input_tokens", "cache_creation_input_tokens":
 					v = f(m[sp.Metric])
-				case "input_cost":
+				case "input_cost": // all prompt tokens, cache reads and writes at their own rates
 					if priced {
-						v = f(prompt * price.PromptTokenCost)
+						v = f(cost.Input())
 					}
 				case "output_cost":
 					if priced {
-						v = f(completion * price.CompletionTokenCost)
+						v = f(cost.Completion)
 					}
 				case "total_cost":
 					if priced {
-						v = f(prompt*price.PromptTokenCost + completion*price.CompletionTokenCost)
+						v = f(cost.Total())
 					}
 				}
 				accs[j].add(v)

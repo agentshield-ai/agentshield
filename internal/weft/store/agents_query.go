@@ -31,7 +31,8 @@ type agentSpan struct {
 	Ended                                       bool
 	Exception                                   *string
 	InTok, OutTok, ReasonTok, CacheRead, CacheW float64
-	InCost, OutCost                             float64
+	InCost, OutCost                             float64 // InCost includes the cache costs below
+	CacheReadCost, CacheWCost                   float64
 	HasCost                                     bool
 	WBUserID, WBRunID                           string
 	IsInvocation                                bool
@@ -135,9 +136,11 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 			sp.ReasonTok += math.Max(m["reasoning_tokens"], 0)
 			sp.CacheRead += math.Max(m["cache_read_input_tokens"], 0)
 			sp.CacheW += math.Max(m["cache_creation_input_tokens"], 0)
-			if price, ok := pb.lookup(model, sp.StartedUS); ok {
-				sp.InCost += p * price.PromptTokenCost
-				sp.OutCost += c * price.CompletionTokenCost
+			if cost, _, ok := pb.ModelCost(model, m, sp.StartedUS); ok {
+				sp.InCost += cost.Input()
+				sp.OutCost += cost.Completion
+				sp.CacheReadCost += cost.CacheRead
+				sp.CacheWCost += cost.CacheCreation
 				sp.HasCost = true
 			}
 			if p+c > 0 {
@@ -232,7 +235,7 @@ var agentFieldAliases = map[string]string{
 
 var agentNumericFields = map[string]bool{"duration_ms": true, "input_tokens": true, "output_tokens": true, "total_tokens": true,
 	"reasoning_tokens": true, "cache_read_input_tokens": true, "cache_creation_input_tokens": true,
-	"input_cost_usd": true, "output_cost_usd": true, "total_cost_usd": true}
+	"input_cost_usd": true, "output_cost_usd": true, "total_cost_usd": true, "cache_read_cost_usd": true, "cache_creation_cost_usd": true}
 
 var agentStringFields = map[string]bool{"span_id": true, "trace_id": true, "parent_span_id": true, "operation_name": true,
 	"span_name": true, "display_name": true, "agent_name": true, "agent_id": true, "agent_version": true, "agent_description": true,
@@ -340,7 +343,7 @@ func (sp *agentSpan) field(key string) any {
 		return sp.CacheRead
 	case "cache_creation_input_tokens":
 		return sp.CacheW
-	case "input_cost_usd", "output_cost_usd", "total_cost_usd":
+	case "input_cost_usd", "output_cost_usd", "total_cost_usd", "cache_read_cost_usd", "cache_creation_cost_usd":
 		if !sp.HasCost {
 			return nil
 		}
@@ -349,6 +352,10 @@ func (sp *agentSpan) field(key string) any {
 			return sp.InCost
 		case "output_cost_usd":
 			return sp.OutCost
+		case "cache_read_cost_usd":
+			return sp.CacheReadCost
+		case "cache_creation_cost_usd":
+			return sp.CacheWCost
 		}
 		return sp.InCost + sp.OutCost
 	case "is_turn":
@@ -1293,6 +1300,8 @@ type AgentSpan struct {
 	ArtifactRefs             []string           `json:"artifact_refs"`
 	CacheCreationInputTokens *int64             `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     *int64             `json:"cache_read_input_tokens"`
+	CacheCreationCostUSD     *float64           `json:"cache_creation_cost_usd"` // part of input_cost_usd
+	CacheReadCostUSD         *float64           `json:"cache_read_cost_usd"`     // part of input_cost_usd
 	ContentRefs              []string           `json:"content_refs"`
 	ConversationID           *string            `json:"conversation_id"`
 	ConversationName         *string            `json:"conversation_name"`
@@ -1895,6 +1904,8 @@ func (sp *agentSpan) toAPI(pid string, call *Call, includeCosts bool, cols []Age
 	if includeCosts && sp.HasCost {
 		in, o, t := sp.InCost, sp.OutCost, sp.InCost+sp.OutCost
 		out.InputCostUSD, out.OutputCostUSD, out.TotalCostUSD = &in, &o, &t
+		cr, cw := sp.CacheReadCost, sp.CacheWCost
+		out.CacheReadCostUSD, out.CacheCreationCostUSD = &cr, &cw
 	}
 	if sp.attrsJSON != "" || call != nil {
 		if sp.attrsJSON == "" && call != nil {

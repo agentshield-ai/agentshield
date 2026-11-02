@@ -638,16 +638,18 @@ func usageItems(u store.Contribution, pb *store.PriceBook, atUS int64) map[strin
 		costs = pb.Costs(u, atUS)
 	}
 	for model, m := range u.Usage {
-		prompt, completion, total := store.UsageTokens(m)
-		item := map[string]any{"requests": int64(m["requests"]), "prompt_tokens": int64(prompt), "completion_tokens": int64(completion),
-			"total_tokens": int64(total), "cache_creation_input_tokens": int64(m["cache_creation_input_tokens"]),
-			"cache_read_input_tokens": int64(m["cache_read_input_tokens"])}
+		t := store.UsageCounts(m)
+		item := map[string]any{"requests": int64(t.Requests), "prompt_tokens": int64(t.Prompt), "completion_tokens": int64(t.Completion),
+			"total_tokens": int64(t.Total), "cache_creation_input_tokens": int64(t.CacheCreation),
+			"cache_read_input_tokens": int64(t.CacheRead)}
 		if pb != nil {
 			item["prompt_tokens_total_cost"], item["completion_tokens_total_cost"] = nil, nil
 			item["cache_creation_input_tokens_total_cost"], item["cache_read_input_tokens_total_cost"] = nil, nil
 			if c, ok := costs[model].(map[string]any); ok {
-				item["prompt_tokens_total_cost"] = c["prompt_tokens_total_cost"]
-				item["completion_tokens_total_cost"] = c["completion_tokens_total_cost"]
+				for _, k := range []string{"prompt_tokens_total_cost", "completion_tokens_total_cost",
+					"cache_read_input_tokens_total_cost", "cache_creation_input_tokens_total_cost"} {
+					item[k] = c[k]
+				}
 			}
 		}
 		out[model] = item
