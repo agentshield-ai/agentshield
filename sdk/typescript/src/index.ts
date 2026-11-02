@@ -122,7 +122,17 @@ export { wrapMistral, MistralStreamAccumulator } from './integrations/mistral.js
 export { wrapCohere, CohereStreamAccumulator } from './integrations/cohere.js';
 export { wrapBedrock, instrumentBedrock, wrapBedrockAgent, instrumentBedrockAgent } from './integrations/bedrock.js';
 export { AgentTraceProcessor as BedrockAgentTraceProcessor } from './integrations/bedrock_agents.js';
-export { wrapOpenAIRealtime, instrumentOpenAIRealtime, RealtimeTracer } from './integrations/openai_realtime.js';
+export {
+  wrapOpenAIRealtime,
+  instrumentOpenAIRealtime,
+  RealtimeTracer,
+  wrapRealtimeSession,
+  instrumentRealtimeSession,
+  patchRealtimeSession,
+  pcmToWav,
+  audioFormat,
+  type AudioFormat,
+} from './integrations/openai_realtime.js';
 export { wrapVertexAI, wrapVertexModel, wrapVertexChat } from './integrations/vertexai.js';
 export {
   configureIntegrations,

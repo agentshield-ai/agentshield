@@ -887,7 +887,9 @@ def test_openai_realtime(client, fake, monkeypatch):
     assert r1["inputs"]["input"][0]["content"][0]["text"] == "Weather in Paris?" and r1["inputs"]["input_audio_bytes"] == 600
     assert r1["inputs"]["instructions"] == "Be brief." and r1["inputs"]["voice"] == "alloy"
     assert r1["output"]["text"] == "It is sunny." and r1["output"]["audio_bytes"] == 300
-    assert r1["output"]["output"][0]["content"][0] == {"type": "output_audio", "transcript": "It is sunny.", "audio_bytes": 150}
+    part = r1["output"]["output"][0]["content"][0]
+    assert part["type"] == "output_audio" and part["transcript"] == "It is sunny." and part["audio_bytes"] == 300
+    assert part["audio"]["_type"] == "Audio" and part["audio"]["mime_type"] == "audio/wav", "streamed audio is saved as WAV"
     u = usage(r1)["gpt-realtime"]
     assert u["prompt_tokens"] == 100 and u["completion_tokens"] == 50 and u["cached_tokens"] == 20 and u["input_audio_tokens"] == 60
     assert usage(sess) is None

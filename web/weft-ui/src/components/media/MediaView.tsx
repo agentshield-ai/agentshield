@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
 import { api, fileUrl, getApiKey } from '../../api/client'
-import { mediaApi } from '../../api/media'
 import { fmtBytes } from '../../lib/format'
 import { dataUrlText, detectMedia, resolveContent, type MediaSpec } from './mediaUtils'
+import { useInView, useResolvedUri } from './useResolvedUri'
 import './media.css'
 
 const API_BASE: string = (import.meta.env.VITE_WEFT_API as string | undefined) ?? ''
@@ -62,8 +62,7 @@ function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
   return { url, error }
 }
 
-function srcOf(projectId: string, spec: MediaSpec & { resolvedUrl?: string }): string | undefined {
-  if (spec.resolvedUrl) return spec.resolvedUrl
+function srcOf(projectId: string, spec: MediaSpec): string | undefined {
   if (spec.dataUrl) return spec.dataUrl
   if (spec.digest) return fileUrl(projectId, spec.digest)
   return undefined
@@ -147,40 +146,149 @@ function WeaveContent({ projectId, spec }: { projectId: string; spec: MediaSpec 
   return <MediaBlock projectId={projectId} spec={resolveContent(spec, parsed)} />
 }
 
+/** A reference PDF: fetched into a blob when the bucket allows CORS, else embedded by URL. */
+function ExternalPdf({ url, spec }: { url: string; spec: MediaSpec }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let revoked = false
+    let made: string | null = null
+    fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => {
+        made = URL.createObjectURL(new Blob([b], { type: 'application/pdf' }))
+        if (!revoked) setBlobUrl(made)
+      })
+      .catch(() => !revoked && setFailed(true))
+    return () => {
+      revoked = true
+      if (made) URL.revokeObjectURL(made)
+    }
+  }, [url])
+  if (!blobUrl && !failed) return <div className="media-frame media-loading faint small">Loading PDF…</div>
+  return (
+    <object data={blobUrl ?? url} type="application/pdf" className="media-frame" aria-label={spec.filename ?? 'PDF document'}>
+      <a href={url} target="_blank" rel="noreferrer noopener">
+        Open PDF
+      </a>
+    </object>
+  )
+}
+
+/** The fallback for a URI that cannot be shown: the URI as text and why. */
+function UriFallback({ uri, reason, href }: { uri: string; reason: string; href?: string }) {
+  return (
+    <div className="media media-ref-fallback">
+      <span className="mono media-uri">{uri}</span>
+      <span className="faint small">
+        {reason}
+        {href && (
+          <>
+            {' · '}
+            <a href={href} target="_blank" rel="noreferrer noopener">
+              open
+            </a>
+          </>
+        )}
+      </span>
+    </div>
+  )
+}
+
+const LOAD_FAILED = 'could not load: the object may be missing, or the bucket refuses this browser'
+
 /**
- * Media stored outside Weft (s3://, gs://, https://): resolve a download URL
- * with /files/resolve_url, render images, audio and video from it, and fall
- * back to a link for everything else or when the uri cannot be resolved.
+ * Media stored outside Weft (s3://, gs://, https://). Images, audio, video
+ * and PDFs are resolved lazily, once scrolled into view, through
+ * /files/resolve_url (presigned URLs are cached until they expire) and render
+ * inline; other files show the URI with an on-demand download link. When the
+ * URI cannot be resolved (bucket not registered, no access) the URI shows as
+ * text with the reason.
  */
 function ExternalMedia({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
-  const q = useQuery({
-    queryKey: ['resolve-url', projectId, spec.uri],
-    queryFn: () => mediaApi.resolveUrls(projectId, [spec.uri!]).then((r) => r.download_urls[0] ?? null),
-    staleTime: 30 * 60_000,
-    retry: false,
-  })
-  const direct = /^https?:\/\//i.test(spec.uri ?? '') ? spec.uri : undefined
-  const url = q.data ?? (q.error ? direct : undefined)
-  const label = spec.filename ?? spec.uri
-  const playable = spec.kind === 'image' || spec.kind === 'audio' || spec.kind === 'video'
-  if (q.isLoading) return <div className="faint small">Resolving {label}…</div>
+  const inline = spec.kind === 'image' || spec.kind === 'audio' || spec.kind === 'video' || spec.kind === 'pdf'
+  return inline ? <ExternalInline projectId={projectId} spec={spec} /> : <ExternalFile projectId={projectId} spec={spec} />
+}
+
+/**
+ * Any other file in a bucket (a dataset path, a JSON file): the URI as text
+ * and a download link resolved on demand, so values that merely name an
+ * object do not each cost a presign request (or a refusal) on page load.
+ */
+function ExternalFile({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
+  const uri = spec.uri!
+  const [wanted, setWanted] = useState(false)
+  const { resolved, loading } = useResolvedUri(projectId, uri, wanted)
+  return (
+    <div className="media media-ref-fallback">
+      <span className="mono media-uri">{uri}</span>
+      <span className="faint small row" style={{ gap: 8 }}>
+        {spec.mimetype && <span>{spec.mimetype}</span>}
+        {!wanted ? (
+          <button className="btn ghost sm" onClick={() => setWanted(true)} title="Presign a download URL for this object">
+            Get download link
+          </button>
+        ) : loading ? (
+          <span>resolving…</span>
+        ) : resolved?.ok ? (
+          <a href={resolved.url} target="_blank" rel="noreferrer noopener" download={spec.filename ?? true}>
+            Download{spec.filename ? ` ${spec.filename}` : ''}
+          </a>
+        ) : (
+          <span>not available: {resolved?.reason}</span>
+        )}
+      </span>
+    </div>
+  )
+}
+
+function ExternalInline({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
+  const uri = spec.uri!
+  const box = useRef<HTMLDivElement>(null)
+  const visible = useInView(box)
+  const { resolved, retry } = useResolvedUri(projectId, uri, visible)
+  const [loadErrors, setLoadErrors] = useState(0)
+  const onError = () => {
+    // The first failure may be an expired presigned URL: resolve again once.
+    if (loadErrors === 0) retry()
+    setLoadErrors((n) => n + 1)
+  }
+  const label = spec.filename ?? uri
+  if (!resolved)
+    return (
+      <div ref={box} className="media media-ref-pending">
+        <span className="mono media-uri faint">{uri}</span>
+        {visible && <span className="faint small">loading…</span>}
+      </div>
+    )
+  if (!resolved.ok) return <UriFallback uri={uri} reason={`not rendered: ${resolved.reason}`} />
+  const url = resolved.url
+  if (loadErrors > 1) return <UriFallback uri={uri} reason={LOAD_FAILED} href={url} />
+  let body: ReactNode
+  switch (spec.kind) {
+    case 'image':
+      body = <img src={url} alt={spec.filename ?? 'image'} className="media-img" onError={onError} />
+      break
+    case 'audio':
+      body = <audio controls src={url} preload="metadata" onError={onError} />
+      break
+    case 'video':
+      body = <video controls src={url} className="media-video" preload="metadata" onError={onError} />
+      break
+    default:
+      body = <ExternalPdf url={url} spec={spec} />
+  }
   return (
     <div className={`media media-${spec.kind}`}>
-      {url && playable ? <Rendered projectId={projectId} spec={{ ...spec, resolvedUrl: url } as MediaSpec} /> : null}
+      {body}
       <div className="media-caption">
-        <span className="truncate mono" title={spec.uri}>
+        <span className="truncate mono" title={uri}>
           {label}
         </span>
         {spec.mimetype && <span className="faint">{spec.mimetype}</span>}
-        {url ? (
-          <a href={url} className="media-dl" target="_blank" rel="noreferrer noopener">
-            {playable ? 'Open' : 'Open file'}
-          </a>
-        ) : (
-          <span className="faint small" title={q.error instanceof Error ? q.error.message : undefined}>
-            not resolvable
-          </span>
-        )}
+        <a href={url} className="media-dl" target="_blank" rel="noreferrer noopener" title={uri}>
+          Open
+        </a>
       </div>
     </div>
   )
@@ -188,7 +296,7 @@ function ExternalMedia({ projectId, spec }: { projectId: string; spec: MediaSpec
 
 function MediaBlock({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   if (spec.kind === 'content') return <WeaveContent projectId={projectId} spec={spec} />
-  if (spec.uri && !spec.digest && !spec.dataUrl) return <ExternalMedia projectId={projectId} spec={spec} />
+  if (spec.uri && !spec.digest && !spec.dataUrl) return <ExternalMedia key={spec.uri} projectId={projectId} spec={spec} />
   const showCaption = spec.kind !== 'image' || !!spec.filename
   return (
     <div className={`media media-${spec.kind}`}>

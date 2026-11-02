@@ -13,12 +13,14 @@ import { fmtBytes, fmtNumber, fmtRelative } from '../../lib/format'
 import { objectUrl } from '../../lib/urls'
 import { ApiKeysTab, DeleteProjectTab, RetentionTab, SamplingTab, SensitiveDataTab } from './AdminTabs'
 import { AuditLogTab, MembersTab } from './IamTabs'
+import { BucketsTab } from './BucketsTab'
 
-type Tab = 'general' | 'costs' | 'secrets' | 'annotations' | 'integrations' | 'apikeys' | 'members' | 'audit' | 'retention' | 'sampling' | 'sensitive' | 'delete'
+type Tab = 'general' | 'costs' | 'secrets' | 'buckets' | 'annotations' | 'integrations' | 'apikeys' | 'members' | 'audit' | 'retention' | 'sampling' | 'sensitive' | 'delete'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'costs', label: 'Costs' },
   { id: 'secrets', label: 'Secrets & providers' },
+  { id: 'buckets', label: 'Buckets' },
   { id: 'annotations', label: 'Annotations' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'apikeys', label: 'API keys' },
@@ -47,6 +49,7 @@ export function SettingsPage() {
       {tab === 'general' && <GeneralTab projectId={projectId} />}
       {tab === 'costs' && <CostsTab projectId={projectId} />}
       {tab === 'secrets' && <SecretsTab projectId={projectId} />}
+      {tab === 'buckets' && <BucketsTab projectId={projectId} />}
       {tab === 'annotations' && <AnnotationsTab projectId={projectId} />}
       {tab === 'integrations' && <IntegrationsTab projectId={projectId} />}
       {tab === 'apikeys' && (

@@ -419,3 +419,9 @@
 .eval-agent-textlinks {
   white-space: nowrap;
 }
+.agent-tool-media {
+  padding-left: 18px;
+  margin-top: 4px;
+  min-width: 0;
+  max-width: 100%;
+}

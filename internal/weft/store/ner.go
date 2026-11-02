@@ -79,6 +79,8 @@ func NewPresidioAnalyzer(baseURL string) *PresidioAnalyzer {
 	if !strings.HasSuffix(u, "/analyze") {
 		u += "/analyze"
 	}
+	// The analyzer URL is operator configuration (--pii-analyzer-url) and is
+	// usually a local container, so it does not go through the egress guard.
 	return &PresidioAnalyzer{URL: u, Client: &http.Client{}}
 }
 

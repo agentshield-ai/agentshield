@@ -144,7 +144,7 @@ describe('OpenAI Realtime', () => {
     expect(r1.inputs.instructions).toBe('Be brief.');
     expect(r1.output.text).toBe('It is sunny.');
     expect(r1.output.audio_bytes).toBe(300);
-    expect(r1.output.output[0].content[0]).toEqual({ type: 'output_audio', transcript: 'It is sunny.', audio_bytes: 150 });
+    expect(r1.output.output[0].content[0]).toMatchObject({ type: 'output_audio', transcript: 'It is sunny.', audio_bytes: 300, audio: { _type: 'Audio', mime_type: 'audio/wav' } });
     expect(r1.summary.usage['gpt-realtime']).toMatchObject({ prompt_tokens: 100, completion_tokens: 50, cached_tokens: 20, input_audio_tokens: 60, output_audio_tokens: 40 });
     expect(sess.summary?.usage).toBeUndefined();
     expect(r2.exception).toMatch(/rate limited/);

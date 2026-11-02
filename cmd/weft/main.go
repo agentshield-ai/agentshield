@@ -56,9 +56,10 @@ func main() {
 	cors := flag.String("cors-origins", os.Getenv("WEFT_CORS_ORIGINS"), "comma-separated browser origins allowed to call the API (env WEFT_CORS_ORIGINS)")
 	noUI := flag.Bool("no-ui", false, "do not serve the web UI")
 	logLevel := flag.String("log-level", envOr("WEFT_LOG_LEVEL", "info"), "debug, info, warn or error")
-	filesCfg := registerFilesFlags() // files.go
-	iamCfg := registerIAMFlags()     // iam.go
-	piiCfg := registerPIIFlags()     // pii.go
+	filesCfg := registerFilesFlags()   // files.go
+	iamCfg := registerIAMFlags()       // iam.go
+	piiCfg := registerPIIFlags()       // pii.go
+	egressCfg := registerEgressFlags() // egress.go
 
 	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
 	flag.Parse()
@@ -107,6 +108,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	egressMode, err := egressCfg.apply(log)
+	if err != nil {
+		log.Error("configuring outbound request restrictions", "err", err)
+		os.Exit(2)
+	}
+
 	permMsg := "database file permissions: the database is not encrypted at rest; restrict access, use an encrypted volume or set --db-encryption-key-file"
 	if st.Encrypted() {
 		permMsg = "database file permissions: restrict access to the database files"
@@ -143,7 +150,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

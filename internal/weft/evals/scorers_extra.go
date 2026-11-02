@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
@@ -519,7 +520,7 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	}
 	resp, err := remoteHTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("remote scorer: %w", err)
+		return nil, fmt.Errorf("remote scorer: %w", egress.Sanitize(err))
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -533,7 +534,10 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	return v, nil
 }
 
-var remoteHTTP = &http.Client{}
+// remoteHTTP calls remote scorers and remote (predict) models. Destinations
+// pass the egress guard, and, as in Weave, redirects are not followed: a 3xx
+// response fails the call.
+var remoteHTTP = egress.NewClient(0, false)
 
 // ---------------------------------------------------------------- rule-based signals
 

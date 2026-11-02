@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 )
@@ -268,7 +269,7 @@ func (e *Engine) remotePredict(ctx context.Context, projectID string, p *predict
 	}
 	resp, err := remoteHTTP.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("calling predict endpoint: %w", err)
+		return nil, nil, fmt.Errorf("calling predict endpoint: %w", egress.Sanitize(err))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))

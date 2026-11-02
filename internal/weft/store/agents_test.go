@@ -184,3 +184,44 @@ func TestSpanGroupsCountSDKTurns(t *testing.T) {
 		t.Fatalf("turns=%d invocations=%d, want 2 and 0", agg.turns, agg.invocations)
 	}
 }
+
+// Media attached to the first LLM call's user message (attach_media) shows on
+// the turn's user message when the turn's own prompt carries none.
+func TestConversationChatLLMInputMedia(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	th := "conv-media"
+	part := map[string]any{"type": "uri", "uri": "s3://cust-media/frames/1.png", "mime_type": "image/png", "modality": "image"}
+	root := start("turn", "", "turn")
+	root.TraceID, root.ThreadID, root.TurnID = "tm", &th, ptr("turn")
+	root.Attributes = map[string]any{"weft": map[string]any{"span_kind": "agent"}}
+	root.Inputs = map[string]any{"messages": []any{map[string]any{"role": "user", "content": "show frame"}}}
+	llm := start("llm", "turn", "chat")
+	llm.TraceID, llm.ThreadID = "tm", &th
+	llm.Attributes = map[string]any{"weft": map[string]any{"span_kind": "llm"}, "gen_ai": map[string]any{"operation": map[string]any{"name": "chat"}}}
+	llm.Inputs = map[string]any{"model": "gpt-4o", "messages": []any{map[string]any{"role": "user", "content": []any{part}}}}
+	for _, st := range []CallStart{root, llm} {
+		if err := s.StartCall(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"llm", "turn"} {
+		if err := s.EndCall(ctx, end(id, nil, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := s.ConversationChat(ctx, AgentConversationChatReq{ProjectID: proj, ConversationID: th})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Turns) != 1 || len(res.Turns[0].Messages) == 0 {
+		t.Fatalf("turns = %+v", res.Turns)
+	}
+	u := res.Turns[0].Messages[0]
+	if u.Type != "user_message" || u.UserMessage == nil || u.UserMessage.Text != "show frame" || len(u.Media) != 1 {
+		t.Fatalf("user message = %+v (media %v)", u, u.Media)
+	}
+	if m, _ := u.Media[0].(map[string]any); m["uri"] != "s3://cust-media/frames/1.png" {
+		t.Fatalf("media = %v", u.Media)
+	}
+}

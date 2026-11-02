@@ -2,7 +2,8 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Any, Call } from '../../api/types'
-import { MediaView, ValueView } from '../ValueView'
+import { MediaView, ValueView, isMedia } from '../ValueView'
+import { isReferenceUri } from '../media/mediaUtils'
 
 // Chat-shaped data detection and rendering. Handles OpenAI chat messages and
 // completions, OpenAI Responses API items, Anthropic content blocks, and the
@@ -224,12 +225,15 @@ function ToolCallView({ part, projectId }: { part: Extract<ChatPart, { type: 'to
 function PartView({ part, projectId }: { part: ChatPart; projectId: string }) {
   switch (part.type) {
     case 'text':
+      // A message whose whole text is a bucket URI renders the object.
+      if (isReferenceUri(part.text)) return <MediaView value={part.text} projectId={projectId} />
       return (
         <div className="markdown chat-text">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
         </div>
       )
     case 'image':
+      if (isReferenceUri(part.url)) return <MediaView value={{ _type: 'Image', uri: part.url.trim() }} projectId={projectId} />
       return part.url.startsWith('data:') ? (
         <MediaView value={part.url} projectId={projectId} />
       ) : (
@@ -247,7 +251,11 @@ function PartView({ part, projectId }: { part: ChatPart; projectId: string }) {
             {part.id && <span className="faint mono small">{part.id}</span>}
           </div>
           <div style={{ marginTop: 6 }}>
-            {typeof part.content === 'string' ? <pre className="small">{part.content}</pre> : <ValueView value={part.content} projectId={projectId} />}
+            {typeof part.content === 'string' && !isMedia(part.content) ? (
+              <pre className="small">{part.content}</pre>
+            ) : (
+              <ValueView value={part.content} projectId={projectId} />
+            )}
           </div>
         </div>
       )

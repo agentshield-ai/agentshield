@@ -1492,14 +1492,41 @@ Weave's "Bulk Export" API exports a whole project as files.
 ## Reference buckets (bring your own bucket)
 
 Media that already lives in a customer bucket can be logged by URI
-(`s3://bucket/key`, `gs://bucket/key`, in any call input, output or agent
-span) and rendered without importing the bytes, as in Weave's "Reference
-media in your own bucket". A bucket must be registered first, for a team
-(entity: every project of the team may use it) or for one project.
+(`s3://bucket/key`, `gs://bucket/key`) and rendered without importing the
+bytes, as in Weave's "Reference media in your own bucket". A bucket must be
+registered first, for a team (entity: every project of the team may use it)
+or for one project, in **Settings → Buckets** or with the endpoints below.
 `/files/resolve_url` then presigns any URI in a registered bucket that the
-request's project may use; the UI's media view resolves URIs through it, so
-images and video in those buckets render inline. URIs in buckets that are not
-registered (or outside a registration's `prefix`) are a 400.
+request's project may use. URIs in buckets that are not registered (or
+outside a registration's `prefix`) are a 400, and one such URI fails the
+whole `uris` batch.
+
+How the UI renders bucket URIs:
+
+- **Where.** A string value that is exactly one object URI, in any call
+  input, output, attribute, object or dataset value (any field name), an
+  agent tool result, or a message part: the GenAI `{"type": "uri", "uri",
+  "mime_type"?, "modality"?}` part that `attach_media(uri=…)` writes, Gemini
+  `fileData.fileUri`, an `image_url` with an `s3://`/`gs://` URL, or a
+  message whose whole text is the URI. `Content.from_uri` values render as
+  before. Strings that only mention a URI (`"see s3://b/x.png"`), prefixes
+  ending in `/`, and `https://` strings stay text; Weave renders bucket URIs
+  only.
+- **Kind** comes from the file extension (or the part's `mime_type` /
+  `modality`): images, video, audio and PDFs render inline; other files show
+  the URI with a **Get download link** button that presigns on demand.
+- **Resolution** is lazy: an inline URI is resolved when it scrolls near the
+  viewport, URIs of one bucket are batched per request, and each presigned URL
+  is cached until shortly before `expires_at` (then resolved again, also after
+  a load error). Refusals are remembered for a minute.
+- **Fallback.** When a URI cannot be resolved the URI shows as text with a
+  short reason (for example "not rendered: bucket not registered for this
+  project"); the page never waits on it. The browser logs the refused
+  `/files/resolve_url` request (400) in its console.
+- In the Agents conversation view, a tool result that is media shows under
+  the tool row without expanding it, and media attached to the first LLM
+  call's user message (`attach_media`) shows with the turn's user message
+  when that message has none of its own.
 
 | Endpoint | Body | Access |
 |---|---|---|
@@ -1518,7 +1545,11 @@ Credentials are never returned.
   a browser would, and refuses the registration if that fails (bad
   credentials, missing object, unreachable endpoint). Weave also checks the
   bucket's CORS configuration; Weft does not, so configure CORS for the Weft
-  UI's origin yourself (`GET`, `HEAD`).
+  UI's origin yourself (`GET`, `HEAD`). Images, audio and video load without
+  CORS; PDFs are fetched by the page and need it (without it the UI embeds
+  the presigned URL directly, which depends on the object's `Content-Type`).
+  The Buckets tab shows registrations to anyone who can view the project; its
+  Register, Test and Remove controls appear for server admins only.
 - **S3** (`provider: "s3"`, also `"aws"`): presigned with SigV4
   (`internal/weft/objstore`). `secret_name` names a stored secret
   (Settings → Secrets, `/secrets/set`) holding

@@ -14,8 +14,12 @@ call:
   execution, with its input schema and response.
 
 Units run in Verdict's thread pool; parents are resolved from Verdict's
-``(trace_id, parent_id)`` like Weave does, and each unit call is the current
-weft call while it runs, so LLM requests made through patched clients
+``(trace_id, parent_id)`` like Weave does. Verdict starts each block of a
+chain (``a >> b``) with the *finished* previous block as its parent, so
+finished calls stay resolvable until the call that opened the trace (the
+pipeline run) ends, and ``b`` nests under ``a`` in one trace, as in Weave.
+Each unit call is the current weft call while it runs, so LLM requests made
+through patched clients
 (``litellm``, ``openai``, ``instructor`` ...) nest under the unit. A pipeline
 run inside an ``@weft.op`` nests under that op. Pass ``tracer=`` to
 ``Pipeline`` as usual; Weft's tracer is added alongside it (a lone
@@ -85,8 +89,22 @@ def _make_tracer_cls(Tracer: Any, VerdictCall: Any, current_trace_context: Any, 
         """Logs Verdict spans as Weft calls (see the module docs)."""
 
         def __init__(self) -> None:
+            # (trace_id, verdict call_id) -> weft Call. Finished calls stay here
+            # until the call that opened their trace ends, because Verdict hands
+            # a *finished* block's call id to the next block as its parent
+            # (``GraphExecutor._on_task_complete``).
             self._calls: Dict[Tuple[Any, Any], Any] = {}
+            # trace_id -> call id of the first call this tracer saw in it.
+            self._owners: Dict[Any, Any] = {}
             self._lock = threading.Lock()
+
+        def _release(self, trace_id: Any, call_id: Any) -> None:
+            with self._lock:
+                if self._owners.get(trace_id) != call_id:
+                    return
+                del self._owners[trace_id]
+                for key in [k for k in self._calls if k[0] == trace_id]:
+                    del self._calls[key]
 
         @contextlib.contextmanager
         def start_call(self, name: str, inputs: Dict[str, Any], trace_id: Optional[str] = None, parent_id: Optional[str] = None) -> Iterator[Any]:
@@ -123,6 +141,7 @@ def _make_tracer_cls(Tracer: Any, VerdictCall: Any, current_trace_context: Any, 
             if call is not None:
                 with self._lock:
                     self._calls[(trace_id, vc.call_id)] = call
+                    self._owners.setdefault(trace_id, vc.call_id)
             ctx_token = current_trace_context.set(TraceContext(trace_id, vc.call_id, parent_id))
             weft_token = _context.push_call(call) if call is not None else None
             exc: Optional[BaseException] = None
@@ -142,8 +161,7 @@ def _make_tracer_cls(Tracer: Any, VerdictCall: Any, current_trace_context: Any, 
                         client.finish_call(call, output=_plain(vc.outputs), exception=err, op=op)
                     except Exception as e:  # pragma: no cover
                         logger.debug("weft: could not end verdict span %s: %s", name, e)
-                    with self._lock:
-                        self._calls.pop((trace_id, vc.call_id), None)
+                    self._release(trace_id, vc.call_id)
 
     return WeftVerdictTracer
 

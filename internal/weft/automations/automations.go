@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 )
@@ -192,7 +193,7 @@ func New(st *store.Store, secret SecretFunc, log *slog.Logger) *Runner {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Runner{Store: st, Secret: secret, Log: log, HTTP: &http.Client{Timeout: 15 * time.Second}, Interval: time.Minute,
+	return &Runner{Store: st, Secret: secret, Log: log, HTTP: egress.NewClient(15*time.Second, true), Interval: time.Minute,
 		feedbackCh: make(chan store.Feedback, 10000), stop: make(chan struct{}),
 		cache: map[string]cacheEntry{}, lastFire: map[string]time.Time{}, loaded: map[string]bool{}}
 }
@@ -625,7 +626,7 @@ func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event
 	}
 	resp, err := r.HTTP.Do(req)
 	if err != nil {
-		return 0, "", fmt.Errorf("delivering webhook: %w", err)
+		return 0, "", fmt.Errorf("delivering webhook: %w", egress.Sanitize(err))
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

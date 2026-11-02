@@ -7,7 +7,8 @@ import { RefChip } from './RefChip'
 
 // Generic renderer for call inputs/outputs and object values.
 // - refs render as links
-// - media ({_type: Image|Audio} or data: URLs) render inline
+// - media ({_type: Image|Audio}, data: URLs, and strings that are exactly an
+//   s3:// or gs:// object URI in a reference bucket) render inline
 // - long strings render as text or markdown
 // - objects/arrays render as a collapsible tree
 

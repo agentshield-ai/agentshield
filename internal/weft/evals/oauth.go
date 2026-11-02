@@ -5,13 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -29,8 +29,8 @@ import (
 var (
 	oauthMu      sync.Mutex
 	oauthSources = map[string]oauth2.TokenSource{}
-	// oauthHTTP fetches tokens; tests may replace it.
-	oauthHTTP = &http.Client{Timeout: 30 * time.Second}
+	// oauthHTTP fetches tokens through the egress guard; tests may replace it.
+	oauthHTTP = egress.NewClient(30*time.Second, false)
 )
 
 // oauthToken returns a bearer token for auth_config, or "" when it has no token_url.
@@ -99,6 +99,9 @@ func (e *Engine) oauthToken(ctx context.Context, ac map[string]any) (string, err
 			oauthMu.Lock()
 			delete(oauthSources, key)
 			oauthMu.Unlock()
+			if egress.IsBlocked(r.err) {
+				return "", fmt.Errorf("fetching OAuth token: %w", egress.ErrBlocked)
+			}
 			return "", fmt.Errorf("fetching OAuth token from %s: %s", u.Host, oauthErrSummary(r.err))
 		}
 		return r.tok.AccessToken, nil

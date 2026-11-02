@@ -7,6 +7,12 @@
 // - {_type: "CustomWeaveType", weave_type: {type}, files: {...}, val?}  (official weave client):
 //   PIL.Image.Image → image.<ext>, wave.Wave_read / Audio → audio.<ext>, VideoFileClip → video.<ext>,
 //   weave.type_wrappers.Content.content.Content → content + metadata.json, rich Markdown → val.markup | markup.md
+// - a plain string that is exactly an s3:// or gs:// object URI (reference buckets, Weave's
+//   "bring your own bucket"): the whole value must be the URI, so prose mentioning one stays text.
+//   The kind comes from the file extension; other extensions render as a download link.
+// - GenAI message parts: {type: "uri", uri, mime_type?, modality?} (the SDKs' attach_media(uri=…)),
+//   {type: "blob", content (base64), mime_type}, Gemini {inlineData: {mimeType, data}} and
+//   {fileData: {mimeType, fileUri}}.
 
 export type MediaKind = 'image' | 'audio' | 'video' | 'pdf' | 'html' | 'markdown' | 'text' | 'file' | 'content'
 
@@ -37,10 +43,40 @@ export function mediaUri(uri: string | undefined): { digest?: string; uri?: stri
   return null
 }
 
+// A whole value that is an object URI in a customer bucket: scheme, bucket
+// name (S3/GCS naming rules), and a non-empty key that does not end in "/"
+// (a "folder" is not an object). No whitespace anywhere.
+const REFERENCE_URI_RE = /^(?:s3|gs):\/\/[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]\/[^\s]*[^\s/]$/
+
+/** True when `v` is exactly one s3:// or gs:// object URI (surrounding whitespace allowed). */
+export function isReferenceUri(v: unknown): boolean {
+  return typeof v === 'string' && v.length <= 2048 && REFERENCE_URI_RE.test(v.trim())
+}
+
+/**
+ * Kinds rendered inline from a bucket URI. Weave renders images and video
+ * inline; Weft adds audio and PDF. Everything else is a download link.
+ */
+const INLINE_REF_KINDS: ReadonlySet<MediaKind> = new Set<MediaKind>(['image', 'audio', 'video', 'pdf'])
+
+/** The media spec of a reference URI, its kind from the extension (or a known mimetype). */
+export function referenceUriSpec(uri: string, mimetype?: string): MediaSpec {
+  const u = uri.trim()
+  const filename = uriFilename(u)
+  const mt = mimetype ?? mimeFromFilename(filename)
+  const k = kindFromMime(mt)
+  return { kind: INLINE_REF_KINDS.has(k) ? k : 'file', mimetype: mt, filename, uri: u }
+}
+
 function uriFilename(uri: string): string | undefined {
   const path = uri.split(/[?#]/)[0]
   const name = path.slice(path.lastIndexOf('/') + 1)
-  return name && name.includes('.') ? decodeURIComponent(name) : undefined
+  if (!name || !name.includes('.')) return undefined
+  try {
+    return decodeURIComponent(name)
+  } catch {
+    return name
+  }
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -112,6 +148,7 @@ function str(v: unknown): string | undefined {
 /** Returns how to render `v`, or null when it is not media. */
 export function detectMedia(v: unknown): MediaSpec | null {
   if (typeof v === 'string') {
+    if (isReferenceUri(v)) return referenceUriSpec(v)
     const m = DATA_URL_RE.exec(v)
     if (!m) return null
     const kind = kindFromMime(m[1])
@@ -123,7 +160,7 @@ export function detectMedia(v: unknown): MediaSpec | null {
   const o = v as Record<string, unknown>
   const type = str(o._type)
   if (type === 'CustomWeaveType') return detectWeaveCustom(o)
-  if (!type) return null
+  if (!type) return detectPart(o)
   const mime = str(o.mimetype) ?? str(o.mime_type) ?? str(o.content_type)
   const filename = str(o.filename) ?? str(o.name)
   const size = typeof o.size === 'number' ? o.size : undefined
@@ -151,6 +188,52 @@ export function detectMedia(v: unknown): MediaSpec | null {
   }
   const data = str(o.data)
   if (data && mime) return { kind: known === 'file' ? kindFromMime(mime) : known, mimetype: mime, filename, size, dataUrl: data.startsWith('data:') ? data : `data:${mime};base64,${data}` }
+  return null
+}
+
+const MODALITY_KIND: Record<string, MediaKind> = { image: 'image', audio: 'audio', video: 'video' }
+
+/** GenAI / Gemini message parts that carry media without a `_type`. */
+function detectPart(o: Record<string, unknown>): MediaSpec | null {
+  const t = str(o.type)
+  if (t === 'uri') {
+    const raw = str(o.uri) ?? str(o.url)
+    const ref = mediaUri(raw)
+    if (!ref) return null
+    const mt = str(o.mime_type) ?? str(o.mimetype)
+    const modal = MODALITY_KIND[str(o.modality)?.toLowerCase() ?? '']
+    if (ref.digest) {
+      const kind = mt ? kindFromMime(mt) : (modal ?? 'file')
+      return { kind, mimetype: mt, digest: ref.digest }
+    }
+    const spec = referenceUriSpec(ref.uri!, mt)
+    // An explicit modality wins over an unknown extension.
+    if (spec.kind === 'file' && modal) return { ...spec, kind: modal }
+    return spec
+  }
+  if (t === 'blob') {
+    const data = str(o.content) ?? str(o.data)
+    const mt = str(o.mime_type) ?? str(o.mimetype)
+    if (!data || !mt) return null
+    const kind = kindFromMime(mt)
+    if (kind === 'file') return null
+    return { kind, mimetype: mt, dataUrl: data.startsWith('data:') ? data : `data:${mt};base64,${data}` }
+  }
+  if (t) return null
+  const inline = o.inlineData && typeof o.inlineData === 'object' ? (o.inlineData as Record<string, unknown>) : null
+  if (inline) {
+    const mt = str(inline.mimeType) ?? str(inline.mime_type)
+    const data = str(inline.data)
+    if (!mt || !data) return null
+    const kind = kindFromMime(mt)
+    return kind === 'file' ? null : { kind, mimetype: mt, dataUrl: `data:${mt};base64,${data}` }
+  }
+  const fd = o.fileData && typeof o.fileData === 'object' ? (o.fileData as Record<string, unknown>) : null
+  if (fd) {
+    const ref = mediaUri(str(fd.fileUri) ?? str(fd.file_uri))
+    if (!ref?.uri) return null
+    return referenceUriSpec(ref.uri, str(fd.mimeType) ?? str(fd.mime_type))
+  }
   return null
 }
 

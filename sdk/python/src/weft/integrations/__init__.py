@@ -8,7 +8,7 @@ does not import every framework you have installed).
 | Integration (settings key) | Library | Traced |
 |---|---|---|
 | ``openai`` | openai | chat.completions.create, responses.create (sync/async/stream); OpenAI-compatible endpoints (NVIDIA NIM, Azure, OpenRouter, vLLM ...) tagged ``weft.provider`` |
-| ``openai_realtime`` | openai | Realtime connections: session, response (usage) and function-call spans |
+| ``openai_realtime`` | openai, websockets, websocket-client, aiohttp | Realtime connections (openai SDK, OpenAI Agents SDK ``RealtimeRunner``, raw websockets): session, response (usage, WAV audio) and function-call spans |
 | ``anthropic`` | anthropic | messages.create (sync/async/stream), messages.stream() |
 | ``litellm`` | litellm | completion, acompletion (incl. stream) |
 | ``google_genai`` | google-genai | models.generate_content(_stream), sync and async |
@@ -69,7 +69,7 @@ from .llamaindex import patch_llamaindex, unpatch_llamaindex
 from .mcp import patch_mcp
 from .openai import patch_openai, patch_openai_compatible
 from .openai_agents import patch_openai_agents
-from .openai_realtime import RealtimeTracer, patch_openai_realtime
+from .openai_realtime import RealtimeTracer, patch_openai_realtime, wrap_websocket_async, wrap_websocket_connect, wrap_websocket_sync
 from .other_llms import patch_cerebras, patch_cohere, patch_groq, patch_mistral, patch_together
 from .smolagents import patch_smolagents
 from .verdict import patch_verdict, unpatch_verdict
@@ -92,7 +92,7 @@ INTEGRATIONS: Dict[str, Integration] = {
     i.name: i
     for i in (
         Integration("openai", patch_openai, ("openai",)),
-        Integration("openai_realtime", patch_openai_realtime, ("openai",)),
+        Integration("openai_realtime", patch_openai_realtime, ("openai", "websockets", "websocket", "aiohttp")),
         Integration("anthropic", patch_anthropic, ("anthropic",)),
         Integration("litellm", patch_litellm, ("litellm",)),
         Integration("google_genai", patch_google_genai, ("google.genai",)),
@@ -147,9 +147,10 @@ def _run_patch(name: str) -> bool:
 
 
 def _installed(modules: Tuple[str, ...]) -> bool:
-    # Only the primary module is looked up: finding a dotted module imports its
-    # parent packages, which for the primary ones are light namespace packages.
-    return _hooks.is_installed(modules[0])
+    # The primary module, plus other top-level trigger modules: finding a dotted
+    # module imports its parent packages, which for the primary ones are light
+    # namespace packages.
+    return any(_hooks.is_installed(m) for i, m in enumerate(modules) if i == 0 or "." not in m)
 
 
 def autopatch(settings: Any = None) -> Dict[str, str]:
@@ -215,6 +216,9 @@ __all__ = [
     "IntegrationSettings",
     "OpSettings",
     "RealtimeTracer",
+    "wrap_websocket_async",
+    "wrap_websocket_connect",
+    "wrap_websocket_sync",
     "patch_openai",
     "patch_openai_compatible",
     "patch_openai_realtime",

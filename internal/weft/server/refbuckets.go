@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/objstore"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/go-chi/chi/v5"
@@ -125,7 +126,9 @@ func (s *Server) bucketClient(ctx context.Context, b *store.ReferenceBucket) (bu
 	return nil, store.Invalidf("unknown provider %q", b.Provider)
 }
 
-var bucketTestClient = &http.Client{Timeout: 15 * time.Second}
+// bucketTestClient fetches a presigned URL for a registered bucket. The bucket
+// endpoint comes from the API, so the request goes through the egress guard.
+var bucketTestClient = egress.NewClient(15*time.Second, false)
 
 // testBucket reads the first byte of key through a presigned URL, the way a
 // browser would fetch it.
@@ -151,7 +154,7 @@ func (s *Server) testBucket(ctx context.Context, b *store.ReferenceBucket) error
 	req.Header.Set("Range", "bytes=0-0")
 	resp, err := bucketTestClient.Do(req)
 	if err != nil {
-		return store.Invalidf("cannot reach the bucket: %v", err)
+		return store.Invalidf("cannot reach the bucket: %v", egress.Sanitize(err))
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))

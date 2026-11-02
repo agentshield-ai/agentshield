@@ -216,13 +216,29 @@ func durPtr(sp *agentSpan) *int64 {
 
 // userText finds the user prompt of a turn: the last user message of the
 // root's inputs, else of the first LLM call below it, else the root's
-// readable inputs.
+// readable inputs. When the root's message carries no media, media attached
+// to the first LLM call's user message (attach_media) is shown with it.
 func (b *chatBuilder) userText(root string) (string, []any) {
+	llmText, llmMedia, llmFound := b.firstLLMUser(root)
 	if c := b.calls[root]; c != nil {
 		if t, m := lastUserText(InputMessages(c.Inputs)); m != nil {
+			if len(m.Media) == 0 {
+				return t, llmMedia
+			}
 			return t, m.Media
 		}
 	}
+	if llmFound {
+		return llmText, llmMedia
+	}
+	if c := b.calls[root]; c != nil {
+		return InputText(c.Inputs), nil
+	}
+	return "", nil
+}
+
+// firstLLMUser is the last user message of the first LLM call below root.
+func (b *chatBuilder) firstLLMUser(root string) (string, []any, bool) {
 	var found string
 	var media []any
 	var walk func(id string) bool
@@ -242,13 +258,8 @@ func (b *chatBuilder) userText(root string) (string, []any) {
 		}
 		return false
 	}
-	if walk(root) {
-		return found, media
-	}
-	if c := b.calls[root]; c != nil {
-		return InputText(c.Inputs), nil
-	}
-	return "", nil
+	ok := walk(root)
+	return found, media, ok
 }
 
 func (b *chatBuilder) emitAssistant(sp *agentSpan, text, reasoning string, media []any, tools []string, withUsage bool) {

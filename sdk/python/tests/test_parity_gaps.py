@@ -335,6 +335,29 @@ class Pipeline:
             if call is not None:
                 call.set_outputs(out)
             return out
+
+
+class ChainPipeline(Pipeline):
+    """``a >> b`` as Verdict's GraphExecutor runs it: when a block finishes,
+    the next block starts in a new ExecutionContext whose parent_id is the
+    *finished* block's call id (``_on_task_complete``)."""
+    def run(self, x, tracers=None):
+        ctx = ExecutionContext(tracer=self.default_tracer, parent_id=None)
+        with ctx.trace_call(self.name, {"input_data": {"text": x}}) as call:
+            parent = call.call_id if call is not None else None
+            for u in self.units:
+                child = ExecutionContext(tracer=ctx.tracer, trace_id=ctx.trace_id, parent_id=parent)
+                ids = []
+                def run_unit(u=u, child=child):
+                    with child.trace_call("MapUnit", {"input": x, "unit": u}) as c:
+                        ids.append(c.call_id if c is not None else None)
+                        return u.judge(x)
+                with ThreadPoolExecutor(1) as pool:  # each block in a worker thread, after the previous one ended
+                    x = pool.submit(run_unit).result()
+                parent = ids[0]
+            if call is not None:
+                call.set_outputs(x)
+            return x
 '''
 
 
@@ -393,6 +416,57 @@ def test_verdict_pipeline_and_units_are_traced(client, fake, monkeypatch):
     p2.run("x", tracers=[Recorder()])
     client.flush()
     assert Recorder.names == ["P2", "JudgeUnit"] and fake.calls_by_op("verdict.P2")
+
+
+def _tree(calls):
+    """{display_name: [(id, parent_id, trace_id)]}"""
+    out = {}
+    for c in calls:
+        out.setdefault(c["display_name"], []).append((c["id"], c.get("parent_id"), c["trace_id"]))
+    return out
+
+
+def test_verdict_chained_blocks_stay_in_one_trace(client, fake, monkeypatch):
+    """Regression (parity audit A6): the second block's parent is the finished first block."""
+    _, vp = _install_verdict(monkeypatch)
+    assert patch_verdict()
+    p = vp.ChainPipeline("double") >> vp.JudgeUnit(lambda x: x * 2) >> vp.JudgeUnit(lambda x: x + 1)
+    assert p.run(3) == 7
+    p.run(10)  # a second run is a second, separate trace
+    client.flush()
+    roots = fake.calls_by_op("verdict.double")
+    assert len(roots) == 2 and all(r.get("parent_id") is None for r in roots)
+    for root in roots:
+        trace = [c for c in fake.calls.values() if c["trace_id"] == root["trace_id"]]
+        first, second = sorted((c for c in trace if c["display_name"] == "MapUnit"), key=lambda c: c["started_at"])
+        assert first["parent_id"] == root["id"] and second["parent_id"] == first["id"]
+        assert len(trace) == 3
+    from weft.integrations import verdict as wv
+    assert wv.get_tracer()._calls == {} and wv.get_tracer()._owners == {}, "finished traces are released"
+
+
+def test_verdict_real_library_chain(client, fake):
+    """The real ``verdict`` package: one trace per pipeline run, as under Weave."""
+    pytest.importorskip("verdict")
+    from verdict import Pipeline
+    from verdict.schema import Schema
+    from verdict.transform import MapUnit
+
+    assert patch_verdict()
+    p = Pipeline("double") >> MapUnit(lambda x: Schema.of(values=x.values * 2)) >> MapUnit(lambda x: Schema.of(values=x.values + 1))
+    res, _ = p.run(Schema.of(values=3), display=False)
+    assert sorted(res.values()) == [6, 7]
+    client.flush()
+    calls = list(fake.calls.values())
+    assert len(calls) == 5 and len({c["trace_id"] for c in calls}) == 1, _tree(calls)
+    [root] = [c for c in calls if c.get("parent_id") is None]
+    assert root["op_name"].endswith("verdict.double") or root["display_name"] == "double"
+    maps = sorted((c for c in calls if c["display_name"] == "Map"), key=lambda c: c["started_at"])
+    assert len(maps) == 2 and maps[0]["parent_id"] == root["id"] and maps[1]["parent_id"] == maps[0]["id"]
+    ids = {c["id"] for c in calls}
+    assert all(c["parent_id"] in ids for c in calls if c is not root)
+    from weft.integrations import verdict as wv
+    assert wv.get_tracer()._calls == {}
 
 
 def test_verdict_unit_errors_and_disabled(client, fake, monkeypatch):

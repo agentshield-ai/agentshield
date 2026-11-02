@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/google/uuid"
 )
@@ -44,7 +45,7 @@ type Client struct {
 
 // New creates a client. secret falls back to environment variables.
 func New(secret SecretFunc, providers ProviderFunc) *Client {
-	return &Client{Secret: secret, Providers: providers, HTTP: &http.Client{Timeout: 10 * time.Minute}}
+	return &Client{Secret: secret, Providers: providers, HTTP: egress.NewClient(10*time.Minute, true)}
 }
 
 func (c *Client) secret(ctx context.Context, name string) (string, bool) {
@@ -296,7 +297,7 @@ func (c *Client) post(ctx context.Context, url string, headers map[string]string
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("calling provider: %w", err)
+		return nil, fmt.Errorf("calling provider: %w", egress.Sanitize(err))
 	}
 	if resp.StatusCode >= 300 {
 		defer resp.Body.Close()

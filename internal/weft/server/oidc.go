@@ -58,6 +58,8 @@ type OIDCConfig struct {
 	// AdminEmails become server admins when they sign in with a verified email.
 	AdminEmails []string
 	// HTTPClient is used for discovery, JWKS and the token exchange (tests).
+	// The issuer is operator configuration (--oidc-issuer), so these requests
+	// do not go through the egress guard (an in-cluster IdP is common).
 	HTTPClient *http.Client
 }
 

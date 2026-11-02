@@ -9,7 +9,7 @@ import type { Any } from '../../api/types'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber } from '../../lib/format'
 import { callUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../common'
-import { ValueView } from '../ValueView'
+import { MediaView, ValueView, isMedia } from '../ValueView'
 import { CallChatView, ChatMessageView, extractChat, normaliseMessage } from '../traces/ChatView'
 import { parseMaybeJSON } from './agentUtils'
 import './agents.css'
@@ -158,11 +158,19 @@ function EventView({ m, projectId, agentName }: { m: ChatMessage; projectId: str
               </div>
             </div>
           ) : (
-            (t.tool_arguments || m.status_message) && (
-              <div className="small faint truncate" style={{ paddingLeft: 18, color: m.status_message ? 'var(--error)' : undefined }}>
-                {m.status_message ? m.status_message.split('\n')[0] : t.tool_arguments}
-              </div>
-            )
+            <>
+              {(t.tool_arguments || m.status_message) && (
+                <div className="small faint truncate" style={{ paddingLeft: 18, color: m.status_message ? 'var(--error)' : undefined }}>
+                  {m.status_message ? m.status_message.split('\n')[0] : t.tool_arguments}
+                </div>
+              )}
+              {/* A tool that returned media (a bucket URI, an image) shows it without expanding, as Weave does. */}
+              {!m.status_message && isMedia(result) && (
+                <div className="agent-tool-media">
+                  <MediaView value={result} projectId={projectId} />
+                </div>
+              )}
+            </>
           )}
         </div>
       )

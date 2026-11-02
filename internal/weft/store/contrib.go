@@ -29,17 +29,7 @@ func ParseContribution(s string) Contribution {
 func TotalContribution(summary map[string]any, ended, failed, cumulative bool, rollup Contribution) Contribution {
 	if cumulative && ended {
 		var c Contribution
-		if u, ok := summary["usage"].(map[string]any); ok {
-			for model, v := range u {
-				if fields, ok := v.(map[string]any); ok {
-					for k, x := range fields {
-						if f, ok := toFloat(x); ok {
-							c.addUsage(model, k, f)
-						}
-					}
-				}
-			}
-		}
+		c.addSummaryUsage(summary)
 		if sc, ok := summary["status_counts"].(map[string]any); ok {
 			for k, x := range sc {
 				if f, ok := toFloat(x); ok {
@@ -64,19 +54,7 @@ func TotalContribution(summary map[string]any, ended, failed, cumulative bool, r
 // OwnContribution derives a call's own contribution from its summary and status.
 func OwnContribution(summary map[string]any, ended, failed bool) Contribution {
 	var c Contribution
-	if u, ok := summary["usage"].(map[string]any); ok {
-		for model, v := range u {
-			fields, ok := v.(map[string]any)
-			if !ok {
-				continue
-			}
-			for k, x := range fields {
-				if f, ok := toFloat(x); ok {
-					c.addUsage(model, k, f)
-				}
-			}
-		}
-	}
+	c.addSummaryUsage(summary)
 	if ended {
 		if failed {
 			c.addStatus("error", 1)
@@ -85,6 +63,128 @@ func OwnContribution(summary map[string]any, ended, failed bool) Contribution {
 		}
 	}
 	return c
+}
+
+// addSummaryUsage adds summary.usage, normalised per model (NormalizeUsage).
+func (c *Contribution) addSummaryUsage(summary map[string]any) {
+	u, ok := summary["usage"].(map[string]any)
+	if !ok {
+		return
+	}
+	for model, v := range u {
+		if fields, ok := v.(map[string]any); ok {
+			for k, f := range NormalizeUsage(fields) {
+				c.addUsage(model, k, f)
+			}
+		}
+	}
+}
+
+// NormalizeUsage flattens one model's usage entry into numeric fields with
+// Weave's canonical cache names, so cached tokens can be priced:
+//
+//   - cache_read_input_tokens and cache_creation_input_tokens are the
+//     cache-read and cache-write subsets of the prompt, and prompt_tokens /
+//     input_tokens is the gross prompt (Weave's convention).
+//   - OpenAI: prompt_tokens_details.cached_tokens (Chat Completions) and
+//     input_tokens_details.cached_tokens (Responses) are already included in
+//     the prompt count and become cache_read_input_tokens; cache_write_tokens
+//     (OpenAI-compatible providers) becomes cache_creation_input_tokens, as
+//     in weave's openai integration. Nested reasoning_tokens are lifted too.
+//   - Gemini/Vertex usage_metadata names (prompt_token_count,
+//     candidates_token_count, total_token_count, cached_content_token_count,
+//     thoughts_token_count, and their camelCase forms) become prompt_tokens,
+//     completion_tokens, total_tokens, cache_read_input_tokens and
+//     reasoning_tokens, as in weave's google_genai integration.
+//   - Bedrock Converse (inputTokens, cacheReadInputTokens,
+//     cacheWriteInputTokens): inputTokens excludes cached tokens, so they are
+//     added to the prompt, as in weave's bedrock integration.
+//   - Anthropic's native usage reports input_tokens without the cache reads
+//     and writes. Producers should send the gross count (weave's anthropic
+//     integration and Weft's harness plugins do). When an entry cannot be
+//     gross (cache reads + writes exceed the prompt count), the cache counts
+//     are added to the prompt; otherwise the entry is taken as gross.
+//
+// Existing canonical fields always win over derived ones.
+func NormalizeUsage(fields map[string]any) map[string]float64 {
+	out := map[string]float64{}
+	for k, x := range fields {
+		if f, ok := toFloat(x); ok {
+			out[k] = f
+		}
+	}
+	setDefault := func(k string, v any) {
+		if _, exists := out[k]; exists {
+			return
+		}
+		if f, ok := toFloat(v); ok {
+			out[k] = f
+		}
+	}
+	for _, dk := range []string{"prompt_tokens_details", "input_tokens_details"} {
+		if d, ok := fields[dk].(map[string]any); ok {
+			setDefault("cache_read_input_tokens", d["cached_tokens"])
+			setDefault("cache_creation_input_tokens", d["cache_write_tokens"])
+		}
+	}
+	for _, dk := range []string{"completion_tokens_details", "output_tokens_details"} {
+		if d, ok := fields[dk].(map[string]any); ok {
+			setDefault("reasoning_tokens", d["reasoning_tokens"])
+		}
+	}
+	rename := func(to string, from ...string) {
+		for _, f := range from {
+			if v, ok := out[f]; ok {
+				if _, exists := out[to]; !exists {
+					out[to] = v
+				}
+				delete(out, f)
+			}
+		}
+	}
+	_, hasPrompt := out["prompt_tokens"]
+	_, hasInput := out["input_tokens"]
+	if !hasPrompt && !hasInput {
+		rename("prompt_tokens", "prompt_token_count", "promptTokenCount")
+	}
+	_, hasCompletion := out["completion_tokens"]
+	_, hasOutput := out["output_tokens"]
+	if !hasCompletion && !hasOutput {
+		rename("completion_tokens", "candidates_token_count", "candidatesTokenCount")
+	}
+	rename("total_tokens", "total_token_count", "totalTokenCount")
+	rename("cache_read_input_tokens", "cached_content_token_count", "cachedContentTokenCount")
+	rename("reasoning_tokens", "thoughts_token_count", "thoughtsTokenCount")
+
+	// Bedrock Converse: inputTokens excludes cache reads and writes.
+	if in, ok := out["inputTokens"]; ok && !hasPrompt && !hasInput {
+		cr, cw := out["cacheReadInputTokens"], out["cacheWriteInputTokens"]
+		out["prompt_tokens"] = in + cr + cw
+		delete(out, "inputTokens")
+		rename("cache_read_input_tokens", "cacheReadInputTokens")
+		rename("cache_creation_input_tokens", "cacheWriteInputTokens")
+		rename("completion_tokens", "outputTokens")
+		rename("total_tokens", "totalTokens")
+	}
+
+	// An entry whose cache counts exceed its prompt cannot be gross: it is
+	// Anthropic-native (input_tokens excludes the cache). Make it gross.
+	cache := math.Max(out["cache_read_input_tokens"], 0) + math.Max(out["cache_creation_input_tokens"], 0)
+	prompt := out["prompt_tokens"] + out["input_tokens"]
+	if cache > 0 && cache > prompt {
+		key := "input_tokens"
+		if _, ok := out["input_tokens"]; !ok {
+			if _, ok := out["prompt_tokens"]; ok {
+				key = "prompt_tokens"
+			}
+		}
+		out[key] += cache
+		completion := out["completion_tokens"] + out["output_tokens"]
+		if t, ok := out["total_tokens"]; ok && t < prompt+cache+completion {
+			out["total_tokens"] = t + cache
+		}
+	}
+	return out
 }
 
 func (c *Contribution) addUsage(model, key string, v float64) {

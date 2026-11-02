@@ -62,3 +62,19 @@
 .media-dl {
   margin-left: auto;
 }
+/* Media referenced by URI (reference buckets): pending and fallback states. */
+.media-ref-pending,
+.media-ref-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.media-ref-pending {
+  min-height: 40px;
+}
+.media-uri {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}

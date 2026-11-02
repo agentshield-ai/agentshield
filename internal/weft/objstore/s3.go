@@ -80,6 +80,10 @@ func New(cfg Config) (*S3, error) {
 		return nil, errors.New("s3: access key id and secret access key are required (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)")
 	}
 	if cfg.HTTP == nil {
+		// The files backend endpoint is operator configuration (--s3-endpoint),
+		// so its requests skip the egress guard. Reference buckets registered
+		// through the API only presign here; server/refbuckets.go fetches
+		// through the guarded client.
 		cfg.HTTP = &http.Client{Timeout: 5 * time.Minute}
 	}
 	if cfg.Now == nil {
