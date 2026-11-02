@@ -23,6 +23,8 @@ export class FakeWeft {
   aliases = new Map<string, string>(); // `${object}|${alias}` -> digest
   embeddingsEnabled = false;
   weaveRoutes = true;
+  /** Extra POST routes for individual tests: path -> handler(body). */
+  routes = new Map<string, (body: any) => unknown>();
   url = '';
   private server: Server;
 
@@ -67,6 +69,12 @@ export class FakeWeft {
           }
           return send(404, { reason: 'no route' });
         }
+        if (req.method === 'GET' && path.startsWith('/file/content?')) {
+          const d = new URLSearchParams(path.split('?')[1]).get('digest') ?? '';
+          if (!this.files.has(d)) return send(404, { reason: 'no file' });
+          res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+          return res.end(this.files.get(d));
+        }
         if (path === '/file/content') {
           res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
           return res.end(this.files.get(body.digest));
@@ -106,6 +114,8 @@ export class FakeWeft {
   }
 
   private handle(path: string, body: any, raw: Buffer, ctype: string): unknown {
+    const extra = this.routes.get(path);
+    if (extra) return extra(body);
     let m = /^\/objs\/([^/]+)\/aliases\/remove$/.exec(path);
     if (m && this.weaveRoutes) {
       for (const a of body.aliases) this.aliases.delete(`${decodeURIComponent(m[1])}|${a}`);

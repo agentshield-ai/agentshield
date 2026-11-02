@@ -7,7 +7,7 @@ import { ErrorBox, Modal } from '../common'
 import { discoverFeedbackFields, discoverFields, getDotted } from '../traces/callUtils'
 import { PanelChart } from './MetricChart'
 import { TimeRangePicker } from './TimeRangePicker'
-import { FIELD_PRESETS, GROUP_PRESETS, metricLabel, panelTitle } from './dashboardUtils'
+import { FIELD_PRESETS, GROUP_PRESETS, metricLabel, panelTitle, withChart } from './dashboardUtils'
 
 const CHARTS: { id: ChartType; label: string }[] = [
   { id: 'line', label: 'Line' },
@@ -16,6 +16,7 @@ const CHARTS: { id: ChartType; label: string }[] = [
   { id: 'area', label: 'Area' },
   { id: 'table', label: 'Table' },
   { id: 'stat', label: 'Stat' },
+  { id: 'scatter', label: 'Scatter' },
 ]
 
 const AGG_NAMES: Record<MetricAgg, string> = {
@@ -183,12 +184,40 @@ export function PanelEditor({
             Chart
             <div className="seg" role="group" aria-label="Chart type" style={{ flexWrap: 'wrap' }}>
               {CHARTS.map((c) => (
-                <button key={c.id} className={p.chart === c.id ? 'on' : ''} aria-pressed={p.chart === c.id} onClick={() => setP({ ...p, chart: c.id })}>
+                <button key={c.id} className={p.chart === c.id ? 'on' : ''} aria-pressed={p.chart === c.id} onClick={() => setP(withChart(p, c.id))}>
                   {c.label}
                 </button>
               ))}
             </div>
           </div>
+          {p.chart === 'scatter' ? (
+            <div className="field dash-field">
+              Axes
+              <div className="col" style={{ gap: 6 }}>
+                {(['x', 'y'] as const).map((axis, i) => (
+                  <label key={axis} className="row small" style={{ gap: 6 }}>
+                    <span className="mono" style={{ width: 14 }}>
+                      {axis}
+                    </span>
+                    <input
+                      className="input mono grow"
+                      list={listId}
+                      aria-label={`${axis.toUpperCase()} field`}
+                      placeholder={i === 0 ? 'latency_ms' : 'total_tokens'}
+                      value={p.metrics[i]?.field ?? ''}
+                      onChange={(e) => {
+                        const ms = [...p.metrics]
+                        while (ms.length < 2) ms.push({ agg: 'avg' })
+                        ms[i] = { ...ms[i], agg: 'avg', field: e.target.value || undefined }
+                        setP({ ...p, metrics: ms.slice(0, 2) })
+                      }}
+                    />
+                  </label>
+                ))}
+                <div className="small faint">One point per call; click a point to open the call. Group by colours the points.</div>
+              </div>
+            </div>
+          ) : (
           <div className="field dash-field">
             Metrics
             <div className="col" style={{ gap: 6 }}>
@@ -212,6 +241,7 @@ export function PanelEditor({
               </div>
             </div>
           </div>
+          )}
           {p.chart !== 'stat' && (
             <label className="field">
               Group by

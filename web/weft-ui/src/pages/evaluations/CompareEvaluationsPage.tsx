@@ -230,7 +230,7 @@ function CompareBody({
           )
         })}
       </div>
-      <InlineLeaderboard evals={evals} metrics={metrics} labels={labels} colorOf={colorOf} lowerBetter={lowerBetter} value={lb} onChange={setLb} />
+      <InlineLeaderboard projectId={projectId} evals={evals} metrics={metrics} labels={labels} colorOf={colorOf} lowerBetter={lowerBetter} value={lb} onChange={setLb} />
       <MetricsSection
         evals={evals}
         metrics={metrics}

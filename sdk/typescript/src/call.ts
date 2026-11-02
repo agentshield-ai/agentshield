@@ -91,6 +91,30 @@ export class Call {
     return `weft:///${this.projectId}/call/${this.id}`;
   }
 
+  /** A ref to this call. */
+  get ref(): Ref {
+    const [entity, project] = this.projectId.split('/');
+    return new Ref(entity, project, 'call', this.id);
+  }
+
+  /** Link to this call in the Weft UI. */
+  get uiUrl(): string {
+    return `${this.client?.serverUrl ?? ''}/${this.projectId}/calls/${this.id}`;
+  }
+
+  /** `success`, `error`, `running` or `descendant_error` (server value when fetched). */
+  get status(): string {
+    const s = this.summary?.weave?.status;
+    if (typeof s === 'string' && s) return s;
+    if (this.exception) return 'error';
+    return this.endedAt ? 'success' : 'running';
+  }
+
+  /** Direct children of this call (oldest first). */
+  children(): Promise<Call[]> {
+    return this.c().getCalls({ filter: { parent_ids: [this.id] }, sortBy: [{ field: 'started_at', direction: 'asc' }] });
+  }
+
   private c(): WeftClient {
     if (!this.client) throw new Error('call is not attached to a client');
     return this.client;
@@ -183,6 +207,14 @@ export class CallFeedback {
     const ref = spec.__weftRef ?? (await this.client.publish(spec));
     if (spec.valueIsValid && !spec.valueIsValid(value)) throw new Error(`value ${JSON.stringify(value)} does not match annotation spec ${ref.name}`);
     return this.add(`wandb.annotation.${ref.name}`, { value }, { annotation_ref: ref.uri() });
+  }
+
+  /** Delete one feedback item by id. */
+  async purge(feedbackId: string): Promise<void> {
+    await this.client.http.post('/feedback/purge', {
+      project_id: this.call.projectId,
+      query: { $expr: { $eq: [{ $getField: 'id' }, { $literal: feedbackId }] } },
+    });
   }
 
   async list(): Promise<any[]> {

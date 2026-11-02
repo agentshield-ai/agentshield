@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, setApiKey } from './api/client'
 import { Loading } from './components/common'
-import { Logo, PlainLayout, ProjectLayout } from './components/Layout'
+import { PlainLayout, ProjectLayout } from './components/Layout'
+import { LoginScreen } from './components/LoginScreen'
 
 const lazyNamed = <K extends string>(loader: () => Promise<Record<K, React.ComponentType<any>>>, name: K) =>
   lazy(() => loader().then((m) => ({ default: m[name] })))
@@ -29,6 +30,7 @@ const LeaderboardPage = lazyNamed(() => import('./pages/leaderboards/Leaderboard
 const MonitorsPage = lazyNamed(() => import('./pages/monitors/MonitorsPage'), 'MonitorsPage')
 const MonitorPage = lazyNamed(() => import('./pages/monitors/MonitorPage'), 'MonitorPage')
 const SettingsPage = lazyNamed(() => import('./pages/settings/SettingsPage'), 'SettingsPage')
+const AdminPage = lazyNamed(() => import('./pages/admin/AdminPage'), 'AdminPage')
 const QueuesPage = lazyNamed(() => import('./pages/queues/QueuesPage'), 'QueuesPage')
 const QueueReviewPage = lazyNamed(() => import('./pages/queues/QueueReviewPage'), 'QueueReviewPage')
 const AutomationsPage = lazyNamed(() => import('./pages/automations/AutomationsPage'), 'AutomationsPage')
@@ -46,7 +48,6 @@ function WeaveCallRedirect() {
 function AuthGate({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const check = useQuery({ queryKey: ['auth-check'], queryFn: api.authCheck, retry: false })
-  const [key, setKey] = useState('')
   const authed = check.isSuccess
   useEffect(() => {
     if (!authed) return
@@ -65,26 +66,12 @@ function AuthGate({ children }: { children: ReactNode }) {
   if (check.isLoading) return <Loading />
   if (check.error instanceof ApiError && check.error.status === 401) {
     return (
-      <div className="empty" style={{ maxWidth: 420, margin: '10vh auto' }}>
-        <div className="col" style={{ alignItems: 'center', gap: 14 }}>
-          <Logo />
-          <h2>This Weft server needs an API key</h2>
-          <form
-            className="row"
-            style={{ width: '100%' }}
-            onSubmit={(e) => {
-              e.preventDefault()
-              setApiKey(key.trim())
-              void qc.invalidateQueries()
-            }}
-          >
-            <input className="input grow" type="password" placeholder="API key" value={key} onChange={(e) => setKey(e.target.value)} autoFocus />
-            <button className="btn primary" type="submit">
-              Continue
-            </button>
-          </form>
-        </div>
-      </div>
+      <LoginScreen
+        onKey={(key) => {
+          setApiKey(key)
+          void qc.invalidateQueries()
+        }}
+      />
     )
   }
   return <>{children}</>
@@ -97,6 +84,7 @@ export function App() {
         <Routes>
           <Route element={<PlainLayout />}>
             <Route path="/" element={<ProjectsPage />} />
+            <Route path="/admin" element={<AdminPage />} />
           </Route>
           <Route path="/:entity/:project" element={<ProjectLayout />}>
             <Route index element={<Navigate to="traces" replace />} />

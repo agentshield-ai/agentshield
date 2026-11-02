@@ -12,6 +12,10 @@ import { JsonBlock } from '../../components/ValueView'
 import { ChatMessageView, findInputMessages, normaliseMessage } from '../../components/traces/ChatView'
 import { Dropdown, MenuItem } from '../../components/traces/Menu'
 import { slugify } from '../../components/traces/callUtils'
+import { HistoryPanel } from '../../components/playground/HistoryPanel'
+import { ImageMode } from '../../components/playground/ImageMode'
+import { addRun, loadRuns, saveRuns, type PlaygroundRun } from '../../components/playground/history'
+import type { ImageInputs } from '../../api/playground'
 
 // ---------------------------------------------------------------- model
 
@@ -156,6 +160,28 @@ function applyDelta(msg: ChatMessage, delta: Any): ChatMessage {
   return next
 }
 
+/** Messages, params and model from completion inputs (a call's or a history run's). */
+function stateFromInputs(inputs: Any): { msgs: EditMsg[]; params: Params; model: string | null } | null {
+  const msgs = findInputMessages(inputs)
+  if (!msgs) return null
+  const system = typeof inputs?.system === 'string' && !msgs.some((m) => m?.role === 'system') ? [{ id: uid(), role: 'system', content: inputs.system }] : []
+  const p: Params = { ...DEFAULT_PARAMS }
+  for (const k of ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'] as const) if (typeof inputs[k] === 'number') p[k] = inputs[k]
+  if (Array.isArray(inputs.stop)) p.stop = inputs.stop.join(', ')
+  else if (typeof inputs.stop === 'string') p.stop = inputs.stop
+  if (inputs.response_format?.type === 'json_object') p.json = true
+  if (Array.isArray(inputs.tools)) p.tools = JSON.stringify(inputs.tools, null, 2)
+  return { msgs: [...system, ...msgs.map(toEditMsg)], params: p, model: typeof inputs.model === 'string' ? inputs.model : null }
+}
+
+function messageText(m: ChatMessage | undefined): string {
+  if (!m) return ''
+  if (typeof m.content === 'string' && m.content) return m.content
+  if (Array.isArray(m.content)) return m.content.map((x: Any) => (typeof x?.text === 'string' ? x.text : '')).join(' ')
+  if (Array.isArray(m.tool_calls) && m.tool_calls.length) return `→ ${m.tool_calls.map((t: Any) => t?.function?.name).join(', ')}()`
+  return ''
+}
+
 function pickDefaultModel(models: LLMModelInfo[]): string {
   const avail = models.filter((m) => m.available)
   return (avail.find((m) => m.id === 'gpt-4o-mini') ?? avail.find((m) => !m.id.startsWith('mock/')) ?? avail[0])?.id ?? 'mock/echo'
@@ -185,6 +211,42 @@ export function PlaygroundPage() {
   varsRef.current = vars
   const [loadNote, setLoadNote] = useState<string | null>(null)
   const aborts = useRef(new Map<string, AbortController>())
+  // Run history: this browser's runs (localStorage) plus tracked calls on the server.
+  const mode: 'chat' | 'image' = params.get('mode') === 'image' ? 'image' : 'chat'
+  const [showHistory, setShowHistory] = useState(() => {
+    try {
+      return localStorage.getItem('weft.playground.showHistory') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleHistory = (on: boolean) => {
+    setShowHistory(on)
+    try {
+      localStorage.setItem('weft.playground.showHistory', on ? '1' : '0')
+    } catch {
+      /* storage unavailable */
+    }
+  }
+  const [history, setHistory] = useState<PlaygroundRun[]>(() => loadRuns(projectId))
+  const record = useRef((run: PlaygroundRun) => {
+    setHistory((h) => {
+      const next = addRun(h, run)
+      saveRuns(projectId, next)
+      return next
+    })
+  })
+  const [imageInitial, setImageInitial] = useState<(Partial<ImageInputs> & { nonce: number }) | undefined>()
+  const setMode = (m: 'chat' | 'image') =>
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p)
+        if (m === 'chat') n.delete('mode')
+        else n.set('mode', m)
+        return n
+      },
+      { replace: true },
+    )
 
   // Default model once the list arrives.
   useEffect(() => {
@@ -197,22 +259,14 @@ export function PlaygroundPage() {
   useEffect(() => {
     const c = callQ.data?.call
     if (!c) return
-    const msgs = findInputMessages(c.inputs)
-    if (!msgs) {
+    const st = stateFromInputs(c.inputs ?? {})
+    if (!st) {
       setLoadNote(`Call ${c.id.slice(0, 8)} has no chat messages in its inputs.`)
       return
     }
-    const inputs: Any = c.inputs ?? {}
-    const system = typeof inputs.system === 'string' && !msgs.some((m) => m?.role === 'system') ? [{ id: uid(), role: 'system', content: inputs.system }] : []
-    setShared([...system, ...msgs.map(toEditMsg)])
+    setShared(st.msgs)
     setSync(true)
-    const p: Params = { ...DEFAULT_PARAMS }
-    for (const k of ['temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'] as const) if (typeof inputs[k] === 'number') p[k] = inputs[k]
-    if (Array.isArray(inputs.stop)) p.stop = inputs.stop.join(', ')
-    else if (typeof inputs.stop === 'string') p.stop = inputs.stop
-    if (inputs.response_format?.type === 'json_object') p.json = true
-    if (Array.isArray(inputs.tools)) p.tools = JSON.stringify(inputs.tools, null, 2)
-    const model = typeof inputs.model === 'string' ? inputs.model : null
+    const { params: p, model } = st
     setPanels((ps) => ps.map((x, i) => (i === 0 ? { ...x, model: model ?? x.model, params: p, result: null } : x)))
     setLoadNote(`Loaded from call ${c.id.slice(0, 8)}${model ? ` (${model})` : ''}.`)
   }, [callQ.data])
@@ -269,6 +323,19 @@ export function PlaygroundPage() {
         setPanel(panel.id, {
           result: { running: false, message: msg, usage, callId, finishReason: finish, error: streamError, latencyMs: performance.now() - t0, raw: chunks, streamed: true },
         })
+        record.current({
+          id: callId ?? `local-${Date.now()}-${panel.id}`,
+          at: new Date().toISOString(),
+          mode: 'chat',
+          model: panel.model,
+          inputs: inputs as Any,
+          output: messageText(msg),
+          callId,
+          latencyMs: performance.now() - t0,
+          tokens: (usage as Any)?.total_tokens,
+          error: streamError,
+          source: 'local',
+        })
       } catch (e) {
         if (ctrl.signal.aborted) {
           setPanel(panel.id, { result: { running: false, message: msg, error: 'Stopped', latencyMs: performance.now() - t0, callId, streamed: true } })
@@ -283,6 +350,19 @@ export function PlaygroundPage() {
         try {
           const r = await api.completionsCreate(projectId, inputs)
           const resp = r.response
+          record.current({
+            id: r.weave_call_id ?? `local-${Date.now()}-${panel.id}`,
+            at: new Date().toISOString(),
+            mode: 'chat',
+            model: panel.model,
+            inputs: inputs as Any,
+            output: messageText(resp.choices?.[0]?.message),
+            callId: r.weave_call_id,
+            latencyMs: performance.now() - t0,
+            tokens: resp.usage?.total_tokens,
+            error: resp.error,
+            source: 'local',
+          })
           setPanel(panel.id, {
             result: {
               running: false,
@@ -324,6 +404,31 @@ export function PlaygroundPage() {
         ? ps
         : [...ps, { id: uid(), model: ps[ps.length - 1]?.model ?? pickDefaultModel(models), params: { ...(ps[ps.length - 1]?.params ?? DEFAULT_PARAMS) }, messages: (ps[ps.length - 1]?.messages ?? []).map((m) => ({ ...m, id: uid() })), result: null, showParams: false }],
     )
+
+  const openRun = (run: PlaygroundRun, target: 'replace' | 'new') => {
+    if (run.mode === 'image') {
+      setMode('image')
+      setImageInitial({ model: run.model, prompt: String(run.inputs.prompt ?? ''), size: typeof run.inputs.size === 'string' ? run.inputs.size : undefined, n: typeof run.inputs.n === 'number' ? run.inputs.n : undefined, nonce: Date.now() })
+      return
+    }
+    const st = stateFromInputs(run.inputs)
+    if (!st) {
+      setLoadNote('That run has no chat messages to load.')
+      return
+    }
+    setMode('chat')
+    const result: RunResult | null = run.output || run.error ? { running: false, message: { role: 'assistant', content: run.output }, callId: run.callId, latencyMs: run.latencyMs, error: run.error } : null
+    if (target === 'new' && panels.length < MAX_PANELS) {
+      // A run with its own messages: give every panel its own list.
+      const copies = panels.map((p) => ({ ...p, messages: (sync ? shared : p.messages).map((m) => ({ ...m, id: uid() })) }))
+      setSync(false)
+      setPanels([...copies, { id: uid(), model: st.model ?? pickDefaultModel(models), params: st.params, messages: st.msgs, result, showParams: false }])
+    } else {
+      if (sync) setShared(st.msgs)
+      setPanels((ps) => ps.map((x, i) => (i === 0 ? { ...x, model: st.model ?? x.model, params: st.params, messages: sync ? x.messages : st.msgs, result } : x)))
+    }
+    setLoadNote(`Loaded a ${run.source === 'server' ? 'tracked' : 'previous'} run of ${run.model} from ${new Date(run.at).toLocaleString()}.`)
+  }
 
   const loadPrompt = (o: ObjSchema, fromUrl = false) => {
     const v = o.val ?? {}
@@ -369,7 +474,20 @@ export function PlaygroundPage() {
         <button className="btn sm" onClick={() => setSaveModelOpen(true)} title="Save a panel's model, parameters and messages as a model you can evaluate">
           Save as model
         </button>
+        <div className="seg" role="group" aria-label="Playground mode">
+          <button className={mode === 'chat' ? 'on' : ''} aria-pressed={mode === 'chat'} onClick={() => setMode('chat')}>
+            Chat
+          </button>
+          <button className={mode === 'image' ? 'on' : ''} aria-pressed={mode === 'image'} onClick={() => setMode('image')}>
+            Image
+          </button>
+        </div>
+        <button className={`btn sm ${showHistory ? 'primary' : ''}`} aria-pressed={showHistory} onClick={() => toggleHistory(!showHistory)} title="Past runs in this browser and tracked calls">
+          History{history.length ? ` (${history.length})` : ''}
+        </button>
         <span className="spacer" />
+        {mode === 'chat' && (
+        <>
         <label className="checkbox small" title="Edit one message list shared by all panels">
           <input type="checkbox" checked={sync} onChange={(e) => toggleSync(e.target.checked)} /> Sync messages
         </label>
@@ -379,6 +497,8 @@ export function PlaygroundPage() {
         <button className="btn sm primary" onClick={runAll} title="Run all panels (Ctrl+Enter)">
           Run{panels.length > 1 ? ' all' : ''} <kbd className="kbd-inline">⌘↵</kbd>
         </button>
+        </>
+        )}
       </div>
       {loadNote && (
         <div className="info-box row">
@@ -389,6 +509,31 @@ export function PlaygroundPage() {
         </div>
       )}
       <ErrorBox error={modelsQ.error ?? callQ.error ?? promptQ.error} />
+      <div className={showHistory ? 'pg-layout' : undefined}>
+      <div className="col" style={{ gap: 14, minWidth: 0 }}>
+      {mode === 'image' ? (
+        <ImageMode
+          projectId={projectId}
+          models={models}
+          initial={imageInitial}
+          onRun={(inputs, r) =>
+            record.current({
+              id: r.callId ?? `local-${Date.now()}`,
+              at: new Date().toISOString(),
+              mode: 'image',
+              model: inputs.model,
+              inputs: { ...inputs },
+              output: `${r.response?.data?.length ?? 0} image${r.response?.data?.length === 1 ? '' : 's'}`,
+              callId: r.callId,
+              latencyMs: r.latencyMs,
+              error: r.error,
+              images: r.response?.data?.length ?? 0,
+              source: 'local',
+            })
+          }
+        />
+      ) : (
+      <>
       <VariablesCard names={templateVars(sync ? shared : panels.flatMap((p) => p.messages))} values={vars} onChange={setVars} />
       <div className="pg-grid" style={{ gridTemplateColumns: `repeat(${panels.length}, minmax(300px, 1fr))` }}>
         {panels.map((p, i) => (
@@ -407,6 +552,23 @@ export function PlaygroundPage() {
             onStop={() => aborts.current.get(p.id)?.abort()}
           />
         ))}
+      </div>
+      </>
+      )}
+      </div>
+      {showHistory && (
+        <HistoryPanel
+          projectId={projectId}
+          local={history}
+          onOpen={openRun}
+          canAddPanel={panels.length < MAX_PANELS}
+          onClear={() => {
+            setHistory([])
+            saveRuns(projectId, [])
+          }}
+          onClose={() => toggleHistory(false)}
+        />
+      )}
       </div>
       {saveModelOpen && <SaveModelModal projectId={projectId} panels={panels.map((p) => ({ ...p, messages: panelMessages(p) }))} onClose={() => setSaveModelOpen(false)} />}
       {saveOpen && <SavePromptModal projectId={projectId} messages={sync ? shared : (panels[0]?.messages ?? [])} onClose={() => setSaveOpen(false)} />}

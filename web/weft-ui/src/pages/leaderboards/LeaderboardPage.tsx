@@ -7,6 +7,7 @@ import type { LeaderboardComputeRes } from '../../api/types'
 import { Empty, ErrorBox, Loading } from '../../components/common'
 import { LeaderboardEditor } from '../../components/evals/LeaderboardEditor'
 import { fmtMetric, toNum } from '../../components/evals/evalUtils'
+import { encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative } from '../../lib/format'
 import { callUrl, compareEvaluationsUrl, newEvaluationUrl, objectUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
@@ -90,6 +91,15 @@ export function LeaderboardPage() {
             <Link className="btn ghost" to={objectVersionsUrl(projectId, objectId)}>
               v{data.leaderboard.version_index} · history
             </Link>
+            {Array.isArray(data.leaderboard.val?.weft_dynamic?.evaluation_call_ids) && data.leaderboard.val.weft_dynamic.evaluation_call_ids.length > 0 && (
+              <Link
+                className="btn ghost"
+                title="Open the evaluation comparison this leaderboard was saved from"
+                to={`${compareEvaluationsUrl(projectId, data.leaderboard.val.weft_dynamic.evaluation_call_ids)}${Array.isArray(data.leaderboard.val.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.val.weft_dynamic.metrics))}` : ''}`}
+              >
+                Source comparison
+              </Link>
+            )}
             <button
               className="btn"
               disabled={!data.rows.length}

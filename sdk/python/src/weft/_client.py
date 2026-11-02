@@ -556,6 +556,32 @@ class WeftClient:
         self.flush()
         return self._http.request_raw("POST", "/file/content", {"project_id": self.project_id, "digest": file_digest})
 
+    def resolve_url(self, target: Any, expires_in: Optional[int] = None) -> Any:
+        """Download URL(s) via ``/files/resolve_url``.
+
+        ``target`` is a file digest, a ``weft-file://<digest>``/``s3://bucket/key``/``https://`` URI,
+        a ``Content`` value, or a list of these (then a list is returned). Files in the server's S3
+        backend and ``s3://`` references in its bucket get presigned URLs; other files get this
+        server's ``/file/content`` URL; HTTP(S) URLs come back unchanged.
+        """
+        from ._content import Content
+
+        def one(t: Any) -> str:
+            if isinstance(t, Content):
+                return t.uri if t.uri is not None else t.digest
+            if isinstance(t, dict) and (t.get("uri") or t.get("file_digest")):
+                return t.get("uri") or t["file_digest"]
+            return str(t)
+
+        items = list(target) if isinstance(target, (list, tuple)) else [target]
+        uris = [one(t) for t in items]
+        self.flush()  # pending uploads must exist before their digests resolve
+        body: Dict[str, Any] = {"project_id": self.project_id, "uris": uris}
+        if expires_in is not None:
+            body["expires_in"] = int(expires_in)
+        urls = list(self._http.post("/files/resolve_url", body).get("download_urls") or [])
+        return urls if isinstance(target, (list, tuple)) else (urls[0] if urls else None)
+
     # ------------------------------------------------------------------ evaluations (server side)
     def _uri_of(self, obj: Any) -> str:
         if isinstance(obj, str):

@@ -141,7 +141,6 @@ class RealtimeTracer:
                 return
             if t == "response.create":
                 self.response_overrides = dict(e.get("response") or {})
-                self._ensure_session()
                 return
             if t == "conversation.item.create":
                 item = e.get("item") or {}
@@ -155,7 +154,6 @@ class RealtimeTracer:
                             pass
                         finish_call(self.client, call, out)
                 self.pending.append(_strip_audio(item))
-                self._ensure_session()
 
     def on_server_event(self, event: Any) -> None:
         e = _event(event)

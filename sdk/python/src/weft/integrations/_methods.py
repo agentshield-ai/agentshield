@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 from .. import _context
 from . import _settings
-from ._common import patch_attr
+from ._common import is_patched, patch_attr, register_undo
 
 logger = logging.getLogger("weft")
 
@@ -277,6 +277,48 @@ def _subclasses(cls: type) -> List[type]:
     return out
 
 
+def _watch_subclasses(owner: type, attr: str, make: Callable[[Any], Any]) -> None:
+    """Patch ``attr`` on subclasses of ``owner`` defined later (user models, tools ...)."""
+    hooks = owner.__dict__.get("_weft_subclass_hooks")
+    if hooks is None:
+        hooks = []
+        prev = owner.__dict__.get("__init_subclass__")
+
+        def __init_subclass__(cls: type, **kwargs: Any) -> None:
+            if prev is not None:
+                fn = getattr(prev, "__func__", prev)
+                fn(cls, **kwargs)
+            else:
+                super(owner, cls).__init_subclass__(**kwargs)
+            for a, mk in owner.__dict__.get("_weft_subclass_hooks") or ():
+                v = cls.__dict__.get(a)
+                if v is not None and not is_patched(v):
+                    try:
+                        patch_attr(cls, a, mk)
+                    except Exception as e:  # pragma: no cover - never break class creation
+                        logger.debug("weft: cannot patch %s.%s: %s", cls.__name__, a, e)
+
+        try:
+            type.__setattr__(owner, "_weft_subclass_hooks", hooks)
+            type.__setattr__(owner, "__init_subclass__", classmethod(__init_subclass__))
+        except (TypeError, AttributeError):  # e.g. extension types
+            return
+
+        def undo() -> None:
+            try:
+                if prev is not None:
+                    type.__setattr__(owner, "__init_subclass__", prev)
+                else:
+                    type.__delattr__(owner, "__init_subclass__")
+                type.__delattr__(owner, "_weft_subclass_hooks")
+            except (TypeError, AttributeError):  # pragma: no cover
+                pass
+
+        register_undo(undo)
+    if not any(a == attr for a, _ in hooks):
+        hooks.append((attr, make))
+
+
 def patch_methods(integration: str, module: Optional[str], methods: Iterable[Method]) -> bool:
     """Patch every method that exists; missing modules/attributes are skipped."""
     patched = False
@@ -302,6 +344,7 @@ def patch_methods(integration: str, module: Optional[str], methods: Iterable[Met
         owners = [owner]
         if m.subclasses and isinstance(owner, type):
             owners += [c for c in _subclasses(owner) if attr in c.__dict__]
+            _watch_subclasses(owner, attr, lambda orig, mm=m: _make_any(integration, orig, mm))
         for o in owners:
             if isinstance(o, type) and attr not in o.__dict__ and o is not owner:
                 continue

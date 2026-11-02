@@ -10,7 +10,7 @@ const apiPrefixes = [
   '/evaluations/', '/leaderboard/', '/threads/', '/project/', '/projects', '/server_info',
   '/health', '/auth/', '/otel/', '/agents/',
   '/annotation_queues', '/automations/', '/embeddings/',
-  '/api_keys/', '/dataset_sources/', '/files/', '/trace/', '/v2/', '^/(tags|aliases)(\\?.*)?$',
+  '/api_keys/', '/users/', '/teams/', '/audit/', '/dataset_sources/', '/files/', '/trace/', '/v2/', '^/(tags|aliases)(\\?.*)?$',
 ]
 
 export default defineConfig({

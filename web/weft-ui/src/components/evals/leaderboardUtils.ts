@@ -74,3 +74,38 @@ export function decodeLb(s: string | null | undefined): LbMetric[] {
     })
     .filter((m) => m.key)
 }
+
+export interface LeaderboardColumnSpec {
+  evaluation_object_ref: string
+  scorer_name: string
+  summary_metric_path: string
+  should_minimize: boolean
+}
+
+/** Splits a compare metric into the scorer name and the path inside its summary. */
+export function metricColumn(m: { key: string; scorer?: string; path?: string }): { scorer_name: string; summary_metric_path: string } {
+  if (m.scorer) return { scorer_name: m.scorer, summary_metric_path: m.path || m.key.slice(m.scorer.length + 1) }
+  const [head, ...rest] = m.key.split('.')
+  return { scorer_name: head, summary_metric_path: rest.join('.') }
+}
+
+/**
+ * Leaderboard columns for a dynamic (compare view) leaderboard: one column
+ * per weighted metric and distinct evaluation, so the saved Leaderboard
+ * ranks every model evaluated with those evaluations, not just these runs.
+ */
+export function leaderboardColumns(
+  evals: { evaluation_ref: string }[],
+  selected: LbMetric[],
+  metrics: { key: string; scorer?: string; path?: string }[],
+): LeaderboardColumnSpec[] {
+  const refs = [...new Set(evals.map((e) => e.evaluation_ref).filter(Boolean))]
+  const out: LeaderboardColumnSpec[] = []
+  for (const ref of refs)
+    for (const s of selected) {
+      if (s.weight <= 0) continue
+      const m = metrics.find((x) => x.key === s.key) ?? { key: s.key }
+      out.push({ evaluation_object_ref: ref, ...metricColumn(m), should_minimize: s.lowerBetter })
+    }
+  return out
+}

@@ -4,6 +4,7 @@ import { dashboardsApi, type DashboardPanel, type DashboardVal, type MetricsRes 
 import { ErrorBox, Spinner } from '../common'
 import { SERIES_COLORS } from '../evals/evalUtils'
 import { fmtValue, groupLabel, metricLabel, metricName, panelRequest, toChartData, valueKind, type ChartSeries } from './dashboardUtils'
+import { ScatterPanel } from './ScatterChart'
 import './dashboards.css'
 
 const AXIS = { fontSize: 10, fill: 'var(--text-3)' }
@@ -60,7 +61,9 @@ export function PanelChart({
     queryFn: () => dashboardsApi.callsMetrics(panelRequest(projectId, panel, dash)),
     refetchInterval: refreshMs || false,
     placeholderData: (prev) => prev,
+    enabled: panel.chart !== 'scatter',
   })
+  if (panel.chart === 'scatter') return <ScatterPanel projectId={projectId} panel={panel} dash={dash} refreshMs={refreshMs} height={height} />
   if (q.isLoading)
     return (
       <div className="dash-chart-empty" style={{ height }}>

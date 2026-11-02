@@ -361,3 +361,48 @@ def test_dataset_select_after_publish(client, fake):
     assert [r["i"] for r in sub.rows] == [1, 2]
     ref = weft.publish(sub, name="sel-small")
     assert client.get(ref).rows[1]["i"] == 2
+
+
+# ---------------------------------------------------------------- bring-your-own-bucket media
+
+
+def test_content_from_uri_is_logged_by_reference(client, fake):
+    img = weft.Image.from_uri("s3://my-bucket/photos/cat.png")
+    doc = weft.Content.from_uri("https://example.com/report.pdf", size=1234)
+    vid = weft.Video.from_uri("s3://my-bucket/clip.mp4", mimetype="video/mp4")
+    assert img.is_reference and img.mimetype == "image/png" and img.filename == "cat.png"
+    assert doc.mimetype == "application/pdf" and doc.size == 1234
+    assert "s3://my-bucket" in repr(img)
+    with pytest.raises(ValueError):
+        weft.Content.from_uri("not-a-uri")
+
+    @weft.op
+    def describe(image, doc, clip) -> str:
+        return "a cat"
+
+    describe(img, doc, vid)
+    client.flush()
+    [c] = [c for c in fake.calls.values() if fake.op_base(c) == "describe"]
+    assert c["inputs"]["image"] == {"_type": "Image", "uri": "s3://my-bucket/photos/cat.png", "mime_type": "image/png", "filename": "cat.png"}
+    assert c["inputs"]["doc"] == {"_type": "Content", "mimetype": "application/pdf", "filename": "report.pdf", "uri": "https://example.com/report.pdf", "size": 1234}
+    assert c["inputs"]["clip"]["_type"] == "Video" and c["inputs"]["clip"]["uri"] == "s3://my-bucket/clip.mp4"
+    assert not fake.files  # nothing was uploaded
+    assert not [r for r in fake.requests if r["path"] == "/file/create"]
+
+
+def test_resolve_url_and_reading_referenced_content(client, fake):
+    data = weft.Content(b"bytes in weft", mimetype="text/plain")
+
+    @weft.op
+    def keep(x) -> None:
+        return None
+
+    keep(data)  # uploads the file
+    assert client.resolve_url(data) == f"{fake.url}/file/content?project_id=test-entity/test-proj&digest={data.digest}"
+    urls = client.resolve_url(["s3://bucket/k.png", "https://x.test/a.png", f"weft-file://{data.digest}"], expires_in=60)
+    assert urls[0].startswith("https://s3.fake/bucket/k.png") and urls[1] == "https://x.test/a.png" and urls[2].endswith(data.digest)
+    body = [r["body"] for r in fake.requests if r["path"] == "/files/resolve_url"][-1]
+    assert body["expires_in"] == 60 and body["project_id"] == "test-entity/test-proj"
+    ref = weft.Content.from_uri(f"weft-file://{data.digest}", mimetype="text/plain")
+    assert ref.as_text() == "bytes in weft"  # resolved, then downloaded
+    assert ref.resolve_url().endswith(data.digest)

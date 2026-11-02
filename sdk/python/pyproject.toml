@@ -22,6 +22,18 @@ otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 images = ["pillow"]
+# Local small-model scorers (weft.local_scorers) and transformers-based PII NER.
+scorers = [
+  "transformers>=4.40",
+  "torch>=2.1",
+  "numpy",
+  "sentencepiece",
+  "presidio-analyzer>=2.2",
+  "presidio-anonymizer>=2.2",
+]
+# NER-based PII redaction with Presidio (also needs a spaCy model, e.g.
+# `python -m spacy download en_core_web_lg`).
+pii = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]
 test = ["pytest>=7", "pytest-asyncio>=0.21"]
 
 [tool.hatch.build.targets.wheel]

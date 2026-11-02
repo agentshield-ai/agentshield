@@ -229,6 +229,21 @@ function AddMemberModal({ projectId, existing, onClose, onDone }: { projectId: s
 
 // ================================================================ audit log
 
+function IdList({ ids }: { ids: string[] }) {
+  if (ids.length === 0) return <span className="faint">—</span>
+  const shown = ids.slice(0, 2)
+  return (
+    <span title={ids.join('\n')}>
+      {shown.map((id) => (
+        <div key={id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {id}
+        </div>
+      ))}
+      {ids.length > shown.length && <div className="faint">+{ids.length - shown.length} more</div>}
+    </span>
+  )
+}
+
 const OUTCOMES = ['success', 'denied', 'unauthenticated', 'failed'] as const
 const PAGE = 50
 
@@ -368,7 +383,7 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
                         </td>
                         <td className="mono small">{e.project_id ?? <span className="faint">—</span>}</td>
                         <td className="mono small" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {[...e.object_ids, ...e.call_ids].join(', ') || <span className="faint">—</span>}
+                          <IdList ids={[...e.object_ids, ...e.call_ids]} />
                         </td>
                         <td>
                           <span className={`badge ${e.outcome === 'success' ? 'success' : e.outcome === 'failed' ? 'warn' : 'error'}`} title={String(e.status)}>

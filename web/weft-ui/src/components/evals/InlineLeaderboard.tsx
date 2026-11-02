@@ -1,8 +1,99 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { leaderboardsApi } from '../../api/leaderboards'
 import type { CompareEvaluation, CompareMetric } from '../../api/types'
-import { Section } from '../common'
+import { leaderboardUrl } from '../../lib/urls'
+import { ErrorBox, Modal, Section } from '../common'
+import { classVal } from '../objects/objectUtils'
+import { slugify } from '../traces/callUtils'
 import { fmtMetric, toNum } from './evalUtils'
-import { rankRuns, type LbMetric } from './leaderboardUtils'
+import { leaderboardColumns, rankRuns, type LbMetric } from './leaderboardUtils'
+
+function SaveLeaderboardModal({
+  projectId,
+  evals,
+  selected,
+  metrics,
+  onClose,
+}: {
+  projectId: string
+  evals: CompareEvaluation[]
+  selected: LbMetric[]
+  metrics: CompareMetric[]
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const evalNames = [...new Set(evals.map((e) => e.evaluation_name).filter(Boolean))]
+  const [name, setName] = useState(slugify(`${evalNames[0] ?? 'eval'}-leaderboard`))
+  const [description, setDescription] = useState(`Ranks models on ${evalNames.join(', ') || 'these evaluations'} by ${selected.map((s) => s.key).join(', ')}.`)
+  const columns = leaderboardColumns(evals, selected, metrics)
+  const save = useMutation({
+    mutationFn: async () => {
+      const id = slugify(name)
+      if (!id) throw new Error('Enter a name')
+      const val = {
+        ...classVal('Leaderboard', [], { name: id, description, columns }),
+        weft_dynamic: { evaluation_call_ids: evals.map((e) => e.call_id), metrics: selected },
+      }
+      await leaderboardsApi.save(projectId, id, val as Parameters<typeof leaderboardsApi.save>[2])
+      return id
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objs', projectId] }),
+  })
+  return (
+    <Modal
+      title="Save as leaderboard"
+      onClose={onClose}
+      footer={
+        save.isSuccess ? (
+          <>
+            <button className="btn" onClick={onClose}>
+              Close
+            </button>
+            <Link className="btn primary" to={leaderboardUrl(projectId, save.data)}>
+              Open leaderboard →
+            </Link>
+          </>
+        ) : (
+          <>
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={!slugify(name) || !columns.length || save.isPending} onClick={() => save.mutate()}>
+              Save
+            </button>
+          </>
+        )
+      }
+    >
+      <div className="col" style={{ gap: 10 }}>
+        <span className="small muted">
+          Saves a Leaderboard object with one column per metric and evaluation. Saving with an existing name creates a new version. The weights and the
+          compared runs are kept so the comparison can be reopened.
+        </span>
+        <label className="field">
+          Name
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </label>
+        <label className="field">
+          Description
+          <textarea className="input" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <div className="small">
+          <b>{columns.length}</b> column{columns.length === 1 ? '' : 's'}:{' '}
+          {columns.map((c, i) => (
+            <span key={i} className="chip mono" style={{ marginRight: 4 }}>
+              {c.scorer_name}.{c.summary_metric_path} {c.should_minimize ? '↓' : '↑'}
+            </span>
+          ))}
+        </div>
+        <ErrorBox error={save.error} />
+        {save.isSuccess && <div className="info-box">Saved leaderboard {save.data}.</div>}
+      </div>
+    </Modal>
+  )
+}
 
 const fmtVal = (v: unknown, kind: CompareMetric['kind']) => (kind === 'fraction' && typeof v === 'number' ? `${(v * 100).toFixed(1)}%` : fmtMetric(v))
 
@@ -15,7 +106,9 @@ export function InlineLeaderboard({
   lowerBetter,
   value,
   onChange,
+  projectId,
 }: {
+  projectId?: string
   evals: CompareEvaluation[]
   metrics: CompareMetric[]
   labels: Record<string, string>
@@ -26,6 +119,7 @@ export function InlineLeaderboard({
   onChange: (m: LbMetric[]) => void
 }) {
   const [configuring, setConfiguring] = useState(false)
+  const [saving, setSaving] = useState(false)
   const numeric = useMemo(() => metrics.filter((m) => evals.some((e) => toNum(m.values[e.call_id]) != null)), [metrics, evals])
   const defaults = useMemo<LbMetric[]>(() => {
     const scores = numeric.filter((m) => m.scorer && !/latency|tokens/.test(m.key) && !m.key.endsWith('.true_count'))
@@ -62,6 +156,11 @@ export function InlineLeaderboard({
           <button className="btn sm" aria-expanded={configuring} onClick={() => setConfiguring((c) => !c)}>
             {configuring ? 'Done' : 'Metrics & weights'}
           </button>
+          {projectId && (
+            <button className="btn sm" disabled={!active.length} onClick={() => setSaving(true)} title="Save these metrics as a Leaderboard object">
+              Save as leaderboard
+            </button>
+          )}
         </div>
       }
     >
@@ -173,6 +272,7 @@ export function InlineLeaderboard({
           </div>
         )}
       </div>
+      {saving && projectId && <SaveLeaderboardModal projectId={projectId} evals={evals} selected={active} metrics={numeric} onClose={() => setSaving(false)} />}
     </Section>
   )
 }

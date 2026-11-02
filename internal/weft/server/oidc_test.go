@@ -403,3 +403,21 @@ func TestParseGroupRoles(t *testing.T) {
 
 func ptr(s string) *string { return &s }
 func ptrBool(b bool) *bool { return &b }
+
+// TestPublicRoutesStayPublic: routes registered through publicRouteExtensions
+// (SSO, /version, /geolocate) need no key or session even with keys and SSO on.
+func TestPublicRoutesStayPublic(t *testing.T) {
+	e := newSSOEnv(t, "RS256", nil)
+	for _, p := range []string{"/version", "/geolocate", "/auth/sso", "/health", "/server_info"} {
+		if code, out := e.admDo("GET", p, "", nil); code != 200 {
+			t.Errorf("GET %s without credentials -> %d %s", p, code, out)
+		}
+	}
+	if code, _ := e.admDo("GET", "/projects", "", nil); code != 401 {
+		t.Fatalf("/projects should need auth: %d", code)
+	}
+	e2, _ := newIAMEnv(t, IAMConfig{})
+	if code, _ := e2.admDo("GET", "/version", "", nil); code != 200 {
+		t.Fatalf("/version with static keys -> %d", code)
+	}
+}

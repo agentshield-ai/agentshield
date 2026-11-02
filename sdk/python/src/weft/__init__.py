@@ -21,7 +21,7 @@ from ._client import (
     publish,
     ref,
 )
-from ._content import PDF, Content, Html, Markdown, Video
+from ._content import PDF, Audio, Content, Html, Image, Markdown, Video
 from ._context import ThreadPoolExecutor, Thread, attributes, get_current_call, thread, tracing_disabled
 from ._evaluation import Evaluation, EvaluationLogger, ScoreLogger, auto_summarize
 from ._http import WeftHTTPError
@@ -120,6 +120,8 @@ __all__ = [
     "ApplyScorerResult",
     "OpLoadError",
     "Content",
+    "Image",
+    "Audio",
     "Video",
     "PDF",
     "Html",

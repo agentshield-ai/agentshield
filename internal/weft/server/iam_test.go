@@ -394,6 +394,11 @@ func TestSessionsAndCSRF(t *testing.T) {
 	if code, _ := cookieDo(t, e, "POST", "/call/start", callStart("acme/app", "s1"), cs, map[string]string{csrfHeader: "wrong"}); code != 403 {
 		t.Fatalf("wrong CSRF -> %d", code)
 	}
+	s.FlushAudit()
+	if ents, _, _ := s.store.QueryAudit(t.Context(), store.AuditFilter{Outcome: "denied", PathPrefix: "/call/start"}); len(ents) != 1 ||
+		ents[0].Actor != "bob" || ents[0].AuthMethod != "session" {
+		t.Fatalf("CSRF denial audit = %+v", ents)
+	}
 	if code, out := cookieDo(t, e, "POST", "/call/start", callStart("acme/app", "s1"), cs, ok); code != 200 {
 		t.Fatalf("session write -> %d %s", code, out)
 	}

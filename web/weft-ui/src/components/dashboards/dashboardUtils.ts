@@ -352,3 +352,12 @@ export function scatterSeries(calls: Call[], xField: string, yField: string, gro
   if (rest.length) out.push({ group: '__other__', points: rest })
   return out
 }
+
+/** Switching to a scatter needs two numeric fields; switching away keeps them as averages. */
+export function withChart(p: DashboardPanel, chart: ChartType): DashboardPanel {
+  if (chart !== 'scatter' || p.chart === 'scatter') return { ...p, chart }
+  const fields = p.metrics.map((m) => m.field).filter((f): f is string => !!f)
+  const x = fields[0] ?? 'latency_ms'
+  const y = fields.find((f) => f !== x) ?? (x === 'total_tokens' ? 'latency_ms' : 'total_tokens')
+  return { ...p, chart, metrics: [{ agg: 'avg', field: x }, { agg: 'avg', field: y }] }
+}

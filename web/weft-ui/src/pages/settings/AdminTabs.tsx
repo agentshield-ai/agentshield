@@ -42,7 +42,7 @@ export function ApiKeysTab({ projectId }: { projectId: string }) {
             <label className="checkbox small">
               <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} /> Show revoked
             </label>
-            <button className="btn primary sm" disabled={p?.admin === false} onClick={() => setCreating(true)}>
+            <button className="btn primary sm" disabled={p?.admin === false && !p?.rbac} onClick={() => setCreating(true)}>
               + Create key
             </button>
           </div>
@@ -51,7 +51,9 @@ export function ApiKeysTab({ projectId }: { projectId: string }) {
         <div className="col" style={{ gap: 10 }}>
           <div className="hint">
             Keys are stored hashed; the secret is shown once when you create a key. A key can be limited to projects and made read-only. Admin keys can
-            also manage keys, secrets and project settings. Keys passed with <span className="mono">--api-keys</span> keep working and count as admin.
+            also manage keys, secrets and project settings. Keys passed with <span className="mono">--api-keys</span> keep working and count as admin. A key
+            whose user is a registered user (Users &amp; teams) carries that user's team and project roles; without admin rights you see and create
+            only your own keys.
           </div>
           {p && (
             <div className="kv">
@@ -134,7 +136,7 @@ export function ApiKeysTab({ projectId }: { projectId: string }) {
                             title={`Revoke "${k.name}"?`}
                             body="Requests with this key fail immediately. This cannot be undone."
                             confirmLabel="Revoke"
-                            disabled={p?.admin === false}
+                            disabled={p?.admin === false && !p?.rbac}
                             onConfirm={async () => {
                               await adminApi.apiKeyRevoke(k.id)
                               refresh()
@@ -156,6 +158,7 @@ export function ApiKeysTab({ projectId }: { projectId: string }) {
         <CreateKeyModal
           projectId={projectId}
           firstKey={!!p && !p.auth_required}
+          selfOnly={!!p && !p.admin}
           onClose={() => setCreating(false)}
           onCreated={(r) => {
             // On an open server the first key turns auth on: keep the UI signed in.
@@ -175,11 +178,13 @@ export function ApiKeysTab({ projectId }: { projectId: string }) {
 function CreateKeyModal({
   projectId,
   firstKey,
+  selfOnly,
   onClose,
   onCreated,
 }: {
   projectId: string
   firstKey: boolean
+  selfOnly?: boolean
   onClose: () => void
   onCreated: (r: { key: ManagedApiKey; secret: string }) => void
 }) {
@@ -228,7 +233,7 @@ function CreateKeyModal({
           Name
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="CI ingestion" autoFocus />
         </label>
-        <label className="field">
+        <label className="field" hidden={selfOnly}>
           User (recorded as wb_user_id)
           <input className="input mono" value={user} onChange={(e) => setUser(e.target.value.replace(/[^\w.@-]/g, ''))} placeholder="default" />
         </label>
@@ -249,7 +254,7 @@ function CreateKeyModal({
             <option value="read" disabled={firstKey}>
               Read-only
             </option>
-            <option value="admin">Admin (all projects, manages keys and settings)</option>
+            {!selfOnly && <option value="admin">Admin (all projects, manages keys and settings)</option>}
           </select>
         </label>
       </div>

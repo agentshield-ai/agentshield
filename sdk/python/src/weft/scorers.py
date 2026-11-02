@@ -506,7 +506,8 @@ __all__ = [
 _LOCAL = (
     "WeaveToxicityScorerV1", "WeaveBiasScorerV1", "WeaveCoherenceScorerV1", "WeaveFluencyScorerV1",
     "WeaveHallucinationScorerV1", "WeaveContextRelevanceScorerV1", "WeaveTrustScorerV1", "PresidioScorer",
-    "WeaveScorerResult",
+    "WeaveScorerResult", "ToxicityScorer", "BiasScorer", "CoherenceScorer", "FluencyScorer", "HallucinationScorer",
+    "ContextRelevanceScorer", "TrustScorer",
 )
 
 

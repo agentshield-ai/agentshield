@@ -115,7 +115,7 @@ type predictor struct {
 	llmModel map[string]any // model value passed to PredictWith (kind llm)
 	url      string
 	headers  map[string]string
-	secret   string // secret sent as a bearer token
+	secret   string         // secret sent as a bearer token
 	oauth    map[string]any // the model's auth_config; token_url selects OAuth client credentials (oauth.go)
 	timeout  time.Duration
 	extra    map[string]any // extra request fields (runtime_id)

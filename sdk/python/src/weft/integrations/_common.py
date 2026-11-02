@@ -14,6 +14,12 @@ from . import _settings
 logger = logging.getLogger("weft")
 
 _PATCHES: List[Tuple[Any, str, Any]] = []
+_UNDO: List[Callable[[], None]] = []
+
+
+def register_undo(fn: Callable[[], None]) -> None:
+    """Run ``fn`` on ``unpatch_all()`` (for patches that are not a plain attribute swap)."""
+    _UNDO.append(fn)
 
 
 def to_dict(obj: Any) -> Any:
@@ -57,6 +63,11 @@ def patch_attr(owner: Any, attr: str, make_wrapper: Callable[[Any], Any]) -> boo
 
 def unpatch_all() -> None:
     """Restore every method patched by weft integrations."""
+    while _UNDO:
+        try:
+            _UNDO.pop()()
+        except Exception:  # pragma: no cover
+            pass
     while _PATCHES:
         owner, attr, orig = _PATCHES.pop()
         try:

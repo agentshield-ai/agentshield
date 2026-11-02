@@ -35,6 +35,19 @@ make weft         # build bin/weft
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
+| `--oidc-issuer` | `WEFT_OIDC_ISSUER` | empty (no SSO); an OpenID Connect issuer URL turns on "Sign in with SSO" and makes authentication required |
+| `--oidc-client-id` | `WEFT_OIDC_CLIENT_ID` | required with `--oidc-issuer` |
+| `--oidc-client-secret` | `WEFT_OIDC_CLIENT_SECRET` | empty (public PKCE client); prefer the env var, flags show in process lists |
+| `--oidc-redirect-url` | `WEFT_OIDC_REDIRECT_URL` | required: `<public URL>/auth/oidc/callback`, registered with the provider |
+| `--oidc-allowed-domains` | `WEFT_OIDC_ALLOWED_DOMAINS` | empty; comma-separated email domains allowed to sign in (verified emails only) |
+| `--oidc-group-roles` | `WEFT_OIDC_GROUP_ROLES` | empty; `group=admin` (server admin) or `group=viewer\|member\|admin@team`, comma-separated |
+| `--oidc-groups-claim` | `WEFT_OIDC_GROUPS_CLAIM` | `groups` |
+| `--oidc-admin-emails` | `WEFT_OIDC_ADMIN_EMAILS` | empty; verified emails made server admins at sign-in |
+| `--oidc-scopes` | `WEFT_OIDC_SCOPES` | `openid,email,profile` |
+| `--session-ttl` | `WEFT_SESSION_TTL` | `12h` browser session lifetime |
+| `--secure-cookies` | `WEFT_SECURE_COOKIES` | auto (Secure on TLS or an https redirect URL); `true` behind a TLS-terminating proxy |
+| `--audit-retention-days` | `WEFT_AUDIT_RETENTION_DAYS` | `90`; `0` or `-1` keeps the audit log forever |
+| | `WEFT_SESSION_KEY` | session-cookie signing key (32+ chars); default is derived from the secret key |
 
 Provider keys for the playground, LLM judges and monitors come from the
 environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) or
@@ -43,6 +56,9 @@ work offline.
 
 For UI development: `./bin/weft` in one shell, `cd web/weft-ui && npm run dev`
 in another (Vite proxies API paths to `WEFT_SERVER_URL`, default `:6345`).
+To test SSO through Vite, register `http://localhost:5173/auth/oidc/callback`
+as the redirect URL and start Weft with `--cors-origins http://localhost:5173`
+(the proxy rewrites `Host`, so the session's same-origin check needs it).
 
 ## Send data
 
@@ -150,6 +166,7 @@ monitor and feedback, using offline mock models.
 | Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a call from its Scores tab (`/calls/score`). |
 | Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
 | Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
+| Access control | Users, teams (entities) and viewer/member/admin roles per team or project; API keys belong to users and carry their roles; OIDC single sign-on (PKCE) with auto-provisioning, domain and group-to-role mapping; an audit log of every write, admin action and refused request with query and CSV export. **Settings → Members / Audit log**, **Users & teams** page. |
 | Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest, project delete. Settings tabs for each; Weave paths (`/project/ttl_settings/*`, …). |
 
 ## Layout
@@ -183,14 +200,46 @@ committed UI build is stale.
 
 ## Security notes
 
-- Without `--api-keys` the server is open to anyone who can reach it. It
-  binds to loopback by default and logs a warning on other addresses.
-- Static `--api-keys` keys and managed admin keys can do everything. Managed
-  keys (**Settings → API keys**, stored hashed) can be limited to projects and
-  made read-only. Any key that can write to a project can use the stored
-  provider secrets through the playground and LLM judges. A `Provider`
-  object sends the secret named in `api_key_name` to its `base_url`, so only
-  give keys to people you would trust with those secrets.
+- Without `--api-keys`, managed keys or `--oidc-issuer` the server is open to
+  anyone who can reach it. It binds to loopback by default and logs a
+  warning on other addresses.
+- **Access model.** Static `--api-keys` keys and managed admin keys are
+  server admins. Users (**Users & teams**) hold roles: `viewer` (read),
+  `member` (also write calls, objects, feedback, run evaluations) and
+  `admin` (also manage members, keys, project settings and delete the
+  project), granted per team (an entity: every `team/*` project) or per
+  project; the stronger applies. Server admins (a user flag) are admin
+  everywhere and alone manage users, teams and provider secrets. Every
+  authenticated request is checked: reads need viewer on each project the
+  request names, writes need member, admin endpoints need admin; requests
+  that name no project are refused for non-admins.
+- **API keys.** A key whose `user_id` is a registered user is bound to it
+  and inherits that user's roles, optionally narrowed to projects or
+  read-only. Disabling the user disables the key at once. Users create and
+  revoke their own keys, never broader than the credential they use. Keys
+  for ids that are not users keep the earlier flag-based access.
+- **Sessions and SSO.** OIDC uses the authorization-code flow with PKCE,
+  state and nonce; ID tokens are verified against the issuer's JWKS
+  (RS256/ES256), audience and expiry. Sessions use an HttpOnly,
+  SameSite=Lax cookie (Secure on TLS) holding a random id and its HMAC; only
+  the id's SHA-256 is stored. Cookie-authenticated non-GET requests must
+  send the session's CSRF token (readable `weft_csrf` cookie) in
+  `X-Weft-CSRF`, and a foreign `Origin` is refused; API-key requests are
+  exempt. Sign-out, disabling a user and **Sign out everywhere** revoke
+  sessions server-side. Without `--oidc-allowed-domains` or
+  `--oidc-group-roles` any account of the provider can sign in, but it has
+  no access until granted a role.
+- **Audit log.** Writes, admin actions, sign-ins and refused requests are
+  recorded (actor, auth method, key id, method, path, project, object and
+  call ids, status, outcome, client IP); bodies and secret values are not.
+  Entries survive project deletion and are purged after
+  `--audit-retention-days`. Unauthenticated writes are recorded too, so a
+  flood of them grows the table until retention removes it; rate-limit at a
+  proxy if the server is exposed.
+- Any key that can write to a project can use the stored provider secrets
+  through the playground and LLM judges. A `Provider` object sends the
+  secret named in `api_key_name` to its `base_url`, so only give write
+  access to people you would trust with those secrets.
 - Provider secrets are encrypted at rest with AES-256-GCM. The key comes
   from `WEFT_SECRET_KEY` or a random key file created next to the database
   (`<db>.key`, mode 0600). Keep the key file off backups that hold the
@@ -198,3 +247,12 @@ committed UI build is stale.
   from older versions are re-encrypted at startup.
 - Uploaded files are served with `Content-Security-Policy: sandbox` and
   `nosniff` so they cannot run script in the UI's origin.
+- **The database is not encrypted at rest.** The pure-Go SQLite driver
+  (`modernc.org/sqlite`, no CGO) has no page-level encryption (SQLCipher
+  and SEE need CGO), so Weft does not encrypt the database file; only
+  provider secrets inside it are encrypted. Put the database on an
+  encrypted volume or filesystem (LUKS/dm-crypt, FileVault, BitLocker, an
+  encrypted cloud disk with KMS) and keep its permissions tight. New
+  databases are created mode 0600 (SQLite's `-wal` and `-shm` files follow),
+  and the server warns at startup when the database, its WAL/SHM files or
+  `<db>.key` are world-readable.

@@ -74,6 +74,10 @@ class FakeWeft:
                     return self._send(200, {"user_id": "anonymous", "auth_required": False})
                 if self.path == "/health":
                     return self._send(200, {"status": "ok"})
+                if self.path.startswith("/file/content?"):
+                    d = self.path.rsplit("digest=", 1)[-1]
+                    if d in fake.files:
+                        return self._send(200, fake.files[d], "application/octet-stream")
                 return self._send(404, {"reason": "not found"})
 
             def do_POST(self) -> None:
@@ -322,6 +326,19 @@ class FakeWeft:
                                  "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}}}
         if path == "/refs/read_batch":
             return {"vals": [self._read_ref(r) for r in body["refs"]]}
+        if path == "/files/resolve_url":
+            out = []
+            for u in body["uris"]:
+                if u.startswith(("http://", "https://")):
+                    out.append(u)
+                elif u.startswith("s3://"):
+                    out.append("https://s3.fake/" + u[5:] + "?X-Amz-Signature=fake")
+                else:
+                    d = u.split("://", 1)[-1]
+                    if d not in self.files:
+                        raise KeyError(d)
+                    out.append(f"{self.url}/file/content?project_id={body['project_id']}&digest={d}")
+            return {"download_urls": out, "expires_at": None}
         if path == "/otel/v1/traces":
             self.otel.append(raw)
             return {}

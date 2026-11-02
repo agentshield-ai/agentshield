@@ -7,6 +7,7 @@ import { getClient, setGlobalClient } from './global.js';
 import { HttpClient, VERSION, WeftHTTPError } from './http.js';
 import { uuid7 } from './ids.js';
 import { loadOp } from './loader.js';
+import { Content } from './content.js';
 import { Dataset, WeftObject, loadPromptOrModel } from './objects.js';
 import { SavedView } from './savedView.js';
 import { loadPlatformObject } from './platform.js';
@@ -418,6 +419,26 @@ export class WeftClient {
     if (digest && digest !== 'latest') body.digest = digest;
     await this.flush();
     return this.http.post('/leaderboard/compute', body);
+  }
+
+  /**
+   * Download URL(s) via `/files/resolve_url`. `target` is a file digest, a
+   * `weft-file://<digest>` / `s3://bucket/key` / `https://` URI, a Content
+   * value, or an array of these (then an array is returned). Files in the
+   * server's S3 backend and `s3://` references in its bucket get presigned URLs.
+   */
+  async resolveUrl(target: unknown, opts: { expiresIn?: number } = {}): Promise<string | string[]> {
+    const one = (t: any): string => {
+      if (t instanceof Content) return t.uri ?? t.digest;
+      if (t && typeof t === 'object' && (t.uri || t.file_digest)) return String(t.uri ?? t.file_digest);
+      return String(t);
+    };
+    const items = Array.isArray(target) ? target : [target];
+    await this.flush();
+    const body: Record<string, unknown> = { project_id: this.projectId, uris: items.map(one) };
+    if (opts.expiresIn !== undefined) body.expires_in = Math.floor(opts.expiresIn);
+    const urls: string[] = (await this.http.post('/files/resolve_url', body)).download_urls ?? [];
+    return Array.isArray(target) ? urls : urls[0];
   }
 
   /** Raw bytes of an uploaded file (a Content/media `file_digest`). */

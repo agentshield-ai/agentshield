@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { CartesianGrid, Legend, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts'
 import { api } from '../../api/client'
 import type { DashboardPanel, DashboardVal } from '../../api/dashboards'
-import { useProjectId } from '../../hooks/useProject'
+import type { Operation, Query } from '../../api/types'
 import { callUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../common'
 import { SERIES_COLORS } from '../evals/evalUtils'
@@ -29,21 +29,22 @@ export function ScatterPanel({
   height?: number
 }) {
   const navigate = useNavigate()
-  const pid = useProjectId() || projectId
   const xField = panel.metrics[0]?.field ?? 'latency_ms'
   const yField = panel.metrics[1]?.field ?? 'total_tokens'
   const q = useQuery({
     queryKey: ['calls-scatter', projectId, panel.filter, panel.query, panel.search, panel.time_range, dash?.filter, dash?.query, dash?.time_range],
     queryFn: () => {
       const range = timeRangeBounds(panel.time_range || dash?.time_range)
-      const filter = { ...(mergeFilters(dash?.filter, panel.filter) ?? {}) }
-      if (range.start) filter.started_after = range.start
-      if (range.end) filter.started_before = range.end
+      const timeOps: Operation[] = []
+      if (range.start) timeOps.push({ $gte: [{ $getField: 'started_at' }, { $literal: range.start }] })
+      if (range.end) timeOps.push({ $lt: [{ $getField: 'started_at' }, { $literal: range.end }] })
+      const timeQuery = timeOps.length ? ({ $expr: timeOps.length === 1 ? timeOps[0] : { $and: timeOps } } as Query) : undefined
       const needsFeedback = [xField, yField].some((f) => f.startsWith('feedback.'))
       return api.callsQuery({
         project_id: projectId,
-        filter,
-        query: mergeQueries(dash?.query, panel.query),
+        filter: mergeFilters(dash?.filter, panel.filter),
+        query: mergeQueries(dash?.query, panel.query, timeQuery),
+        search: panel.search || undefined,
         sort_by: [{ field: 'started_at', direction: 'desc' }],
         limit: MAX_CALLS,
         include_costs: true,
@@ -97,7 +98,7 @@ export function ScatterPanel({
               cursor="pointer"
               onClick={(p: { id?: string; payload?: { id: string } }) => {
                 const id = p?.payload?.id ?? p?.id
-                if (id) navigate(callUrl(pid, id))
+                if (id) navigate(callUrl(projectId, id))
               }}
             />
           ))}

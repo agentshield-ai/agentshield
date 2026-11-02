@@ -41,6 +41,7 @@ export interface ManagedApiKey {
   created_at: string
   last_used_at: string | null
   revoked_at: string | null
+  user_bound?: boolean
 }
 
 export interface ApiKeyCreate {
@@ -53,6 +54,9 @@ export interface ApiKeyCreate {
 
 export interface Principal {
   auth_required: boolean
+  /** true for user-bound keys and SSO sessions: access comes from the user's roles */
+  rbac?: boolean
+  auth_method?: string
   admin: boolean
   read_only: boolean
   projects: string[] | null

@@ -11,6 +11,8 @@ import { columnsOf } from '../../components/objects/csv'
 import { ModelFormModal, NameField, usePublish } from '../../components/objects/ObjectForms'
 import { classVal, errMsg, isLLMModel, isServerScorerClass, KIND_META, refOf, templateVars, useObjects, valClass } from '../../components/objects/objectUtils'
 import { ScorerPicker } from '../../components/evals/ScorerPicker'
+import { RemoteModelModal, RuntimeModelModal } from '../../components/evals/ServerModelForms'
+import { serverModelKind, serverModelSummary } from '../../components/evals/modelUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtRelative } from '../../lib/format'
 import { callUrl, compareEvaluationsUrl, evaluationsUrl, objectUrl } from '../../lib/urls'
@@ -57,12 +59,13 @@ export function NewEvaluationPage() {
   const [params] = useSearchParams()
   const evals = useObjects(projectId, { base_object_classes: ['Evaluation'] })
   const models = useObjects(projectId, KIND_META.models.filter)
-  const llmModels = (models.data ?? []).filter(isLLMModel)
+  // Models the server can run: LLM completion models, remote (predict_url) and runtime-bound models.
+  const llmModels = (models.data ?? []).filter((o) => isLLMModel(o) || serverModelKind(o) != null)
 
   const [evalRef, setEvalRef] = useState<string | null>(params.get('evaluation'))
   const [mode, setMode] = useState<'existing' | 'new'>('existing')
   const [modelRefs, setModelRefs] = useState<string[]>(params.get('model') ? [params.get('model')!] : [])
-  const [creatingModel, setCreatingModel] = useState(false)
+  const [creatingModel, setCreatingModel] = useState<false | true | 'remote' | 'runtime'>(false)
   const [launched, setLaunched] = useState<Launched[]>([])
   const [launching, setLaunching] = useState(false)
 
@@ -87,8 +90,8 @@ export function NewEvaluationPage() {
   }, [evals.data, evalRef])
 
   const modelOptions = useMemo(() => {
-    const opts = llmModels.map((o) => ({ ref: refOf(o), name: o.object_id, val: o.val, sub: `${o.val?.llm_model_id ?? ''} · v${o.version_index} · ${fmtRelative(o.created_at)}` }))
-    for (const r of modelRefs) if (!opts.some((o) => o.ref === r)) opts.unshift({ ref: r, name: parseRef(r)?.name ?? r, val: null, sub: `pinned version ${parseRef(r)?.digest?.slice(0, 8) ?? ''}` })
+    const opts = llmModels.map((o) => ({ ref: refOf(o), name: o.object_id, val: o.val, kind: serverModelKind(o), sub: `${serverModelSummary(o)} · v${o.version_index} · ${fmtRelative(o.created_at)}` }))
+    for (const r of modelRefs) if (!opts.some((o) => o.ref === r)) opts.unshift({ ref: r, name: parseRef(r)?.name ?? r, val: null, kind: null, sub: `pinned version ${parseRef(r)?.digest?.slice(0, 8) ?? ''}` })
     return opts
   }, [llmModels, modelRefs])
 
@@ -120,7 +123,7 @@ export function NewEvaluationPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Run an evaluation</h1>
-          <span className="muted small">The server runs each model over every dataset row and scores the outputs. Only LLM completion models and built-in scorers can run on the server.</span>
+          <span className="muted small">The server runs each model over every dataset row and scores the outputs. LLM completion models, remote models (a predict URL) and runtime-bound models run on the server, with built-in scorers.</span>
         </div>
       </div>
 
@@ -203,9 +206,17 @@ export function NewEvaluationPage() {
       <Section
         title={`2 · Models${modelRefs.length ? ` (${modelRefs.length} selected)` : ''}`}
         actions={
-          <button className="btn sm" onClick={() => setCreatingModel(true)}>
-            + New model
-          </button>
+          <div className="row" style={{ gap: 6 }}>
+            <button className="btn sm" onClick={() => setCreatingModel(true)} title="A chat model with a prompt template">
+              + LLM model
+            </button>
+            <button className="btn sm" onClick={() => setCreatingModel('remote')} title="Your own HTTP endpoint that predicts one row at a time">
+              + Remote model
+            </button>
+            <button className="btn sm" onClick={() => setCreatingModel('runtime')} title="A model served by a registered custom runtime">
+              + Runtime model
+            </button>
+          </div>
         }
       >
         <ErrorBox error={models.error} />
@@ -213,7 +224,7 @@ export function NewEvaluationPage() {
           <Loading />
         ) : models.error ? null : modelOptions.length === 0 ? (
           <div className="faint">
-            No LLM completion models yet.{' '}
+            No server-runnable models yet.{' '}
             <button className="btn sm" onClick={() => setCreatingModel(true)}>
               Create one
             </button>
@@ -227,7 +238,10 @@ export function NewEvaluationPage() {
                 <label key={m.ref}>
                   <input type="checkbox" checked={modelRefs.includes(m.ref)} onChange={() => setModelRefs(modelRefs.includes(m.ref) ? modelRefs.filter((x) => x !== m.ref) : [...modelRefs, m.ref])} />
                   <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
-                    <span className="mono truncate">{m.name}</span>
+                    <span className="row" style={{ gap: 6, minWidth: 0 }}>
+                      <span className="mono truncate">{m.name}</span>
+                      {m.kind && m.kind !== 'llm' && <span className="badge">{m.kind}</span>}
+                    </span>
                     <span className="hint truncate">{m.sub}</span>
                   </span>
                   {missing.length > 0 && (
@@ -255,7 +269,21 @@ export function NewEvaluationPage() {
         </div>
       </Section>
 
-      {creatingModel && (
+      {(creatingModel === 'remote' || creatingModel === 'runtime') &&
+        (() => {
+          const Form = creatingModel === 'remote' ? RemoteModelModal : RuntimeModelModal
+          return (
+            <Form
+              projectId={projectId}
+              onClose={() => setCreatingModel(false)}
+              onCreated={(c) => {
+                setCreatingModel(false)
+                setModelRefs([...modelRefs, c.ref])
+              }}
+            />
+          )
+        })()}
+      {creatingModel === true && (
         <ModelFormModal
           projectId={projectId}
           onClose={() => setCreatingModel(false)}

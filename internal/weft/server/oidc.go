@@ -296,6 +296,9 @@ func (s *Server) sessionAuth(w http.ResponseWriter, r *http.Request, raw string)
 	if err != nil || u.Disabled() {
 		return unauth("this user is disabled")
 	}
+	if note := auditNoteFrom(r); note != nil {
+		note.actor, note.authMethod = u.ID, "session"
+	}
 	if !isSafeMethod(r.Method) {
 		got := r.Header.Get(csrfHeader)
 		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(sess.CSRF)) != 1 {

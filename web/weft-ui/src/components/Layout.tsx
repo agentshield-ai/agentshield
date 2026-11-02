@@ -1,4 +1,5 @@
 import { NavLink, Link, Outlet, useParams } from 'react-router-dom'
+import { UserMenu } from './UserMenu'
 
 const NAV: { section: string; items: { to: string; label: string; icon: string }[] }[] = [
   {
@@ -72,6 +73,7 @@ export function ProjectLayout() {
             ))}
           </div>
         ))}
+        <UserMenu />
       </nav>
       <main className="main">
         <Outlet />

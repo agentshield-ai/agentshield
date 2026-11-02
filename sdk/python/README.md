@@ -49,7 +49,9 @@ explicitly).
 | Disable tracing | | `WEFT_DISABLED=true` | off |
 | Evaluation concurrency | | `WEFT_PARALLELISM` | 10 |
 | Exit flush timeout (s) | | `WEFT_FLUSH_TIMEOUT` | 10 |
-| Redaction | `settings={"redact_keys": [...], "redact_pii": True}` | `WEFT_REDACT_KEYS=0` disables | credential keys |
+| Redaction | `settings={"redact_keys": [...], "redact_pii": True}` | `WEFT_REDACT_KEYS=0` disables, `WEFT_REDACT_PII=1` | credential keys |
+| PII entities and engine | `settings={"redact_pii_fields": [...], "redact_pii_exclude_fields": [...], "redact_pii_engine": "auto"}` | `WEFT_REDACT_PII_FIELDS`, `WEFT_REDACT_PII_EXCLUDE_FIELDS`, `WEFT_REDACT_PII_ENGINE` | Weave's entity list; Presidio if installed |
+| Integrations | `autopatch=False`, `autopatch_settings={...}` | `WEFT_AUTOPATCH=0`, `WEFT_DISABLED_INTEGRATIONS=a,b`, `WEFT_AUTOPATCH_<NAME>=0` | all on |
 | Attributes on every call | `settings={"global_attributes": {...}}` | | none |
 | Print a link per root call | `settings={"print_call_link": False}` | `WEFT_PRINT_CALL_LINK` | on |
 | Store op source code | `settings={"capture_code": False}` | `WEFT_CAPTURE_CODE` | on |
@@ -79,11 +81,41 @@ in call inputs and outputs, and happens before anything leaves the process.
 ```python
 weft.init("my-project", settings={
     "redact_keys": ["api_key", "ssn"],   # replaces the default list
-    "redact_pii": True,                  # also mask emails, phone/card/SSN numbers, IPs in strings
+    "redact_pii": True,                  # also mask PII entities in strings
 })
 ```
 
 Set `WEFT_REDACT_KEYS=0` to turn key redaction off.
+
+**PII entities.** With `redact_pii` (or `WEFT_REDACT_PII=1`), strings in
+inputs and outputs have entities replaced with `<ENTITY_TYPE>`. Regular
+expressions always cover e-mail addresses, US SSNs, credit cards, phone
+numbers and IP addresses. Names (`PERSON`), places (`LOCATION`),
+organisations (`ORGANIZATION`) and Presidio's other entities need an NER
+engine, picked by `redact_pii_engine`:
+
+| `redact_pii_engine` | NER | Install |
+|---|---|---|
+| `"auto"` (default) | Presidio when installed, else regex only | `pip install 'weft[pii]'` and `python -m spacy download en_core_web_lg` |
+| `"presidio"` | Presidio `AnalyzerEngine` (error if missing) | as above |
+| `"transformers"` | Hugging Face NER pipeline, `redact_pii_model` (default `dslim/bert-base-NER`) | `pip install 'weft[scorers]'` |
+| `"regex"` | none | |
+
+```python
+weft.init("my-project", settings={
+    "redact_pii": True,
+    "redact_pii_fields": ["PERSON", "LOCATION", "ORGANIZATION", "EMAIL_ADDRESS"],  # default: Weave's list + ORGANIZATION
+    "redact_pii_exclude_fields": ["LOCATION"],
+    # or bring your own analyzer: Presidio-style .analyze(text=, entities=, language=)
+    # or a callable(text) -> [(entity_type, start, end), ...]
+    # "redact_pii_analyzer": my_analyzer,
+})
+# "Alice Smith from Acme in Berlin" -> "<PERSON> from <ORGANIZATION> in Berlin"
+```
+
+The engine loads on first use. If it fails at run time (for example a missing
+spaCy model), weft logs a warning and falls back to the regular expressions;
+the call is still recorded.
 
 ## Tracing
 
@@ -160,28 +192,53 @@ dataset rows.
 ## Integrations (auto-patched by `weft.init`)
 
 `weft.init()` patches every supported library that is installed. Patching is
-idempotent, and nothing happens for libraries that are not installed. Pass
-`autopatch=False` to opt out.
+idempotent, and nothing happens for libraries that are not installed. A
+library that is already imported is patched at once; one imported later is
+patched as soon as its import finishes, so `weft.init()` never imports
+frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 
-| Library | Traced | Op name(s) |
-|---|---|---|
-| openai | `chat.completions.create`, `responses.create` (sync/async/stream) | `openai.chat.completions.create`, `openai.responses.create` |
-| anthropic | `messages.create` (sync/async/`stream=True`), `messages.stream()` | `anthropic.messages.create`, `anthropic.messages.stream` |
-| litellm | `completion`, `acompletion` (incl. stream) | `litellm.completion`, `litellm.acompletion` |
-| google-genai | `models.generate_content(_stream)`, sync and `client.aio` | `google.genai.models.generate_content(_stream)` |
-| boto3 (Bedrock) | `converse`, `converse_stream`, `invoke_model`, `invoke_model_with_response_stream` | `bedrock.converse`, ... |
-| mistralai | `chat.complete`, `chat.stream` (+ `_async`) | `mistralai.chat.complete`, `mistralai.chat.stream` |
-| cohere | `ClientV2`/`Client` `chat`, `chat_stream` (sync/async) | `cohere.chat`, `cohere.chat_stream` |
-| groq, together | `chat.completions.create` (OpenAI-compatible) | `groq.chat.completions.create`, `together...` |
-| langchain-core | every chain, chat model/LLM, tool and retriever run | `langchain.<Type>.<name>` |
-| openai-agents | traces and agent/function/generation/response/handoff/guardrail spans | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, ... |
-| dspy | modules, LM calls, tools | `dspy.<Module>`, `dspy.LM`, `dspy.Tool.<name>` |
+**LLM SDKs.** Each request becomes an `llm` call.
+
+| Settings key | Library | Traced | Op name(s) |
+|---|---|---|---|
+| `openai` | openai | `chat.completions.create`, `responses.create` (sync/async/stream) | `openai.chat.completions.create`, `openai.responses.create` |
+| `openai_realtime` | openai | Realtime connections (`client.realtime.connect`, `client.beta.realtime.connect`, sync/async) | `openai.realtime.session`, `.response`, `.tool.<name>` |
+| `anthropic` | anthropic | `messages.create` (sync/async/`stream=True`), `messages.stream()` | `anthropic.messages.create`, `anthropic.messages.stream` |
+| `litellm` | litellm | `completion`, `acompletion` (incl. stream) | `litellm.completion`, `litellm.acompletion` |
+| `google_genai` | google-genai | `models.generate_content(_stream)`, sync and `client.aio` | `google.genai.models.generate_content(_stream)` |
+| `vertexai` | google-cloud-aiplatform | `GenerativeModel.generate_content(_async)` (incl. `stream=True`), `ChatSession.send_message(_async)`, `ImageGenerationModel.generate_images` | `vertexai.GenerativeModel.generate_content`, ... |
+| `bedrock` | boto3 | `converse`, `converse_stream`, `invoke_model`, `invoke_model_with_response_stream` | `bedrock.converse`, ... |
+| `mistral` | mistralai | `chat.complete`, `chat.stream` (+ `_async`) | `mistralai.chat.complete`, `mistralai.chat.stream` |
+| `cohere` | cohere | `ClientV2`/`Client` `chat`, `chat_stream` (sync/async) | `cohere.chat`, `cohere.chat_stream` |
+| `groq`, `together`, `cerebras` | groq, together, cerebras-cloud-sdk | `chat.completions.create` (OpenAI-shaped) | `groq.chat.completions.create`, `together...`, `cerebras...` |
+| `huggingface` | huggingface_hub | `InferenceClient`/`AsyncInferenceClient` `chat_completion` (incl. `client.chat.completions.create`, streams), `text_generation`, and task methods (`summarization`, `translation`, `text_to_image`, ...) | `huggingface_hub.InferenceClient.chat_completion`, ... |
+
+**Agent and RAG frameworks.**
+
+| Settings key | Library | Traced (span kind) | Op name(s) |
+|---|---|---|---|
+| `langchain` | langchain-core, LangGraph | every chain, chat model/LLM, tool and retriever run; LangGraph graphs (agent) and nodes, with `attributes.langgraph` (node, step, triggers) | `langchain.<Type>.<name>`, `langgraph.graph`, `langgraph.node.<node>` |
+| `llamaindex` | llama-index-core | every instrumented span (query engines, retrievers, LLMs, embeddings, agents, workflows, tools) via `WeftSpanHandler` | `llama_index.<Class>.<method>` |
+| `openai_agents` | openai-agents | traces and agent/function/generation/response/handoff/guardrail spans | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, ... |
+| `dspy` | dspy | modules, LM calls, tools | `dspy.<Module>`, `dspy.LM`, `dspy.Tool.<name>` |
+| `crewai` | crewai | `Crew.kickoff*` (agent), `Agent.execute_task` (agent), `Task.execute_*` (chain), `LLM.call` (llm), tools, `Flow.kickoff*` (workflow) | `crewai.Crew.kickoff`, `crewai.Agent.execute_task`, ... |
+| `smolagents` | smolagents | agent `run` (agent) and `step`, every `Model.generate` (llm), `Tool.__call__` (tool) | `smolagents.Agent.run`, `smolagents.<Model>.generate`, `smolagents.Tool` |
+| `instructor` | instructor | `create`, `create_with_completion`, `create_partial`, `create_iterable` (sync/async; llm) | `instructor.Instructor.create`, ... |
+| `mcp` | mcp, fastmcp | client `call_tool` (tool), `read_resource`, `get_prompt`, `list_*`; server (`FastMCP`) `call_tool`, `read_resource`, `get_prompt` | `mcp.ClientSession.call_tool`, `mcp.FastMCP.call_tool`, `fastmcp.Client.call_tool`, ... |
+| `claude_agent_sdk` | claude-agent-sdk | `query()` (agent) and `ClaudeSDKClient` turns (agent, one thread per client), each assistant message (llm), each tool use (tool; `Task` sub-agents nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
+| `haystack` | haystack-ai | pipelines (chain) and components (`llm`, `retriever`, `embedding`, `reranker`, `tool`, `agent`) via `WeftHaystackTracer` | `haystack.pipeline.run`, `haystack.<ComponentType>` |
+| `autogen` | autogen-agentchat / -core / -ext | agents and teams `run`/`run_stream`/`on_messages` (agent), model clients `create`/`create_stream` (llm), tools, memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
+| `agno` | agno | `Agent`/`Team` `run`/`arun` (agent), `Workflow` (workflow), `Model.response` (llm), tool calls | `agno.Agent.run`, `agno.Model.response`, ... |
+| `google_adk` | google-adk | `Runner.run(_async)`, agents, tools, LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
+| `pydantic_ai` | pydantic-ai | `Agent.run` (agent), tool calls, `Model.request` (llm) | `pydantic_ai.Agent.run`, ... |
+| `notdiamond`, `verifiers`, `gepa` | | model routing, RL environments/rubrics, `gepa.optimize` | see `weft/integrations/frameworks.py` |
 
 Each LLM request becomes a call (`kind="llm"`):
 - **Inputs** are the request kwargs.
 - **Output** is the response; streams are accumulated into a single response.
 - **Usage** is recorded as
   `summary.usage = {model: {requests, prompt_tokens, completion_tokens, total_tokens}}`.
+- Every integration call carries `attributes.weft.integration` (the settings key).
 
 For streamed OpenAI chat completions the SDK adds
 `stream_options={"include_usage": True}` unless you set `stream_options`
@@ -191,43 +248,98 @@ from the response, the stream metadata or the
 
 **No double counting.** Wrapper libraries call provider SDKs that are also
 patched:
-- **LiteLLM:** the provider calls it makes are not traced again.
-- **LangChain, OpenAI Agents and DSPy:** the framework run's call is the
-  parent, so provider calls and your own ops nest under it. The framework's LLM
-  run records usage only when no nested call already did.
+- **LiteLLM** and **Vertex AI chat sessions:** the provider calls they make are
+  not traced again.
+- **Frameworks** (LangChain, LlamaIndex, OpenAI Agents, DSPy, CrewAI,
+  smolagents, Instructor, Haystack, AutoGen, Agno, ADK, Pydantic AI): the
+  framework's call is the parent, so provider calls and your own ops nest
+  under it. A framework LLM call records usage only when no nested call
+  already did.
+- **Claude Agent SDK:** usage and cost from the final `ResultMessage` are
+  recorded once, on the query/turn call.
 
-**LangChain.** `weft.init()` registers `WeftTracer` through LangChain's
-configure hook, so every run is traced. Set `WEFT_TRACE_LANGCHAIN=false` to
-opt out. You can also pass it explicitly:
+**OpenAI-compatible endpoints and NVIDIA NIM.** The `openai` integration tags
+each call with `attributes.weft.provider` and `base_url` from the client's base
+URL: `nvidia_nim` for `integrate.api.nvidia.com` (NVIDIA NIM), and `azure_openai`,
+`openrouter`, `groq`, `together`, `cerebras`, `fireworks`, `deepseek`, `xai`,
+`local` ... A self-hosted NIM (or vLLM) server reads as `openai_compatible`:
+
+```python
+from openai import OpenAI
+nim = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=os.environ["NVIDIA_API_KEY"])
+nim.chat.completions.create(model="meta/llama-3.1-8b-instruct", messages=[...])   # traced, provider=nvidia_nim
+```
+
+LangChain's `ChatNVIDIA` (langchain-nvidia-ai-endpoints) is traced by the
+LangChain tracer. To give one client instance of an OpenAI-shaped SDK its own
+op names (when the `openai` class patch is off):
+
+```python
+from weft.integrations import patch_openai_compatible
+patch_openai_compatible(client, name="vllm")   # -> vllm.chat.completions.create
+```
+
+**LangChain and LangGraph.** `weft.init()` registers `WeftTracer` through
+LangChain's configure hook, so every run is traced. Set
+`WEFT_TRACE_LANGCHAIN=false` to opt out. You can also pass it explicitly:
 
 ```python
 from weft.integrations.langchain import WeftTracer
 chain.invoke({"question": "..."}, config={"callbacks": [WeftTracer()]})
 ```
 
-**OpenAI Agents SDK.** The integration calls
-`agents.add_trace_processor(WeftTracingProcessor())`. Each agent trace becomes
-a root call; spans become nested calls with kinds `agent`, `tool`, `llm` and
-`guardrail`.
+**Callback-style integrations.** OpenAI Agents
+(`agents.add_trace_processor(WeftTracingProcessor())`), DSPy
+(`WeftDSPyCallback` in `dspy.settings.callbacks`), LlamaIndex
+(`WeftSpanHandler` on the root instrumentation dispatcher) and Haystack
+(`haystack.tracing.enable_tracing(WeftHaystackTracer())`, with content
+tracing on so component inputs and outputs are kept; set
+`HAYSTACK_CONTENT_TRACING_ENABLED=false` first to keep them out) are
+registered for you.
 
-**DSPy.** The integration appends `WeftDSPyCallback` to
-`dspy.settings.callbacks`. LM usage is recorded by the LiteLLM integration.
+**OpenAI Realtime.** Each realtime connection is a session call. Every
+response (`response.created` → `response.done`) is an LLM call whose inputs
+are the conversation items added since the previous response (text, input
+audio transcripts, function-call outputs) plus instructions and voice, and
+whose output holds the response items, the streamed text/transcript and the
+audio size (audio bytes are never stored). Usage includes cached and audio
+token details. Function calls are tool calls that end when you send their
+`function_call_output`. For a raw websocket client, call
+`RealtimeTracer().on_client_event(e)` / `.on_server_event(e)` / `.close()`.
 
-**LlamaIndex** (and any other OpenInference-instrumented framework) goes
-through OpenTelemetry:
+**MCP.** Set `WEFT_MCP_TRACE_LIST_OPERATIONS=false` to skip the `list_*`
+methods.
+
+### Per-integration settings
+
+`autopatch_settings` mirrors Weave's: a dict (or `AutopatchSettings`) keyed by
+the settings keys above. Each value has `enabled` and `op_settings`
+(`name`, `call_display_name`, `postprocess_inputs`, `postprocess_output`,
+`kind`, `color`, `attributes`), applied to every call the integration records:
 
 ```python
-import weft.otel
-from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
-LlamaIndexInstrumentor().instrument(tracer_provider=weft.otel.configure(project="my-project"))
+from weft.integrations import IntegrationSettings, OpSettings
+
+def scrub(inputs):
+    return {**inputs, "messages": "<hidden>"}
+
+weft.init("my-project", autopatch_settings={
+    "openai": {"op_settings": {"postprocess_inputs": scrub,
+                               "postprocess_output": lambda r: {"id": r.get("id")},
+                               "call_display_name": "chat"}},
+    "crewai": {"enabled": False},
+    "anthropic": IntegrationSettings(op_settings=OpSettings(color="purple", attributes={"team": "search"})),
+})
 ```
 
-To trace a single client instance of any OpenAI-shaped SDK (vLLM, Ollama, ...):
-
-```python
-from weft.integrations import patch_openai_compatible
-patch_openai_compatible(client, name="vllm")   # -> vllm.chat.completions.create
-```
+`postprocess_*` change only what is recorded; your code still gets the real
+response, and usage is still recorded. Disabling an integration also stops an
+already-patched one from recording. From the environment:
+`WEFT_AUTOPATCH=0` (all off), `WEFT_DISABLED_INTEGRATIONS=openai,crewai`, or
+`WEFT_AUTOPATCH_<NAME>=0` (e.g. `WEFT_AUTOPATCH_LLAMAINDEX=0`).
+`weft.integrations.autopatch()` returns each integration's status (`patched`,
+`deferred` until imported, `disabled`, `absent`), and `patch("crewai")` patches
+one by name.
 
 ## Objects, refs and prompts
 
@@ -363,6 +475,31 @@ serialises for server-side runs.
 | `RuleScorer` | `rule` (query-language operation), `threshold` | the rule's value; with `threshold`, numbers score `value >= threshold` |
 | `RemoteScorer` | `url`, `headers_secret`, `timeout` | JSON response of `POST url {"output", "inputs"}` |
 | `PydanticScorer` (local only) | `model` (a pydantic class) | bool (output parses) |
+
+### Local model scorers
+
+Weave's local small-model scorers run in your process with
+`pip install 'weft[scorers]'` (transformers, torch, presidio). The base
+install does not pull these in; a missing dependency raises an `ImportError`
+naming the extra. Models load on first use (or `scorer.load()`) from
+`model_name_or_path` (a Hugging Face id or local path; by default Weave's
+`wandb/Weave*ScorerV1` models), on `device` (`"cpu"`, `"cuda"`, `"mps"`).
+
+| Scorer (`weft.scorers` / `weft.local_scorers`) | `score(...)` | `metadata` (+ `passed`) |
+|---|---|---|
+| `WeaveToxicityScorerV1` | `output` | five category levels; fails at `total_threshold`/`category_threshold` |
+| `WeaveBiasScorerV1` | `output` | `gender_bias(_score)`, `racial_bias(_score)` |
+| `WeaveCoherenceScorerV1` | `query`, `output` (`chat_history` or `context`) | `coherence_label`, `coherence_id`, `score` |
+| `WeaveFluencyScorerV1` | `output` | `score` (fluent probability) |
+| `WeaveHallucinationScorerV1` | `query`, `context`, `output` | `score` (higher = more hallucinated) |
+| `WeaveContextRelevanceScorerV1` | `query`, `output` (the context) | `score`, `all_spans` |
+| `WeaveTrustScorerV1` | `query`, `context`, `output` | `trust_level`, critical and advisory issues, per-scorer scores |
+| `PresidioScorer` (guardrail) | `output` | `detected_entities`, `reason`, `anonymized_text` |
+
+They return `WeaveScorerResult` (`{"passed", "metadata"}` with attribute
+access) and work in `Evaluation`s and with `call.apply_scorer`. They serialise
+with their settings (never the model), so evaluations show them in the UI, but
+only the process that has the model can run them.
 
 Judge prompts can use `{output}`, `{inputs}` (all columns as JSON) and any
 column name. They run through the server's `/completions/create`, so
@@ -525,7 +662,7 @@ OTEL_EXPORTER_OTLP_TRACES_HEADERS=project_id=my-entity/my-project
 ## Tests
 
 ```bash
-pip install -e 'sdk/python[otel,test]'
+pip install -e 'sdk/python[otel,test]'     # extras: scorers (local model scorers), pii (Presidio NER)
 pytest sdk/python/tests                                   # unit tests (in-process fake server)
 WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 pytest sdk/python/tests/test_integration_server.py
 ```

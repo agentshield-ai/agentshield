@@ -12,8 +12,9 @@ import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtNumber, fmtRelative } from '../../lib/format'
 import { objectUrl } from '../../lib/urls'
 import { ApiKeysTab, DeleteProjectTab, RetentionTab, SamplingTab, SensitiveDataTab } from './AdminTabs'
+import { AuditLogTab, MembersTab } from './IamTabs'
 
-type Tab = 'general' | 'costs' | 'secrets' | 'annotations' | 'integrations' | 'apikeys' | 'retention' | 'sampling' | 'sensitive' | 'delete'
+type Tab = 'general' | 'costs' | 'secrets' | 'annotations' | 'integrations' | 'apikeys' | 'members' | 'audit' | 'retention' | 'sampling' | 'sensitive' | 'delete'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'costs', label: 'Costs' },
@@ -21,6 +22,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'annotations', label: 'Annotations' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'apikeys', label: 'API keys' },
+  { id: 'members', label: 'Members' },
+  { id: 'audit', label: 'Audit log' },
   { id: 'retention', label: 'Retention' },
   { id: 'sampling', label: 'Sampling' },
   { id: 'sensitive', label: 'Sensitive data' },
@@ -52,6 +55,8 @@ export function SettingsPage() {
           <ApiKeysTab projectId={projectId} />
         </div>
       )}
+      {tab === 'members' && <MembersTab projectId={projectId} />}
+      {tab === 'audit' && <AuditLogTab projectId={projectId} />}
       {tab === 'retention' && <RetentionTab projectId={projectId} />}
       {tab === 'sampling' && <SamplingTab projectId={projectId} />}
       {tab === 'sensitive' && <SensitiveDataTab projectId={projectId} />}
