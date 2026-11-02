@@ -45,8 +45,39 @@ the exact key, at any depth.
 await weft.init('my-project', { settings: { redactKeys: ['api_key', 'ssn'], redactPii: true } });
 ```
 
-`redactPii` also masks emails, phone, card and SSN numbers, and IP addresses
-inside strings.
+`redactPii` (or `WEFT_REDACT_PII=true`) also masks emails, phone, card and SSN
+numbers, and IP addresses inside strings with `<ENTITY_TYPE>` placeholders.
+
+**NER (names, locations, organisations, ...).** Plug in an analyzer, as the
+Python SDK does with Presidio. It runs in the background sender just before a
+call leaves the process, so it can be async (a remote service) without
+slowing your code:
+
+```ts
+// a Presidio Analyzer REST service (e.g. docker run -p 5002:3000 mcr.microsoft.com/presidio-analyzer)
+await weft.init('my-project', { settings: { redactPii: true, redactPiiEngine: 'presidio', redactPiiPresidioUrl: 'http://localhost:5002' } });
+
+// or any function returning spans: { entity_type, start, end, score? } or [entity, start, end, score?]
+await weft.init('my-project', {
+  settings: { redactPii: true, redactPiiAnalyzer: async (text, entities) => myNer(text), redactPiiScoreThreshold: 0.5 },
+});
+// "Alice Smith from Acme in Berlin" -> "<PERSON> from <ORGANIZATION> in <LOCATION>"
+```
+
+| Setting | Environment | Default |
+|---|---|---|
+| `redactPiiEngine`: `regex`, `presidio`, `auto` | `WEFT_REDACT_PII_ENGINE` | `auto` (Presidio when a URL is set, else regex) |
+| `redactPiiPresidioUrl` | `WEFT_PRESIDIO_ANALYZER_URL` | none |
+| `redactPiiFields`, `redactPiiExcludeFields` | `WEFT_REDACT_PII_FIELDS`, `WEFT_REDACT_PII_EXCLUDE_FIELDS` (comma-separated) | `weft.DEFAULT_PII_ENTITIES` (same list as Python) |
+| `redactPiiScoreThreshold`, `redactPiiLanguage` | | 0, `en` |
+
+Regex entities are always applied when the call is recorded; the analyzer
+handles the rest (Presidio is asked only for the entities regex does not
+cover; a custom analyzer gets all of them). If the analyzer fails, a warning is
+logged once, regex redaction stands and NER is skipped for that client. The
+locally visible `call.inputs`/`call.output` keep the regex-only version; what
+is sent and stored is fully redacted. The server can also apply NER
+(sensitive-data settings).
 
 ### Settings
 
@@ -57,11 +88,22 @@ await weft.init('my-project', {
     printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root call (WEFT_PRINT_CALL_LINK)
     captureCode: true,                           // store op source (WEFT_CAPTURE_CODE)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
-    maxQueueSize: 10_000, batchSize: 100,
-    retryMaxAttempts: 3, retryBackoffMs: 250, retryMaxBackoffMs: 4000,
+    maxQueueSize: 10_000, batchSize: 100,      // WEFT_MAX_CALLS_QUEUE_SIZE (0 = unbounded)
+    retryMaxAttempts: 3,                       // WEFT_RETRY_MAX_ATTEMPTS
+    retryBackoffMs: 250, retryMaxBackoffMs: 4000,   // WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL (seconds)
+    httpTimeoutMs: 30_000,                     // WEFT_HTTP_TIMEOUT (seconds)
+    logLevel: 'warning',                       // debug, info, warning, error, critical (WEFT_LOG_LEVEL)
+    wbRunId: 'run-abc', wbRunStep: () => step, // W&B run linkage (also client.setWbRun / weft.setWbRun)
   },
 });
 ```
+
+The environment variables use Weave's names with a `WEFT_` prefix and seconds
+like the Python SDK; explicit settings and `sender` options win over them.
+`weft.setLogLevel()` changes the level later; the SDK's messages go through
+`weft.logger` (to `console`). With `wbRunId`/`setWbRun(runId, step)` calls
+carry `wb_run_id` (`<entity>/<project>/<run id>`), `wb_run_step` and
+`wb_run_step_end`, as Weave does for an active `wandb` run.
 
 With `enableDiskFallback`, anything that cannot be sent goes to a JSONL file
 instead of being dropped. That covers batches that still fail after retries,
@@ -136,8 +178,34 @@ weft.wrapMistral(new Mistral({ apiKey }));          // chat/fim/agents .complete
 weft.wrapCohere(new CohereClientV2({ token }));     // chat, chatStream (v2 and v1), embed, rerank
 weft.wrapBedrock(new BedrockRuntimeClient({}));     // send(Converse | ConverseStream | InvokeModel | InvokeModelWithResponseStream)
 weft.instrumentBedrock(BedrockRuntimeClient);       // or patch every client
+weft.wrapBedrockAgent(new BedrockAgentRuntimeClient({}));   // send(InvokeAgent | InvokeInlineAgent), see below
+weft.instrumentBedrockAgent(BedrockAgentRuntimeClient);
+const rt = weft.wrapOpenAIRealtime(new OpenAIRealtimeWS({ model: 'gpt-realtime' }));   // see below
 const vertex = weft.wrapVertexAI(new VertexAI({ project, location }));   // models from getGenerativeModel: generateContent(Stream), chats
 ```
+
+**AWS Bedrock Agents.** `InvokeAgentCommand` and `InvokeInlineAgentCommand`
+become an `invoke_agent` call (`bedrock_agent.invoke_agent`), a turn of the
+conversation `sessionId`. While you iterate `response.completion`, the trace
+events (`enableTrace: true`) become child calls, as in the Python SDK:
+`bedrock_agent.model_invocation` (llm: prompt, raw/parsed response, usage per
+foundation model), `bedrock_agent.action_group` and `.code_interpreter`
+(tool), `.knowledge_base` (retriever), `.guardrail`, `.return_control`, and
+`.collaborator` (agent; the collaborator's own trace nests under it). A
+`failureTrace` fails the open steps and the agent call. For events you get
+some other way, use `new weft.BedrockAgentTraceProcessor(...)`.
+
+**OpenAI Realtime.** `wrapOpenAIRealtime(rt)` (or
+`instrumentOpenAIRealtime(OpenAIRealtimeWS, OpenAIRealtimeWebSocket)`) mirrors
+the Python integration: the connection is an `openai.realtime.session` (agent)
+call; every `response.created` → `response.done` is an
+`openai.realtime.response` (llm) call whose inputs are the items added since
+the previous response (text, input audio transcripts, function outputs) plus
+instructions and voice, with usage including cached and audio tokens; function
+calls are `openai.realtime.tool.<name>` (tool) calls that end at your
+`function_call_output`. Audio is never stored, only its size. The model comes
+from the connection URL. For a raw websocket, feed a `new weft.RealtimeTracer()`
+with `onClientEvent(e)`, `onServerEvent(e)` and `close()`.
 
 ## Framework integrations
 
@@ -473,7 +541,22 @@ await client.getThreads({ limit: 20 });
 await client.getEvaluations(); await client.getEvaluationCalls();
 await client.compareEvaluations([a, b]); await client.leaderboard('qa-board');
 await weft.get('qa:latest'); weft.parseUri('weft:///e/p/object/qa:<digest>');
+
+// calls as plain records (the TS counterpart of Python's CallsIter.to_pandas()/to_records())
+const rows = await client.getCallsRecords({ filter: { op_names: ['answer'] }, includeUsernames: true });
+calls[0].toRecord();   // { id, op_name, inputs, output, status, summary, wb_run_id, ... }
+
+// registry (Weave's link_prompt_to_registry, and any object)
+await weft.linkPromptToRegistry(prompt, { targetPath: 'wandb-registry-prompts/support-bot', aliases: ['production'] });
+await weft.linkToRegistry(dataset, { targetPath: 'my-team/datasets-registry/golden-sets' });
+await client.queryRegistry('wandb-registry-prompts', { collection: 'support-bot' });
+await client.getFromRegistry('wandb-registry-prompts/support-bot', 'production');   // alias, 'v0', 0 or 'latest'
 ```
+
+`getCalls` already returns an array (`Call[]`). `targetPath` is
+`<registry_project>/<collection>` (in your entity) or
+`<entity>/<registry_project>/<collection>`; unpublished objects are published
+first.
 
 ## OpenTelemetry
 

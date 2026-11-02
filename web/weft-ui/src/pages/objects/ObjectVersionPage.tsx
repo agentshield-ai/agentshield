@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
@@ -8,6 +8,7 @@ import { CopyButton, Empty, ErrorBox, Loading, Section, Spinner, Tabs } from '..
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock, ValueView } from '../../components/ValueView'
 import { CallsMiniTable, EvalRunsTable } from '../../components/evals/EvalRunsTable'
+import { useAgentEvalRuns } from '../../components/agents/AgentEvals'
 import { objectRefPrefix, useEvalRuns } from '../../components/evals/evalUtils'
 import { AliasEditor, CodeBlock, MessageList, TemplateText, TemplateVarChips, UsePanel } from '../../components/objects/bits'
 import { DatasetRowsView } from '../../components/objects/DatasetRowsView'
@@ -345,6 +346,8 @@ function EvaluationView({ o, projectId }: { o: ObjSchema; projectId: string }) {
   const nav = useNavigate()
   const v = o.val ?? {}
   const runs = useEvalRuns(projectId, { evalName: o.object_id, limit: 100 })
+  const runIds = useMemo(() => (runs.data ?? []).map((c) => c.id), [runs.data])
+  const agentRuns = useAgentEvalRuns(projectId, runIds)
   const [sel, setSel] = useState<string[]>([])
   const scorers: string[] = Array.isArray(v.scorers) ? v.scorers : []
   return (
@@ -384,7 +387,7 @@ function EvaluationView({ o, projectId }: { o: ObjSchema; projectId: string }) {
         ) : !runs.data?.length ? (
           <div className="faint">This evaluation has not been run yet.</div>
         ) : (
-          <EvalRunsTable projectId={projectId} calls={runs.data} hideEval selected={sel} onSelect={setSel} maxMetrics={8} />
+          <EvalRunsTable projectId={projectId} calls={runs.data} hideEval selected={sel} onSelect={setSel} maxMetrics={8} agentRuns={agentRuns.data} />
         )}
       </Section>
     </div>
@@ -396,6 +399,8 @@ function EvaluationView({ o, projectId }: { o: ObjSchema; projectId: string }) {
 function ModelRuns({ o, projectId }: { o: ObjSchema; projectId: string }) {
   const nav = useNavigate()
   const runs = useEvalRuns(projectId, { modelName: o.object_id, limit: 50 })
+  const runIds = useMemo(() => (runs.data ?? []).map((c) => c.id), [runs.data])
+  const agentRuns = useAgentEvalRuns(projectId, runIds)
   const [sel, setSel] = useState<string[]>([])
   return (
     <Section
@@ -419,7 +424,7 @@ function ModelRuns({ o, projectId }: { o: ObjSchema; projectId: string }) {
       ) : !runs.data?.length ? (
         <div className="faint">No evaluation runs use this model yet.</div>
       ) : (
-        <EvalRunsTable projectId={projectId} calls={runs.data} hideModel selected={sel} onSelect={setSel} maxMetrics={8} />
+        <EvalRunsTable projectId={projectId} calls={runs.data} hideModel selected={sel} onSelect={setSel} maxMetrics={8} agentRuns={agentRuns.data} />
       )}
     </Section>
   )

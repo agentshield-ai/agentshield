@@ -1,4 +1,5 @@
-// A fake Pi ExtensionAPI and a recorded session (two prompts: a fix with read,
+// A fake Pi ExtensionAPI and a recorded session (event order as emitted by
+// @mariozechner/pi-coding-agent 0.73.1: `context` precedes `turn_start` after the first turn) (two prompts: a fix with read,
 // bash and edit tools over three LLM calls, then a failed LLM call).
 import { registerWeft } from '../lib/pi.mjs';
 
@@ -38,13 +39,15 @@ export function recordedEvents(sessionId = SESSION_ID) {
       { t: 950, name: 'tool_execution_end', event: { type: 'tool_execution_end', toolCallId: 'tc-read', toolName: 'read', result: { content: r1.content, details: { lines: 1 } }, isError: false } },
       { t: 1500, name: 'tool_execution_end', event: { type: 'tool_execution_end', toolCallId: 'tc-bash', toolName: 'bash', result: { content: r2.content }, isError: true } },
       { t: 1510, name: 'turn_end', event: { type: 'turn_end', turnIndex: 0, message: a1, toolResults: [r1, r2] } },
-      { t: 1520, name: 'turn_start', event: { type: 'turn_start', turnIndex: 1, timestamp: T0 + 1520 } },
-      { t: 1530, name: 'context', event: { type: 'context', messages: [user(p1), a1, r1, r2] } },
+      { t: 1505, name: 'message_end', event: { type: 'message_end', message: r1 } },
+      { t: 1506, name: 'message_end', event: { type: 'message_end', message: r2 } },
+      { t: 1520, name: 'context', event: { type: 'context', messages: [user(p1), a1, r1, r2] } },
+      { t: 1530, name: 'turn_start', event: { type: 'turn_start', turnIndex: 1, timestamp: T0 + 1530 } },
       { t: 2100, name: 'message_end', event: { type: 'message_end', message: a2 } },
       { t: 2110, name: 'tool_execution_start', event: { type: 'tool_execution_start', toolCallId: 'tc-edit', toolName: 'edit', args: { path: 'math.js', oldText: 'a-b', newText: 'a+b' } } },
       { t: 2200, name: 'tool_execution_end', event: { type: 'tool_execution_end', toolCallId: 'tc-edit', toolName: 'edit', result: { content: r3.content }, isError: false } },
-      { t: 2210, name: 'turn_start', event: { type: 'turn_start', turnIndex: 2, timestamp: T0 + 2210 } },
-      { t: 2220, name: 'context', event: { type: 'context', messages: [user(p1), a1, r1, r2, a2, r3] } },
+      { t: 2210, name: 'context', event: { type: 'context', messages: [user(p1), a1, r1, r2, a2, r3] } },
+      { t: 2220, name: 'turn_start', event: { type: 'turn_start', turnIndex: 2, timestamp: T0 + 2220 } },
       { t: 2600, name: 'message_end', event: { type: 'message_end', message: a3 } },
       { t: 2700, name: 'agent_end', event: { type: 'agent_end', messages: [user(p1), a1, r1, r2, a2, r3, a3] } },
       { t: 5000, name: 'before_agent_start', event: { type: 'before_agent_start', prompt: p2, images: [], systemPrompt: 'You are pi, a coding agent.' } },
@@ -132,3 +135,23 @@ export function recorder({ fail = 0 } = {}) {
   };
   return { items, fetchImpl, calls };
 }
+
+// ---------------------------------------------------------------- live server helpers
+
+export async function post(path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (process.env.WEFT_TEST_API_KEY) headers.Authorization = `Bearer ${process.env.WEFT_TEST_API_KEY}`;
+  const r = await fetch(`${process.env.WEFT_TEST_SERVER_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+  return r.json();
+}
+
+export async function waitFor(fn, ms = 15000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v || Date.now() > end) return v;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+

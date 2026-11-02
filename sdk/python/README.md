@@ -56,9 +56,28 @@ explicitly).
 | Print a link per root call | `settings={"print_call_link": False}` | `WEFT_PRINT_CALL_LINK` | on |
 | Store op source code | `settings={"capture_code": False}` | `WEFT_CAPTURE_CODE` | on |
 | On-disk write-ahead log | `settings={"enable_disk_fallback": True, "wal_dir": ...}` | `WEFT_ENABLE_WAL`, `WEFT_WAL_DIR` | off (`~/.weft/wal`) |
-| Send queue size | `settings={"max_queue_size": 10000}` | | 10000 |
-| Retries | `settings={"retry_max_attempts": 3, "retry_backoff": 0.25, "retry_max_backoff": 4.0}` | | as shown |
+| Send queue size (0 = unbounded) | `settings={"max_queue_size": 10000}` | `WEFT_MAX_CALLS_QUEUE_SIZE` | 10000 |
+| Retries of a failed request | `settings={"retry_max_attempts": 3}` | `WEFT_RETRY_MAX_ATTEMPTS` | 3 |
+| First / longest retry delay (s) | `settings={"retry_backoff": 0.25, "retry_max_backoff": 4.0}` | `WEFT_RETRY_BACKOFF`, `WEFT_RETRY_MAX_INTERVAL` | 0.25, 4 |
+| HTTP timeout (s) | `settings={"http_timeout": 30}` or `WeftClient(timeout=)` | `WEFT_HTTP_TIMEOUT` | 30 |
+| Log level of the `weft` logger | `settings={"log_level": "DEBUG"}` | `WEFT_LOG_LEVEL` | unchanged (Python's default) |
+| W&B run linkage | `settings={"wb_run_id": ..., "wb_run_step": ...}`, `weft.set_wb_run()` | | an active `wandb.run` |
 | Cache of immutable server reads | `settings={"use_server_cache": False, "server_cache_dir": ..., "server_cache_size_limit": 10**9}` | `WEFT_USE_SERVER_CACHE`, `WEFT_SERVER_CACHE_DIR`, `WEFT_SERVER_CACHE_SIZE_LIMIT` | on, `~/.cache/weft`, 1 GB |
+
+The environment variables follow Weave's names with a `WEFT_` prefix
+(`WEAVE_MAX_CALLS_QUEUE_SIZE` → `WEFT_MAX_CALLS_QUEUE_SIZE`, and so on);
+explicit settings and arguments win over them. `WEFT_RETRY_BACKOFF` has no
+Weave equivalent. Invalid numbers are ignored with a warning.
+
+**W&B run linkage.** Like Weave, calls started while a `wandb` run is active
+(`wandb.run`, when `wandb` is imported) carry `wb_run_id`
+(`<entity>/<project>/<run id>`) and `wb_run_step`, and `wb_run_step_end` when
+they finish. Without wandb, set it yourself:
+`weft.set_wb_run("run-abc", step=lambda: trainer.global_step)` (an int or a
+callable; `weft.set_wb_run(None)` clears it). Fetched calls expose
+`wb_user_id`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`, and `wb_username`
+when queried with `include_usernames=True` (whether these come back depends on
+the server version).
 
 Root calls print `weft: <server>/<entity>/<project>/calls/<id>` to stderr
 (`call.ui_url` gives the same link).
@@ -280,7 +299,7 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 | `litellm` | litellm | `completion`, `acompletion` (incl. stream) | `litellm.completion`, `litellm.acompletion` |
 | `google_genai` | google-genai | `models.generate_content(_stream)`, sync and `client.aio` | `google.genai.models.generate_content(_stream)` |
 | `vertexai` | google-cloud-aiplatform | `GenerativeModel.generate_content(_async)` (incl. `stream=True`), `ChatSession.send_message(_async)`, `ImageGenerationModel.generate_images` | `vertexai.GenerativeModel.generate_content`, ... |
-| `bedrock` | boto3 | `converse`, `converse_stream`, `invoke_model`, `invoke_model_with_response_stream` | `bedrock.converse`, ... |
+| `bedrock` | boto3 | `converse`, `converse_stream`, `invoke_model`, `invoke_model_with_response_stream`; Bedrock Agents `invoke_agent`, `invoke_inline_agent` (see below) | `bedrock.converse`, ..., `bedrock_agent.invoke_agent` |
 | `mistral` | mistralai | `chat.complete`, `chat.stream` (+ `_async`) | `mistralai.chat.complete`, `mistralai.chat.stream` |
 | `cohere` | cohere | `ClientV2`/`Client` `chat`, `chat_stream` (sync/async) | `cohere.chat`, `cohere.chat_stream` |
 | `groq`, `together`, `cerebras` | groq, together, cerebras-cloud-sdk | `chat.completions.create` (OpenAI-shaped) | `groq.chat.completions.create`, `together...`, `cerebras...` |
@@ -300,6 +319,7 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 | `mcp` | mcp, fastmcp | client `call_tool` (tool), `read_resource`, `get_prompt`, `list_*`; server (`FastMCP`) `call_tool`, `read_resource`, `get_prompt` | `mcp.ClientSession.call_tool`, `mcp.FastMCP.call_tool`, `fastmcp.Client.call_tool`, ... |
 | `claude_agent_sdk` | claude-agent-sdk | `query()` (agent) and `ClaudeSDKClient` turns (agent, one thread per client), each assistant message (llm), each tool use (tool; `Task` sub-agents nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
 | `haystack` | haystack-ai | pipelines (chain) and components (`llm`, `retriever`, `embedding`, `reranker`, `tool`, `agent`) via `WeftHaystackTracer` | `haystack.pipeline.run`, `haystack.<ComponentType>` |
+| `verdict` | verdict | `Pipeline` runs (workflow) and units such as `JudgeUnit` (scorer), via Verdict's tracer interface | `verdict.<pipeline name>`, `verdict.<Unit>` |
 | `autogen` | autogen-agentchat / -core / -ext | agents and teams `run`/`run_stream`/`on_messages` (agent), model clients `create`/`create_stream` (llm), tools, memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
 | `agno` | agno | `Agent`/`Team` `run`/`arun` (agent), `Workflow` (workflow), `Model.response` (llm), tool calls | `agno.Agent.run`, `agno.Model.response`, ... |
 | `google_adk` | google-adk | `Runner.run(_async)`, agents, tools, LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
@@ -383,6 +403,36 @@ token details. Function calls are tool calls that end when you send their
 **MCP.** Set `WEFT_MCP_TRACE_LIST_OPERATIONS=false` to skip the `list_*`
 methods.
 
+**AWS Bedrock Agents.** `invoke_agent` and `invoke_inline_agent` on any
+`bedrock-agent-runtime` client become an `invoke_agent` agent call, a turn of
+the conversation `sessionId` (so Bedrock sessions show under **Agents** and
+**Threads**). The `completion` stream is wrapped; while you iterate it, the
+trace events (`enableTrace=True`) become child calls:
+
+```
+bedrock_agent.invoke_agent        agent: inputText, the streamed answer, citations, returnControl
+├─ bedrock_agent.model_invocation llm: pre-processing / orchestration / post-processing / routing
+│                                 prompts, raw and parsed responses, token usage per foundation model
+├─ bedrock_agent.action_group     tool: action group function or API path, parameters, result
+├─ bedrock_agent.knowledge_base   retriever: query and retrieved references
+├─ bedrock_agent.code_interpreter tool
+├─ bedrock_agent.guardrail        guardrail assessments
+├─ bedrock_agent.return_control   tool: functions handed back to your application
+└─ bedrock_agent.collaborator     agent: a multi-agent collaborator; its own trace nests here
+```
+
+A `failureTrace` ends the open steps and the agent call with the failure
+reason. Without `enableTrace` only the agent call (answer, citations) is
+recorded. The call ends when the stream is consumed or closed.
+
+**Verdict.** Every Verdict `Pipeline` (including `run(tracers=...)`) gets a
+Weft tracer through Verdict's own tracing interface, like Weave's: the
+pipeline run is a `workflow` call (`verdict.<pipeline name>`) and each unit a
+child call (`verdict.JudgeUnit`, ...; judge-like units have kind `scorer`)
+with its input schema and output. Units run in Verdict's thread pool; they
+still nest correctly, and LLM requests made inside a unit (through litellm,
+openai, instructor ...) nest under the unit.
+
 ### Per-integration settings
 
 `autopatch_settings` mirrors Weave's: a dict (or `AutopatchSettings`) keyed by
@@ -437,6 +487,25 @@ weft.publish(chat, name="chat-prompt")
 
 Publishing is content-addressed: publishing an identical object again gives
 the same digest, and the server keeps one version.
+
+**Registry.** Weave's `link_prompt_to_registry`, plus `link_to_registry` for any
+object (datasets, models, scorers, ...), link a published version into a
+collection of a registry project (`POST /link_to_registry`; Weft keeps the
+registry itself, there is no W&B Registry):
+
+```python
+weft.link_prompt_to_registry(prompt, target_path="wandb-registry-prompts/support-bot", aliases=["production"])
+weft.link_to_registry(dataset, target_path="my-team/datasets-registry/golden-sets")  # entity/registry/collection
+weft.link_to_registry("chat-prompt:v2", target_path="prompts-registry/chat")          # name:version, ref or URI
+client.query_registry("wandb-registry-prompts", "support-bot")       # versions, newest first, with aliases
+client.get_from_registry("wandb-registry-prompts/support-bot", "production")  # alias, "v0", 0 or "latest"
+```
+
+`target_path` is `<registry_project>/<collection>` (in your entity) or
+`<entity>/<registry_project>/<collection>`; unlike Weave the registry project
+does not need a `wandb-registry-` prefix. An unpublished object is published
+first. Linking a version already in the collection returns its index;
+aliases move to the version they were given last.
 
 **Loading ops runs stored code.** `weft.ref("my_fn").get()` returns a runnable
 `weft.Op`. The SDK rebuilds it from the stored source by `exec`-ing it in a
@@ -748,7 +817,10 @@ call.children()
 call.feedback.add("wandb.annotation.quality", {"value": 4}, annotation_ref=spec_ref)
 
 client.get_calls(columns=["id", "inputs.question"], expand_columns=["inputs.example"],
-                 include_costs=True, include_feedback=True)
+                 include_costs=True, include_feedback=True, include_usernames=True)
+df = client.get_calls(filter={"op_names": ["answer"]}, limit=1000).to_pandas()    # needs pandas
+flat = client.get_calls(limit=100).to_pandas(flatten=True)       # inputs.x, summary.usage... columns
+rows = client.get_calls(limit=100).to_records()                  # plain dicts, no pandas needed
 client.get_feedback(query={"$eq": [{"$getField": "feedback_type"}, {"$literal": "wandb.note.1"}]}, limit=50)
 client.get_evaluations()                         # Evaluation objects
 client.compare_evaluations([eval_call_id_a, eval_call_id_b])

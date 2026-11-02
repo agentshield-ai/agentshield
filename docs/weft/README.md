@@ -132,8 +132,9 @@ Cerebras, AWS Bedrock and Vertex AI, with per-integration settings
 
 **Coding agents.** Agent harness plugins trace Claude Code
 ([`plugins/weft-claude-code`](../../plugins/weft-claude-code)), Codex
-([`plugins/weft-codex`](../../plugins/weft-codex)) and OpenClaw
-([`plugins/weft-openclaw`](../../plugins/weft-openclaw)) sessions as agent
+([`plugins/weft-codex`](../../plugins/weft-codex)), OpenClaw
+([`plugins/weft-openclaw`](../../plugins/weft-openclaw)) and Pi
+([`plugins/weft-pi`](../../plugins/weft-pi)) sessions as agent
 conversations: a turn per prompt, LLM calls with token usage, tool calls and
 sub-agents. They are configured with `WEFT_SERVER_URL`, `WEFT_API_KEY` and
 `WEFT_PROJECT`, never block the agent, and send in the background.
@@ -212,7 +213,7 @@ WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 \
   python -m pytest sdk/python                      # SDK integration tests against a running server
 cd sdk/typescript && WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 npx vitest run
 WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 \
-  node --test plugins/weft-claude-code/test/*.test.mjs plugins/weft-codex/test/*.test.mjs plugins/weft-openclaw/test/*.test.mjs   # harness plugins
+  node --test plugins/weft-claude-code/test/*.test.mjs plugins/weft-codex/test/*.test.mjs plugins/weft-openclaw/test/*.test.mjs plugins/weft-pi/test/*.test.mjs   # harness plugins
 ```
 
 CI runs all of these in `.github/workflows/weft.yml` and fails if the

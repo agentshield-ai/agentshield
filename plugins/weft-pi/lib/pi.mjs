@@ -204,7 +204,9 @@ export class WeftPiTracer {
 
   onTurnStart(event = {}, ctx = {}) {
     const run = this.ensureRun(ctx);
-    const llm = this.startLlm(run, typeof event.timestamp === 'number' ? event.timestamp : this.now());
+    // Pi emits `context` before `turn_start` from the second turn on: reuse that pending LLM call.
+    let llm = run.currentLlm;
+    if (!llm || llm.message) llm = this.startLlm(run, typeof event.timestamp === 'number' ? event.timestamp : this.now());
     llm.turnIndex = event.turnIndex;
   }
 
