@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -323,5 +326,78 @@ func TestThreadsMixedTurnIDs(t *testing.T) {
 	}
 	if len(ts) != 1 || ts[0].TurnCount != 2 || ts[0].CallCount != 3 {
 		t.Fatalf("threads = %+v", ts[0])
+	}
+}
+
+func TestDefaultPriceLookup(t *testing.T) {
+	cases := map[string][2]float64{
+		"claude-opus-5-5":            {4, 20},
+		"claude-opus-5":              {5, 25},
+		"claude-sonnet-5-5":          {2, 10},
+		"claude-haiku-5-5":           {0.1, 0.5},
+		"claude-fable-5-1":           {10, 50},
+		"anthropic/claude-opus-4-8":  {5, 25},
+		"claude-sonnet-4-5-20250929": {3, 15},
+		"gpt-4o-mini-2024-07-18":     {0.15, 0.6},
+	}
+	for model, want := range cases {
+		p, ok := LookupDefaultPrice(model)
+		if !ok {
+			t.Errorf("%s: no price", model)
+			continue
+		}
+		if got := [2]float64{p.Prompt / perM, p.Completion / perM}; math.Abs(got[0]-want[0]) > 1e-9 || math.Abs(got[1]-want[1]) > 1e-9 {
+			t.Errorf("%s (matched %s): got %v per M, want %v", model, p.LLMID, got, want)
+		}
+	}
+}
+
+func TestSecretsEncryptedAtRest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "weft.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.SetSecret(ctx, "OPENAI_API_KEY", "sk-test-123"); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err := s.r.QueryRowContext(ctx, `SELECT value FROM secrets WHERE name = 'OPENAI_API_KEY'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw == "sk-test-123" || !strings.HasPrefix(raw, encPrefix) {
+		t.Fatalf("secret stored in plaintext: %q", raw)
+	}
+	// a legacy plaintext row is re-encrypted on the next open
+	if _, err := s.w.ExecContext(ctx, `INSERT INTO secrets(name, value, updated_at) VALUES('LEGACY', 'plain', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	for name, want := range map[string]string{"OPENAI_API_KEY": "sk-test-123", "LEGACY": "plain"} {
+		got, ok, err := s2.GetSecret(ctx, name)
+		if err != nil || !ok || got != want {
+			t.Fatalf("%s = %q %v %v", name, got, ok, err)
+		}
+	}
+	if err := s2.r.QueryRowContext(ctx, `SELECT value FROM secrets WHERE name = 'LEGACY'`).Scan(&raw); err != nil || !strings.HasPrefix(raw, encPrefix) {
+		t.Fatalf("legacy secret not re-encrypted: %q", raw)
+	}
+	// a different key cannot read the secrets
+	other, _ := LoadSecretKey("another-passphrase", "")
+	if err := s2.SetSecretKey(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s2.GetSecret(ctx, "OPENAI_API_KEY"); err == nil {
+		t.Fatal("decryption with the wrong key should fail")
+	}
+	if st, err := os.Stat(SecretKeyFile(path)); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("key file perms: %v %v", st, err)
 	}
 }

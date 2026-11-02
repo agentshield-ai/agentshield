@@ -5,10 +5,12 @@ package store
 
 import (
 	"context"
+	"crypto/cipher"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -33,8 +35,9 @@ func Invalidf(format string, args ...any) error {
 // Store holds separate read and write handles. SQLite allows one writer;
 // WAL mode lets readers proceed concurrently.
 type Store struct {
-	w *sql.DB
-	r *sql.DB
+	w    *sql.DB
+	r    *sql.DB
+	aead cipher.AEAD // encrypts secrets; see secrets.go
 }
 
 const schema = `
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS calls (
 	deleted_at INTEGER,
 	storage_size INTEGER NOT NULL DEFAULT 0,
 	has_start INTEGER NOT NULL DEFAULT 0,
+	cumulative INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (project_id, id)
 );
 CREATE INDEX IF NOT EXISTS calls_started ON calls(project_id, started_at);
@@ -175,13 +179,31 @@ func Open(path string) (*Store, error) {
 		_ = w.Close()
 		return nil, fmt.Errorf("initialising schema: %w", err)
 	}
+	if err := runExtensions(w); err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("initialising extension schema: %w", err)
+	}
+	if err := migrate(w); err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("migrating schema: %w", err)
+	}
 	r, err := sql.Open("sqlite", dsn+"&_pragma=query_only(true)")
 	if err != nil {
 		_ = w.Close()
 		return nil, fmt.Errorf("opening read handle: %w", err)
 	}
 	r.SetMaxOpenConns(8)
-	return &Store{w: w, r: r}, nil
+	st := &Store{w: w, r: r}
+	key, err := LoadSecretKey(os.Getenv("WEFT_SECRET_KEY"), SecretKeyFile(path))
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	if err := st.SetSecretKey(context.Background(), key); err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("initialising secret encryption: %w", err)
+	}
+	return st, nil
 }
 
 // Close closes both handles.
@@ -316,6 +338,30 @@ func toFloat(v any) (float64, bool) {
 
 // ToFloat is the exported form of toFloat.
 func ToFloat(v any) (float64, bool) { return toFloat(v) }
+
+// migrate adds columns introduced after a database was created.
+func migrate(db *sql.DB) error {
+	cols := map[string]bool{}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('calls')`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		cols[n] = true
+	}
+	rows.Close()
+	if !cols["cumulative"] {
+		if _, err := db.Exec(`ALTER TABLE calls ADD COLUMN cumulative INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // txT shortens transaction signatures.
 type txT = sql.Tx

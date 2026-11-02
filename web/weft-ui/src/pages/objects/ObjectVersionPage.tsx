@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
 import { objectRef, parseRef } from '../../api/refs'
 import type { Any, ObjSchema } from '../../api/types'
-import { CopyButton, Empty, ErrorBox, Loading, Section, Tabs } from '../../components/common'
+import { CopyButton, Empty, ErrorBox, Loading, Section, Spinner, Tabs } from '../../components/common'
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock, ValueView } from '../../components/ValueView'
 import { CallsMiniTable, EvalRunsTable } from '../../components/evals/EvalRunsTable'
@@ -244,11 +244,21 @@ function OpView({ o, projectId }: { o: ObjSchema; projectId: string }) {
         .then((r) => r.calls),
   })
   const v = o.val ?? {}
+  // Ops serialised by the official weave client keep their source in a file (files["obj.py"]).
+  const fileDigest: string | undefined = !v.code && v.files && typeof v.files === 'object' ? (v.files['obj.py'] ?? Object.values(v.files)[0]) : undefined
+  const fileCode = useQuery({
+    queryKey: ['op-file', projectId, fileDigest],
+    queryFn: () => api.fileContentText(projectId, fileDigest!),
+    enabled: !!fileDigest,
+    staleTime: Infinity,
+  })
+  const code: string | undefined = v.code ?? fileCode.data
   return (
     <div className="col" style={{ gap: 16 }}>
-      {v.code ? (
+      {fileCode.isLoading && <Spinner label="Loading source…" />}
+      {code ? (
         <CodeBlock
-          code={v.code}
+          code={code}
           language={v.language ?? 'python'}
           title={
             <span className="mono">

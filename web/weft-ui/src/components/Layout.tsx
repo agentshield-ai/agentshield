@@ -5,8 +5,11 @@ const NAV: { section: string; items: { to: string; label: string; icon: string }
     section: 'Observe',
     items: [
       { to: 'traces', label: 'Traces', icon: '≡' },
+      { to: 'agents', label: 'Agents', icon: '◎' },
       { to: 'threads', label: 'Threads', icon: '⇄' },
+      { to: 'dashboards', label: 'Dashboards', icon: '▥' },
       { to: 'monitors', label: 'Monitors', icon: '◉' },
+      { to: 'queues', label: 'Annotation queues', icon: '☰' },
     ],
   },
   {
@@ -30,7 +33,10 @@ const NAV: { section: string; items: { to: string; label: string; icon: string }
   },
   {
     section: 'Project',
-    items: [{ to: 'settings', label: 'Settings', icon: '⚙' }],
+    items: [
+      { to: 'automations', label: 'Automations', icon: '↯' },
+      { to: 'settings', label: 'Settings', icon: '⚙' },
+    ],
   },
 ]
 

@@ -84,6 +84,10 @@ func classify(val any, forced string) (kind string, base, leaf *string) {
 		if t, _ := m["_type"].(string); t == "Op" {
 			kind = "op"
 		}
+		// Ops serialised by the official weave client.
+		if wt, ok := m["weave_type"].(map[string]any); ok && m["_type"] == "CustomWeaveType" && wt["type"] == "Op" {
+			kind = "op"
+		}
 	}
 	set := func(b, l string) {
 		base, leaf = &b, &l

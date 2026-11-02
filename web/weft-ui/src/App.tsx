@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, setApiKey } from './api/client'
 import { Loading } from './components/common'
@@ -29,6 +29,19 @@ const LeaderboardPage = lazyNamed(() => import('./pages/leaderboards/Leaderboard
 const MonitorsPage = lazyNamed(() => import('./pages/monitors/MonitorsPage'), 'MonitorsPage')
 const MonitorPage = lazyNamed(() => import('./pages/monitors/MonitorPage'), 'MonitorPage')
 const SettingsPage = lazyNamed(() => import('./pages/settings/SettingsPage'), 'SettingsPage')
+const QueuesPage = lazyNamed(() => import('./pages/queues/QueuesPage'), 'QueuesPage')
+const QueueReviewPage = lazyNamed(() => import('./pages/queues/QueueReviewPage'), 'QueueReviewPage')
+const AutomationsPage = lazyNamed(() => import('./pages/automations/AutomationsPage'), 'AutomationsPage')
+const AgentsPage = lazyNamed(() => import('./pages/agents/AgentsPage'), 'AgentsPage')
+const AgentPage = lazyNamed(() => import('./pages/agents/AgentPage'), 'AgentPage')
+const ConversationPage = lazyNamed(() => import('./pages/agents/ConversationPage'), 'ConversationPage')
+const DashboardsPage = lazyNamed(() => import('./pages/dashboards/DashboardsPage'), 'DashboardsPage')
+const DashboardPage = lazyNamed(() => import('./pages/dashboards/DashboardPage'), 'DashboardPage')
+
+function WeaveCallRedirect() {
+  const { entity, project, callId } = useParams()
+  return <Navigate to={`/${entity}/${project}/calls/${callId}`} replace />
+}
 
 function AuthGate({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
@@ -110,6 +123,18 @@ export function App() {
             <Route path="monitors" element={<MonitorsPage />} />
             <Route path="monitors/:objectId" element={<MonitorPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="queues" element={<QueuesPage />} />
+            <Route path="queues/:queueId" element={<QueueReviewPage />} />
+            <Route path="automations" element={<AutomationsPage />} />
+            <Route path="agents" element={<AgentsPage />} />
+            <Route path="agents/:agentName" element={<AgentPage />} />
+            <Route path="conversations/:conversationId" element={<ConversationPage />} />
+            <Route path="dashboards" element={<DashboardsPage />} />
+            <Route path="dashboards/:objectId" element={<DashboardPage />} />
+            {/* Links printed by the official weave client */}
+            <Route path="weave" element={<Navigate to="../traces" relative="path" replace />} />
+            <Route path="weave/*" element={<Navigate to="../traces" relative="path" replace />} />
+            <Route path="r/call/:callId" element={<WeaveCallRedirect />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found</div>} />
         </Routes>

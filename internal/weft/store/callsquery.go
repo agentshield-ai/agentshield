@@ -37,7 +37,7 @@ type Call struct {
 	startedUS  int64
 	endedUS    *int64
 	rollup     Contribution
-	own        Contribution
+	cumulative bool
 }
 
 // OpBaseName is the op name without ref decoration.
@@ -73,8 +73,8 @@ func (c *Call) LatencyMS() *float64 {
 
 // TotalUsage returns own + descendant usage.
 func (c *Call) TotalUsage() Contribution {
-	t := c.own.Clone()
-	t.Add(c.rollup)
+	t := TotalContribution(c.Summary, c.endedUS != nil, c.Exception != nil, c.cumulative, c.rollup)
+	t.StatusCounts = nil
 	return t
 }
 
@@ -311,7 +311,7 @@ func orderCalls(sorts []SortBy) (string, []any, error) {
 
 const callSelect = `SELECT c.project_id, c.id, c.op_name, c.op_base_name, c.display_name, c.trace_id, c.parent_id, c.thread_id, c.turn_id,
 	c.started_at, c.ended_at, c.exception, c.attributes, c.inputs, c.output, c.summary, c.rollup, c.wb_user_id, c.wb_run_id,
-	c.deleted_at, c.storage_size FROM calls c`
+	c.deleted_at, c.storage_size, c.cumulative FROM calls c`
 
 func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 	var c Call
@@ -320,7 +320,7 @@ func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 	var attrs, inputs, summary, rollup string
 	var size int64
 	if err := rows.Scan(&c.ProjectID, &c.ID, &c.OpName, &c.opBaseName, &display, &c.TraceID, &parent, &thread, &turn,
-		&started, &ended, &exc, &attrs, &inputs, &output, &summary, &rollup, &user, &run, &deleted, &size); err != nil {
+		&started, &ended, &exc, &attrs, &inputs, &output, &summary, &rollup, &user, &run, &deleted, &size, &c.cumulative); err != nil {
 		return nil, err
 	}
 	c.DisplayName, c.ParentID, c.ThreadID, c.TurnID = strPtr(display), strPtr(parent), strPtr(thread), strPtr(turn)
@@ -342,7 +342,6 @@ func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 		c.Output = decodeJSON(output.String)
 	}
 	c.Summary = decodeMap(summary)
-	c.own = OwnContribution(c.Summary, false, false)
 	c.rollup = ParseContribution(rollup)
 	c.StorageSizeBytes = &size
 	return &c, nil

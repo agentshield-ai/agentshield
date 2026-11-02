@@ -1,0 +1,1 @@
+import{j as r,b as a}from"./index-hcRe3JEU.js";import{r as t,I as l}from"./urls-Cw_MIoXs.js";function c({refStr:s}){const e=t(s),i=l(s);return e?r.jsx(a,{className:"ref-chip",to:e,title:s,children:i}):r.jsx("span",{className:"ref-chip",title:s,children:i})}export{c as R};

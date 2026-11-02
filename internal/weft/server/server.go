@@ -28,6 +28,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// routeExtensions let feature modules register authenticated routes from
+// their own files: func init() { routeExtensions = append(routeExtensions, ...) }.
+var routeExtensions []func(*Server, chi.Router)
+
+// Store exposes the store to feature modules.
+func (s *Server) Store() *store.Store { return s.store }
+
 // Version is reported by /server_info.
 const Version = "0.1.0"
 
@@ -107,10 +114,14 @@ func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(s.requestLog)
+	r.Use(weaveCompat)
 	r.Use(s.cors)
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"status": "ok"}) })
 	r.Get("/server_info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"version": Version, "auth_required": len(s.keys) > 0, "otel_endpoint": "/otel/v1/traces"})
+		writeJSON(w, map[string]any{"version": Version, "auth_required": len(s.keys) > 0, "otel_endpoint": "/otel/v1/traces",
+			// Fields read by the official weave client.
+			"min_required_weave_python_version": "0.0.0", "trace_server_version": Version})
 	})
 
 	r.Group(func(r chi.Router) {
@@ -178,6 +189,15 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/leaderboard/compute", handle(s.leaderboardCompute))
 
 		r.Post("/otel/v1/traces", s.otelTraces)
+		for _, ext := range routeExtensions {
+			ext(s, r)
+		}
+		r.Post("/graphql", s.graphql)
+		r.Post("/v2/{entity}/{project}/calls/complete", s.callsComplete)
+		r.Post("/v2/{entity}/{project}/call/start", handle(s.callStart))
+		r.Post("/v2/{entity}/{project}/call/end", handle(s.callEnd))
+		r.Post("/feedback/batch/create", handle(s.feedbackBatchCreate))
+		r.Post("/service/projects_info", s.projectsInfo)
 	})
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
@@ -198,6 +218,20 @@ func (s *Server) Handler() http.Handler {
 }
 
 // ---------------------------------------------------------------- middleware
+
+// requestLog records each request at debug level (method, path, status, duration).
+func (s *Server) requestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.log.Enabled(r.Context(), slog.LevelDebug) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		start := time.Now()
+		next.ServeHTTP(ww, r)
+		s.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", ww.Status(), "ms", time.Since(start).Milliseconds())
+	})
+}
 
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -449,7 +483,8 @@ type callEndReq struct {
 	End store.CallEnd `json:"end"`
 }
 
-func (s *Server) callEnd(ctx context.Context, _ *http.Request, req *callEndReq) (any, error) {
+func (s *Server) callEnd(ctx context.Context, r *http.Request, req *callEndReq) (any, error) {
+	req.End.Cumulative = wantsWeaveRefs(r)
 	if req.End.EndedAt == "" {
 		req.End.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -486,6 +521,7 @@ func (s *Server) callUpsertBatch(ctx context.Context, r *http.Request, req *batc
 			}
 			res[i] = map[string]any{"id": b.Req.Start.ID, "trace_id": b.Req.Start.TraceID}
 		case b.Mode == "end" && b.Req.End != nil:
+			b.Req.End.Cumulative = wantsWeaveRefs(r)
 			if b.Req.End.EndedAt == "" {
 				b.Req.End.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			}
@@ -869,6 +905,30 @@ func (s *Server) feedbackCreate(ctx context.Context, r *http.Request, req *store
 		return nil, err
 	}
 	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload}, nil
+}
+
+type feedbackBatchReq struct {
+	Batch []struct {
+		store.FeedbackCreate
+		ID string `json:"id"`
+	} `json:"batch"`
+}
+
+func (s *Server) feedbackBatchCreate(ctx context.Context, r *http.Request, req *feedbackBatchReq) (any, error) {
+	if len(req.Batch) > 1000 {
+		return nil, store.Invalidf("batch too large (max 1000)")
+	}
+	res := make([]any, 0, len(req.Batch))
+	for _, b := range req.Batch {
+		b.FeedbackCreate.WBUserID = userFrom(r, b.FeedbackCreate.WBUserID)
+		b.FeedbackCreate.ID = b.ID
+		f, err := s.store.CreateFeedback(ctx, b.FeedbackCreate)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload})
+	}
+	return map[string]any{"res": res}, nil
 }
 
 type feedbackQueryReq struct {

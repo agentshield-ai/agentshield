@@ -34,6 +34,8 @@ type CallEnd struct {
 	Exception *string        `json:"exception"`
 	Output    any            `json:"output"`
 	Summary   map[string]any `json:"summary"`
+	// Cumulative marks a summary that already includes descendants' usage.
+	Cumulative bool `json:"-"`
 }
 
 // CompleteCall is a call delivered in one piece (OTLP spans, server-side calls).
@@ -308,13 +310,13 @@ func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
 	}
 	summary := mustJSON(en.Summary)
 	outRefs := mustJSON(nonNil(refs.CollectRefs(en.Output)))
-	_, err = tx.ExecContext(ctx, `INSERT INTO calls(project_id, id, trace_id, ended_at, exception, output, summary, output_refs, storage_size)
-		VALUES(?,?,?,?,?,?,?,?,?)
+	_, err = tx.ExecContext(ctx, `INSERT INTO calls(project_id, id, trace_id, ended_at, exception, output, summary, output_refs, storage_size, cumulative)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(project_id, id) DO UPDATE SET
 			ended_at = excluded.ended_at, exception = excluded.exception, output = excluded.output,
-			summary = excluded.summary, output_refs = excluded.output_refs,
+			summary = excluded.summary, output_refs = excluded.output_refs, cumulative = excluded.cumulative,
 			storage_size = calls.storage_size - length(COALESCE(calls.output, '')) - length(calls.summary) + excluded.storage_size`,
-		en.ProjectID, en.ID, en.ID, ended, nullStr(en.Exception), output, summary, outRefs, len(outStr)+len(summary))
+		en.ProjectID, en.ID, en.ID, ended, nullStr(en.Exception), output, summary, outRefs, len(outStr)+len(summary), en.Cumulative)
 	if err != nil {
 		return err
 	}
@@ -346,6 +348,7 @@ type rollState struct {
 	summary    string
 	endedAt    sql.NullInt64
 	exception  sql.NullString
+	cumulative bool
 	rollup     Contribution
 	propagated Contribution
 }
@@ -353,8 +356,8 @@ type rollState struct {
 func (s *Store) loadRoll(ctx context.Context, tx *sql.Tx, projectID, id string) (*rollState, error) {
 	var st rollState
 	var rollup, prop string
-	err := tx.QueryRowContext(ctx, `SELECT parent_id, summary, ended_at, exception, rollup, propagated FROM calls WHERE project_id = ? AND id = ?`,
-		projectID, id).Scan(&st.parentID, &st.summary, &st.endedAt, &st.exception, &rollup, &prop)
+	err := tx.QueryRowContext(ctx, `SELECT parent_id, summary, ended_at, exception, cumulative, rollup, propagated FROM calls WHERE project_id = ? AND id = ?`,
+		projectID, id).Scan(&st.parentID, &st.summary, &st.endedAt, &st.exception, &st.cumulative, &rollup, &prop)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -366,14 +369,8 @@ func (s *Store) loadRoll(ctx context.Context, tx *sql.Tx, projectID, id string) 
 	return &st, nil
 }
 
-func (st *rollState) own() Contribution {
-	return OwnContribution(decodeMap(st.summary), st.endedAt.Valid, st.exception.Valid)
-}
-
 func (st *rollState) total() Contribution {
-	t := st.own()
-	t.Add(st.rollup)
-	return t
+	return TotalContribution(decodeMap(st.summary), st.endedAt.Valid, st.exception.Valid, st.cumulative, st.rollup)
 }
 
 func (s *Store) saveRollup(ctx context.Context, tx *sql.Tx, projectID, id string, st *rollState) error {
@@ -393,7 +390,7 @@ func (s *Store) refreshTotalTokens(ctx context.Context, tx *sql.Tx, projectID, i
 
 // absorbChildren links children that arrived before this call.
 func (s *Store) absorbChildren(ctx context.Context, tx *sql.Tx, projectID, id string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, summary, ended_at, exception, rollup, propagated FROM calls WHERE project_id = ? AND parent_id = ?`,
+	rows, err := tx.QueryContext(ctx, `SELECT id, summary, ended_at, exception, cumulative, rollup, propagated FROM calls WHERE project_id = ? AND parent_id = ?`,
 		projectID, id)
 	if err != nil {
 		return err
@@ -408,12 +405,12 @@ func (s *Store) absorbChildren(ctx context.Context, tx *sql.Tx, projectID, id st
 		var cid, summary, rollup, prop string
 		var ended sql.NullInt64
 		var exc sql.NullString
-		if err := rows.Scan(&cid, &summary, &ended, &exc, &rollup, &prop); err != nil {
+		var cum bool
+		if err := rows.Scan(&cid, &summary, &ended, &exc, &cum, &rollup, &prop); err != nil {
 			rows.Close()
 			return err
 		}
-		total := OwnContribution(decodeMap(summary), ended.Valid, exc.Valid)
-		total.Add(ParseContribution(rollup))
+		total := TotalContribution(decodeMap(summary), ended.Valid, exc.Valid, cum, ParseContribution(rollup))
 		d := total.Clone()
 		d.Sub(ParseContribution(prop))
 		if !d.IsZero() {

@@ -21,6 +21,15 @@ type Project struct {
 	LastActivity *string `json:"last_activity"`
 }
 
+// EnsureProject creates a project if it does not exist.
+func (s *Store) EnsureProject(ctx context.Context, projectID string) error {
+	pid, err := refs.NormalizeProject(projectID)
+	if err != nil {
+		return &InvalidError{Msg: err.Error()}
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error { return s.touchProject(ctx, tx, pid) })
+}
+
 // ListProjects lists all projects with counts.
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	rows, err := s.r.QueryContext(ctx, `SELECT p.project_id, p.last_activity,
@@ -203,7 +212,7 @@ func (s *Store) ComputeCallsStats(ctx context.Context, projectID string, f *Call
 	}
 	// Roots carry trace totals; other calls only their own usage.
 	rootsOnly := f != nil && f.TraceRootsOnly
-	rows, err := s.r.QueryContext(ctx, `SELECT c.started_at, c.ended_at, c.exception IS NOT NULL, c.summary, c.rollup FROM calls c WHERE `+
+	rows, err := s.r.QueryContext(ctx, `SELECT c.started_at, c.ended_at, c.exception IS NOT NULL, c.summary, c.rollup, c.cumulative FROM calls c WHERE `+
 		where+` ORDER BY c.started_at LIMIT 200000`, args...)
 	if err != nil {
 		return nil, err
@@ -220,7 +229,8 @@ func (s *Store) ComputeCallsStats(ctx context.Context, projectID string, f *Call
 		var en sql.NullInt64
 		var failed bool
 		var summary, rollup string
-		if err := rows.Scan(&st, &en, &failed, &summary, &rollup); err != nil {
+		var cum bool
+		if err := rows.Scan(&st, &en, &failed, &summary, &rollup, &cum); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -229,10 +239,12 @@ func (s *Store) ComputeCallsStats(ctx context.Context, projectID string, f *Call
 			l := float64(en.Int64-st) / 1000
 			p.latency = &l
 		}
-		p.usage = OwnContribution(decodeMap(summary), false, false)
-		if rootsOnly {
-			p.usage.Add(ParseContribution(rollup))
+		ru := ParseContribution(rollup)
+		p.usage = TotalContribution(decodeMap(summary), en.Valid, failed, cum, ru)
+		if !rootsOnly {
+			p.usage.Sub(ru) // own usage only, so nested calls aren't counted twice
 		}
+		p.usage.StatusCounts = nil
 		pts = append(pts, p)
 	}
 	rows.Close()
@@ -389,7 +401,7 @@ func (s *Store) QueryThreads(ctx context.Context, q ThreadsQuery) ([]*Thread, er
 	rows, err := s.r.QueryContext(ctx, `SELECT c.thread_id, c.id, c.started_at, c.ended_at,
 		COALESCE(c.turn_id = c.id OR (c.turn_id IS NULL AND (c.parent_id IS NULL OR NOT EXISTS (
 			SELECT 1 FROM calls p WHERE p.project_id = c.project_id AND p.id = c.parent_id AND p.thread_id = c.thread_id))), 0) AS is_turn,
-		c.summary, c.rollup FROM calls c WHERE `+strings.Join(conds, " AND ")+` ORDER BY c.started_at LIMIT 500000`, args...)
+		c.summary, c.rollup, c.cumulative, c.exception IS NOT NULL FROM calls c WHERE `+strings.Join(conds, " AND ")+` ORDER BY c.started_at LIMIT 500000`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -404,8 +416,8 @@ func (s *Store) QueryThreads(ctx context.Context, q ThreadsQuery) ([]*Thread, er
 		var tid, id, summary, rollup string
 		var st int64
 		var en sql.NullInt64
-		var isTurn bool
-		if err := rows.Scan(&tid, &id, &st, &en, &isTurn, &summary, &rollup); err != nil {
+		var isTurn, cum, failed bool
+		if err := rows.Scan(&tid, &id, &st, &en, &isTurn, &summary, &rollup, &cum, &failed); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -431,8 +443,7 @@ func (s *Store) QueryThreads(ctx context.Context, q ThreadsQuery) ([]*Thread, er
 			if en.Valid {
 				t.durations = append(t.durations, float64(en.Int64-st)/1000)
 			}
-			u := OwnContribution(decodeMap(summary), false, false)
-			u.Add(ParseContribution(rollup))
+			u := TotalContribution(decodeMap(summary), en.Valid, failed, cum, ParseContribution(rollup))
 			t.TotalTokens += u.Tokens()
 			t.CostUSD += prices.TotalCost(u, st)
 		}

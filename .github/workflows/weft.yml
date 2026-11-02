@@ -97,3 +97,7 @@ jobs:
           npm run build
       - name: Demo seed script
         run: python3 scripts/weft_seed_demo.py --traces 5
+      - name: Official weave client against Weft
+        run: |
+          python -m pip install 'weave==0.54.0'
+          WEFT_URL=http://127.0.0.1:6345 python scripts/weft_weave_compat_check.py

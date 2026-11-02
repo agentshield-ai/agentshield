@@ -22,6 +22,45 @@ func ParseContribution(s string) Contribution {
 	return c
 }
 
+// TotalContribution is a call's own contribution plus its descendants'.
+// Calls from clients that already roll descendants into their summary
+// (cumulative, e.g. the official weave client) report their total directly;
+// for those the summary is authoritative once the call has ended.
+func TotalContribution(summary map[string]any, ended, failed, cumulative bool, rollup Contribution) Contribution {
+	if cumulative && ended {
+		var c Contribution
+		if u, ok := summary["usage"].(map[string]any); ok {
+			for model, v := range u {
+				if fields, ok := v.(map[string]any); ok {
+					for k, x := range fields {
+						if f, ok := toFloat(x); ok {
+							c.addUsage(model, k, f)
+						}
+					}
+				}
+			}
+		}
+		if sc, ok := summary["status_counts"].(map[string]any); ok {
+			for k, x := range sc {
+				if f, ok := toFloat(x); ok {
+					c.addStatus(k, f)
+				}
+			}
+		} else if failed {
+			c.addStatus("error", 1)
+		} else {
+			c.addStatus("success", 1)
+		}
+		return c
+	}
+	t := OwnContribution(summary, ended, failed)
+	if cumulative { // running: only descendants are known
+		t = Contribution{}
+	}
+	t.Add(rollup)
+	return t
+}
+
 // OwnContribution derives a call's own contribution from its summary and status.
 func OwnContribution(summary map[string]any, ended, failed bool) Contribution {
 	var c Contribution

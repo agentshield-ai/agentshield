@@ -65,7 +65,8 @@ func (s *Store) insertTable(ctx context.Context, tx *sql.Tx, projectID string, r
 	if rowDigests == nil {
 		rowDigests = []string{}
 	}
-	d, canon, err := refs.Digest(rowDigests)
+	d := refs.TableDigest(rowDigests)
+	canon, err := refs.CanonicalJSON(rowDigests)
 	if err != nil {
 		return "", err
 	}

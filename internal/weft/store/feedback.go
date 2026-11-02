@@ -27,6 +27,8 @@ type Feedback struct {
 
 // FeedbackCreate is the body of /feedback/create.
 type FeedbackCreate struct {
+	// ID is an optional client-chosen id (UUID); generated when empty.
+	ID            string  `json:"-"`
 	ProjectID     string  `json:"project_id"`
 	WeaveRef      string  `json:"weave_ref"`
 	FeedbackType  string  `json:"feedback_type"`
@@ -88,7 +90,7 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 		user = &u
 	}
 	fb := &Feedback{
-		ID: uuid.Must(uuid.NewV7()).String(), ProjectID: pid, WeaveRef: f.WeaveRef, FeedbackType: f.FeedbackType,
+		ID: feedbackID(f.ID), ProjectID: pid, WeaveRef: f.WeaveRef, FeedbackType: f.FeedbackType,
 		Payload: decodeJSON(payload), Creator: f.Creator, WBUserID: user,
 		AnnotationRef: normRefPtr(f.AnnotationRef), RunnableRef: normRefPtr(f.RunnableRef),
 		CallRef: normRefPtr(f.CallRef), TriggerRef: normRefPtr(f.TriggerRef),
@@ -150,6 +152,13 @@ func scanFeedback(rows *sql.Rows) (Feedback, error) {
 	f.Creator, f.WBUserID, f.AnnotationRef, f.RunnableRef, f.CallRef, f.TriggerRef =
 		strPtr(creator), strPtr(user), strPtr(ann), strPtr(run), strPtr(call), strPtr(trig)
 	return f, nil
+}
+
+func feedbackID(given string) string {
+	if u, err := uuid.Parse(given); err == nil {
+		return u.String()
+	}
+	return uuid.Must(uuid.NewV7()).String()
 }
 
 // QueryFeedback lists feedback for a project.
@@ -260,65 +269,4 @@ func (s *Store) ReplaceFeedback(ctx context.Context, feedbackID string, f Feedba
 		return nil, ErrNotFound
 	}
 	return s.CreateFeedback(ctx, f)
-}
-
-// ---------------------------------------------------------------- secrets
-
-// SetSecret stores a provider secret.
-func (s *Store) SetSecret(ctx context.Context, name, value string) error {
-	if !secretNameOK(name) {
-		return Invalidf("invalid secret name %q (use A-Z, 0-9, _)", name)
-	}
-	if len(value) > 16384 {
-		return Invalidf("secret too long")
-	}
-	_, err := s.w.ExecContext(ctx, `INSERT INTO secrets(name, value, updated_at) VALUES(?,?,?)
-		ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, name, value, nowMicros())
-	return err
-}
-
-func secretNameOK(name string) bool {
-	if name == "" || len(name) > 128 {
-		return false
-	}
-	for _, r := range name {
-		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
-			return false
-		}
-	}
-	return true
-}
-
-// GetSecret returns a stored secret.
-func (s *Store) GetSecret(ctx context.Context, name string) (string, bool, error) {
-	var v string
-	err := s.r.QueryRowContext(ctx, `SELECT value FROM secrets WHERE name = ?`, name).Scan(&v)
-	if err == sql.ErrNoRows {
-		return "", false, nil
-	}
-	return v, err == nil, err
-}
-
-// ListSecrets returns stored secret names.
-func (s *Store) ListSecrets(ctx context.Context) ([]string, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT name FROM secrets ORDER BY name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			return nil, err
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
-}
-
-// DeleteSecret removes a stored secret.
-func (s *Store) DeleteSecret(ctx context.Context, name string) error {
-	_, err := s.w.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, name)
-	return err
 }
