@@ -48,10 +48,10 @@ function ChartCard({ title, value, children }: { title: string; value: string; c
   )
 }
 
-export function CallCharts({ projectId, filter, query }: { projectId: string; filter?: CallsFilter; query?: Query }) {
+export function CallCharts({ projectId, filter, query, search }: { projectId: string; filter?: CallsFilter; query?: Query; search?: string }) {
   const stats = useQuery({
-    queryKey: ['calls-stats', projectId, filter, query],
-    queryFn: () => api.callsStats({ project_id: projectId, filter, query }),
+    queryKey: ['calls-stats', projectId, filter, query, search],
+    queryFn: () => api.callsStats({ project_id: projectId, filter, query, search }),
   })
   if (stats.isLoading)
     return (

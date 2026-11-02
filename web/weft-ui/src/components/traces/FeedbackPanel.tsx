@@ -20,7 +20,7 @@ function myUserId(): string | null {
     return null
   }
 }
-function rememberUserId(id: string | null | undefined) {
+export function rememberUserId(id: string | null | undefined) {
   if (!id) return
   try {
     localStorage.setItem(USER_KEY, id)

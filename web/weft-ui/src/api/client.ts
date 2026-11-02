@@ -116,6 +116,7 @@ export function fileUrl(projectId: string, digest: string): string {
 export const api = {
   serverInfo: () => get<ServerInfo>('/server_info'),
   authCheck: () => get<{ ok: boolean }>('/auth/check'),
+  whoami: () => get<{ user_id: string; auth_required: boolean }>('/auth/whoami'),
   projects: () => get<{ projects: Project[] }>('/projects'),
   projectStats: (project_id: string) => post<ProjectStats>('/project/stats', { project_id }),
 
@@ -130,7 +131,7 @@ export const api = {
   callsDelete: (project_id: string, call_ids: string[]) => post<object>('/calls/delete', { project_id, call_ids }),
   callUpdate: (project_id: string, call_id: string, display_name: string) =>
     post<object>('/call/update', { project_id, call_id, display_name }),
-  callsStats: (req: { project_id: string; filter?: CallsFilter; query?: Query; start?: string; end?: string; bucket_seconds?: number }) =>
+  callsStats: (req: { project_id: string; filter?: CallsFilter; query?: Query; search?: string; start?: string; end?: string; bucket_seconds?: number }) =>
     post<CallsStatsRes>('/calls/stats', req),
   opCounts: (project_id: string, trace_roots_only = false) =>
     post<{ ops: OpCount[] }>('/calls/op_counts', { project_id, trace_roots_only }),

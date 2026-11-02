@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ type Config struct {
 // Server is the HTTP API.
 type Server struct {
 	cfg    Config
+	keys   []apiKey
 	store  *store.Store
 	llm    *llm.Client
 	engine *evals.Engine
@@ -56,7 +58,7 @@ func New(cfg Config, st *store.Store) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{cfg: cfg, store: st, log: log}
+	s := &Server{cfg: cfg, store: st, log: log, keys: parseKeys(cfg.APIKeys)}
 	s.llm = llm.New(func(ctx context.Context, name string) (string, bool) {
 		v, ok, err := st.GetSecret(ctx, name)
 		return v, ok && err == nil
@@ -108,12 +110,19 @@ func (s *Server) Handler() http.Handler {
 	r.Use(s.cors)
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"status": "ok"}) })
 	r.Get("/server_info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"version": Version, "auth_required": len(s.cfg.APIKeys) > 0, "otel_endpoint": "/otel/v1/traces"})
+		writeJSON(w, map[string]any{"version": Version, "auth_required": len(s.keys) > 0, "otel_endpoint": "/otel/v1/traces"})
 	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth)
 		r.Get("/auth/check", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"ok": true}) })
+		r.Get("/auth/whoami", func(w http.ResponseWriter, r *http.Request) {
+			u := "anonymous"
+			if p := userFrom(r, nil); p != nil {
+				u = *p
+			}
+			writeJSON(w, map[string]any{"user_id": u, "auth_required": len(s.keys) > 0})
+		})
 		r.Get("/projects", s.listProjects)
 		r.Post("/project/stats", handle(s.projectStats))
 
@@ -241,18 +250,44 @@ func presentedKey(r *http.Request) string {
 	return ""
 }
 
+// apiKey is a configured key, optionally bound to a user name ("alice=key").
+type apiKey struct {
+	user string
+	key  []byte
+}
+
+var keyUserRe = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,64}$`)
+
+func parseKeys(raw []string) []apiKey {
+	out := make([]apiKey, 0, len(raw))
+	for _, k := range raw {
+		if name, key, ok := strings.Cut(k, "="); ok && key != "" && keyUserRe.MatchString(name) {
+			out = append(out, apiKey{user: name, key: []byte(key)})
+			continue
+		}
+		out = append(out, apiKey{key: []byte(k)})
+	}
+	return out
+}
+
+type ctxKey struct{}
+
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(s.cfg.APIKeys) == 0 {
+		if len(s.keys) == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
-		k := presentedKey(r)
+		k := []byte(presentedKey(r))
 		ok := false
-		for _, want := range s.cfg.APIKeys {
-			if k != "" && subtle.ConstantTimeCompare([]byte(k), []byte(want)) == 1 {
-				ok = true
+		user := ""
+		for _, want := range s.keys {
+			if len(k) > 0 && subtle.ConstantTimeCompare(k, want.key) == 1 {
+				ok, user = true, want.user
 			}
+		}
+		if ok && user != "" {
+			r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, user))
 		}
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="weft"`)
@@ -339,7 +374,10 @@ func userFrom(r *http.Request, explicit *string) *string {
 	if explicit != nil && *explicit != "" {
 		return explicit
 	}
-	if u := r.Header.Get("X-Weft-User"); u != "" {
+	if u, ok := r.Context().Value(ctxKey{}).(string); ok && u != "" {
+		return &u
+	}
+	if u := r.Header.Get("X-Weft-User"); u != "" && len(u) <= 128 {
 		return &u
 	}
 	return nil
@@ -569,6 +607,7 @@ func (s *Server) callsDelete(ctx context.Context, _ *http.Request, req *callsDel
 
 type callsStatsReq struct {
 	ProjectID     string             `json:"project_id"`
+	Search        string             `json:"search"`
 	Filter        *store.CallsFilter `json:"filter"`
 	Query         any                `json:"query"`
 	Start         string             `json:"start"`
@@ -577,7 +616,7 @@ type callsStatsReq struct {
 }
 
 func (s *Server) callsStats(ctx context.Context, _ *http.Request, req *callsStatsReq) (any, error) {
-	return s.store.ComputeCallsStats(ctx, req.ProjectID, req.Filter, req.Query, req.Start, req.End, req.BucketSeconds)
+	return s.store.ComputeCallsStats(ctx, req.ProjectID, req.Filter, req.Query, req.Search, req.Start, req.End, req.BucketSeconds)
 }
 
 type opCountsReq struct {

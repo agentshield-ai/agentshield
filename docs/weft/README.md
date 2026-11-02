@@ -29,7 +29,7 @@ make weft         # build bin/weft
 |---|---|---|
 | `--addr` | `WEFT_ADDR` | `127.0.0.1:6345` |
 | `--db` | `WEFT_DB` | `~/.weft/weft.db` |
-| `--api-keys` | `WEFT_API_KEYS` | empty (auth disabled) |
+| `--api-keys` | `WEFT_API_KEYS` | empty (auth disabled); comma-separated, each `key` or `user=key` |
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` |

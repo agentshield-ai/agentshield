@@ -177,12 +177,12 @@ func percentile(sorted []float64, p float64) *float64 {
 var niceBuckets = []int64{1, 5, 10, 30, 60, 300, 600, 1800, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400, 7 * 86400, 30 * 86400}
 
 // ComputeCallsStats buckets matching calls over time.
-func (s *Store) ComputeCallsStats(ctx context.Context, projectID string, f *CallsFilter, query any, startStr, endStr string, bucketSec int64) (*CallsStats, error) {
+func (s *Store) ComputeCallsStats(ctx context.Context, projectID string, f *CallsFilter, query any, search, startStr, endStr string, bucketSec int64) (*CallsStats, error) {
 	pid, err := refs.NormalizeProject(projectID)
 	if err != nil {
 		return nil, &InvalidError{Msg: err.Error()}
 	}
-	where, args, err := whereCalls(pid, f, query, "", false)
+	where, args, err := whereCalls(pid, f, query, search, false)
 	if err != nil {
 		return nil, err
 	}

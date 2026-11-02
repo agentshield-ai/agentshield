@@ -445,7 +445,7 @@ export function TracesPage() {
         </button>
       </div>
 
-      {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} />}
+      {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
 
       <div className="toolbar">
         <input

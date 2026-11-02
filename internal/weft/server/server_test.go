@@ -296,3 +296,31 @@ func TestKeyOrderPreserved(t *testing.T) {
 		t.Fatalf("reordered content should dedupe: %s", out2)
 	}
 }
+
+func TestNamedKeysAndWhoami(t *testing.T) {
+	e := newEnv(t, "alice=k1", "plainkey")
+	e.key = "k1"
+	_, out := e.raw("/auth/whoami", nil, nil)
+	if !strings.Contains(string(out), `"user_id":"alice"`) {
+		t.Fatalf("whoami = %s", out)
+	}
+	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/x",
+		"feedback_type": "wandb.note.1", "payload": map[string]any{"note": "hi"}})
+	if fb["wb_user_id"] != "alice" {
+		t.Fatalf("feedback user = %v", fb["wb_user_id"])
+	}
+	e.key = "plainkey"
+	_, out = e.raw("/auth/whoami", nil, nil)
+	if !strings.Contains(string(out), `"user_id":"anonymous"`) {
+		t.Fatalf("whoami plain = %s", out)
+	}
+	e.key = "alice"
+	if code, _ := e.raw("/auth/whoami", nil, nil); code != 401 {
+		t.Fatal("user name must not work as a key")
+	}
+	e.key = "k1"
+	st := e.post("/calls/stats", map[string]any{"project_id": pid, "search": "nothing-matches"})
+	if st["totals"].(map[string]any)["count"].(float64) != 0 {
+		t.Fatalf("stats search ignored: %v", st)
+	}
+}

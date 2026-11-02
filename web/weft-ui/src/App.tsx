@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, setApiKey } from './api/client'
@@ -34,6 +34,21 @@ function AuthGate({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const check = useQuery({ queryKey: ['auth-check'], queryFn: api.authCheck, retry: false })
   const [key, setKey] = useState('')
+  const authed = check.isSuccess
+  useEffect(() => {
+    if (!authed) return
+    // Remember who we are so feedback panels can tell our reactions from others'.
+    api
+      .whoami()
+      .then((w) => {
+        try {
+          localStorage.setItem('weft.userId', w.user_id)
+        } catch {
+          /* storage unavailable */
+        }
+      })
+      .catch(() => undefined)
+  }, [authed])
   if (check.isLoading) return <Loading />
   if (check.error instanceof ApiError && check.error.status === 401) {
     return (

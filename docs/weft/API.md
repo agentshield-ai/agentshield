@@ -30,6 +30,10 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
   `GET /health`, `GET /server_info` and the static UI needs one of
   `Authorization: Bearer <key>`, `Authorization: Basic base64("api:<key>")`,
   or `X-Weft-Api-Key: <key>`. `GET /auth/check` returns 200 or 401.
+  Keys may be configured as `name=key`; requests with that key act as user
+  `name`, which becomes the default `wb_user_id` of calls, objects and
+  feedback. Otherwise the `X-Weft-User` header is used, and feedback without
+  a user is stored as `"anonymous"`.
 
 ## Server
 
@@ -38,6 +42,7 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
 | `GET /health` | `{"status":"ok"}` |
 | `GET /server_info` | `{"version": "...", "auth_required": bool, "otel_endpoint": "/otel/v1/traces"}` |
 | `GET /auth/check` | `{"ok": true}` or 401 |
+| `GET /auth/whoami` | `{"user_id": "alice" \| "anonymous", "auth_required": bool}` |
 | `GET /projects` | `{"projects": [{"project_id","entity","project","call_count","trace_count","object_count","last_activity"}]}` |
 | `/project/stats` `{project_id}` | `{"call_count","trace_count","object_count","table_count","file_count","feedback_count","storage_size_bytes"}` |
 
@@ -92,7 +97,7 @@ descendants, so `summary.usage` on a root call is the total for the trace.
 | `/calls/query_stats` | `{project_id, filter?, query?, search?}` | `{"count", "total_storage_size_bytes"}` |
 | `/calls/delete` | `{project_id, call_ids, wb_user_id?}` | `{}` (soft delete, cascades to descendants) |
 | `/call/update` | `{project_id, call_id, display_name}` | `{}` |
-| `/calls/stats` | `{project_id, filter?, query?, start?, end?, bucket_seconds?}` | see below |
+| `/calls/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | see below |
 | `/calls/op_counts` | `{project_id, trace_roots_only?}` | `{"ops": [{"op_name","op_base_name","count","error_count","last_called"}]}` |
 
 **CallsQuery**
