@@ -18,6 +18,7 @@ import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal } from '../../components/traces/Menu'
 import { CodeSnippet, serverOrigin } from '../../components/traces/GettingStarted'
 import { buildTree, callLabel, flattenTree, type TreeNode } from '../../components/traces/callUtils'
+import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 
 type Tab = 'call' | 'feedback' | 'scores' | 'summary' | 'attributes' | 'use' | 'raw'
 const TABS: Tab[] = ['call', 'feedback', 'scores', 'summary', 'attributes', 'use', 'raw']
@@ -273,6 +274,7 @@ function CallDetail({
           <button className="btn sm" onClick={() => setModal('dataset')}>
             Add to dataset
           </button>
+          <AddToQueueButton projectId={projectId} callIds={[call.id]} />
           <button className="btn sm danger" onClick={() => setModal('delete')}>
             Delete
           </button>

@@ -11,6 +11,7 @@ export class ChatCompletionAccumulator implements Accumulator {
     if (!c || typeof c !== 'object') return;
     for (const k of ['id', 'model', 'created', 'system_fingerprint', 'service_tier']) if (c[k] != null) this.base[k] = c[k];
     if (c.usage) this.usage = c.usage;
+    else if (c.x_groq?.usage) this.usage = c.x_groq.usage;
     for (const ch of c.choices ?? []) {
       const idx = ch.index ?? 0;
       if (!this.choices.has(idx)) this.choices.set(idx, { index: idx, message: { role: 'assistant', content: null }, finish_reason: null });
@@ -85,4 +86,12 @@ export function wrapOpenAI<T>(client: T, opts: WrapOpenAIOptions = {}): T {
     recordUsage: usage,
   });
   return client;
+}
+
+/**
+ * Trace any OpenAI-compatible client (Groq, Together, Mistral's OpenAI endpoint,
+ * vLLM, Ollama, ...). `name` becomes the op prefix, e.g. `groq.chat.completions.create`.
+ */
+export function wrapOpenAICompatible<T>(client: T, opts: WrapOpenAIOptions = {}): T {
+  return wrapOpenAI(client, { includeUsage: false, ...opts });
 }

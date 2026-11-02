@@ -17,6 +17,7 @@ import { GettingStarted } from '../../components/traces/GettingStarted'
 import { callLabel, discoverFeedbackFields, discoverFields, exportCalls, getDotted, reactionCounts, slugify } from '../../components/traces/callUtils'
 import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/ExportModal'
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
+import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 
 // ---------------------------------------------------------------- URL state
 
@@ -552,6 +553,7 @@ export function TracesPage() {
           <button className="btn sm" onClick={() => setModal('dataset')}>
             Add to dataset
           </button>
+          <AddToQueueButton projectId={projectId} callIds={[...selected.keys()]} />
           <Dropdown label="Export ▾" align="right">
             {(close) =>
               (['json', 'jsonl', 'csv'] as const).map((f) => (

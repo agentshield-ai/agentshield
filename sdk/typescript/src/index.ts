@@ -1,8 +1,9 @@
-export { init, finish, flush, WeftClient, DEFAULT_SERVER_URL, type InitOptions, type GetCallsOptions } from './client.js';
+export { init, finish, flush, WeftClient, DEFAULT_SERVER_URL, type InitOptions, type ClientSettings, type GetCallsOptions } from './client.js';
 export { getClient, requireClient } from './global.js';
 export { op, isOp, type Op, type OpOptions } from './op.js';
 export { Call, CallFeedback, type CallData, type ApplyScorerResult } from './call.js';
-export { attributes, withThread, getCurrentCall } from './context.js';
+export { attributes, withThread, getCurrentCall, withTracingDisabled } from './context.js';
+export { Content, Video, PDF, Html, Markdown } from './content.js';
 export { Ref } from './refs.js';
 export { WeftObject, Dataset, Model } from './objects.js';
 export {
@@ -22,6 +23,21 @@ export {
   JSONValidScorer,
   LevenshteinScorer,
   LLMAsAJudgeScorer,
+  HallucinationFreeScorer,
+  SummarizationScorer,
+  RelevanceScorer,
+  ValidXMLScorer,
+  JSONSchemaScorer,
+  OpenAIModerationScorer,
+  EmbeddingSimilarityScorer,
+  RuleScorer,
+  RemoteScorer,
+  HALLUCINATION_PROMPT,
+  SUMMARIZATION_PROMPT,
+  RELEVANCE_PROMPT,
+  evaluateExpr,
+  schemaErrors,
+  isWellFormedXml,
   levenshtein,
   type ScoreArgs,
 } from './scorers.js';
@@ -30,7 +46,9 @@ export { OpLoadError } from './loader.js';
 export { Redactor, REDACTED, DEFAULT_REDACT_KEYS, redactPiiText, type RedactSettings } from './redact.js';
 export { addUsage } from './usage.js';
 export { WeftHTTPError, VERSION } from './http.js';
-export { wrapOpenAI, type WrapOpenAIOptions } from './integrations/openai.js';
+export { wrapOpenAI, wrapOpenAICompatible, type WrapOpenAIOptions } from './integrations/openai.js';
+export { wrapGoogleGenAI } from './integrations/google_genai.js';
+export { weftMiddleware } from './integrations/vercel_ai.js';
 export { wrapAnthropic } from './integrations/anthropic.js';
 export { canonicalJson, digestJson, digest, tableDigest } from './canonical.js';
 
