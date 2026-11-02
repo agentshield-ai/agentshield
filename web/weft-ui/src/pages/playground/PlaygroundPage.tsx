@@ -91,6 +91,23 @@ function toApiMsg(m: EditMsg): ChatMessage {
   return { role: m.role, content, ...(m.extra ?? {}) }
 }
 
+const VAR_RE = /\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+
+/** Template variable names ({name}) used across messages, in first-seen order. */
+export function templateVars(msgs: EditMsg[]): string[] {
+  const seen = new Set<string>()
+  for (const m of msgs) {
+    if (m.json) continue
+    for (const match of m.content.matchAll(VAR_RE)) if (match[1]) seen.add(match[1])
+  }
+  return [...seen]
+}
+
+/** Fill {name} placeholders; unknown names are left as-is and {{ }} become literal braces. */
+export function fillVars(text: string, vars: Record<string, string>): string {
+  return text.replace(VAR_RE, (m, name?: string) => (m === '{{' ? '{' : m === '}}' ? '}' : name && name in vars ? vars[name] : m))
+}
+
 function buildInputs(model: string, msgs: EditMsg[], p: Params): CompletionInputs {
   const inputs: CompletionInputs = { model, messages: msgs.map(toApiMsg), temperature: p.temperature, max_tokens: p.max_tokens }
   if (p.top_p !== 1) inputs.top_p = p.top_p
@@ -162,6 +179,10 @@ export function PlaygroundPage() {
   const [shared, setShared] = useState<EditMsg[]>(DEFAULT_MESSAGES)
   const [panels, setPanels] = useState<Panel[]>(() => [{ id: uid(), model: '', params: { ...DEFAULT_PARAMS }, messages: [], result: null, showParams: false }])
   const [saveOpen, setSaveOpen] = useState(false)
+  const [saveModelOpen, setSaveModelOpen] = useState(false)
+  const [vars, setVars] = useState<Record<string, string>>({})
+  const varsRef = useRef(vars)
+  varsRef.current = vars
   const [loadNote, setLoadNote] = useState<string | null>(null)
   const aborts = useRef(new Map<string, AbortController>())
 
@@ -212,7 +233,8 @@ export function PlaygroundPage() {
       aborts.current.get(panel.id)?.abort()
       let inputs: CompletionInputs
       try {
-        inputs = buildInputs(panel.model, msgs, panel.params)
+        const filled = msgs.map((m) => (m.json ? m : { ...m, content: fillVars(m.content, varsRef.current) }))
+        inputs = buildInputs(panel.model, filled, panel.params)
       } catch (e) {
         setPanel(panel.id, { result: { running: false, error: (e as Error).message } })
         return
@@ -344,6 +366,9 @@ export function PlaygroundPage() {
         <button className="btn sm" onClick={() => setSaveOpen(true)}>
           Save as prompt
         </button>
+        <button className="btn sm" onClick={() => setSaveModelOpen(true)} title="Save a panel's model, parameters and messages as a model you can evaluate">
+          Save as model
+        </button>
         <span className="spacer" />
         <label className="checkbox small" title="Edit one message list shared by all panels">
           <input type="checkbox" checked={sync} onChange={(e) => toggleSync(e.target.checked)} /> Sync messages
@@ -364,6 +389,7 @@ export function PlaygroundPage() {
         </div>
       )}
       <ErrorBox error={modelsQ.error ?? callQ.error ?? promptQ.error} />
+      <VariablesCard names={templateVars(sync ? shared : panels.flatMap((p) => p.messages))} values={vars} onChange={setVars} />
       <div className="pg-grid" style={{ gridTemplateColumns: `repeat(${panels.length}, minmax(300px, 1fr))` }}>
         {panels.map((p, i) => (
           <PanelView
@@ -382,6 +408,7 @@ export function PlaygroundPage() {
           />
         ))}
       </div>
+      {saveModelOpen && <SaveModelModal projectId={projectId} panels={panels.map((p) => ({ ...p, messages: panelMessages(p) }))} onClose={() => setSaveModelOpen(false)} />}
       {saveOpen && <SavePromptModal projectId={projectId} messages={sync ? shared : (panels[0]?.messages ?? [])} onClose={() => setSaveOpen(false)} />}
     </div>
   )
@@ -416,6 +443,112 @@ function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: Ob
         </>
       )}
     </Dropdown>
+  )
+}
+
+function VariablesCard({ names, values, onChange }: { names: string[]; values: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
+  if (!names.length) return null
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="grow">Variables</h3>
+        <span className="small faint">Filled into {'{placeholders}'} when you run; saved prompts and models keep the placeholders.</span>
+      </div>
+      <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+        {names.map((n) => (
+          <label key={n} className="field">
+            <span className="mono">{n}</span>
+            <textarea
+              className="input"
+              style={{ minHeight: 34 }}
+              rows={1}
+              value={values[n] ?? ''}
+              onChange={(e) => onChange({ ...values, [n]: e.target.value })}
+              placeholder={`Value for {${n}}`}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SaveModelModal({ projectId, panels, onClose }: { projectId: string; panels: Panel[]; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [name, setName] = useState('')
+  const [idx, setIdx] = useState(0)
+  const panel = panels[Math.min(idx, panels.length - 1)]
+  const save = useMutation({
+    mutationFn: async () => {
+      const id = slugify(name)
+      if (!id) throw new Error('Enter a name')
+      const p = panel.params
+      const default_params: Record<string, Any> = {
+        messages_template: panel.messages.map(toApiMsg),
+        temperature: p.temperature,
+        max_tokens: p.max_tokens,
+      }
+      if (p.top_p !== 1) default_params.top_p = p.top_p
+      if (p.json) default_params.response_format = 'json_object'
+      const val = { _class_name: 'LLMStructuredCompletionModel', _bases: ['Model', 'Object', 'BaseModel'], name: id, llm_model_id: panel.model, default_params }
+      const r = await api.objCreate(projectId, id, val, 'LLMStructuredCompletionModel')
+      return { id, ...r }
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objs', projectId] }),
+  })
+  return (
+    <Modal
+      title="Save as model"
+      onClose={onClose}
+      footer={
+        save.data ? (
+          <button className="btn primary" onClick={onClose}>
+            Done
+          </button>
+        ) : (
+          <>
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={!name.trim() || !panel?.model || save.isPending} onClick={() => save.mutate()}>
+              Save
+            </button>
+          </>
+        )
+      }
+    >
+      {save.data ? (
+        <div className="success-box">
+          Saved model <b>{save.data.id}</b> (v{save.data.version_index}). It can now be run in{' '}
+          <Link to={`/${projectId}/evaluations/new`}>a new evaluation</Link>.
+        </div>
+      ) : (
+        <>
+          {panels.length > 1 && (
+            <label className="field">
+              Panel
+              <select className="input" value={idx} onChange={(e) => setIdx(Number(e.target.value))}>
+                {panels.map((p, i) => (
+                  <option key={p.id} value={i}>
+                    Panel {i + 1}: {p.model}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="field">
+            Model name
+            <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. support-gpt4o-v2" />
+            {name && slugify(name) !== name && <span className="faint">Saved as {slugify(name)}</span>}
+          </label>
+          <div className="small muted">
+            Saves <code>{panel?.model}</code> with this panel's parameters and {panel?.messages.length ?? 0} messages as the template. Dataset columns fill the{' '}
+            {'{placeholders}'} when the model is evaluated.
+          </div>
+        </>
+      )}
+      <ErrorBox error={save.error} />
+    </Modal>
   )
 }
 

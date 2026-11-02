@@ -103,3 +103,16 @@ describe('chat extraction', () => {
     expect(extractChat({ inputs: { x: 1 }, output: 2 })).toBeNull()
   })
 })
+
+describe('playground variables', async () => {
+  const { templateVars, fillVars } = await import('../pages/playground/PlaygroundPage')
+  it('finds and fills placeholders', () => {
+    const msgs = [
+      { id: '1', role: 'system', content: 'You help {company} customers. Literal {{braces}}.' },
+      { id: '2', role: 'user', content: '{question} ({company})' },
+      { id: '3', role: 'user', content: '{"json": true}', json: true },
+    ]
+    expect(templateVars(msgs)).toEqual(['company', 'question'])
+    expect(fillVars('{question} for {company} {{x}} {missing}', { question: 'Q?', company: 'Acme' })).toBe('Q? for Acme {x} {missing}')
+  })
+})
