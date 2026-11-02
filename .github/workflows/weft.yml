@@ -2,7 +2,7 @@ name: Weft
 
 on:
   push:
-    branches: [main]
+    # Any branch, so feature branches get feedback before a PR is opened.
     paths:
       - 'cmd/weft/**'
       - 'internal/weft/**'
