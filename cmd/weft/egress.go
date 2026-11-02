@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
+	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 )
 
 // egressFlags configure which internal destinations outbound requests made
@@ -17,11 +18,15 @@ import (
 type egressFlags struct {
 	allow        *string
 	allowPrivate *bool
+	insecureHTTP *bool
 }
 
 func registerEgressFlags() *egressFlags {
 	priv, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("WEFT_EGRESS_ALLOW_PRIVATE")))
+	insecure := envBool("WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP") || envBool("WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP")
 	return &egressFlags{
+		insecureHTTP: flag.Bool("remote-scorer-allow-insecure-http", insecure,
+			"allow http:// RemoteScorer URLs; https is required otherwise (env WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true, or Weave's WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP)"),
 		allow: flag.String("egress-allow", os.Getenv("WEFT_EGRESS_ALLOW"),
 			"comma-separated destinations outbound requests may reach even when internal: host, host:port, *.domain, IP or CIDR, "+
 				"e.g. localhost:11434,10.0.0.0/8 (env WEFT_EGRESS_ALLOW). Loopback, private, link-local, CGNAT and cloud metadata addresses are refused otherwise"),
@@ -51,6 +56,10 @@ func (f *egressFlags) apply(log *slog.Logger) (string, error) {
 		return "", fmt.Errorf("--egress-allow: %w", err)
 	}
 	egress.SetDefault(p)
+	evals.AllowInsecureRemoteScorerHTTP = f.insecureHTTP != nil && *f.insecureHTTP
+	if evals.AllowInsecureRemoteScorerHTTP {
+		log.Warn("remote scorers may use http:// URLs (--remote-scorer-allow-insecure-http)")
+	}
 	switch {
 	case *f.allowPrivate:
 		return "private-allowed", nil
@@ -58,4 +67,11 @@ func (f *egressFlags) apply(log *slog.Logger) (string, error) {
 		return "public+allowlist", nil
 	}
 	return "public-only", nil
+}
+
+// envBool reads a boolean environment variable ("true", "1", ...); unset or
+// invalid values are false.
+func envBool(name string) bool {
+	v, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(name)))
+	return v
 }

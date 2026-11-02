@@ -120,3 +120,13 @@ def test_typesafe_live(live, monkeypatch):
     live.flush()
     [llm] = live.get_calls(filter={"op_names": ["chat"]}).to_list()
     assert llm.attributes["gen_ai"]["provider"]["name"] == "typesafe" and llm.summary["usage"]["jev-2"]["prompt_tokens"] == 42
+
+
+def test_list_aliases_and_get_tags_and_aliases(live):
+    ref = weft.publish({"rows": [1, 2]}, name="alias-check")
+    live.set_aliases(ref, ["production", "staging"])
+    live.add_tags(ref, ["reviewed"])
+    tags, aliases = live.get_tags_and_aliases(ref)
+    assert tags == ["reviewed"]
+    assert {"production", "staging"} <= set(aliases)
+    assert {"production", "staging"} <= set(live.list_aliases())

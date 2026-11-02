@@ -809,6 +809,8 @@ client.remove_aliases("qa", "production")
 client.get_aliases(ref)
 client.add_tags(ref, ["reviewed"]); client.remove_tags(ref, ["reviewed"]); client.get_tags(ref)
 client.list_tags()                             # all tags in the project
+client.list_aliases()                          # all aliases in the project
+client.get_tags_and_aliases(ref)               # (tags, aliases) of one version
 client.delete_object_version(ref)              # or "qa:v0"
 client.delete_object_versions("qa", ["v1", "<digest>"])
 client.delete_all_object_versions("qa")

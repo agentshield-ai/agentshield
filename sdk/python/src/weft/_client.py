@@ -785,6 +785,16 @@ class WeftClient:
         """All tags used in the project."""
         return list(self._http.request("GET", "/tags", query={"project_id": self.project_id}).get("tags") or [])
 
+    def list_aliases(self) -> List[str]:
+        """All distinct aliases in the project (Weave: ``client.list_aliases()``)."""
+        return list(self._http.request("GET", "/aliases", query={"project_id": self.project_id}).get("aliases") or [])
+
+    def get_tags_and_aliases(self, obj_ref: Any) -> "tuple[List[str], List[str]]":
+        """``(tags, aliases)`` of an object version in one request (Weave's name and order)."""
+        r = self._obj_ref(obj_ref)
+        obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
+        return list(obj.get("tags") or []), list(obj.get("aliases") or [])
+
     # ------------------------------------------------------------------ registry
     def _registry_target(self, target_path: str) -> "tuple[str, str, str]":
         """``<registry_project>/<collection>`` or ``<entity>/<registry_project>/<collection>``."""

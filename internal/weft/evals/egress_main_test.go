@@ -13,5 +13,7 @@ import (
 // with egress.SetDefault and restore this one afterwards.
 func TestMain(m *testing.M) {
 	egress.SetDefault(egress.MustNew(egress.Config{Allow: []string{"127.0.0.1", "::1", "localhost"}}))
+	// httptest servers are plain http; the https rule has its own test.
+	AllowInsecureRemoteScorerHTTP = true
 	os.Exit(m.Run())
 }

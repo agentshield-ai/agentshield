@@ -468,6 +468,9 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("RemoteScorer needs an http(s) url")
 	}
+	if u.Scheme == "http" && !AllowInsecureRemoteScorerHTTP {
+		return nil, fmt.Errorf("RemoteScorer url must use https (the server operator can allow http with --remote-scorer-allow-insecure-http)")
+	}
 	timeout := numField(val, "timeout", 30)
 	if timeout <= 0 || timeout > 600 {
 		timeout = 30
@@ -533,6 +536,13 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	}
 	return v, nil
 }
+
+// AllowInsecureRemoteScorerHTTP permits http:// RemoteScorer URLs. As in
+// Weave (WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP), it is off by
+// default, so scorer requests, which carry call inputs and outputs and may
+// carry credentials, are only sent over TLS. cmd/weft sets it from
+// --remote-scorer-allow-insecure-http.
+var AllowInsecureRemoteScorerHTTP bool
 
 // remoteHTTP calls remote scorers and remote (predict) models. Destinations
 // pass the egress guard, and, as in Weave, redirects are not followed: a 3xx

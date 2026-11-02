@@ -37,6 +37,7 @@ make weft         # build bin/weft
 | `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error calls are stored with regex redaction only |
 | `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |
 | `--egress-allow-private` | `WEFT_EGRESS_ALLOW_PRIVATE` | `false`; `true` allows loopback, private, link-local and CGNAT destinations (cloud metadata addresses stay blocked) |
+| `--remote-scorer-allow-insecure-http` | `WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP` (or Weave's `WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP`) | `false`; `true` allows `http://` RemoteScorer URLs, which otherwise must be `https://` |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
 | `--db-encryption-key-file` | `WEFT_DB_ENCRYPTION_KEY_FILE` | empty (plaintext database); a file holding a passphrase encrypts the whole database at rest, see [Database encryption at rest](#database-encryption-at-rest) |
@@ -359,6 +360,9 @@ one-off Argon2id run plus a Wasm heap per connection).
   and read the reply back as feedback. `--egress-allow-private` reopens that
   for every member, so prefer a narrow `--egress-allow` list on shared
   servers. See [Outbound requests](#outbound-requests).
+- Remote scorer requests carry call inputs and outputs and often credentials,
+  so their URLs must be `https://` unless `--remote-scorer-allow-insecure-http`
+  is set.
 - Any key that can write to a project can use the stored provider secrets
   through the playground and LLM judges. A `Provider` object sends the
   secret named in `api_key_name` to its `base_url`, so only give write

@@ -600,6 +600,8 @@ is all input columns as JSON; `{output}` is the output text.
     // POSTs {"output","inputs"} and returns the JSON response (or its text). headers_secret names a secret holding a JSON
     // object of headers or a bare token (sent as Authorization: Bearer). Weave's endpoint_url and auth_config.bearer_secret_name are accepted too;
     // auth_config with token_url uses OAuth client credentials (see "OAuth client credentials" below).
+    // The url must be https unless the server runs with --remote-scorer-allow-insecure-http (Weave:
+    // WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP, default false); an http url fails before any request is sent.
 {"_class_name":"RuleScorer", … "rule": {"$contains": {"input": {"$getField":"output"}, "substr": {"$literal":"sorry"}}}, "threshold": null}
     // rule: a query-language operation ($literal $getField $and $or $not $eq $gt $gte $lt $lte $in $contains $convert; optionally
     // wrapped in $expr) evaluated on {output, inputs, <each input column>}; the value is the score; with threshold a number scores value >= threshold.
@@ -1476,6 +1478,10 @@ internal and cloud metadata addresses are rejected"); Weft applies it to
 every user-supplied destination. As in Weave, a `RemoteScorer` (and a
 `predict_url` model) does not follow redirects: a 3xx response fails the
 call. Webhooks and provider calls follow redirects, each hop checked.
+`RemoteScorer` URLs must also use `https://` unless the operator starts the
+server with `--remote-scorer-allow-insecure-http`
+(`WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true`; Weave's
+`WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP` is read too).
 
 A refused request fails with `destination not allowed` (for example a scorer
 result `{"error": "remote scorer: destination not allowed"}`); the resolved
