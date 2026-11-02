@@ -9,6 +9,7 @@ const apiPrefixes = [
   '/cost/', '/completions/', '/llm/', '/secrets/', '/evaluate_model', '/evaluation_status',
   '/evaluations/', '/leaderboard/', '/threads/', '/project/', '/projects', '/server_info',
   '/health', '/auth/', '/otel/',
+  '/annotation_queues', '/automations/',
 ]
 
 export default defineConfig({

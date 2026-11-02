@@ -1,4 +1,5 @@
 import type { Call } from '../call.js';
+import { syntheticOp } from '../client.js';
 import { currentContext } from '../context.js';
 import { tracingClient } from '../global.js';
 import { toJson } from '../serialize.js';
@@ -77,7 +78,7 @@ export function wrapAnthropic<T>(client: T): T {
       const wc = tracingClient();
       const s = bound(body, ...rest);
       if (!wc || !s || typeof s.finalMessage !== 'function') return s;
-      const call = wc.createCall('anthropic.messages.stream', toJson(body ?? {}) as Record<string, unknown>, { parent: currentContext().stack.at(-1) ?? null });
+      const call = wc.createCall(syntheticOp('anthropic.messages.stream', 'llm'), toJson(body ?? {}) as Record<string, unknown>, { parent: currentContext().stack.at(-1) ?? null });
       s.finalMessage().then(
         (m: any) => {
           const out = toJson(m);

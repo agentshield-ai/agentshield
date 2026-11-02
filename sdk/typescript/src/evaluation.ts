@@ -5,6 +5,9 @@ import { Dataset, Model, WeftObject } from './objects.js';
 import { isOp, op, type Op } from './op.js';
 import { Scorer } from './scorers.js';
 import { autoSummarizeValues } from './summarize.js';
+import { digest } from './canonical.js';
+import { isRefUri } from './refs.js';
+import { toJson } from './serialize.js';
 
 type AnyFn = (...args: any[]) => any;
 
@@ -220,6 +223,7 @@ export class EvaluationLogger {
   summary: Record<string, unknown> | null = null;
   private predictions: ScoreLogger[] = [];
   private finished = false;
+  private rowIndex = new Map<string, number>();
 
   constructor(opts: EvaluationLoggerOptions = {}) {
     this.client = tracingClient();
@@ -234,20 +238,44 @@ export class EvaluationLogger {
               return new Model({ name: String(name ?? 'model'), attributes: attrs });
             })();
     const d = opts.dataset;
+    if (typeof d === 'string' && isRefUri(d)) {
+      throw new Error('EvaluationLogger: load the dataset first, e.g. `dataset: await weft.ref(uri).get()`');
+    }
     this.dataset = d instanceof Dataset ? d : typeof d === 'string' || d === undefined ? new Dataset({ name: d ?? 'dataset', rows: [] }) : new Dataset({ rows: d });
     this.evaluation = new Evaluation({ name: opts.name ?? 'Evaluation', description: opts.description, dataset: this.dataset, scorers: opts.scorers ?? [] });
     if (this.client) {
       this.client.publishLocal(this.evaluation, this.evaluation.name);
       this.client.publishLocal(this.model);
       this.call = this.client.createCall(evaluateOp.__weftOp, { self: this.evaluation, model: this.model }, { displayName: opts.name });
+      // link predictions whose inputs equal a dataset row to that row's ref
+      this.dataset.rows.forEach((row, i) => {
+        const key = digest(toJson(row));
+        if (!this.rowIndex.has(key)) this.rowIndex.set(key, i);
+      });
     }
+  }
+
+  private example(inputs: Record<string, unknown>): Record<string, unknown> {
+    const i = this.rowIndex.get(digest(toJson(inputs)));
+    const ref = i === undefined ? undefined : this.dataset.rowRef(i);
+    const ex = { ...inputs };
+    if (ref) Object.defineProperty(ex, '__weftRef', { value: ref, enumerable: false });
+    return ex;
+  }
+
+  /** Log a prediction and its scores in one call (the prediction is finished). */
+  logExample(inputs: Record<string, unknown>, output: unknown, scores: Record<string, unknown> = {}, modelLatency: number | null = null): ScoreLogger {
+    const pred = this.logPrediction(inputs, output, modelLatency);
+    for (const [name, value] of Object.entries(scores)) pred.logScore(name, value);
+    pred.finish();
+    return pred;
   }
 
   logPrediction(inputs: Record<string, unknown>, output: unknown, modelLatency: number | null = null): ScoreLogger {
     if (this.finished) throw new Error('evaluation already finished');
     let pas: Call | null = null;
     if (this.client && this.call) {
-      pas = this.client.createCall(predictAndScore.__weftOp, { self: this.evaluation, model: this.model, example: { ...inputs } }, { parent: this.call });
+      pas = this.client.createCall(predictAndScore.__weftOp, { self: this.evaluation, model: this.model, example: this.example(inputs) }, { parent: this.call });
       const pc = this.client.createCall(`${this.model.name ?? 'Model'}.predict`, { self: this.model, ...inputs }, { parent: pas });
       this.client.finishCall(pc, output);
     }

@@ -33,6 +33,10 @@ class FakeWeft:
         self.otel: List[bytes] = []
         self.fail_status: Optional[int] = None
         self.fail_paths: Dict[str, int] = {}  # path -> number of upcoming requests to fail with 503
+        self.tags: Dict[tuple, List[str]] = {}
+        self.aliases: Dict[tuple, str] = {}  # (object_id, alias) -> digest
+        self.embeddings_enabled = False
+        self.weave_routes = True  # serve /objs/{id}/aliases and tag routes
         self.lock = threading.Lock()
         fake = self
 
@@ -48,9 +52,22 @@ class FakeWeft:
                 self.end_headers()
                 self.wfile.write(data)
 
+            def do_PUT(self) -> None:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                with fake.lock:
+                    fake.requests.append({"method": "PUT", "path": self.path, "body": body, "headers": dict(self.headers)})
+                    try:
+                        res = fake.handle_put(self.path, body)
+                    except KeyError as e:
+                        return self._send(404, {"reason": f"not found: {e}"})
+                return self._send(200, res)
+
             def do_GET(self) -> None:
                 with fake.lock:
                     fake.requests.append({"method": "GET", "path": self.path, "body": None, "headers": dict(self.headers)})
+                if self.path.startswith("/tags?"):
+                    return self._send(200, {"tags": sorted({t for ts in fake.tags.values() for t in ts})})
                 if self.path == "/server_info":
                     return self._send(200, {"version": "fake", "auth_required": False, "otel_endpoint": "/otel/v1/traces"})
                 if self.path == "/auth/whoami":
@@ -121,7 +138,52 @@ class FakeWeft:
         c.update(req)
         return {"id": cid, "trace_id": c.get("trace_id")} if mode == "start" else {}
 
+    def handle_put(self, path: str, body: Any) -> Any:
+        m = re.fullmatch(r"/objs/([^/]+)/aliases", path)
+        if m and self.weave_routes:
+            for a in body["aliases"]:
+                self.aliases[(m.group(1), a)] = body["digest"]
+            return {}
+        m = re.fullmatch(r"/objs/([^/]+)/versions/([^/]+)/tags", path)
+        if m and self.weave_routes:
+            cur = self.tags.setdefault((m.group(1), m.group(2)), [])
+            cur.extend(t for t in body["tags"] if t not in cur)
+            return {}
+        raise KeyError(path)
+
     def handle(self, path: str, body: Any, raw: bytes, ctype: str) -> Any:
+        m = re.fullmatch(r"/objs/([^/]+)/aliases/remove", path)
+        if m and self.weave_routes:
+            for a in body["aliases"]:
+                self.aliases.pop((m.group(1), a), None)
+            return {}
+        m = re.fullmatch(r"/objs/([^/]+)/versions/([^/]+)/tags/remove", path)
+        if m and self.weave_routes:
+            key = (m.group(1), m.group(2))
+            self.tags[key] = [t for t in self.tags.get(key, []) if t not in body["tags"]]
+            return {}
+        if path == "/obj/alias/set":
+            self.aliases[(body["object_id"], body["alias"])] = body["digest"]
+            return {}
+        if path == "/obj/alias/remove":
+            self.aliases.pop((body["object_id"], body["alias"]), None)
+            return {}
+        if path == "/obj/delete":
+            versions = self.objs.get(body["object_id"], [])
+            digests = body.get("digests")
+            keep = [v for v in versions if digests is not None and v["digest"] not in digests and f"v{v['version_index']}" not in digests]
+            n = len(versions) - len(keep)
+            self.objs[body["object_id"]] = keep
+            return {"num_deleted": n}
+        if path == "/embeddings/create":
+            if not self.embeddings_enabled:
+                raise KeyError(path)
+            vecs = [[float(len(t)), 1.0] for t in body["inputs"]["input"]]
+            return {"response": {"model": body["inputs"]["model"], "data": [{"embedding": v} for v in vecs], "usage": {"prompt_tokens": 4, "total_tokens": 4}}}
+        if path == "/file/content":
+            return (self.files[body["digest"]], "application/octet-stream")
+        if path == "/remote/score":
+            return {"score": 0.9, "received": body}
         if path == "/call/upsert_batch":
             res = []
             for item in body["batch"]:
@@ -151,7 +213,11 @@ class FakeWeft:
                 v = versions[int(dg[1:])]
             else:
                 v = next(x for x in versions if x["digest"] == dg)
-            return {"obj": {**v, "project_id": body["project_id"]}}
+            extra = {}
+            if body.get("include_tags_and_aliases"):
+                extra = {"tags": self.tags.get((body["object_id"], v["digest"]), []),
+                         "aliases": sorted(a for (o, a), d in self.aliases.items() if o == body["object_id"] and d == v["digest"])}
+            return {"obj": {**v, "project_id": body["project_id"], **extra}}
         if path == "/objs/query":
             flt = body.get("filter") or {}
             out = []

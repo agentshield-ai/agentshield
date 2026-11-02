@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { Call, type CallData } from './call.js';
 import { b64digest, digest, tableDigest } from './canonical.js';
 import { currentContext, getCurrentCall } from './context.js';
@@ -21,9 +23,35 @@ export interface InitOptions {
   /** Disable tracing (also WEFT_DISABLED=true). */
   disabled?: boolean;
   sender?: SenderOptions;
-  /** Redaction settings (default: redact credential-like keys). */
-  settings?: RedactSettings;
+  /** Client settings (redaction, attributes, links, durability). */
+  settings?: ClientSettings;
 }
+
+export interface ClientSettings extends RedactSettings {
+  /** Attributes added to every call. */
+  globalAttributes?: Record<string, unknown>;
+  /** Print `<server>/<entity>/<project>/calls/<id>` for each root call (default true; env WEFT_PRINT_CALL_LINK). */
+  printCallLink?: boolean;
+  /** Store op source code (default true; env WEFT_CAPTURE_CODE). */
+  captureCode?: boolean;
+  /** Keep unsent data in an on-disk write-ahead log, replayed on the next start (env WEFT_ENABLE_WAL). */
+  enableDiskFallback?: boolean;
+  /** WAL directory (default ~/.weft/wal; env WEFT_WAL_DIR). */
+  walDir?: string;
+  maxQueueSize?: number;
+  retryMaxAttempts?: number;
+  retryBackoffMs?: number;
+  retryMaxBackoffMs?: number;
+}
+
+function settingBool(v: boolean | undefined, env: string, dflt: boolean): boolean {
+  if (v !== undefined) return v;
+  const raw = (process.env[env] ?? '').trim().toLowerCase();
+  if (!raw) return dflt;
+  return ['1', 'true', 'yes', 'on'].includes(raw);
+}
+
+export const CODE_CAPTURE_DISABLED = '// Code capture disabled\n';
 
 export interface GetCallsOptions {
   filter?: Record<string, unknown>;
@@ -56,13 +84,14 @@ export function formatError(e: unknown): string {
 }
 
 const synthetic = new Map<string, OpMeta>();
-export function syntheticOp(name: string): OpMeta {
-  let m = synthetic.get(name);
+export function syntheticOp(name: string, kind?: string): OpMeta {
+  const key = `${name}|${kind ?? ''}`;
+  let m = synthetic.get(key);
   if (!m) {
-    const fn = makeOp(function recorded() {}, { name });
+    const fn = makeOp(function recorded() {}, { name, kind });
     m = fn.__weftOp;
     m.code = `// ${name}: recorded by the weft SDK\n`;
-    synthetic.set(name, m);
+    synthetic.set(key, m);
   }
   return m;
 }
@@ -77,13 +106,40 @@ export class WeftClient {
   readonly redactor: Redactor;
   private uploaded = new Set<string>();
 
+  readonly settings: ClientSettings;
+  readonly captureCode: boolean;
+  readonly printCallLink: boolean;
+  readonly globalAttributes: Record<string, unknown>;
+
   constructor(project: string, opts: InitOptions = {}) {
     [this.entity, this.project] = splitProject(project);
     this.serverUrl = (opts.serverUrl ?? process.env.WEFT_SERVER_URL ?? DEFAULT_SERVER_URL).replace(/\/+$/, '');
     this.http = new HttpClient(this.serverUrl, opts.apiKey ?? process.env.WEFT_API_KEY);
-    this.sender = new Sender(this.http, opts.sender);
+    const st = (this.settings = opts.settings ?? {});
+    this.captureCode = settingBool(st.captureCode, 'WEFT_CAPTURE_CODE', true);
+    this.printCallLink = settingBool(st.printCallLink, 'WEFT_PRINT_CALL_LINK', true);
+    this.globalAttributes = { ...(st.globalAttributes ?? {}) };
+    let walPath: string | undefined;
+    if (settingBool(st.enableDiskFallback, 'WEFT_ENABLE_WAL', false)) {
+      const dir = st.walDir ?? process.env.WEFT_WAL_DIR ?? join(homedir(), '.weft', 'wal');
+      walPath = join(dir, `${this.serverUrl}_${this.projectId}`.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') + '.jsonl');
+    }
+    this.sender = new Sender(this.http, {
+      ...opts.sender,
+      ...(st.maxQueueSize !== undefined ? { maxQueue: st.maxQueueSize } : {}),
+      ...(st.retryMaxAttempts !== undefined ? { maxRetries: st.retryMaxAttempts } : {}),
+      ...(st.retryBackoffMs !== undefined ? { backoffMs: st.retryBackoffMs } : {}),
+      ...(st.retryMaxBackoffMs !== undefined ? { maxBackoffMs: st.retryMaxBackoffMs } : {}),
+      walPath,
+    });
     this.disabled = !!opts.disabled;
-    this.redactor = new Redactor(opts.settings);
+    this.redactor = new Redactor(st);
+    if (walPath && !this.disabled) this.sender.replayWal();
+  }
+
+  /** UI link for a call. */
+  callUrl(call: Call | string): string {
+    return `${this.serverUrl}/${this.projectId}/calls/${typeof call === 'string' ? call : call.id}`;
   }
 
   get projectId(): string {
@@ -130,8 +186,17 @@ export class WeftClient {
     for (const [k, v] of Object.entries(raw)) if (k !== 'self') ser[k] = toJson(v, this);
     const redacted = this.redactor.apply(ser) as Record<string, unknown>;
     const finalInputs: Record<string, unknown> = 'self' in raw ? { self: this.serializeSelf(raw.self), ...redacted } : redacted;
-    const attributes = toJson({ ...ctx.attributes, ...(opts.attributes ?? {}) }, this) as Record<string, unknown>;
-    if (!('weft' in attributes)) attributes.weft = { client_version: VERSION, source: 'typescript-sdk', node_version: process.version };
+    const attributes = toJson({ ...this.globalAttributes, ...ctx.attributes, ...(opts.attributes ?? {}) }, this) as Record<string, unknown>;
+    const weftAttrs: Record<string, unknown> = { client_version: VERSION, source: 'typescript-sdk', node_version: process.version };
+    if (attributes.weft && typeof attributes.weft === 'object') Object.assign(weftAttrs, attributes.weft);
+    const { kind, color } = meta.options;
+    if (kind) weftAttrs.span_kind = kind;
+    if (color) weftAttrs.color = color;
+    attributes.weft = weftAttrs;
+    if (kind || color) {
+      const weave = attributes.weave && typeof attributes.weave === 'object' ? { ...(attributes.weave as object) } : {};
+      attributes.weave = { ...weave, ...(kind ? { kind } : {}), ...(color ? { color } : {}) };
+    }
     const data: CallData = {
       id,
       project_id: this.projectId,
@@ -161,6 +226,7 @@ export class WeftClient {
     if (threadId) start.thread_id = threadId;
     if (turnId) start.turn_id = turnId;
     this.sender.enqueue({ kind: 'call_start', payload: start });
+    if (!parent && this.printCallLink) process.stderr.write(`weft: ${this.callUrl(call)}\n`);
     return call;
   }
 
@@ -241,7 +307,8 @@ export class WeftClient {
     const key = `${this.serverUrl}|${this.projectId}`;
     const cached = meta.refs.get(key);
     if (cached) return cached;
-    const val = { _type: 'Op', name: meta.name, code: meta.code, language: 'javascript', signature: meta.signature };
+    const code = this.captureCode && meta.options.enableCodeCapture !== false ? meta.code : meta.code.includes('recorded by the weft SDK') ? meta.code : CODE_CAPTURE_DISABLED;
+    const val = { _type: 'Op', name: meta.name, code, language: 'javascript', signature: meta.signature };
     const d = digest(val);
     const name = sanitizeName(meta.name);
     const ref = new Ref(this.entity, this.project, 'op', name, d);
@@ -343,6 +410,100 @@ export class WeftClient {
       appended.push(...(res.updated_row_digests ?? []));
     }
     return { ref: new Ref(this.entity, this.project, 'table', td), appended };
+  }
+
+  // ---------------------------------------------------------------- object management
+  /** Resolve a ref, URI, "name:v1"/"name:latest" or published object to a ref with a concrete digest. */
+  async resolveObjectRef(obj: Ref | string | { __weftRef?: Ref }): Promise<Ref> {
+    let r: Ref | undefined = obj instanceof Ref ? obj : typeof obj === 'string' ? this.ref(obj) : obj.__weftRef;
+    if (!r) throw new Error('object is not published');
+    if (r.digest === 'latest' || /^v\d+$/.test(r.digest)) {
+      const res = await this.http.post('/obj/read', { project_id: r.projectId, object_id: r.name, digest: r.digest });
+      r = new Ref(r.entity, r.project, r.kind, r.name, res.obj.digest);
+    }
+    return r;
+  }
+
+  async deleteObjectVersion(obj: Ref | string | { __weftRef?: Ref }): Promise<number> {
+    const r = await this.resolveObjectRef(obj);
+    return (await this.http.post('/obj/delete', { project_id: r.projectId, object_id: r.name, digests: [r.digest] })).num_deleted ?? 0;
+  }
+
+  /** Delete versions of `name` by digest (or "v0"/"latest"). */
+  async deleteObjectVersions(name: string, digests: string[]): Promise<number> {
+    return (await this.http.post('/obj/delete', { project_id: this.projectId, object_id: name, digests })).num_deleted ?? 0;
+  }
+
+  async deleteAllObjectVersions(name: string): Promise<number> {
+    return (await this.http.post('/obj/delete', { project_id: this.projectId, object_id: name })).num_deleted ?? 0;
+  }
+
+  private async withFallback<T>(attempts: Array<() => Promise<T>>): Promise<T> {
+    let last: unknown;
+    for (const a of attempts) {
+      try {
+        return await a();
+      } catch (e) {
+        if (!(e instanceof WeftHTTPError) || ![404, 405, 501].includes(e.status)) throw e;
+        last = e;
+      }
+    }
+    throw last;
+  }
+
+  /** Point alias(es) (e.g. "production") at an object version. */
+  async setAliases(obj: Ref | string | { __weftRef?: Ref }, alias: string | string[]): Promise<void> {
+    const r = await this.resolveObjectRef(obj);
+    const aliases = Array.isArray(alias) ? alias : [alias];
+    if (!aliases.length) return;
+    const body = { project_id: r.projectId, digest: r.digest, aliases };
+    const path = `/objs/${encodeURIComponent(r.name)}/aliases`;
+    await this.withFallback([
+      () => this.http.request('PUT', path, body),
+      () => this.http.post(path, body),
+      async () => {
+        for (const a of aliases) await this.http.post('/obj/alias/set', { project_id: r.projectId, object_id: r.name, digest: r.digest, alias: a });
+      },
+    ]);
+  }
+
+  /** Remove alias(es) from an object (by name or ref). */
+  async removeAliases(obj: Ref | string, alias: string | string[]): Promise<void> {
+    const name = typeof obj === 'string' && !isRefUri(obj) && !obj.includes(':') ? obj : (await this.resolveObjectRef(obj)).name;
+    const aliases = Array.isArray(alias) ? alias : [alias];
+    await this.withFallback([
+      () => this.http.post(`/objs/${encodeURIComponent(name)}/aliases/remove`, { project_id: this.projectId, aliases }),
+      async () => {
+        for (const a of aliases) await this.http.post('/obj/alias/remove', { project_id: this.projectId, object_id: name, alias: a });
+      },
+    ]);
+  }
+
+  async getAliases(obj: Ref | string | { __weftRef?: Ref }): Promise<string[]> {
+    const r = await this.resolveObjectRef(obj);
+    return (await this.http.post('/obj/read', { project_id: r.projectId, object_id: r.name, digest: r.digest, include_tags_and_aliases: true })).obj.aliases ?? [];
+  }
+
+  async addTags(obj: Ref | string | { __weftRef?: Ref }, tags: string[]): Promise<void> {
+    const r = await this.resolveObjectRef(obj);
+    const path = `/objs/${encodeURIComponent(r.name)}/versions/${r.digest}/tags`;
+    const body = { project_id: r.projectId, tags };
+    await this.withFallback([() => this.http.request('PUT', path, body), () => this.http.post(path, body)]);
+  }
+
+  async removeTags(obj: Ref | string | { __weftRef?: Ref }, tags: string[]): Promise<void> {
+    const r = await this.resolveObjectRef(obj);
+    await this.http.post(`/objs/${encodeURIComponent(r.name)}/versions/${r.digest}/tags/remove`, { project_id: r.projectId, tags });
+  }
+
+  async getTags(obj: Ref | string | { __weftRef?: Ref }): Promise<string[]> {
+    const r = await this.resolveObjectRef(obj);
+    return (await this.http.post('/obj/read', { project_id: r.projectId, object_id: r.name, digest: r.digest, include_tags_and_aliases: true })).obj.tags ?? [];
+  }
+
+  /** All tags used in the project. */
+  async listTags(): Promise<string[]> {
+    return (await this.http.request('GET', '/tags', undefined, { project_id: this.projectId })).tags ?? [];
   }
 
   /** `GET /auth/whoami`. */
@@ -470,6 +631,9 @@ function installExitHook(): void {
   process.on('beforeExit', () => {
     const c = getClient();
     if (c && c.sender.pending > 0) void c.flush();
+  });
+  process.on('exit', () => {
+    getClient()?.sender.spillPending();
   });
 }
 

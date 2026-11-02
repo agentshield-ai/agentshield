@@ -48,3 +48,8 @@ export function withThread<T>(a: unknown, b?: unknown): T {
   const parent = getCurrentCall();
   return runWith({ thread: { threadId, entryParentId: parent ? parent.id : null } }, () => fn(threadId));
 }
+
+/** Run `fn` without recording any calls (ops still execute). */
+export function withTracingDisabled<T>(fn: () => T): T {
+  return runWith({ suppressed: true }, fn);
+}

@@ -7,6 +7,7 @@ import inspect
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .. import _context
 from .._context import pop_call, push_call, tracing_suppressed
 
 logger = logging.getLogger("weft")
@@ -83,6 +84,8 @@ class LLMSpec:
         accumulator: Optional[Callable[[], Accumulator]] = None,
         record_usage: Optional[Callable[[Any, Any], None]] = None,
         skip_first_arg: bool = True,
+        kind: Optional[str] = "llm",
+        suppress_nested: bool = False,
     ):
         self.op_name = op_name
         self.prepare_kwargs = prepare_kwargs
@@ -90,6 +93,33 @@ class LLMSpec:
         self.accumulator = accumulator
         self.record_usage = record_usage
         self.skip_first_arg = skip_first_arg
+        self.kind = kind
+        # Wrapper libraries (litellm, ...) call provider SDKs we also patch;
+        # suppress those nested calls so usage is not counted twice.
+        self.suppress_nested = suppress_nested
+
+
+def start_call(client: Any, spec: "LLMSpec", inputs: Dict[str, Any]) -> Any:
+    from .._client import _synthetic_op
+
+    return client.create_call(_synthetic_op(spec.op_name, spec.kind), inputs)
+
+
+class _Enter:
+    """Push the call (and optionally suppress nested tracing) while the client runs."""
+
+    def __init__(self, call: Any, suppress: bool):
+        self.call, self.suppress = call, suppress
+
+    def __enter__(self) -> "_Enter":
+        self.t1 = push_call(self.call)
+        self.t2 = _context.suppress() if self.suppress else None
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        if self.t2 is not None:
+            _context.unsuppress(self.t2)
+        pop_call(self.t1)
 
 
 def _tracing() -> Any:
@@ -242,10 +272,34 @@ class AsyncStreamProxy:
         return getattr(self._stream, item)
 
 
-def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None) -> Any:
-    """Wrap an LLM client method so each invocation becomes a traced call."""
+def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None, returns_async_iter: bool = False) -> Any:
+    """Wrap an LLM client method so each invocation becomes a traced call.
+
+    ``returns_async_iter`` is for methods that return an async iterator
+    without being awaited (async generator methods).
+    """
     if is_async is None:
         is_async = inspect.iscoroutinefunction(orig)
+
+    if returns_async_iter:
+
+        @functools.wraps(orig)
+        def iwrapper(*args: Any, **kwargs: Any) -> Any:
+            client = _tracing()
+            if client is None:
+                return orig(*args, **kwargs)
+            if spec.prepare_kwargs is not None:
+                kwargs = spec.prepare_kwargs(dict(kwargs))
+            call = start_call(client, spec, _inputs(spec, args, kwargs))
+            try:
+                with _Enter(call, spec.suppress_nested):
+                    res = orig(*args, **kwargs)
+            except BaseException as e:
+                client.finish_call(call, exception=e)
+                raise
+            return AsyncStreamProxy(res, client, call, spec)
+
+        return iwrapper
 
     if is_async:
 
@@ -256,15 +310,15 @@ def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None) -> A
                 return await orig(*args, **kwargs)
             if spec.prepare_kwargs is not None:
                 kwargs = spec.prepare_kwargs(dict(kwargs))
-            call = client.create_call(spec.op_name, _inputs(spec, args, kwargs))
-            token = push_call(call)
+            call = start_call(client, spec, _inputs(spec, args, kwargs))
             try:
-                res = await orig(*args, **kwargs)
+                with _Enter(call, spec.suppress_nested):
+                    res = orig(*args, **kwargs)
+                    if inspect.isawaitable(res):
+                        res = await res
             except BaseException as e:
-                pop_call(token)
                 client.finish_call(call, exception=e)
                 raise
-            pop_call(token)
             if spec.is_stream(kwargs, res):
                 return AsyncStreamProxy(res, client, call, spec)
             _finish(client, call, spec, to_dict(res))
@@ -279,15 +333,13 @@ def make_wrapper(orig: Any, spec: LLMSpec, is_async: Optional[bool] = None) -> A
             return orig(*args, **kwargs)
         if spec.prepare_kwargs is not None:
             kwargs = spec.prepare_kwargs(dict(kwargs))
-        call = client.create_call(spec.op_name, _inputs(spec, args, kwargs))
-        token = push_call(call)
+        call = start_call(client, spec, _inputs(spec, args, kwargs))
         try:
-            res = orig(*args, **kwargs)
+            with _Enter(call, spec.suppress_nested):
+                res = orig(*args, **kwargs)
         except BaseException as e:
-            pop_call(token)
             client.finish_call(call, exception=e)
             raise
-        pop_call(token)
         if spec.is_stream(kwargs, res):
             return SyncStreamProxy(res, client, call, spec)
         _finish(client, call, spec, to_dict(res))

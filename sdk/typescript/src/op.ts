@@ -14,6 +14,14 @@ export interface OpOptions {
   postprocessOutput?: (output: unknown) => unknown;
   /** Reduce streamed items into the call output (default: collect into an array). */
   accumulator?: (acc: any, item: unknown) => any;
+  /** Span kind (agent, llm, tool, chain, retriever, embedding, scorer, ...): stored as attributes.weft.span_kind. */
+  kind?: string;
+  /** UI color (red, orange, yellow, green, blue, purple): stored as attributes.weft.color. */
+  color?: string;
+  /** Fraction of root calls to trace (children follow their root). Default 1. */
+  tracingSampleRate?: number;
+  /** Store the function source with the op (default true; see also the captureCode setting). */
+  enableCodeCapture?: boolean;
 }
 
 export interface OpMeta {
@@ -195,6 +203,11 @@ interface Tracer {
 function startTracer(meta: OpMeta, self: unknown, args: unknown[]): Tracer {
   const client = tracingClient();
   if (!client) return { call: null, ctx: null, finish: () => {} };
+  const rate = meta.options.tracingSampleRate;
+  if (rate !== undefined && rate < 1 && currentContext().stack.length === 0 && Math.random() >= rate) {
+    // sampled out: run the whole subtree untraced
+    return { call: null, ctx: { ...currentContext(), suppressed: true }, finish: () => {} };
+  }
   try {
     let inputs = buildInputs(meta, args);
     if (meta.thisArg !== undefined) inputs = { self: meta.thisArg, ...inputs };

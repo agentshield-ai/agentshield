@@ -1,5 +1,6 @@
 import type { Call } from '../call.js';
 import { currentContext, storage } from '../context.js';
+import { syntheticOp } from '../client.js';
 import { tracingClient } from '../global.js';
 import { toJson } from '../serialize.js';
 
@@ -13,6 +14,10 @@ export interface LLMSpec {
   prepare?: (body: Record<string, any>) => Record<string, any>;
   accumulator: () => Accumulator;
   recordUsage: (call: Call, out: any) => void;
+  /** Span kind (default "llm"). */
+  kind?: string;
+  /** Treat the result as a stream (default: `body.stream` and the result is async iterable). */
+  isStream?: (body: Record<string, any>, res: unknown) => boolean;
 }
 
 function isAsyncIterable(v: unknown): v is AsyncIterable<unknown> {
@@ -67,7 +72,7 @@ export function wrapLLMMethod(orig: (...args: any[]) => any, spec: LLMSpec): (..
     if (spec.prepare) body = spec.prepare(body);
     const inputs: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(body)) if (v !== undefined) inputs[k] = v;
-    const call = client.createCall(spec.opName, inputs);
+    const call = client.createCall(syntheticOp(spec.opName, spec.kind ?? 'llm'), inputs);
     const ctx = { ...currentContext(), stack: [...currentContext().stack, call] };
     let res: any;
     try {
@@ -84,7 +89,8 @@ export function wrapLLMMethod(orig: (...args: any[]) => any, spec: LLMSpec): (..
       }
       client.finishCall(call, out, err);
     };
-    if (body.stream && isAsyncIterable(res)) return proxyStream(res, spec.accumulator(), finish);
+    const streaming = spec.isStream ? spec.isStream(body, res) : !!body.stream;
+    if (streaming && isAsyncIterable(res)) return proxyStream(res, spec.accumulator(), finish);
     finish(plain(res));
     return res;
   };

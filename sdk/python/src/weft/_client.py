@@ -803,15 +803,16 @@ def from_val(val: Any, client: WeftClient, ref: Optional[ObjectRef]) -> Any:
 _SYNTHETIC: Dict[str, Op] = {}
 
 
-def _synthetic_op(name: str) -> Op:
-    op = _SYNTHETIC.get(name)
+def _synthetic_op(name: str, kind: Optional[str] = None) -> Op:
+    key = f"{name}|{kind or ''}"
+    op = _SYNTHETIC.get(key)
     if op is None:
 
         def _fn(*args: Any, **kwargs: Any) -> Any:  # pragma: no cover - never executed
             return None
 
-        op = Op(_fn, name=name, code=f"# {name}: recorded by the weft SDK\n")
-        _SYNTHETIC[name] = op
+        op = Op(_fn, name=name, code=f"# {name}: recorded by the weft SDK\n", kind=kind)
+        _SYNTHETIC[key] = op
     return op
 
 

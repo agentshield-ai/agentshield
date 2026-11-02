@@ -1,6 +1,8 @@
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { HttpClient, WeftHTTPError } from './http.js';
 
-type Item =
+export type Item =
   | { kind: 'call_start' | 'call_end'; payload: Record<string, unknown>; cb?: (r: any) => void }
   | { kind: 'post'; path: string; payload: unknown; cb?: (r: any) => void }
   | { kind: 'file'; path: string; fields: Record<string, string>; data: Uint8Array; filename: string; mime: string; cb?: (r: any) => void };
@@ -11,6 +13,62 @@ export interface SenderOptions {
   flushIntervalMs?: number;
   maxRetries?: number;
   backoffMs?: number;
+  maxBackoffMs?: number;
+  /** Write-ahead log file: unsent items are appended here and replayed on the next start. */
+  walPath?: string;
+}
+
+/** Append-only JSONL file of unsent requests. */
+export class WriteAheadLog {
+  constructor(readonly path: string) {}
+
+  append(items: Item[]): void {
+    if (!items.length) return;
+    mkdirSync(dirname(this.path), { recursive: true });
+    const lines = items
+      .map((it) => {
+        const { cb: _cb, ...rest } = it as Item & { cb?: unknown };
+        if (rest.kind === 'file') return JSON.stringify({ ...rest, data: Buffer.from(rest.data).toString('base64') });
+        return JSON.stringify(rest);
+      })
+      .join('\n');
+    appendFileSync(this.path, lines + '\n', 'utf8');
+  }
+
+  drain(): Item[] {
+    if (!existsSync(this.path)) return [];
+    const tmp = `${this.path}.${process.pid}.${Date.now()}.replay`;
+    try {
+      renameSync(this.path, tmp);
+    } catch {
+      return [];
+    }
+    const out: Item[] = [];
+    try {
+      for (const line of readFileSync(tmp, 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const d = JSON.parse(line);
+          if (d.kind === 'file') d.data = new Uint8Array(Buffer.from(d.data, 'base64'));
+          out.push(d as Item);
+        } catch {
+          /* skip corrupt line */
+        }
+      }
+    } finally {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  }
+
+  count(): number {
+    if (!existsSync(this.path)) return 0;
+    return readFileSync(this.path, 'utf8').split('\n').filter((l) => l.trim()).length;
+  }
 }
 
 /**
@@ -33,6 +91,10 @@ export class Sender {
   flushIntervalMs: number;
   maxRetries: number;
   backoffMs: number;
+  maxBackoffMs: number;
+  readonly wal: WriteAheadLog | null;
+  walWritten = 0;
+  private lastFailureRetryable = false;
 
   constructor(
     private readonly http: HttpClient,
@@ -43,6 +105,34 @@ export class Sender {
     this.flushIntervalMs = opts.flushIntervalMs ?? 100;
     this.maxRetries = opts.maxRetries ?? 3;
     this.backoffMs = opts.backoffMs ?? 250;
+    this.maxBackoffMs = opts.maxBackoffMs ?? 4000;
+    this.wal = opts.walPath ? new WriteAheadLog(opts.walPath) : null;
+  }
+
+  /** Re-enqueue items saved by a previous process; returns how many. */
+  replayWal(): number {
+    if (!this.wal) return 0;
+    const items = this.wal.drain();
+    for (const it of items) this.enqueue(it);
+    return items.length;
+  }
+
+  /** Move everything still queued to the write-ahead log (synchronous; used at exit). */
+  spillPending(): number {
+    if (!this.wal) return 0;
+    const items = this.queue.splice(0);
+    this.spill(items);
+    return items.length;
+  }
+
+  private spill(items: Item[]): void {
+    if (!this.wal || !items.length) return;
+    try {
+      this.wal.append(items);
+      this.walWritten += items.length;
+    } catch (e) {
+      this.warn(`weft: could not write the write-ahead log: ${(e as Error).message}`);
+    }
   }
 
   get pending(): number {
@@ -51,6 +141,10 @@ export class Sender {
 
   enqueue(item: Item): boolean {
     if (this.queue.length >= this.maxQueue) {
+      if (this.wal) {
+        this.spill([item]);
+        return true;
+      }
       this.dropped++;
       this.warn(`weft: send queue full (${this.maxQueue}); dropping ${item.kind}`);
       return false;
@@ -104,6 +198,7 @@ export class Sender {
           });
           const res = await this.retry(() => this.http.post('/call/upsert_batch', { batch }), 'call/upsert_batch');
           if (res !== undefined) for (const it of items) it.cb?.(res);
+          else if (this.lastFailureRetryable) this.spill(items);
         } else {
           const it = this.queue.shift()!;
           const res =
@@ -113,6 +208,7 @@ export class Sender {
                 ? await this.retry(() => this.http.postFile(it.path, it.fields, it.data, it.filename, it.mime), it.path)
                 : undefined;
           if (res !== undefined) it.cb?.(res);
+          else if (this.lastFailureRetryable) this.spill([it]);
         }
       }
     } finally {
@@ -136,6 +232,7 @@ export class Sender {
         return r;
       } catch (e) {
         const retryable = e instanceof WeftHTTPError ? e.retryable : false;
+        this.lastFailureRetryable = retryable;
         if (!retryable || attempt >= this.maxRetries) {
           this.failedRequests++;
           this.warn(`weft: failed to send ${what}: ${(e as Error).message}`);
@@ -143,7 +240,7 @@ export class Sender {
         }
       }
       await new Promise((r) => setTimeout(r, delay));
-      delay = Math.min(delay * 2, 4000);
+      delay = Math.min(delay * 2, this.maxBackoffMs);
     }
   }
 }

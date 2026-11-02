@@ -15,6 +15,8 @@ import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal, Dropdown, MenuItem } from '../../components/traces/Menu'
 import { GettingStarted } from '../../components/traces/GettingStarted'
 import { callLabel, discoverFeedbackFields, discoverFields, exportCalls, getDotted, reactionCounts, slugify } from '../../components/traces/callUtils'
+import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/ExportModal'
+import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
 
 // ---------------------------------------------------------------- URL state
 
@@ -315,6 +317,9 @@ export function TracesPage() {
     })
 
   const [modal, setModal] = useState<null | 'delete' | 'dataset' | 'saveView'>(null)
+  // Server export, copy-as-code and add-to-dashboard modals.
+  const [extraModal, setExtraModal] = useState<null | 'serverExport' | 'code' | 'chart'>(null)
+  const serverInfo = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo, staleTime: 60_000 })
   const del = useMutation({
     mutationFn: () => api.callsDelete(projectId, [...selected.keys()]),
     onSuccess: () => {
@@ -447,6 +452,11 @@ export function TracesPage() {
         <button className="btn sm" onClick={() => update({ charts: s.charts ? '0' : null }, false)} aria-expanded={s.charts}>
           {s.charts ? 'Hide charts' : 'Show charts'}
         </button>
+        {s.charts && (
+          <button className="btn sm" onClick={() => setExtraModal('chart')} title="Build a custom chart from the current filters and add it to a dashboard">
+            + Add chart to dashboard
+          </button>
+        )}
       </div>
 
       {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
@@ -658,20 +668,40 @@ export function TracesPage() {
               <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> open · <kbd>x</kbd> select · <kbd>/</kbd> search
             </span>
             {!selected.size && (
-              <Dropdown label="Export page ▾" className="btn ghost sm">
-                {(close) =>
-                  (['json', 'jsonl', 'csv'] as const).map((f) => (
+              <Dropdown label="Export ▾" className="btn ghost sm">
+                {(close) => (
+                  <>
+                    <div className="dd-section">This page</div>
+                    {(['json', 'jsonl', 'csv'] as const).map((f) => (
+                      <MenuItem
+                        key={f}
+                        onClick={() => {
+                          exportCalls(exportTargets, f, s.cols)
+                          close()
+                        }}
+                      >
+                        {f.toUpperCase()}
+                      </MenuItem>
+                    ))}
+                    <div className="dd-sep" />
                     <MenuItem
-                      key={f}
                       onClick={() => {
-                        exportCalls(exportTargets, f, s.cols)
+                        setExtraModal('serverExport')
                         close()
                       }}
                     >
-                      {f.toUpperCase()}
+                      All matching rows (server)…
                     </MenuItem>
-                  ))
-                }
+                    <MenuItem
+                      onClick={() => {
+                        setExtraModal('code')
+                        close()
+                      }}
+                    >
+                      Copy as code…
+                    </MenuItem>
+                  </>
+                )}
               </Dropdown>
             )}
           </div>
@@ -701,6 +731,15 @@ export function TracesPage() {
         />
       )}
       {modal === 'dataset' && <AddToDatasetModal projectId={projectId} calls={selCalls} onClose={() => setModal(null)} />}
+      {extraModal === 'serverExport' && (
+        <ServerExportModal spec={{ projectId, ...req, sortBy }} columns={s.cols} onClose={() => setExtraModal(null)} />
+      )}
+      {extraModal === 'code' && (
+        <CopyAsCodeModal spec={{ projectId, ...req, sortBy }} authRequired={!!serverInfo.data?.auth_required} onClose={() => setExtraModal(null)} />
+      )}
+      {extraModal === 'chart' && (
+        <AddToDashboardModal projectId={projectId} filter={req.filter} query={req.query} search={req.search} onClose={() => setExtraModal(null)} />
+      )}
       {modal === 'saveView' && (
         <SaveViewModal
           projectId={projectId}

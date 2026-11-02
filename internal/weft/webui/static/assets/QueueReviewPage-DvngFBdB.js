@@ -1,0 +1,1 @@
+import{j as e}from"./index-DSb6Kf27.js";function r(s){return e.jsxs("div",{className:"page",children:[e.jsx("h1",{children:"QueueReviewPage"}),e.jsx("p",{className:"muted",children:"Not implemented yet."})]})}export{r as QueueReviewPage};

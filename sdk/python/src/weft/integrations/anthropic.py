@@ -104,7 +104,9 @@ class _StreamManagerProxy:
     def _start(self) -> None:
         self._client = _tracing()
         if self._client is not None:
-            self._call = self._client.create_call("anthropic.messages.stream", self._inputs)
+            from .._client import _synthetic_op
+
+            self._call = self._client.create_call(_synthetic_op("anthropic.messages.stream", "llm"), self._inputs)
 
     def _end(self, exc: Optional[BaseException]) -> None:
         if self._call is None:

@@ -25,6 +25,8 @@ class ChatCompletionAccumulator(Accumulator):
                 self.base[k] = c[k]
         if c.get("usage"):
             self.usage = c["usage"]
+        elif isinstance(c.get("x_groq"), dict) and c["x_groq"].get("usage"):
+            self.usage = c["x_groq"]["usage"]
         for ch in c.get("choices") or []:
             idx = ch.get("index", 0) or 0
             st = self.choices.setdefault(

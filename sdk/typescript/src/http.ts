@@ -54,6 +54,13 @@ export class HttpClient {
     return res;
   }
 
+  async request<T = any>(method: string, path: string, body?: unknown, query?: Record<string, string>): Promise<T> {
+    const q = query ? '?' + new URLSearchParams(query).toString() : '';
+    const res = await this.raw(method, path + q, body === undefined ? undefined : JSON.stringify(body));
+    const text = await res.text();
+    return (text.trim() ? JSON.parse(text) : {}) as T;
+  }
+
   async post<T = any>(path: string, body: unknown, timeoutMs?: number): Promise<T> {
     const res = await this.raw('POST', path, JSON.stringify(body), 'application/json', timeoutMs);
     const text = await res.text();

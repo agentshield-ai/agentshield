@@ -164,7 +164,7 @@ function Notes({ projectId, callId, feedback }: { projectId: string; callId: str
 
 // ---------------------------------------------------------------- annotations
 
-interface FieldSchema {
+export interface FieldSchema {
   type?: string
   minimum?: number
   maximum?: number
@@ -183,7 +183,7 @@ function specApplies(spec: ObjSchema, call: Call | undefined): boolean {
   return scope.some((s: string) => base(s) === base(call.op_name))
 }
 
-function AnnotationInput({ schema, value, onChange }: { schema: FieldSchema; value: Any; onChange: (v: Any) => void }) {
+export function AnnotationInput({ schema, value, onChange }: { schema: FieldSchema; value: Any; onChange: (v: Any) => void }) {
   const t = schema.type
   if (Array.isArray(schema.enum))
     return (

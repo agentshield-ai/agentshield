@@ -1,1 +1,0 @@
-import{j as e}from"./index-hcRe3JEU.js";function o(s){return e.jsxs("div",{className:"page",children:[e.jsx("h1",{children:"AutomationsPage"}),e.jsx("p",{className:"muted",children:"Not implemented yet."})]})}export{o as AutomationsPage};

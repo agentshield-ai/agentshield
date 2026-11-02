@@ -13,12 +13,18 @@ export function sniffMime(data: Uint8Array): string {
   if (s(0, 4) === 'RIFF' && s(8, 12) === 'WAVE') return 'audio/wav';
   if (s(0, 3) === 'ID3') return 'audio/mpeg';
   if (s(0, 4) === '%PDF') return 'application/pdf';
+  if (s(4, 8) === 'ftyp') return s(8, 10) === 'qt' ? 'video/quicktime' : 'video/mp4';
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'video/webm';
   return 'application/octet-stream';
 }
 
 export function mediaType(mime: string): string {
   if (mime.startsWith('image/')) return 'Image';
   if (mime.startsWith('audio/')) return 'Audio';
+  if (mime.startsWith('video/')) return 'Video';
+  if (mime === 'application/pdf') return 'PDF';
+  if (mime === 'text/html') return 'Html';
+  if (mime === 'text/markdown') return 'Markdown';
   return 'File';
 }
 
@@ -79,6 +85,9 @@ export function toJson(value: unknown, client: WeftClient | null = null, depth =
   const rec = (v: unknown) => toJson(v, client, depth + 1, seen);
   seen.add(value);
   try {
+    if (typeof (value as { weftSerialize?: unknown }).weftSerialize === 'function') {
+      return (value as { weftSerialize: (c: WeftClient | null) => unknown }).weftSerialize(client);
+    }
     if (value instanceof Date) return value.toISOString();
     if (value instanceof Uint8Array) return bytesToMedia(value, client);
     if (value instanceof ArrayBuffer) return bytesToMedia(new Uint8Array(value), client);

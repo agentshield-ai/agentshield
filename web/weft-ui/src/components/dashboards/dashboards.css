@@ -101,9 +101,22 @@
 }
 .dash-metric-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px minmax(0, 0.8fr) auto;
-  gap: 6px;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  gap: 4px 6px;
   align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+}
+.dash-metric-row .dash-metric-name {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.dash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
 }
 .dash-editor {
   display: grid;
@@ -153,11 +166,5 @@
   .dash-panel.w2,
   .dash-panel.w3 {
     grid-column: auto;
-  }
-  .dash-metric-row {
-    grid-template-columns: minmax(0, 1fr) 96px auto;
-  }
-  .dash-metric-row .dash-metric-name {
-    display: none;
   }
 }

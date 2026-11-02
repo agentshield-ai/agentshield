@@ -25,11 +25,15 @@ function colorFor(s: ChartSeries, i: number, groupBy: string): string {
   return SERIES_COLORS[i % SERIES_COLORS.length]
 }
 
-function tickTime(bucketSeconds: number) {
+function tickTime(bucketSeconds: number, buckets: string[]) {
+  const spanMs = buckets.length > 1 ? new Date(buckets[buckets.length - 1]).getTime() - new Date(buckets[0]).getTime() : 0
   return (iso: string) => {
     const d = new Date(iso)
-    if (bucketSeconds < 86_400) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    if (bucketSeconds >= 86_400) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    // Ranges over a day need the date too, or 09:00 on two days look the same.
+    if (spanMs > 86_400_000) return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
+    return time
   }
 }
 
@@ -80,7 +84,7 @@ export function MetricChart({ res, panel, height = 200 }: { res: MetricsRes; pan
   const { rows, series } = toChartData(res, metrics)
   const kind = series[0]?.kind ?? 'number'
   const fmtTick = (v: number) => (kind === 'number' ? compact(v) : fmtValue(v, kind))
-  const xTick = tickTime(res.bucket_seconds)
+  const xTick = tickTime(res.bucket_seconds, res.buckets)
   const labelFmt = (iso: string) => new Date(iso).toLocaleString()
   const kindOf = Object.fromEntries(series.map((s) => [s.key, s.kind]))
   const tooltipFmt = (v: number, _n: string, item: { dataKey?: string | number }) => fmtValue(v, kindOf[String(item?.dataKey)] ?? kind)
@@ -180,6 +184,7 @@ function StatView({ res, panel, height }: { res: MetricsRes; panel: DashboardPan
 
 function TableView({ res, panel, height }: { res: MetricsRes; panel: DashboardPanel; height: number }) {
   const metrics = res.metrics?.length ? res.metrics : panel.metrics
+  const hasCount = metrics.some((m) => m.agg === 'count' && !m.field)
   if (!res.count)
     return (
       <div className="dash-chart-empty small faint" style={{ height: Math.min(height, 120) }}>
@@ -192,7 +197,7 @@ function TableView({ res, panel, height }: { res: MetricsRes; panel: DashboardPa
         <thead>
           <tr>
             <th>{res.group_by ? res.group_by.replace(/_/g, ' ') : 'Group'}</th>
-            <th className="num">Calls</th>
+            {!hasCount && <th className="num">Calls</th>}
             {metrics.map((m) => (
               <th key={metricName(m)} className="num">
                 {metricLabel(m)}
@@ -206,7 +211,7 @@ function TableView({ res, panel, height }: { res: MetricsRes; panel: DashboardPa
               <td className="truncate" style={{ maxWidth: 260 }} title={g.group ?? ''}>
                 {groupLabel(g, res.group_by)}
               </td>
-              <td className="num">{g.count.toLocaleString()}</td>
+              {!hasCount && <td className="num">{g.count.toLocaleString()}</td>}
               {metrics.map((m) => (
                 <td key={metricName(m)} className="num mono">
                   {fmtValue(g.totals[metricName(m)], valueKind(m))}

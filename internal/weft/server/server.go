@@ -32,6 +32,10 @@ import (
 // their own files: func init() { routeExtensions = append(routeExtensions, ...) }.
 var routeExtensions []func(*Server, chi.Router)
 
+// startExtensions start background work for feature modules when a server is
+// built; the returned stop functions run on Close.
+var startExtensions []func(*Server) (stop func())
+
 // Store exposes the store to feature modules.
 func (s *Server) Store() *store.Store { return s.store }
 
@@ -57,6 +61,7 @@ type Server struct {
 	llm    *llm.Client
 	engine *evals.Engine
 	log    *slog.Logger
+	stops  []func()
 }
 
 // New builds a server around a store.
@@ -71,11 +76,19 @@ func New(cfg Config, st *store.Store) *Server {
 		return v, ok && err == nil
 	}, s.resolveProvider)
 	s.engine = evals.New(st, s.llm, log)
+	for _, start := range startExtensions {
+		s.stops = append(s.stops, start(s))
+	}
 	return s
 }
 
 // Close stops background work.
-func (s *Server) Close() { s.engine.Close() }
+func (s *Server) Close() {
+	for _, stop := range s.stops {
+		stop()
+	}
+	s.engine.Close()
+}
 
 // Engine exposes the evaluation engine (tests).
 func (s *Server) Engine() *evals.Engine { return s.engine }
@@ -119,7 +132,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(s.cors)
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"status": "ok"}) })
 	r.Get("/server_info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"version": Version, "auth_required": len(s.keys) > 0, "otel_endpoint": "/otel/v1/traces",
+		writeJSON(w, map[string]any{"version": Version, "auth_required": s.authRequired(), "otel_endpoint": "/otel/v1/traces",
 			// Fields read by the official weave client.
 			"min_required_weave_python_version": "0.0.0", "trace_server_version": Version})
 	})
@@ -132,7 +145,7 @@ func (s *Server) Handler() http.Handler {
 			if p := userFrom(r, nil); p != nil {
 				u = *p
 			}
-			writeJSON(w, map[string]any{"user_id": u, "auth_required": len(s.keys) > 0})
+			writeJSON(w, map[string]any{"user_id": u, "auth_required": s.authRequired()})
 		})
 		r.Get("/projects", s.listProjects)
 		r.Post("/project/stats", handle(s.projectStats))
@@ -240,7 +253,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Encoding, X-Weft-Api-Key, X-Weft-User, X-Weft-Project, project_id")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -309,7 +322,7 @@ type ctxKey struct{}
 
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(s.keys) == 0 {
+		if !s.authRequired() {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -325,9 +338,11 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, user))
 		}
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="weft"`)
-			writeError(w, http.StatusUnauthorized, "missing or invalid API key")
-			return
+			// Managed keys (admin.go) are hashed and may be scoped; on rejection
+			// dbKeyAuth writes the 401/403 itself and returns nil.
+			if r = s.dbKeyAuth(w, r, string(k)); r == nil {
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

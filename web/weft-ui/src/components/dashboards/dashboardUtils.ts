@@ -74,7 +74,7 @@ export function mergeQueries(...qs: (Query | undefined)[]): Query | undefined {
 }
 
 export function maxGroupsFor(chart: ChartType): number {
-  return chart === 'table' ? 25 : chart === 'stat' ? 1 : 8
+  return chart === 'table' ? 25 : chart === 'stat' ? 1 : 6
 }
 
 /** The /calls/metrics request for one panel of a dashboard. */
@@ -154,6 +154,7 @@ export function valueKind(m: MetricSpec): ValueKind {
 
 export function fmtValue(v: number | null | undefined, kind: ValueKind): string {
   if (v == null || Number.isNaN(v)) return '—'
+  if (v === 0) return kind === 'percent' ? '0%' : kind === 'cost' ? '$0' : '0'
   switch (kind) {
     case 'percent':
       return `${(v * 100).toFixed(v < 0.1 ? 2 : 1)}%`
@@ -201,6 +202,11 @@ export function toChartData(res: MetricsRes, metrics: MetricSpec[]): { rows: Rec
       series.push({ key: `s${gi}_${mi}`, label, metric: name, group: g.group, kind: valueKind(m) })
     })
   })
+  // Series that never have a non-zero value only add legend noise.
+  const live = series.filter((s, si) => {
+    const g = res.groups[Math.floor(si / specs.length)]
+    return (g.series[s.metric] ?? []).some((v) => v != null && v !== 0)
+  })
   const rows = res.buckets.map((t, bi) => {
     const row: Record<string, number | string | null> = { t }
     res.groups.forEach((g, gi) => {
@@ -210,7 +216,7 @@ export function toChartData(res: MetricsRes, metrics: MetricSpec[]): { rows: Rec
     })
     return row
   })
-  return { rows, series }
+  return { rows, series: live.length ? live : series }
 }
 
 let idCounter = 0
@@ -234,12 +240,12 @@ export function panelTitle(p: DashboardPanel): string {
 export function overviewPanels(): DashboardPanel[] {
   const id = newPanelId
   return [
-    { id: id(), title: 'Calls by status', chart: 'stacked', metrics: [{ agg: 'count', name: 'calls' }], group_by: 'status', width: 2 },
-    { id: id(), title: 'Error rate', chart: 'stat', metrics: [{ agg: 'error_rate', name: 'error_rate' }], width: 1 },
+    { id: id(), title: 'Calls by status', chart: 'stacked', metrics: [{ agg: 'count', name: 'Calls' }], group_by: 'status', width: 2 },
+    { id: id(), title: 'Error rate', chart: 'stat', metrics: [{ agg: 'error_rate', name: 'Error rate' }, { agg: 'count', name: 'Calls' }], width: 1 },
     { id: id(), title: 'Latency p50 / p95', chart: 'line', metrics: [{ agg: 'p50', field: 'latency_ms', name: 'p50' }, { agg: 'p95', field: 'latency_ms', name: 'p95' }], width: 1 },
-    { id: id(), title: 'Tokens by model', chart: 'stacked', metrics: [{ agg: 'sum', field: 'total_tokens', name: 'tokens' }], group_by: 'model', filter: { trace_roots_only: false }, width: 1 },
-    { id: id(), title: 'Cost by model', chart: 'bar', metrics: [{ agg: 'sum', field: 'cost', name: 'cost' }], group_by: 'model', width: 1 },
-    { id: id(), title: 'Ops', chart: 'table', metrics: [{ agg: 'count', name: 'calls' }, { agg: 'p95', field: 'latency_ms', name: 'p95 latency' }, { agg: 'error_rate', name: 'error rate' }], group_by: 'op_name', width: 3 },
+    { id: id(), title: 'Tokens by model', chart: 'stacked', metrics: [{ agg: 'sum', field: 'total_tokens', name: 'Tokens' }], group_by: 'model', filter: { trace_roots_only: false }, width: 1 },
+    { id: id(), title: 'Cost by model', chart: 'bar', metrics: [{ agg: 'sum', field: 'cost', name: 'Cost' }], group_by: 'model', filter: { trace_roots_only: false }, width: 1 },
+    { id: id(), title: 'Ops', chart: 'table', metrics: [{ agg: 'count', name: 'Calls' }, { agg: 'p95', field: 'latency_ms', name: 'p95 latency' }, { agg: 'sum', field: 'total_tokens', name: 'Tokens' }, { agg: 'error_rate', name: 'Error rate' }], group_by: 'op_name', width: 3 },
   ]
 }
 

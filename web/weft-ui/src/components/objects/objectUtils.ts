@@ -82,7 +82,21 @@ export const isEvaluation = (o: ObjSchema) => hasClass(o, 'Evaluation')
 export const isScorer = (o: ObjSchema) => hasClass(o, 'Scorer', 'LLMAsAJudgeScorer')
 export const isLLMModel = (o: ObjSchema) => hasClass(o, 'LLMStructuredCompletionModel')
 export const isModel = (o: ObjSchema) => hasClass(o, 'Model', 'LLMStructuredCompletionModel')
-export const isServerScorer = (o: ObjSchema) => (SERVER_SCORER_CLASSES as readonly string[]).includes(valClass(o.val) ?? '')
+/** More server-runnable scorer classes (created by the Signals gallery or the SDKs, not the generic scorer form). */
+export const EXTRA_SERVER_SCORER_CLASSES = [
+  'RemoteScorer',
+  'HallucinationFreeScorer',
+  'SummarizationScorer',
+  'RelevanceScorer',
+  'ValidXMLScorer',
+  'JSONSchemaScorer',
+  'OpenAIModerationScorer',
+  'EmbeddingSimilarityScorer',
+  'RuleScorer',
+] as const
+export const isServerScorerClass = (cls: string | null | undefined) =>
+  (SERVER_SCORER_CLASSES as readonly string[]).includes(cls ?? '') || (EXTRA_SERVER_SCORER_CLASSES as readonly string[]).includes(cls ?? '')
+export const isServerScorer = (o: ObjSchema) => isServerScorerClass(valClass(o.val))
 
 /** The object list page an object belongs to. */
 export function kindOf(o: ObjSchema): ObjectKind {

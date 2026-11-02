@@ -9,7 +9,7 @@ import { RefChip } from '../../components/RefChip'
 import { CreateDatasetModal } from '../../components/objects/CreateDatasetModal'
 import { columnsOf } from '../../components/objects/csv'
 import { ModelFormModal, NameField, usePublish } from '../../components/objects/ObjectForms'
-import { classVal, errMsg, isLLMModel, KIND_META, refOf, SERVER_SCORER_CLASSES, templateVars, useObjects, valClass } from '../../components/objects/objectUtils'
+import { classVal, errMsg, isLLMModel, isServerScorerClass, KIND_META, refOf, templateVars, useObjects, valClass } from '../../components/objects/objectUtils'
 import { ScorerPicker } from '../../components/evals/ScorerPicker'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtRelative } from '../../lib/format'
@@ -46,7 +46,7 @@ function useEvaluationDetails(evalRef: string | null) {
         columns = columnsOf(sample.rows.map((r) => r.val))
         rowCount = stats.count
       }
-      const scorers = scorerRefs.map((ref, i) => ({ ref, cls: valClass(scorerVals[i]), runnable: (SERVER_SCORER_CLASSES as readonly string[]).includes(valClass(scorerVals[i]) ?? '') }))
+      const scorers = scorerRefs.map((ref, i) => ({ ref, cls: valClass(scorerVals[i]), runnable: isServerScorerClass(valClass(scorerVals[i])) }))
       return { ev, ds, columns, rowCount, scorers }
     },
   })
