@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import { callRef, objectRef, parseRef } from '../../api/refs'
 import type { Any, Call, Feedback, ObjSchema } from '../../api/types'
 import { fmtDate, fmtRelative, fmtScore } from '../../lib/format'
-import { refUrl, objectUrl } from '../../lib/urls'
+import { refUrl, objectUrl, settingsUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Loading, Section } from '../common'
 import { RefChip } from '../RefChip'
 import { ValueView } from '../ValueView'
@@ -320,8 +320,8 @@ function Annotations({ projectId, call, feedback }: { projectId: string; call?: 
   if (!list.length)
     return (
       <div className="faint small">
-        No annotation specs in this project. Create an <code>AnnotationSpec</code> object (for example from the SDK or the Settings page) to add structured human
-        feedback fields here.
+        No annotation specs in this project. <Link to={settingsUrl(projectId, 'annotations')}>Create one in Settings</Link> (or publish an{' '}
+        <code>AnnotationSpec</code> object from the SDK) to add structured human feedback fields here.
       </div>
     )
   return (

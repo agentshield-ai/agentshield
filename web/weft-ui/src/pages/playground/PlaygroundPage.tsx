@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
+import { parseRef } from '../../api/refs'
 import type { Any, ChatMessage, CompletionInputs, LLMModelInfo, ObjSchema } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDuration, fmtNumber } from '../../lib/format'
@@ -149,6 +150,7 @@ export function PlaygroundPage() {
   const projectId = useProjectId()
   const [params, setParams] = useSearchParams()
   const fromCall = params.get('call')
+  const fromPrompt = params.get('prompt')
   const modelsQ = useQuery({ queryKey: ['llm-models'], queryFn: api.llmModels, staleTime: 60_000 })
   const models = useMemo(() => {
     const ms = [...(modelsQ.data?.models ?? [])]
@@ -281,7 +283,8 @@ export function PlaygroundPage() {
     [projectId],
   )
 
-  const runAll = () => panels.forEach((p) => p.model && void run(p, panelMessages(p)))
+  const runnable = (p: Panel) => !!p.model && models.find((m) => m.id === p.model)?.available !== false
+  const runAll = () => panels.forEach((p) => runnable(p) && void run(p, panelMessages(p)))
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -300,7 +303,7 @@ export function PlaygroundPage() {
         : [...ps, { id: uid(), model: ps[ps.length - 1]?.model ?? pickDefaultModel(models), params: { ...(ps[ps.length - 1]?.params ?? DEFAULT_PARAMS) }, messages: (ps[ps.length - 1]?.messages ?? []).map((m) => ({ ...m, id: uid() })), result: null, showParams: false }],
     )
 
-  const loadPrompt = (o: ObjSchema) => {
+  const loadPrompt = (o: ObjSchema, fromUrl = false) => {
     const v = o.val ?? {}
     let msgs: EditMsg[] = []
     if (Array.isArray(v.messages)) msgs = v.messages.map(toEditMsg)
@@ -313,8 +316,25 @@ export function PlaygroundPage() {
     if (sync) setShared(msgs)
     else setPanels((ps) => ps.map((p) => ({ ...p, messages: msgs.map((m) => ({ ...m, id: uid() })) })))
     setLoadNote(`Loaded prompt ${o.object_id} (v${o.version_index}).`)
-    if (fromCall) setParams({}, { replace: true })
+    // A prompt picked from the menu replaces whatever the URL pointed at.
+    if (!fromUrl && (fromCall || fromPrompt)) setParams({}, { replace: true })
   }
+
+  // Load a saved prompt from the URL (?prompt=<object ref or object id>).
+  const promptQ = useQuery({
+    queryKey: ['playground-prompt', projectId, fromPrompt],
+    queryFn: async () => {
+      const ref = parseRef(fromPrompt!)
+      if (ref && ref.kind !== 'object') throw new Error(`${fromPrompt} is not an object ref`)
+      return ref ? api.objRead(ref.projectId, ref.name, ref.digest ?? 'latest') : api.objRead(projectId, fromPrompt!, 'latest')
+    },
+    enabled: !!fromPrompt,
+    staleTime: Infinity,
+  })
+  useEffect(() => {
+    if (promptQ.data?.obj) loadPrompt(promptQ.data.obj, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promptQ.data])
 
   return (
     <div className="page playground">
@@ -343,7 +363,7 @@ export function PlaygroundPage() {
           </button>
         </div>
       )}
-      <ErrorBox error={modelsQ.error ?? callQ.error} />
+      <ErrorBox error={modelsQ.error ?? callQ.error ?? promptQ.error} />
       <div className="pg-grid" style={{ gridTemplateColumns: `repeat(${panels.length}, minmax(300px, 1fr))` }}>
         {panels.map((p, i) => (
           <PanelView

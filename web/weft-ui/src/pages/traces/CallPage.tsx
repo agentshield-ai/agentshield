@@ -124,7 +124,7 @@ export function CallPage() {
           />
           <span className="grow" />
           <span className="faint small">
-            {traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} calls`}
+            {traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} call${traceCalls.length === 1 ? '' : 's'}`}
           </span>
         </div>
         <ErrorBox error={traceQ.error} />

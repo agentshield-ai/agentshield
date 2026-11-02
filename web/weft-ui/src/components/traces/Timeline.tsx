@@ -29,7 +29,7 @@ export function Timeline({ roots, selectedId, onSelect }: { roots: TreeNode[]; s
   return (
     <div className="timeline" role="list" aria-label="Trace timeline">
       <div className="tl-row tl-axis">
-        <div className="tl-label faint small">{rows.length} calls</div>
+        <div className="tl-label faint small">{rows.length} call{rows.length === 1 ? '' : 's'}</div>
         <div className="tl-track">
           {ticks.map((t) => (
             <span key={t} className="tl-tick" style={{ left: `${t * 100}%` }}>
