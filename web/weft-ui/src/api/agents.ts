@@ -108,6 +108,8 @@ export interface SpanGroup {
   first_seen: string | null
   last_seen: string | null
   invocation_count: number
+  /** Weft extension: turn spans in the group, including SDK turns without an agent invocation. */
+  turn_count?: number
   metrics: Record<string, Any>
   provider_names: string[]
   request_models: string[]

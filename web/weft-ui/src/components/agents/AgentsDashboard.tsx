@@ -186,7 +186,7 @@ export function AgentsDashboard({ projectId, range, setRange, onFilterSpans }: {
                             {a}
                           </span>
                         ))}
-                        <span>{plural(g.invocation_count, 'turn')}</span>
+                        <span>{plural(Math.max(g.turn_count ?? 0, g.invocation_count), 'turn')}</span>
                         {g.error_count > 0 && <span style={{ color: 'var(--error)' }}>{g.error_count} failed</span>}
                         <span className="grow" />
                         <span className="mono">{fmtCost(g.total_cost_usd)}</span>

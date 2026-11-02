@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -147,5 +148,39 @@ func TestAgentIndexBackfill(t *testing.T) {
 	rows, _, err := st.QueryAgents(ctx, AgentsQueryReq{ProjectID: "e/p"})
 	if err != nil || len(rows) != 1 || rows[0].AgentName != "bot" {
 		t.Fatalf("backfilled agents: %v %+v", err, rows)
+	}
+}
+
+func TestSpanGroupsCountSDKTurns(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	th := "conv-x"
+	for i, id := range []string{"t1", "t2"} {
+		st := start(id, "", "support_agent")
+		st.TraceID = id
+		st.ThreadID, st.TurnID = &th, ptr(id)
+		st.StartedAt = fmt.Sprintf("2026-01-01T00:00:0%dZ", i)
+		if err := s.StartCall(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.EndCall(ctx, end(id, nil, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agg := newSpanAgg()
+	rows, err := s.ReadDB().QueryContext(ctx, `SELECT is_turn FROM agent_spans WHERE project_id = ? AND conversation_id = ?`, proj, th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var turn bool
+		if err := rows.Scan(&turn); err != nil {
+			t.Fatal(err)
+		}
+		agg.add(&agentSpan{IsTurn: turn})
+	}
+	if agg.turns != 2 || agg.invocations != 0 {
+		t.Fatalf("turns=%d invocations=%d, want 2 and 0", agg.turns, agg.invocations)
 	}
 }

@@ -824,6 +824,7 @@ func sortLess(a, b any, desc bool) (less bool, equal bool) {
 
 type spanAgg struct {
 	spans, errors, invocations, invErrors int64
+	turns                                 int64
 	first, last                           int64
 	inTok, outTok, reason, cacheR, cacheW float64
 	inCost, outCost                       float64
@@ -845,6 +846,9 @@ func (g *spanAgg) add(sp *agentSpan) {
 	g.spans++
 	if sp.Exception != nil {
 		g.errors++
+	}
+	if sp.IsTurn {
+		g.turns++
 	}
 	if sp.IsInvocation {
 		g.invocations++
@@ -1375,6 +1379,9 @@ type AgentSpanGroup struct {
 	LatencyMSP50 *float64 `json:"latency_ms_p50"`
 	LatencyMSP95 *float64 `json:"latency_ms_p95"`
 	TraceCount   int      `json:"trace_count"`
+	// TurnCount counts turn spans, including SDK turns that have no agent
+	// invocation span.
+	TurnCount int64 `json:"turn_count"`
 
 	agg *spanAgg
 }
@@ -1670,6 +1677,7 @@ func groupSpans(spans []*agentSpan, by []AgentValueRef, measures []AgentMeasureS
 		g.AgentNames, g.AgentVersions = sortedKeys(a.agents), sortedKeys(a.versions)
 		g.ConversationCount, g.ConversationNames = len(a.convs), sortedKeys(a.convNames)
 		g.ErrorCount, g.InvocationCount, g.SpanCount = a.errors, a.invocations, a.spans
+		g.TurnCount = a.turns
 		g.FirstSeen, g.LastSeen = microsPtr(a.first), microsPtr(a.last)
 		g.ProviderNames, g.RequestModels = sortedKeys(a.providers), sortedKeys(a.models)
 		g.TotalCacheCreationInputTokens, g.TotalCacheReadInputTokens = int64(a.cacheW), int64(a.cacheR)
