@@ -128,6 +128,83 @@ set `stream_options` yourself. The wrapped methods return plain promises, so
 the OpenAI-specific `APIPromise` helpers such as `.withResponse()` are not
 available on wrapped calls.
 
+More providers (each request is an `llm` call with usage; streams are accumulated):
+
+```ts
+weft.wrapGroq(new Groq()); weft.wrapTogether(new Together()); weft.wrapCerebras(new Cerebras());   // OpenAI-compatible
+weft.wrapMistral(new Mistral({ apiKey }));          // chat/fim/agents .complete and .stream, embeddings.create
+weft.wrapCohere(new CohereClientV2({ token }));     // chat, chatStream (v2 and v1), embed, rerank
+weft.wrapBedrock(new BedrockRuntimeClient({}));     // send(Converse | ConverseStream | InvokeModel | InvokeModelWithResponseStream)
+weft.instrumentBedrock(BedrockRuntimeClient);       // or patch every client
+const vertex = weft.wrapVertexAI(new VertexAI({ project, location }));   // models from getGenerativeModel: generateContent(Stream), chats
+```
+
+## Framework integrations
+
+```ts
+// LangChain.js (and LangGraph): a callback handler
+await chain.invoke(input, { callbacks: [new weft.WeftCallbackHandler()] });
+
+// LlamaIndex.TS: subscribe to the global callback manager
+import { Settings } from 'llamaindex';
+weft.instrumentLlamaIndex(Settings);
+
+// Vercel AI SDK: model middleware, plus tools and the top-level functions
+const ai = weft.wrapAISDK(await import('ai'));                 // generateText/streamText/generateObject/streamObject
+await ai.generateText({ model: wrapLanguageModel({ model, middleware: weft.weftMiddleware() }), tools, prompt });
+const tools = weft.wrapAITools({ weather });                   // only the tools' execute functions
+
+// MCP (@modelcontextprotocol/sdk)
+weft.wrapMCPClient(client);            // callTool, readResource, getPrompt, list*
+weft.wrapMCPServer(mcpServer);         // tools/call, resources/read, prompts/get handled by the server
+weft.instrumentMCP({ Client });        // every Client instance
+
+// Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
+const { query } = weft.wrapClaudeAgentSDK(await import('@anthropic-ai/claude-agent-sdk'));
+
+// OpenAI Agents SDK (@openai/agents): a tracing processor
+weft.instrumentOpenAIAgents(await import('@openai/agents'));   // or addTraceProcessor(new weft.WeftTracingProcessor())
+```
+
+| Integration | Calls |
+|---|---|
+| LangChain.js | `langchain.Chain.<name>` (chain/agent), `langchain.ChatModel.<name>` / `langchain.Llm.<name>` (llm, usage from `tokenUsage` or `usage_metadata`), `langchain.Tool.<name>` (tool, `gen_ai.tool.call.id`), `langchain.Retriever.<name>`; nested by run id |
+| LlamaIndex.TS | `llamaindex.query`, `llamaindex.retrieve` (nodes), `llamaindex.llm.chat` (usage from the raw response), `llamaindex.tool.<name>`, `llamaindex.agent` |
+| Vercel AI SDK | `vercel_ai.generateText` / `streamText` / `generateObject` / `streamObject` (chain), `vercel_ai.generate` / `vercel_ai.stream` (llm: text, reasoning, tool calls, usage incl. reasoning and cached tokens), `vercel_ai.tool.<name>` (tool) |
+| MCP | `mcp.client.call_tool` (`MCP tool: <name>`), `mcp.client.read_resource`, `mcp.client.get_prompt`, `mcp.client.list_*`; `mcp.server.call_tool` etc. with ops called by the tool nested inside. `WEFT_MCP_TRACE_LIST_OPERATIONS=false` skips list calls |
+| Claude Agent SDK | `claude_agent_sdk.query` (an agent turn; conversation = the SDK session id), `claude_agent_sdk.llm` per assistant message (usage once per message id, cache tokens included), `claude_agent_sdk.tool.<name>` ending at its result; sub-agent messages nest under their `Task`/`Agent` call |
+| OpenAI Agents JS | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, `openai_agents.generation` / `.response` (usage), `openai_agents.handoff`, `guardrail.<name>`, with the SDK's start and end times |
+
+Every integration's calls carry `gen_ai.*` attributes (operation, model,
+provider, tool name and call id, agent name), so they also appear in
+**Agents**.
+
+### Integration settings
+
+Like Python's `autopatch_settings`, per integration:
+
+```ts
+await weft.init('proj', {
+  autopatchSettings: {
+    openai: { opSettings: { postprocessInputs: (i) => ({ ...i, messages: '[hidden]' }), postprocessOutput: scrub } },
+    langchain: { enabled: false },
+    mcp: { opSettings: { callDisplayName: (call) => `mcp ${call.inputs.name}`, attributes: { team: 'tools' }, color: 'purple' } },
+  },
+});
+weft.updateIntegration('bedrock', { opSettings: { kind: 'llm', name: 'bedrock' } });
+const groq = weft.wrapGroq(client, { postprocessOutput: scrub });   // per client, after the global hooks
+```
+
+`opSettings` fields: `name` (op name), `callDisplayName`, `postprocessInputs`,
+`postprocessOutput`, `kind`, `color`, `attributes`. Names: `openai`,
+`anthropic`, `google_genai`, `vercel_ai`, `langchain`, `llamaindex`, `mcp`,
+`claude_agent_sdk`, `openai_agents`, `mistral`, `cohere`, `groq`, `together`,
+`cerebras`, `bedrock`, `vertexai` (package names such as
+`@modelcontextprotocol/sdk` also work). `WEFT_AUTOPATCH=false` turns all of
+them off, `WEFT_DISABLED_INTEGRATIONS=mcp,langchain` some, and
+`WEFT_AUTOPATCH_<NAME>=false` one; disabled integrations call straight
+through.
+
 ## Objects and datasets
 
 ```ts

@@ -62,6 +62,8 @@ const usage = (call: Call, out: any) => recordOpenAIUsage(call, out);
 export interface WrapOpenAIOptions extends Omit<IntegrationOpSettings, 'name'> {
   /** Op name prefix (default "openai"), e.g. "groq" for an OpenAI-compatible provider. */
   name?: string;
+  /** Replace the op name of every call (same as `opSettings.name`). */
+  opName?: string;
   /** Add stream_options.include_usage to streamed chat completions (default true). */
   includeUsage?: boolean;
   /** Integration name for settings (default: `name`, else "openai"). */

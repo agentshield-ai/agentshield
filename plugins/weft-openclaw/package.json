@@ -1,0 +1,23 @@
+{
+  "name": "weft-openclaw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Weft agent harness plugin for OpenClaw (no dependencies)",
+  "type": "module",
+  "main": "./index.js",
+  "files": ["index.js", "lib/", "openclaw.plugin.json", "README.md"],
+  "engines": { "node": ">=18" },
+  "openclaw": {
+    "extensions": ["./index.js"]
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": { "optional": true }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "Apache-2.0"
+}

@@ -8,6 +8,7 @@ on:
       - 'internal/weft/**'
       - 'web/weft-ui/**'
       - 'sdk/**'
+      - 'plugins/weft-*/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/weft.yml'
@@ -17,6 +18,7 @@ on:
       - 'internal/weft/**'
       - 'web/weft-ui/**'
       - 'sdk/**'
+      - 'plugins/weft-*/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/weft.yml'
@@ -95,6 +97,10 @@ jobs:
           npm run typecheck
           npx vitest run
           npm run build
+      - name: Agent harness plugins (unit + against server)
+        env:
+          WEFT_TEST_SERVER_URL: http://127.0.0.1:6345
+        run: node --test plugins/weft-claude-code/test/*.test.mjs plugins/weft-codex/test/*.test.mjs plugins/weft-openclaw/test/*.test.mjs
       - name: Demo seed script
         run: python3 scripts/weft_seed_demo.py --traces 5
       - name: Official weave client against Weft

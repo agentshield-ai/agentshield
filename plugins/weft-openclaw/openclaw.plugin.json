@@ -1,0 +1,23 @@
+{
+  "id": "weft",
+  "version": "0.1.0",
+  "description": "Trace OpenClaw agent runs into Weft: one conversation per session, a turn per agent run, model calls with usage, tools and sub-agents",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "serverUrl": { "type": "string", "description": "Weft server URL (default WEFT_SERVER_URL or http://localhost:6345)" },
+      "apiKey": { "type": "string", "description": "Weft API key (default WEFT_API_KEY)" },
+      "entity": { "type": "string", "description": "Team part of the project id, when project has none" },
+      "project": { "type": "string", "description": "Weft project, entity/project (default WEFT_PROJECT)" },
+      "agentName": { "type": "string", "description": "Agent name in Weft (default: the OpenClaw agent id)" },
+      "agentVersion": { "type": "string" },
+      "captureContent": { "type": "boolean", "default": true },
+      "flushIntervalMs": { "type": "number", "default": 1000, "minimum": 100 },
+      "timeoutMs": { "type": "number", "default": 2000, "minimum": 100, "maximum": 30000 },
+      "maxFieldChars": { "type": "number", "default": 20000 },
+      "runIdleMs": { "type": "number", "default": 600000 }
+    }
+  }
+}

@@ -719,9 +719,9 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
 | `/project/ttl_settings/purge` | `{project_id}` | `{"purged": {"calls","feedback"}, "retention_days"}` — apply now |
 | `/project/ingest_sampling_settings/read` | `{project_id}` | `{"sample_rate": 0..1, "dry_run": bool}` (default 1, false) |
 | `/project/ingest_sampling_settings/update` | `{project_id, sample_rate, dry_run?}` | same |
-| `GET /project/sensitive_data_settings?project_id=` (or POST `.../read`) | | `{"policy": "off"\|"pii-v1", "entities": [], "custom_patterns": [{name, pattern}], "available_entities": [{name, placeholder, description}]}` |
-| `/project/sensitive_data_settings/update` | `{project_id, policy, entities?, custom_patterns?}` | same as read |
-| `/project/sensitive_data_settings/preview` | `{policy, entities?, custom_patterns?, text?, value?}` | `{"text","value"}` redacted with the given, unsaved settings |
+| `GET /project/sensitive_data_settings?project_id=` (or POST `.../read`) | | `{"policy": "off"\|"pii-v1", "entities": [], "custom_patterns": [{name, pattern}], "available_entities": [{name, placeholder, description, kind}], "ner": {enabled, score_threshold, language}, "ner_available", "ner_active", "ner_entities"}` |
+| `/project/sensitive_data_settings/update` | `{project_id, policy, entities?, custom_patterns?, ner?: {enabled?, score_threshold?, language?}}` | same as read |
+| `/project/sensitive_data_settings/preview` | `{policy, entities?, custom_patterns?, ner?, text?, value?}` | `{"text","value","ner_applied"}` redacted with the given, unsaved settings (NER included when the server has an analyzer) |
 | `/project/delete` | `{project_id, confirm?}` (`confirm` must equal the project id when given) | `{"project_id", "deleted": {"<table>": rows}}` |
 
 - **Retention.** A background job (hourly; `WEFT_RETENTION_INTERVAL`, a Go
@@ -744,6 +744,37 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
   `IP_ADDRESS`. Matches become `<ENTITY>`; custom RE2 patterns become
   `<NAME>` (upper-cased). Ref strings (`weft:///`, `weave:///`) and map keys are
   never changed. Existing data is not rewritten.
+- **NER entities (Presidio).** Start the server with
+  `--pii-analyzer-url http://<presidio-analyzer>:5002` (env
+  `WEFT_PII_ANALYZER_URL`; Presidio Analyzer's REST `POST /analyze`) and
+  `pii-v1` projects also redact named entities: `PERSON`, `LOCATION` and
+  `ORGANIZATION` by default, `NRP` (nationalities, religious or political
+  groups) when listed in `entities`. They are listed in `available_entities`
+  with `"kind": "ner"` (regex detectors have `"kind": "regex"`). An empty
+  `entities` list means every regex detector plus the three default NER
+  entities; a non-empty list selects among both kinds. Per project,
+  `ner: {"enabled": false}` turns NER off (regex rules stay),
+  `score_threshold` (0–1, default 0.5) drops low-confidence entities, and
+  `language` (default `en`) is passed to the analyzer. `ner_active` in the
+  read response says whether NER applies now (policy on, analyzer configured,
+  enabled, at least one NER entity selected).
+  - NER runs at ingest before the write transaction, on every ingest path
+    (`/call/start|end`, `/call/upsert_batch`, `/v2/.../calls/complete`,
+    OTLP). The strings of a request (inputs, attributes, output, exception;
+    refs, numbers and short or lowercase-only Latin strings are skipped) are
+    joined into chunks of up to 50,000 characters, one analyzer request per
+    chunk, and each entity becomes `<ENTITY>`. The regex rules then run as
+    before.
+  - The analyzer has a short time budget per ingest request
+    (`--pii-analyzer-timeout`, env `WEFT_PII_ANALYZER_TIMEOUT`, default
+    `2s`). On a timeout, error or bad response the call is stored with regex
+    redaction only, a warning is logged (at most once a minute), and the
+    analyzer is skipped for 30 s so a down analyzer does not slow ingest.
+    Names can therefore be stored unredacted while the analyzer is
+    unavailable.
+  - Run the analyzer with e.g. `docker run -p 5002:3000
+    mcr.microsoft.com/presidio-analyzer` and keep it on a private network:
+    every redacted string is sent to it.
 - **Project delete** removes the project's rows from every table with a
   `project_id` column, including settings, links and tags.
 

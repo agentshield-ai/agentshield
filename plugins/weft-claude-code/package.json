@@ -1,0 +1,13 @@
+{
+  "name": "weft-claude-code",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Weft agent harness plugin for Claude Code (hooks, no dependencies)",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "bin": { "weft-claude-code": "./install.mjs" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "Apache-2.0"
+}

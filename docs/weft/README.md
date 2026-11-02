@@ -33,6 +33,8 @@ make weft         # build bin/weft
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
+| `--pii-analyzer-url` | `WEFT_PII_ANALYZER_URL` | empty (regex PII redaction only); a Presidio Analyzer REST URL adds PERSON, LOCATION and ORGANIZATION redaction at ingest for projects with sensitive-data redaction on, see [API.md](API.md#project-settings-weave-paths) |
+| `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error calls are stored with regex redaction only |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
 | `--oidc-issuer` | `WEFT_OIDC_ISSUER` | empty (no SSO); an OpenID Connect issuer URL turns on "Sign in with SSO" and makes authentication required |
@@ -120,6 +122,20 @@ It also provides `Dataset`, `Evaluation`, `EvaluationLogger`, built-in scorers,
 `publish`/`ref`, `wrapAnthropic`, `attributes` and `withThread`. See
 [sdk/typescript/README.md](../../sdk/typescript/README.md).
 
+The TypeScript SDK also traces LangChain.js, LlamaIndex.TS, the Vercel AI SDK
+(models, tools, `generateText`/`streamText`), MCP clients and servers, the
+Claude Agent SDK, the OpenAI Agents SDK, Mistral, Cohere, Groq, Together,
+Cerebras, AWS Bedrock and Vertex AI, with per-integration settings
+(`autopatchSettings`, postprocess hooks).
+
+**Coding agents.** Agent harness plugins trace Claude Code
+([`plugins/weft-claude-code`](../../plugins/weft-claude-code)), Codex
+([`plugins/weft-codex`](../../plugins/weft-codex)) and OpenClaw
+([`plugins/weft-openclaw`](../../plugins/weft-openclaw)) sessions as agent
+conversations: a turn per prompt, LLM calls with token usage, tool calls and
+sub-agents. They are configured with `WEFT_SERVER_URL`, `WEFT_API_KEY` and
+`WEFT_PROJECT`, never block the agent, and send in the background.
+
 Both SDKs also support guardrails (`call.apply_scorer` / `call.applyScorer`
 score a finished call and attach the result as feedback), loading published
 ops back as runnable functions (this executes the stored code), object classes
@@ -167,7 +183,7 @@ monitor and feedback, using offline mock models.
 | Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
 | Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
 | Access control | Users, teams (entities) and viewer/member/admin roles per team or project; API keys belong to users and carry their roles; OIDC single sign-on (PKCE) with auto-provisioning, domain and group-to-role mapping; an audit log of every write, admin action and refused request with query and CSV export. **Settings → Members / Audit log**, **Users & teams** page. |
-| Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest, project delete. Settings tabs for each; Weave paths (`/project/ttl_settings/*`, …). |
+| Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest (regex entities and custom patterns, plus PERSON/LOCATION/ORGANIZATION through an optional Presidio analyzer, configurable per project), project delete. Settings tabs for each; Weave paths (`/project/ttl_settings/*`, …). |
 
 ## Layout
 
@@ -193,6 +209,8 @@ cd web/weft-ui && npm test                         # UI unit tests
 WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 \
   python -m pytest sdk/python                      # SDK integration tests against a running server
 cd sdk/typescript && WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 npx vitest run
+WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 \
+  node --test plugins/weft-claude-code/test/*.test.mjs plugins/weft-codex/test/*.test.mjs plugins/weft-openclaw/test/*.test.mjs   # harness plugins
 ```
 
 CI runs all of these in `.github/workflows/weft.yml` and fails if the

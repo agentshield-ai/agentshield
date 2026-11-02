@@ -1,0 +1,13 @@
+{
+  "name": "weft-codex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Weft agent harness plugin for the OpenAI Codex CLI (Stop hook / notify, no dependencies)",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "bin": { "weft-codex": "./install.mjs" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "Apache-2.0"
+}

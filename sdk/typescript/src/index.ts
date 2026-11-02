@@ -85,10 +85,29 @@ export { OpLoadError } from './loader.js';
 export { Redactor, REDACTED, DEFAULT_REDACT_KEYS, redactPiiText, type RedactSettings } from './redact.js';
 export { addUsage } from './usage.js';
 export { WeftHTTPError, VERSION } from './http.js';
-export { wrapOpenAI, wrapOpenAICompatible, type WrapOpenAIOptions } from './integrations/openai.js';
+export { wrapOpenAI, wrapOpenAICompatible, wrapGroq, wrapTogether, wrapCerebras, type WrapOpenAIOptions } from './integrations/openai.js';
 export { wrapGoogleGenAI } from './integrations/google_genai.js';
-export { weftMiddleware } from './integrations/vercel_ai.js';
+export { weftMiddleware, wrapAITools, wrapAISDK, type WeftMiddlewareOptions } from './integrations/vercel_ai.js';
 export { wrapAnthropic } from './integrations/anthropic.js';
+export { WeftCallbackHandler, weftCallbackHandler } from './integrations/langchain.js';
+export { instrumentLlamaIndex, type LlamaIndexInstrumentation } from './integrations/llamaindex.js';
+export { wrapMCPClient, wrapMCPServer, instrumentMCP } from './integrations/mcp.js';
+export { wrapClaudeAgentSDK, wrapClaudeAgentQuery } from './integrations/claude_agent_sdk.js';
+export { WeftTracingProcessor, instrumentOpenAIAgents } from './integrations/openai_agents.js';
+export { wrapMistral, MistralStreamAccumulator } from './integrations/mistral.js';
+export { wrapCohere, CohereStreamAccumulator } from './integrations/cohere.js';
+export { wrapBedrock, instrumentBedrock } from './integrations/bedrock.js';
+export { wrapVertexAI, wrapVertexModel, wrapVertexChat } from './integrations/vertexai.js';
+export {
+  configureIntegrations,
+  updateIntegration,
+  getIntegrationSettings,
+  integrationEnabled,
+  canonicalIntegration,
+  type AutopatchSettings,
+  type IntegrationSettings,
+  type IntegrationOpSettings,
+} from './integrations/settings.js';
 export { canonicalJson, digestJson, digest, tableDigest } from './canonical.js';
 
 import { requireClient } from './global.js';

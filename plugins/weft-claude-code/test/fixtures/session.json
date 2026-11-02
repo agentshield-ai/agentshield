@@ -1,0 +1,608 @@
+{
+ "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+ "steps": [
+  {
+   "t": "2026-11-02T10:00:00.000Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "SessionStart",
+    "source": "startup",
+    "model": "claude-sonnet-4-5"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:01.000Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "List the files and review a.txt"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:01.010Z",
+   "transcript": "main",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": "List the files and review a.txt"
+    },
+    "timestamp": "2026-11-02T10:00:01.010Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:02.000Z",
+   "transcript": "main",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_01",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-sonnet-4-5",
+     "content": [
+      {
+       "type": "text",
+       "text": "I'll list the files first."
+      }
+     ],
+     "stop_reason": null,
+     "usage": {
+      "input_tokens": 12,
+      "cache_creation_input_tokens": 200,
+      "cache_read_input_tokens": 3000,
+      "output_tokens": 40,
+      "service_tier": "standard"
+     }
+    },
+    "requestId": "req_msg_01",
+    "timestamp": "2026-11-02T10:00:02.000Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:02.100Z",
+   "transcript": "main",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_01",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-sonnet-4-5",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01",
+       "name": "Bash",
+       "input": {
+        "command": "ls",
+        "description": "List files"
+       }
+      }
+     ],
+     "stop_reason": "tool_use",
+     "usage": {
+      "input_tokens": 12,
+      "cache_creation_input_tokens": 200,
+      "cache_read_input_tokens": 3000,
+      "output_tokens": 40,
+      "service_tier": "standard"
+     }
+    },
+    "requestId": "req_msg_01",
+    "timestamp": "2026-11-02T10:00:02.100Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:02.200Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "ls",
+     "description": "List files"
+    },
+    "tool_use_id": "toolu_01"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:02.500Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "ls",
+     "description": "List files"
+    },
+    "tool_use_id": "toolu_01",
+    "tool_response": {
+     "stdout": "a.txt\nb.txt",
+     "stderr": "",
+     "interrupted": false,
+     "isImage": false
+    }
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:02.510Z",
+   "transcript": "main",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_01",
+       "content": "a.txt\nb.txt"
+      }
+     ]
+    },
+    "timestamp": "2026-11-02T10:00:02.510Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:03.500Z",
+   "transcript": "main",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_02",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-sonnet-4-5",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_02",
+       "name": "Task",
+       "input": {
+        "subagent_type": "code-reviewer",
+        "description": "Review a.txt",
+        "prompt": "Review the file a.txt"
+       }
+      }
+     ],
+     "stop_reason": "tool_use",
+     "usage": {
+      "input_tokens": 20,
+      "cache_read_input_tokens": 3200,
+      "output_tokens": 30
+     }
+    },
+    "requestId": "req_msg_02",
+    "timestamp": "2026-11-02T10:00:03.500Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:03.600Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Task",
+    "tool_input": {
+     "subagent_type": "code-reviewer",
+     "description": "Review a.txt",
+     "prompt": "Review the file a.txt"
+    },
+    "tool_use_id": "toolu_02"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:03.700Z",
+   "transcript": "agent",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": "Review the file a.txt"
+    },
+    "timestamp": "2026-11-02T10:00:03.700Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:04.500Z",
+   "transcript": "agent",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_s1",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-haiku-4-5",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_03",
+       "name": "Read",
+       "input": {
+        "file_path": "/home/dev/project/a.txt"
+       }
+      }
+     ],
+     "stop_reason": "tool_use",
+     "usage": {
+      "input_tokens": 50,
+      "output_tokens": 10
+     }
+    },
+    "requestId": "req_msg_s1",
+    "timestamp": "2026-11-02T10:00:04.500Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:04.600Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "/home/dev/project/a.txt"
+    },
+    "tool_use_id": "toolu_03",
+    "agent_id": "a1b2c3",
+    "agent_type": "code-reviewer"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:04.700Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "/home/dev/project/a.txt"
+    },
+    "tool_use_id": "toolu_03",
+    "agent_id": "a1b2c3",
+    "agent_type": "code-reviewer",
+    "tool_response": {
+     "type": "text",
+     "file": {
+      "filePath": "/home/dev/project/a.txt",
+      "content": "hello\n",
+      "numLines": 1
+     }
+    }
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:04.710Z",
+   "transcript": "agent",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_03",
+       "content": "hello"
+      }
+     ]
+    },
+    "timestamp": "2026-11-02T10:00:04.710Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:05.500Z",
+   "transcript": "agent",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_s2",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-haiku-4-5",
+     "content": [
+      {
+       "type": "text",
+       "text": "a.txt looks fine."
+      }
+     ],
+     "stop_reason": "end_turn",
+     "usage": {
+      "input_tokens": 70,
+      "output_tokens": 8
+     }
+    },
+    "requestId": "req_msg_s2",
+    "timestamp": "2026-11-02T10:00:05.500Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:05.600Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStop",
+    "stop_hook_active": false,
+    "agent_id": "a1b2c3",
+    "agent_type": "code-reviewer",
+    "agent_transcript_path": "{{AGENT_TRANSCRIPT}}"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:05.700Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Task",
+    "tool_input": {
+     "subagent_type": "code-reviewer",
+     "description": "Review a.txt",
+     "prompt": "Review the file a.txt"
+    },
+    "tool_use_id": "toolu_02",
+    "tool_response": {
+     "content": [
+      {
+       "type": "text",
+       "text": "a.txt looks fine."
+      }
+     ],
+     "totalDurationMs": 2100,
+     "totalTokens": 138
+    }
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:05.710Z",
+   "transcript": "main",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_02",
+       "content": [
+        {
+         "type": "text",
+         "text": "a.txt looks fine."
+        }
+       ]
+      }
+     ]
+    },
+    "timestamp": "2026-11-02T10:00:05.710Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:06.500Z",
+   "transcript": "main",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_03",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-sonnet-4-5",
+     "content": [
+      {
+       "type": "text",
+       "text": "Done: there are two files and a.txt looks fine."
+      }
+     ],
+     "stop_reason": "end_turn",
+     "usage": {
+      "input_tokens": 5,
+      "cache_read_input_tokens": 3300,
+      "output_tokens": 15
+     }
+    },
+    "requestId": "req_msg_03",
+    "timestamp": "2026-11-02T10:00:06.500Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:00:06.600Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:00.000Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Now delete b.txt"
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:00.010Z",
+   "transcript": "main",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": "Now delete b.txt"
+    },
+    "timestamp": "2026-11-02T10:01:00.010Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:01.000Z",
+   "transcript": "main",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_04",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-sonnet-4-5",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_04",
+       "name": "Bash",
+       "input": {
+        "command": "rm b.txt"
+       }
+      }
+     ],
+     "stop_reason": "tool_use",
+     "usage": {
+      "input_tokens": 6,
+      "cache_read_input_tokens": 3400,
+      "output_tokens": 12
+     }
+    },
+    "requestId": "req_msg_04",
+    "timestamp": "2026-11-02T10:01:01.000Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:01.100Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "rm b.txt"
+    },
+    "tool_use_id": "toolu_04"
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:01.300Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUseFailure",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "rm b.txt"
+    },
+    "tool_use_id": "toolu_04",
+    "error": "rm: b.txt: Permission denied",
+    "is_interrupt": false
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:01.310Z",
+   "transcript": "main",
+   "line": {
+    "type": "user",
+    "message": {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_04",
+       "content": "rm: b.txt: Permission denied",
+       "is_error": true
+      }
+     ]
+    },
+    "timestamp": "2026-11-02T10:01:01.310Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:02.000Z",
+   "transcript": "main",
+   "line": {
+    "type": "assistant",
+    "message": {
+     "id": "msg_05",
+     "type": "message",
+     "role": "assistant",
+     "model": "claude-sonnet-4-5",
+     "content": [
+      {
+       "type": "text",
+       "text": "I could not delete b.txt: permission denied."
+      }
+     ],
+     "stop_reason": "end_turn",
+     "usage": {
+      "input_tokens": 7,
+      "cache_read_input_tokens": 3500,
+      "output_tokens": 14
+     }
+    },
+    "requestId": "req_msg_05",
+    "timestamp": "2026-11-02T10:01:02.000Z",
+    "sessionId": "5f1c2d3e-0000-4a1b-9c2d-claudecode001"
+   }
+  },
+  {
+   "t": "2026-11-02T10:01:02.100Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false
+   }
+  },
+  {
+   "t": "2026-11-02T10:02:00.000Z",
+   "hook": {
+    "session_id": "5f1c2d3e-0000-4a1b-9c2d-claudecode001",
+    "transcript_path": "{{TRANSCRIPT}}",
+    "cwd": "/home/dev/project",
+    "permission_mode": "default",
+    "hook_event_name": "SessionEnd",
+    "reason": "prompt_input_exit"
+   }
+  }
+ ]
+}

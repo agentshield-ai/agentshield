@@ -36,7 +36,7 @@ function plain(v: unknown): any {
 }
 
 /** Wrap a stream so iterating it accumulates chunks and ends the call at the end. */
-export function proxyStream<T extends object>(stream: T, acc: Accumulator, done: (out: any, err?: unknown) => void): T {
+export function proxyStream<T extends object>(stream: T, acc: Accumulator, done: (out: any, err?: unknown) => void, opts: { raw?: boolean } = {}): T {
   let finished = false;
   const finish = (err?: unknown) => {
     if (finished) return;
@@ -47,7 +47,7 @@ export function proxyStream<T extends object>(stream: T, acc: Accumulator, done:
     try {
       for await (const ch of stream as AsyncIterable<unknown>) {
         try {
-          acc.add(plain(ch));
+          acc.add(opts.raw ? ch : plain(ch));
         } catch {
           /* accumulation is best effort */
         }

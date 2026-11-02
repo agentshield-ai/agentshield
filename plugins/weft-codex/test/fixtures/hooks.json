@@ -1,0 +1,22 @@
+{
+ "session_id": "0199a1b2-c3d4-7e5f-8a9b-codex0000001",
+ "split": 22,
+ "stop_hook": {
+  "session_id": "0199a1b2-c3d4-7e5f-8a9b-codex0000001",
+  "transcript_path": "{{ROLLOUT}}",
+  "cwd": "/home/dev/app",
+  "hook_event_name": "Stop",
+  "model": "gpt-5-codex",
+  "stop_hook_active": false
+ },
+ "notify": {
+  "type": "agent-turn-complete",
+  "thread-id": "0199a1b2-c3d4-7e5f-8a9b-codex0000001",
+  "turn-id": "1",
+  "cwd": "/home/dev/app",
+  "input-messages": [
+   "Commit it"
+  ],
+  "last-assistant-message": "The sandbox blocked the commit."
+ }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "weft",
+  "owner": { "name": "AgentShield" },
+  "plugins": [
+    {
+      "name": "weft-claude-code",
+      "source": "./",
+      "description": "Trace Claude Code sessions into Weft as agent conversations"
+    }
+  ]
+}

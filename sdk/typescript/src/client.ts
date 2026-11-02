@@ -15,6 +15,7 @@ import { op as makeOp, isOp, type OpMeta } from './op.js';
 import { Ref, isRefUri, splitProject } from './refs.js';
 import { Redactor, type RedactSettings } from './redact.js';
 import { Sender, type SenderOptions } from './sender.js';
+import { configureIntegrations, type AutopatchSettings } from './integrations/settings.js';
 import { getRef, toJson } from './serialize.js';
 
 export const DEFAULT_SERVER_URL = 'http://localhost:6345';
@@ -27,6 +28,13 @@ export interface InitOptions {
   sender?: SenderOptions;
   /** Client settings (redaction, attributes, links, durability). */
   settings?: ClientSettings;
+  /**
+   * Per-integration settings, keyed by integration name (`openai`, `langchain`,
+   * `mcp`, ...): `{ enabled?, opSettings?: { name, callDisplayName,
+   * postprocessInputs, postprocessOutput, kind, color, attributes } }`.
+   * Replaces earlier settings when given.
+   */
+  autopatchSettings?: AutopatchSettings;
 }
 
 export interface ClientSettings extends RedactSettings {
@@ -836,6 +844,7 @@ export async function init(project?: string, opts: InitOptions = {}): Promise<We
   const old = getClient();
   if (old) await old.flush();
   const client = new WeftClient(p, { ...opts, disabled: opts.disabled || envDisabled });
+  if (opts.autopatchSettings !== undefined) configureIntegrations(opts.autopatchSettings);
   setGlobalClient(client);
   installExitHook();
   return client;

@@ -1,0 +1,674 @@
+{
+ "session_id": "oc-sess-0001",
+ "events": [
+  {
+   "t": 0,
+   "hook": "session_start",
+   "event": {
+    "sessionId": "oc-sess-0001",
+    "sessionKey": "agent:main:telegram:dm:42"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5"
+   }
+  },
+  {
+   "t": 100,
+   "hook": "model_call_started",
+   "event": {
+    "runId": "run-1",
+    "callId": "mc-1",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 110,
+   "hook": "llm_input",
+   "event": {
+    "runId": "run-1",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "systemPrompt": "You are a helpful assistant.",
+    "prompt": "What's the weather in Oslo? Ask the researcher too.",
+    "historyMessages": [],
+    "imagesCount": 0,
+    "tools": [
+     {
+      "name": "exec"
+     },
+     {
+      "name": "web_fetch"
+     }
+    ]
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 900,
+   "hook": "model_call_ended",
+   "event": {
+    "runId": "run-1",
+    "callId": "mc-1",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 800,
+    "outcome": "completed"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 1000,
+   "hook": "before_tool_call",
+   "event": {
+    "toolName": "web_fetch",
+    "params": {
+     "url": "https://wttr.in/Oslo?format=3"
+    },
+    "runId": "run-1",
+    "toolCallId": "tc-1"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1",
+    "toolName": "web_fetch",
+    "toolCallId": "tc-1"
+   }
+  },
+  {
+   "t": 1400,
+   "hook": "after_tool_call",
+   "event": {
+    "toolName": "web_fetch",
+    "params": {
+     "url": "https://wttr.in/Oslo?format=3"
+    },
+    "runId": "run-1",
+    "toolCallId": "tc-1",
+    "result": {
+     "status": 200,
+     "text": "Oslo: \u2600\ufe0f +12\u00b0C"
+    },
+    "durationMs": 400
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1",
+    "toolName": "web_fetch",
+    "toolCallId": "tc-1"
+   }
+  },
+  {
+   "t": 1500,
+   "hook": "model_call_started",
+   "event": {
+    "runId": "run-1",
+    "callId": "mc-2",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 1900,
+   "hook": "model_call_ended",
+   "event": {
+    "runId": "run-1",
+    "callId": "mc-2",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 400,
+    "outcome": "completed"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 2000,
+   "hook": "before_tool_call",
+   "event": {
+    "toolName": "sessions_spawn",
+    "params": {
+     "agentId": "researcher",
+     "task": "Find tomorrow's forecast for Oslo"
+    },
+    "runId": "run-1",
+    "toolCallId": "tc-2"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 2010,
+   "hook": "subagent_spawned",
+   "event": {
+    "childSessionKey": "agent:researcher:subagent:7",
+    "agentId": "researcher",
+    "label": "forecast",
+    "mode": "run",
+    "runId": "run-c1",
+    "threadRequested": false,
+    "resolvedModel": "claude-haiku-4-5",
+    "resolvedProvider": "anthropic"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 2100,
+   "hook": "llm_input",
+   "event": {
+    "runId": "run-c1",
+    "sessionId": "oc-sess-child-01",
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5",
+    "prompt": "Find tomorrow's forecast for Oslo",
+    "historyMessages": [],
+    "imagesCount": 0
+   },
+   "ctx": {
+    "agentId": "researcher",
+    "sessionKey": "agent:researcher:subagent:7",
+    "sessionId": "oc-sess-child-01",
+    "runId": "run-c1"
+   }
+  },
+  {
+   "t": 2300,
+   "hook": "before_tool_call",
+   "event": {
+    "toolName": "web_search",
+    "params": {
+     "query": "Oslo forecast tomorrow"
+    },
+    "runId": "run-c1",
+    "toolCallId": "tc-c1"
+   },
+   "ctx": {
+    "agentId": "researcher",
+    "sessionKey": "agent:researcher:subagent:7",
+    "sessionId": "oc-sess-child-01",
+    "runId": "run-c1"
+   }
+  },
+  {
+   "t": 2600,
+   "hook": "after_tool_call",
+   "event": {
+    "toolName": "web_search",
+    "params": {
+     "query": "Oslo forecast tomorrow"
+    },
+    "runId": "run-c1",
+    "toolCallId": "tc-c1",
+    "result": [
+     "Rain, 9\u00b0C"
+    ],
+    "durationMs": 300
+   },
+   "ctx": {
+    "agentId": "researcher",
+    "sessionKey": "agent:researcher:subagent:7",
+    "sessionId": "oc-sess-child-01",
+    "runId": "run-c1"
+   }
+  },
+  {
+   "t": 2900,
+   "hook": "llm_output",
+   "event": {
+    "runId": "run-c1",
+    "sessionId": "oc-sess-child-01",
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5",
+    "assistantTexts": [
+     "Tomorrow: rain, 9\u00b0C."
+    ],
+    "usage": {
+     "input": 300,
+     "output": 12,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 312
+    }
+   },
+   "ctx": {
+    "agentId": "researcher",
+    "sessionKey": "agent:researcher:subagent:7",
+    "sessionId": "oc-sess-child-01",
+    "runId": "run-c1"
+   }
+  },
+  {
+   "t": 2950,
+   "hook": "agent_end",
+   "event": {
+    "runId": "run-c1",
+    "messages": [
+     {
+      "role": "user",
+      "content": "Find tomorrow's forecast for Oslo"
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "Tomorrow: rain, 9\u00b0C."
+       }
+      ]
+     }
+    ],
+    "success": true,
+    "durationMs": 900
+   },
+   "ctx": {
+    "agentId": "researcher",
+    "sessionKey": "agent:researcher:subagent:7",
+    "sessionId": "oc-sess-child-01",
+    "runId": "run-c1"
+   }
+  },
+  {
+   "t": 3000,
+   "hook": "subagent_ended",
+   "event": {
+    "targetSessionKey": "agent:researcher:subagent:7",
+    "targetKind": "subagent",
+    "reason": "completed",
+    "outcome": "ok",
+    "runId": "run-c1"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 3010,
+   "hook": "after_tool_call",
+   "event": {
+    "toolName": "sessions_spawn",
+    "params": {
+     "agentId": "researcher",
+     "task": "Find tomorrow's forecast for Oslo"
+    },
+    "runId": "run-1",
+    "toolCallId": "tc-2",
+    "result": {
+     "text": "Tomorrow: rain, 9\u00b0C."
+    },
+    "durationMs": 1010
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 3100,
+   "hook": "model_call_started",
+   "event": {
+    "runId": "run-1",
+    "callId": "mc-3",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 3600,
+   "hook": "llm_output",
+   "event": {
+    "runId": "run-1",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "assistantTexts": [
+     "It is sunny and 12\u00b0C in Oslo now; tomorrow brings rain at 9\u00b0C."
+    ],
+    "lastAssistant": {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "It is sunny and 12\u00b0C in Oslo now; tomorrow brings rain at 9\u00b0C."
+      }
+     ]
+    },
+    "usage": {
+     "input": 1200,
+     "output": 60,
+     "cacheRead": 2000,
+     "cacheWrite": 100,
+     "total": 3360
+    }
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 3600,
+   "hook": "model_call_ended",
+   "event": {
+    "runId": "run-1",
+    "callId": "mc-3",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 500,
+    "outcome": "completed"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 3700,
+   "hook": "agent_end",
+   "event": {
+    "runId": "run-1",
+    "messages": [
+     {
+      "role": "user",
+      "content": "What's the weather in Oslo? Ask the researcher too."
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "It is sunny and 12\u00b0C in Oslo now; tomorrow brings rain at 9\u00b0C."
+       }
+      ]
+     }
+    ],
+    "success": true,
+    "durationMs": 3600
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-1"
+   }
+  },
+  {
+   "t": 10000,
+   "hook": "llm_input",
+   "event": {
+    "runId": "run-2",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "prompt": "Delete my files",
+    "historyMessages": [
+     {
+      "role": "user",
+      "content": "What's the weather in Oslo? Ask the researcher too."
+     },
+     {
+      "role": "assistant",
+      "content": "It is sunny..."
+     }
+    ],
+    "imagesCount": 0
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-2"
+   }
+  },
+  {
+   "t": 10200,
+   "hook": "before_tool_call",
+   "event": {
+    "toolName": "exec",
+    "params": {
+     "command": "rm -rf ~/files"
+    },
+    "runId": "run-2",
+    "toolCallId": "tc-3"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-2"
+   }
+  },
+  {
+   "t": 10300,
+   "hook": "after_tool_call",
+   "event": {
+    "toolName": "exec",
+    "params": {
+     "command": "rm -rf ~/files"
+    },
+    "runId": "run-2",
+    "toolCallId": "tc-3",
+    "error": "blocked by policy",
+    "durationMs": 100
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-2"
+   }
+  },
+  {
+   "t": 10800,
+   "hook": "llm_output",
+   "event": {
+    "runId": "run-2",
+    "sessionId": "oc-sess-0001",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "assistantTexts": [
+     "I can't delete those files."
+    ],
+    "usage": {
+     "input": 900,
+     "output": 10,
+     "cacheRead": 2500,
+     "cacheWrite": 0
+    }
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-2"
+   }
+  },
+  {
+   "t": 10900,
+   "hook": "agent_end",
+   "event": {
+    "runId": "run-2",
+    "messages": [
+     {
+      "role": "assistant",
+      "content": "I can't delete those files."
+     }
+    ],
+    "success": true,
+    "durationMs": 900
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5",
+    "runId": "run-2"
+   }
+  },
+  {
+   "t": 20000,
+   "hook": "session_end",
+   "event": {
+    "sessionId": "oc-sess-0001",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "messageCount": 4,
+    "durationMs": 20000,
+    "reason": "idle"
+   },
+   "ctx": {
+    "agentId": "main",
+    "sessionKey": "agent:main:telegram:dm:42",
+    "sessionId": "oc-sess-0001",
+    "channelId": "telegram",
+    "trigger": "user",
+    "modelProviderId": "anthropic",
+    "modelId": "claude-sonnet-4-5"
+   }
+  }
+ ]
+}

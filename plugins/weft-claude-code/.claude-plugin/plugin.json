@@ -1,0 +1,15 @@
+{
+  "name": "weft-claude-code",
+  "version": "0.1.0",
+  "description": "Trace Claude Code sessions into Weft: one agent conversation per session, a turn per prompt, LLM calls with token usage and a span per tool use.",
+  "author": {
+    "name": "AgentShield"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "weft",
+    "tracing",
+    "observability",
+    "agents"
+  ]
+}
