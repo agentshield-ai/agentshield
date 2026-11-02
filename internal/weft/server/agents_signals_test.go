@@ -133,8 +133,8 @@ func TestAgentFeedbackBatchAndSignalFilters(t *testing.T) {
 
 	res := e.post("/agents/feedback/batch/create", map[string]any{"batch": []any{
 		map[string]any{"project_id": pid, "weave_ref": ref(t1["span_id"].(string)), "feedback_type": "wandb.agent_monitor",
-			"payload":        map[string]any{"signal": "manual"},
-			"scorer_ratings": map[string]any{"response_quality": 0.9, "user_satisfaction": 0.1},
+			"payload":                   map[string]any{"signal": "manual"},
+			"scorer_ratings":            map[string]any{"response_quality": 0.9, "user_satisfaction": 0.1},
 			"scorer_rating_confidences": map[string]any{"response_quality": 1.7}, "scorer_rating_reasons": map[string]any{"response_quality": "Answered\n\n<b>fully</b>"},
 			"scorer_tags": []any{"User_Frustration", "user_frustration ", "Weather"}, "scorer_tag_confidences": map[string]any{"USER_FRUSTRATION": 0.8},
 			"scorer_tag_reasons": map[string]any{"user_frustration": "Asked twice"}},

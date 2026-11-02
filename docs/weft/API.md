@@ -863,14 +863,56 @@ OpenInference `metadata` JSON flattens under `metadata.`.
 |---|---|---|
 | `/agents/query` | `{project_id, filters?: {agent_name? (case-insensitive substring)}, include_costs?, limit? (100), offset?, sort_by?}`; *Weft*: `started_after?`, `started_before?` | `{"agents": [Agent], "total_count"}` |
 | `/agents/agent-versions/query` | `{project_id, agent_name, include_costs?, limit?, offset?, sort_by?}` | `{"versions": [Agent + agent_version], "total_count"}`; spans without a version are the version `""` |
-| `/agents/spans/query` | `{project_id, query?, started_after?, started_before?, group_by?, measures?, group_filters?, group_distributions?, custom_attr_columns?, include_costs?, include_details?, sort_by?, limit? (100), offset?}` | `{"spans": [Span], "groups": [Group], "total_count"}`; `groups` when `group_by` is set |
-| `/agents/spans/stats` | `{project_id, start, end?, granularity? (seconds; ~60 buckets when absent), timezone?, query?, group_by?, group_limit? (50), group_filters?, metrics?, bucket_by?}` | `{"bucket_type","start","end","granularity","timezone","columns","rows"}` |
+| `/agents/spans/query` | `{project_id, query?, started_after?, started_before?, group_by?, measures?, group_filters?, group_distributions?, custom_attr_columns?, signal_filters?, insight_filters?, include_costs?, include_details?, sort_by?, limit? (100), offset?}` | `{"spans": [Span], "groups": [Group], "total_count"}`; `groups` when `group_by` is set |
+| `/agents/spans/stats` | `{project_id, start, end?, granularity? (seconds; ~60 buckets when absent), timezone?, query?, group_by?, group_limit? (50), group_filters?, signal_filters?, insight_filters?, metrics?, bucket_by?}` | `{"bucket_type","start","end","granularity","timezone","columns","rows"}` |
 | `/agents/spans/custom-attrs/schema` | `{project_id, query?, started_after?, started_before?, limit? (200), offset?}` | `{"attributes": [{"key","source","value_type","span_count"}], "has_more", "limit", "offset"}` |
 | `/agents/search` | `{project_id, query?, roles?, agent_name?, conversation_id?, trace_id?, request_model?, provider_name?, started_after?, started_before?, truncate_content? (true), limit? (20), offset?}` | `{"results": [{"conversation_id","conversation_name","agent_name","last_activity","matched_messages": [{"content_digest","content_preview","role","span_id","trace_id","started_at"}]}], "total_conversations"}` |
 | `/agents/conversations/spans` | `{project_id, conversation_ids, started_after?, started_before?}` | `{"conversations": [{"conversation_id","spans": [{"span_id","trace_id","operation_name","status","duration_ms"; Weft: "span_name","started_at"}], "spans_feedback": [...]}]}` |
 | `/agents/conversations/chat` | `{project_id, conversation_id, include_feedback?, include_model_tool_calls?, limit? (50), offset?}` | `{"conversation_id","turns": [TraceChat],"total_turns","has_more","limit","offset","total_cost_usd","feedback"}`; *Weft*: `conversation_name, agent_names, started_at, last_activity, total_input_tokens, total_output_tokens, span_count, error_count` |
 | `/agents/traces/chat` | `{project_id, trace_id, include_feedback?, include_model_tool_calls?}` | TraceChat (404 for an unknown trace) |
 | `/agents/otel/v1/traces` | OTLP | same as `/otel/v1/traces` |
+| *Weft*: `/agents/signals/presets` (GET or POST) | — | `{"presets": [{"id","name","kind": "tag"\|"rating","description"}]}` |
+| *Weft*: `/agents/signals/run` | `{project_id, model, signals: [{preset} \| {id, name?, kind, description}] (1–12), agent_name?, conversation_id?, trace_ids?, started_after?, started_before?, limit? (20 most recent turns, max 200), rescore?}` | `{"turns","scored","skipped","failed","results": [{"span_id","trace_id","signal","kind","score"?,"matched"?,"confidence"?,"reason"?,"feedback_id"?,"error"?}]}` |
+| *Weft*: `/agents/signals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, signal?, kind?, tag?, min_score?, max_score?, matched_only? (true), started_after?, started_before?, limit? (100), offset?}` | `{"results": [SignalResult], "summary": [{"signal","signal_name","kind","count","matched","avg","tag_counts"}], "total_count"}` |
+| *Weft*: `/agents/feedback/batch/create` | Weave's `FeedbackBatchCreateParams` (`{batch: [{project_id, weave_ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}`) | `{"res": [{"id","created_at","wb_user_id","payload"}]}` |
+
+**Signals.** A signal scores one *turn* (a conversation turn, or an agent
+invocation at the top of its trace outside conversations) with an LLM judge
+(`model`; `mock/json` works offline). Tag signals ask for `{matched,
+confidence, reason}`, rating signals for `{score, confidence, reason}`;
+1–5, 1–10 and 0–100 scales are rescaled to 0–1. Each result is feedback on
+the turn's root call with `feedback_type` `wandb.agent_monitor` and payload
+`{signal, signal_name, signal_kind, model, scorer_call_id, output, reason,
+scorer_ratings | scorer_tags, scorer_*_confidences, scorer_*_reasons,
+span_trace_id, span_conversation_id, span_agent_name, span_agent_version,
+span_status_code, scorer_trace_id}`. Already-scored turns are skipped unless
+`rescore`. The judge's own calls are internal (`attributes.weft.internal`)
+and are not agent spans. `/agents/feedback/batch/create` normalises like
+Weave: tags are lowercased, trimmed and de-duplicated (at most 10; a tag over
+36 characters rejects the item), reasons lose control and markup characters
+and are cut to 256 characters, confidences are clamped to 0–1; missing
+`span_*` fields are filled from the span index. Chat views
+(`feedback[]` in `/agents/conversations/chat`, `/agents/traces/chat`) lift the
+`scorer_*` fields back to the top level, and `spans_feedback` ratings carry
+`confidence` and `reason`. **SignalResult**: `{feedback_id, feedback_type,
+kind, signal, signal_id, signal_name, score, tags, confidence, reason,
+creator, created_at, span_id, trace_id, conversation_id, conversation_name,
+agent_name, agent_version, turn_started_at, turn_status, last_message,
+scorer_call_id}`; ratings and tags from annotations, `wandb.runnable.*`
+scorers and reactions on turns are listed too. Results are newest turn first.
+
+**`signal_filters`** `{ratings?: [{scorer_key, op: gte|gt|lte|lt|eq, value}],
+tags?: [...]}` keeps spans whose turn (trace) has signal results where every
+rating condition holds and, when tags are given, at least one tag matches
+(case-insensitive). **`insight_filters`** `[{field, values, exclude?}]`
+(fields `intent_category, intent_sentiment, failure_category,
+failure_severity, intent_topic_id, failure_topic_id`; values ORed, filters
+ANDed) are per conversation (per trace outside conversations). Weft has no
+Insights pipeline: values come from an `insights` map in turn feedback
+payloads, and `intent_sentiment` is also derived from `sentiment` /
+`user_satisfaction` ratings (<0.2 frustrated, <0.4 dissatisfied, <0.6
+neutral, <0.8 satisfied, else delighted) and the `user_frustration` tag.
+Unknown fields, ops or sentiment/severity values are a 400.
 
 **Agent** fields: `agent_name, project_id, invocation_count, span_count,
 error_count` (failed spans), `first_seen, last_seen, total_duration_ms`

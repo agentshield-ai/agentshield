@@ -72,6 +72,19 @@ type SensitiveDataSettings struct {
 	// Entities restricts the built-in detectors; empty means all.
 	Entities       []string           `json:"entities"`
 	CustomPatterns []RedactionPattern `json:"custom_patterns"`
+	// NER configures named-entity redaction (PERSON, LOCATION, …) through the
+	// server's PII analyzer (--pii-analyzer-url). Nil means the defaults.
+	NER *NERSettings `json:"ner,omitempty"`
+}
+
+// NERSettings is a project's named-entity redaction configuration.
+type NERSettings struct {
+	// Enabled nil means on whenever the server has an analyzer.
+	Enabled *bool `json:"enabled,omitempty"`
+	// ScoreThreshold drops entities the analyzer scores below it (0..1; default 0.5).
+	ScoreThreshold *float64 `json:"score_threshold,omitempty"`
+	// Language is the analyzer language (default "en").
+	Language string `json:"language,omitempty"`
 }
 
 // GetProjectSetting decodes a setting into out and reports whether it exists.
@@ -140,7 +153,12 @@ func (s *Store) invalidateIngest(projectID string) {
 	delete(ingestCache[s], projectID)
 }
 
-func (s *Store) ingestPolicyFor(ctx context.Context, tx *sql.Tx, projectID string) (*ingestPolicy, error) {
+// queryer is a *sql.DB or *sql.Tx.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func (s *Store) ingestPolicyFor(ctx context.Context, tx queryer, projectID string) (*ingestPolicy, error) {
 	ingestCacheMu.Lock()
 	if p, ok := ingestCache[s][projectID]; ok {
 		ingestCacheMu.Unlock()

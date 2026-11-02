@@ -13,8 +13,12 @@ type RedactionEntity struct {
 	Name        string `json:"name"`
 	Placeholder string `json:"placeholder"`
 	Description string `json:"description"`
-	re          *regexp.Regexp
+	// Kind is "regex" for built-in pattern detectors and "ner" for named
+	// entities found by the PII analyzer (see ner.go).
+	Kind  string `json:"kind,omitempty"`
+	re    *regexp.Regexp
 	check       func(string) bool
+	defaultOn   bool // NER entities: redacted when the project lists no entities
 }
 
 // RedactionEntities lists the built-in detectors in the order they run.
@@ -78,11 +82,20 @@ func validIBAN(s string) bool {
 	return mod == 1
 }
 
-// Redactor applies a project's redaction policy.
+// Redactor applies a project's redaction policy. String and Value apply the
+// regex detectors; NER entities (ner) are applied by Store.nerRedact before
+// the regex pass when the server has a PII analyzer.
 type Redactor struct {
 	entities []*RedactionEntity
 	custom   []customPattern
+	ner      []string
+	nerScore float64
+	nerLang  string
 }
+
+// NEREntities reports the named-entity types this policy redacts (empty when
+// NER is off for the project).
+func (r *Redactor) NEREntities() []string { return r.ner }
 
 type customPattern struct {
 	placeholder string
@@ -103,6 +116,9 @@ func NewRedactor(set SensitiveDataSettings) (*Redactor, error) {
 		for _, e := range RedactionEntities {
 			found = found || e.Name == name
 		}
+		for _, e := range NEREntities {
+			found = found || e.Name == name
+		}
 		if !found {
 			return nil, Invalidf("unknown entity %q", name)
 		}
@@ -110,6 +126,28 @@ func NewRedactor(set SensitiveDataSettings) (*Redactor, error) {
 	for _, e := range RedactionEntities {
 		if len(want) == 0 || want[e.Name] {
 			r.entities = append(r.entities, e)
+		}
+	}
+	if set.NER == nil || set.NER.Enabled == nil || *set.NER.Enabled {
+		for _, e := range NEREntities {
+			if (len(want) == 0 && e.defaultOn) || want[e.Name] {
+				r.ner = append(r.ner, e.Name)
+			}
+		}
+	}
+	r.nerScore, r.nerLang = 0.5, "en"
+	if set.NER != nil {
+		if t := set.NER.ScoreThreshold; t != nil {
+			if *t < 0 || *t > 1 {
+				return nil, Invalidf("ner.score_threshold must be between 0 and 1")
+			}
+			r.nerScore = *t
+		}
+		if l := strings.TrimSpace(set.NER.Language); l != "" {
+			if len(l) > 16 || !customNameRe.MatchString(l) {
+				return nil, Invalidf("invalid ner.language %q", l)
+			}
+			r.nerLang = l
 		}
 	}
 	if len(set.CustomPatterns) > 50 {

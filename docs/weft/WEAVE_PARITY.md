@@ -33,17 +33,17 @@ Status key: **Impl** = implemented, **Partial** = present with stated gaps, **Mi
 | 4. Datasets | 6 | 0 | 1 |
 | 5. Models | 4 | 0 | 0 |
 | 6. Prompts | 3 | 0 | 0 |
-| 7. Evaluations, scorers, guardrails | 11 | 2 | 0 |
-| 8. Leaderboards | 2 | 1 | 0 |
+| 7. Evaluations, scorers, guardrails | 12 | 1 | 0 |
+| 8. Leaderboards | 3 | 0 | 0 |
 | 9. Feedback, annotations, queues | 7 | 0 | 0 |
-| 10. Monitors, signals, automations | 2 | 3 | 0 |
-| 11. Agents | 4 | 3 | 1 |
-| 12. Playground | 8 | 0 | 1 |
+| 10. Monitors, signals, automations | 4 | 1 | 0 |
+| 11. Agents | 5 | 2 | 1 |
+| 12. Playground | 9 | 0 | 0 |
 | 13. Costs | 3 | 0 | 0 |
-| 14. UI views | 9 | 3 | 1 |
+| 14. UI views | 13 | 0 | 0 |
 | 15. SDKs and client APIs | 6 | 2 | 1 |
 | 16. Admin, settings, security | 6 | 1 | 2 |
-| **Total (140 rows)** | **115** | **17** | **8** |
+| **Total (140 rows)** | **125** | **9** | **6** |
 
 API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in Weft (was 116 at the audit). That includes **118 of 118** in the vendored client SDK. See §17.
 
@@ -148,7 +148,7 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | Local SLM scorers (toxicity, bias, coherence, fluency, context relevance, Presidio) | evaluation/weave_local_scorers | Impl | `weft/local_scorers.py` (also `weft.scorers.<Name>`): `WeaveToxicityScorerV1`, `WeaveBiasScorerV1`, `WeaveCoherenceScorerV1`, `WeaveFluencyScorerV1`, `WeaveHallucinationScorerV1`, `WeaveContextRelevanceScorerV1`, `WeaveTrustScorerV1`, `PresidioScorer`; optional `weft[scorers]` extra with lazy imports and a clear error. They serialise for display but run client side only; `tests/test_local_scorers.py` (model loading mocked) |
 | `EvaluationLogger` (`log_prediction`, `log_score`, `log_example`, `log_summary`, dataset link) | evaluation/evaluation_logger | Impl | `_evaluation.py` `EvaluationLogger`, TS `logExample` |
 | Link existing calls or agent traces to an EvaluationLogger run | evaluation/evaluation_logger, agent-evals | Partial | the logger always creates new predict calls; no way to attach existing calls |
-| Evaluate from the UI on the server | tools/evaluation_playground | Partial | `/evaluate_model` runs `LLMStructuredCompletionModel`, any model with a `predict_url`, and models bound to a custom runtime (`evals/runtimes.go`; `TestEvaluateModelWithPredictURL`, `TestEvaluateModelBoundToRuntime`). The UI picker (`NewEvaluationPage.tsx`) still lists only `LLMStructuredCompletionModel` models |
+| Evaluate from the UI on the server | tools/evaluation_playground | Impl | `/evaluate_model` runs `LLMStructuredCompletionModel`, any model with a `predict_url`, and models bound to a custom runtime (`evals/runtimes.go`; `TestEvaluateModelWithPredictURL`, `TestEvaluateModelBoundToRuntime`). `NewEvaluationPage.tsx` lists all three and creates remote and runtime-bound models inline (`ServerModelForms.tsx`, `modelUtils.ts`; `serverModels.test.ts`); checked end to end against a local predict endpoint and a `predict` runtime |
 | Re-score an evaluation | OpenAPI `/evaluations/rescore` | Impl | `evals/rescore.go`; `TestCompatExtraEndpoints` |
 | Evaluation status | OpenAPI | Impl | `/evaluation_status`, `/evaluations/status` |
 | Compare evaluations (summary, per-example diffs, baseline) | evaluation/compare_evals | Impl | `CompareEvaluationsPage.tsx`, `/evaluations/compare`; `TestServerSideEvaluationCompareLeaderboard` |
@@ -162,7 +162,7 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 |---|---|---|---|
 | Leaderboard objects, compute API, page and editor | core-types/leaderboards | Impl | `LeaderboardEditor.tsx`, `LeaderboardPage.tsx`, `/leaderboard/compute`; `TestServerSideEvaluationCompareLeaderboard` |
 | Leaderboard SDK | core-types/leaderboards | Impl | `weft.Leaderboard`, `client.leaderboard()` |
-| Dynamic leaderboard inside eval comparison | evaluation/dynamic_leaderboards | Partial | `InlineLeaderboard.tsx`. The configuration lives only in the URL (`?lb=`) and is not saved as an object |
+| Dynamic leaderboard inside eval comparison | evaluation/dynamic_leaderboards | Impl | `InlineLeaderboard.tsx` (`?lb=`); **Save as leaderboard** publishes a `Leaderboard` object with one column per weighted metric and evaluation, plus the source runs and weights (`weft_dynamic`) linked back from `LeaderboardPage.tsx` (`leaderboardColumns`; `serverModels.test.ts`) |
 
 ## 9. Feedback, annotations, queues
 
@@ -181,8 +181,8 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | Feature | Weave | Weft status | Evidence |
 |---|---|---|---|
 | Custom monitors (ops, filter, sampling, scorers → feedback) | evaluation/custom-monitors | Impl | `evals/monitors.go`, `MonitorEditor.tsx`; `TestMonitorScoresEndedCalls` |
-| Preset signals | evaluation/monitors, view-agent-signals | Partial | 12 monitor templates (`components/monitors/signals.ts`, `SignalsGallery.tsx`). They do not match Weave's turn-scoped presets: no jailbreak or NSFW tags, and no user-satisfaction, good-intent or response-quality ratings |
-| Custom tag signals | create-custom-signal | Partial | any LLM-judge monitor can be built; no tag/rating schema or normalisation |
+| Preset signals | evaluation/monitors, view-agent-signals | Impl | Weave's turn presets (User Frustration, Malicious Intent, NSFW, Low Quality Response tags; User Satisfaction, User Good Intent, Safe-for-Work, Response Quality ratings) plus Sentiment and Task Success, scored per turn by an LLM judge: `store/agents_signals.go`, `server/agents_signals.go` (`/agents/signals/presets`, `/agents/signals/run`); Signals tab `components/agents/SignalsView.tsx`; `TestAgentSignalsRunAndQuery`, `signals.test.ts`. The older call-level monitor templates (`SignalsGallery.tsx`) remain |
+| Custom tag signals | create-custom-signal | Impl | custom tag or rating signals (name, kind, judge description) in the Signals tab; results are normalised as in Weave (tags lowercased, de-duplicated, at most 10, over 36 characters rejected; reasons stripped and cut to 256 characters; confidences clamped to 0–1) and stored as feedback with Weave's `scorer_ratings`/`scorer_tags` fields (`/agents/feedback/batch/create`); `TestAgentFeedbackBatchAndSignalFilters`, `TestJudgeNormalisation`. Signals run on demand, not continuously |
 | Remote scorers | evaluation/remote-scorers, remote-scorer-signals | Partial | `RemoteScorer` (`evals/scorers_extra.go:464`) with bearer or header secrets; no OAuth |
 | Automations (score threshold, error rate, feedback created → webhook/Slack, run log) | evaluation/automations | Impl | `internal/weft/automations/automations.go`, `server/automations.go`, `AutomationsPage.tsx`; `TestAutomationScoreThresholdAndFeedback`, `TestAutomationErrorRate` |
 
@@ -195,7 +195,7 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | Span-kind derivation (GenAI, OpenInference, OpenLLMetry, SDK `kind`) | trace-agents-attributes | Impl | `store/agents.go`; `TestDeriveSpanKinds`, `TestAgentsFromSDKCalls` |
 | `/agents/*` API (query, versions, search, spans query/stats, custom-attr schema, conversations, chat) | OpenAPI | Impl | `server/agents.go`, `store/agents_*.go`; `server/agents_test.go` (7 tests); response shapes match the spec |
 | Agents list, agent page, conversation page | tracking/view-agent-activity | Impl | `pages/agents/AgentsPage.tsx`, `AgentPage.tsx`, `ConversationPage.tsx`; `agents.test.ts` |
-| Agents view: project Dashboard, global Spans tab, Signals tab | tracking/view-agent-activity | Partial | per-agent charts (`AgentCharts.tsx`) only; no project-wide dashboard, no cross-agent span table, and signals sit under Monitors |
+| Agents view: project Dashboard, global Spans tab, Signals tab | tracking/view-agent-activity | Impl | `pages/agents/AgentsPage.tsx` tabs Dashboard (`AgentsDashboard.tsx`: totals, volume charts, signal activity, top agents/tools/models/providers, recent conversations/spans), Agents, Spans (`SpansTable.tsx`: filters incl. signal and insight filters, sort, group-by incl. custom attributes, trace highlight, ratings and tags per turn) and Signals; `AgentPage.tsx` has Overview/Spans/Signals tabs. `signal_filters` and `insight_filters` on `/agents/spans/query` and `/agents/spans/stats` are applied (`TestAgentFeedbackBatchAndSignalFilters`) |
 | Agent evals | agent-evals | Partial | evaluations work on calls; no linking of agent conversations to eval runs |
 | Agents BYOB references | agents-byob-references | Partial | see §1 |
 
@@ -210,8 +210,8 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | Load from call or prompt; template variables | tools/playground | Impl | `fillVars`, `?call=`/`?prompt=` |
 | Save as model | tools/playground | Impl | saves an `LLMStructuredCompletionModel` |
 | Custom runtimes REST (`PUT /v2/{e}/{p}/runtimes/{name}`) | tools/custom-runtimes | Impl | `server/runtimes.go`: a `Provider` object plus one `ProviderModel` per runtime ID; `TestCustomRuntimeApply`; official `client.register_custom_runtime` verified |
-| History of past playground runs | tools/playground | Missing | runs are logged as calls but there is no history panel |
-| Image generation (`/image/create`) | OpenAPI | Impl | `server/files_media.go`, `llm/images.go` (OpenAI-compatible `/images/generations`, offline `mock/*`); `TestImageCreateMock`, `TestImageCreateOpenAICompatible`. No playground UI for it |
+| History of past playground runs | tools/playground | Impl | History panel (`components/playground/HistoryPanel.tsx`): runs in this browser (localStorage) and tracked `weft.completions.create` / `weft.images.generate` calls, re-opened into the first or a new panel; `playground.test.ts` |
+| Image generation (`/image/create`) | OpenAPI | Impl | `server/files_media.go`, `llm/images.go` (OpenAI-compatible `/images/generations`, offline `mock/*`); `TestImageCreateMock`, `TestImageCreateOpenAICompatible`. Playground **Image** mode (`components/playground/ImageMode.tsx`) with prompt, size and count, linking to the tracked call |
 
 ## 13. Costs
 
@@ -226,15 +226,15 @@ API endpoints: **127 of 127** Weave OpenAPI method/path pairs are registered in 
 | Feature | Weave | Weft status | Evidence |
 |---|---|---|---|
 | Traces table: filters, query builder, sort, column hide, page size, bulk delete | tracking/trace-tree | Impl | `TracesPage.tsx` (`PAGE_SIZES`), `FilterBuilder.tsx` |
-| Column pinning | tools/saved-views | Missing | no code |
+| Column pinning | tools/saved-views | Impl | traces table: drag-to-reorder headers, pin/unpin and move in the Columns menu, sticky pinned columns; kept in the URL (`order`, `pin`) and saved views (`col_order`, `pinned_cols`) (`components/traces/columnLayout.ts`; `columnLayout.test.ts`) |
 | Saved views (traces and evaluations) | tools/saved-views | Impl | `SavedView` objects in `TracesPage.tsx`, `EvaluationsPage.tsx` |
-| Trace view modes | tracking/trace-tree | Partial | tree, timeline and graph (`TraceTree.tsx`, `Timeline.tsx`, `TraceGraph.tsx`); no flame graph or code-composition view |
+| Trace view modes | tracking/trace-tree | Impl | Tree, Code (trace folded by op with call counts and time, `CodeComposition`), Flame (icicle graph with lanes for parallel calls and zoom, `FlameGraph.tsx`), Timeline and Graph (`flameLayout.ts`; `flameLayout.test.ts`) |
 | Call tabs (Call, Feedback, Scores, Summary, Attributes, Code, Use, Raw) | tracking/trace-tree | Impl | `CallPage.tsx:25`, `OpCodeView.tsx` |
 | Chat view for LLM calls | tracking/view-call | Impl | `ChatView.tsx` |
 | Default trace plots | tracking/trace-plots | Impl | `CallCharts.tsx`, `/calls/stats` |
-| Custom charts and dashboards | tracking/trace-plots | Partial | `pages/dashboards/*`, `/calls/metrics` (aggregations, group-by; `TestCallsMetrics*`). Chart types are line, bar, stacked, area, table and stat; no scatter |
+| Custom charts and dashboards | tracking/trace-plots | Impl | `pages/dashboards/*`, `/calls/metrics` (aggregations, group-by; `TestCallsMetrics*`). Chart types are line, bar, stacked, area, table, stat and scatter (metric vs metric per call, coloured by group-by, `ScatterChart.tsx`; `scatter.test.ts`) |
 | Server-side export (CSV, JSON, JSONL) with Python/cURL snippets | tracking/querying-calls | Impl | `server/export.go`, `ExportModal.tsx`, `codeSnippets.ts`; `TestCallsExportCSVFlatten`, `TestCallsExportStreamingFormats` |
-| Compare calls (baseline, diff vs baseline, diff-only) | tools/comparison | Partial | `CompareCallsPage.tsx`; no numeric diff-format options |
+| Compare calls (baseline, diff vs baseline, diff-only) | tools/comparison | Impl | `CompareCallsPage.tsx`; numeric changes shown as absolute, percentage, ratio or both (`?nfmt=`, also in `CompareEvaluationsPage.tsx`; `deltaFormat.test.ts`) |
 | Object and version comparison | tools/comparison | Impl | `ObjectDiffPage.tsx` (split and unified) |
 | Projects page with stats | platform/weave-projects | Impl | `ProjectsPage.tsx`, `/projects`, `/project/stats` |
 | Threads list and chat view | tracking/threads | Impl | `ThreadsPage.tsx`, `ThreadPage.tsx` |
@@ -308,7 +308,7 @@ These are deliberate design choices, not gaps.
   - TTL purge and error-rate automations run as in-process background loops.
 - **Asynchronous agent index.** Agents are derived from ordinary calls through the store's span index, not stored as a separate data model.
   - In one run, `/agents/query` issued right after `weave.finish()` returned no agents. A query about two seconds later returned the agent. The cause was not determined.
-- **Signals as monitors.** Weave Signals are implemented as monitor templates. They write `wandb.runnable.<scorer>` feedback on calls and are not scored per turn.
+- **Signals.** Turn signals are scored on demand from the Signals tab or `POST /agents/signals/run`, not continuously as new turns arrive. Their results are feedback (`wandb.agent_monitor`) whose payload carries Weave's `scorer_*` and `span_*` fields; `/feedback/batch/create` itself still drops top-level `scorer_*` fields, so clients should send those through `/agents/feedback/batch/create`.
 - **Server-side evaluation.** The server runs `LLMStructuredCompletionModel`s, models with a `predict_url`, and models bound to a custom runtime (OpenAI-compatible or Weft's `predict` kind). It never executes a model's Python or TypeScript `predict` code; other models must be evaluated client-side.
 - **`/calls/stats`.** Weave's request fields select Weave's shape; otherwise the endpoint keeps Weft's shape (fixed metrics), which the UI uses. Grouped custom metrics are served by `/calls/metrics`.
 - **Inference, registry, geolocation.** Weft has no CoreWeave inference service or W&B Registry. `/inference/*` serve Weft's own model catalog in the spec's shapes (and need an API key when auth is on), `/link_to_registry` links into Weft registry collections, and `/geolocate` answers locally without a GeoIP database.
@@ -319,18 +319,15 @@ These are deliberate design choices, not gaps.
 Ordered by importance.
 
 1. **Agent tracing API in the Weft SDKs.** Add `start_conversation/start_turn/start_llm/start_tool/start_subagent` and batch logging (Python and TS). Today only the official `weave` client or raw OTel can produce agent conversations.
-2. **Agents view and Signals parity.**
-   - Add a project-wide Dashboard and a cross-agent Spans tab.
-   - Add a Signals tab that scores turns, using Weave's preset set: frustration, jailbreak, NSFW and low-quality tags; satisfaction, intent, safety and quality ratings.
-   - Normalise tags and ratings, and add OAuth for remote scorers.
+2. **Agents view and Signals parity.** ~~Project Dashboard, cross-agent Spans tab, turn Signals with Weave's presets, tag/rating normalisation, `signal_filters`/`insight_filters`~~ done. Remaining: score new turns continuously (signals run on demand), accept `scorer_*` on `/feedback/batch/create` itself, and OAuth for remote scorers.
 3. ~~**`/calls/stats` in Weave's shape**, `has_more` on `/calls/query_stats`, `total_count` on `/feedback/query`.~~ Done.
-4. **Server-side evaluation of any model.** ~~Custom runtimes and remote predict URLs~~ done (`PUT /v2/.../runtimes/{name}`, `predict_url`). Remaining: let the New Evaluation page pick such models.
+4. **Server-side evaluation of any model.** ~~Custom runtimes and remote predict URLs~~ done (`PUT /v2/.../runtimes/{name}`, `predict_url`). ~~Let the New Evaluation page pick such models~~ done.
 5. **Agent harness plugins and TS integrations.** Add agent harness plugins (Claude Code, Codex, OpenClaw). The native framework integrations, OpenAI Realtime and per-integration autopatch settings exist in the Python SDK only.
 6. **NER-based PII redaction on the server and in the TS SDK.** The Python SDK has local SLM scorers and Presidio/transformers NER redaction; the server and TS SDK still redact with regular expressions only.
-7. **Media extras.** ~~`/files/resolve_url`, `/image/create`, an S3-compatible files backend~~ done. Remaining: SDK-side BYOB references (logging media that already sits in a user bucket) and an image-generation mode in the playground UI.
-8. **Evaluation extras.** Link existing calls or agent traces to EvaluationLogger runs and agent evals. Save dynamic leaderboards as objects.
+7. **Media extras.** ~~`/files/resolve_url`, `/image/create`, an S3-compatible files backend~~ done. Remaining: SDK-side BYOB references (logging media that already sits in a user bucket) (~~image-generation mode in the playground UI~~ done).
+8. **Evaluation extras.** Link existing calls or agent traces to EvaluationLogger runs and agent evals (the UI shows `linked_calls`, `genai_span_ref` and `weave.eval.*` links on the call page and in the eval comparison). ~~Save dynamic leaderboards as objects~~ done.
 9. **Dataset helpers.** Add `from_hf`/`to_hf` and `select()`.
-10. **UI polish.** Add column pinning, flame-graph and code-composition trace views, scatter charts, numeric diff formats in call comparison, and a playground history panel.
+10. ~~**UI polish.** Column pinning, flame-graph and code-composition trace views, scatter charts, numeric diff formats and a playground history panel.~~ Done.
 11. **Platform security.** Add user accounts, teams and roles, SSO, an audit log, and optional database encryption at rest.
 12. **SDK extras.** Add a client-side server-response cache, a SavedView query/apply API, and broader TypeScript coverage (`deleteCalls`, feedback and cost queries, OTel helper).
 13. ~~**Minor endpoints.**~~ Done: JSON `GET /version`, and Weft implementations of `/geolocate`, `/link_to_registry` and `/inference/*`.

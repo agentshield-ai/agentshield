@@ -40,6 +40,8 @@ type Store struct {
 	aead cipher.AEAD // encrypts secrets; see secrets.go
 	// files, when set, holds file contents outside SQLite; see filebackend.go.
 	files FileBackend
+	// pii, when set, is the NER analyzer used by sensitive-data redaction; see ner.go.
+	pii *piiState
 }
 
 const schema = `
