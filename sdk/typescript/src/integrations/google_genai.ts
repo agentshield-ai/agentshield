@@ -1,5 +1,5 @@
 import type { Call } from '../call.js';
-import { addUsage } from '../usage.js';
+import { addGeminiUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
 import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
@@ -35,7 +35,7 @@ export function recordGenAIUsage(call: Call, out: any): void {
   const u = out?.usageMetadata ?? out?.usage_metadata;
   if (!u) return;
   const model = (call.inputs?.model as string) ?? out?.modelVersion;
-  addUsage(call, model, u.promptTokenCount ?? 0, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0), u.totalTokenCount);
+  addGeminiUsage(call, model, u);
 }
 
 /**

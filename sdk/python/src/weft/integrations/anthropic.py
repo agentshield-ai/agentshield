@@ -6,7 +6,7 @@ import importlib
 import json
 from typing import Any, Dict, List, Optional
 
-from .._usage import add_usage
+from .._usage import add_usage, anthropic_usage
 from ._common import Accumulator, LLMSpec, _inputs, _tracing, finish_call, make_wrapper, patch_attr, start_call, to_dict
 
 
@@ -79,7 +79,9 @@ def record_anthropic_usage(call: Any, out: Any) -> None:
     u = out.get("usage")
     if not isinstance(u, dict):
         return
-    add_usage(call, out.get("model"), u.get("input_tokens") or 0, u.get("output_tokens") or 0)
+    n = anthropic_usage(u)  # gross prompt tokens plus the cache read/creation counts
+    if n is not None:
+        add_usage(call, out.get("model"), **n)
 
 
 def create_spec(skip_first_arg: bool = True) -> LLMSpec:

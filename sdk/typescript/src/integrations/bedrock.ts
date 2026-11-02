@@ -48,14 +48,37 @@ function int(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function usageFromBody(b: any): { p: number; c: number } | null {
+/** Usage with a gross prompt count (`p`) and the cache read (`cr`) / write (`cw`) parts of it. */
+type BUsage = { p: number; c: number; cr?: number; cw?: number; t?: number };
+
+/** Bedrock Converse usage: `inputTokens` excludes `cacheReadInputTokens` / `cacheWriteInputTokens`. */
+function converseUsage(u: any): BUsage {
+  const cr = int(u.cacheReadInputTokens);
+  const cw = int(u.cacheWriteInputTokens);
+  return { p: int(u.inputTokens) + cr + cw, c: int(u.outputTokens), cr, cw, t: u.totalTokens };
+}
+
+function addB(call: any, model: string | undefined, u: BUsage): void {
+  addUsage(call, model, u.p, u.c, u.t, { cache_read_input_tokens: u.cr ?? 0, cache_creation_input_tokens: u.cw ?? 0 });
+}
+
+function usageFromBody(b: any): BUsage | null {
   if (!b || typeof b !== 'object') return null;
   const u = b.usage;
-  if (u && typeof u === 'object' && (u.input_tokens != null || u.inputTokens != null || u.prompt_tokens != null)) {
-    return { p: int(u.input_tokens ?? u.inputTokens ?? u.prompt_tokens), c: int(u.output_tokens ?? u.outputTokens ?? u.completion_tokens) };
+  if (u && typeof u === 'object' && (u.input_tokens != null || u.output_tokens != null)) {
+    // Anthropic Messages bodies: input_tokens excludes the cache counts
+    const cr = int(u.cache_read_input_tokens);
+    const cw = int(u.cache_creation_input_tokens);
+    return { p: int(u.input_tokens) + cr + cw, c: int(u.output_tokens), cr, cw };
   }
+  if (u && typeof u === 'object' && u.inputTokens != null) return { ...converseUsage(u), t: undefined };
+  if (u && typeof u === 'object' && u.prompt_tokens != null) return { p: int(u.prompt_tokens), c: int(u.completion_tokens), cr: int(u.prompt_tokens_details?.cached_tokens) };
   const m = b['amazon-bedrock-invocationMetrics'];
-  if (m && typeof m === 'object') return { p: int(m.inputTokenCount), c: int(m.outputTokenCount) };
+  if (m && typeof m === 'object') {
+    const cr = int(m.cacheReadInputTokenCount);
+    const cw = int(m.cacheWriteInputTokenCount);
+    return { p: int(m.inputTokenCount) + cr + cw, c: int(m.outputTokenCount), cr, cw };
+  }
   if (b.prompt_token_count != null || b.inputTextTokenCount != null) {
     const c = b.generation_token_count ?? (b.results ?? []).reduce((a: number, r: any) => a + int(r?.tokenCount), 0);
     return { p: int(b.prompt_token_count ?? b.inputTextTokenCount), c: int(c) };
@@ -66,7 +89,7 @@ function usageFromBody(b: any): { p: number; c: number } | null {
 class ConverseStreamAccumulator implements Accumulator {
   text = '';
   stopReason: string | null = null;
-  usage: { p: number; c: number; t?: number } | null = null;
+  usage: BUsage | null = null;
   toolUses: any[] = [];
   events = 0;
 
@@ -78,7 +101,7 @@ class ConverseStreamAccumulator implements Accumulator {
     if (d?.toolUse?.input && this.toolUses.length) this.toolUses[this.toolUses.length - 1].input += d.toolUse.input;
     if (ev?.messageStop) this.stopReason = ev.messageStop.stopReason ?? null;
     const u = ev?.metadata?.usage;
-    if (u) this.usage = { p: int(u.inputTokens), c: int(u.outputTokens), t: u.totalTokens };
+    if (u) this.usage = converseUsage(u);
   }
 
   result(): any {
@@ -92,13 +115,13 @@ class ConverseStreamAccumulator implements Accumulator {
       }
       content.push({ toolUse: { toolUseId: t.toolUseId, name: t.name, input } });
     }
-    return { output: { message: { role: 'assistant', content } }, stopReason: this.stopReason, events: this.events, ...(this.usage ? { usage: { inputTokens: this.usage.p, outputTokens: this.usage.c } } : {}) };
+    return { output: { message: { role: 'assistant', content } }, stopReason: this.stopReason, events: this.events, ...(this.usage ? { usage: { inputTokens: this.usage.p - (this.usage.cr ?? 0) - (this.usage.cw ?? 0), outputTokens: this.usage.c, ...(this.usage.cr ? { cacheReadInputTokens: this.usage.cr } : {}), ...(this.usage.cw ? { cacheWriteInputTokens: this.usage.cw } : {}) } } : {}) };
   }
 }
 
 class InvokeStreamAccumulator implements Accumulator {
   text = '';
-  usage: { p: number; c: number } | null = null;
+  usage: BUsage | null = null;
   events = 0;
 
   add(ev: any): void {
@@ -107,7 +130,11 @@ class InvokeStreamAccumulator implements Accumulator {
     if (!chunk || typeof chunk !== 'object') return;
     this.text += chunk.delta?.text ?? chunk.completion ?? chunk.generation ?? chunk.outputText ?? chunk.choices?.[0]?.delta?.content ?? '';
     const u = usageFromBody(chunk) ?? (chunk.message?.usage ? usageFromBody(chunk.message) : null);
-    if (u) this.usage = this.usage ? { p: Math.max(this.usage.p, u.p), c: Math.max(this.usage.c, u.c) } : u;
+    // message_start carries the prompt and cache counts, message_delta the output: keep the largest of each
+    if (u) {
+      const a = this.usage;
+      this.usage = a ? { p: Math.max(a.p, u.p), c: Math.max(a.c, u.c), cr: Math.max(a.cr ?? 0, u.cr ?? 0), cw: Math.max(a.cw ?? 0, u.cw ?? 0) } : u;
+    }
   }
 
   result(): any {
@@ -189,14 +216,14 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
     function handle(res: any): any {
       if (name === 'ConverseCommand') {
         const u = res?.usage;
-        if (u) addUsage(call, model, int(u.inputTokens), int(u.outputTokens), u.totalTokens);
+        if (u) addB(call, model, converseUsage(u));
         client!.finishCall(call, strip(res), undefined, meta);
         return res;
       }
       if (name === 'ConverseStreamCommand' && res?.stream) {
         const acc = new ConverseStreamAccumulator();
         res.stream = proxyStream(res.stream, acc, (out, err) => {
-          if (acc.usage) addUsage(call, model, acc.usage.p, acc.usage.c, acc.usage.t);
+          if (acc.usage) addB(call, model, acc.usage);
           client!.finishCall(call, out, err, meta);
         });
         return res;
@@ -204,7 +231,7 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
       if (name === 'InvokeModelWithResponseStreamCommand' && res?.body) {
         const acc = new InvokeStreamAccumulator();
         res.body = proxyStream(res.body, acc, (out, err) => {
-          if (acc.usage) addUsage(call, model, acc.usage.p, acc.usage.c);
+          if (acc.usage) addB(call, model, acc.usage);
           client!.finishCall(call, out, err, meta);
         }, { raw: true });
         return res;
@@ -212,7 +239,7 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
       // InvokeModel: the body is a Uint8Array (blob adapter); decoding does not consume it.
       const body = decodeBody(res?.body);
       const u = usageFromBody(body);
-      if (u) addUsage(call, model, u.p, u.c);
+      if (u) addB(call, model, u);
       client!.finishCall(call, { ...strip(res), body }, undefined, meta);
       return res;
     }

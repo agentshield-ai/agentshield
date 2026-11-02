@@ -1,7 +1,7 @@
 import type { Call } from '../call.js';
 import { currentContext } from '../context.js';
 import { toJson } from '../serialize.js';
-import { addUsage } from '../usage.js';
+import { addAnthropicUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
 import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
@@ -55,7 +55,7 @@ export class MessageAccumulator implements Accumulator {
 export function recordAnthropicUsage(call: Call, out: any): void {
   const u = out?.usage;
   if (!u) return;
-  addUsage(call, out.model, u.input_tokens ?? 0, u.output_tokens ?? 0);
+  addAnthropicUsage(call, out.model, u); // gross prompt tokens plus cache read/creation counts
 }
 
 /**

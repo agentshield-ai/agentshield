@@ -353,6 +353,13 @@ Each LLM request becomes a call (`kind="llm"`):
 - **Output** is the response; streams are accumulated into a single response.
 - **Usage** is recorded as
   `summary.usage = {model: {requests, prompt_tokens, completion_tokens, total_tokens}}`.
+  Prompt caching is kept the way Weave prices it: `prompt_tokens` is the gross
+  prompt count and `cache_read_input_tokens` / `cache_creation_input_tokens`
+  are the parts of it read from and written to the cache. Anthropic and
+  Bedrock report cache counts outside their input count, so the SDK adds them
+  in; OpenAI's `prompt_tokens_details` / `input_tokens_details.cached_tokens`
+  (kept as well) and Gemini's `cached_content_token_count` are already inside
+  it. Reasoning tokens are kept as `reasoning_tokens`.
 - Every integration call carries `attributes.weft.integration` (the settings key).
 
 For streamed OpenAI chat completions the SDK adds

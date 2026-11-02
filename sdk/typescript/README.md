@@ -172,7 +172,11 @@ Each request becomes a call with `kind: 'llm'` (for example
 add `stream_options`; Groq's `x_groq.usage` is picked up automatically.
 The request body is recorded as inputs and the response as output. Streams are
 accumulated into one response. `summary.usage` is
-`{model: {requests, prompt_tokens, completion_tokens, total_tokens}}`. Streamed
+`{model: {requests, prompt_tokens, completion_tokens, total_tokens}}`, plus
+`cache_read_input_tokens` / `cache_creation_input_tokens` as parts of a gross
+`prompt_tokens` (Weave's pricing; Anthropic and Bedrock cache counts are added
+to their input count, OpenAI `*_tokens_details.cached_tokens` and Gemini
+`cachedContentTokenCount` are already in it) and `reasoning_tokens`. Streamed
 OpenAI chat requests get `stream_options: { include_usage: true }` unless you
 set `stream_options` yourself. The wrapped methods return plain promises, so
 the OpenAI-specific `APIPromise` helpers such as `.withResponse()` are not

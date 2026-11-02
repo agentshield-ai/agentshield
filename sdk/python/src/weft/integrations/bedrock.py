@@ -16,7 +16,7 @@ import json
 from typing import Any, Dict, Optional
 
 from .._context import pop_call, push_call
-from .._usage import add_usage
+from .._usage import add_usage, anthropic_usage, bedrock_usage
 from ._common import LLMSpec, _tracing, finish_call, patch_attr, start_call
 
 OPS = {
@@ -45,15 +45,29 @@ def _decode_body(body: Any) -> Any:
     return body
 
 
+def _add(call: Any, model: Any, u: Dict[str, int]) -> None:
+    add_usage(call, model, u.get("p", 0), u.get("c", 0),
+              cache_read_input_tokens=u.get("cr", 0), cache_creation_input_tokens=u.get("cw", 0))
+
+
 def _usage_from_body(body: Any) -> Optional[Dict[str, int]]:
     if not isinstance(body, dict):
         return None
     u = body.get("usage") or {}
-    if isinstance(u, dict) and (u.get("input_tokens") is not None or u.get("inputTokens") is not None):
-        return {"p": _int(u.get("input_tokens", u.get("inputTokens"))), "c": _int(u.get("output_tokens", u.get("outputTokens")))}
+    if isinstance(u, dict) and (u.get("input_tokens") is not None or u.get("output_tokens") is not None):  # Anthropic Messages bodies: gross prompt + cache counts
+        n = anthropic_usage(u) or {}
+        return {"p": n.get("prompt_tokens", 0), "c": n.get("completion_tokens", 0),
+                "cr": n.get("cache_read_input_tokens", 0), "cw": n.get("cache_creation_input_tokens", 0)}
+    if isinstance(u, dict) and u.get("inputTokens") is not None:
+        n = bedrock_usage(u) or {}
+        return {"p": n.get("prompt_tokens", 0), "c": n.get("completion_tokens", 0),
+                "cr": n.get("cache_read_input_tokens", 0), "cw": n.get("cache_creation_input_tokens", 0)}
     m = body.get("amazon-bedrock-invocationMetrics")
     if isinstance(m, dict):
-        return {"p": _int(m.get("inputTokenCount")), "c": _int(m.get("outputTokenCount"))}
+        cr, cw = _int(m.get("cacheReadInputTokenCount")), _int(m.get("cacheWriteInputTokenCount"))
+        return {"p": _int(m.get("inputTokenCount")) + cr + cw, "c": _int(m.get("outputTokenCount")), "cr": cr, "cw": cw}
+    if isinstance(body.get("message"), dict) and isinstance(body["message"].get("usage"), dict):  # Anthropic message_start
+        return _usage_from_body(body["message"])
     if body.get("prompt_token_count") is not None or body.get("inputTextTokenCount") is not None:
         p = body.get("prompt_token_count", body.get("inputTextTokenCount"))
         c = body.get("generation_token_count") or sum(_int(r.get("tokenCount")) for r in body.get("results") or [])
@@ -100,8 +114,9 @@ class _StreamProxy:
             if "messageStop" in ev:
                 self.stop_reason = ev["messageStop"].get("stopReason")
             if "metadata" in ev:
-                u = ev["metadata"].get("usage") or {}
-                self.usage = {"p": _int(u.get("inputTokens")), "c": _int(u.get("outputTokens"))}
+                n = bedrock_usage(ev["metadata"].get("usage") or {}) or {}
+                self.usage = {"p": n.get("prompt_tokens", 0), "c": n.get("completion_tokens", 0),
+                              "cr": n.get("cache_read_input_tokens", 0), "cw": n.get("cache_creation_input_tokens", 0)}
         else:
             chunk = _decode_body((ev.get("chunk") or {}).get("bytes"))
             if isinstance(chunk, dict):
@@ -109,14 +124,15 @@ class _StreamProxy:
                 self.text += d.get("text") or chunk.get("completion") or chunk.get("generation") or chunk.get("outputText") or ""
                 u = _usage_from_body(chunk)
                 if u is not None:
-                    self.usage = u if self.usage is None else {"p": max(self.usage["p"], u["p"]), "c": max(self.usage["c"], u["c"])}
+                    # message_start carries the prompt and cache counts, message_delta the output: keep the largest of each
+                    self.usage = u if self.usage is None else {k: max(self.usage.get(k, 0), u.get(k, 0)) for k in set(self.usage) | set(u)}
 
     def _finish(self, exc: Optional[BaseException] = None) -> None:
         if self._done:
             return
         self._done = True
         if self.usage is not None:
-            add_usage(self._call, self._model, self.usage["p"], self.usage["c"])
+            _add(self._call, self._model, self.usage)
         out = {"text": self.text, "stop_reason": self.stop_reason, "events": self.events}
         finish_call(self._client, self._call, out, exc)
 
@@ -208,8 +224,9 @@ def _wrap(orig: Any) -> Any:
 def _handle(client: Any, call: Any, op: str, model: str, res: Dict[str, Any]) -> Any:
     out = {k: v for k, v in res.items() if k != "ResponseMetadata"}
     if op == "Converse":
-        u = res.get("usage") or {}
-        add_usage(call, model, _int(u.get("inputTokens")), _int(u.get("outputTokens")), u.get("totalTokens"))
+        n = bedrock_usage(res.get("usage") or {})
+        if n is not None:
+            add_usage(call, model, **n)
         finish_call(client, call, out)
         return res
     if op == "ConverseStream":
@@ -227,12 +244,13 @@ def _handle(client: Any, call: Any, op: str, model: str, res: Dict[str, Any]) ->
     headers = ((res.get("ResponseMetadata") or {}).get("HTTPHeaders") or {})
     p = headers.get("x-amzn-bedrock-input-token-count")
     c = headers.get("x-amzn-bedrock-output-token-count")
-    if p is not None or c is not None:
-        add_usage(call, model, _int(p), _int(c))
-    else:
-        u = _usage_from_body(parsed)
-        if u is not None:
-            add_usage(call, model, u["p"], u["c"])
+    u = _usage_from_body(parsed)
+    if u is None and (p is not None or c is not None):
+        # the input-count header excludes cached tokens, which have their own headers
+        cr, cw = _int(headers.get("x-amzn-bedrock-cache-read-input-token-count")), _int(headers.get("x-amzn-bedrock-cache-write-input-token-count"))
+        u = {"p": _int(p) + cr + cw, "c": _int(c), "cr": cr, "cw": cw}
+    if u is not None:
+        _add(call, model, u)
     finish_call(client, call, out)
     return res
 

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
+import { weaveLinkTarget } from './api/weaveLinks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, setApiKey } from './api/client'
 import { Loading } from './components/common'
@@ -39,6 +40,15 @@ const AgentPage = lazyNamed(() => import('./pages/agents/AgentPage'), 'AgentPage
 const ConversationPage = lazyNamed(() => import('./pages/agents/ConversationPage'), 'ConversationPage')
 const DashboardsPage = lazyNamed(() => import('./pages/dashboards/DashboardsPage'), 'DashboardsPage')
 const DashboardPage = lazyNamed(() => import('./pages/dashboards/DashboardPage'), 'DashboardPage')
+
+// Links built by the official weave client and Weave's UI use a /weave/ segment
+// (e.g. /e/p/weave/calls/<id>, /e/p/weave/agents/conversations/<id>). Map the
+// ones Weft has an equivalent for and send the rest to Traces.
+function WeaveLinkRedirect() {
+  const { entity, project, '*': rest } = useParams()
+  const loc = useLocation()
+  return <Navigate to={weaveLinkTarget(entity ?? '', project ?? '', rest ?? '') + loc.search} replace />
+}
 
 function WeaveCallRedirect() {
   const { entity, project, callId } = useParams()
@@ -121,7 +131,7 @@ export function App() {
             <Route path="dashboards/:objectId" element={<DashboardPage />} />
             {/* Links printed by the official weave client */}
             <Route path="weave" element={<Navigate to="../traces" relative="path" replace />} />
-            <Route path="weave/*" element={<Navigate to="../traces" relative="path" replace />} />
+            <Route path="weave/*" element={<WeaveLinkRedirect />} />
             <Route path="r/call/:callId" element={<WeaveCallRedirect />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found</div>} />

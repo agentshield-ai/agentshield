@@ -6,7 +6,7 @@ from __future__ import annotations
 import importlib
 from typing import Any, Dict, List, Optional
 
-from .._usage import add_usage
+from .._usage import add_usage, gemini_usage
 from ._common import Accumulator, LLMSpec, make_wrapper, patch_attr
 
 
@@ -59,10 +59,10 @@ def record_genai_usage(call: Any, out: Any) -> None:
     u = out.get("usage_metadata") or out.get("usageMetadata")
     if not isinstance(u, dict):
         return
-    model = (call.inputs or {}).get("model") or out.get("model_version")
-    prompt = u.get("prompt_token_count") or 0
-    completion = (u.get("candidates_token_count") or 0) + (u.get("thoughts_token_count") or 0)
-    add_usage(call, model, prompt, completion, u.get("total_token_count"))
+    model = (call.inputs or {}).get("model") or out.get("model_version") or out.get("modelVersion")
+    n = gemini_usage(u)  # keeps cached_content_token_count as cache_read_input_tokens
+    if n is not None:
+        add_usage(call, model, **n)
 
 
 def _spec(name: str, stream: bool) -> LLMSpec:

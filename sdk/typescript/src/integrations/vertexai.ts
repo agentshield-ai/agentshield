@@ -13,7 +13,7 @@
  * (`@google/genai` clients in Vertex mode use `wrapGoogleGenAI`.)
  */
 import type { Call } from '../call.js';
-import { addUsage } from '../usage.js';
+import { addGeminiUsage } from '../usage.js';
 import { patchWith, plain, withCall } from './common.js';
 import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
@@ -27,7 +27,7 @@ function modelName(m: any): string | undefined {
 function recordVertexUsage(call: Call, model: string | undefined, resp: any): void {
   const u = resp?.usageMetadata;
   if (!u) return;
-  addUsage(call, model, u.promptTokenCount ?? 0, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0), u.totalTokenCount);
+  addGeminiUsage(call, model, u);
 }
 
 function textOf(resp: any): string {
