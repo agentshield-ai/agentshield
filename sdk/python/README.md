@@ -58,6 +58,7 @@ explicitly).
 | On-disk write-ahead log | `settings={"enable_disk_fallback": True, "wal_dir": ...}` | `WEFT_ENABLE_WAL`, `WEFT_WAL_DIR` | off (`~/.weft/wal`) |
 | Send queue size | `settings={"max_queue_size": 10000}` | | 10000 |
 | Retries | `settings={"retry_max_attempts": 3, "retry_backoff": 0.25, "retry_max_backoff": 4.0}` | | as shown |
+| Cache of immutable server reads | `settings={"use_server_cache": False, "server_cache_dir": ..., "server_cache_size_limit": 10**9}` | `WEFT_USE_SERVER_CACHE`, `WEFT_SERVER_CACHE_DIR`, `WEFT_SERVER_CACHE_SIZE_LIMIT` | on, `~/.cache/weft`, 1 GB |
 
 Root calls print `weft: <server>/<entity>/<project>/calls/<id>` to stderr
 (`call.ui_url` gives the same link).
@@ -66,6 +67,15 @@ Root calls print `weft: <server>/<entity>/<project>/calls/<id>` to stderr
 to a JSONL file instead of being dropped. That covers batches that still fail
 after retries, items that overflow the queue, and whatever is still queued at
 exit. The next `weft.init()` against the same server and project replays it.
+
+**Server-response cache.** Like Weave's caching middleware, reads that can
+never change are kept in memory and in an on-disk SQLite file
+(`~/.cache/weft/server_cache.sqlite`) and reused across processes:
+`/obj/read` by digest (not `latest`, `v3` or an alias), `/table/query` and
+`/table/query_stats` by table digest, `/file/content` and object/table refs in
+`/refs/read_batch`. Deleting an object through the client drops its cached
+reads. `client.cache_stats()` gives hits/misses/skips and
+`client.clear_server_cache()` empties it.
 
 A bare project name `"p"` is stored as `"default/p"`. When the server uses
 `user=key` API keys, calls, objects and feedback are attributed to that user
@@ -187,7 +197,70 @@ client.read_file(file_digest)                     # bytes back
 ```
 
 Any of these can be returned from or passed to an op, or stored in objects and
-dataset rows.
+dataset rows. `weft.Image` and `weft.Audio` wrap image and audio files the same way.
+
+**Bring your own bucket.** Media that already lives in your storage is logged
+by reference, without uploading:
+
+```python
+weft.Image.from_uri("s3://my-bucket/photos/cat.png")     # {"_type": "Image", "uri", "mime_type", "filename"}
+weft.Content.from_uri("https://example.com/report.pdf", size=1234)
+weft.Video.from_uri("s3://my-bucket/clip.mp4"); weft.PDF.from_uri("weft-file://<digest>")
+client.resolve_url("s3://my-bucket/photos/cat.png")       # /files/resolve_url: presigned for the server's S3 backend
+client.resolve_url([content, file_digest], expires_in=600)  # Content values, digests, weft-file:// and https:// URIs
+```
+
+Reading a reference (`.data`, `.as_text()`, `.save()`) downloads it, through
+`resolve_url` for non-HTTP URIs.
+
+## Agents: conversations, turns, LLM calls and tools
+
+The same API as Weave's conversation SDK. Each turn, LLM call, tool and
+sub-agent is recorded as a call the server's agents index understands, so
+conversations show up in **Agents** (`/agents/*`), Threads and Traces:
+
+```python
+with weft.start_conversation(agent_name="support", conversation_name="Order help") as conv:
+    with conv.start_turn(user_message="Where is order 7?", system_instructions=["Be brief."]) as turn:
+        with turn.start_llm(model="gpt-4o-mini", provider_name="openai") as llm:
+            llm.input_messages = [weft.Message.user("Where is order 7?")]
+            llm.output_messages = [weft.Message.assistant("", tool_calls=[
+                weft.conversation.ToolCallPart(id="c1", name="lookup", arguments={"order_id": 7})])]
+            llm.usage = weft.Usage(input_tokens=20, output_tokens=6)
+        with turn.start_tool(name="lookup", arguments={"order_id": 7}, tool_call_id="c1") as tool:
+            tool.result = lookup(7)            # @weft.op calls inside become children
+        with turn.start_subagent(name="writer") as sub:
+            with sub.start_llm(model="gpt-4o") as w:
+                w.output("Your order has shipped.")
+        turn.output_messages = [weft.Message.assistant("Order 7 has shipped.")]
+```
+
+- Module functions use the current conversation/turn: `weft.start_turn`,
+  `weft.start_llm`, `weft.start_tool`, `weft.start_subagent`, `weft.end_turn`,
+  `weft.get_current_turn()`, ... Spans also work without `with`
+  (`span.start()` / `span.end()`).
+- A turn is an `invoke_agent` call (`attributes.gen_ai.agent.name`,
+  `attributes.weft.span_kind="agent"`) and the root of its own trace; the
+  conversation id is its `thread_id` and the turn id its own id. Pass
+  `continue_parent_trace=True` to nest turns under the current call. LLM calls
+  are `chat` calls with `inputs.messages`, an OpenAI-style output and
+  `summary.usage` (so costs work); tools are `execute_tool` calls.
+- `llm.think(...)`, `llm.attach_media(content=..., mime_type=...)` (uploaded),
+  `span.set_attributes({...})`, `span.record_error(exc)`, and
+  `start_conversation(include_content=False, attributes={...})` behave as in Weave.
+- Spans are sent when they end. `turn.call_id` / `turn.trace_id` / `turn.call`
+  give the recorded call.
+
+**Batch logging** of finished spans (queue workers, replays):
+
+```python
+weft.log_turn(conversation_id="c-1", agent_name="support",
+              messages=[weft.Message.user("hi")], output_messages=[weft.Message.assistant("hello")],
+              spans=[weft.LLM(model="gpt-4o-mini", started_at=t0, ended_at=t1, usage=weft.Usage(input_tokens=5))])
+res = weft.log_conversation(turns=[weft.Turn(messages=[...], spans=[weft.Tool(name="t", result=1)])],
+                            agent_name="support")
+res.conversation_id, res.root_span_ids, res.trace_ids
+```
 
 ## Integrations (auto-patched by `weft.init`)
 
@@ -387,6 +460,9 @@ for row in weft.ref("qa").get().rows:
     ...
 ds2 = ds.add_rows([{"question": "3+3", "expected": "6"}])   # /table/update + new version
 weft.Dataset.from_calls(client.get_calls(filter={"op_names": ["answer"]}))
+ds.select([0, 2])                    # new dataset with those rows
+weft.Dataset.from_pandas(df); ds.to_pandas()                  # needs pandas
+weft.Dataset.from_hf(hf_dataset, split="train"); ds.to_hf()   # needs `pip install datasets`
 
 class MyModel(weft.Model):
     system_prompt: str
@@ -531,6 +607,33 @@ ev.log_summary()            # same call structure as Evaluation
 ev.log_example({"question": "3+3"}, "6", {"correct": True})
 ```
 
+Without an output the predict call stays open, so work done inside the block
+becomes its children (and conversation spans started there carry
+`weave.eval.*` link attributes):
+
+```python
+with ev.log_prediction({"question": "2+2"}) as pred:
+    pred.output = my_agent("2+2")
+    pred.log_score("correct", pred.output == "4")
+```
+
+**Linking existing traces (agent evals).** Score traces that already exist
+instead of re-recording them: `call=` takes a `Call`, a call id or URI, a
+conversation span (`Turn`, `LLM`, ...), a `LogResult`, a `Conversation`, or a
+list of these.
+
+```python
+_, call = my_agent.call("2+2")
+pred = ev.log_prediction({"question": "2+2"}, call=call)   # output and latency taken from the call
+pred = ev.log_prediction({"question": "hi"}, output="hello", call=turn, example_id="ex-1")
+```
+
+The links are stored on the prediction as `attributes.weft.linked_calls`,
+`attributes.weft.genai_span_ref` (`[{"trace_id", "span_id"}]`, the field of
+Weave's v2 predictions API) and `attributes.weft.linked_conversation_ids`, so
+`client.get_calls(query={"$eq": [{"$getField": "attributes.weft.genai_span_ref.0.span_id"}, {"$literal": call_id}]})`
+finds the predictions of a trace.
+
 Pass a `Dataset` or a dataset ref/URI as `dataset=` to link predictions to its
 rows. When a prediction's inputs equal a row, its `example` input is that row's
 ref (`.../attr/rows/id/<row digest>`), as in `Evaluation`. Comparisons and
@@ -596,6 +699,33 @@ weft.publish(weft.SavedView(name="errors", label="Errors",
 All four serialise in the shapes documented in API.md and load back as their
 classes.
 
+### Saved views as queries
+
+`SavedView` has Weave's fluent API. Views saved here open in the UI's
+Traces/Evaluations pages, and views saved in the UI load here:
+
+```python
+view = (weft.SavedView(label="Slow errors")
+        .filter_op("answer")                                   # name, name:version or op ref
+        .add_filter("summary.weave.status", "equals", "error")
+        .add_filter("summary.weave.latency_ms", ">", 1000)
+        .add_filter("started_at", "after", "2026-01-01")
+        .sort_by("started_at", "desc")
+        .add_column("inputs.question", "Question")
+        .save())                                               # named after the label
+calls = view.get_calls(limit=20)                               # applied as a calls query
+view.to_calls_query()                                          # the raw /calls/query body
+weft.SavedView.load("Slow-errors"); client.get_saved_views(view_type="traces")
+```
+
+Operators: `contains`, `does not contain`, `equals`, `does not equal`, `in`,
+`=`, `!=`, `<`, `<=`, `>`, `>=`, `is`, `after`, `before`, `is empty`,
+`is not empty`. Also `remove_filter`, `remove_filters`, `set_filter(trace_roots_only=..., ...)`,
+`search(text)`, `add_sort`, `show_column`/`hide_column`, `pin_column_left`/`_right`,
+`page_size`, `ui_url()`. Note that Weft stores a missing exception as null,
+so `is empty` / `is not empty` on `exception` follow Weave's empty-string
+semantics; filter on `summary.weave.status` instead.
+
 ## Querying calls and feedback
 
 ```python
@@ -627,6 +757,7 @@ client.evaluate_model(evaluation, llm_model)     # server-side run; polls until 
 ids = client.add_cost("my-model", prompt_token_cost=1e-6, completion_token_cost=2e-6)
 client.query_costs(["my-model"]); client.purge_costs(ids)
 client.server_info(); client.whoami()
+client.resolve_url(file_digest)                  # download URL for a file or media reference
 ```
 
 ## OpenTelemetry

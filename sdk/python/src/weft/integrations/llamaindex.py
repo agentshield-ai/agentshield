@@ -41,7 +41,9 @@ def span_kind(cls_name: str, method: str, instance: Any = None) -> str:
         return "embedding"
     if "rerank" in c or "postprocess" in m:
         return "reranker"
-    if "retriev" in c or m in ("retrieve", "aretrieve", "_retrieve", "_aretrieve"):
+    if "engine" in c and "embedding" not in c:
+        return "chain"  # query/chat engines wrap a retriever and a synthesizer
+    if c.endswith("retriever") or m in ("retrieve", "aretrieve", "_retrieve", "_aretrieve"):
         return "retriever"
     if "tool" in c or m in ("call", "acall") and "tool" in c:
         return "tool"

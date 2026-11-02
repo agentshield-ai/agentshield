@@ -18,6 +18,7 @@ import importlib
 from typing import Any, Dict, List
 
 from .._usage import add_usage
+from ._common import patch_attr
 from ._methods import Method, patch_methods
 
 INTEGRATION = "smolagents"
@@ -85,7 +86,9 @@ def _model_methods(mod: Any) -> List[Method]:
         else:
             continue
         out.append(Method(f"{cls.__name__}.{meth}", f"smolagents.{cls.__name__}.{meth.strip('_')}", "llm",
-                          module=cls.__module__, usage=model_usage, inputs=_model_inputs))
+                          module=cls.__module__, usage=model_usage, inputs=_model_inputs,
+                          # user-defined Model subclasses (created after weft.init) are traced too
+                          subclasses=cls is base))
     return out
 
 
@@ -94,7 +97,9 @@ def methods(mod: Any) -> List[Method]:
     agent = getattr(mod, "MultiStepAgent", None)
     if isinstance(agent, type):
         ms.append(Method("MultiStepAgent.run", "smolagents.Agent.run", "agent", display=_agent_display, subclasses=True))
-        ms.append(Method("MultiStepAgent.step", "smolagents.Agent.step", "chain", subclasses=True))
+        # recent releases run each step through the ``_step_stream`` generator; older ones through ``step``
+        step = "_step_stream" if hasattr(agent, "_step_stream") else "step"
+        ms.append(Method(f"MultiStepAgent.{step}", "smolagents.Agent.step", "chain", subclasses=True))
     ms += _model_methods(mod)
     ms.append(Method("Tool.__call__", "smolagents.Tool", "tool", display=_tool_display, subclasses=True))
     return ms
@@ -105,4 +110,24 @@ def patch_smolagents() -> bool:
         mod = importlib.import_module("smolagents")
     except ImportError:
         return False
-    return patch_methods(INTEGRATION, "smolagents", methods(mod))
+    patched = patch_methods(INTEGRATION, "smolagents", methods(mod))
+    # The local Python executor runs agent code (and so tool calls) in a worker
+    # thread for its timeout; give it weft's context-propagating pool so those
+    # calls nest under the agent step.
+    try:
+        lpe = importlib.import_module("smolagents.local_python_executor")
+    except ImportError:
+        lpe = None
+    if lpe is not None and getattr(lpe, "ThreadPoolExecutor", None) is not None:
+        from .._context import ThreadPoolExecutor as ContextPool
+
+        if lpe.ThreadPoolExecutor is not ContextPool:
+            patched |= patch_attr(lpe, "ThreadPoolExecutor", lambda orig: _context_pool(ContextPool))
+    return patched
+
+
+def _context_pool(pool: Any) -> Any:
+    class WeftContextThreadPoolExecutor(pool):  # type: ignore[misc, valid-type]
+        pass
+
+    return WeftContextThreadPoolExecutor

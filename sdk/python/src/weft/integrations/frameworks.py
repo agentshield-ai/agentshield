@@ -86,9 +86,9 @@ def _run_output(res: Any) -> Any:
     if out is None:
         return res
     d = {"output": out}
+    u = getattr(res, "usage", None)
     try:
-        u = res.usage()
-        d["usage"] = u
+        d["usage"] = u() if callable(u) else u
     except Exception:
         pass
     return d

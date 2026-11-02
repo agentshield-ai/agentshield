@@ -1,10 +1,11 @@
 """Model Context Protocol (``mcp`` and ``fastmcp``) integration.
 
-Client side (``mcp.ClientSession`` and ``fastmcp.Client``): ``call_tool``
+Client side (``mcp.ClientSession``, which ``mcp.Client`` and ``fastmcp.Client`` use): ``call_tool``
 (tool kind, display name ``MCP tool: <name>``), ``read_resource``,
 ``get_prompt``, and the ``list_*`` methods.
 
-Server side (``mcp.server.fastmcp.FastMCP`` and ``fastmcp.FastMCP``):
+Server side (``mcp.server.fastmcp.FastMCP`` in mcp 1.x, ``mcp.server.mcpserver.MCPServer``
+in mcp 2.x, and ``fastmcp.FastMCP``):
 ``call_tool`` (tool kind), ``read_resource`` and ``get_prompt``; each request a
 server handles becomes a call, and ops or LLM calls made by the tool
 function nest under it.
@@ -95,15 +96,18 @@ def server_methods(cls: str, prefix: str) -> List[Method]:
 
 
 def patch_mcp() -> bool:
-    """Patch whichever of ``mcp`` (client + FastMCP server) and ``fastmcp`` 2.x are installed."""
+    """Patch whichever of ``mcp`` 1.x/2.x (client session and server) and ``fastmcp`` 2.x are installed.
+
+    Clients (``mcp.Client``, ``fastmcp.Client``) delegate to
+    ``mcp.ClientSession``, which is the one patched, so each request is one call.
+    """
     a = patch_methods(INTEGRATION, "mcp.client.session", client_methods("ClientSession", "mcp.ClientSession"))
-    b = patch_methods(INTEGRATION, "mcp.server.fastmcp", server_methods("FastMCP", "mcp.FastMCP"))
-    c = patch_methods(INTEGRATION, "fastmcp", client_methods("Client", "fastmcp.Client"))
-    # fastmcp 2.x servers dispatch tool calls through FastMCP._call_tool / _mcp_call_tool
+    b = patch_methods(INTEGRATION, "mcp.server.fastmcp", server_methods("FastMCP", "mcp.FastMCP"))  # mcp 1.x
+    c = patch_methods(INTEGRATION, "mcp.server.mcpserver", server_methods("MCPServer", "mcp.MCPServer"))  # mcp 2.x
+    # fastmcp 2.x servers dispatch requests through FastMCP._mcp_call_tool & co.
     d = patch_methods(INTEGRATION, "fastmcp", [
         Method("FastMCP._mcp_call_tool", "fastmcp.FastMCP.call_tool", "tool", display=_tool_display, output=_result),
         Method("FastMCP._mcp_read_resource", "fastmcp.FastMCP.read_resource", "retriever", display=_resource_display, output=_result),
         Method("FastMCP._mcp_get_prompt", "fastmcp.FastMCP.get_prompt", None, display=_prompt_display, output=_result),
     ])
     return a or b or c or d
-

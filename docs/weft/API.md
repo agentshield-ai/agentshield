@@ -29,7 +29,9 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
 - **Auth**: when the server is started with API keys, every endpoint except
   `GET /health`, `GET /server_info` and the static UI needs one of
   `Authorization: Bearer <key>`, `Authorization: Basic base64("api:<key>")`,
-  or `X-Weft-Api-Key: <key>`. `GET /auth/check` returns 200 or 401.
+  or `X-Weft-Api-Key: <key>`, or (browsers) an SSO session cookie with
+  `X-Weft-CSRF` on non-GET requests. `GET /auth/check` returns 200 or 401.
+  Access is role-checked; see [Users, teams and roles](#users-teams-and-roles).
   Keys may be configured as `name=key`; requests with that key act as user
   `name`, which becomes the default `wb_user_id` of calls, objects and
   feedback. Otherwise the `X-Weft-User` header is used, and feedback without
@@ -511,7 +513,8 @@ is all input columns as JSON; `{output}` is the output text.
     // → cosine similarity (number) of output and row[target_column] embeddings; any OpenAI-compatible provider, or mock/* offline
 {"_class_name":"RemoteScorer", … "url":"https://…", "headers_secret":"MY_SCORER_HEADERS", "timeout": 30}
     // POSTs {"output","inputs"} and returns the JSON response (or its text). headers_secret names a secret holding a JSON
-    // object of headers or a bare token (sent as Authorization: Bearer). Weave's endpoint_url and auth_config.bearer_secret_name are accepted too.
+    // object of headers or a bare token (sent as Authorization: Bearer). Weave's endpoint_url and auth_config.bearer_secret_name are accepted too;
+    // auth_config with token_url uses OAuth client credentials (see "OAuth client credentials" below).
 {"_class_name":"RuleScorer", … "rule": {"$contains": {"input": {"$getField":"output"}, "substr": {"$literal":"sorry"}}}, "threshold": null}
     // rule: a query-language operation ($literal $getField $and $or $not $eq $gt $gte $lt $lte $in $contains $convert; optionally
     // wrapped in $expr) evaluated on {output, inputs, <each input column>}; the value is the score; with threshold a number scores value >= threshold.
@@ -692,8 +695,10 @@ the project settings below). Static keys count as admin.
   a read (`query`, `read`, `stream_query`, `stats`, `query_stats`, `read_batch`,
   `content`, `compare`, `compute`, `status`, `usage`, `aggregate`,
   `payload_schema`, `export`, …) are allowed; other writes get 403.
-- **Admin only:** `/api_keys/*`, `/secrets/set|delete`, `/project/delete`,
-  `/project/*/update`, `/project/ttl_settings/purge`.
+- **Admin only:** `/secrets/set|delete`, `/project/delete`,
+  `/project/*/update`, `/project/ttl_settings/purge`. Keys bound to a user
+  (see [Users, teams and roles](#users-teams-and-roles)) take their access
+  from the user's roles instead of these flags, and can manage their own keys.
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -1013,7 +1018,7 @@ columns) under each `Evaluation.predict_and_score`:
 | Model value | How it is predicted |
 |---|---|
 | `LLMStructuredCompletionModel` | chat completion of `llm_model_id` (built-in, Provider or runtime model id) |
-| any class with `predict_url` | `POST predict_url` (see protocol). Optional: `predict_headers` (literal), `predict_api_key_secret` or `auth_config.bearer_secret_name` (secret sent as `Authorization: Bearer`), `predict_timeout` (seconds, default 120) |
+| any class with `predict_url` | `POST predict_url` (see protocol). Optional: `predict_headers` (literal), `predict_api_key_secret` or `auth_config.bearer_secret_name` (secret sent as `Authorization: Bearer`), `auth_config` with `token_url` (OAuth client credentials, see [below](#oauth-client-credentials-remotescorer-predict_url)), `predict_timeout` (seconds, default 120) |
 | any class with `runtime` = a `predict` runtime (name or ref) | `POST` to the runtime's `base_url` with its headers and `api_key_secret`; `runtime_id` (or the runtime's first ID) is sent too |
 | any class with `runtime` = an OpenAI-compatible runtime | chat completion of `<runtime>/<runtime_id>` (default: the first ID). Messages come from `default_params.messages_template` if set, else `system_prompt` and `prompt_template` (`{column}` placeholders), else the row's `input`/`question`/`prompt`/`query`/`text` column; `temperature`, `max_tokens`, `top_p`, `response_format` attributes are passed on |
 
@@ -1140,3 +1145,143 @@ Weave these need an API key when auth is on.
 Weft has no GeoIP database and no regional restrictions; an invalid `ip` is
 a 400.
 
+## Users, teams and roles
+
+Weft has users, teams and three roles:
+
+| Role | Can |
+|---|---|
+| `viewer` | read: every `GET` and read-only `POST` (`…/query`, `…/read`, `…/stats`, …) |
+| `member` | also write: calls, objects, tables, files, feedback, costs, completions, evaluations, queues, … |
+| `admin` | also `/project/members/*` writes, `/project/*_settings/update`, `/project/ttl_settings/purge`, `/project/delete`, and the project's audit log |
+
+- A **team** is an entity: a role in team `acme` applies to every project
+  `acme/*`, including projects created later. A role can also be granted on
+  one project. The effective role is the stronger of the two.
+- A **server admin** (`users.admin`) is admin of every project and alone may
+  manage users and teams (`/users/create|update|revoke_sessions`,
+  `/teams/create|delete`) and provider secrets (`/secrets/set|delete`).
+  Static `--api-keys` keys and managed admin keys are server admins.
+- **API keys belong to users.** A key created with a `user_id` that names a
+  user is bound to it (`"user_bound": true`) and carries that user's roles,
+  narrowed by the key's `projects` and `read_only`. Such keys cannot have
+  the `admin` flag; make the user an admin instead. A disabled user's keys
+  get 401. Keys whose `user_id` is not a user keep the flag-based access
+  above.
+- **Self-service keys.** Users who are not server admins may call
+  `/api_keys/create` for themselves only (no `admin`; a project-scoped key
+  can create keys only for a subset of its projects; a read-only credential
+  only read-only keys), and `/api_keys/list|revoke` see only their own keys
+  (revoking another user's key is a 404).
+- **Enforcement.** Every authenticated request is checked against every
+  project it names (same discovery as for scoped keys: `project_id` in the
+  query, body, wrappers, batch items and refs, the `/v2/{entity}/{project}/`
+  path, the OTLP `project_id` header). A non-admin request that names no
+  project gets 403, except `/auth/*`, `/projects`, `/llm/models`,
+  `/graphql`, `/secrets/list`. `GET /projects` lists only projects where the
+  caller has a role. Refusals are 403 with a `reason` such as
+  `"the member role on acme/app is needed; you have viewer"`.
+
+| Endpoint | Body | Response | Who |
+|---|---|---|---|
+| `GET /auth/me` | | `{"user": User\|null, "user_id", "auth_method": "none"\|"static_key"\|"api_key"\|"session", "server_admin", "read_only", "projects": [..]\|null, "key_id", "roles": {"entities": {team: role}, "projects": {pid: role}}, "sso_enabled", "auth_required"}` | any |
+| `/users/create` | `{id, name?, email?, admin?}` | `{"user": User}` | server admin |
+| `GET /users/list?include_disabled=true` (or POST) | | `{"users": [User]}` | server admin, or any team/project admin |
+| `/users/update` | `{id, name?, email?, admin?, disabled?}` | `{"user": User}`; disabling revokes sessions; you cannot demote or disable yourself | server admin |
+| `/users/revoke_sessions` | `{id}` | `{"revoked": n}` | server admin |
+| `/teams/create` | `{name, display_name?}` | `{"team": Team}` | server admin |
+| `GET /teams/list` (or POST) | | `{"teams": [Team]}`: all for server admins, else the caller's teams | any |
+| `/teams/delete` | `{name}` | `{}`; memberships go, projects stay | server admin |
+| `/teams/members/set` | `{team, user_id, role}` | `{"team": Team}` | server admin or team admin |
+| `/teams/members/remove` | `{team, user_id}` | `{"team": Team}` | server admin or team admin |
+| `/project/members/list` | `{project_id}` | `{"project_id","entity","members": [{user_id, name, email, role, project_role, team_role, server_admin, disabled}], "can_manage"}` | viewer |
+| `/project/members/set` | `{project_id, user_id, role}` | `{"project_id","user_id","role"}` | project admin |
+| `/project/members/remove` | `{project_id, user_id}` | `{}` | project admin |
+
+User: `{"id","name","email","admin","sso","created_at","disabled_at","last_login_at"}`.
+User ids match `[A-Za-z0-9_.@-]{1,64}` and become the default `wb_user_id`.
+Team: `{"name","display_name","created_at","members": [{"user_id","role","source": "manual"|"sso"}]}`.
+
+### Single sign-on (OIDC) and sessions
+
+With `--oidc-issuer`, `--oidc-client-id` and `--oidc-redirect-url` (see
+[README](README.md#run-it)) the UI offers **Sign in with SSO** and
+authentication is required.
+
+| Endpoint (no auth) | Notes |
+|---|---|
+| `GET /auth/sso` | `{"enabled", "login_url", "issuer"}` |
+| `GET /auth/oidc/login?return_to=/path` | 302 to the provider's authorization endpoint (from `.well-known/openid-configuration`) with `state`, `nonce` and an S256 `code_challenge`; sets a 10-minute sealed `weft_oidc` cookie (path `/auth/oidc/`) |
+| `GET /auth/oidc/callback` | checks `state`, exchanges the code with the PKCE verifier, verifies the ID token (issuer, audience = client id, expiry, RS256/ES256 signature from the JWKS, nonce), applies the allowed domains and group mapping, provisions the user and redirects to `return_to` (same-site paths only) with the session cookies set; on failure redirects to `/?sso_error=<reason>` |
+| `POST /auth/logout` | revokes the session (needs `X-Weft-CSRF`) and clears the cookies |
+
+- **Provisioning.** A user is found by issuer and subject; otherwise an
+  existing user with the same email is linked when the email is verified (or
+  in an allowed domain); otherwise one is created from `preferred_username`
+  or the email's local part. Disabled users cannot sign in.
+- **Who may sign in.** With `--oidc-allowed-domains`, only verified emails
+  of those domains. Otherwise, with `--oidc-group-roles`, only members of a
+  mapped group. With neither, anyone at the provider (with no access until
+  granted a role).
+- **Groups.** `--oidc-group-roles "platform=admin,ml=member@acme"` reads
+  the `--oidc-groups-claim` claim. `group=role@team` memberships are
+  re-synced at every sign-in (source `sso`; manual memberships are kept).
+  When a `group=admin` mapping exists, the server-admin flag of SSO users
+  follows it. `--oidc-admin-emails` grants server admin to those verified
+  emails.
+- **Cookies.** `weft_session` (HttpOnly, SameSite=Lax, Secure on TLS or an
+  https redirect URL, `--session-ttl`): a random id plus its HMAC-SHA256
+  under the session key; the database keeps only SHA-256 of the id.
+  `weft_csrf` (readable by script): the session's CSRF token.
+- **CSRF.** A cookie-authenticated request other than `GET`/`HEAD`/`OPTIONS`
+  must send `X-Weft-CSRF: <weft_csrf>` (403 otherwise), and an `Origin`
+  other than the server's own or a `--cors-origins` entry is refused.
+  Requests carrying an API key do not use the cookie and are exempt.
+- Sessions end at sign-out, expiry, `/users/revoke_sessions`, or when the
+  user is disabled.
+
+### Audit log
+
+Recorded: every request other than a read (any outcome, including 401 and
+403), every refused (403) request, admin actions with a `detail` text, and
+SSO sign-ins, sign-in failures and sign-outs. Request bodies, headers and
+secret values are never recorded. Entries are written in the background and
+purged after `--audit-retention-days` (default 90). Project delete keeps
+them.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `/audit/query` | `{project_id?, actor?, method?, path_prefix?, outcome?, since?, until?, limit? (≤10000, default 100), offset?}` | `{"entries": [AuditEntry], "total_count", "retention_days"}`, newest first |
+| `/audit/export` | same filter (limit default 10000) | `text/csv` with the AuditEntry columns; cells starting with `= + - @` are prefixed with `'` |
+
+Without `project_id` only server admins may query; with it, admins of that
+project. AuditEntry:
+`{"id","ts","actor","auth_method": "static_key"|"api_key"|"session"|"sso"|"none"|"unauthenticated","key_id","method","path","project_id","object_ids","call_ids","status","outcome": "success"|"denied"|"unauthenticated"|"failed","ip","detail"}`.
+`object_ids` and `call_ids` (up to 50 each) come from `object_id`, `obj`,
+`call_id(s)`, `start`/`end`, batch items and object/call refs in the body.
+
+### OAuth client credentials (RemoteScorer, predict_url)
+
+`RemoteScorer` and models evaluated through `predict_url` or a `predict`
+runtime accept an OAuth 2.0 client-credentials `auth_config`:
+
+```jsonc
+"auth_config": {"token_url": "https://idp.example.com/oauth/token", "client_id": "weft",
+                "client_secret_secret": "SCORER_CLIENT_SECRET",   // name of a stored secret (or env var)
+                "scopes": ["score"],                              // list or space-separated string
+                "audience": "https://scorer.example.com"}         // optional, sent as a token parameter
+```
+
+The token is fetched with the stored secret, cached per token URL, client,
+secret, scopes and audience, refreshed 30 seconds before `expires_in`, and
+sent as `Authorization: Bearer`. It overrides `bearer_secret_name` and
+`headers_secret`. Token errors report the HTTP status and OAuth error code
+only.
+
+### Database encryption at rest
+
+The SQLite database is **not** encrypted: the pure-Go driver has no page
+encryption without CGO. Provider secrets inside it are AES-256-GCM
+encrypted. Use an encrypted volume or filesystem. New database files are
+created mode 0600, and startup logs a warning for each of the database,
+`-wal`, `-shm` and `<db>.key` files that is world-readable.

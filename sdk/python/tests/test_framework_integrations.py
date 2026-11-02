@@ -166,6 +166,8 @@ def test_llamaindex_span_kinds():
     assert span_kind("ReActAgent", "chat") == "agent"
     assert span_kind("MyWorkflow", "run") == "workflow"
     assert span_kind("CompactAndRefine", "get_response") == "chain"
+    assert span_kind("RetrieverQueryEngine", "query") == "chain"
+    assert span_kind("VectorIndexRetriever", "_retrieve") == "retriever"
 
 
 # ---------------------------------------------------------------- CrewAI

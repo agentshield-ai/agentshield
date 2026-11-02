@@ -57,7 +57,7 @@ await weft.init('my-project', {
     printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root call (WEFT_PRINT_CALL_LINK)
     captureCode: true,                           // store op source (WEFT_CAPTURE_CODE)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
-    maxQueueSize: 10_000,
+    maxQueueSize: 10_000, batchSize: 100,
     retryMaxAttempts: 3, retryBackoffMs: 250, retryMaxBackoffMs: 4000,
   },
 });
@@ -145,7 +145,34 @@ Files and rich media are uploaded through `/file/create`:
 weft.Content.fromPath('report.pdf');     // {_type: 'Content', mimetype, filename, file_digest}
 weft.Content.fromText('notes', { filename: 'notes.txt' });
 weft.Video.fromPath('demo.mp4'); weft.PDF.fromBytes(bytes); new weft.Html('<b>x</b>'); new weft.Markdown('# x');
+weft.Image.fromPath('cat.png'); weft.Audio.fromBytes(wav);
+content.save('copy.pdf'); await client.readFile(fileDigest);
 ```
+
+**Bring your own bucket.** Media already in your storage is logged by
+reference, without uploading:
+
+```ts
+weft.Image.fromUri('s3://my-bucket/photos/cat.png');   // {_type: 'Image', uri, mime_type, filename}
+weft.Content.fromUri('https://example.com/report.pdf', { size: 1234 });
+await client.resolveUrl('s3://my-bucket/photos/cat.png');      // /files/resolve_url (presigned for the server's S3 backend)
+await client.resolveUrl([content, fileDigest], { expiresIn: 600 });
+await weft.Content.fromUri('weft-file://<digest>').load();   // download the bytes
+```
+
+Prompts and server-runnable models (same shapes as Python; they load back as their classes):
+
+```ts
+new weft.StringPrompt({ name: 'greet', content: 'Hello {name}' }).format({ name: 'Ada' });
+new weft.MessagesPrompt({ name: 'qa', messages: [{ role: 'user', content: '{question}' }] }).format({ question: '2+2' });
+const m = new weft.LLMStructuredCompletionModel({ name: 'qa-model', llmModelId: 'gpt-4o-mini',
+  defaultParams: { messages_template: [{ role: 'user', content: '{question}' }], temperature: 0 } });
+await m.predict({ question: '2+2' });          // via the server's /completions/create
+await client.evaluateModel(evaluation, m);     // server-side evaluation; polls until done
+```
+
+Dataset helpers: `ds.select([0, 2])`, `ds.columnNames`, `ds.numRows`,
+`weft.Dataset.fromCalls(calls)`.
 
 Object versions:
 
@@ -174,6 +201,64 @@ await weft.publish(new weft.Leaderboard({ name: 'qa-board', columns: [
   { evaluationObjectRef: evaluation, scorerName: 'exact', summaryMetricPath: 'true_fraction' },
 ] }));
 await weft.publish(new weft.Monitor({ name: 'judge-chats', opNames: ['openai.chat.completions.create'], samplingRate: 0.2, scorers: [judge] }));
+```
+
+`SavedView` has Weave's fluent query API; views open in the UI and UI views load here:
+
+```ts
+const view = await new weft.SavedView({ label: 'Slow errors' })
+  .filterOp('answer')
+  .addFilter('summary.weave.status', 'equals', 'error')
+  .addFilter('summary.weave.latency_ms', '>', 1000)
+  .sortBy('started_at', 'desc')
+  .addColumn('inputs.question', 'Question')
+  .save();                                  // named after the label
+const calls = await view.getCalls({ limit: 20 });
+view.toCallsQuery();                        // the raw /calls/query body
+await weft.SavedView.load('Slow-errors'); await client.getSavedViews('traces');
+```
+
+Operators: `contains`, `does not contain`, `equals`, `does not equal`, `in`,
+`=`, `!=`, `<`, `<=`, `>`, `>=`, `is`, `after`, `before`, `is empty`,
+`is not empty`; also `removeFilter`, `setFilter({...})`, `search`, `addSort`,
+`showColumn`/`hideColumn`, `pinColumnLeft`/`Right`, `pageSize`, `uiUrl()`.
+
+## Agents: conversations, turns, LLM calls and tools
+
+Weave's conversation SDK with camelCase names. Turns, LLM calls, tools and
+sub-agents are recorded as calls the agents index understands, so they show
+up in **Agents** (`/agents/*`), Threads and Traces (see the Python README for
+the call shapes). `span.run(fn)` is Python's `with`: the span is current while
+`fn` runs (ops inside become children), a thrown error is recorded and
+re-thrown, and the span ends afterwards.
+
+```ts
+const conv = weft.startConversation({ agentName: 'support', conversationName: 'Order help' });
+await conv.startTurn({ userMessage: 'Where is order 7?' }).run(async (turn) => {
+  await turn.startLLM({ model: 'gpt-4o-mini', providerName: 'openai' }).run((llm) => {
+    llm.inputMessages = [weft.Message.user('Where is order 7?')];
+    llm.outputMessages = [weft.Message.assistant('', { toolCalls: [{ id: 'c1', name: 'lookup', arguments: { id: 7 } }] })];
+    llm.usage = { inputTokens: 20, outputTokens: 6 };
+  });
+  await turn.startTool({ name: 'lookup', arguments: { id: 7 }, toolCallId: 'c1' }).run(async (t) => { t.result = await lookup(7); });
+  await turn.startSubagent({ name: 'writer' }).run((s) => s.startLLM({ model: 'gpt-4o' }).output('Shipped.').end());
+  turn.outputMessages = [weft.Message.assistant('Order 7 has shipped.')];
+});
+conv.end();
+```
+
+Also: `weft.startTurn/startLLM/startTool/startSubagent` (current conversation
+and turn), `endTurn/endLLM/endConversation`, `getCurrentTurn()`,
+`span.start()/end()`, `llm.think()`, `llm.attachMedia({ content, mimeType })`,
+`span.setAttributes()`, `span.recordError()`, `startConversation({ includeContent: false,
+continueParentTrace: true, attributes })`, `withAgentNameOverride(name, fn)`.
+Batch logging of finished spans:
+
+```ts
+weft.logTurn({ conversationId: 'c-1', agentName: 'support', messages: [weft.Message.user('hi')],
+  spans: [new weft.LLM({ model: 'gpt-4o-mini', startedAt: t0, endedAt: t1, usage: { inputTokens: 5 } })] });
+const res = weft.logConversation({ agentName: 'support', turns: [new weft.Turn({ messages, spans })] });
+res.conversationId; res.rootSpanIds;
 ```
 
 ## Evaluations
@@ -254,6 +339,23 @@ ev.logExample({ question: '3+3' }, '6', { correct: true });   // prediction + sc
 const summary = await ev.logSummary();     // same call structure as Evaluation
 ```
 
+Without an output the predict call stays open: `await pred.run(async (p) => { p.output = await agent(q); })`
+records calls made inside as its children (and stamps `weave.eval.*` on
+conversation spans started there), then finishes the prediction.
+
+**Linking existing traces (agent evals):** the third argument may be options,
+including `call` (a Call, call id or URI, a Turn or other span, a `LogResult`,
+a `Conversation`, or an array):
+
+```ts
+const [, call] = await agent.call('2+2');
+ev.logPrediction({ q: '2+2' }, undefined, { call });          // output and latency from the call
+ev.logPrediction({ q: 'hi' }, 'hello', { call: turn, exampleId: 'ex-1' });
+```
+
+Links are stored as `attributes.weft.linked_calls`, `attributes.weft.genai_span_ref`
+(`[{trace_id, span_id}]`, Weave's v2 field) and `attributes.weft.linked_conversation_ids`.
+
 Pass a `Dataset` as `dataset` to link predictions to its rows. Load a
 published one with `await weft.ref('qa').get()` first. A prediction whose
 inputs equal a row references that row's ref.
@@ -283,7 +385,17 @@ await call!.feedback.addReaction('👍');
 await call!.feedback.addNote('nice');
 await call!.setDisplayName('golden');
 await client.addCost('my-model', 1e-6, 2e-6);
+await client.queryCosts({ llmIds: ['my-model'] }); await client.purgeCosts(ids);
 await client.whoami();                     // { user_id, auth_required }
+await client.countCalls({ filter: { op_names: ['answer'] } });
+await client.deleteCalls([id]);
+await client.getFeedback({ query: { $eq: [{ $getField: 'feedback_type' }, { $literal: 'wandb.note.1' }] } });
+await call!.feedback.list(); await call!.feedback.purge(feedbackId);
+await call!.children(); call!.status; call!.uiUrl;
+await client.getThreads({ limit: 20 });
+await client.getEvaluations(); await client.getEvaluationCalls();
+await client.compareEvaluations([a, b]); await client.leaderboard('qa-board');
+await weft.get('qa:latest'); weft.parseUri('weft:///e/p/object/qa:<digest>');
 ```
 
 ## OpenTelemetry
@@ -292,7 +404,9 @@ Weft also ingests OTLP/HTTP directly. Point any OpenTelemetry exporter at
 `<server>/otel/v1/traces` with a `project_id` header:
 
 ```ts
-new OTLPTraceExporter({ url: 'http://localhost:6345/otel/v1/traces', headers: { project_id: 'my-entity/my-project' } });
+new OTLPTraceExporter({ url: weft.otel.otlpEndpoint(), headers: weft.otel.otlpHeaders('my-entity/my-project') });
+// or, with @opentelemetry/sdk-trace-node and an OTLP exporter package installed:
+const provider = await weft.otel.configure({ project: 'my-entity/my-project' });
 ```
 
 ## Development
