@@ -1,4 +1,4 @@
-.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score
+.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score weft weft-ui weft-run weft-test
 
 # Go binary path
 GO ?= go
@@ -75,3 +75,24 @@ replay-score: replay-build
 # Build Docker engine image
 docker-build:
 	docker build -t agentshield-engine:test -f docker/engine.Dockerfile .
+
+# ---------------------------------------------------------------- Weft
+# OpenTelemetry-native LLM tracing and evaluation server (see docs/weft/).
+
+# Build the web UI into internal/weft/webui/static (embedded in the binary)
+weft-ui:
+	cd web/weft-ui && npm ci && npm run build
+
+# Build the weft server binary
+weft:
+	$(GO) build -o bin/weft ./cmd/weft
+
+# Run the weft server on http://127.0.0.1:6345
+weft-run: weft
+	./bin/weft
+
+# Go, UI and Python SDK tests for weft
+weft-test:
+	$(GO) test ./internal/weft/...
+	cd web/weft-ui && npx tsc -b
+	cd sdk/python && python -m pytest -q
