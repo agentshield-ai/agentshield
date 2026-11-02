@@ -86,8 +86,8 @@ func seedAgentData(t *testing.T, e *testEnv, base time.Time) {
 			"gen_ai.tool.call.arguments": `{"city":"Paris"}`, "gen_ai.tool.call.result": `{"temp_c":18,"sky":"sunny"}`}, ""},
 		{t1, hexID("c2", 16), hexID("a1", 16), "chat gpt-4o", 630, 500, map[string]any{
 			"gen_ai.operation.name": "chat", "gen_ai.request.model": "gpt-4o", "gen_ai.provider.name": "openai",
-			"gen_ai.input.messages": genaiMsgs("user", "What's the weather in Paris?"),
-			"gen_ai.output.messages": genaiMsgs("assistant", "It is 18°C and sunny in Paris."),
+			"gen_ai.input.messages":     genaiMsgs("user", "What's the weather in Paris?"),
+			"gen_ai.output.messages":    genaiMsgs("assistant", "It is 18°C and sunny in Paris."),
 			"gen_ai.usage.input_tokens": 160, "gen_ai.usage.output_tokens": 12}, ""},
 		{t1, hexID("a1", 16), "", "invoke_agent travel-agent", 0, 1200, map[string]any{
 			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "travel-agent", "gen_ai.agent.version": "v2",
@@ -115,8 +115,8 @@ func seedAgentData(t *testing.T, e *testEnv, base time.Time) {
 			"ai.telemetry.metadata.sessionId": "vercel-session"}, ""},
 		{tv, hexID("v2", 16), hexID("v1", 16), "ai.generateText.doGenerate", 120_010, 900, map[string]any{
 			"ai.operationId": "ai.generateText.doGenerate", "ai.model.id": "gpt-4o-mini", "ai.model.provider": "openai.chat",
-			"ai.prompt.messages": `[{"role":"system","content":"You are a poet."},{"role":"user","content":[{"type":"text","text":"Write a haiku about the sea"}]}]`,
-			"ai.response.toolCalls": `[{"toolCallType":"function","toolCallId":"tc1","toolName":"rhyme","args":"{\"word\":\"sea\"}"}]`,
+			"ai.prompt.messages":       `[{"role":"system","content":"You are a poet."},{"role":"user","content":[{"type":"text","text":"Write a haiku about the sea"}]}]`,
+			"ai.response.toolCalls":    `[{"toolCallType":"function","toolCallId":"tc1","toolName":"rhyme","args":"{\"word\":\"sea\"}"}]`,
 			"ai.response.finishReason": "tool-calls", "ai.usage.promptTokens": 30, "ai.usage.completionTokens": 9}, ""},
 		{tv, hexID("v3", 16), hexID("v1", 16), "ai.toolCall", 120_920, 50, map[string]any{
 			"ai.operationId": "ai.toolCall", "ai.toolCall.name": "rhyme", "ai.toolCall.id": "tc1",
@@ -124,7 +124,7 @@ func seedAgentData(t *testing.T, e *testEnv, base time.Time) {
 		{tv, hexID("v4", 16), hexID("v1", 16), "ai.generateText.doGenerate", 121_000, 900, map[string]any{
 			"ai.operationId": "ai.generateText.doGenerate", "ai.model.id": "gpt-4o-mini", "ai.model.provider": "openai.chat",
 			"ai.prompt.messages": `[{"role":"user","content":"Write a haiku about the sea"},{"role":"assistant","content":[{"type":"tool-call","toolCallId":"tc1","toolName":"rhyme","args":{"word":"sea"}}]},{"role":"tool","content":[{"type":"tool-result","toolCallId":"tc1","toolName":"rhyme","result":["free","tree"]}]}]`,
-			"ai.response.text": "Waves fold into foam", "ai.usage.promptTokens": 50, "ai.usage.completionTokens": 12}, ""},
+			"ai.response.text":   "Waves fold into foam", "ai.usage.promptTokens": 50, "ai.usage.completionTokens": 12}, ""},
 	}
 	lcIn := `{"messages":[{"lc":1,"type":"constructor","id":["langchain","schema","messages","HumanMessage"],"kwargs":{"content":"Find papers on RAG","type":"human"}}]}`
 	openinference := []testSpan{

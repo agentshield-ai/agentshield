@@ -377,17 +377,34 @@ Span → call mapping:
 |---|---|
 | `id`, `trace_id`, `parent_id` | hex span id, trace id, parent span id |
 | `op_name` | `weft.op_name`, else span name |
-| `display_name` | `weft.display_name`, `wandb.display_name` |
+| `display_name` | `weft.display_name`, `wandb.display_name`, `weave.display_name`; Traceloop `traceloop.entity.name` (or `traceloop.workflow.name` on workflow spans) |
 | `started_at`, `ended_at` | span start/end |
-| `inputs` | `weft.inputs` (JSON), `input.value` (OpenInference), `gen_ai.input.messages`, `llm.input_messages.N.message.*`, `gen_ai.prompt.N.*` (OpenLLMetry), `gen_ai.prompt`, `traceloop.entity.input`, `gen_ai.*.message` span events. Request params (`gen_ai.request.*`, `llm.invocation_parameters`) are added. |
-| `output` | `weft.output`, `output.value`, `gen_ai.output.messages`, `llm.output_messages.N.message.*`, `gen_ai.completion.N.*`, `gen_ai.completion`, `traceloop.entity.output`, `gen_ai.choice` events |
-| `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*` |
+| `inputs` | `weft.inputs` (JSON), OpenInference LLM spans' `llm.input_messages.*`, `input.value` (OpenInference; serialised LangChain/LangGraph messages become chat messages), framework layouts (see below), `gen_ai.input.messages`, `llm.input_messages.N.message.*`, `gen_ai.prompt.N.*` (OpenLLMetry), `gen_ai.prompt`, `traceloop.entity.input`, `gen_ai.*.message` span events. Request params (`gen_ai.request.*`, `llm.invocation_parameters`) are added. |
+| `output` | `weft.output`, OpenInference LLM spans' `llm.output_messages.*`, `output.value`, framework layouts (see below), `gen_ai.output.messages`, `llm.output_messages.N.message.*`, `gen_ai.completion.N.*`, `gen_ai.completion`, `traceloop.entity.output`, `gen_ai.choice` events |
+| `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata`; also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
 | `exception` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
-| `thread_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`; `weft.turn_id` |
-| `wb_user_id` | `user.id`, `enduser.id` |
+| `thread_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `wandb.is_turn` / `weft.is_turn` is true |
+| `wb_user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
 | `attributes` | `weft.attributes.*` (prefix stripped), plus `otel: {span_name, kind, status, resource, scope, attributes, events, links}` |
 
 The response is an OTLP `ExportTraceServiceResponse` in the request's encoding.
+`POST /agents/otel/v1/traces` (Weave's agents OTLP path) is the same endpoint.
+
+Framework layouts (checked after `input.value` / `output.value`):
+
+| Framework | Inputs | Output |
+|---|---|---|
+| MLflow | `mlflow.spanInputs` (JSON-encoded) | `mlflow.spanOutputs` |
+| GenAI tool spans, Pydantic AI, ADK, Vercel tools | `gen_ai.tool.call.arguments`, `tool_arguments`, `gcp.vertex.agent.tool_call_args`, `ai.toolCall.args` (objects are spread into inputs, other values become `input`) | `gen_ai.tool.call.result`, `tool_response`, `gcp.vertex.agent.tool_response`, `ai.toolCall.result` |
+| Pydantic AI / Logfire agent runs | `pydantic_ai.all_messages` (GenAI parts) or `all_messages_events` (v1), minus the final answer | `final_result`, else the trailing assistant messages |
+| Vercel AI SDK | `ai.prompt.messages` (text, image, file, `tool-call` and `tool-result` parts become chat messages with `tool_calls` / `role: tool`), else `ai.prompt` (`{system, prompt\|messages}`); `ai.value(s)` for embeddings | `ai.response.text` + `ai.response.toolCalls` (+ `ai.response.finishReason`) as a chat completion, `ai.response.object`, `ai.embedding` |
+| Google ADK / Vertex | `gcp.vertex.agent.llm_request` (`contents` with `function_call` / `function_response` / `inline_data` parts, `config.system_instruction`) | `gcp.vertex.agent.llm_response` |
+
+GenAI message parts: `text` parts are joined; `tool_call` parts become OpenAI
+`tool_calls`; a message of only `tool_call_response` parts becomes `role: tool`;
+`reasoning` becomes `{"type":"thinking"}`; `blob` / `uri` image parts become
+`{"type":"image_url","image_url":{"url": data URI or URI}}`, and other media
+`{"type":"media","mime_type","modality","data": data URI or URI}`.
 
 ## Annotation queues
 
@@ -792,3 +809,160 @@ Evaluation runs, predictions and scores are calls, so they show up in
 | `GET /scores/{id}`, `GET /scores?evaluation_run_id` | `{score_id, scorer, value, evaluation_run_id, wb_user_id}` |
 | `DELETE /predictions?prediction_ids=`, `DELETE /scores?score_ids=` | soft delete → `{num_deleted}` |
 | `POST /eval_results/query` | `{evaluation_call_ids \| evaluation_run_ids, include_rows?, include_summary?, include_raw_data_rows?, include_predict_and_score_children?, require_intersection?, sort_by?: [{field: "scores.<name>" \| "inputs.<path>" \| "outputs.<path>", direction, evaluation_call_id?}], limit?, offset?}` → `{rows: [{row_digest, raw_data_row, evaluations: [{evaluation_call_id, trials: [{predict_and_score_call_id, predict_call_id, scorer_call_ids, model_output, model_latency_seconds, scores, total_tokens}]}]}], summary: {row_count, evaluations: [{evaluation_call_id, display_name, evaluation_ref, model_ref, started_at, trial_count, predict_total_tokens, scorer_stats: [{scorer_key, path, value_type: binary\|continuous\|text, trial_count, pass_true_count, pass_known_count, pass_rate, pass_signal_coverage, numeric_count, numeric_mean}]}]}, total_rows, warnings}`. `include_*` default to true. `filters` are not supported and produce a warning; costs are not computed. |
+
+## Agents
+
+Weave's Agents API, at Weave's paths with its request and response fields,
+so the official client's `client.agents.*` works. Agents, versions,
+conversations, turns and spans are derived from calls: every call (SDK call
+or OTLP span) gets a row in a span index written in the same transaction.
+Fields marked *Weft* are extensions.
+
+**Span kind** (`operation_name`), first match wins: `gen_ai.operation.name`;
+`weft.span_kind` (flat OTLP attribute, or `attributes.weft.span_kind` set by
+the Weft SDKs), `weave.span_kind`, `weave.kind` (the official client's op
+kind), `openinference.span.kind`, `traceloop.span.kind`, `mlflow.spanType`;
+Vercel `ai.operationId` / `operation.name` (`*.doGenerate|doStream` → `chat`,
+`ai.toolCall` → `execute_tool`, `ai.embed*` → `embeddings`, `ai.generateText`
+etc. → `chain`); ADK `gcp.vertex.agent.llm_request` → `chat`; `llm.request.type`;
+span name prefixes (`invoke_agent`, `agent run`, `chat `, `call_llm`,
+`execute_tool`, `running tool`); SDK LLM ops (`openai.chat.completions.create`,
+`anthropic.Messages.create`, …), or an SDK call with chat `messages` and usage.
+Kind vocabularies map onto `invoke_agent` (agent, AGENT, subagent, turn),
+`chat` (llm, LLM, CHAT_MODEL), `execute_tool` (tool, TOOL, function),
+`embeddings`, `retrieval` (retriever, search), `chain` (CHAIN, workflow, task).
+
+| Field | Source |
+|---|---|
+| agent name | `gen_ai.agent.name`, `weft.agent.name`, `agent.name` (OpenInference), `agent_name` (Pydantic AI), `traceloop.entity.name` on Traceloop agent spans; for `invoke_agent` spans without one, the span name after `invoke_agent `, else the display name or op name |
+| agent id / version / description | `gen_ai.agent.id\|version\|description` (`weft.agent.*` also accepted) |
+| conversation | the call's `thread_id` (OTLP: `gen_ai.conversation.id`, `session.id`, …), `gen_ai.conversation.name` |
+| turn | `turn_id == id`, or `wandb.is_turn` / `weft.is_turn` |
+| tool | `gen_ai.tool.name`, `tool.name`, `ai.toolCall.name`; else the `execute_tool` span name suffix, display name or op name. `gen_ai.tool.call.id`, `ai.toolCall.id` |
+| model, provider | `gen_ai.request.model`, `ai.model.id`, `llm.model_name`, `model_name`, SDK `inputs.model`, else the single model in usage; `gen_ai.provider.name`, `gen_ai.system`, `ai.model.provider` (`openai.chat` → `openai`), `llm.provider`, SDK op prefix |
+
+Agent and conversation identity are inherited from the nearest ancestor that
+sets them, also when children arrive first. Spans with no agent, conversation
+or kind are left out of agent queries. An **invocation** is an `invoke_agent`
+span that names its agent, or the top-most span of an agent's run when the
+agent never emits `invoke_agent`. Usage and cost are each span's own (not
+rolled up), so sums never double count. Deleted calls drop out. Custom
+attributes are span attributes outside the reserved conventions (`gen_ai.*`,
+`weave.*`, `wandb.*`, `weft.*`, `llm.*`, `input.*`, `output.*`, `ai.*`,
+`mlflow.*`, `traceloop.*`, `openinference.*`, `gcp.vertex.agent.*`, …) plus
+the call's own attributes; nested values flatten to dotted keys and the
+OpenInference `metadata` JSON flattens under `metadata.`.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `/agents/query` | `{project_id, filters?: {agent_name? (case-insensitive substring)}, include_costs?, limit? (100), offset?, sort_by?}`; *Weft*: `started_after?`, `started_before?` | `{"agents": [Agent], "total_count"}` |
+| `/agents/agent-versions/query` | `{project_id, agent_name, include_costs?, limit?, offset?, sort_by?}` | `{"versions": [Agent + agent_version], "total_count"}`; spans without a version are the version `""` |
+| `/agents/spans/query` | `{project_id, query?, started_after?, started_before?, group_by?, measures?, group_filters?, group_distributions?, custom_attr_columns?, include_costs?, include_details?, sort_by?, limit? (100), offset?}` | `{"spans": [Span], "groups": [Group], "total_count"}`; `groups` when `group_by` is set |
+| `/agents/spans/stats` | `{project_id, start, end?, granularity? (seconds; ~60 buckets when absent), timezone?, query?, group_by?, group_limit? (50), group_filters?, metrics?, bucket_by?}` | `{"bucket_type","start","end","granularity","timezone","columns","rows"}` |
+| `/agents/spans/custom-attrs/schema` | `{project_id, query?, started_after?, started_before?, limit? (200), offset?}` | `{"attributes": [{"key","source","value_type","span_count"}], "has_more", "limit", "offset"}` |
+| `/agents/search` | `{project_id, query?, roles?, agent_name?, conversation_id?, trace_id?, request_model?, provider_name?, started_after?, started_before?, truncate_content? (true), limit? (20), offset?}` | `{"results": [{"conversation_id","conversation_name","agent_name","last_activity","matched_messages": [{"content_digest","content_preview","role","span_id","trace_id","started_at"}]}], "total_conversations"}` |
+| `/agents/conversations/spans` | `{project_id, conversation_ids, started_after?, started_before?}` | `{"conversations": [{"conversation_id","spans": [{"span_id","trace_id","operation_name","status","duration_ms"; Weft: "span_name","started_at"}], "spans_feedback": [...]}]}` |
+| `/agents/conversations/chat` | `{project_id, conversation_id, include_feedback?, include_model_tool_calls?, limit? (50), offset?}` | `{"conversation_id","turns": [TraceChat],"total_turns","has_more","limit","offset","total_cost_usd","feedback"}`; *Weft*: `conversation_name, agent_names, started_at, last_activity, total_input_tokens, total_output_tokens, span_count, error_count` |
+| `/agents/traces/chat` | `{project_id, trace_id, include_feedback?, include_model_tool_calls?}` | TraceChat (404 for an unknown trace) |
+| `/agents/otel/v1/traces` | OTLP | same as `/otel/v1/traces` |
+
+**Agent** fields: `agent_name, project_id, invocation_count, span_count,
+error_count` (failed spans), `first_seen, last_seen, total_duration_ms`
+(sum of invocation durations), `total_input_tokens, total_output_tokens,
+total_cost_usd` (null unless `include_costs`). *Weft*: `version_count,
+versions, conversation_count, invocation_error_count, latency_ms_p50,
+latency_ms_p95` (of invocations), `llm_call_count, tool_call_count, models`.
+Sort fields: those plus `conversation_count, version_count, latency_ms_p50,
+latency_ms_p95`; default `last_seen desc`.
+
+**Span fields** usable in `query` (`$getField`), `group_by`, measures,
+metrics and `sort_by` (field source `field`, `column` or `derived`):
+`span_id, trace_id, parent_span_id, operation_name, span_name, display_name,
+agent_name, agent_id, agent_version, agent_description, conversation_id,
+conversation_name, tool_name, tool_call_id, request_model, response_model,
+provider_name, status_code` (`OK|ERROR|UNSET`), `status_message, error_type,
+started_at, ended_at, duration_ms, input_tokens, output_tokens, total_tokens,
+reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens,
+input_cost_usd, output_cost_usd, total_cost_usd, wb_user_id, wb_run_id`, the
+booleans `is_turn, is_error, is_invocation, is_agent, is_llm, is_tool`, and
+custom attributes as `custom_attrs_string|int|float|bool.<key>` (or source
+`custom_attrs_*` with the bare key). Dotted aliases such as `agent.name`,
+`gen_ai.agent.name`, `conversation.id`, `tool.name`, `request.model` work too.
+The query language is the calls one (`$and $or $not $eq $gt $gte $lt $lte $in
+$contains $convert`); timestamps compare chronologically. Unknown fields in
+`group_by` and `sort_by` are a 400.
+
+**Span** (`spans[]`) follows Weave's `AgentSpanSchema`. `input_messages`,
+`output_messages` (`{role, content, finish_reason}`; content is text, or a
+JSON parts array for structured messages), `system_instructions`,
+`finish_reasons`, `reasoning_content`, `tool_call_arguments`,
+`tool_call_result`, `tool_definitions` and request parameters are filled only
+with `include_details`; costs only with `include_costs`. `custom_attrs_*` hold
+all custom attributes, or only `custom_attr_columns` keys when given.
+*Weft*: `duration_ms, is_turn, display_name`.
+
+**Group** (`groups[]`): `group_keys` (alias → value), `span_count,
+invocation_count, error_count, conversation_count, conversation_names,
+agent_names, agent_versions, provider_names, request_models, first_seen,
+last_seen, total_input_tokens, total_output_tokens, total_reasoning_tokens,
+total_cache_read_input_tokens, total_cache_creation_input_tokens,
+total_duration_ms` (sum over the group's top-level spans, whose parent is not
+in the group), `total_cost_usd, total_input_cost_usd, total_output_cost_usd,
+first_message` / `last_message` (`{role: user_message|assistant_message,
+text}`, previews up to 200 characters), `metrics` (measure alias → value) and
+`distributions` (per `group_distributions`: `values` top-N for strings,
+`bins` for numbers). *Weft*: `latency_ms_p50, latency_ms_p95` (top-level
+spans), `trace_count`. Measures: `{alias, aggregation: sum|avg|min|max|count|
+count_distinct|count_true|count_false, value?, filter?}`; `group_filters`
+keep groups whose measure is within `[min, max]`. Group sort fields: group key
+aliases, measure aliases and the bundle fields; default `last_seen desc`.
+
+**Stats rows.** Time buckets (`bucket_by` absent or `{type: "time"}`): each
+row has `timestamp` (bucket start, RFC 3339 in `timezone`), the group-by
+aliases, `count` (matching spans) and, per metric, `<alias>_<aggregation>`
+and `<alias>_p<percentile>` (for example `latency_p95`). Without `group_by`,
+empty buckets are included. Numeric buckets (`{type: "number", alias, bins
+(24, max 200), min?, max?, value | (group_by + measure)}`) bucket a span
+value, or a per-group measure, into equal-width bins with `<alias>_min`,
+`<alias>_max` and `bucket_index`. `columns` describes every column with its
+`role` (`time|bucket|group|metric`).
+
+**TraceChat** (`/agents/traces/chat` and each conversation turn) follows
+Weave's `AgentTraceChatRes`: `messages` is the trajectory in tree order
+(children by start time):
+
+- `user_message`: the last user message of the turn root's inputs, else of its
+  first LLM call, else the root's readable inputs (`question`, `query`,
+  `input`, … or JSON).
+- `assistant_message` for each LLM span with text, reasoning or requested
+  tools (`text` may be empty; *Weft* `requested_tools` names them), with
+  model, duration, own tokens and cost; plus the final answer of the turn or a
+  sub-agent when no LLM span already said it.
+- `tool_call` for each tool span (`tool_name, tool_arguments, tool_result,
+  duration_ms, status`). With `include_model_tool_calls`, tool calls a model
+  requested that have no execution span (matched by tool call id) are added
+  without status, duration or result.
+- `agent_start` for nested `invoke_agent` spans (sub-agents), with model,
+  system instructions and tool definitions.
+
+Every message has `span_id, started_at, status_code, status_message,
+error_type, agent_name, agent_version` and, with `include_feedback`, the
+span's feedback; *Weft*: `operation_name, span_name, media` (image and audio
+parts). Totals cover the turn's spans; `total_duration_ms` is the root's
+wall-clock duration. *Weft*: `root_span_id, span_count, llm_call_count,
+tool_call_count`.
+
+**Turns of a conversation**: spans flagged as turns if there are any, else the
+conversation's root spans (each usually the root of its own trace), in start
+order. `offset` skips the most recent turns and each page is chronological.
+Feedback markers in `/agents/conversations/spans` come from feedback on turn
+roots: scorer feedback (`wandb.runnable.*`, numeric or boolean output, or the
+numeric fields of an output object) becomes `wandb.agent_monitor` ratings;
+numeric annotations become `wandb.agent_user_feedback` ratings, and
+reactions and string annotations become its tags.
+
+Not implemented: `signal_filters` and `insight_filters` are accepted and
+ignored; `agent_handoff` and `context_compacted` messages are never produced;
+`content_refs`, `artifact_refs` and `object_refs` are always empty. Queries
+aggregate up to 200,000 spans in memory.
+

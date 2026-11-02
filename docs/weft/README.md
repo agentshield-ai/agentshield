@@ -141,6 +141,7 @@ monitor and feedback, using offline mock models.
 | Traces | Calls with inputs, output, exception, attributes, summary. Trace tree and timeline views, filters (op, status, free text, any field via the query builder), sorting, saved views, charts (volume, errors, latency percentiles, tokens, cost), export, bulk delete, compare calls. |
 | Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models; per-project price overrides. |
 | Threads | Calls sharing a `thread_id` group into conversations with turn latency and token totals. |
+| Agents | Weave's Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from calls (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or SDK ops with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
 | Objects | Content-addressed, versioned objects (datasets, models, prompts, scorers, ops, anything JSON). Aliases, version diffs, refs (`weft:///entity/project/object/name:digest`). |
 | Datasets | Row tables with paging and editing; create from CSV/JSON or from selected calls. |
 | Evaluations | SDK-run evaluations (`weft.Evaluation`, `EvaluationLogger`) and server-run evaluations of prompt-based models with built-in scorers and LLM judges. Comparison view with metric deltas and per-example diffs. |

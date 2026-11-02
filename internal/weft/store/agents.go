@@ -153,7 +153,7 @@ func (a spanAttrs) truthy(keys ...string) bool {
 var kindAliases = map[string]string{
 	"agent": OpInvokeAgent, "invoke_agent": OpInvokeAgent, "create_agent": OpInvokeAgent, "subagent": OpInvokeAgent, "sub_agent": OpInvokeAgent,
 	"turn": OpInvokeAgent,
-	"llm": OpChat, "chat": OpChat, "chat_model": OpChat, "text_completion": OpChat, "generate_content": OpChat, "completion": OpChat,
+	"llm":  OpChat, "chat": OpChat, "chat_model": OpChat, "text_completion": OpChat, "generate_content": OpChat, "completion": OpChat,
 	"tool": OpExecuteTool, "execute_tool": OpExecuteTool, "function": OpExecuteTool,
 	"embedding": OpEmbeddings, "embeddings": OpEmbeddings,
 	"retriever": OpRetrieval, "retrieval": OpRetrieval, "retrieve": OpRetrieval,
@@ -372,7 +372,7 @@ type dbtx interface {
 
 type inherited struct {
 	agentName, agentID, agentVersion, agentDescription string
-	conversationID, conversationName                    string
+	conversationID, conversationName                   string
 }
 
 func indexAgentSpanTx(ctx context.Context, tx dbtx, projectID, id string) error {

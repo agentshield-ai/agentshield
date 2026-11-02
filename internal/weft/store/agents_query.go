@@ -19,24 +19,24 @@ const maxAgentSpans = 200000
 
 // agentSpan is an index row joined with the call's timing, status and usage.
 type agentSpan struct {
-	ID, TraceID, ParentID                         string
-	Op, SpanName, OpName, DisplayName             string
-	OwnAgent                                      bool
-	AgentName, AgentID, AgentVersion, AgentDesc   string
-	ConvID, ConvName                              string
-	IsTurn                                        bool
-	ToolName, ToolCallID                          string
-	RequestModel, ResponseModel, Provider         string
-	StartedUS, EndedUS                            int64
-	Ended                                         bool
-	Exception                                     *string
-	InTok, OutTok, ReasonTok, CacheRead, CacheW   float64
-	InCost, OutCost                               float64
-	HasCost                                       bool
-	WBUserID, WBRunID                             string
-	IsInvocation                                  bool
-	attrsJSON                                     string
-	custom                                        map[string]any
+	ID, TraceID, ParentID                       string
+	Op, SpanName, OpName, DisplayName           string
+	OwnAgent                                    bool
+	AgentName, AgentID, AgentVersion, AgentDesc string
+	ConvID, ConvName                            string
+	IsTurn                                      bool
+	ToolName, ToolCallID                        string
+	RequestModel, ResponseModel, Provider       string
+	StartedUS, EndedUS                          int64
+	Ended                                       bool
+	Exception                                   *string
+	InTok, OutTok, ReasonTok, CacheRead, CacheW float64
+	InCost, OutCost                             float64
+	HasCost                                     bool
+	WBUserID, WBRunID                           string
+	IsInvocation                                bool
+	attrsJSON                                   string
+	custom                                      map[string]any
 }
 
 type agentSpanFilter struct {

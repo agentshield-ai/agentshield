@@ -225,7 +225,7 @@ func TestGenAIMediaAndReasoningParts(t *testing.T) {
 			{"type":"blob","modality":"image","mime_type":"image/jpeg","content":"/9j/4AAQ"},
 			{"type":"uri","modality":"image","uri":"https://example.com/cat.png"},
 			{"type":"blob","modality":"audio","mime_type":"audio/wav","content":"UklGRg=="}]}]`,
-		"gen_ai.output.messages": `[{"role":"assistant","parts":[{"type":"reasoning","content":"Looks feline."},{"type":"text","content":"A cat."}],"finish_reason":"stop"}]`,
+		"gen_ai.output.messages":    `[{"role":"assistant","parts":[{"type":"reasoning","content":"Looks feline."},{"type":"text","content":"A cat."}],"finish_reason":"stop"}]`,
 		"gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20, "gen_ai.usage.reasoning.output_tokens": 8,
 		"gen_ai.usage.cache_read.input_tokens": 50})
 	parts := msgsOf(t, c.Start.Inputs["messages"])[0]["content"].([]any)
