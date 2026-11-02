@@ -1,0 +1,1 @@
+Keeps internal/weft/webui/static present for go:embed in fresh checkouts.
