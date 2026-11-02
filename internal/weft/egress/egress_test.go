@@ -449,3 +449,39 @@ func TestHostPortOf(t *testing.T) {
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// Through an HTTP proxy the dial goes to the proxy, so the destination is
+// resolved and checked before the request is handed over.
+func TestClientChecksDestinationBehindProxy(t *testing.T) {
+	var seen []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Host)
+		_, _ = io.WriteString(w, "via-proxy")
+	}))
+	defer proxy.Close()
+	pu, _ := url.Parse(proxy.URL)
+	prevProxy := proxyFromEnvironment
+	proxyFromEnvironment = func(*http.Request) (*url.URL, error) { return pu, nil }
+	defer func() { proxyFromEnvironment = prevProxy }()
+	withPolicy(t, Config{Resolver: fakeResolver{
+		"pub.example": {netip.MustParseAddr("93.184.216.34")},
+		"int.example": {netip.MustParseAddr("10.0.0.1")},
+	}})
+	// The proxy itself is on loopback: operator configuration, not checked.
+	if body, err := get(t, "http://pub.example/x"); err != nil || body != "via-proxy" {
+		t.Fatalf("public via proxy: %q %v", body, err)
+	}
+	_, err := get(t, "http://int.example/")
+	assertBlocked(t, err, "10.0.0.1") // the resolved address is not revealed
+	for _, u := range []string{"http://169.254.169.254/latest/meta-data/", "http://[::ffff:10.0.0.1]/"} {
+		_, err := get(t, u)
+		assertBlocked(t, err)
+	}
+	// A name the server cannot resolve is left to the proxy.
+	if body, err := get(t, "http://only-the-proxy-knows.example/"); err != nil || body != "via-proxy" {
+		t.Fatalf("unresolvable via proxy: %q %v", body, err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("proxy saw %v", seen)
+	}
+}

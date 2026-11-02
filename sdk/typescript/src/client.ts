@@ -21,6 +21,21 @@ import { getRef, toJson } from './serialize.js';
 
 export const DEFAULT_SERVER_URL = 'http://localhost:6345';
 
+/**
+ * Link to a conversation in the Agents view (Weave's Python
+ * `weave.trace.urls.agent_conversation_path`). The base is `serverUrl`, else
+ * the global client's server, else `WEFT_SERVER_URL`, else the default.
+ */
+export function agentConversationPath(entityName: string, projectName: string, conversationId: string, serverUrl?: string): string {
+  const base = (serverUrl ?? globalServerUrl() ?? process.env.WEFT_SERVER_URL ?? DEFAULT_SERVER_URL).replace(/\/+$/, '');
+  const enc = encodeURIComponent;
+  return `${base}/${enc(entityName)}/${enc(projectName)}/conversations/${enc(conversationId)}`;
+}
+
+function globalServerUrl(): string | undefined {
+  return getClient()?.serverUrl;
+}
+
 export interface InitOptions {
   serverUrl?: string;
   apiKey?: string;
@@ -49,6 +64,11 @@ export interface ClientSettings extends RedactSettings {
   enableDiskFallback?: boolean;
   /** WAL directory (default ~/.weft/wal; env WEFT_WAL_DIR). */
   walDir?: string;
+  /**
+   * With the WAL on, write every request to it and send nothing; a later run
+   * without this setting replays it (Weave's WEAVE_DISABLE_WAL_SENDER; env WEFT_DISABLE_WAL_SENDER).
+   */
+  disableWalSender?: boolean;
   maxQueueSize?: number;
   /** Calls per /call/upsert_batch request. */
   batchSize?: number;
@@ -100,6 +120,37 @@ function settingBool(v: boolean | undefined, env: string, dflt: boolean): boolea
 }
 
 export const CODE_CAPTURE_DISABLED = '// Code capture disabled\n';
+
+/** A runtime ID for `registerCustomRuntime` (Weave's `CustomRuntimeId`). */
+export interface CustomRuntimeId {
+  id: string;
+  /** Default 4096 (set by the server). */
+  maxTokens?: number;
+}
+
+/** Weave's `RegisterCustomRuntimeOptions`. */
+export interface RegisterCustomRuntimeOptions {
+  name: string;
+  /** OpenAI-compatible base URL, e.g. `https://vllm.internal/v1`. */
+  baseUrl: string;
+  /** Complete desired list; omitted IDs are removed from an existing runtime. */
+  runtimeIds: ReadonlyArray<string | CustomRuntimeId>;
+  /** Name of a stored secret sent as the bearer token. */
+  apiKeySecret?: string;
+  headers?: Readonly<Record<string, string>>;
+}
+
+/** The server's reply (Weave's `CustomRuntimeApplyRes`; `kind` and `ref` are Weft additions). */
+export interface CustomRuntimeApplyRes {
+  name: string;
+  base_url: string;
+  api_key_secret: string | null;
+  headers: Record<string, string>;
+  runtime_ids: Array<{ id: string; max_tokens?: number; playground_id: string }>;
+  kind?: string;
+  ref?: string;
+}
+export type RegisterCustomRuntimeResult = CustomRuntimeApplyRes;
 
 export interface GetCallsOptions {
   filter?: Record<string, unknown>;
@@ -221,6 +272,7 @@ export class WeftClient {
       ...(st.retryBackoffMs !== undefined ? { backoffMs: st.retryBackoffMs } : {}),
       ...(st.retryMaxBackoffMs !== undefined ? { maxBackoffMs: st.retryMaxBackoffMs } : {}),
       walPath,
+      walOnly: settingBool(st.disableWalSender, 'WEFT_DISABLE_WAL_SENDER', false),
     });
     this.disabled = !!opts.disabled;
     this.redactor = new Redactor(st);
@@ -440,6 +492,30 @@ export class WeftClient {
     if (opts.offset !== undefined) body.offset = opts.offset;
     if (opts.sortBy) body.sort_by = opts.sortBy;
     return (await this.http.post('/feedback/query', body)).result ?? [];
+  }
+
+  /**
+   * Register a custom runtime (an OpenAI-compatible endpoint), replacing its
+   * complete configuration if it exists (Weave's `registerCustomRuntime`;
+   * `PUT /v2/{entity}/{project}/runtimes/{name}`). Each ID is then usable as
+   * the model `<name>/<id>`. Resolves to `{data, error: null}` like Weave's
+   * `Response`; failures throw `WeftHTTPError`.
+   */
+  async registerCustomRuntime(options: RegisterCustomRuntimeOptions): Promise<{ data: RegisterCustomRuntimeResult; error: null }> {
+    const enc = encodeURIComponent;
+    const body = {
+      base_url: options.baseUrl,
+      api_key_secret: options.apiKeySecret,
+      headers: { ...(options.headers ?? {}) },
+      runtime_ids: options.runtimeIds.map((r) => (typeof r === 'string' ? { id: r } : { id: r.id, max_tokens: r.maxTokens })),
+    };
+    const data = await this.http.request<RegisterCustomRuntimeResult>('PUT', `/v2/${enc(this.entity)}/${enc(this.project)}/runtimes/${enc(options.name)}`, body);
+    return { data, error: null };
+  }
+
+  /** UI link to a conversation in the Agents view (`<server>/<entity>/<project>/conversations/<id>`). */
+  conversationUrl(conversationId: string): string {
+    return agentConversationPath(this.entity, this.project, conversationId, this.serverUrl);
   }
 
   /** Conversation threads (`/threads/query`). */

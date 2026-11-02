@@ -104,3 +104,20 @@ func TestOpenAIStreamAccumulates(t *testing.T) {
 		t.Fatalf("expected provider error, got %v", err)
 	}
 }
+
+// Anthropic's input_tokens excludes cache reads and writes; the OpenAI-shaped
+// usage Weft records must carry the gross prompt and the cache split.
+func TestAnthropicCacheUsage(t *testing.T) {
+	out := fromAnthropic(map[string]any{"id": "m1", "model": "claude-sonnet-4-5", "stop_reason": "end_turn",
+		"content": []any{map[string]any{"type": "text", "text": "hi"}},
+		"usage":   map[string]any{"input_tokens": 1000.0, "output_tokens": 100.0, "cache_read_input_tokens": 9000.0, "cache_creation_input_tokens": 50.0}})
+	u := out["usage"].(map[string]any)
+	d, _ := u["prompt_tokens_details"].(map[string]any)
+	if u["prompt_tokens"] != 10050 || u["total_tokens"] != 10150 || d["cached_tokens"] != 9000 || d["cache_write_tokens"] != 50 {
+		t.Fatalf("usage = %v", u)
+	}
+	plain := fromAnthropic(map[string]any{"content": []any{}, "usage": map[string]any{"input_tokens": 5.0, "output_tokens": 1.0}})["usage"].(map[string]any)
+	if _, ok := plain["prompt_tokens_details"]; ok || plain["prompt_tokens"] != 5 {
+		t.Fatalf("plain usage = %v", plain)
+	}
+}

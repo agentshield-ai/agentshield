@@ -38,6 +38,7 @@ class FakeWeft:
         self.registry: Dict[tuple, List[Dict[str, Any]]] = {}  # (project_id, collection) -> versions
         self.embeddings_enabled = False
         self.weave_routes = True  # serve /objs/{id}/aliases and tag routes
+        self.runtimes: Dict[str, Any] = {}
         self.lock = threading.Lock()
         fake = self
 
@@ -144,6 +145,15 @@ class FakeWeft:
         return {"id": cid, "trace_id": c.get("trace_id")} if mode == "start" else {}
 
     def handle_put(self, path: str, body: Any) -> Any:
+        m = re.fullmatch(r"/v2/([^/]+)/([^/]+)/runtimes/([^/]+)", path)
+        if m:
+            from urllib.parse import unquote
+
+            name = unquote(m.group(3))
+            ids = [{"id": r["id"], "max_tokens": r.get("max_tokens") or 4096, "playground_id": f"{name}/{r['id']}"} for r in body["runtime_ids"]]
+            self.runtimes[name] = {"name": name, "base_url": body["base_url"], "api_key_secret": body.get("api_key_secret"),
+                                   "headers": body.get("headers") or {}, "runtime_ids": ids, "kind": body.get("kind") or "openai"}
+            return self.runtimes[name]
         m = re.fullmatch(r"/objs/([^/]+)/aliases", path)
         if m and self.weave_routes:
             for a in body["aliases"]:
@@ -157,6 +167,23 @@ class FakeWeft:
         raise KeyError(path)
 
     def handle(self, path: str, body: Any, raw: bytes, ctype: str) -> Any:
+        if path in ("/threads/query", "/threads/stream_query"):
+            threads: Dict[str, Dict[str, Any]] = {}
+            for c in self.calls.values():
+                tid = c.get("thread_id")
+                if not tid or c.get("project_id") != body["project_id"]:
+                    continue
+                t = threads.setdefault(tid, {"thread_id": tid, "turn_count": 0, "start_time": c.get("started_at"), "last_updated": c.get("ended_at") or c.get("started_at")})
+                if c.get("turn_id") == c.get("id"):
+                    t["turn_count"] += 1
+                t["start_time"] = min(t["start_time"], c.get("started_at"))
+            out = sorted(threads.values(), key=lambda t: t["thread_id"])
+            for sb in reversed(body.get("sort_by") or []):
+                out.sort(key=lambda t: t.get(sb["field"]) or 0, reverse=sb.get("direction") == "desc")
+            out = out[body.get("offset") or 0:][: body.get("limit") or None]
+            if path == "/threads/query":
+                return {"threads": out}
+            return ("".join(json.dumps(t) + "\n" for t in out).encode(), "application/jsonl")
         m = re.fullmatch(r"/objs/([^/]+)/aliases/remove", path)
         if m and self.weave_routes:
             for a in body["aliases"]:

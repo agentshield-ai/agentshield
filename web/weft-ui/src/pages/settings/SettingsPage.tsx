@@ -138,7 +138,10 @@ function CostsTab({ projectId }: { projectId: string }) {
   return (
     <div className="col" style={{ gap: 12 }}>
       <div className="toolbar">
-        <span className="muted small grow">Prices are per 1M tokens in USD. Project prices override the built-in defaults for cost calculation.</span>
+        <span className="muted small grow">
+          Prices are per 1M tokens in USD. Project prices override the built-in defaults for cost calculation. Cache reads and writes are the cached part of
+          the input; without a cache price they are billed at the input price.
+        </span>
         <input className="input" placeholder="Search models…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200, maxWidth: '100%' }} />
         <select className="input" value={level} onChange={(e) => setLevel(e.target.value as typeof level)}>
           <option value="">All prices</option>
@@ -165,6 +168,8 @@ function CostsTab({ projectId }: { projectId: string }) {
                 <th>Provider</th>
                 <th className="num">Input / 1M</th>
                 <th className="num">Output / 1M</th>
+                <th className="num" title="Cache hits (cached input tokens)">Cache read / 1M</th>
+                <th className="num" title="Tokens written to the prompt cache">Cache write / 1M</th>
                 <th>Effective</th>
                 <th>Level</th>
                 <th style={{ width: 130 }} />
@@ -177,6 +182,17 @@ function CostsTab({ projectId }: { projectId: string }) {
                   <td className="muted">{c.provider_id || '—'}</td>
                   <td className="num mono">{fmtPerM(c.prompt_token_cost)}</td>
                   <td className="num mono">{fmtPerM(c.completion_token_cost)}</td>
+                  {[c.cache_read_input_token_cost, c.cache_creation_input_token_cost].map((v, i) => (
+                    <td key={i} className="num mono">
+                      {v == null ? (
+                        <span className="faint" title="Not priced separately: billed at the input price">
+                          = input
+                        </span>
+                      ) : (
+                        fmtPerM(v)
+                      )}
+                    </td>
+                  ))}
                   <td className="muted small">{c.effective_date ? new Date(c.effective_date).toLocaleDateString() : '—'}</td>
                   <td>
                     <span className={`badge ${c.pricing_level === 'project' ? 'accent' : ''}`}>{c.pricing_level === 'project' ? 'project' : 'built-in'}</span>
@@ -235,11 +251,17 @@ function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId
   const [provider, setProvider] = useState(entry?.provider_id ?? '')
   const [inPrice, setIn] = useState(entry ? String(+(entry.prompt_token_cost * PER_M).toPrecision(6)) : '')
   const [outPrice, setOut] = useState(entry ? String(+(entry.completion_token_cost * PER_M).toPrecision(6)) : '')
+  const perMOrBlank = (v: number | null | undefined) => (v == null ? '' : String(+(v * PER_M).toPrecision(6)))
+  const [cacheRead, setCacheRead] = useState(perMOrBlank(entry?.cache_read_input_token_cost))
+  const [cacheWrite, setCacheWrite] = useState(perMOrBlank(entry?.cache_creation_input_token_cost))
+  const optPrice = (v: string) => (v.trim() === '' ? undefined : Number(v) / PER_M)
+  const optValid = (v: string) => v.trim() === '' || (!Number.isNaN(Number(v)) && Number(v) >= 0)
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
   const isEdit = !!entry && !override
-  const valid = llmId && inPrice !== '' && outPrice !== '' && !Number.isNaN(Number(inPrice)) && !Number.isNaN(Number(outPrice))
+  const valid =
+    llmId && inPrice !== '' && outPrice !== '' && !Number.isNaN(Number(inPrice)) && !Number.isNaN(Number(outPrice)) && optValid(cacheRead) && optValid(cacheWrite)
   return (
     <Modal
       title={isEdit ? `Edit price for ${entry!.llm_id}` : override ? `Override price for ${entry!.llm_id}` : 'Add model price'}
@@ -260,6 +282,8 @@ function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId
                   [llmId.trim()]: {
                     prompt_token_cost: Number(inPrice) / PER_M,
                     completion_token_cost: Number(outPrice) / PER_M,
+                    cache_read_input_token_cost: optPrice(cacheRead),
+                    cache_creation_input_token_cost: optPrice(cacheWrite),
                     provider_id: provider || undefined,
                     effective_date: new Date(date + 'T00:00:00Z').toISOString(),
                   },
@@ -301,13 +325,24 @@ function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId
           <input className="input mono" inputMode="decimal" value={outPrice} onChange={(e) => setOut(e.target.value)} placeholder="0.60" />
         </label>
         <label className="field">
+          Cache read $ / 1M tokens
+          <input className="input mono" inputMode="decimal" value={cacheRead} onChange={(e) => setCacheRead(e.target.value)} placeholder="blank = input price" />
+        </label>
+        <label className="field">
+          Cache write $ / 1M tokens
+          <input className="input mono" inputMode="decimal" value={cacheWrite} onChange={(e) => setCacheWrite(e.target.value)} placeholder="blank = input price" />
+        </label>
+        <label className="field">
           Effective from
           <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
       </div>
       {valid && (
         <div className="hint mono">
-          Stored per token: input {(Number(inPrice) / PER_M).toExponential(3)}, output {(Number(outPrice) / PER_M).toExponential(3)} USD
+          Stored per token: input {(Number(inPrice) / PER_M).toExponential(3)}, output {(Number(outPrice) / PER_M).toExponential(3)}
+          {cacheRead.trim() !== '' && `, cache read ${(Number(cacheRead) / PER_M).toExponential(3)}`}
+          {cacheWrite.trim() !== '' && `, cache write ${(Number(cacheWrite) / PER_M).toExponential(3)}`} USD. Cached tokens are part of the input:
+          cost = (input − cache read − cache write) × input price + cache read × cache read price + cache write × cache write price + output × output price.
         </div>
       )}
       <ErrorBox error={err} />

@@ -29,6 +29,7 @@ does not import every framework you have installed).
 | ``claude_agent_sdk`` | claude-agent-sdk | query() and ClaudeSDKClient turns, LLM messages, tools |
 | ``haystack`` | haystack-ai | WeftHaystackTracer (pipelines and components) |
 | ``verdict`` | verdict | pipelines and units (judges) via Verdict's tracer interface |
+| ``typesafe`` | typesafe-sdk | ``system_one`` (sync/async) as an LLM span (state, questions, answers, usage) |
 | ``autogen`` | autogen-agentchat | agents, teams, model clients, tools, memory |
 | ``agno`` | agno | agents, teams, workflows, models, tools |
 | ``google_adk`` | google-adk | runner, agents, tools, LLM calls |
@@ -72,6 +73,7 @@ from .openai_agents import patch_openai_agents
 from .openai_realtime import RealtimeTracer, patch_openai_realtime, wrap_websocket_async, wrap_websocket_connect, wrap_websocket_sync
 from .other_llms import patch_cerebras, patch_cohere, patch_groq, patch_mistral, patch_together
 from .smolagents import patch_smolagents
+from .typesafe import patch_typesafe
 from .verdict import patch_verdict, unpatch_verdict
 from .vertexai import patch_vertexai
 
@@ -115,6 +117,7 @@ INTEGRATIONS: Dict[str, Integration] = {
         Integration("claude_agent_sdk", patch_claude_agent_sdk, ("claude_agent_sdk",)),
         Integration("haystack", patch_haystack, ("haystack",)),
         Integration("verdict", patch_verdict, ("verdict",)),
+        Integration("typesafe", patch_typesafe, ("typesafe_sdk",)),
         Integration("autogen", patch_autogen, _AUTOGEN_TRIGGERS),
         Integration("agno", patch_agno, ("agno",)),
         Integration("google_adk", patch_google_adk, ("google.adk",)),
@@ -244,6 +247,7 @@ __all__ = [
     "patch_claude_agent_sdk",
     "patch_haystack",
     "patch_verdict",
+    "patch_typesafe",
     "patch_autogen",
     "patch_agno",
     "patch_google_adk",

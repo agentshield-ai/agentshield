@@ -241,10 +241,13 @@ class WeftClient:
             backoff=self.retry_backoff,
             max_backoff=self.retry_max_backoff,
             wal_path=wal_path,
+            # Weave's WEAVE_DISABLE_WAL_SENDER: with the WAL on, write requests to it and send nothing.
+            wal_only=_setting_bool(st, "disable_wal_sender", "WEFT_DISABLE_WAL_SENDER", False),
         )
+        self.wal_path = wal_path
         self._uploaded: set = set()
         self._warned_digest = False
-        if wal_path and not disabled:
+        if wal_path and not disabled and not self._sender.wal_only:
             n = self._sender.replay_wal()
             if n:
                 logger.info("weft: replaying %d unsent items from %s", n, wal_path)
@@ -608,6 +611,78 @@ class WeftClient:
     def whoami(self) -> Dict[str, Any]:
         """``GET /auth/whoami``: the user the API key acts as."""
         return self._http.get("/auth/whoami")
+
+    # ------------------------------------------------------------------ threads, custom runtimes
+    def threads_query(self, req: Any = None, **kwargs: Any) -> Any:
+        """Weave's ``client.threads_query(ThreadsQueryReq(...))``: threads (calls grouped by
+        ``thread_id``) with turn counts, times and turn-duration percentiles.
+
+        ``req`` is a ``weft.trace_server_interface.ThreadsQueryReq`` or a dict; keyword
+        arguments build one (``client.threads_query(limit=20, sort_by=[...])``).
+        Returns a ``ThreadsQueryRes`` (``.threads``: ``ThreadSchema`` list)."""
+        from .trace_server_interface import ThreadsQueryRes
+
+        return ThreadsQueryRes(threads=list(self.threads_query_stream(req, **kwargs)))
+
+    def threads_query_stream(self, req: Any = None, **kwargs: Any) -> Iterator[Any]:
+        """``threads_query`` as an iterator of ``ThreadSchema`` (``/threads/stream_query``)."""
+        from .trace_server_interface import ThreadSchema, ThreadsQueryReq, threads_query_body
+
+        if req is None:
+            req = ThreadsQueryReq(**kwargs)
+        elif isinstance(req, dict):
+            req = ThreadsQueryReq(**{**req, **kwargs})
+        elif kwargs:
+            req = req.model_copy(update=kwargs)
+        body = threads_query_body(req, self.project_id, self.entity)
+        for t in self._http.post_jsonl("/threads/stream_query", body):
+            yield ThreadSchema.model_validate(t)
+
+    def register_custom_runtime(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        runtime_ids: Any,
+        api_key_secret: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        """Register a custom runtime (an OpenAI-compatible endpoint), replacing its
+        configuration if it exists (Weave's ``register_custom_runtime``).
+
+        ``runtime_ids`` is the complete list: IDs left out are removed. A string ID
+        gets the default ``max_tokens`` (4096); pass ``weft.CustomRuntimeID(id=...,
+        max_tokens=...)`` to set it. ``api_key_secret`` names a stored secret sent
+        as the bearer token. Each ID is then usable as the model ``<name>/<id>`` in
+        the playground, LLM judges and ``LLMStructuredCompletionModel``. Returns a
+        ``CustomRuntimeApplyRes``."""
+        from urllib.parse import quote
+
+        from ._custom_runtime import DEFAULT_CUSTOM_RUNTIME_MAX_TOKENS, CustomRuntimeID
+        from .trace_server_interface import CustomRuntimeApplyRes
+
+        if isinstance(runtime_ids, (str, bytes)) or not hasattr(runtime_ids, "__iter__"):
+            raise TypeError("runtime_ids must be a list of IDs")
+        ids: List[Dict[str, Any]] = []
+        for rid in runtime_ids:
+            if isinstance(rid, str):
+                ids.append({"id": rid, "max_tokens": DEFAULT_CUSTOM_RUNTIME_MAX_TOKENS})
+            elif isinstance(rid, CustomRuntimeID):
+                ids.append(rid.model_dump())
+            elif isinstance(rid, dict):
+                ids.append(CustomRuntimeID(**rid).model_dump())
+            else:
+                raise TypeError(f"runtime_ids entries must be str or CustomRuntimeID, got {type(rid).__name__}")
+        path = f"/v2/{quote(self.entity, safe='')}/{quote(self.project, safe='')}/runtimes/{quote(name, safe='')}"
+        body = {
+            "project_id": self.project_id,
+            "runtime_name": name,
+            "base_url": base_url,
+            "api_key_secret": api_key_secret,
+            "headers": dict(headers or {}),
+            "runtime_ids": ids,
+        }
+        return CustomRuntimeApplyRes.model_validate(self._http.request("PUT", path, body))
 
     # ------------------------------------------------------------------ object management
     def _obj_ref(self, obj_ref: Any) -> ObjectRef:
@@ -1166,7 +1241,9 @@ def init(
     ``settings`` (dict): ``global_attributes``, ``print_call_link`` (default
     True, env ``WEFT_PRINT_CALL_LINK``), ``capture_code`` (default True, env
     ``WEFT_CAPTURE_CODE``), ``enable_disk_fallback`` (env ``WEFT_ENABLE_WAL``)
-    with ``wal_dir`` (env ``WEFT_WAL_DIR``), ``max_queue_size`` (default
+    with ``wal_dir`` (env ``WEFT_WAL_DIR``) and ``disable_wal_sender`` (env
+    ``WEFT_DISABLE_WAL_SENDER``: write every request to the WAL and send
+    nothing; the WAL is replayed by a later run without it), ``max_queue_size`` (default
     10000, 0 = unbounded; env ``WEFT_MAX_CALLS_QUEUE_SIZE``),
     ``retry_max_attempts`` (default 3, env ``WEFT_RETRY_MAX_ATTEMPTS``),
     ``retry_backoff`` (first retry delay in seconds, default 0.25, env
@@ -1179,7 +1256,8 @@ def init(
     ``WEFT_USE_SERVER_CACHE``), ``server_cache_dir`` (default
     ``~/.cache/weft``, env ``WEFT_SERVER_CACHE_DIR``) and
     ``server_cache_size_limit`` (bytes, default 1 GB, env
-    ``WEFT_SERVER_CACHE_SIZE_LIMIT``).
+    ``WEFT_SERVER_CACHE_SIZE_LIMIT``). ``WEFT_DEBUG_HTTP=1`` prints every HTTP
+    request and response to stderr (Authorization redacted).
     """
     global _global_client, _atexit_registered
     project = project or os.environ.get("WEFT_PROJECT")

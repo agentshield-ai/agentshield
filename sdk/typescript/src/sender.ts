@@ -17,6 +17,8 @@ export interface SenderOptions {
   maxBackoffMs?: number;
   /** Write-ahead log file: unsent items are appended here and replayed on the next start. */
   walPath?: string;
+  /** With `walPath`: write every item to the WAL and send nothing (WEFT_DISABLE_WAL_SENDER). */
+  walOnly?: boolean;
 }
 
 /** Append-only JSONL file of unsent requests. */
@@ -94,6 +96,8 @@ export class Sender {
   backoffMs: number;
   maxBackoffMs: number;
   readonly wal: WriteAheadLog | null;
+  /** Everything goes to the WAL, nothing is sent (WEFT_DISABLE_WAL_SENDER). */
+  readonly walOnly: boolean;
   walWritten = 0;
   /**
    * Async step run on call start/end items just before they are sent (e.g.
@@ -115,11 +119,12 @@ export class Sender {
     this.backoffMs = opts.backoffMs ?? 250;
     this.maxBackoffMs = opts.maxBackoffMs ?? 4000;
     this.wal = opts.walPath ? new WriteAheadLog(opts.walPath) : null;
+    this.walOnly = !!(opts.walOnly && this.wal);
   }
 
   /** Re-enqueue items saved by a previous process; returns how many. */
   replayWal(): number {
-    if (!this.wal) return 0;
+    if (!this.wal || this.walOnly) return 0;
     const items = this.wal.drain();
     for (const it of items) this.enqueue(it);
     return items.length;
@@ -148,6 +153,10 @@ export class Sender {
   }
 
   enqueue(item: Item): boolean {
+    if (this.walOnly) {
+      this.spill([item]);
+      return true;
+    }
     if (this.queue.length >= this.maxQueue) {
       if (this.wal) {
         this.spill([item]);

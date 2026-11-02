@@ -88,6 +88,7 @@ await weft.init('my-project', {
     printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root call (WEFT_PRINT_CALL_LINK)
     captureCode: true,                           // store op source (WEFT_CAPTURE_CODE)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
+    disableWalSender: false,                     // with the WAL on: write everything to it, send nothing (WEFT_DISABLE_WAL_SENDER)
     maxQueueSize: 10_000, batchSize: 100,      // WEFT_MAX_CALLS_QUEUE_SIZE (0 = unbounded)
     retryMaxAttempts: 3,                       // WEFT_RETRY_MAX_ATTEMPTS
     retryBackoffMs: 250, retryMaxBackoffMs: 4000,   // WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL (seconds)
@@ -108,7 +109,14 @@ carry `wb_run_id` (`<entity>/<project>/<run id>`), `wb_run_step` and
 With `enableDiskFallback`, anything that cannot be sent goes to a JSONL file
 instead of being dropped. That covers batches that still fail after retries,
 queue overflow, and what is still queued when the process exits. The next
-`init()` for the same server and project replays it.
+`init()` for the same server and project replays it. Weave's WAL is different
+(every request is written first and a background "WAL sender" drains it), so
+its `WEAVE_DISABLE_WAL_SENDER` maps to `disableWalSender` /
+`WEFT_DISABLE_WAL_SENDER`: with the WAL on, every write goes to the file and
+nothing is sent or replayed until a run without it. `WEFT_DEBUG_HTTP=1`
+(Weave's `WEAVE_DEBUG_HTTP`) prints every request and response (method, URL,
+headers with `Authorization` redacted, JSON bodies, status, elapsed time) to
+stderr.
 
 ## Tracing
 
@@ -181,6 +189,8 @@ weft.instrumentBedrock(BedrockRuntimeClient);       // or patch every client
 weft.wrapBedrockAgent(new BedrockAgentRuntimeClient({}));   // send(InvokeAgent | InvokeInlineAgent), see below
 weft.instrumentBedrockAgent(BedrockAgentRuntimeClient);
 const rt = weft.wrapOpenAIRealtime(new OpenAIRealtimeWS({ model: 'gpt-realtime' }));   // see below
+await weft.patchRealtimeSession();                  // every RealtimeSession of @openai/agents-realtime, see below
+weft.wrapTypeSafe(new TypeSafeClient());            // @typesafe-ai/sdk systemOne; or patchTypeSafeModule(await import('@typesafe-ai/sdk'))
 const vertex = weft.wrapVertexAI(new VertexAI({ project, location }));   // models from getGenerativeModel: generateContent(Stream), chats
 ```
 
@@ -203,9 +213,40 @@ call; every `response.created` → `response.done` is an
 the previous response (text, input audio transcripts, function outputs) plus
 instructions and voice, with usage including cached and audio tokens; function
 calls are `openai.realtime.tool.<name>` (tool) calls that end at your
-`function_call_output`. Audio is never stored, only its size. The model comes
-from the connection URL. For a raw websocket, feed a `new weft.RealtimeTracer()`
-with `onClientEvent(e)`, `onServerEvent(e)` and `close()`.
+`function_call_output`. The model comes from the connection URL.
+
+Audio is saved as WAV files (`weft.Audio`), as in Weave: the user's audio
+(`input_audio_buffer.append`, cut per item at the server-VAD speech markers or
+at each commit) on the item's `input_audio` part, and the model's audio
+(`response.output_audio.delta`) on the response's `output_audio` part. PCM16
+at the session's rate and G.711 u-law/A-law are written. Each clip is capped
+at `WEFT_REALTIME_MAX_AUDIO_BYTES` (default 25 MiB; the server takes files up
+to 64 MiB) and marked `audio_truncated` past it; `0` records sizes only.
+
+The OpenAI Agents SDK's `RealtimeSession` (`@openai/agents-realtime`, the
+route Weave documents for TypeScript) is traced by Weave's
+`patchRealtimeSession()`: it imports the package (or takes it:
+`patchRealtimeSession(await import('@openai/agents-realtime'))`) and patches
+`RealtimeSession.prototype.connect`, so every session, including ones created
+earlier, is traced from its `connect()`. The session's `transport_event`s
+(every raw server event) and its transport's `sendEvent` (which `sendAudio`,
+`sendMessage` and tool outputs go through) feed the same tracer, so a session
+records the same calls and audio as above. A disconnect or `close()` ends the
+session call; a later `connect()` starts a new one.
+`weft.wrapRealtimeSession(session)` traces one session. For any other
+websocket client, feed a `new weft.RealtimeTracer()` with `onClientEvent(e)`,
+`onServerEvent(e)` and `close()`.
+
+**TypeSafe.** `wrapTypeSafe(client, { captureContent? })` or
+`patchTypeSafeModule(mod)` / `instrumentTypeSafe(mod)` (Weave's names)
+record each `systemOne({ state, questions, model? })` as an LLM (`chat`) call
+of provider `typesafe`: the state as the user message, the questions as the
+`typesafe.questions` attribute, the answers, response model, usage and request
+id, inside the running turn or its own `typesafe SDK` turn. Errors keep their
+type and HTTP status but not TypeSafe's message (it holds the response body).
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
+`captureContent: false` or a conversation with `includeContent: false` drops
+state, questions and answers.
 
 ## Framework integrations
 
@@ -538,6 +579,12 @@ await client.getFeedback({ query: { $eq: [{ $getField: 'feedback_type' }, { $lit
 await call!.feedback.list(); await call!.feedback.purge(feedbackId);
 await call!.children(); call!.status; call!.uiUrl;
 await client.getThreads({ limit: 20 });
+await client.registerCustomRuntime({        // Weave's registerCustomRuntime; resolves to { data, error: null }
+  name: 'my-vllm', baseUrl: 'https://vllm.internal/v1',
+  runtimeIds: ['llama-3-8b', { id: 'qwen2-7b', maxTokens: 8192 }],   // the complete list
+  apiKeySecret: 'VLLM_KEY', headers: { 'X-Team': 'ml' },
+});                                          // models "my-vllm/llama-3-8b", ...
+client.conversationUrl(conversationId);      // UI link; also weft.agentConversationPath(entity, project, id)
 await client.getEvaluations(); await client.getEvaluationCalls();
 await client.compareEvaluations([a, b]); await client.leaderboard('qa-board');
 await weft.get('qa:latest'); weft.parseUri('weft:///e/p/object/qa:<digest>');

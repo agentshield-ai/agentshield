@@ -166,8 +166,10 @@ func usageSummary(resp map[string]any, model string) map[string]any {
 		model = m
 	}
 	entry := map[string]any{"requests": 1}
-	for _, k := range []string{"prompt_tokens", "completion_tokens", "total_tokens"} {
-		if v, ok := store.ToFloat(u[k]); ok {
+	norm := store.NormalizeUsage(u) // lifts cached_tokens etc. to Weave's cache fields
+	for _, k := range []string{"prompt_tokens", "completion_tokens", "total_tokens", "cache_read_input_tokens",
+		"cache_creation_input_tokens", "reasoning_tokens"} {
+		if v, ok := norm[k]; ok {
 			entry[k] = v
 		}
 	}

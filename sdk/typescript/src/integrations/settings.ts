@@ -51,6 +51,9 @@ export type AutopatchSettings = Record<string, IntegrationSettings | boolean | u
 /** Alternative spellings accepted as integration names. */
 export const INTEGRATION_ALIASES: Record<string, string> = {
   'openai-agents': 'openai_agents',
+  '@typesafe-ai/sdk': 'typesafe',
+  'typesafe-sdk': 'typesafe',
+  '@openai/agents-realtime': 'openai_realtime',
   '@openai/agents': 'openai_agents',
   agents: 'openai_agents',
   'claude-agent-sdk': 'claude_agent_sdk',

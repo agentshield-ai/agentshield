@@ -683,7 +683,11 @@ func frameworkUsage(attrs map[string]any, set func(name string, keys ...string))
 		"ai.usage.reasoningTokens")
 	set("cache_read_input_tokens", "gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_read_input_tokens",
 		"llm.token_count.prompt_details.cache_read", "ai.usage.cachedInputTokens")
-	set("cache_creation_input_tokens", "gen_ai.usage.cache_write.input_tokens", "gen_ai.usage.cache_creation_input_tokens",
+	// OTel GenAI semconv: gen_ai.usage.cache_read.input_tokens and
+	// gen_ai.usage.cache_creation.input_tokens are included in
+	// gen_ai.usage.input_tokens (Weave's convention too).
+	set("cache_creation_input_tokens", "gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.cache_write.input_tokens",
+		"gen_ai.usage.cache_creation_input_tokens",
 		"llm.token_count.prompt_details.cache_write")
 }
 

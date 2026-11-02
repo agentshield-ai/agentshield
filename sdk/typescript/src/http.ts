@@ -14,6 +14,59 @@ export class WeftHTTPError extends Error {
   }
 }
 
+// ---------------------------------------------------------------- WEFT_DEBUG_HTTP
+// Weave's WEAVE_DEBUG_HTTP: print every request and response (time, method,
+// URL, headers with Authorization redacted, body; then elapsed time, status,
+// headers and body) to stderr. Read on every request.
+const DIV_REQUEST = '-'.repeat(21);
+const DIV_RESPONSE = '----- Response below -----';
+const BODY_LIMIT = 64 * 1024;
+
+export function debugHttpEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((process.env.WEFT_DEBUG_HTTP ?? '').trim().toLowerCase());
+}
+
+function debugWrite(text: string): void {
+  try {
+    process.stderr.write(text);
+  } catch {
+    /* ignore */
+  }
+}
+
+function headersText(h: Iterable<[string, string]>): string {
+  return [...h].map(([k, v]) => `  ${k}: ${['authorization', 'cookie', 'x-api-key'].includes(k.toLowerCase()) ? '<Redacted>' : v}`).join('\n');
+}
+
+function bodyText(body: unknown, ctype: string): string {
+  if (body === undefined || body === null || body === '') return '  None';
+  if (typeof body !== 'string') return body instanceof FormData ? '  <multipart/form-data>' : `  <${(body as { byteLength?: number }).byteLength ?? '?'} bytes>`;
+  let text = body;
+  if (ctype.includes('json') || /^[[{]/.test(text)) {
+    try {
+      text = JSON.stringify(JSON.parse(text), null, 4);
+    } catch {
+      /* not JSON */
+    }
+  }
+  return text.length > BODY_LIMIT ? `${text.slice(0, BODY_LIMIT)}\n... (${text.length - BODY_LIMIT} more characters)` : text;
+}
+
+function debugRequest(method: string, url: string, headers: Record<string, string>, body: unknown): number {
+  const ctype = headers['Content-Type'] ?? '';
+  debugWrite(`${DIV_REQUEST}\nTime: ${new Date().toISOString()}\nMethod: ${method}\nURL: ${url}\nHeaders:\n${headersText(Object.entries(headers))}\nBody:\n${bodyText(body, ctype)}\n`);
+  return Date.now();
+}
+
+async function debugResponse(res: Response, started: number): Promise<Response> {
+  const text = await res.text().catch(() => '');
+  debugWrite(
+    `${DIV_RESPONSE}\nElapsed Time: ${((Date.now() - started) / 1000).toFixed(2)} seconds\nStatus Code: ${res.status}\nReason: ${res.statusText}\n` +
+      `Headers:\n${headersText(res.headers as unknown as Iterable<[string, string]>)}\nBody:\n${bodyText(text, res.headers.get('content-type') ?? '')}\n`,
+  );
+  return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+
 export class HttpClient {
   constructor(
     public readonly baseUrl: string,
@@ -32,16 +85,21 @@ export class HttpClient {
 
   async raw(method: string, path: string, body?: BodyInit, contentType: string | null = 'application/json', timeoutMs?: number): Promise<Response> {
     let res: Response;
+    const headers = this.headers(body === undefined ? null : contentType);
+    const debug = debugHttpEnabled();
+    const started = debug ? debugRequest(method, this.baseUrl + path, headers, body) : 0;
     try {
       res = await fetch(this.baseUrl + path, {
         method,
-        headers: this.headers(body === undefined ? null : contentType),
+        headers,
         body,
         signal: AbortSignal.timeout(timeoutMs ?? this.timeoutMs),
       });
     } catch (e) {
+      if (debug) debugWrite(`${DIV_RESPONSE}\nError: ${(e as Error).message}\n`);
       throw new WeftHTTPError(0, `connection failed: ${(e as Error).message}`, path);
     }
+    if (debug) res = await debugResponse(res, started);
     if (!res.ok) {
       let reason = await res.text().catch(() => '');
       try {

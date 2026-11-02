@@ -4,6 +4,11 @@ export {
   flush,
   WeftClient,
   DEFAULT_SERVER_URL,
+  agentConversationPath,
+  type CustomRuntimeId,
+  type CustomRuntimeApplyRes,
+  type RegisterCustomRuntimeOptions,
+  type RegisterCustomRuntimeResult,
   senderOptionsFromEnv,
   type InitOptions,
   type ClientSettings,
@@ -134,6 +139,7 @@ export {
   type AudioFormat,
 } from './integrations/openai_realtime.js';
 export { wrapVertexAI, wrapVertexModel, wrapVertexChat } from './integrations/vertexai.js';
+export { wrapTypeSafe, patchTypeSafeModule, instrumentTypeSafe } from './integrations/typesafe.js';
 export {
   configureIntegrations,
   updateIntegration,

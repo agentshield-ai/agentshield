@@ -47,14 +47,22 @@ class HTTPClient:
 
     def _open(self, method: str, path: str, data: Optional[bytes], headers: Dict[str, str], timeout: Optional[float]):
         req = urllib.request.Request(self.base_url + path, data=data, method=method, headers=headers)
+        debug = debug_http_enabled()
+        if debug:
+            started = _debug_request(req, data)
         try:
-            return urllib.request.urlopen(req, timeout=timeout or self.timeout)
+            resp = urllib.request.urlopen(req, timeout=timeout or self.timeout)
+            if debug:
+                return _debug_response(resp, started)
+            return resp
         except urllib.error.HTTPError as e:
             body = b""
             try:
                 body = e.read()
             except Exception:
                 pass
+            if debug:
+                _debug_response_parts(e.code, str(e.reason), e.headers, body, started)
             reason = body.decode("utf-8", "replace")
             try:
                 reason = json.loads(reason).get("reason", reason)
@@ -63,6 +71,8 @@ class HTTPClient:
             raise WeftHTTPError(e.code, reason or str(e.reason), path) from None
         except (urllib.error.URLError, OSError, ValueError) as e:
             reason = getattr(e, "reason", e)
+            if debug:
+                _debug_write(f"{_DIV_RESPONSE}\nError: {reason}\n")
             raise WeftHTTPError(0, f"connection failed: {reason}", path) from None
 
     def request_raw(self, method: str, path: str, body: Any = None, timeout: Optional[float] = None) -> bytes:
@@ -114,6 +124,117 @@ class HTTPClient:
         with self._open("POST", path, data, self.headers(f"multipart/form-data; boundary={boundary}"), timeout) as resp:
             raw = resp.read()
         return json.loads(raw) if raw.strip() else {}
+
+
+# ---------------------------------------------------------------- WEFT_DEBUG_HTTP
+# Weave's WEAVE_DEBUG_HTTP: print every request and response (time, thread,
+# method, URL, headers with Authorization redacted, body; then elapsed time,
+# status, headers and body). Weave prints to the console with rich; Weft
+# writes plain text to stderr so program output on stdout is not mixed with it.
+_DIV_REQUEST = "-" * 21
+_DIV_RESPONSE = "----- Response below -----"
+_DEBUG_BODY_LIMIT = 64 * 1024
+
+
+def debug_http_enabled() -> bool:
+    """``WEFT_DEBUG_HTTP`` is set (``1``/``true``); read on every request."""
+    return env_flag("WEFT_DEBUG_HTTP")
+
+
+def _debug_write(text: str) -> None:
+    import sys
+
+    try:
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    except Exception:  # pragma: no cover
+        pass
+
+
+def _headers_text(items: Any) -> str:
+    out = []
+    for k, v in items:
+        out.append(f"  {k}: {'<Redacted>' if str(k).lower() in ('authorization', 'cookie', 'x-api-key') else v}")
+    return "\n".join(out)
+
+
+def _body_text(body: Optional[bytes], ctype: str) -> str:
+    if not body:
+        return "  None"
+    if ctype.startswith("multipart/"):
+        return f"  <multipart/form-data, {len(body)} bytes>"
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return f"  <{len(body)} bytes of binary data>"
+    if "json" in ctype or text[:1] in "{[":
+        try:
+            text = json.dumps(json.loads(text), indent=4, ensure_ascii=False)
+        except ValueError:
+            pass
+    if len(text) > _DEBUG_BODY_LIMIT:
+        text = text[:_DEBUG_BODY_LIMIT] + f"\n... ({len(text) - _DEBUG_BODY_LIMIT} more characters)"
+    return text
+
+
+def _debug_request(req: "urllib.request.Request", data: Optional[bytes]) -> float:
+    import datetime
+    import threading
+    import time
+
+    ctype = req.get_header("Content-type") or ""
+    _debug_write(
+        f"{_DIV_REQUEST}\nTime: {datetime.datetime.now().strftime('%H:%M:%S.%f')}\nThread ID: {threading.get_ident()}\n"
+        f"Method: {req.get_method()}\nURL: {req.full_url}\nHeaders:\n{_headers_text(req.header_items())}\n"
+        f"Body:\n{_body_text(data, ctype)}\n"
+    )
+    return time.time()
+
+
+def _debug_response_parts(status: int, reason: str, headers: Any, body: bytes, started: float) -> None:
+    import time
+
+    items = headers.items() if headers is not None else []
+    ctype = (headers.get("Content-Type") if headers is not None else "") or ""
+    _debug_write(
+        f"{_DIV_RESPONSE}\nElapsed Time: {time.time() - started:.2f} seconds\nStatus Code: {status}\nReason: {reason}\n"
+        f"Headers:\n{_headers_text(items)}\nBody:\n{_body_text(body, ctype)}\n"
+    )
+
+
+class _BufferedResponse:
+    """A read-once response replaced by its buffered body (so it can be printed)."""
+
+    def __init__(self, resp: Any, body: bytes):
+        import io
+
+        self._buf = io.BytesIO(body)
+        self.status = getattr(resp, "status", 200)
+        self.headers = getattr(resp, "headers", None)
+
+    def read(self, n: int = -1) -> bytes:
+        return self._buf.read(n)
+
+    def __iter__(self) -> Iterator[bytes]:
+        return iter(self._buf)
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> "_BufferedResponse":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        pass
+
+
+def _debug_response(resp: Any, started: float) -> _BufferedResponse:
+    try:
+        body = resp.read()
+    finally:
+        resp.close()
+    _debug_response_parts(getattr(resp, "status", 200), getattr(resp, "reason", ""), getattr(resp, "headers", None), body, started)
+    return _BufferedResponse(resp, body)
 
 
 def env_flag(name: str) -> bool:

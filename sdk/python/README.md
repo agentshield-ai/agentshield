@@ -56,6 +56,8 @@ explicitly).
 | Print a link per root call | `settings={"print_call_link": False}` | `WEFT_PRINT_CALL_LINK` | on |
 | Store op source code | `settings={"capture_code": False}` | `WEFT_CAPTURE_CODE` | on |
 | On-disk write-ahead log | `settings={"enable_disk_fallback": True, "wal_dir": ...}` | `WEFT_ENABLE_WAL`, `WEFT_WAL_DIR` | off (`~/.weft/wal`) |
+| Write the WAL, send nothing (needs the WAL on) | `settings={"disable_wal_sender": True}` | `WEFT_DISABLE_WAL_SENDER` | off |
+| Print every HTTP request and response to stderr | | `WEFT_DEBUG_HTTP=1` | off |
 | Send queue size (0 = unbounded) | `settings={"max_queue_size": 10000}` | `WEFT_MAX_CALLS_QUEUE_SIZE` | 10000 |
 | Retries of a failed request | `settings={"retry_max_attempts": 3}` | `WEFT_RETRY_MAX_ATTEMPTS` | 3 |
 | First / longest retry delay (s) | `settings={"retry_backoff": 0.25, "retry_max_backoff": 4.0}` | `WEFT_RETRY_BACKOFF`, `WEFT_RETRY_MAX_INTERVAL` | 0.25, 4 |
@@ -68,6 +70,24 @@ The environment variables follow Weave's names with a `WEFT_` prefix
 (`WEAVE_MAX_CALLS_QUEUE_SIZE` → `WEFT_MAX_CALLS_QUEUE_SIZE`, and so on);
 explicit settings and arguments win over them. `WEFT_RETRY_BACKOFF` has no
 Weave equivalent. Invalid numbers are ignored with a warning.
+
+**WAL.** Weft's write-ahead log is a disk fallback: requests are sent from
+memory, and only what cannot be sent (server down, queue full, process
+exiting) is appended to `<wal_dir>/<server>_<project>.jsonl`, which the next
+`weft.init` for that server and project replays. Weave writes every request
+to its WAL first and drains it with a background "WAL sender". The Weave
+switch `WEAVE_DISABLE_WAL_SENDER` (write the WAL, never send) maps to
+`WEFT_DISABLE_WAL_SENDER`: with `WEFT_ENABLE_WAL` on, every write (call
+starts and ends, op and object versions, files) goes to the WAL file, nothing
+is sent, and nothing is replayed at start-up. Reads still go to the server.
+Run once more without the flag to send the file. Without `WEFT_ENABLE_WAL`
+the flag does nothing, as in Weave.
+
+**`WEFT_DEBUG_HTTP=1`** (Weave's `WEAVE_DEBUG_HTTP`) prints each request
+(time, thread, method, URL, headers with `Authorization` redacted, JSON body)
+and its response (elapsed time, status, headers, body) to stderr; bodies
+over 64 KB are cut and file uploads are summarised. It is read on every
+request.
 
 **W&B run linkage.** Like Weave, calls started while a `wandb` run is active
 (`wandb.run`, when `wandb` is imported) carry `wb_run_id`
@@ -170,6 +190,7 @@ result, call = search.call("weft", api_key="...")   # (result, Call); never rais
 call.id, call.trace_id, call.exception
 
 weft.get_current_call()                    # innermost call in this context
+weft.require_current_call()                # the same, raising weft.NoCurrentCallError outside an op
 
 with weft.attributes({"env": "prod", "user_id": "u1"}):
     search("x", api_key="...")             # attributes stored on every call in the block
@@ -294,7 +315,7 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 | Settings key | Library | Traced | Op name(s) |
 |---|---|---|---|
 | `openai` | openai | `chat.completions.create`, `responses.create` (sync/async/stream) | `openai.chat.completions.create`, `openai.responses.create` |
-| `openai_realtime` | openai | Realtime connections (`client.realtime.connect`, `client.beta.realtime.connect`, sync/async) | `openai.realtime.session`, `.response`, `.tool.<name>` |
+| `openai_realtime` | openai, websockets, websocket-client, aiohttp | Realtime connections: `client.realtime.connect` / `client.beta.realtime.connect` (sync/async), the OpenAI Agents SDK's `RealtimeRunner`, and raw `websockets.connect`, `websocket.WebSocketApp` and `aiohttp` `ws_connect` clients; audio saved as WAV | `openai.realtime.session`, `.response`, `.tool.<name>` |
 | `anthropic` | anthropic | `messages.create` (sync/async/`stream=True`), `messages.stream()` | `anthropic.messages.create`, `anthropic.messages.stream` |
 | `litellm` | litellm | `completion`, `acompletion` (incl. stream) | `litellm.completion`, `litellm.acompletion` |
 | `google_genai` | google-genai | `models.generate_content(_stream)`, sync and `client.aio` | `google.genai.models.generate_content(_stream)` |
@@ -320,6 +341,7 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 | `claude_agent_sdk` | claude-agent-sdk | `query()` (agent) and `ClaudeSDKClient` turns (agent, one thread per client), each assistant message (llm), each tool use (tool; `Task` sub-agents nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
 | `haystack` | haystack-ai | pipelines (chain) and components (`llm`, `retriever`, `embedding`, `reranker`, `tool`, `agent`) via `WeftHaystackTracer` | `haystack.pipeline.run`, `haystack.<ComponentType>` |
 | `verdict` | verdict | `Pipeline` runs (workflow) and units such as `JudgeUnit` (scorer), via Verdict's tracer interface | `verdict.<pipeline name>`, `verdict.<Unit>` |
+| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn or op is running) | `chat` |
 | `autogen` | autogen-agentchat / -core / -ext | agents and teams `run`/`run_stream`/`on_messages` (agent), model clients `create`/`create_stream` (llm), tools, memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
 | `agno` | agno | `Agent`/`Team` `run`/`arun` (agent), `Workflow` (workflow), `Model.response` (llm), tool calls | `agno.Agent.run`, `agno.Model.response`, ... |
 | `google_adk` | google-adk | `Runner.run(_async)`, agents, tools, LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
@@ -393,12 +415,42 @@ registered for you.
 **OpenAI Realtime.** Each realtime connection is a session call. Every
 response (`response.created` → `response.done`) is an LLM call whose inputs
 are the conversation items added since the previous response (text, input
-audio transcripts, function-call outputs) plus instructions and voice, and
+audio, transcripts, function-call outputs) plus instructions and voice, and
 whose output holds the response items, the streamed text/transcript and the
-audio size (audio bytes are never stored). Usage includes cached and audio
-token details. Function calls are tool calls that end when you send their
-`function_call_output`. For a raw websocket client, call
-`RealtimeTracer().on_client_event(e)` / `.on_server_event(e)` / `.close()`.
+audio size. Usage includes cached and audio token details. Function calls are
+tool calls that end when you send their `function_call_output`.
+
+Audio is saved as WAV files (`weft.Audio`), as in Weave: the user's audio
+(`input_audio_buffer.append`, cut per item at the server-VAD speech markers,
+or at each commit without VAD) on the item's `input_audio` content part, and
+the model's audio (`response.output_audio.delta`) on the `output_audio` part
+of the response output. PCM16 at the session's rate (24 kHz by default) and
+G.711 u-law/A-law are written. Each clip is capped at
+`WEFT_REALTIME_MAX_AUDIO_BYTES` (default 25 MiB of raw audio, about 9 minutes
+of 24 kHz PCM16; the server accepts files up to 64 MiB); a longer clip is cut
+there and marked `audio_truncated`. `WEFT_REALTIME_MAX_AUDIO_BYTES=0` records
+sizes only.
+
+Besides the `openai` package, the integration patches the websocket clients
+Weave patches, so the OpenAI Agents SDK (`agents.realtime.RealtimeRunner`,
+which connects with `websockets.connect`) and hand-written clients are traced
+without changes: `websockets.connect`, `websocket.WebSocketApp`
+(websocket-client) and `aiohttp.ClientSession.ws_connect`. Only Realtime URLs
+are traced (host `api.openai.com` or `*.openai.azure.com` with `realtime` in
+the path; add hosts with `WEFT_REALTIME_HOSTS=host1,host2`). The connection
+objects are not replaced, so `async with`, `async for` and `isinstance` keep
+working. With autopatching off, wrap one client yourself with Weave's helpers
+(any URL):
+
+```python
+from weft.integrations import wrap_websocket_async, wrap_websocket_connect, wrap_websocket_sync
+connect = wrap_websocket_connect(websockets.connect)      # async with connect(url) as ws: ...
+ws = wrap_websocket_async(await websockets.connect(url))  # or an aiohttp ws_connect response
+App = wrap_websocket_sync(websocket.WebSocketApp)         # App(url, on_message=...)
+```
+
+For anything else, call `RealtimeTracer().on_client_event(e)` /
+`.on_server_event(e)` / `.close()`.
 
 **MCP.** Set `WEFT_MCP_TRACE_LIST_OPERATIONS=false` to skip the `list_*`
 methods.
@@ -431,7 +483,20 @@ pipeline run is a `workflow` call (`verdict.<pipeline name>`) and each unit a
 child call (`verdict.JudgeUnit`, ...; judge-like units have kind `scorer`)
 with its input schema and output. Units run in Verdict's thread pool; they
 still nest correctly, and LLM requests made inside a unit (through litellm,
-openai, instructor ...) nest under the unit.
+openai, instructor ...) nest under the unit. Chained blocks
+(`Pipeline() >> a >> b`) stay in one trace: Verdict starts `b` with the
+finished `a` as its parent, so `b` nests under `a`, as under Weave.
+
+**TypeSafe.** `system_one(state, questions)` (Weave ships this integration
+without a docs page) becomes one LLM call of provider `typesafe`: the state is
+the user message, the questions are the `typesafe.questions` attribute, the
+answers are the assistant message (`gen_ai.output.type` `json`), with the
+response model, token usage and request id. It nests under the running turn
+or op, else in its own `typesafe SDK` turn. A failed call records the error
+type and HTTP status, not TypeSafe's error message (it carries the response
+body). `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
+`patch_typesafe(capture_content=False)` or a conversation with
+`include_content=False` drops state, questions and answers.
 
 ### Per-integration settings
 
@@ -830,6 +895,21 @@ ids = client.add_cost("my-model", prompt_token_cost=1e-6, completion_token_cost=
 client.query_costs(["my-model"]); client.purge_costs(ids)
 client.server_info(); client.whoami()
 client.resolve_url(file_digest)                  # download URL for a file or media reference
+
+from weft.trace_server_interface import SortBy, ThreadsQueryReq
+res = client.threads_query(ThreadsQueryReq(       # Weave's threads_query; also threads_query_stream
+    sort_by=[SortBy(field="last_updated", direction="desc")], limit=50,
+    sortable_datetime_after=datetime.datetime.now() - datetime.timedelta(days=1)))
+for t in res.threads:
+    print(t.thread_id, t.turn_count, t.start_time, t.last_updated, t.p50_turn_duration_ms)
+
+client.register_custom_runtime(                  # Weave's register_custom_runtime
+    name="my-vllm", base_url="https://vllm.internal/v1",
+    runtime_ids=["llama-3-8b", weft.CustomRuntimeID(id="qwen2-7b", max_tokens=8192)],  # the complete list
+    api_key_secret="VLLM_KEY", headers={"X-Team": "ml"})   # -> model ids "my-vllm/llama-3-8b", ...
+
+weft.urls.agent_conversation_path(entity, project, conversation_id)  # UI link to a conversation
+weft.urls.redirect_call(entity, project, call_id)                    # UI link to a call
 ```
 
 ## OpenTelemetry
@@ -869,5 +949,11 @@ pip install -e 'sdk/python[otel,test]'     # extras: scorers (local model scorer
 pytest sdk/python/tests                                   # unit tests (in-process fake server)
 WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 pytest sdk/python/tests/test_integration_server.py
 ```
+
+Some tests use real libraries when they are installed and are skipped
+otherwise: `verdict` (chained Verdict pipelines), `websockets`,
+`websocket-client`, `aiohttp` and `openai-agents` (Realtime over a local
+websocket server). They are not in the `test` extra because `verdict` pulls
+in litellm, scikit-learn and datasets.
 
 Examples live in `examples/weft/python/`.

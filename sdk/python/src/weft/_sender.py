@@ -37,6 +37,7 @@ class Sender:
         flush_interval: float = 0.1,
         max_backoff: float = 4.0,
         wal_path: Optional[str] = None,
+        wal_only: bool = False,
     ):
         self.http = http
         self.max_queue = max_queue
@@ -47,6 +48,8 @@ class Sender:
         self.flush_interval = flush_interval
         self.max_backoff = max_backoff
         self.wal = WriteAheadLog(wal_path) if wal_path else None
+        # WEFT_DISABLE_WAL_SENDER: write everything to the WAL and send nothing.
+        self.wal_only = bool(wal_only and self.wal is not None)
         self.wal_written = 0
         self._last_failure_retryable = False
         self._q: Deque[Item] = deque()
@@ -61,6 +64,9 @@ class Sender:
 
     # -- public -------------------------------------------------------------
     def enqueue(self, kind: str, payload: Any, callback: Optional[Callable[[Any], None]] = None) -> bool:
+        if self.wal_only:
+            self._spill([(kind, payload, callback)])
+            return True
         with self._cv:
             if self._stopped:
                 return False
@@ -111,7 +117,7 @@ class Sender:
 
     def replay_wal(self) -> int:
         """Re-enqueue items saved by a previous process; returns how many."""
-        if self.wal is None:
+        if self.wal is None or self.wal_only:
             return 0
         items = self.wal.drain()
         for kind, payload in items:

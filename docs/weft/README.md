@@ -35,6 +35,8 @@ make weft         # build bin/weft
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
 | `--pii-analyzer-url` | `WEFT_PII_ANALYZER_URL` | empty (regex PII redaction only); a Presidio Analyzer REST URL adds PERSON, LOCATION and ORGANIZATION redaction at ingest for projects with sensitive-data redaction on, see [API.md](API.md#project-settings-weave-paths) |
 | `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error calls are stored with regex redaction only |
+| `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |
+| `--egress-allow-private` | `WEFT_EGRESS_ALLOW_PRIVATE` | `false`; `true` allows loopback, private, link-local and CGNAT destinations (cloud metadata addresses stay blocked) |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
 | `--db-encryption-key-file` | `WEFT_DB_ENCRYPTION_KEY_FILE` | empty (plaintext database); a file holding a passphrase encrypts the whole database at rest, see [Database encryption at rest](#database-encryption-at-rest) |
@@ -57,6 +59,28 @@ Provider keys for the playground, LLM judges and monitors come from the
 environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) or
 from **Settings → Secrets** in the UI. The `mock/echo` and `mock/json` models
 work offline.
+
+### Outbound requests
+
+Weft refuses to send user-configured requests (remote scorers, `predict_url`
+models, webhooks, OAuth token URLs, LLM provider base URLs, reference-bucket
+tests) to loopback, private, link-local, CGNAT, cloud-metadata and other
+internal addresses, checking the address each connection dials so DNS
+rebinding and redirects are covered. The caller sees `destination not
+allowed`; the server logs the host, address and reason at warn level. Local
+model servers and mocks need an explicit allow:
+
+```bash
+./bin/weft --egress-allow localhost:11434            # Ollama (the built-in ollama/ models)
+./bin/weft --egress-allow 127.0.0.1:8000,10.0.0.0/8  # a local vLLM and an internal network
+./bin/weft --egress-allow-private                    # everything internal except cloud metadata
+```
+
+`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL` and `OLLAMA_BASE_URL` set in the
+server's environment are allowed automatically (the same names stored as
+secrets are not). The PII analyzer, the OIDC issuer and the S3/GCS files
+backend are operator configuration and are not restricted. Details:
+[API.md](API.md#outbound-request-restrictions).
 
 For UI development: `./bin/weft` in one shell, `cd web/weft-ui && npm run dev`
 in another (Vite proxies API paths to `WEFT_SERVER_URL`, default `:6345`).
@@ -130,6 +154,18 @@ Claude Agent SDK, the OpenAI Agents SDK, Mistral, Cohere, Groq, Together,
 Cerebras, AWS Bedrock and Vertex AI, with per-integration settings
 (`autopatchSettings`, postprocess hooks).
 
+Both SDKs trace OpenAI Realtime sessions with their audio saved as WAV files:
+the `openai` package's realtime connections, and the OpenAI Agents SDK
+(`RealtimeRunner` in Python, which uses `websockets`; `RealtimeSession` in
+TypeScript via `weft.patchRealtimeSession()`). The Python SDK also patches raw
+`websockets`, `websocket-client` and `aiohttp` Realtime clients, as Weave
+does. Weave's lower-level client methods are there too:
+`register_custom_runtime` / `registerCustomRuntime`, `threads_query`,
+`require_current_call` and `weft.urls.agent_conversation_path` (TypeScript:
+`agentConversationPath`, `client.conversationUrl`), and the
+`WEFT_DEBUG_HTTP` / `WEFT_DISABLE_WAL_SENDER` equivalents of Weave's
+variables.
+
 **Coding agents.** Agent harness plugins trace Claude Code
 ([`plugins/weft-claude-code`](../../plugins/weft-claude-code)), Codex
 ([`plugins/weft-codex`](../../plugins/weft-codex)), OpenClaw
@@ -175,7 +211,7 @@ monitor and feedback, using offline mock models.
 | Area | What Weft does |
 |---|---|
 | Traces | Calls with inputs, output, exception, attributes, summary. Trace tree and timeline views, filters (op, status, free text, any field via the query builder), sorting, saved views, charts (volume, errors, latency percentiles, tokens, cost), export, bulk delete, compare calls. |
-| Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models; per-project price overrides. |
+| Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models, with cache-read and cache-write prices, so prompt-cached tokens are billed at the provider's cache rates as in Weave ([Cached tokens](API.md#cached-tokens)); per-project price overrides (**Settings → Costs**). |
 | Threads | Calls sharing a `thread_id` group into conversations with turn latency and token totals. |
 | Agents | Weave's Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from calls (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or SDK ops with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
 | Objects | Content-addressed, versioned objects (datasets, models, prompts, scorers, ops, anything JSON). Aliases, version diffs, refs (`weft:///entity/project/object/name:digest`). |
@@ -313,6 +349,16 @@ one-off Argon2id run plus a Wasm heap per connection).
   `--audit-retention-days`. Unauthenticated writes are recorded too, so a
   flood of them grows the table until retention removes it; rate-limit at a
   proxy if the server is exposed.
+- **Outbound requests.** Remote scorers, webhooks, OAuth token URLs, remote
+  models and provider base URLs are user input, so Weft refuses internal
+  destinations (loopback, private, link-local, CGNAT, cloud metadata,
+  including IPv4-mapped and NAT64 forms, after DNS resolution and on every
+  redirect) unless the operator allows them with `--egress-allow` or
+  `--egress-allow-private`. Errors say only `destination not allowed`.
+  Without this a project member could make the server call internal services
+  and read the reply back as feedback. `--egress-allow-private` reopens that
+  for every member, so prefer a narrow `--egress-allow` list on shared
+  servers. See [Outbound requests](#outbound-requests).
 - Any key that can write to a project can use the stored provider secrets
   through the playground and LLM judges. A `Provider` object sends the
   secret named in `api_key_name` to its `base_url`, so only give write

@@ -67,6 +67,12 @@ export class FakeWeft {
             this.tags.set(key, cur);
             return send(200, {});
           }
+          m = /^\/v2\/([^/]+)\/([^/]+)\/runtimes\/([^/]+)$/.exec(path);
+          if (m) {
+            const name = decodeURIComponent(m[3]);
+            const ids = body.runtime_ids.map((r: any) => ({ id: r.id, max_tokens: r.max_tokens ?? 4096, playground_id: `${name}/${r.id}` }));
+            return send(200, { name, base_url: body.base_url, api_key_secret: body.api_key_secret ?? null, headers: body.headers ?? {}, runtime_ids: ids, kind: 'openai' });
+          }
           return send(404, { reason: 'no route' });
         }
         if (req.method === 'GET' && path.startsWith('/file/content?')) {

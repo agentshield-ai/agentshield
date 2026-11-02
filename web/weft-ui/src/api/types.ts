@@ -23,8 +23,17 @@ export interface LLMCost {
   total_tokens?: number
   prompt_token_cost?: number
   completion_token_cost?: number
+  /** All prompt tokens, cache reads and writes included; the call's cost is this plus completion_tokens_total_cost. */
   prompt_tokens_total_cost?: number
   completion_tokens_total_cost?: number
+  cache_read_input_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_token_cost?: number
+  cache_creation_input_token_cost?: number
+  /** Part of prompt_tokens_total_cost spent on cache reads (do not add it again). */
+  cache_read_input_tokens_total_cost?: number
+  /** Part of prompt_tokens_total_cost spent on cache writes (do not add it again). */
+  cache_creation_input_tokens_total_cost?: number
   prompt_token_cost_unit?: string
   completion_token_cost_unit?: string
   effective_date?: string
@@ -256,6 +265,10 @@ export interface CostEntry {
   llm_id: string
   prompt_token_cost: number
   completion_token_cost: number
+  /** USD per cache-read token; null bills cache reads at prompt_token_cost. */
+  cache_read_input_token_cost: number | null
+  /** USD per cache-write token; null bills cache writes at prompt_token_cost. */
+  cache_creation_input_token_cost: number | null
   prompt_token_cost_unit: string
   completion_token_cost_unit: string
   effective_date: string

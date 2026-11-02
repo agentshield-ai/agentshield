@@ -25,7 +25,18 @@ from ._client import (
     set_wb_run,
 )
 from ._content import PDF, Audio, Content, Html, Image, Markdown, Video
-from ._context import ThreadPoolExecutor, Thread, attributes, get_current_call, thread, tracing_disabled
+from ._context import (
+    NoCurrentCallError,
+    Thread,
+    ThreadPoolExecutor,
+    attributes,
+    get_current_call,
+    require_current_call,
+    thread,
+    tracing_disabled,
+)
+from ._custom_runtime import CustomRuntimeID
+from . import trace_server_interface, urls
 from ._evaluation import Evaluation, EvaluationLogger, ScoreLogger, auto_summarize
 from ._http import WeftHTTPError
 from ._object import (
@@ -87,6 +98,11 @@ __all__ = [
     "WeftClient",
     "WeftHTTPError",
     "get_current_call",
+    "require_current_call",
+    "NoCurrentCallError",
+    "CustomRuntimeID",
+    "trace_server_interface",
+    "urls",
     "attributes",
     "thread",
     "ThreadPoolExecutor",

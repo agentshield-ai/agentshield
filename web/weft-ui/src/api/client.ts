@@ -218,7 +218,17 @@ export const api = {
   // ---------------------------------------------------------------- costs
   costCreate: (
     project_id: string,
-    costs: Record<string, { prompt_token_cost: number; completion_token_cost: number; effective_date?: string; provider_id?: string }>,
+    costs: Record<
+      string,
+      {
+        prompt_token_cost: number
+        completion_token_cost: number
+        cache_read_input_token_cost?: number
+        cache_creation_input_token_cost?: number
+        effective_date?: string
+        provider_id?: string
+      }
+    >,
   ) => post<{ ids: [string, string][] }>('/cost/create', { project_id, costs }),
   costQuery: (project_id: string, include_defaults = false) =>
     post<{ results: CostEntry[] }>('/cost/query', { project_id, include_defaults, limit: 1000 }),

@@ -466,6 +466,9 @@ func dial(ctx context.Context, p *Policy, network, addr string) (net.Conn, error
 	return d.DialContext(ctx, network, addr)
 }
 
+// proxyFromEnvironment picks the HTTP(S) proxy (a variable for tests).
+var proxyFromEnvironment = http.ProxyFromEnvironment
+
 // NewTransport returns an HTTP transport whose connections are checked
 // against the default policy at dial time (so redirects and DNS rebinding are
 // covered). With an HTTP(S) proxy from the environment, the destination is
@@ -474,11 +477,14 @@ func NewTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = DialContext
 	t.Proxy = func(req *http.Request) (*url.URL, error) {
-		pu, err := http.ProxyFromEnvironment(req)
+		pu, err := proxyFromEnvironment(req)
 		if err != nil || pu == nil {
 			return pu, err
 		}
-		if err := Default().checkHost(req.Context(), req.URL.Hostname(), portOf(req.URL)); err != nil {
+		// The proxy resolves the name itself. Check what it resolves to here;
+		// if this host cannot resolve it (DNS only through the proxy), the
+		// proxy, which the operator configured, decides.
+		if err := Default().checkHost(req.Context(), req.URL.Hostname(), portOf(req.URL)); err != nil && IsBlocked(err) {
 			return nil, err
 		}
 		proxies.Store(net.JoinHostPort(pu.Hostname(), portOf(pu)), true)

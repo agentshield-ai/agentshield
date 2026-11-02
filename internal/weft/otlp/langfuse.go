@@ -182,11 +182,20 @@ func langfuseUsage(attrs map[string]any, put func(name string, v any)) {
 		}
 		return nil
 	}
-	put("prompt_tokens", pick("input", "prompt_tokens", "input_tokens", "promptTokens"))
+	// Langfuse usage types are disjoint ("input excludes any input_* values"),
+	// while Weft's prompt_tokens is gross, so cache reads and writes are added
+	// back into the prompt count.
+	cr := pick("input_cached_tokens", "cache_read_input_tokens", "input_cache_read")
+	cw := pick("cache_creation_input_tokens", "input_cache_creation")
+	if in, ok := store.ToFloat(pick("input", "prompt_tokens", "input_tokens", "promptTokens")); ok {
+		r, _ := store.ToFloat(cr)
+		w, _ := store.ToFloat(cw)
+		put("prompt_tokens", in+r+w)
+	}
 	put("completion_tokens", pick("output", "completion_tokens", "output_tokens", "completionTokens"))
 	put("total_tokens", pick("total", "total_tokens", "totalTokens"))
-	put("cache_read_input_tokens", pick("input_cached_tokens", "cache_read_input_tokens", "input_cache_read"))
-	put("cache_creation_input_tokens", pick("cache_creation_input_tokens", "input_cache_creation"))
+	put("cache_read_input_tokens", cr)
+	put("cache_creation_input_tokens", cw)
 	put("reasoning_tokens", pick("output_reasoning_tokens", "reasoning_tokens"))
 }
 

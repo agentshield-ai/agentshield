@@ -41,6 +41,21 @@ def get_current_call() -> Optional["Call"]:
     return stack[-1] if stack else None
 
 
+class NoCurrentCallError(Exception):
+    """Raised by ``require_current_call`` outside a traced op."""
+
+
+def require_current_call() -> "Call":
+    """Weave's ``require_current_call``: the call of the op that is running now.
+
+    Raises ``NoCurrentCallError`` when called outside an op (or before
+    ``weft.init``)."""
+    call = get_current_call()
+    if call is None:
+        raise NoCurrentCallError("Have you initialized weft and are you calling this from inside an op?")
+    return call
+
+
 def push_call(call: "Call") -> contextvars.Token:
     return _call_stack.set(_call_stack.get() + (call,))
 

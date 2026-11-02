@@ -67,6 +67,8 @@ ALIASES: Dict[str, str] = {
     "pydantic-ai": "pydantic_ai",
     "google.adk": "google_adk",
     "realtime": "openai_realtime",
+    "typesafe_sdk": "typesafe",
+    "typesafe-sdk": "typesafe",
 }
 
 

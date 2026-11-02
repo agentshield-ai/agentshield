@@ -194,9 +194,24 @@ func fromAnthropic(resp map[string]any) map[string]any {
 	if u, ok := resp["usage"].(map[string]any); ok {
 		in, _ := store.ToFloat(u["input_tokens"])
 		outT, _ := store.ToFloat(u["output_tokens"])
-		out["usage"] = map[string]any{"prompt_tokens": int(in), "completion_tokens": int(outT), "total_tokens": int(in + outT)}
+		out["usage"] = openAIUsage(in, outT, u)
 	}
 	return out
+}
+
+// openAIUsage converts Anthropic usage to the OpenAI shape. Anthropic's
+// input_tokens excludes cache reads and writes; OpenAI's prompt_tokens
+// includes them and reports them under prompt_tokens_details, which is how
+// Weft (and Weave) price cached tokens.
+func openAIUsage(in, outT float64, u map[string]any) map[string]any {
+	cr, _ := store.ToFloat(u["cache_read_input_tokens"])
+	cw, _ := store.ToFloat(u["cache_creation_input_tokens"])
+	prompt := in + cr + cw
+	usage := map[string]any{"prompt_tokens": int(prompt), "completion_tokens": int(outT), "total_tokens": int(prompt + outT)}
+	if cr > 0 || cw > 0 {
+		usage["prompt_tokens_details"] = map[string]any{"cached_tokens": int(cr), "cache_write_tokens": int(cw)}
+	}
+	return usage
 }
 
 func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[string]any, emit func(map[string]any) error) (map[string]any, error) {
@@ -223,6 +238,7 @@ func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[str
 	}
 	var id, model string
 	var inTokens float64
+	var startUsage map[string]any
 	toolIdx := map[int]int{}
 	nextTool := 0
 	err = readSSE(resp.Body, func(event, data string) error {
@@ -237,6 +253,7 @@ func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[str
 			model, _ = m["model"].(string)
 			u, _ := m["usage"].(map[string]any)
 			inTokens, _ = store.ToFloat(u["input_tokens"])
+			startUsage = u
 			return emit(chunk(id, model, map[string]any{"role": "assistant", "content": ""}, nil, nil))
 		case "content_block_start":
 			cb, _ := ev["content_block"].(map[string]any)
@@ -263,8 +280,17 @@ func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[str
 			sr, _ := d["stop_reason"].(string)
 			u, _ := ev["usage"].(map[string]any)
 			outT, _ := store.ToFloat(u["output_tokens"])
-			return emit(chunk(id, model, map[string]any{}, stopReasons[sr], map[string]any{
-				"prompt_tokens": int(inTokens), "completion_tokens": int(outT), "total_tokens": int(inTokens + outT)}))
+			// message_delta usage is cumulative and may repeat the cache counts.
+			cu := map[string]any{}
+			for k, v := range startUsage {
+				cu[k] = v
+			}
+			for _, k := range []string{"cache_read_input_tokens", "cache_creation_input_tokens"} {
+				if v, ok := u[k]; ok && v != nil {
+					cu[k] = v
+				}
+			}
+			return emit(chunk(id, model, map[string]any{}, stopReasons[sr], openAIUsage(inTokens, outT, cu)))
 		case "error":
 			e, _ := ev["error"].(map[string]any)
 			return fmt.Errorf("provider stream error: %v", e["message"])

@@ -15,16 +15,17 @@ func TestLangfuseAttributes(t *testing.T) {
 		"langfuse.observation.output":           `{"role":"assistant","content":"Paris."}`,
 		"langfuse.observation.model.name":       "gpt-4o-mini",
 		"langfuse.observation.model.parameters": `{"temperature":0.2,"max_tokens":64}`,
-		"langfuse.observation.usage_details":    `{"input":12,"output":3,"total":15,"input_cached_tokens":4}`,
-		"langfuse.observation.cost_details":     `{"total":0.0001}`,
-		"langfuse.observation.prompt.name":      "capitals",
-		"langfuse.observation.prompt.version":   2,
-		"langfuse.observation.metadata.team":    `"geo"`,
-		"langfuse.trace.name":                   "geo-qa",
-		"langfuse.trace.tags":                   `["prod","geo"]`,
-		"langfuse.session.id":                   "sess-42",
-		"langfuse.user.id":                      "u-7",
-		"input.value":                           "ignored: the Langfuse input wins",
+		// Langfuse usage types are disjoint: input excludes input_cached_tokens and total sums them.
+		"langfuse.observation.usage_details":  `{"input":8,"output":3,"total":15,"input_cached_tokens":4}`,
+		"langfuse.observation.cost_details":   `{"total":0.0001}`,
+		"langfuse.observation.prompt.name":    "capitals",
+		"langfuse.observation.prompt.version": 2,
+		"langfuse.observation.metadata.team":  `"geo"`,
+		"langfuse.trace.name":                 "geo-qa",
+		"langfuse.trace.tags":                 `["prod","geo"]`,
+		"langfuse.session.id":                 "sess-42",
+		"langfuse.user.id":                    "u-7",
+		"input.value":                         "ignored: the Langfuse input wins",
 	})
 	msgs := msgsOf(t, gen.Start.Inputs["messages"])
 	if len(msgs) != 2 || msgs[1]["content"] != "Capital of France?" {

@@ -69,8 +69,11 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
       "status": "success|error|running|descendant_error",
       "latency_ms": 1234, "trace_name": "my_fn", "display_name": null,
       "costs": {"gpt-4o-mini": {"requests":1,"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,
+                "cache_read_input_tokens":0,"cache_creation_input_tokens":0,
                 "prompt_token_cost":1.5e-7,"completion_token_cost":6e-7,
+                "cache_read_input_token_cost":7.5e-8,"cache_creation_input_token_cost":1.5e-7,
                 "prompt_tokens_total_cost":1.5e-6,"completion_tokens_total_cost":3e-6,
+                "cache_read_input_tokens_total_cost":0,"cache_creation_input_tokens_total_cost":0,
                 "prompt_token_cost_unit":"USD","completion_token_cost_unit":"USD",
                 "effective_date":"...","provider_id":"openai","pricing_level":"default|project"}}
     }
@@ -90,7 +93,8 @@ The optional fields are described in [Optional call fields](#optional-call-field
 **Usage roll-up.** Clients report only a call's *own* LLM usage in
 `summary.usage` at call end. The server sums usage and `status_counts` from all
 descendants, so `summary.usage` on a root call is the total for the trace.
-`summary.weave.costs` is present when `include_costs` is true.
+`summary.weave.costs` is present when `include_costs` is true; see
+[Cached tokens](#cached-tokens) for how cache reads and writes are priced.
 
 ### Endpoints
 
@@ -295,14 +299,89 @@ Feedback query fields: `id, weave_ref, feedback_type, created_at, creator, wb_us
 
 ## Costs
 
-Built-in prices cover common OpenAI, Anthropic, Google, Mistral and Meta
-models. Project prices override them.
+Built-in prices cover common OpenAI, Anthropic, Google, Mistral and DeepSeek
+models, including the providers' published cache-read and cache-write prices
+(`store/costs.go` `DefaultPrices` lists the sources). Project prices override
+them.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/cost/create` | `{project_id, costs: {"<llm_id>": {prompt_token_cost, completion_token_cost, prompt_token_cost_unit?, completion_token_cost_unit?, effective_date?, provider_id?}}}` (per-token USD) | `{"ids": [[id, llm_id]]}` |
-| `/cost/query` | `{project_id, query?, limit?, offset?, include_defaults?}` | `{"results": [{"id","llm_id","prompt_token_cost","completion_token_cost","prompt_token_cost_unit","completion_token_cost_unit","effective_date","provider_id","pricing_level"}]}` |
+| `/cost/create` | `{project_id, costs: {"<llm_id>": {prompt_token_cost, completion_token_cost, cache_read_input_token_cost?, cache_creation_input_token_cost?, prompt_token_cost_unit?, completion_token_cost_unit?, effective_date?, provider_id?}}}` (per-token USD) | `{"ids": [[id, llm_id]]}` |
+| `/cost/query` | `{project_id, query?, limit?, offset?, include_defaults?}` | `{"results": [{"id","llm_id","prompt_token_cost","completion_token_cost","cache_read_input_token_cost","cache_creation_input_token_cost","prompt_token_cost_unit","completion_token_cost_unit","effective_date","provider_id","pricing_level"}]}` |
 | `/cost/purge` | `{project_id, ids?: [], query?}` | `{}` |
+
+`query` fields: `id, llm_id, provider_id, prompt_token_cost,
+completion_token_cost, cache_read_input_token_cost,
+cache_creation_input_token_cost, prompt_token_cost_unit,
+completion_token_cost_unit, effective_date, pricing_level, pricing_level_id`
+(the project id).
+
+### Cached tokens
+
+Weft prices prompt caching the way Weave does. In `summary.usage`,
+`prompt_tokens` (or `input_tokens`) is the **gross** prompt count, and
+`cache_read_input_tokens` and `cache_creation_input_tokens` are the parts of
+it read from and written to a provider cache. A model's cost is:
+
+```
+(prompt − cache_read − cache_creation) × prompt_token_cost
+  + cache_read × cache_read_input_token_cost
+  + cache_creation × cache_creation_input_token_cost
+  + completion × completion_token_cost
+```
+
+Example (the audit's): `claude-sonnet-4-5`, 10,000 input tokens of which
+9,000 are cache reads, 100 output → 1,000 × $3/M + 9,000 × $0.30/M + 100 ×
+$15/M = **$0.0072** (it was $0.0315 before cache pricing).
+
+The server normalises each call's own usage entry before summing, so these
+provider shapes all price correctly:
+
+| Source | Usage shape | Normalised to |
+|---|---|---|
+| OpenAI Chat Completions | `prompt_tokens` (includes cached), `prompt_tokens_details.cached_tokens` | `cache_read_input_tokens` = `cached_tokens` |
+| OpenAI Responses | `input_tokens`, `input_tokens_details.cached_tokens` | same |
+| OpenAI-compatible routers | `prompt_tokens_details.cache_write_tokens` | `cache_creation_input_tokens` |
+| Anthropic (native) | `input_tokens` **excludes** `cache_read_input_tokens` and `cache_creation_input_tokens` | weave's anthropic integration and Weft's harness plugins send the gross count. When an entry's cache counts exceed its prompt count, the server adds them to the prompt; otherwise the entry is taken as gross (Weave's convention) |
+| Gemini / Vertex | `prompt_token_count` (includes cached), `candidates_token_count`, `total_token_count`, `cached_content_token_count`, `thoughts_token_count` (snake or camel case) | `prompt_tokens`, `completion_tokens`, `total_tokens`, `cache_read_input_tokens`, `reasoning_tokens` |
+| Bedrock Converse | `inputTokens` (excludes cache), `cacheReadInputTokens`, `cacheWriteInputTokens` | gross `prompt_tokens` plus the cache fields |
+| OTel GenAI semconv | `gen_ai.usage.input_tokens` (includes cache), `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens` | mapped by `/otel/v1/traces`; OpenInference `llm.token_count.prompt_details.cache_read/cache_write`, OpenLLMetry `gen_ai.usage.cache_read_input_tokens`, Vercel `ai.usage.cachedInputTokens` too |
+| Langfuse `usage_details` | disjoint buckets: `input` excludes `input_cached_tokens` / `input_cache_read` / `input_cache_creation` | gross `prompt_tokens` plus the cache fields |
+
+Existing canonical fields always win over derived ones. Weft's own LLM calls
+(playground, judges, `evaluate_model`) record Anthropic usage in this form.
+
+**Cost fields.** Weave's names: `cache_read_input_token_cost`,
+`cache_creation_input_token_cost` (prices), `cache_read_input_tokens`,
+`cache_creation_input_tokens` (counts) and
+`cache_read_input_tokens_total_cost`, `cache_creation_input_tokens_total_cost`
+(amounts, as in Weave's `LLMAggregatedUsage` from `/calls/usage`).
+`prompt_tokens_total_cost` is the cost of **all** prompt tokens (uncached +
+cache reads + cache writes); the two cache totals are the parts of it spent on
+the cache. A call's cost is therefore always `prompt_tokens_total_cost +
+completion_tokens_total_cost`; do not add the cache totals again. Weave's
+server does not publish how it splits these fields, so this partition is
+Weft's definition.
+
+**Missing cache prices.** In Weave's API an omitted cache price defaults to 0.
+In Weft an omitted (or `null`) cache price is stored as `null` and those
+tokens are billed at `prompt_token_cost`, so a project price added without
+cache rates never makes cached tokens free; send `0` explicitly for free
+cache reads. Built-in prices for models whose provider does not price cache
+reads or writes separately (OpenAI cache writes, Gemini cache writes, Mistral,
+DeepSeek) are `null` and behave the same way. Weave has a single cache-write price, so
+Anthropic's 1-hour cache writes (2× input) are priced at the built-in
+5-minute rate (1.25×); set a project `cache_creation_input_token_cost` if you
+mostly use 1-hour caching.
+
+The same rates are used everywhere costs appear: `summary.weave.costs`,
+`/calls/usage` and `/trace/usage`, `/calls/stats` (`cost_usd`, and Weave's
+`input_cost` / `output_cost` / `total_cost`, where `input_cost` includes the
+cache costs), `/calls/metrics` (`cost`), `/threads/query`, `/calls/export`,
+evaluation summaries and the Agents views (`input_cost_usd` includes the cache
+costs, *Weft*: `cache_read_cost_usd`, `cache_creation_cost_usd` on spans, as
+in Weave's `AgentSpanSchema`). Roll-ups sum token counts per model and price
+the sum once, so nested calls are never double counted.
 
 ## LLMs and playground
 
@@ -975,7 +1054,8 @@ conversation_name, tool_name, tool_call_id, request_model, response_model,
 provider_name, status_code` (`OK|ERROR|UNSET`), `status_message, error_type,
 started_at, ended_at, duration_ms, input_tokens, output_tokens, total_tokens,
 reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens,
-input_cost_usd, output_cost_usd, total_cost_usd, wb_user_id, wb_run_id`, the
+input_cost_usd, output_cost_usd, total_cost_usd, cache_read_cost_usd,
+cache_creation_cost_usd, wb_user_id, wb_run_id`, the
 booleans `is_turn, is_error, is_invocation, is_agent, is_llm, is_tool`, and
 custom attributes as `custom_attrs_string|int|float|bool.<key>` (or source
 `custom_attrs_*` with the bare key). Dotted aliases such as `agent.name`,
@@ -989,7 +1069,9 @@ $contains $convert`); timestamps compare chronologically. Unknown fields in
 JSON parts array for structured messages), `system_instructions`,
 `finish_reasons`, `reasoning_content`, `tool_call_arguments`,
 `tool_call_result`, `tool_definitions` and request parameters are filled only
-with `include_details`; costs only with `include_costs`. `custom_attrs_*` hold
+with `include_details`; costs only with `include_costs` (`input_cost_usd`
+covers all input tokens; `cache_read_cost_usd` and `cache_creation_cost_usd`
+are the parts of it spent on the cache). `custom_attrs_*` hold
 all custom attributes, or only `custom_attr_columns` keys when given.
 *Weft*: `duration_ms, is_turn, display_name`.
 
@@ -1222,8 +1304,8 @@ Weave these need an API key when auth is on.
 | Endpoint | Shape |
 |---|---|
 | `GET /inference/catalog/models` | `{"models": [LLMModelDetails]}`: `id`/`idPlayground` are Weft model ids; prices in cents per billion tokens; `status` is `unavailable` when no provider key is configured; fields Weft cannot know are empty, 0, `false` or `"bf16"` (quantization) |
-| `GET /inference/modelsdev/models` | models.dev `api.json`: `{"<provider>": {id, name, npm, env, doc, api, models: {"<model id>": {..., cost: {input, output} USD per million tokens, limit}}}}` |
-| `GET /inference/router/openrouter/models`, `GET /inference/analysis/artificialanalysis/models` | `{"data": [{id, name, context_length, max_output_length, pricing: {prompt, completion} USD per token as strings, supported_features, ...}]}` |
+| `GET /inference/modelsdev/models` | models.dev `api.json`: `{"<provider>": {id, name, npm, env, doc, api, models: {"<model id>": {..., cost: {input, output, cache_read, cache_write} USD per million tokens, limit}}}}` |
+| `GET /inference/router/openrouter/models`, `GET /inference/analysis/artificialanalysis/models` | `{"data": [{id, name, context_length, max_output_length, pricing: {prompt, completion, input_cache_read} USD per token as strings, supported_features, ...}]}` |
 | `GET /inference/nvidia/v2/hardware?model=` | `{"hardware": [{"id": "weft-<provider>", "type": "serverless", "pricing": {cents_per_million_input_tokens, cents_per_million_output_tokens}, "specs"}]}` for catalog models whose name matches; `model` is required |
 
 **Geolocation.** `GET /geolocate?ip=` (no API key needed) →
@@ -1362,7 +1444,57 @@ The token is fetched with the stored secret, cached per token URL, client,
 secret, scopes and audience, refreshed 30 seconds before `expires_in`, and
 sent as `Authorization: Bearer`. It overrides `bearer_secret_name` and
 `headers_secret`. Token errors report the HTTP status and OAuth error code
-only.
+only. The token URL is checked against the [outbound request
+restrictions](#outbound-request-restrictions) separately from the scorer URL.
+
+### Outbound request restrictions
+
+Requests Weft makes to URLs that users or projects supply go through one
+egress guard (`internal/weft/egress`): `RemoteScorer` URLs, `predict_url`
+models and `predict` runtimes, OAuth token URLs, automation webhooks, LLM
+provider base URLs (built-in providers, custom `Provider` objects, custom
+runtimes, `OPENAI_BASE_URL` / `OLLAMA_BASE_URL` stored as secrets), embedding,
+moderation and image endpoints, and reference-bucket tests.
+
+The guard checks the address every connection actually dials (a
+`net.Dialer` control hook), so a hostname that resolves or re-resolves (DNS
+rebinding) to an internal address is refused, and so is every redirect hop.
+Refused by default:
+
+| Range | Examples |
+|---|---|
+| Loopback | `127.0.0.0/8`, `::1`, `localhost` |
+| Private | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, IPv6 ULA `fc00::/7`, site-local `fec0::/10` |
+| Link-local | `169.254.0.0/16`, `fe80::/10` |
+| Cloud metadata | `169.254.169.254`, `169.254.170.2`, `169.254.170.23`, `fd00:ec2::254`, `fd00:ec2::23`, `100.100.100.200` |
+| CGNAT | `100.64.0.0/10` |
+| Unspecified, multicast, reserved | `0.0.0.0/8`, `::`, `224.0.0.0/4`, `ff00::/8`, `240.0.0.0/4` (incl. broadcast), `192.0.0.0/24`, `198.18.0.0/15`, `100::/64` |
+| Embedded IPv4 forms of the above | IPv4-mapped `::ffff:127.0.0.1`, IPv4-compatible `::127.0.0.1`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` |
+
+This matches what Weave documents for remote scorers ("loopback, private,
+internal and cloud metadata addresses are rejected"); Weft applies it to
+every user-supplied destination. As in Weave, a `RemoteScorer` (and a
+`predict_url` model) does not follow redirects: a 3xx response fails the
+call. Webhooks and provider calls follow redirects, each hop checked.
+
+A refused request fails with `destination not allowed` (for example a scorer
+result `{"error": "remote scorer: destination not allowed"}`); the resolved
+address and the reason are only in the server log, at warn level. Operators
+open destinations with `--egress-allow` / `WEFT_EGRESS_ALLOW` (hosts,
+`host:port`, `*.domain`, IPs and CIDRs, comma-separated; Weave's
+`..._ALLOWED_HOSTS` and `..._ALLOWED_PRIVATE_CIDRS`) or
+`--egress-allow-private` / `WEFT_EGRESS_ALLOW_PRIVATE=true` (loopback,
+private, link-local and CGNAT; cloud metadata, unspecified and multicast stay
+refused unless listed in `--egress-allow`). Provider base URLs set in the
+server's own environment (`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`,
+`OLLAMA_BASE_URL`) are operator configuration and are allowed automatically.
+With an HTTP(S) proxy in the environment, the destination is resolved and
+checked before the request is handed to the proxy.
+
+Not guarded, because the operator sets them on the command line and they are
+often local by design: the PII analyzer (`--pii-analyzer-url`), the OIDC
+issuer and its discovery/JWKS/token endpoints (`--oidc-issuer`), and the
+S3/GCS files backend (`--s3-endpoint`, `--files-backend`).
 
 ### Database encryption at rest
 
