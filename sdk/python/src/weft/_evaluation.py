@@ -360,13 +360,32 @@ def _coerce_model(model: Any) -> Any:
 
 
 def _coerce_dataset(dataset: Any) -> Any:
+    from ._refs import ObjectRef, is_ref_uri
+
     if isinstance(dataset, Dataset):
         return dataset
     if dataset is None:
         return Dataset(name="dataset", rows=[])
+    if isinstance(dataset, ObjectRef) or (isinstance(dataset, str) and is_ref_uri(dataset)):
+        from ._client import require_client
+
+        loaded = require_client().get(dataset)
+        if not isinstance(loaded, Dataset):
+            raise TypeError(f"{dataset} is not a Dataset")
+        return loaded
     if isinstance(dataset, str):
         return Dataset(name=dataset, rows=[])
     return Dataset(rows=list(dataset))
+
+
+def _row_key(row: Any) -> Optional[str]:
+    from ._canonical import digest
+    from ._serialize import to_json
+
+    try:
+        return digest(to_json(row))
+    except Exception:
+        return None
 
 
 class EvaluationLogger:
@@ -398,10 +417,12 @@ class EvaluationLogger:
         self._finished = False
         self.summary: Optional[Dict[str, Any]] = None
         self._call = None
+        self._row_refs: Dict[str, Any] = {}
         if self._client is not None:
             self._client.publish(self.evaluation, name=self.evaluation.name)
             if isinstance(self.model, Object):
                 self._client.publish(self.model)
+            self._index_dataset_rows()
             self._call = self._client.create_call(
                 Evaluation.__dict__["_evaluate"], {"self": self.evaluation, "model": self.model}, display_name=name
             )
@@ -409,6 +430,27 @@ class EvaluationLogger:
     @property
     def call(self) -> Any:
         return self._call
+
+    def _index_dataset_rows(self) -> None:
+        """Map each dataset row to its row ref so matching predictions link to it."""
+        ds_ref = self.dataset._weft_ref
+        table = self.dataset.rows
+        rows = list(table.rows) if hasattr(table, "rows") else []  # loads lazy tables (and their digests)
+        digests = getattr(table, "row_digests", None)
+        if ds_ref is None or not digests:
+            return
+        for row, rd in zip(rows, digests):
+            key = _row_key(row)
+            if key is not None and rd:
+                self._row_refs.setdefault(key, ds_ref.with_extra("attr", "rows", "id", rd))
+
+    def _example(self, inputs: Dict[str, Any]) -> Any:
+        ref = self._row_refs.get(_row_key(inputs) or "")
+        if ref is None:
+            return dict(inputs)
+        row = _RowDict(inputs)
+        row._weft_ref = ref
+        return row
 
     def _predict_op(self) -> Any:
         m = self.model
@@ -426,7 +468,7 @@ class EvaluationLogger:
         if self._client is not None:
             call = self._client.create_call(
                 Evaluation.__dict__["predict_and_score"],
-                {"self": self.evaluation, "model": self.model, "example": dict(inputs)},
+                {"self": self.evaluation, "model": self.model, "example": self._example(inputs)},
                 parent=self._call,
             )
             pinputs = dict(inputs)
@@ -437,6 +479,20 @@ class EvaluationLogger:
         sl = ScoreLogger(self, call, dict(inputs), output, model_latency)
         self._predictions.append(sl)
         return sl
+
+    def log_example(
+        self,
+        inputs: Dict[str, Any],
+        output: Any,
+        scores: Optional[Dict[str, Any]] = None,
+        model_latency: Optional[float] = None,
+    ) -> ScoreLogger:
+        """Log a prediction and its scores in one call (the prediction is finished)."""
+        pred = self.log_prediction(inputs, output, model_latency=model_latency)
+        for name, value in (scores or {}).items():
+            pred.log_score(name, value)
+        pred.finish()
+        return pred
 
     def log_summary(self, summary: Optional[Dict[str, Any]] = None, auto_summarize_scores: bool = True) -> Dict[str, Any]:
         if self._finished:

@@ -1,5 +1,5 @@
 import { Call, type CallData } from './call.js';
-import { b64digest, digest } from './canonical.js';
+import { b64digest, digest, tableDigest } from './canonical.js';
 import { currentContext, getCurrentCall } from './context.js';
 import { getClient, setGlobalClient } from './global.js';
 import { HttpClient, VERSION, WeftHTTPError } from './http.js';
@@ -315,7 +315,7 @@ export class WeftClient {
     const json = rows.map((r) => toJson(r, this));
     const rowDigests = json.map((r) => digest(r));
     const chunk = 1000;
-    let td = digest(rowDigests.slice(0, chunk));
+    let td = tableDigest(rowDigests.slice(0, chunk));
     this.sender.enqueue({ kind: 'post', path: '/table/create', payload: { table: { project_id: this.projectId, rows: json.slice(0, chunk) } } });
     for (let i = chunk; i < json.length; i += chunk) {
       this.sender.enqueue({
@@ -323,7 +323,7 @@ export class WeftClient {
         path: '/table/update',
         payload: { project_id: this.projectId, base_digest: td, updates: json.slice(i, i + chunk).map((row) => ({ append: { row } })) },
       });
-      td = digest(rowDigests.slice(0, i + chunk));
+      td = tableDigest(rowDigests.slice(0, i + chunk));
     }
     return { ref: new Ref(this.entity, this.project, 'table', td), rowDigests };
   }
@@ -393,7 +393,7 @@ export class WeftClient {
       if (!(e instanceof WeftHTTPError)) throw e;
       console.warn(`weft: could not publish table (${e.message}); using local digests`);
       rowDigests = json.map((r) => digest(r));
-      tdigest = digest(rowDigests);
+      tdigest = tableDigest(rowDigests);
     }
     return { ref: new Ref(this.entity, this.project, 'table', tdigest), rowDigests };
   }

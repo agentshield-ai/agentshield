@@ -70,6 +70,16 @@ def unsuppress(token: contextvars.Token) -> None:
         _suppressed.set(False)
 
 
+@contextlib.contextmanager
+def tracing_disabled() -> Iterator[None]:
+    """Run the block without recording any calls (ops still execute)."""
+    token = _suppressed.set(True)
+    try:
+        yield
+    finally:
+        _suppressed.reset(token)
+
+
 def current_attributes() -> Dict[str, Any]:
     return _attributes.get()
 

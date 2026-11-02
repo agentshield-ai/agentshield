@@ -17,6 +17,12 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 SYNC, ASYNC, GEN, AGEN = "sync", "async", "gen", "agen"
 
+#: Common values for ``@weft.op(kind=...)`` (any string is accepted).
+OP_KINDS = ("agent", "llm", "tool", "chain", "retriever", "embedding", "scorer", "search", "guardrail", "reranker", "workflow")
+#: Values for ``@weft.op(color=...)``.
+OP_COLORS = ("red", "orange", "yellow", "green", "blue", "purple")
+CODE_CAPTURE_DISABLED = "# Code capture disabled\n"
+
 
 def _kind_of(fn: Callable[..., Any]) -> str:
     target = inspect.unwrap(fn) if not isinstance(fn, functools.partial) else fn.func
@@ -78,6 +84,9 @@ class Op:
         tracing_sample_rate: float = 1.0,
         accumulator: Optional[Callable[[Any, Any], Any]] = None,
         code: Optional[str] = None,
+        kind: Optional[str] = None,
+        color: Optional[str] = None,
+        enable_code_capture: bool = True,
     ):
         if not callable(fn):
             raise TypeError("weft.op requires a callable")
@@ -91,6 +100,9 @@ class Op:
         self.tracing_sample_rate = float(tracing_sample_rate)
         self.accumulator = accumulator
         self._code = code
+        self.kind = kind
+        self.color = color
+        self.enable_code_capture = enable_code_capture
         self._kind = _kind_of(fn)
         try:
             self.signature: Optional[inspect.Signature] = inspect.signature(fn)
@@ -124,11 +136,17 @@ class Op:
         client = get_client()
         return client._op_ref(self) if client is not None else None
 
-    def op_val(self) -> Dict[str, Any]:
+    def op_val(self, capture_code: bool = True) -> Dict[str, Any]:
+        if self._code is not None:
+            code = self._code
+        elif capture_code and self.enable_code_capture:
+            code = _source(self.resolve_fn)
+        else:
+            code = CODE_CAPTURE_DISABLED
         return {
             "_type": "Op",
             "name": self.name,
-            "code": self._code if self._code is not None else _source(self.resolve_fn),
+            "code": code,
             "language": "python",
             "signature": _signature_str(self.signature),
         }
@@ -187,6 +205,9 @@ def op(
     postprocess_output: Optional[Callable[[Any], Any]] = None,
     tracing_sample_rate: float = 1.0,
     accumulator: Optional[Callable[[Any, Any], Any]] = None,
+    kind: Optional[str] = None,
+    color: Optional[str] = None,
+    enable_code_capture: bool = True,
 ) -> Callable[[F], F]: ...
 
 
@@ -196,6 +217,10 @@ def op(fn: Any = None, **kwargs: Any) -> Any:
     Works with sync and async functions, generators and async generators
     (yielded items are accumulated into the call output), and methods (``self``
     is recorded as a ref when the object has been published).
+
+    ``kind`` (agent, llm, tool, chain, retriever, embedding, scorer, ...) and
+    ``color`` are stored on every call as ``attributes.weft.span_kind`` /
+    ``attributes.weft.color`` (mirrored to ``attributes.weave.kind``/``color``).
     """
     if fn is None:
         return lambda f: Op(f, **kwargs)

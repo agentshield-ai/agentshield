@@ -9,11 +9,14 @@ so user code is never blocked or crashed by an unavailable server.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
+import os
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Deque, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from ._http import HTTPClient, WeftHTTPError
 
@@ -32,6 +35,8 @@ class Sender:
         max_retries: int = 3,
         backoff: float = 0.25,
         flush_interval: float = 0.1,
+        max_backoff: float = 4.0,
+        wal_path: Optional[str] = None,
     ):
         self.http = http
         self.max_queue = max_queue
@@ -40,6 +45,10 @@ class Sender:
         self.max_retries = max_retries
         self.backoff = backoff
         self.flush_interval = flush_interval
+        self.max_backoff = max_backoff
+        self.wal = WriteAheadLog(wal_path) if wal_path else None
+        self.wal_written = 0
+        self._last_failure_retryable = False
         self._q: Deque[Item] = deque()
         self._cv = threading.Condition()
         self._inflight = 0
@@ -56,6 +65,9 @@ class Sender:
             if self._stopped:
                 return False
             if len(self._q) >= self.max_queue:
+                if self.wal is not None:
+                    self._spill([(kind, payload, callback)])
+                    return True
                 self.dropped += 1
                 self._warn(f"weft: send queue full ({self.max_queue}); dropping {kind}")
                 return False
@@ -80,7 +92,40 @@ class Sender:
         self.flush(timeout)
         with self._cv:
             self._stopped = True
+            leftover = list(self._q)
+            self._q.clear()
             self._cv.notify_all()
+        if leftover and self.wal is not None:
+            self._spill(leftover)
+
+    def spill_pending(self) -> int:
+        """Move everything still queued to the write-ahead log (used at exit)."""
+        if self.wal is None:
+            return 0
+        with self._cv:
+            leftover = list(self._q)
+            self._q.clear()
+            self._cv.notify_all()
+        self._spill(leftover)
+        return len(leftover)
+
+    def replay_wal(self) -> int:
+        """Re-enqueue items saved by a previous process; returns how many."""
+        if self.wal is None:
+            return 0
+        items = self.wal.drain()
+        for kind, payload in items:
+            self.enqueue(kind, payload)
+        return len(items)
+
+    def _spill(self, items: List[Item]) -> None:
+        if self.wal is None:
+            return
+        try:
+            self.wal.append([(k, p) for k, p, _ in items])
+            self.wal_written += len(items)
+        except OSError as e:  # pragma: no cover
+            self._warn(f"weft: could not write the write-ahead log: {e}")
 
     @property
     def pending(self) -> int:
@@ -154,6 +199,8 @@ class Sender:
                 mode = "start" if k == "call_start" else "end"
                 batch.append({"mode": mode, "req": {mode: payload}})
             res = self._with_retries(lambda: self.http.post("/call/upsert_batch", {"batch": batch}), "call/upsert_batch")
+            if res is None and self._last_failure_retryable:
+                self._spill(items)
             for _, _, cb in items:
                 if cb is not None and res is not None:
                     _safe(cb, res)
@@ -169,6 +216,8 @@ class Sender:
             logger.debug("unknown sender item %s", kind)
             return
         res = self._with_retries(fn, kind if kind != "post" else payload[0])
+        if res is None and self._last_failure_retryable:
+            self._spill(items)
         if cb is not None and res is not None:
             _safe(cb, res)
 
@@ -180,16 +229,18 @@ class Sender:
                 self.sent_requests += 1
                 return res
             except WeftHTTPError as e:
+                self._last_failure_retryable = e.retryable
                 if not e.retryable or attempt == self.max_retries:
                     self.failed_requests += 1
                     self._warn(f"weft: failed to send {what}: {e}")
                     return None
             except Exception as e:  # pragma: no cover - defensive
+                self._last_failure_retryable = False
                 self.failed_requests += 1
                 self._warn(f"weft: failed to send {what}: {e}")
                 return None
             time.sleep(delay)
-            delay = min(delay * 2, 4.0)
+            delay = min(delay * 2, self.max_backoff)
         return None
 
 
@@ -206,3 +257,75 @@ def _estimate(payload: Any) -> int:
         return len(repr(payload))
     except Exception:  # pragma: no cover
         return 1024
+
+
+class WriteAheadLog:
+    """Append-only JSONL file of unsent requests, replayed on the next start."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _encode(kind: str, payload: Any) -> Dict[str, Any]:
+        if kind == "multipart":
+            path, fields, files = payload
+            enc = {k: [fn, base64.b64encode(data).decode("ascii"), mime] for k, (fn, data, mime) in files.items()}
+            return {"kind": kind, "path": path, "fields": fields, "files": enc}
+        if kind == "post":
+            return {"kind": kind, "path": payload[0], "body": payload[1]}
+        return {"kind": kind, "payload": payload}
+
+    @staticmethod
+    def _decode(d: Dict[str, Any]) -> Any:
+        kind = d["kind"]
+        if kind == "multipart":
+            files = {k: (fn, base64.b64decode(data), mime) for k, (fn, data, mime) in d["files"].items()}
+            return kind, (d["path"], d["fields"], files)
+        if kind == "post":
+            return kind, (d["path"], d["body"])
+        return kind, d["payload"]
+
+    def append(self, items: List[Any]) -> None:
+        if not items:
+            return
+        lines = "".join(json.dumps(self._encode(k, p), default=repr) + "\n" for k, p in items)
+        with self._lock:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(lines)
+
+    def drain(self) -> List[Any]:
+        """Read and remove all saved items (atomically renamed first)."""
+        with self._lock:
+            if not os.path.exists(self.path):
+                return []
+            tmp = f"{self.path}.{os.getpid()}.{int(time.time() * 1000)}.replay"
+            try:
+                os.replace(self.path, tmp)
+            except OSError:
+                return []
+        out = []
+        try:
+            with open(tmp, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        out.append(self._decode(json.loads(line)))
+                    except (ValueError, KeyError):
+                        continue
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return out
+
+    def count(self) -> int:
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                return sum(1 for line in f if line.strip())
+        except OSError:
+            return 0

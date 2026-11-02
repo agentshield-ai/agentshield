@@ -32,7 +32,7 @@ export { addUsage } from './usage.js';
 export { WeftHTTPError, VERSION } from './http.js';
 export { wrapOpenAI, type WrapOpenAIOptions } from './integrations/openai.js';
 export { wrapAnthropic } from './integrations/anthropic.js';
-export { canonicalJson, digest } from './canonical.js';
+export { canonicalJson, digestJson, digest, tableDigest } from './canonical.js';
 
 import { requireClient } from './global.js';
 import type { Ref } from './refs.js';

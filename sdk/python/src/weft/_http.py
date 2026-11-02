@@ -70,6 +70,14 @@ class HTTPClient:
         with self._open(method, path, data, self.headers("application/json" if data is not None else None), timeout) as resp:
             return resp.read()
 
+    def request(self, method: str, path: str, body: Any = None, query: Optional[Dict[str, str]] = None, timeout: Optional[float] = None) -> Any:
+        if query:
+            import urllib.parse
+
+            path = path + "?" + urllib.parse.urlencode(query)
+        raw = self.request_raw(method, path, body, timeout)
+        return json.loads(raw) if raw.strip() else {}
+
     def post(self, path: str, body: Any, timeout: Optional[float] = None) -> Any:
         raw = self.request_raw("POST", path, body, timeout)
         return json.loads(raw) if raw.strip() else {}

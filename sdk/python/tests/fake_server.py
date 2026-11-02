@@ -8,7 +8,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
 
-from weft._canonical import b64digest, digest
+from weft._canonical import b64digest, digest, table_digest
 
 
 def _base_class(val: Any) -> Optional[str]:
@@ -165,7 +165,7 @@ class FakeWeft:
         if path == "/table/create":
             rows = body["table"]["rows"]
             rds = [digest(r) for r in rows]
-            td = digest(rds)
+            td = table_digest(rds)
             self.tables[td] = [{"digest": rd, "val": r} for rd, r in zip(rds, rows)]
             return {"digest": td, "row_digests": rds}
         if path == "/table/update":
@@ -175,7 +175,7 @@ class FakeWeft:
                 r = u["append"]["row"]
                 rows.append({"digest": digest(r), "val": r})
                 new.append(digest(r))
-            td = digest([r["digest"] for r in rows])
+            td = table_digest([r["digest"] for r in rows])
             self.tables[td] = rows
             return {"digest": td, "updated_row_digests": new}
         if path == "/table/query":

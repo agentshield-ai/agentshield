@@ -38,6 +38,10 @@ def sniff_mime(data: bytes) -> str:
         return "audio/ogg"
     if data.startswith(b"%PDF"):
         return "application/pdf"
+    if data[4:8] == b"ftyp":
+        return "video/quicktime" if data[8:10] == b"qt" else "video/mp4"
+    if data.startswith(b"\x1aE\xdf\xa3"):
+        return "video/webm"
     return "application/octet-stream"
 
 
@@ -46,6 +50,14 @@ def media_type_for(mime: str) -> str:
         return "Image"
     if mime.startswith("audio/"):
         return "Audio"
+    if mime.startswith("video/"):
+        return "Video"
+    if mime == "application/pdf":
+        return "PDF"
+    if mime == "text/html":
+        return "Html"
+    if mime == "text/markdown":
+        return "Markdown"
     return "File"
 
 
@@ -136,6 +148,10 @@ def to_json(
         finally:
             seen.discard(oid)
 
+    from ._content import Content
+
+    if isinstance(value, Content):
+        return value._weft_serialize(client)
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes_to_media(bytes(value), client)
     if _is_pil_image(value):
@@ -267,10 +283,11 @@ def object_val(
     name = cls.__name__
     val: Dict[str, Any] = {"_type": name, "_class_name": name, "_bases": class_bases(cls)}
     exclude = getattr(cls, "_weft_exclude", ()) or ()
-    for fname in cls.model_fields:
+    for fname, finfo in cls.model_fields.items():
         if fname in exclude:
             continue
-        val[fname] = to_json(getattr(obj, fname), client, publish_nested=publish_nested, _depth=_depth + 1, _seen=_seen)
+        key = finfo.alias or fname
+        val[key] = to_json(getattr(obj, fname), client, publish_nested=publish_nested, _depth=_depth + 1, _seen=_seen)
     extra = getattr(obj, "model_extra", None) or {}
     for k, v in extra.items():
         val[k] = to_json(v, client, publish_nested=publish_nested, _depth=_depth + 1, _seen=_seen)

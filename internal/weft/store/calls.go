@@ -267,6 +267,9 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 }
 
 func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error {
+	if drop, err := ingestHook(ctx, s, tx, st, nil); drop || err != nil {
+		return err
+	}
 	started, err := ParseTime(st.StartedAt)
 	if err != nil {
 		return err
@@ -294,10 +297,16 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 	if err := s.absorbChildren(ctx, tx, st.ProjectID, st.ID); err != nil {
 		return err
 	}
-	return s.propagate(ctx, tx, st.ProjectID, st.ID)
+	if err := s.propagate(ctx, tx, st.ProjectID, st.ID); err != nil {
+		return err
+	}
+	return runCallHooks(ctx, tx, st.ProjectID, st.ID)
 }
 
 func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
+	if drop, err := ingestHook(ctx, s, tx, nil, en); drop || err != nil {
+		return err
+	}
 	ended, err := ParseTime(en.EndedAt)
 	if err != nil {
 		return err
@@ -323,8 +332,33 @@ func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
 	if err := s.refreshTotalTokens(ctx, tx, en.ProjectID, en.ID); err != nil {
 		return err
 	}
-	return s.propagate(ctx, tx, en.ProjectID, en.ID)
+	if err := s.propagate(ctx, tx, en.ProjectID, en.ID); err != nil {
+		return err
+	}
+	return runCallHooks(ctx, tx, en.ProjectID, en.ID)
 }
+
+// callHooks run inside the write transaction after a call's start or end is
+// stored (feature modules register them from init with registerCallHook).
+var callHooks []func(ctx context.Context, tx *sql.Tx, projectID, id string) error
+
+func registerCallHook(fn func(ctx context.Context, tx *sql.Tx, projectID, id string) error) {
+	callHooks = append(callHooks, fn)
+}
+
+func runCallHooks(ctx context.Context, tx *sql.Tx, projectID, id string) error {
+	for _, h := range callHooks {
+		if err := h(ctx, tx, projectID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ingestHook runs before a call's start or end is stored (exactly one of st,
+// en is set). It may rewrite the call (redaction) or drop it (sampling).
+// projectadmin.go installs the real hook.
+var ingestHook = func(context.Context, *Store, *sql.Tx, *CallStart, *CallEnd) (drop bool, err error) { return false, nil }
 
 func nonNil(xs []string) []string {
 	if xs == nil {

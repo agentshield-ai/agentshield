@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as weft from '../src/index.js';
-import { canonicalJson } from '../src/canonical.js';
+import { createHash } from 'node:crypto';
+import { b64digest, digest, digestJson, tableDigest } from '../src/canonical.js';
 import { FakeWeft } from './fakeServer.js';
 
 let fake: FakeWeft;
@@ -24,9 +25,17 @@ const ROWS = [
 ];
 
 describe('objects and evaluations', () => {
-  it('canonical JSON matches the server rules', () => {
-    expect(canonicalJson({ b: 1, a: [1.5, true, null], c: '<&>' })).toBe('{"a":[1.5,true,null],"b":1,"c":"<&>"}');
-    expect(canonicalJson({ x: String.fromCharCode(0x2028) })).toBe('{"x":"\\u2028"}');
+  it('digests follow the Weave scheme', () => {
+    expect(digestJson({ b: 1, a: [1.5, true, null], c: '<&>' })).toBe('{"a": [1.5, true, null], "b": 1, "c": "<&>"}');
+    // ensure_ascii escapes, surrogate pairs, code point key order
+    expect(digestJson({ 'é': 1, z: 2, A: ['ü😀', String.fromCharCode(0x2028)] })).toBe('{"A": ["\\u00fc\\ud83d\\ude00", "\\u2028"], "z": 2, "\\u00e9": 1}');
+    expect(digestJson('"q" \\ \n\t\u0001')).toBe('"\\"q\\" \\\\ \\n\\t\\u0001"');
+    // numbers keep the text this SDK sends
+    expect(digestJson({ f: 1.0, g: 1e-7, h: 1e21 })).toBe('{"f": 1, "g": 1e-7, "h": 1e+21}');
+    const raw = createHash('sha256').update('abc').digest('base64url').replace(/-/g, 'X').replace(/_/g, 'Y');
+    expect(b64digest('abc')).toBe(raw);
+    expect(digest({ a: 1 })).toBe(b64digest('{"a": 1}'));
+    expect(tableDigest(['d1', 'd2'])).toBe(createHash('sha256').update('d1d2').digest('hex'));
   });
 
   it('publishes datasets as tables and loads them back', async () => {

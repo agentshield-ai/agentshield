@@ -28,6 +28,7 @@ type Obj struct {
 	Val             any      `json:"val"`
 	WBUserID        *string  `json:"wb_user_id"`
 	Aliases         []string `json:"aliases"`
+	Tags            []string `json:"tags"`
 	SizeBytes       int64    `json:"size_bytes"`
 	VersionCount    *int     `json:"version_count,omitempty"`
 
@@ -64,6 +65,16 @@ var classHierarchy = map[string]string{
 	"RegexScorer":                  "Scorer",
 	"JSONValidScorer":              "Scorer",
 	"LevenshteinScorer":            "Scorer",
+	"RemoteScorer":                 "Scorer",
+	"HallucinationFreeScorer":      "Scorer",
+	"SummarizationScorer":          "Scorer",
+	"RelevanceScorer":              "Scorer",
+	"ValidXMLScorer":               "Scorer",
+	"JSONSchemaScorer":             "Scorer",
+	"OpenAIModerationScorer":       "Scorer",
+	"EmbeddingSimilarityScorer":    "Scorer",
+	"RuleScorer":                   "Scorer",
+	"Automation":                   "Automation",
 	"Prompt":                       "Prompt",
 	"StringPrompt":                 "Prompt",
 	"MessagesPrompt":               "Prompt",
@@ -74,6 +85,7 @@ var classHierarchy = map[string]string{
 	"Provider":                     "Provider",
 	"ProviderModel":                "ProviderModel",
 	"Op":                           "Op",
+	"Dashboard":                    "Dashboard",
 }
 
 // classify returns kind, base class and leaf class of an object value.
@@ -259,6 +271,7 @@ func scanObj(rows interface{ Scan(...any) error }, withVal bool) (*Obj, error) {
 		o.valRaw = val
 	}
 	o.Aliases = []string{}
+	o.Tags = []string{}
 	return &o, nil
 }
 
@@ -341,7 +354,7 @@ func (s *Store) attachAliases(ctx context.Context, objs []*Obj) error {
 		}
 		o.Aliases = al
 	}
-	return nil
+	return s.attachTags(ctx, objs)
 }
 
 // ObjsFilter filters object queries.

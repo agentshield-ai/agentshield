@@ -21,7 +21,8 @@ from ._client import (
     publish,
     ref,
 )
-from ._context import ThreadPoolExecutor, Thread, attributes, get_current_call, thread
+from ._content import PDF, Content, Html, Markdown, Video
+from ._context import ThreadPoolExecutor, Thread, attributes, get_current_call, thread, tracing_disabled
 from ._evaluation import Evaluation, EvaluationLogger, ScoreLogger, auto_summarize
 from ._http import WeftHTTPError
 from ._object import (
@@ -93,4 +94,10 @@ __all__ = [
     "SavedView",
     "ApplyScorerResult",
     "OpLoadError",
+    "Content",
+    "Video",
+    "PDF",
+    "Html",
+    "Markdown",
+    "tracing_disabled",
 ]

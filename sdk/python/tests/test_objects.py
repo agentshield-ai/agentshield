@@ -11,14 +11,31 @@ from weft._canonical import canonical_json, digest
 from weft._serialize import to_json
 
 
-def test_canonical_json_matches_server_rules():
-    assert canonical_json({"b": 1, "a": [1.5, 2, True, None]}) == '{"a":[1.5,2,true,null],"b":1}'
-    # no HTML escaping, raw UTF-8, Go escapes U+2028
-    assert canonical_json({"x": "<a&b> é  "}) == '{"x":"<a&b> é \\u2028"}'
-    assert canonical_json({"f": 1.0}) == '{"f":1.0}'
-    assert digest({"a": 1}) == digest({"a": 1})
+def test_digests_follow_weave_scheme():
+    import base64
+    import hashlib
+    import json
+
+    from weft._canonical import b64digest, digest_json, table_digest
+
+    vals = [
+        {"b": 1, "a": [1.5, 2, True, None]},
+        {"x": "<a&b> é \u2028 😀 \"q\" \\ \n\t"},
+        {"f": 1.0, "g": 1e-07, "h": 1e16, "k": 10**20},
+        {"é": 1, "z": 2, "A": {"nested": ["ü"]}},
+    ]
+    for v in vals:
+        # exactly Python's json.dumps(v, sort_keys=True)
+        assert digest_json(v) == json.dumps(v, sort_keys=True)
+    assert digest_json({"f": 1.0}) == '{"f": 1.0}'
+    raw = hashlib.sha256(b"abc").digest()
+    expected = base64.urlsafe_b64encode(raw).decode().rstrip("=").replace("-", "X").replace("_", "Y")
+    assert b64digest(b"abc") == expected and "-" not in expected and "_" not in expected
+    assert digest({"a": 1}) == b64digest(b'{"a": 1}')
     assert digest({"a": 1}) != digest({"a": 2})
-    assert "=" not in digest({"a": 1})
+    assert table_digest(["d1", "d2"]) == hashlib.sha256(b"d1d2").hexdigest()
+    # DEL is escaped like CPython json.dumps
+    assert digest_json("\x7f") == json.dumps("\x7f") == '"\\u007f"'
 
 
 def test_to_json_handles_common_types(client):

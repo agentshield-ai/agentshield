@@ -32,7 +32,7 @@ func (e *Engine) loadScorer(ctx context.Context, ref string) (*Scorer, error) {
 	}
 	cls := className(val)
 	if !RunnableScorers[cls] {
-		return nil, store.Invalidf("scorer %q (class %q) cannot run on the server; use one of LLMAsAJudgeScorer, ExactMatchScorer, ContainsScorer, RegexScorer, JSONValidScorer, LevenshteinScorer", o.ObjectID, cls)
+		return nil, store.Invalidf("scorer %q (class %q) cannot run on the server; use one of %s", o.ObjectID, cls, runnableScorerList())
 	}
 	return &Scorer{Ref: o.Ref(), Name: o.ObjectID, Val: val}, nil
 }
@@ -169,6 +169,8 @@ func (e *Engine) RunScorer(ctx context.Context, projectID string, sc *Scorer, ex
 	var scoreErr error
 	if cls == "LLMAsAJudgeScorer" {
 		score, scoreErr = e.judge(ctx, projectID, sc.Val, example, output, rec)
+	} else if fn, ok := extraScorers[cls]; ok {
+		score, scoreErr = fn(e, ctx, projectID, sc.Val, example, output, rec, attrs)
 	} else {
 		score, scoreErr = scoreBuiltin(cls, sc.Val, example, output)
 	}

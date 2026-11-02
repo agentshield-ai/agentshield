@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { b64digest, digest } from '../src/canonical.js';
+import { b64digest, digest, tableDigest } from '../src/canonical.js';
 
 export interface Recorded {
   method: string;
@@ -104,7 +104,7 @@ export class FakeWeft {
       case '/table/create': {
         const rows = body.table.rows;
         const rds = rows.map((r: unknown) => digest(r));
-        const td = digest(rds);
+        const td = tableDigest(rds);
         this.tables.set(td, rows.map((r: unknown, i: number) => ({ digest: rds[i], val: r })));
         return { digest: td, row_digests: rds };
       }
@@ -115,7 +115,7 @@ export class FakeWeft {
           rows.push({ digest: digest(u.append.row), val: u.append.row });
           added.push(digest(u.append.row));
         }
-        const td = digest(rows.map((r) => r.digest));
+        const td = tableDigest(rows.map((r) => r.digest));
         this.tables.set(td, rows);
         return { digest: td, updated_row_digests: added };
       }

@@ -23,6 +23,8 @@ type Feedback struct {
 	RunnableRef   *string `json:"runnable_ref"`
 	CallRef       *string `json:"call_ref"`
 	TriggerRef    *string `json:"trigger_ref"`
+	// QueueID is the annotation queue the feedback was given in (nullable).
+	QueueID *string `json:"queue_id"`
 }
 
 // FeedbackCreate is the body of /feedback/create.
@@ -39,6 +41,8 @@ type FeedbackCreate struct {
 	RunnableRef   *string `json:"runnable_ref"`
 	CallRef       *string `json:"call_ref"`
 	TriggerRef    *string `json:"trigger_ref"`
+	// QueueID references annotation_queues.id; nil outside annotation queues.
+	QueueID *string `json:"queue_id"`
 }
 
 func normRefPtr(p *string) *string {
@@ -95,6 +99,12 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 		AnnotationRef: normRefPtr(f.AnnotationRef), RunnableRef: normRefPtr(f.RunnableRef),
 		CallRef: normRefPtr(f.CallRef), TriggerRef: normRefPtr(f.TriggerRef),
 	}
+	if f.QueueID != nil && *f.QueueID != "" {
+		if len(*f.QueueID) > 64 {
+			return nil, Invalidf("queue_id too long")
+		}
+		fb.QueueID = f.QueueID
+	}
 	now := nowMicros()
 	fb.CreatedAt = FormatMicros(now)
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
@@ -102,20 +112,21 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO feedback(id, project_id, weave_ref, feedback_type, payload, creator, created_at, wb_user_id,
-			annotation_ref, runnable_ref, call_ref, trigger_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			annotation_ref, runnable_ref, call_ref, trigger_ref, queue_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			fb.ID, pid, fb.WeaveRef, fb.FeedbackType, payload, nullStr(fb.Creator), now, nullStr(fb.WBUserID),
-			nullStr(fb.AnnotationRef), nullStr(fb.RunnableRef), nullStr(fb.CallRef), nullStr(fb.TriggerRef))
+			nullStr(fb.AnnotationRef), nullStr(fb.RunnableRef), nullStr(fb.CallRef), nullStr(fb.TriggerRef), nullStr(fb.QueueID))
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.fireFeedbackCreated(fb)
 	return fb, nil
 }
 
 var feedbackColumns = map[string]bool{
 	"id": true, "weave_ref": true, "feedback_type": true, "creator": true, "wb_user_id": true,
-	"annotation_ref": true, "runnable_ref": true, "call_ref": true, "trigger_ref": true, "project_id": true,
+	"annotation_ref": true, "runnable_ref": true, "call_ref": true, "trigger_ref": true, "project_id": true, "queue_id": true,
 }
 
 func feedbackFieldResolver(path string) (string, []any, bool, error) {
@@ -137,20 +148,21 @@ func feedbackFieldResolver(path string) (string, []any, bool, error) {
 }
 
 const feedbackSelect = `SELECT f.id, f.project_id, f.weave_ref, f.feedback_type, f.payload, f.creator, f.created_at, f.wb_user_id,
-	f.annotation_ref, f.runnable_ref, f.call_ref, f.trigger_ref FROM feedback f`
+	f.annotation_ref, f.runnable_ref, f.call_ref, f.trigger_ref, f.queue_id FROM feedback f`
 
 func scanFeedback(rows *sql.Rows) (Feedback, error) {
 	var f Feedback
 	var payload string
 	var created int64
-	var creator, user, ann, run, call, trig sql.NullString
-	if err := rows.Scan(&f.ID, &f.ProjectID, &f.WeaveRef, &f.FeedbackType, &payload, &creator, &created, &user, &ann, &run, &call, &trig); err != nil {
+	var creator, user, ann, run, call, trig, queue sql.NullString
+	if err := rows.Scan(&f.ID, &f.ProjectID, &f.WeaveRef, &f.FeedbackType, &payload, &creator, &created, &user, &ann, &run, &call, &trig, &queue); err != nil {
 		return f, err
 	}
 	f.Payload = decodeJSON(payload)
 	f.CreatedAt = FormatMicros(created)
 	f.Creator, f.WBUserID, f.AnnotationRef, f.RunnableRef, f.CallRef, f.TriggerRef =
 		strPtr(creator), strPtr(user), strPtr(ann), strPtr(run), strPtr(call), strPtr(trig)
+	f.QueueID = strPtr(queue)
 	return f, nil
 }
 

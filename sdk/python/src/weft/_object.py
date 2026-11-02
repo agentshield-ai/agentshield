@@ -63,10 +63,11 @@ class Object(BaseModel):
     def _weft_from_val(cls, val: Dict[str, Any], client: "WeftClient", ref: Optional[ObjectRef]) -> Any:
         data: Dict[str, Any] = {}
         allow_extra = cls.model_config.get("extra") == "allow"
+        known = set(cls.model_fields) | {f.alias for f in cls.model_fields.values() if f.alias}
         for k, v in val.items():
             if k in ("_type", "_class_name", "_bases"):
                 continue
-            if k not in cls.model_fields and not allow_extra:
+            if k not in known and not allow_extra:
                 continue
             if isinstance(v, str) and is_ref_uri(v):
                 try:

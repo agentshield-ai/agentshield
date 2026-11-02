@@ -7,6 +7,7 @@ import datetime
 import logging
 import os
 import platform
+import sys
 import re
 import threading
 import traceback
@@ -14,7 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 from . import _context
 from ._call import Call
-from ._canonical import b64digest, digest
+from ._canonical import b64digest, digest, table_digest
 from ._http import HTTPClient, WeftHTTPError, env_flag
 from ._ids import uuid7
 from ._object import Object, Table, WeftObject, registered_class, resolve_ref_value, _is_obj_or_table_ref
@@ -52,6 +53,15 @@ def format_exception(exc: BaseException) -> str:
     except Exception:  # pragma: no cover
         tb = ""
     return head + ("\n\n" + tb.rstrip() if tb else "")
+
+
+def _setting_bool(settings: Dict[str, Any], key: str, env: str, default: bool) -> bool:
+    if key in settings and settings[key] is not None:
+        return bool(settings[key])
+    raw = os.environ.get(env)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def get_client() -> Optional["WeftClient"]:
@@ -116,11 +126,32 @@ class WeftClient:
         self.server_url = (server_url or os.environ.get("WEFT_SERVER_URL") or DEFAULT_SERVER_URL).rstrip("/")
         self.api_key = api_key if api_key is not None else os.environ.get("WEFT_API_KEY")
         self.disabled = disabled
+        self.settings: Dict[str, Any] = dict(settings or {})
+        st = self.settings
         self._http = HTTPClient(self.server_url, self.api_key, timeout=timeout, project_id=self.project_id)
-        self._sender = Sender(self._http, max_queue=max_queue, batch_size=batch_size)
+        self.capture_code = _setting_bool(st, "capture_code", "WEFT_CAPTURE_CODE", True)
+        self.print_call_link = _setting_bool(st, "print_call_link", "WEFT_PRINT_CALL_LINK", True)
+        self.global_attributes: Dict[str, Any] = dict(st.get("global_attributes") or {})
+        wal_path = None
+        if _setting_bool(st, "enable_disk_fallback", "WEFT_ENABLE_WAL", False):
+            wal_dir = st.get("wal_dir") or os.environ.get("WEFT_WAL_DIR") or os.path.join(os.path.expanduser("~"), ".weft", "wal")
+            key = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{self.server_url}_{self.project_id}").strip("_")
+            wal_path = os.path.join(wal_dir, key + ".jsonl")
+        self._sender = Sender(
+            self._http,
+            max_queue=int(st.get("max_queue_size", max_queue)),
+            batch_size=int(st.get("batch_size", batch_size)),
+            max_retries=int(st.get("retry_max_attempts", 3)),
+            backoff=float(st.get("retry_backoff", 0.25)),
+            max_backoff=float(st.get("retry_max_backoff", 4.0)),
+            wal_path=wal_path,
+        )
         self._uploaded: set = set()
         self._warned_digest = False
-        self.settings: Dict[str, Any] = dict(settings or {})
+        if wal_path and not disabled:
+            n = self._sender.replay_wal()
+            if n:
+                logger.info("weft: replaying %d unsent items from %s", n, wal_path)
         self._redact = Redactor(
             keys=self.settings.get("redact_keys"),
             pii=bool(self.settings.get("redact_pii", False)),
@@ -190,11 +221,27 @@ class WeftClient:
             if self_val is not _UNSET:
                 ser_inputs = {"self": self_val, **ser_inputs}
 
-        attrs: Dict[str, Any] = dict(_context.current_attributes())
+        attrs: Dict[str, Any] = dict(self.global_attributes)
+        attrs.update(_context.current_attributes())
         if attributes:
             attrs.update(attributes)
         attrs = to_json(attrs, self)
-        attrs.setdefault("weft", {"client_version": __version__, "source": "python-sdk", "python_version": platform.python_version()})
+        weft_attrs = {"client_version": __version__, "source": "python-sdk", "python_version": platform.python_version()}
+        if isinstance(attrs.get("weft"), dict):
+            weft_attrs.update(attrs["weft"])
+        kind, color = getattr(op, "kind", None), getattr(op, "color", None)
+        if kind:
+            weft_attrs["span_kind"] = kind
+        if color:
+            weft_attrs["color"] = color
+        attrs["weft"] = weft_attrs
+        if kind or color:
+            weave_attrs = dict(attrs.get("weave") or {}) if isinstance(attrs.get("weave"), dict) else {}
+            if kind:
+                weave_attrs["kind"] = kind
+            if color:
+                weave_attrs["color"] = color
+            attrs["weave"] = weave_attrs
 
         call = Call(
             id=call_id,
@@ -211,6 +258,8 @@ class WeftClient:
         )
         call._client = self
         call._raw_inputs = dict(inputs)
+        if parent is not None:
+            parent._child_count += 1
         if call.display_name is None and op.call_display_name is not None:
             try:
                 dn = op.call_display_name
@@ -231,6 +280,8 @@ class WeftClient:
             if getattr(call, k) is not None:
                 start[k] = getattr(call, k)
         self._sender.enqueue("call_start", start)
+        if parent is None and self.print_call_link:
+            print(f"weft: {call.ui_url}", file=sys.stderr)
         return call
 
     def finish_call(
@@ -353,6 +404,112 @@ class WeftClient:
         """``GET /auth/whoami``: the user the API key acts as."""
         return self._http.get("/auth/whoami")
 
+    # ------------------------------------------------------------------ object management
+    def _obj_ref(self, obj_ref: Any) -> ObjectRef:
+        if isinstance(obj_ref, ObjectRef):
+            r = obj_ref
+        elif isinstance(obj_ref, str):
+            r = self.ref(obj_ref)  # type: ignore[assignment]
+        else:
+            r = getattr(obj_ref, "_weft_ref", None) or getattr(obj_ref, "ref", None)
+        if not isinstance(r, ObjectRef):
+            raise TypeError(f"expected an object ref, got {obj_ref!r}")
+        if r.digest in ("latest",) or re.fullmatch(r"v\d+", r.digest or ""):
+            res = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest})
+            r = type(r)(r.entity, r.project, r.name, res["obj"]["digest"])
+        return r
+
+    def delete_object_version(self, obj_ref: Any) -> int:
+        """Delete one object version (ref, URI, ``"name:v1"`` or a published object)."""
+        r = self._obj_ref(obj_ref)
+        return int(self._http.post("/obj/delete", {"project_id": r.project_id, "object_id": r.name, "digests": [r.digest]}).get("num_deleted", 0))
+
+    def delete_object_versions(self, obj: Any, digests: Optional[List[str]] = None) -> int:
+        """Delete versions: ``(name, [digests or "v0"/"latest"...])``, or a single ref."""
+        if digests is None:
+            return self.delete_object_version(obj)
+        name = obj if isinstance(obj, str) else self._obj_ref(obj).name
+        return int(self._http.post("/obj/delete", {"project_id": self.project_id, "object_id": name, "digests": list(digests)}).get("num_deleted", 0))
+
+    def delete_all_object_versions(self, name: str) -> int:
+        """Delete every version of an object; returns the number deleted."""
+        return int(self._http.post("/obj/delete", {"project_id": self.project_id, "object_id": name}).get("num_deleted", 0))
+
+    def _with_fallback(self, attempts: List[Any]) -> Any:
+        last: Optional[Exception] = None
+        for fn in attempts:
+            try:
+                return fn()
+            except WeftHTTPError as e:
+                if e.status not in (404, 405, 501):
+                    raise
+                last = e
+        assert last is not None
+        raise last
+
+    def set_aliases(self, obj_ref: Any, alias: Union[str, List[str]]) -> None:
+        """Point alias(es) (e.g. ``"production"``) at an object version."""
+        r = self._obj_ref(obj_ref)
+        aliases = [alias] if isinstance(alias, str) else list(alias)
+        if not aliases:
+            return
+        body = {"project_id": r.project_id, "digest": r.digest, "aliases": aliases}
+        path = f"/objs/{r.name}/aliases"
+
+        def legacy() -> Any:
+            for a in aliases:
+                self._http.post("/obj/alias/set", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "alias": a})
+
+        self._with_fallback([lambda: self._http.request("PUT", path, body), lambda: self._http.post(path, body), legacy])
+
+    set_alias = set_aliases
+
+    def remove_aliases(self, obj_ref: Any, alias: Union[str, List[str]]) -> None:
+        """Remove alias(es) from an object (``obj_ref`` may be a name)."""
+        name = obj_ref if isinstance(obj_ref, str) and not is_ref_uri(obj_ref) and ":" not in obj_ref else self._obj_ref(obj_ref).name
+        aliases = [alias] if isinstance(alias, str) else list(alias)
+        if not aliases:
+            return
+        body = {"project_id": self.project_id, "aliases": aliases}
+
+        def legacy() -> Any:
+            for a in aliases:
+                self._http.post("/obj/alias/remove", {"project_id": self.project_id, "object_id": name, "alias": a})
+
+        self._with_fallback([lambda: self._http.post(f"/objs/{name}/aliases/remove", body), legacy])
+
+    remove_alias = remove_aliases
+
+    def get_aliases(self, obj_ref: Any) -> List[str]:
+        r = self._obj_ref(obj_ref)
+        obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
+        return list(obj.get("aliases") or [])
+
+    def add_tags(self, obj_ref: Any, tags: List[str]) -> None:
+        """Tag an object version."""
+        r = self._obj_ref(obj_ref)
+        path = f"/objs/{r.name}/versions/{r.digest}/tags"
+        body = {"project_id": r.project_id, "tags": list(tags)}
+        self._with_fallback([lambda: self._http.request("PUT", path, body), lambda: self._http.post(path, body)])
+
+    def remove_tags(self, obj_ref: Any, tags: List[str]) -> None:
+        r = self._obj_ref(obj_ref)
+        self._http.post(f"/objs/{r.name}/versions/{r.digest}/tags/remove", {"project_id": r.project_id, "tags": list(tags)})
+
+    def get_tags(self, obj_ref: Any) -> List[str]:
+        r = self._obj_ref(obj_ref)
+        obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
+        return list(obj.get("tags") or [])
+
+    def list_tags(self) -> List[str]:
+        """All tags used in the project."""
+        return list(self._http.request("GET", "/tags", query={"project_id": self.project_id}).get("tags") or [])
+
+    def read_file(self, file_digest: str) -> bytes:
+        """Raw bytes of an uploaded file (``Content``/media ``file_digest``)."""
+        self.flush()
+        return self._http.request_raw("POST", "/file/content", {"project_id": self.project_id, "digest": file_digest})
+
     # ------------------------------------------------------------------ evaluations (server side)
     def _uri_of(self, obj: Any) -> str:
         if isinstance(obj, str):
@@ -463,7 +620,7 @@ class WeftClient:
         ref = op._refs.get(key)
         if ref is not None:
             return ref
-        val = op.op_val()
+        val = op.op_val(capture_code=self.capture_code)
         d = digest(val)
         name = sanitize_name(op.name)
         ref = OpRef(self.entity, self.project, name, d)
@@ -534,7 +691,7 @@ class WeftClient:
         except (WeftHTTPError, KeyError) as e:
             logger.warning("weft: could not publish table (%s); using local digests", e)
             row_digests = [digest(r) for r in rows]
-            tdigest = digest(row_digests)
+            tdigest = table_digest(row_digests)
         table.ref = TableRef(self.entity, self.project, tdigest)
         table.row_digests = row_digests
         return table.ref
@@ -666,6 +823,7 @@ def _atexit_flush() -> None:
     if c is not None:
         c._sender.max_retries = min(c._sender.max_retries, 1)
         c.flush(timeout=float(os.environ.get("WEFT_FLUSH_TIMEOUT", "10")))
+        c._sender.spill_pending()
 
 
 def init(
@@ -679,6 +837,13 @@ def init(
 
     Environment: ``WEFT_SERVER_URL`` (default http://localhost:6345),
     ``WEFT_API_KEY``, ``WEFT_PROJECT``, ``WEFT_DISABLED``.
+
+    ``settings`` (dict): ``global_attributes``, ``print_call_link`` (default
+    True, env ``WEFT_PRINT_CALL_LINK``), ``capture_code`` (default True, env
+    ``WEFT_CAPTURE_CODE``), ``enable_disk_fallback`` (env ``WEFT_ENABLE_WAL``)
+    with ``wal_dir`` (env ``WEFT_WAL_DIR``), ``max_queue_size``,
+    ``retry_max_attempts``, ``retry_backoff``, ``retry_max_backoff``,
+    ``redact_keys``, ``redact_pii``.
     """
     global _global_client, _atexit_registered
     project = project or os.environ.get("WEFT_PROJECT")
