@@ -38,6 +38,8 @@ const isTyping = (t: EventTarget | null) => {
 }
 
 const hasValue = (v: Any) => v !== null && v !== undefined && v !== ''
+const NO_SPECS: QueueSpec[] = []
+const NO_FEEDBACK: Feedback[] = []
 
 export function QueueReviewPage() {
   const projectId = useProjectId()
@@ -167,7 +169,7 @@ export function QueueReviewPage() {
               projectId={projectId}
               queueId={queueId}
               item={cur}
-              specs={specs.data ?? []}
+              specs={specs.data ?? NO_SPECS}
               specsLoading={specs.isLoading}
               isFirst={idx === 0}
               isLast={idx === list.length - 1}
@@ -279,7 +281,7 @@ function AnnotationPane({
 }) {
   const qc = useQueryClient()
   const fb = useCallFeedback(projectId, item.call_id)
-  const rows: Feedback[] = fb.data?.result ?? []
+  const rows: Feedback[] = fb.data?.result ?? NO_FEEDBACK
   const mineBySpec = useMemo(() => {
     const m = new Map<string, Feedback>()
     for (const s of specs) {

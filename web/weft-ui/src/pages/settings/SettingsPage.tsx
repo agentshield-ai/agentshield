@@ -11,21 +11,27 @@ import { classVal, errMsg, refOf, useObjects } from '../../components/objects/ob
 import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtNumber, fmtRelative } from '../../lib/format'
 import { objectUrl } from '../../lib/urls'
+import { ApiKeysTab, DeleteProjectTab, RetentionTab, SamplingTab, SensitiveDataTab } from './AdminTabs'
 
-type Tab = 'general' | 'costs' | 'secrets' | 'annotations' | 'integrations' | 'apikey'
+type Tab = 'general' | 'costs' | 'secrets' | 'annotations' | 'integrations' | 'apikeys' | 'retention' | 'sampling' | 'sensitive' | 'delete'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'costs', label: 'Costs' },
   { id: 'secrets', label: 'Secrets & providers' },
   { id: 'annotations', label: 'Annotations' },
   { id: 'integrations', label: 'Integrations' },
-  { id: 'apikey', label: 'API key' },
+  { id: 'apikeys', label: 'API keys' },
+  { id: 'retention', label: 'Retention' },
+  { id: 'sampling', label: 'Sampling' },
+  { id: 'sensitive', label: 'Sensitive data' },
+  { id: 'delete', label: 'Delete project' },
 ]
 
 export function SettingsPage() {
   const projectId = useProjectId()
   const [params, setParams] = useSearchParams()
-  const tab = (TABS.some((t) => t.id === params.get('tab')) ? params.get('tab') : 'general') as Tab
+  const raw = params.get('tab') === 'apikey' ? 'apikeys' : params.get('tab') // old link
+  const tab = (TABS.some((t) => t.id === raw) ? raw : 'general') as Tab
   return (
     <div className="page">
       <div className="page-header">
@@ -40,7 +46,16 @@ export function SettingsPage() {
       {tab === 'secrets' && <SecretsTab projectId={projectId} />}
       {tab === 'annotations' && <AnnotationsTab projectId={projectId} />}
       {tab === 'integrations' && <IntegrationsTab projectId={projectId} />}
-      {tab === 'apikey' && <ApiKeyTab />}
+      {tab === 'apikeys' && (
+        <div className="col" style={{ gap: 12 }}>
+          <ApiKeyTab />
+          <ApiKeysTab projectId={projectId} />
+        </div>
+      )}
+      {tab === 'retention' && <RetentionTab projectId={projectId} />}
+      {tab === 'sampling' && <SamplingTab projectId={projectId} />}
+      {tab === 'sensitive' && <SensitiveDataTab projectId={projectId} />}
+      {tab === 'delete' && <DeleteProjectTab projectId={projectId} />}
     </div>
   )
 }

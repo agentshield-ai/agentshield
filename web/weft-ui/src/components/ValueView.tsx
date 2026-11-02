@@ -2,7 +2,7 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { isRef } from '../api/refs'
-import { fileUrl } from '../api/client'
+import { MediaView, isMedia } from './media/MediaView'
 import { RefChip } from './RefChip'
 
 // Generic renderer for call inputs/outputs and object values.
@@ -11,32 +11,10 @@ import { RefChip } from './RefChip'
 // - long strings render as text or markdown
 // - objects/arrays render as a collapsible tree
 
-const DATA_URL_RE = /^data:(image|audio|video)\/[\w.+-]+;base64,/
-
-export function MediaView({ value, projectId }: { value: unknown; projectId: string }) {
-  if (typeof value === 'string' && DATA_URL_RE.test(value)) {
-    if (value.startsWith('data:image')) return <img src={value} style={{ maxWidth: 360, borderRadius: 6 }} />
-    if (value.startsWith('data:audio')) return <audio controls src={value} />
-    return <video controls src={value} style={{ maxWidth: 360 }} />
-  }
-  const v = value as { _type?: string; file_digest?: string; mime_type?: string }
-  if (v && v.file_digest) {
-    const src = fileUrl(projectId, v.file_digest)
-    if (v._type === 'Audio' || v.mime_type?.startsWith('audio')) return <audio controls src={src} />
-    if (v._type === 'Video' || v.mime_type?.startsWith('video')) return <video controls src={src} style={{ maxWidth: 360 }} />
-    return <img src={src} style={{ maxWidth: 360, borderRadius: 6 }} />
-  }
-  return null
-}
-
-export function isMedia(v: unknown): boolean {
-  if (typeof v === 'string') return DATA_URL_RE.test(v)
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    const t = (v as { _type?: string })._type
-    return (t === 'Image' || t === 'Audio' || t === 'Video') && !!(v as { file_digest?: string }).file_digest
-  }
-  return false
-}
+// Media detection and rendering (Image, Audio, Video, PDF, Html, Markdown,
+// Content, and the official weave client's CustomWeaveType files) live in
+// ./media; re-exported here for existing imports.
+export { MediaView, isMedia }
 
 function StringView({ s, markdown }: { s: string; markdown?: boolean }) {
   const [expanded, setExpanded] = useState(false)

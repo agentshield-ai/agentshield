@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Empty, ErrorBox, Loading } from '../../components/common'
 import { MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
+import { SignalsGallery } from '../../components/monitors/SignalsGallery'
 import { ConfirmButton, Switch } from '../../components/objects/bits'
 import { refName, useObjects } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
@@ -30,6 +31,7 @@ export function MonitorsPage() {
         </button>
       </div>
       <ErrorBox error={mons.error} />
+      <SignalsGallery projectId={projectId} onCreated={(id) => nav(monitorUrl(projectId, id))} />
       {mons.isLoading ? (
         <Loading />
       ) : !mons.data?.length ? (

@@ -35,6 +35,10 @@ interface Row {
   render?: (v: Any) => React.ReactNode
   /** Numeric rows: how to format a delta and whether a decrease is an improvement. */
   num?: { fmt: (n: number) => string; lowerBetter: boolean }
+  /** Timestamp rows show the offset from the baseline instead of a text diff. */
+  time?: boolean
+  /** Compare as whole values (no word diff). */
+  atomic?: boolean
 }
 
 type Mode = 'values' | 'diff'
@@ -71,13 +75,13 @@ export function CompareCallsPage() {
   const rows: Row[] = useMemo(() => {
     if (!calls.length) return []
     const r: Row[] = [
-      { section: 'Call', key: 'op', values: calls.map((c) => opDisplayName(c.op_name)) },
+      { section: 'Call', key: 'op', values: calls.map((c) => opDisplayName(c.op_name)), atomic: true },
       { section: 'Call', key: 'status', values: calls.map(callStatus), render: (v) => <StatusBadge status={v} /> },
-      { section: 'Call', key: 'started', values: calls.map((c) => c.started_at), render: (v) => fmtDate(v) },
+      { section: 'Call', key: 'started', values: calls.map((c) => c.started_at), render: (v) => fmtDate(v), time: true },
       { section: 'Call', key: 'latency', values: calls.map(callLatencyMs), render: (v) => fmtDuration(v), num: { fmt: (n) => fmtDuration(n), lowerBetter: true } },
       { section: 'Call', key: 'tokens', values: calls.map((c) => callTokens(c).total), render: (v) => fmtNumber(v), num: { fmt: (n) => fmtNumber(n), lowerBetter: true } },
       { section: 'Call', key: 'cost', values: calls.map(callCost), render: (v) => fmtCost(v), num: { fmt: (n) => fmtCost(n), lowerBetter: true } },
-      { section: 'Call', key: 'models', values: calls.map((c) => Object.keys(c.summary?.usage ?? {}).sort().join(', ') || null) },
+      { section: 'Call', key: 'models', values: calls.map((c) => Object.keys(c.summary?.usage ?? {}).sort().join(', ') || null), atomic: true },
     ]
     if (calls.some((c) => c.exception)) r.push({ section: 'Call', key: 'exception', values: calls.map((c) => c.exception) })
     for (const k of keysOf(calls, (c) => c.inputs)) r.push({ section: 'Inputs', key: k, values: calls.map((c) => c.inputs?.[k]) })
@@ -246,6 +250,28 @@ function DiffCell({ row, base, value, projectId }: { row: Row; base: Any; value:
       <span className="faint small" title="Same as the baseline">
         = baseline
       </span>
+    )
+  if (row.time && typeof base === 'string' && typeof value === 'string') {
+    const ms = new Date(value).getTime() - new Date(base).getTime()
+    return (
+      <>
+        <PlainValue row={row} value={value} projectId={projectId} />
+        <div className="small cmp-delta">
+          {fmtDuration(Math.abs(ms))} {ms >= 0 ? 'after' : 'before'} baseline
+        </div>
+      </>
+    )
+  }
+  // Identifiers, model names and other single tokens read better as "new (was old)".
+  const atomic = row.atomic || (typeof value === 'string' && typeof base === 'string' && value.length < 60 && base.length < 60 && !/\s/.test(value + base))
+  if (atomic && (typeof value !== 'object' || value === null))
+    return (
+      <div className="col" style={{ gap: 2 }}>
+        <PlainValue row={row} value={value} projectId={projectId} />
+        <span className="faint small">
+          was <span className="tdiff-del">{base == null ? 'empty' : preview(base, 60)}</span>
+        </span>
+      </div>
     )
   if (row.num || (typeof value === 'number' && typeof base === 'number'))
     return (

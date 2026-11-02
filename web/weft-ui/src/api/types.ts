@@ -58,6 +58,8 @@ export interface Feedback {
   runnable_ref?: string | null
   call_ref?: string | null
   trigger_ref?: string | null
+  /** Annotation queue the feedback was given in. */
+  queue_id?: string | null
 }
 
 export interface Call {
@@ -223,6 +225,8 @@ export interface ObjSchema {
   val: Any
   wb_user_id: string | null
   aliases: string[]
+  /** Version tags (Weave /objs/{id}/versions/{digest}/tags). */
+  tags?: string[]
   size_bytes: number
   version_count?: number
 }

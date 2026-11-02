@@ -13,6 +13,8 @@ import { RefChip } from '../../components/RefChip'
 import { CallChatView, extractChat, findInputMessages } from '../../components/traces/ChatView'
 import { TraceTree } from '../../components/traces/TraceTree'
 import { Timeline } from '../../components/traces/Timeline'
+import { TraceGraph } from '../../components/traces/TraceGraph'
+import { OpCodeView } from '../../components/traces/OpCodeView'
 import { FeedbackPanel, Reactions, ScoresPanel, useCallFeedback } from '../../components/traces/FeedbackPanel'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal } from '../../components/traces/Menu'
@@ -20,8 +22,9 @@ import { CodeSnippet, serverOrigin } from '../../components/traces/GettingStarte
 import { buildTree, callLabel, flattenTree, type TreeNode } from '../../components/traces/callUtils'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 
-type Tab = 'call' | 'feedback' | 'scores' | 'summary' | 'attributes' | 'use' | 'raw'
-const TABS: Tab[] = ['call', 'feedback', 'scores', 'summary', 'attributes', 'use', 'raw']
+type Tab = 'call' | 'feedback' | 'scores' | 'summary' | 'attributes' | 'code' | 'use' | 'raw'
+const TABS: Tab[] = ['call', 'feedback', 'scores', 'summary', 'attributes', 'code', 'use', 'raw']
+type LeftView = 'tree' | 'timeline' | 'graph'
 const TRACE_LIMIT = 5000
 
 export function CallPage() {
@@ -30,7 +33,7 @@ export function CallPage() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'call') as Tab
-  const leftView = params.get('view') === 'timeline' ? 'timeline' : 'tree'
+  const leftView: LeftView = params.get('view') === 'timeline' ? 'timeline' : params.get('view') === 'graph' ? 'graph' : 'tree'
 
   const qc = useQueryClient()
   const callQ = useQuery({
@@ -81,7 +84,7 @@ export function CallPage() {
       },
       { replace: true },
     )
-  const setLeftView = (v: 'tree' | 'timeline') =>
+  const setLeftView = (v: LeftView) =>
     setParams(
       (p) => {
         const n = new URLSearchParams(p)
@@ -113,12 +116,13 @@ export function CallPage() {
 
   return (
     <div className="split call-split">
-      <div className={`pane-left ${leftView === 'timeline' ? 'wide' : ''}`}>
+      <div className={`pane-left ${leftView !== 'tree' ? 'wide' : ''}`}>
         <div className="row pane-head">
-          <Tabs<'tree' | 'timeline'>
+          <Tabs<LeftView>
             tabs={[
               { id: 'tree', label: 'Tree' },
               { id: 'timeline', label: 'Timeline' },
+              { id: 'graph', label: 'Graph' },
             ]}
             value={leftView}
             onChange={setLeftView}
@@ -131,6 +135,8 @@ export function CallPage() {
         <ErrorBox error={traceQ.error} />
         {leftView === 'tree' ? (
           <TraceTree roots={roots} selectedId={call.id} onSelect={select} collapsed={collapsed} setCollapsed={setCollapsed} />
+        ) : leftView === 'graph' ? (
+          <TraceGraph calls={traceCalls} selectedId={call.id} onSelect={select} />
         ) : (
           <Timeline roots={roots} selectedId={call.id} onSelect={select} />
         )}
@@ -316,6 +322,7 @@ function CallDetail({
           { id: 'scores', label: <>Scores{scoreCount > 0 && <span className="tab-count">{scoreCount}</span>}</> },
           { id: 'summary', label: 'Summary' },
           { id: 'attributes', label: 'Attributes' },
+          { id: 'code', label: 'Code' },
           { id: 'use', label: 'Use' },
           { id: 'raw', label: 'Raw' },
         ]}
@@ -328,6 +335,7 @@ function CallDetail({
       {tab === 'scores' && <ScoresPanel projectId={projectId} call={call} />}
       {tab === 'summary' && <SummaryTab call={call} />}
       {tab === 'attributes' && <AttributesTab projectId={projectId} call={call} />}
+      {tab === 'code' && <OpCodeView call={call} />}
       {tab === 'use' && <UseTab projectId={projectId} call={call} />}
       {tab === 'raw' && <JsonBlock value={call} />}
 

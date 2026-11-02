@@ -929,6 +929,18 @@ type AgentSearchResult struct {
 	MatchedMessages  []AgentSearchMessage `json:"matched_messages"`
 }
 
+// searchRole maps a message onto Weave's message roles: tool responses are
+// tool_result and assistant messages that only request tools are tool_call.
+func searchRole(m ChatMsg) string {
+	switch {
+	case m.Role == "tool":
+		return "tool_result"
+	case m.Role == "assistant" && m.Text == "" && len(m.ToolCalls) > 0:
+		return "tool_call"
+	}
+	return m.Role
+}
+
 func snippet(text, q string, n int) string {
 	text = strings.Join(strings.Fields(text), " ")
 	r := []rune(text)
@@ -1029,11 +1041,8 @@ func (s *Store) SearchAgentMessages(ctx context.Context, req AgentSearchReq) ([]
 				msgs = append(msgs, msg{"tool_result", OutputText(out)})
 			}
 		} else {
-			for _, m := range InputMessages(in) {
-				msgs = append(msgs, msg{m.Role, messageContent(m)})
-			}
-			for _, m := range OutputMessages(out) {
-				msgs = append(msgs, msg{m.Role, messageContent(m)})
+			for _, m := range append(InputMessages(in), OutputMessages(out)...) {
+				msgs = append(msgs, msg{searchRole(m), messageContent(m)})
 			}
 		}
 		acc := convs[conv]

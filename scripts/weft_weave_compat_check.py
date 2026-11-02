@@ -103,7 +103,8 @@ def main():
     check(op["kind"] == "op", "weave ops classified as ops")
     src = urllib.request.urlopen(urllib.request.Request(
         URL + "/file/content", json.dumps({"project_id": PROJECT, "digest": op["val"]["files"]["obj.py"]}).encode(),
-        {"Content-Type": "application/json"})).read().decode()
+        {"Content-Type": "application/json",
+         **({"Authorization": "Bearer " + os.environ["WEFT_API_KEY"]} if os.environ.get("WEFT_API_KEY") else {})})).read().decode()
     check("def add" in src, "op source file found under weave's client-side digest")
 
     evals = weft("/calls/query", {"project_id": PROJECT, "filter": {"op_names": ["Evaluation.evaluate"]}})["calls"]

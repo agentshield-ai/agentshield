@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -194,12 +196,10 @@ func SampleTrace(traceID string, rate float64) bool {
 	if rate <= 0 {
 		return false
 	}
-	// FNV-1a 64: stable across processes and restarts.
-	var h uint64 = 14695981039346656037
-	for i := 0; i < len(traceID); i++ {
-		h ^= uint64(traceID[i])
-		h *= 1099511628211
-	}
+	// SHA-256 of the trace id: stable across processes and restarts, and
+	// well mixed even for short, similar ids.
+	sum := sha256.Sum256([]byte(traceID))
+	h := binary.BigEndian.Uint64(sum[:8])
 	return float64(h>>11)/float64(1<<53) < rate
 }
 

@@ -8,6 +8,8 @@ import { Empty, ErrorBox, Loading, Pager, Section, StatusBadge } from '../../com
 import { ValueView } from '../../components/ValueView'
 import { Drawer } from '../../components/objects/bits'
 import { defaultLowerIsBetter, evalRunInfo, flattenScores, fmtMetric, seriesColor, sortMetricKeys, toNum, useEvalRuns } from '../../components/evals/evalUtils'
+import { InlineLeaderboard } from '../../components/evals/InlineLeaderboard'
+import { decodeLb, encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
 import { callUrl, evaluationsUrl, refUrl } from '../../lib/urls'
@@ -140,6 +142,19 @@ function CompareBody({
   onRemove: (id: string) => void
 }) {
   const evals = data.evaluations
+  // Inline leaderboard selection lives in the URL (?lb=) so it can be shared.
+  const [lbParams, setLbParams] = useSearchParams()
+  const lb = useMemo(() => decodeLb(lbParams.get('lb')), [lbParams])
+  const setLb = (next: ReturnType<typeof decodeLb>) =>
+    setLbParams(
+      (p) => {
+        const n = new URLSearchParams(p)
+        if (next.length) n.set('lb', encodeLb(next))
+        else n.delete('lb')
+        return n
+      },
+      { replace: true },
+    )
   const labels = useLabels(evals)
   const colorOf = useMemo(() => Object.fromEntries(evals.map((e, i) => [e.call_id, seriesColor(i)])), [evals])
   const baseline = evals.find((e) => e.call_id === baselineId) ?? evals[0]
@@ -214,6 +229,7 @@ function CompareBody({
           )
         })}
       </div>
+      <InlineLeaderboard evals={evals} metrics={metrics} labels={labels} colorOf={colorOf} lowerBetter={lowerBetter} value={lb} onChange={setLb} />
       <MetricsSection
         evals={evals}
         metrics={metrics}

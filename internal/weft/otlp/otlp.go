@@ -244,10 +244,17 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 		p := hex.EncodeToString(sp.GetParentSpanId())
 		st.ParentID = &p
 	}
-	st.DisplayName = optString(attrs, "weft.display_name", "wandb.display_name")
-	st.ThreadID = optString(attrs, "weft.thread_id", "wandb.thread_id", "gen_ai.conversation.id", "session.id")
+	st.DisplayName = optString(attrs, "weft.display_name", "wandb.display_name", "weave.display_name")
+	if st.DisplayName == nil {
+		st.DisplayName = frameworkDisplayName(attrs)
+	}
+	st.ThreadID = optString(attrs, "weft.thread_id", "wandb.thread_id", "gen_ai.conversation.id", "session.id",
+		"gcp.vertex.agent.session_id", "ai.telemetry.metadata.sessionId", "ai.telemetry.metadata.threadId", "ai.telemetry.metadata.conversationId")
 	st.TurnID = optString(attrs, "weft.turn_id", "wandb.turn_id")
-	st.WBUserID = optString(attrs, "user.id", "enduser.id")
+	if st.TurnID == nil && (isTrue(attrs["wandb.is_turn"]) || isTrue(attrs["weft.is_turn"])) {
+		st.TurnID = &id
+	}
+	st.WBUserID = optString(attrs, "user.id", "enduser.id", "ai.telemetry.metadata.userId")
 
 	user := map[string]any{}
 	for k, v := range attrs {
@@ -433,7 +440,9 @@ func normalizeFlatMessage(f map[string]any) map[string]any {
 	return msg
 }
 
-// partsMessages converts GenAI semconv messages with "parts" into chat messages.
+// partsMessages converts GenAI semconv messages with "parts" into chat
+// messages. Text parts are joined; media (blob/uri/file) and reasoning parts
+// are kept as content parts; tool calls become OpenAI tool_calls.
 func partsMessages(v any) []any {
 	list, ok := parseMaybeJSON(v).([]any)
 	if !ok {
@@ -455,9 +464,13 @@ func partsMessages(v any) []any {
 		if fr, ok := m["finish_reason"]; ok {
 			msg["finish_reason"] = fr
 		}
+		if n, ok := m["name"]; ok {
+			msg["name"] = n
+		}
 		var texts []string
 		var tcs []any
-		var other []any
+		var content []any // non-text parts, in order, with text parts interleaved
+		responses := 0
 		for _, p := range parts {
 			pm, ok := p.(map[string]any)
 			if !ok {
@@ -467,6 +480,7 @@ func partsMessages(v any) []any {
 			case "text":
 				if s, ok := pm["content"].(string); ok {
 					texts = append(texts, s)
+					content = append(content, map[string]any{"type": "text", "text": s})
 				}
 			case "tool_call":
 				args := pm["arguments"]
@@ -477,14 +491,25 @@ func partsMessages(v any) []any {
 				tcs = append(tcs, map[string]any{"id": pm["id"], "type": "function",
 					"function": map[string]any{"name": pm["name"], "arguments": args}})
 			case "tool_call_response":
+				responses++
 				msg["tool_call_id"] = pm["id"]
-				texts = append(texts, fmt.Sprint(pm["response"]))
+				r := firstNonNil(pm["response"], pm["result"])
+				if _, isStr := r.(string); !isStr && r != nil {
+					b, _ := json.Marshal(r)
+					r = string(b)
+				}
+				texts = append(texts, fmt.Sprint(r))
+				content = append(content, map[string]any{"type": "text", "text": fmt.Sprint(r)})
 			default:
-				other = append(other, pm)
+				cp, _ := genAIPart(pm)
+				content = append(content, cp)
 			}
 		}
-		if len(other) > 0 && len(texts) == 0 {
-			msg["content"] = other
+		if responses > 0 && responses == len(parts) {
+			msg["role"] = "tool"
+		}
+		if len(content) > len(texts) {
+			msg["content"] = content
 		} else {
 			msg["content"] = strings.Join(texts, "\n")
 		}
@@ -531,8 +556,24 @@ func extractInputs(attrs map[string]any, events []map[string]any) map[string]any
 		found = setFrom(v)
 	}
 	if !found {
+		if in := preferredInputs(attrs); in != nil {
+			for k, x := range in {
+				inputs[k] = x
+			}
+			found = true
+		}
+	}
+	if !found {
 		if v, ok := attrs["input.value"]; ok {
-			found = setFrom(v)
+			found = setFrom(normalizeLangChain(parseMaybeJSON(v)))
+		}
+	}
+	if !found {
+		if in := frameworkInputs(attrs); in != nil {
+			for k, x := range in {
+				inputs[k] = x
+			}
+			found = true
 		}
 	}
 	if !found {
@@ -601,8 +642,8 @@ func extractInputs(attrs map[string]any, events []map[string]any) map[string]any
 			found = true
 		}
 	}
-	if found || hasPrefix(attrs, "gen_ai.") || hasPrefix(attrs, "llm.") {
-		if m := firstString(attrs, "gen_ai.request.model", "llm.model_name"); m != "" {
+	if found || hasPrefix(attrs, "gen_ai.") || hasPrefix(attrs, "llm.") || hasPrefix(attrs, "ai.model.") {
+		if m := firstString(attrs, "gen_ai.request.model", "llm.model_name", "ai.model.id"); m != "" {
 			if _, exists := inputs["model"]; !exists {
 				inputs["model"] = m
 			}
@@ -693,8 +734,14 @@ func extractOutput(attrs map[string]any, events []map[string]any) any {
 	if v, ok := attrs["weft.output"]; ok {
 		return parseMaybeJSON(v)
 	}
+	if out := preferredOutput(attrs); out != nil {
+		return out
+	}
 	if v, ok := attrs["output.value"]; ok {
-		return parseMaybeJSON(v)
+		return normalizeLangChain(parseMaybeJSON(v))
+	}
+	if out, ok := frameworkOutput(attrs); ok {
+		return out
 	}
 	if v, ok := attrs["gen_ai.output.messages"]; ok {
 		if msgs := partsMessages(v); msgs != nil {
@@ -744,6 +791,9 @@ func extractOutput(attrs map[string]any, events []map[string]any) any {
 
 func extractUsage(attrs map[string]any) (string, map[string]any) {
 	model := firstString(attrs, "gen_ai.response.model", "gen_ai.request.model", "llm.model_name")
+	if model == "" {
+		model = frameworkModel(attrs)
+	}
 	u := map[string]any{}
 	set := func(name string, keys ...string) {
 		for _, k := range keys {
@@ -758,6 +808,8 @@ func extractUsage(attrs map[string]any) (string, map[string]any) {
 	set("prompt_tokens", "gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt", "llm.usage.prompt_tokens")
 	set("completion_tokens", "gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion", "llm.usage.completion_tokens")
 	set("total_tokens", "gen_ai.usage.total_tokens", "llm.token_count.total", "llm.usage.total_tokens")
+	frameworkUsage(attrs, set)
+	structuredUsage(attrs, u)
 	if len(u) == 0 {
 		return "", nil
 	}

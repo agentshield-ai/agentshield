@@ -38,6 +38,7 @@ type Call struct {
 	endedUS    *int64
 	rollup     Contribution
 	cumulative bool
+	total      *Contribution // set by finishSummary
 }
 
 // OpBaseName is the op name without ref decoration.
@@ -73,6 +74,9 @@ func (c *Call) LatencyMS() *float64 {
 
 // TotalUsage returns own + descendant usage.
 func (c *Call) TotalUsage() Contribution {
+	if c.total != nil { // finishSummary already merged the roll-up into Summary
+		return c.total.Clone()
+	}
 	t := TotalContribution(c.Summary, c.endedUS != nil, c.Exception != nil, c.cumulative, c.rollup)
 	t.StatusCounts = nil
 	return t
@@ -354,6 +358,7 @@ func (c *Call) finishSummary() {
 		sum = map[string]any{}
 	}
 	usage := c.TotalUsage()
+	c.total = &usage
 	if len(usage.Usage) > 0 {
 		sum["usage"] = usage.UsageMap()
 	} else {

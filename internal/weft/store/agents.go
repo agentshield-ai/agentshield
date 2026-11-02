@@ -157,7 +157,7 @@ var kindAliases = map[string]string{
 	"tool": OpExecuteTool, "execute_tool": OpExecuteTool, "function": OpExecuteTool,
 	"embedding": OpEmbeddings, "embeddings": OpEmbeddings,
 	"retriever": OpRetrieval, "retrieval": OpRetrieval, "retrieve": OpRetrieval,
-	"chain": OpChain, "workflow": OpChain, "task": OpChain, "parser": OpChain,
+	"chain": OpChain, "workflow": OpChain, "task": OpChain, "parser": OpChain, "search": OpRetrieval,
 	"reranker": "rerank", "rerank": "rerank", "guardrail": "guardrail", "evaluator": "evaluator", "prompt": "prompt",
 }
 
@@ -203,7 +203,7 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 	// Operation.
 	op := normKind(a.str("gen_ai.operation.name"))
 	if op == "" {
-		op = normKind(a.str("weft.span_kind", "weave.span_kind", "openinference.span.kind", "traceloop.span.kind", "mlflow.spanType"))
+		op = normKind(a.str("weft.span_kind", "weave.span_kind", "weave.kind", "openinference.span.kind", "traceloop.span.kind", "mlflow.spanType"))
 	}
 	if op == "" {
 		vid := a.str("ai.operationId", "operation.name")

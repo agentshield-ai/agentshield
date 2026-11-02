@@ -209,7 +209,7 @@ func (s *Store) QueryDatasetSources(ctx context.Context, q DatasetSourcesQuery) 
 	if q.Offset != nil && *q.Offset > 0 {
 		offset = *q.Offset
 	}
-	rows, err := s.r.QueryContext(ctx, linkSelect+" WHERE "+strings.Join(conds, " AND ")+" ORDER BY l.created_at, l.id LIMIT ? OFFSET ?",
+	rows, err := s.r.QueryContext(ctx, linkSelect+" WHERE "+strings.Join(conds, " AND ")+" ORDER BY l.created_at, l.rowid LIMIT ? OFFSET ?",
 		append(args, limit, offset)...)
 	if err != nil {
 		return nil, err
