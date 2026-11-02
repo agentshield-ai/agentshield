@@ -82,3 +82,10 @@ func TestWeaveCompatibleDigests(t *testing.T) {
 		t.Fatalf("pyFloat: %s %s %s %s", pyFloat(1e-7), pyFloat(1), pyFloat(1e16), pyFloat(0.5))
 	}
 }
+
+func TestDigestJSONEscapesDEL(t *testing.T) {
+	got, _ := DigestJSON("a\x7fb")
+	if string(got) != `"a`+"\\"+`u007fb"` {
+		t.Fatalf("got %s", got)
+	}
+}

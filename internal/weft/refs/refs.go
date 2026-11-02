@@ -346,11 +346,7 @@ func pyString(b *strings.Builder, s string) {
 			b.WriteString(`\b`)
 		case r == '\f':
 			b.WriteString(`\f`)
-		case r < 0x20 || (r > 0x7e && r <= 0xffff):
-			if r == 0x7f {
-				b.WriteRune(r)
-				continue
-			}
+		case r < 0x20 || (r >= 0x7f && r <= 0xffff): // Python escapes everything outside ' '..'~'
 			fmt.Fprintf(b, `\u%04x`, r)
 		case r > 0xffff:
 			r -= 0x10000

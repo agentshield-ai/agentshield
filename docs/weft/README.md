@@ -32,7 +32,8 @@ make weft         # build bin/weft
 | `--api-keys` | `WEFT_API_KEYS` | empty (auth disabled); comma-separated, each `key` or `user=key` |
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
 | `--no-ui` | | serve the UI |
-| `--log-level` | `WEFT_LOG_LEVEL` | `info` |
+| `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
+| | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
 
 Provider keys for the playground, LLM judges and monitors come from the
 environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) or
@@ -109,6 +110,26 @@ for annotation specs, monitors, leaderboards and saved views, and redaction of
 credential-like keys (`api_key`, `password`, `token`, …) before data leaves
 the process.
 
+**The official `weave` Python client** works unchanged. Point it at Weft:
+
+```bash
+export WANDB_BASE_URL=http://127.0.0.1:6345      # W&B login and project setup (GraphQL shim)
+export WF_TRACE_SERVER_URL=http://127.0.0.1:6345 # traces, objects, feedback
+export WANDB_API_KEY=<a Weft API key, or any 40 characters when auth is off>
+```
+
+```python
+import weave
+weave.init("my-team/my-app")   # ops, datasets, models, evaluations, feedback work as usual
+```
+
+Weft answers the GraphQL calls weave makes at login, accepts its `v2`
+call endpoints, uses Weave's digest scheme so client-computed refs resolve,
+and returns `weave:///` refs to weave clients. Weave's client rolls child
+usage into parent summaries; Weft records those as cumulative so tokens and
+cost are not counted twice. `scripts/weft_weave_compat_check.py` drives the
+official client end to end and runs in CI (weave 0.54.0).
+
 **Demo data:** `python3 scripts/weft_seed_demo.py` fills `demo/support-bot` with
 agent traces, threads, OTLP spans, datasets, evaluations, a leaderboard, a
 monitor and feedback, using offline mock models.
@@ -165,7 +186,10 @@ committed UI build is stale.
   stored provider secrets through the playground and LLM judges. A `Provider`
   object sends the secret named in `api_key_name` to its `base_url`, so only
   give keys to people you would trust with those secrets.
-- Secrets are stored unencrypted in the SQLite file. Protect the file like a
-  credential.
+- Provider secrets are encrypted at rest with AES-256-GCM. The key comes
+  from `WEFT_SECRET_KEY` or a random key file created next to the database
+  (`<db>.key`, mode 0600). Keep the key file off backups that hold the
+  database, or set `WEFT_SECRET_KEY` from a secret manager. Plaintext secrets
+  from older versions are re-encrypted at startup.
 - Uploaded files are served with `Content-Security-Policy: sandbox` and
   `nosniff` so they cannot run script in the UI's origin.
