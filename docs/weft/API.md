@@ -1494,8 +1494,22 @@ private, link-local and CGNAT; cloud metadata, unspecified and multicast stay
 refused unless listed in `--egress-allow`). Provider base URLs set in the
 server's own environment (`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`,
 `OLLAMA_BASE_URL`) are operator configuration and are allowed automatically.
-With an HTTP(S) proxy in the environment, the destination is resolved and
-checked before the request is handed to the proxy.
+Every address a name resolves to is checked, and the request is refused if
+any of them is internal, with or without a proxy; the connection then goes
+to the addresses that were checked, so a second DNS answer cannot differ.
+
+With an HTTP(S) proxy in the environment (`HTTPS_PROXY`), the destination is
+resolved and checked before the request is handed to the proxy. Behind a
+proxy:
+
+- a name this host cannot resolve cannot be checked, so it is refused
+  (`reason=unresolved` in the log) unless it is listed in `--egress-allow`;
+- only the connection to the proxy chosen for that request skips the checks.
+  A request addressed to the proxy's own host and port directly (for
+  example because `NO_PROXY` excludes loopback) is checked like any other;
+- the proxy resolves the name again itself, so a DNS answer that changes
+  between the two lookups is not caught here. Configure the proxy to refuse
+  internal destinations too if that matters.
 
 Not guarded, because the operator sets them on the command line and they are
 often local by design: the PII analyzer (`--pii-analyzer-url`), the OIDC

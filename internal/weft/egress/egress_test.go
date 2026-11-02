@@ -477,11 +477,63 @@ func TestClientChecksDestinationBehindProxy(t *testing.T) {
 		_, err := get(t, u)
 		assertBlocked(t, err)
 	}
-	// A name the server cannot resolve is left to the proxy.
-	if body, err := get(t, "http://only-the-proxy-knows.example/"); err != nil || body != "via-proxy" {
-		t.Fatalf("unresolvable via proxy: %q %v", body, err)
-	}
-	if len(seen) != 2 {
+	// A name the server cannot resolve cannot be checked: refused (fail
+	// closed) unless the operator allows it by name.
+	_, err = get(t, "http://only-the-proxy-knows.example/")
+	assertBlocked(t, err)
+	if len(seen) != 1 {
 		t.Fatalf("proxy saw %v", seen)
 	}
+	withPolicy(t, Config{Allow: []string{"only-the-proxy-knows.example"}, Resolver: fakeResolver{}})
+	if body, err := get(t, "http://only-the-proxy-knows.example/"); err != nil || body != "via-proxy" {
+		t.Fatalf("allowed unresolvable via proxy: %q %v", body, err)
+	}
+}
+
+// The proxy's own address is only reachable as the proxy for a request that
+// uses it. A request that targets the proxy address directly (NO_PROXY
+// excludes loopback) is checked like any other, even after earlier requests
+// went through the proxy (audit 3, finding 1).
+func TestProxyAddressNotReachableDirectly(t *testing.T) {
+	var direct int
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.URL.IsAbs() {
+			direct++ // a proxied request carries an absolute URL
+		}
+		_, _ = io.WriteString(w, "proxy")
+	}))
+	defer proxy.Close()
+	pu, _ := url.Parse(proxy.URL)
+	prevProxy := proxyFromEnvironment
+	proxyFromEnvironment = func(r *http.Request) (*url.URL, error) {
+		if r.URL.Hostname() == pu.Hostname() {
+			return nil, nil // like NO_PROXY for loopback
+		}
+		return pu, nil
+	}
+	defer func() { proxyFromEnvironment = prevProxy }()
+	withPolicy(t, Config{Resolver: fakeResolver{"pub.example": {netip.MustParseAddr("93.184.216.34")}}})
+	for i := 0; i < 2; i++ {
+		if body, err := get(t, "http://pub.example/x"); err != nil || body != "proxy" {
+			t.Fatalf("public via proxy: %q %v", body, err)
+		}
+		_, err := get(t, proxy.URL+"/__status")
+		assertBlocked(t, err)
+	}
+	if direct != 0 {
+		t.Fatalf("proxy address reached directly %d times", direct)
+	}
+}
+
+// Without a proxy, a name that resolves to both public and internal
+// addresses is refused, as it is behind a proxy (audit 3, finding 3).
+func TestMixedResolutionRefusedDirect(t *testing.T) {
+	prevProxy := proxyFromEnvironment
+	proxyFromEnvironment = func(*http.Request) (*url.URL, error) { return nil, nil }
+	defer func() { proxyFromEnvironment = prevProxy }()
+	withPolicy(t, Config{Resolver: fakeResolver{
+		"mixed.example": {netip.MustParseAddr("93.184.216.34"), netip.MustParseAddr("10.0.0.7")},
+	}})
+	_, err := get(t, "http://mixed.example/")
+	assertBlocked(t, err, "10.0.0.7")
 }

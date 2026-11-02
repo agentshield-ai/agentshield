@@ -30,7 +30,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -233,6 +232,9 @@ const (
 	CGNAT       Category = "cgnat"
 	Multicast   Category = "multicast"
 	Reserved    Category = "reserved"
+	// Unresolved: behind an HTTP(S) proxy, a name this host cannot resolve
+	// cannot be checked, so it is refused unless listed in --egress-allow.
+	Unresolved Category = "unresolved"
 )
 
 var metadataAddrs = map[netip.Addr]bool{
@@ -323,11 +325,21 @@ func (p *Policy) Check(host string, ip netip.Addr, port string) error {
 	if p.allowPrivate && c != Metadata && c != Unspecified && c != Multicast {
 		return nil
 	}
+	return p.refuse(host, ip, port, c)
+}
+
+// refuse logs a blocked destination (details stay in the log) and returns
+// the sanitized error.
+func (p *Policy) refuse(host string, ip netip.Addr, port string, c Category) error {
 	l := p.log
 	if l == nil {
 		l = slog.Default()
 	}
-	l.Warn("egress: blocked outbound request", "host", host, "ip", ip.String(), "port", port, "reason", string(c),
+	ipText := ""
+	if ip.IsValid() {
+		ipText = ip.String()
+	}
+	l.Warn("egress: blocked outbound request", "host", host, "ip", ipText, "port", port, "reason", string(c),
 		"hint", "allow it with --egress-allow (WEFT_EGRESS_ALLOW) or --egress-allow-private")
 	return &blockedError{category: c}
 }
@@ -405,14 +417,17 @@ func Default() *Policy { return current.Load() }
 
 // ---------------------------------------------------------------- transport
 
-// proxies records proxy addresses chosen by the transport's Proxy function:
-// the proxy is operator configuration (HTTPS_PROXY), so dialling it is not
-// checked, and the destination is checked before the proxy is used.
-var proxies sync.Map // "host:port" -> true
+// proxyDialKey carries, in a request's context, the address of the HTTP(S)
+// proxy chosen for that request (or "" when it goes direct). Only a dial to
+// exactly that address, for that request, skips the checks: the proxy is
+// operator configuration (HTTPS_PROXY) and the destination was checked before
+// it was handed over. A request whose destination is the proxy's own address
+// but which goes direct (NO_PROXY, localhost) is checked like any other.
+type proxyDialKey struct{}
 
 // DialContext dials addr after checking every address it connects to against
-// the default policy. Allowed hostnames and the configured HTTP proxy are
-// dialled without checks.
+// the default policy. Allowed hostnames, and the proxy chosen for the current
+// request (see proxyDialKey), are dialled without checks.
 func DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	return dial(ctx, Default(), network, addr)
 }
@@ -424,7 +439,7 @@ func dial(ctx context.Context, p *Policy, network, addr string) (net.Conn, error
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := proxies.Load(addr); ok || p.hostAllowed(host, port) {
+	if pa, _ := ctx.Value(proxyDialKey{}).(string); (pa != "" && pa == addr) || p.hostAllowed(host, port) {
 		return baseDialer.DialContext(ctx, network, addr)
 	}
 	if ip, err := netip.ParseAddr(canonicalHost(host)); err == nil {
@@ -441,27 +456,34 @@ func dial(ctx context.Context, p *Policy, network, addr string) (net.Conn, error
 		}
 		return p.Check(host, ap.Addr(), strconv.Itoa(int(ap.Port())))
 	}
-	if p.resolver != nil {
-		if _, err := netip.ParseAddr(canonicalHost(host)); err != nil {
-			addrs, err := p.resolver.LookupNetIP(ctx, "ip", host)
-			if err != nil {
+	if _, err := netip.ParseAddr(canonicalHost(host)); err != nil {
+		// Resolve once, refuse if any address is internal (as behind a proxy,
+		// so the outcome does not depend on which address a dial tries
+		// first), then dial the checked addresses so a second lookup cannot
+		// return different ones.
+		addrs, err := p.lookup(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range addrs {
+			if err := p.Check(host, a, port); err != nil {
 				return nil, err
 			}
-			var first error
-			for _, a := range addrs {
-				c, err := d.DialContext(ctx, network, net.JoinHostPort(a.String(), port))
-				if err == nil {
-					return c, nil
-				}
-				if first == nil {
-					first = err
-				}
+		}
+		var first error
+		for _, a := range addrs {
+			c, err := d.DialContext(ctx, network, net.JoinHostPort(a.String(), port))
+			if err == nil {
+				return c, nil
 			}
 			if first == nil {
-				first = fmt.Errorf("no addresses for %s", host)
+				first = err
 			}
-			return nil, first
 		}
+		if first == nil {
+			first = fmt.Errorf("no addresses for %s", host)
+		}
+		return nil, first
 	}
 	return d.DialContext(ctx, network, addr)
 }
@@ -472,7 +494,9 @@ var proxyFromEnvironment = http.ProxyFromEnvironment
 // NewTransport returns an HTTP transport whose connections are checked
 // against the default policy at dial time (so redirects and DNS rebinding are
 // covered). With an HTTP(S) proxy from the environment, the destination is
-// resolved and checked before the request is handed to the proxy.
+// resolved and checked before the request is handed to the proxy. Use it
+// through NewClient: dialling the proxy itself is only permitted for requests
+// sent through NewClient's round tripper, which records the chosen proxy.
 func NewTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = DialContext
@@ -481,13 +505,17 @@ func NewTransport() *http.Transport {
 		if err != nil || pu == nil {
 			return pu, err
 		}
-		// The proxy resolves the name itself. Check what it resolves to here;
-		// if this host cannot resolve it (DNS only through the proxy), the
-		// proxy, which the operator configured, decides.
-		if err := Default().checkHost(req.Context(), req.URL.Hostname(), portOf(req.URL)); err != nil && IsBlocked(err) {
-			return nil, err
+		// The proxy resolves the name itself. Check what it resolves to here.
+		// A name this host cannot resolve cannot be checked, so it is refused
+		// (fail closed) unless the operator listed it in --egress-allow.
+		p := Default()
+		host, port := req.URL.Hostname(), portOf(req.URL)
+		if err := p.checkHost(req.Context(), host, port); err != nil {
+			if IsBlocked(err) {
+				return nil, err
+			}
+			return nil, p.refuse(host, netip.Addr{}, port, Unresolved)
 		}
-		proxies.Store(net.JoinHostPort(pu.Hostname(), portOf(pu)), true)
 		return pu, nil
 	}
 	return t
@@ -498,6 +526,14 @@ func NewTransport() *http.Transport {
 type sanitizingTransport struct{ http.RoundTripper }
 
 func (t sanitizingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	// Record which proxy (if any) this request will use, so the dialer lets
+	// exactly that connection through. It is set on every hop, so a redirect
+	// that goes direct does not inherit the previous hop's proxy.
+	proxyAddr := ""
+	if pu, err := proxyFromEnvironment(r); err == nil && pu != nil {
+		proxyAddr = net.JoinHostPort(pu.Hostname(), portOf(pu))
+	}
+	r = r.WithContext(context.WithValue(r.Context(), proxyDialKey{}, proxyAddr))
 	resp, err := t.RoundTripper.RoundTrip(r)
 	return resp, Sanitize(err)
 }

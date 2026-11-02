@@ -57,3 +57,8 @@ dist/
 *.log
 *.tmp
 *.temp
+
+# binaries from `go build ./cmd/...` run at the repo root
+/weft
+/agentshield
+/agentshield-replay
