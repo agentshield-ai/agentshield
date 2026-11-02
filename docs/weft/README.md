@@ -98,8 +98,16 @@ const answer = weft.op(async function answer(question: string) { /* ... */ })
 const openai = weft.wrapOpenAI(new OpenAI())
 ```
 
-It also provides `Dataset`, `Evaluation`, `publish`/`ref`, `wrapAnthropic`,
-`attributes` and `withThread`. See [sdk/typescript/README.md](../../sdk/typescript/README.md).
+It also provides `Dataset`, `Evaluation`, `EvaluationLogger`, built-in scorers,
+`publish`/`ref`, `wrapAnthropic`, `attributes` and `withThread`. See
+[sdk/typescript/README.md](../../sdk/typescript/README.md).
+
+Both SDKs also support guardrails (`call.apply_scorer` / `call.applyScorer`
+score a finished call and attach the result as feedback), loading published
+ops back as runnable functions (this executes the stored code), object classes
+for annotation specs, monitors, leaderboards and saved views, and redaction of
+credential-like keys (`api_key`, `password`, `token`, …) before data leaves
+the process.
 
 **Demo data:** `python3 scripts/weft_seed_demo.py` fills `demo/support-bot` with
 agent traces, threads, OTLP spans, datasets, evaluations, a leaderboard, a
