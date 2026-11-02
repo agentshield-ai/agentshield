@@ -139,7 +139,7 @@ export function AgentCharts({ projectId, query, range }: { projectId: string; qu
         <AreaChart data={data} margin={margin}>
           {grid}
           {xAxis}
-          <YAxis tick={AXIS} tickFormatter={(v: number) => (v === 0 ? '0' : v < 0.01 ? `$${Number(v.toPrecision(1))}` : `$${compact(v)}`)} axisLine={false} tickLine={false} width={56} />
+          <YAxis tick={AXIS} tickFormatter={(v: number) => (v === 0 ? '0' : v < 1 ? `$${Number(v.toPrecision(2))}` : `$${compact(v)}`)} axisLine={false} tickLine={false} width={56} />
           <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={labelFmt} formatter={(v: number) => fmtCost(v)} />
           <Area dataKey="cost" name="Cost" stroke="var(--c5)" fill="var(--c5)" fillOpacity={0.2} isAnimationActive={false} />
         </AreaChart>
