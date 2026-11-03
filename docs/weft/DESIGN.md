@@ -449,3 +449,70 @@ with the flag on and everything else with it off.
   `docs/weft/PROVENANCE.md`.
 - Feature-parity comparisons with other products are not kept in this
   repository.
+
+## 10. Weft's own trace and object API
+
+The lower-level trace, object and table API (sessions and agents are already
+native, §3) is Weft's own as well. Weft's SDKs, UI and plugins use only these
+routes. The older route shapes stay available only inside the compatibility
+adapter (§8), for that product's client.
+
+### 10.1 Routes
+
+Every route is under `/api/v1`, uses JSON, carries `project_id` like the
+rest of §3, and lists return `{items, total_count}` (streams return NDJSON
+with one item per line).
+
+| Resource | Routes |
+|---|---|
+| Spans (one traced function or model call) | `POST /spans/start`, `POST /spans/end`, `POST /spans/batch` (starts, ends and complete spans in one request), `POST /spans/query`, `POST /spans/stream`, `GET /spans/{id}`, `POST /spans/update`, `POST /spans/delete`, `POST /spans/stats`, `POST /spans/export` |
+| Objects (versioned values: datasets, models, prompts, scorers, functions, views) | `POST /objects/save`, `GET /objects/{name}` (latest) and `GET /objects/{name}/versions/{version}` (digest, `vN` or alias), `POST /objects/query`, `POST /objects/delete`, aliases and tags under `/objects/{name}/…` |
+| Tables (dataset rows) | `POST /tables/create`, `POST /tables/update`, `POST /tables/query`, `POST /tables/stream`, `POST /tables/stats` |
+| Feedback and scores | `POST /feedback/create`, `POST /feedback/batch`, `POST /feedback/query`, `POST /feedback/delete`, `POST /feedback/replace` |
+| Files | `POST /files/upload`, `GET /files/{digest}`, `POST /files/resolve` |
+| Refs | `POST /refs/read` (batch) |
+| Costs and prices | `POST /prices/create`, `POST /prices/query`, `POST /prices/delete` |
+| Model calls | `POST /completions`, `POST /completions/stream`, `POST /embeddings`, `POST /images` |
+| Evaluations | `POST /evaluations/run`, `GET /evaluations/{id}/status`, `POST /evaluations/compare` |
+| Server | `GET /server` (version, features, limits) |
+
+All other existing Weft routes (admin, queues, automations, monitors,
+buckets, agents, security, help and so on) keep their paths and are listed in
+API.md.
+
+### 10.2 Names
+
+- A traced unit is a **span**. Fields: `id`, `trace_id`, `parent_id`, `name`
+  (what used to be the op name), `display_name`, `started_at`, `ended_at`,
+  `inputs`, `output`, `error` (what used to be the exception text),
+  `attributes`, `summary`, `session_id` and `turn_id` (the conversation and
+  turn), `user_id`, `run_id`, `run_step`, `run_step_end`, `deleted_at`.
+- A versioned function is a **function** object (`kind: "function"`). Other
+  objects keep their kind (`dataset`, `model`, `prompt`, `scorer`, …).
+  Fields: `name`, `digest`, `version` (an integer), `kind`, `class`, `value`,
+  `aliases`, `tags`, `created_at`, `deleted_at`, `size_bytes`.
+- Refs keep the `weft:///entity/project/<kind>/<name>:<digest>` form, where
+  `<kind>` is `object`, `function`, `table` or `span`.
+- Queries keep the `$expr` language, with Weft's field names.
+
+### 10.3 Digests
+
+New objects, tables and rows use Weft's own digest: the lowercase hex
+SHA-256 of the canonical JSON (sorted keys, no insignificant whitespace,
+UTF-8). Existing digests stay valid and resolvable. The adapter computes the
+older digest form for its client's requests, because that client computes
+digests itself.
+
+### 10.4 SDK names
+
+- `@weft.trace` traces a function. `weft.save(obj, name)` saves a version
+  and returns its ref; `weft.get(ref)` reads one.
+- `client.spans(…)` and `client.span(id)` query spans.
+- `Evaluation`, `Dataset`, `Model`, `Prompt` and the scorer classes keep
+  their generic names.
+- The previous names (`op`, `publish`, `ref(...).get()`, `get_calls`,
+  `get_call`) stay as deprecated aliases for one release.
+  - They emit a `DeprecationWarning`.
+  - They are documented only in the SDK changelog.
+- The local scorers default to openly licensed models with neutral names.
+  The model is configurable.
