@@ -8,12 +8,16 @@ const ops = (url: string) => {
 }
 
 describe('Traces filters', () => {
-  it('Failed means an error anywhere in the trace (the span or one under it)', () => {
-    expect(statusOp('error')).toEqual({ $in: [{ $getField: 'summary.weft.status' }, [{ $literal: 'error' }, { $literal: 'descendant_error' }]] })
-    expect(statusOp('running')).toEqual({ $eq: [{ $getField: 'summary.weft.status' }, { $literal: 'running' }] })
-    expect(ops('status=error')).toContain('descendant_error')
-    // The shared bar's "ok" is a span's success.
-    expect(ops('status=ok')).toContain('"success"')
+  it('status means the same as on Sessions: Failed is the trace itself, a failed step is descendant_error', () => {
+    expect(statusOp('error')).toEqual({ $eq: [{ $getField: 'summary.weft.status' }, { $literal: 'error' }] })
+    expect(ops('status=error')).toContain('{"$literal":"error"}')
+    expect(ops('status=error')).not.toContain('descendant_error')
+    expect(ops('status=failed_step')).toContain('{"$literal":"descendant_error"}')
+    // The shared bar's "ok" is a span's success (no failure anywhere under it).
+    expect(ops('status=ok')).toContain('{"$literal":"success"}')
+    expect(ops('status=running')).toContain('{"$literal":"running"}')
+    // "No agent data" has no span status: it applies through sessions.
+    expect(ops('status=unknown')).not.toContain('summary.weft.status')
   })
 
   it('hides AgentShield replay evaluations unless asked', () => {

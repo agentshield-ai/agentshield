@@ -2,7 +2,8 @@
 // ingest route: successful and failing two-agent sessions (one team with a
 // hand-off that fails half the time), a blocked tool call, an
 // approval-heavy session, a session that went on after a failed tool call,
-// scores, and a project with only old sessions.
+// scores, a project with only old sessions, one with a session per status,
+// and one with more agents and teams than a page loads.
 import { createHash } from 'node:crypto'
 
 const H = 3600_000
@@ -100,7 +101,14 @@ async function trip(base: string, project: string, sid: string, ago: number, use
   const s = new Session(base, project, sid, ago, ['trip-planners', 'Trip planners'])
   const delegate = o.delegate ?? 'researcher'
   const scale = o.scale ?? 1
-  s.agent('O', null, 'orchestrator', 0, 4000, { user, root: true, output: o.fail ? undefined : 'Here is what I found.' })
+  // A failing trip fails as a whole: the orchestrator ends with an error
+  // after its researcher did not return a result.
+  s.agent('O', null, 'orchestrator', 0, 4000, {
+    user,
+    root: true,
+    output: o.fail ? undefined : 'Here is what I found.',
+    error: o.fail ? `${delegate} did not return a result` : undefined,
+  })
   s.thinkThenCall('C1', 'O', 50, 800, `The ${delegate} agent should handle this part.`, [`toolu_${sid}_d`, `delegate_${delegate}`, { task: user }], undefined, [
     200 * scale,
     120 * scale,
@@ -186,6 +194,52 @@ async function coderRetry(base: string, project: string, sid: string, ago: numbe
   await s.send()
 }
 
+// One session per status, for the status chip meaning the same on Sessions
+// and Traces: the run itself failed; a tool call failed and the agent went
+// on; a delegated agent failed and its caller went on; nothing failed.
+async function statusSessions(base: string, project: string) {
+  const failed = new Session(base, project, 'st-failed', 30 * 60_000)
+  failed.agent('O', null, 'failer', 0, 3000, { user: 'Status check: a run that fails', root: true, error: 'gave up: the database is unreachable' })
+  failed.tool('X1', 'O', 100, 500, 'Bash', 'toolu_st_f1', { command: 'psql -c "select 1"' }, undefined, 'connection refused')
+  await failed.send()
+  const recovered = new Session(base, project, 'st-recovered', 25 * 60_000)
+  recovered.agent('O', null, 'recoverer', 0, 3000, { user: 'Status check: a run that recovers', root: true, output: 'Done on the second try.' })
+  recovered.tool('X1', 'O', 100, 500, 'Bash', 'toolu_st_r1', { command: 'make' }, undefined, 'exit status 2')
+  recovered.tool('X2', 'O', 700, 500, 'Bash', 'toolu_st_r2', { command: 'make -B' }, 'ok')
+  await recovered.send()
+  const delegated = new Session(base, project, 'st-delegated', 20 * 60_000)
+  delegated.agent('O', null, 'delegator', 0, 3000, { user: 'Status check: a helper that fails', root: true, output: 'I answered without the helper.' })
+  delegated.agent('H', 'O', 'helper', 100, 800, { user: 'look it up', error: 'helper crashed' })
+  await delegated.send()
+  const ok = new Session(base, project, 'st-ok', 15 * 60_000)
+  ok.agent('O', null, 'finisher', 0, 3000, { user: 'Status check: a run where nothing fails', root: true, output: 'All good.' })
+  ok.tool('X1', 'O', 100, 500, 'Bash', 'toolu_st_o1', { command: 'true' }, 'ok')
+  await ok.send()
+}
+
+// More agents and teams than the Agents and Teams pages load at once (500).
+async function manyAgents(base: string, project: string, n: number) {
+  const t0 = Date.now() - 10 * 60_000
+  const spans = Array.from({ length: n }, (_, i) => ({
+    traceId: hex(`${project}/many/${i}`, 32),
+    spanId: hex(`${project}/many/${i}/root`),
+    name: `invoke_agent agent-${i}`,
+    kind: 1,
+    startTimeUnixNano: String((t0 + i) * 1e6),
+    endTimeUnixNano: String((t0 + i + 500) * 1e6),
+    attributes: Object.entries({
+      'gen_ai.operation.name': 'invoke_agent',
+      'gen_ai.agent.name': `agent-${i}`,
+      'gen_ai.conversation.id': `many-${i}`,
+      'weft.team.id': `team-${i}`,
+      'weft.team.name': `Team ${i}`,
+    }).map(([k, v]) => attr(k, v)),
+  }))
+  const body = { resourceSpans: [{ resource: { attributes: [attr('service.name', 'e2e')] }, scopeSpans: [{ scope: { name: 'e2e' }, spans }] }] }
+  const r = await fetch(`${base}/otel/v1/traces`, { method: 'POST', headers: { 'Content-Type': 'application/json', project_id: project }, body: JSON.stringify(body) })
+  if (!r.ok) throw new Error(`otlp ${r.status} ${await r.text()}`)
+}
+
 async function score(base: string, project: string, s: Session, scorer: string, value: number, reason: string) {
   await post(base, '/feedback/create', {
     project_id: project,
@@ -212,5 +266,9 @@ export async function seed(base: string, stamp: string) {
   await score(base, project, b, 'GoalCompletionJudge', 0.1, 'No plan: the search failed.')
   await score(base, project, c, 'GoalCompletionJudge', 0.6, 'Linter installed; lint errors not fixed.')
   await trip(base, older, 'older-1', 3 * 24 * H, 'Find three facts about Bergen')
-  return { project, older, empty: `e2e${stamp}/fresh` }
+  const status = `e2e${stamp}/status`
+  await statusSessions(base, status)
+  const many = `e2e${stamp}/many`
+  await manyAgents(base, many, 501)
+  return { project, older, empty: `e2e${stamp}/fresh`, status, many }
 }

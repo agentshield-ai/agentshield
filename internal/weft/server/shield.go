@@ -300,16 +300,19 @@ func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestR
 	if len(req.Detections) > maxIngestItems || len(req.Overrides) > maxIngestItems {
 		return nil, store.Invalidf("at most %d detections and %d overrides per request", maxIngestItems, maxIngestItems)
 	}
-	ignored := 0
 	inputs := make([]store.DetectionInput, 0, len(req.Detections))
 	for i, d := range req.Detections {
 		eventID := d.EventID
 		if eventID == "" {
 			eventID = d.ID
 		}
-		if store.IsReplayEvaluation(eventID, d.SessionID) { // our own remote replay, reported back
-			ignored++
-			continue
+		// Engines never push replays (the namespace is reserved for them and
+		// replay verdicts are not pushed), so a replay-namespaced id here is
+		// a misbehaving or forged sender: reject it rather than store it or
+		// drop it silently.
+		if store.InReplayNamespace(eventID, d.SessionID) {
+			return nil, store.Invalidf("detections[%d]: event ids starting %q and session ids starting %q are reserved for replay and are never pushed",
+				i, store.ReplayEventPrefix, store.ReplaySessionPrefix)
 		}
 		if d.Source != "" && d.Source != store.DetectionSourceEngine {
 			return nil, store.Invalidf("detections[%d]: source must be engine (replay detections are produced by Weft)", i)
@@ -338,9 +341,9 @@ func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestR
 	}
 	ovs := make([]store.DetectionOverride, 0, len(req.Overrides))
 	for i, o := range req.Overrides {
-		if store.IsReplayEvaluation(o.EventID, o.SessionID) {
-			ignored++
-			continue
+		if store.InReplayNamespace(o.EventID, o.SessionID) {
+			return nil, store.Invalidf("overrides[%d]: event ids starting %q and session ids starting %q are reserved for replay and are never pushed",
+				i, store.ReplayEventPrefix, store.ReplaySessionPrefix)
 		}
 		var at int64
 		if o.Timestamp != "" {
@@ -370,7 +373,7 @@ func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestR
 		res = []store.DetectionUpsert{}
 	}
 	return map[string]any{
-		"accepted": len(res), "created": created, "duplicates": len(res) - created, "ignored": ignored,
+		"accepted": len(res), "created": created, "duplicates": len(res) - created,
 		"overrides_applied": ores.Applied, "overrides_pending": ores.Pending, "ids": res,
 	}, nil
 }

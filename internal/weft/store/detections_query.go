@@ -325,7 +325,7 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 			st.Linked += n
 		}
 		// Per-agent counts are engine verdicts, like the detection rate
-		// beside them; replays count only when source=replay is asked for.
+		// beside them; with source=replay both are replay detections.
 		if source != DetectionSourceReplay || q.Source == DetectionSourceReplay {
 			a := agents[agent]
 			if a == nil {
@@ -429,9 +429,10 @@ func (f ToolCallFlag) Rate() *float64 {
 //	detection_rate = flagged tool calls / tool calls
 //
 // A tool call is a recorded execute_tool span of the agent that started in
-// the window. It is flagged when at least one engine verdict (not a replay)
-// other than allow is linked to it (detections.span_id) and matches q's
-// other filters (action, rule, ...). A tool call with several detections
+// the window. It is flagged when at least one engine verdict (not a replay;
+// with q.Source = replay, a replay detection instead) other than allow is
+// linked to it (detections.span_id) and matches q's other filters (action,
+// rule, ruleset, ...). A tool call with several detections
 // counts once, and detections that are not linked to a recorded tool call
 // (no span, or a session Weft has no spans for) are not part of the rate,
 // so it is always between 0 and 1.
@@ -462,12 +463,18 @@ func (s *Store) ToolCallFlags(ctx context.Context, q DetectionQuery) (map[string
 		args = append(args, q.To)
 	}
 	// The verdict filter: q's detection filters, except agent and time,
-	// which apply to the tool call.
+	// which apply to the tool call. The verdicts are the engine's unless
+	// replay is asked for (source=replay): then a tool call is flagged when
+	// a replay (of any ruleset, or of q.Ruleset) would have flagged it, so
+	// the rate sits beside counts of the same detections.
 	dq := q
 	dq.Agent, dq.From, dq.To = "", 0, 0
+	if dq.Source == "" {
+		dq.Source = DetectionSourceEngine
+	}
 	dwhere, dargs := dq.where()
 	rows, err := s.r.QueryContext(ctx, `SELECT a.agent_name, COUNT(*), COALESCE(SUM(EXISTS (SELECT 1 FROM detections d
-			WHERE d.span_id = a.id AND d.source = 'engine' AND d.action <> 'allow' AND `+dwhere+`)), 0)
+			WHERE d.span_id = a.id AND d.action <> 'allow' AND `+dwhere+`)), 0)
 		FROM agent_spans a JOIN calls c ON c.project_id = a.project_id AND c.id = a.id
 		WHERE `+strings.Join(conds, " AND ")+` GROUP BY a.agent_name`, append(dargs, args...)...)
 	if err != nil {

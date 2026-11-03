@@ -212,6 +212,12 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			if len(cached.Alerts) > 0 && e.feedbackURLBase != "" {
 				response.FeedbackURL = fmt.Sprintf("%s?event_id=%s", e.feedbackURLBase, req.EventID)
 			}
+			// A cached verdict is still a tool call of this session: record it
+			// like an evaluated one (after the derived fields above were
+			// computed), so the session's own window and other sessions'
+			// cross-session correlation see it. A replay session was isolated
+			// above, so its cache hits stay in its own window only.
+			e.recordInSession(req, cached.Alerts, cached.Action)
 			return response, nil
 		}
 	}
@@ -294,9 +300,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 
 	// Record this event in the session window (after evaluation, so the current
 	// event is visible to the NEXT evaluation, not this one)
-	if e.sessionRegistry != nil && req.SessionID != "" {
-		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, action, false)
-	}
+	e.recordInSession(req, alerts, action)
 
 	// Fire deep triage async once at the end
 	if len(alerts) > 0 {
@@ -304,6 +308,15 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	}
 
 	return response, nil
+}
+
+// recordInSession records an evaluated or cached tool call in its session's
+// window. It runs after matching, so the call is visible to the session's
+// next evaluation, not to this one.
+func (e *Evaluator) recordInSession(req *models.EvaluationRequest, alerts []engine.RuleResult, action models.Action) {
+	if e.sessionRegistry != nil && req.SessionID != "" {
+		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, action, false)
+	}
 }
 
 // fireDeepTriage kicks off async deep investigation if configured

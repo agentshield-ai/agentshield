@@ -280,3 +280,40 @@ func TestNew_RequiresEndpoint(t *testing.T) {
 		t.Error("expected error without an endpoint")
 	}
 }
+
+// Weft rejects the replay namespace on ingest (a 400 that would fail the
+// whole batch), so the pusher never queues a verdict or override in it.
+func TestPusher_SkipsReplayNamespace(t *testing.T) {
+	c := &collector{}
+	srv := httptest.NewServer(c.handler(nil))
+	defer srv.Close()
+	p := testPusher(t, srv.URL, config.WeftSendAll, 10)
+	p.Start(context.Background())
+	defer p.Close(context.Background())
+
+	req, resp := verdict("weft-replay-j-0", models.ActionBlock)
+	p.Verdict(req, resp)
+	req, resp = verdict("e2", models.ActionBlock)
+	req.SessionID = "weft-replay:j:s"
+	p.Verdict(req, resp)
+	req, resp = verdict("e3", models.ActionBlock)
+	req.Replay = true
+	p.Verdict(req, resp)
+	p.Override("weft-replay:j:s", "e2")
+	p.Override("sess", "weft-replay-j-0")
+	p.Verdict(verdict("live", models.ActionBlock))
+	waitFor(t, func() bool { return len(c.detections()) == 1 })
+	if d := c.detections()[0]; d.EventID != "live" {
+		t.Fatalf("pushed %+v", d)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, pl := range c.payloads {
+		if len(pl.Overrides) != 0 {
+			t.Fatalf("replay override pushed: %+v", pl.Overrides)
+		}
+	}
+	if st := p.Stats(); st.Queued != 1 {
+		t.Fatalf("queued %d, want 1", st.Queued)
+	}
+}

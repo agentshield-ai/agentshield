@@ -6,7 +6,7 @@ import { fmtCost } from './format'
 
 export type TimeRange = '1h' | '24h' | '7d' | '30d' | 'all' | 'custom'
 export type HasFilter = 'block' | 'approval' | 'flagged' | 'any'
-export type StatusFilter = 'ok' | 'error' | 'failed_step' | 'running'
+export type StatusFilter = 'ok' | 'error' | 'failed_step' | 'running' | 'unknown'
 
 /** A session asking for approval this many times is approval-heavy (approval fatigue). */
 export const APPROVAL_HEAVY = 3
@@ -58,6 +58,19 @@ export const STATUS_LABEL: Record<StatusFilter, string> = {
   error: 'Failed',
   failed_step: 'Went on after a failed step',
   running: 'Running',
+  unknown: 'No agent data',
+}
+/**
+ * What each status value keeps. They mean the same on Sessions and Traces
+ * (a session's status comes from the top-level spans of its traces, a
+ * trace's from its top-level span), so a chip keeps the same runs on both.
+ */
+export const STATUS_HELP: Record<StatusFilter, string> = {
+  ok: 'It ended and nothing in it failed.',
+  error: 'The session or trace itself failed: its top-level span ended with an error.',
+  failed_step: 'It ended without failing, but a step in it failed: a tool call, model call, hand-off or delegated agent.',
+  running: 'Still running: a top-level span has not ended.',
+  unknown: 'Known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown.',
 }
 export const HAS_LABEL: Record<HasFilter, string> = {
   block: 'Has a block',
@@ -80,7 +93,7 @@ export const FILTER_KEY_LABEL: Record<FilterKey, string> = {
 }
 
 const isTime = (v: string | null): v is TimeRange => !!v && ['1h', '24h', '7d', '30d', 'all', 'custom'].includes(v)
-const isStatus = (v: string | null): v is StatusFilter => v === 'ok' || v === 'error' || v === 'failed_step' || v === 'running'
+const isStatus = (v: string | null): v is StatusFilter => v === 'ok' || v === 'error' || v === 'failed_step' || v === 'running' || v === 'unknown'
 const isHas = (v: string | null): v is HasFilter => v === 'block' || v === 'approval' || v === 'flagged' || v === 'any'
 
 export function parseScoreBelow(raw: string | null | undefined): FilterState['scoreBelow'] {
@@ -164,13 +177,15 @@ export interface Chip {
   key: FilterKey
   label: string
   value: string
+  /** What the value means (a tooltip). */
+  help?: string
 }
 
 export function chipsOf(state: FilterState, opts: { defaultTime?: TimeRange } = {}): Chip[] {
   const out: Chip[] = []
   if (state.agent) out.push({ key: 'agent', label: 'Agent', value: state.agent })
   if (state.team) out.push({ key: 'team', label: 'Team', value: state.team })
-  if (state.status) out.push({ key: 'status', label: 'Status', value: STATUS_LABEL[state.status] })
+  if (state.status) out.push({ key: 'status', label: 'Status', value: STATUS_LABEL[state.status], help: STATUS_HELP[state.status] })
   if (state.time && state.time !== opts.defaultTime)
     out.push({
       key: 'time',
@@ -240,6 +255,7 @@ export function parseFilterText(text: string, base: FilterState = {}): FilterSta
         else if (['ok', 'success', 'succeeded', 'done'].includes(low)) s.status = 'ok'
         else if (low === 'running') s.status = 'running'
         else if (['failed_step', 'step_failed', 'failed-step', 'step'].includes(low)) s.status = 'failed_step'
+        else if (['unknown', 'no_agent_data', 'verdicts_only'].includes(low)) s.status = 'unknown'
         else return ` ${rawKey}:${rawVal}`
         break
       case 'has':
@@ -363,7 +379,11 @@ export const FILTER_SUPPORT: Record<FilterPage, Record<FilterKey, FilterSupport>
 
 /** Values a page cannot read off its own rows, even for a chip it applies itself. */
 function pageNeedsSessions(page: FilterPage, key: FilterKey, s: FilterState): boolean {
-  if (key === 'status' && s.status === 'failed_step') return page !== 'sessions'
+  // Traces reads "went on after a failed step" off each trace's root
+  // (descendant_error); elsewhere it is a session's status.
+  if (key === 'status' && s.status === 'failed_step') return page !== 'sessions' && page !== 'traces'
+  // Only sessions are known from verdicts alone.
+  if (key === 'status' && s.status === 'unknown') return page !== 'sessions'
   // An agent is not "running"; a session it takes part in is.
   if (key === 'status' && s.status === 'running') return page === 'agents'
   if (key === 'has' && s.has === 'flagged') return page === 'security' || page === 'traces'

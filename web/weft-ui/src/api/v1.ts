@@ -3,7 +3,8 @@
 // AgentShield detections.
 import { get, post } from './client'
 
-export type SessionStatus = 'running' | 'ok' | 'error'
+/** `unknown`: a session known only from AgentShield verdicts (`verdicts_only`), whose outcome is not known. */
+export type SessionStatus = 'running' | 'ok' | 'error' | 'unknown'
 export type DetectionAction = 'allow' | 'log' | 'require_approval' | 'block'
 export type ScoreSummary = Record<string, { mean: number; count: number }>
 

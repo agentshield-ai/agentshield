@@ -103,14 +103,32 @@ func CostSpikeThreshold(costs []float64) (float64, bool) {
 }
 
 // SessionsAttention computes the attention cards over every session that
-// matches q (paging and sorting fields are ignored).
+// matches q (paging and sorting fields are ignored). Each card counts
+// exactly the sessions its link lists: the link opens the request's filters
+// with the card's filter laid over them ({...base, ...card.filter}, so a
+// card's status, has_detection, score_below or cost_min replaces the
+// request's own value for that key), and the count uses that same query.
 func (s *Store) SessionsAttention(ctx context.Context, q SessionsQuery) (*SessionAttention, error) {
 	q.Limit, q.Offset, q.SortBy = 0, 0, ""
-	sessions, pid, _, err := s.matchingSessions(ctx, q) // newest activity first
+	base, err := compileSessionFilter(q)
 	if err != nil {
 		return nil, err
 	}
-	out := &SessionAttention{Sessions: len(sessions), ApprovalHeavyThreshold: ApprovalHeavy,
+	cands, pid, err := s.sessionCandidates(ctx, q, base) // newest activity first
+	if err != nil {
+		return nil, err
+	}
+	matching := make([]*SessionSummary, 0, len(cands))
+	costs := make([]float64, 0, len(cands))
+	for _, ss := range cands {
+		if base.match(ss) {
+			matching = append(matching, ss)
+			if ss.CostUSD != nil {
+				costs = append(costs, *ss.CostUSD)
+			}
+		}
+	}
+	out := &SessionAttention{Sessions: len(matching), ApprovalHeavyThreshold: ApprovalHeavy,
 		LowScoreThreshold: LowScore, CostSpikeFactor: CostSpikeFactor}
 	cards := []*AttentionCard{
 		{ID: "failed", Filter: map[string]string{"status": "error"}},
@@ -119,47 +137,47 @@ func (s *Store) SessionsAttention(ctx context.Context, q SessionsQuery) (*Sessio
 		{ID: "low_score", Filter: map[string]string{"score_below": strconv.FormatFloat(LowScore, 'f', -1, 64)}},
 		{ID: "cost", Filter: map[string]string{}},
 	}
-	firsts := map[string]*SessionSummary{}
-	count := func(c *AttentionCard, ss *SessionSummary) {
-		c.Count++
-		if firsts[c.ID] == nil {
-			firsts[c.ID] = ss
-		}
-	}
-	costs := make([]float64, 0, len(sessions))
-	for _, ss := range sessions {
-		if ss.CostUSD != nil {
-			costs = append(costs, *ss.CostUSD)
-		}
-	}
-	threshold, hasThreshold := CostSpikeThreshold(costs)
-	if hasThreshold {
+	// The cost spike threshold is relative to the sessions the request
+	// matches; the card then lists those costing at least that much.
+	if threshold, ok := CostSpikeThreshold(costs); ok {
 		out.CostSpikeThreshold = fptr(threshold)
 		cards[4].Filter["cost_min"] = strconv.FormatFloat(threshold, 'f', -1, 64)
 	}
-	for _, ss := range sessions {
-		if ss.Status == "error" {
-			count(cards[0], ss)
-		} else if ss.ErrorCount > 0 {
-			count(cards[1], ss)
+	firsts := map[string]*SessionSummary{}
+	for _, c := range cards {
+		if len(c.Filter) == 0 {
+			continue // no list (cost without a threshold)
 		}
-		if ss.DetectionCount[DetectionBlock] > 0 {
-			out.Blocked++
+		cq, err := withCardFilter(q, c.Filter)
+		if err != nil {
+			return nil, err
 		}
-		if ss.DetectionCount[DetectionRequireApproval] >= ApprovalHeavy {
-			out.ApprovalHeavy++
+		f, err := compileSessionFilter(cq)
+		if err != nil {
+			return nil, err
 		}
-		if IsFlaggedSession(ss.DetectionCount) {
-			count(cards[2], ss)
-		}
-		if low, ok := lowestScore(ss); ok && low < LowScore {
-			count(cards[3], ss)
-			if out.LowestScore == nil || low < *out.LowestScore {
-				out.LowestScore = fptr(low)
+		f.textHits = base.textHits // same text query, same candidates
+		for _, ss := range cands {
+			if !f.match(ss) {
+				continue
 			}
-		}
-		if hasThreshold && ss.CostUSD != nil && *ss.CostUSD >= threshold {
-			count(cards[4], ss)
+			c.Count++
+			if firsts[c.ID] == nil {
+				firsts[c.ID] = ss
+			}
+			switch c.ID {
+			case "security":
+				if ss.DetectionCount[DetectionBlock] > 0 {
+					out.Blocked++
+				}
+				if ss.DetectionCount[DetectionRequireApproval] >= ApprovalHeavy {
+					out.ApprovalHeavy++
+				}
+			case "low_score":
+				if low, ok := lowestScore(ss); ok && (out.LowestScore == nil || low < *out.LowestScore) {
+					out.LowestScore = fptr(low)
+				}
+			}
 		}
 	}
 	var named []*SessionSummary
@@ -176,4 +194,28 @@ func (s *Store) SessionsAttention(ctx context.Context, q SessionsQuery) (*Sessio
 		out.Items = append(out.Items, *c)
 	}
 	return out, nil
+}
+
+// withCardFilter lays a card's /api/v1/sessions parameters over q, the way
+// the UI builds the card's link.
+func withCardFilter(q SessionsQuery, filter map[string]string) (SessionsQuery, error) {
+	for k, v := range filter {
+		switch k {
+		case "status":
+			q.Status = v
+		case "has_detection":
+			q.HasDetection = v
+		case "score_below":
+			q.ScoreBelow = v
+		case "cost_min":
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return q, err
+			}
+			q.CostMin = &f
+		default:
+			return q, Invalidf("attention card filter %q is not supported", k)
+		}
+	}
+	return q, nil
 }

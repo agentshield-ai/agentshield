@@ -16,8 +16,11 @@ press Enter:
 |---|---|
 | `agent:researcher` | where this agent took part |
 | `team:trip-planners` | this team |
-| `status:failed` | sessions that failed (on Traces: traces with an error anywhere) |
-| `status:failed_step` | sessions that went on after a failed step |
+| `status:failed` | sessions or traces that failed themselves (see [Status](#status)) |
+| `status:failed_step` | sessions or traces that went on after a failed step |
+| `status:ok` | sessions or traces where nothing failed |
+| `status:running` | sessions or traces still running |
+| `status:unknown` | sessions known only from AgentShield verdicts ("No agent data") |
 | `has:block` | where AgentShield blocked a tool call |
 | `has:approval` | where AgentShield asked for approval |
 | `has:flagged` | blocked, or asked for approval 3 or more times |
@@ -35,7 +38,36 @@ example `inputs.question` contains `Oslo`).
 Every filter is applied by the server, so lists, counts and the attention
 cards cover every matching session. Where a page has to work from a list of
 matching sessions (Agents, Teams and Traces use the most recent 1,000), it
-says "Showing the first 1,000 of …" when more matched.
+says "Showing the first 1,000 of …" when more matched. Agents and Teams list
+at most 500 agents or teams, the most recently active first, and say
+"Showing the first 500 of …" when there are more; narrow the time range or
+search by name to reach the rest.
+
+## Status
+
+**Status** means the same on Sessions and Traces, so a chip carried from
+one page to the other keeps the same runs. Traces reads it off each trace's
+top-level span; a session off the top-level spans of its traces.
+
+| Chip | Sessions | Traces |
+|---|---|---|
+| **Failed** | the session itself failed: a top-level span ended with an error | the top-level span ended with an error |
+| **Went on after a failed step** | it ended without failing, but a tool call, model call, hand-off or delegated agent in it failed | it ended without an error, but a span under it failed |
+| **Succeeded** | it ended and nothing in it failed | the same |
+| **Running** | a top-level span has not ended | the top-level span has not ended |
+| **No agent data** | known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown | no traces (the session has none) |
+
+A failed sub-agent whose caller carried on is a failed step, not a failed
+session. A session with no agent data never matches Failed, Went on after a
+failed step, Succeeded or Running, even when AgentShield blocked a call in
+it: a blocked call is not a failed session. Use **Security: Has a block** to
+find those. Listing spans on Traces (Roots only unticked), the chip applies
+to each span: Failed keeps spans that ended with an error, Went on after a
+failed step keeps spans with a failed span under them.
+
+On Agents, Teams and Security the status chip keeps what belongs to a
+session with that status (Agents reads Failed and Succeeded off the agent's
+own calls).
 
 ## Filters on pages that do not list sessions
 

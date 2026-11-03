@@ -87,9 +87,11 @@ export function parseState(p: URLSearchParams): ViewState {
     system: p.get('system') === '1',
     replay: p.get('replay') === '1',
     op: p.get('op') ?? '',
-    // The shared filter bar says ok/error/running; spans also have descendant_error.
-    // "Went on after a failed step" is a session status, applied through sessions.
-    status: p.get('status') === 'ok' ? 'success' : (STATUSES as readonly string[]).includes(p.get('status') ?? '') ? p.get('status')! : '',
+    // The shared status chip means the same as on Sessions (filters.ts
+    // STATUS_HELP), read off each row: ok is success, failed_step is a
+    // span that ended without an error but has a failed span under it
+    // (descendant_error). "No agent data" applies through sessions.
+    status: traceStatus(p.get('status')),
     q: p.get('q') ?? '',
     clauses: decodeClauses(p.get('f')),
     expr,
@@ -132,14 +134,20 @@ export function sharedOps(f: FilterState, time: TimeRange = 'all', perSpan = tru
   return ops
 }
 
+/** The span status (summary.weft.status) a shared status chip value keeps, or '' for none. */
+export function traceStatus(v: string | null): string {
+  if (v === 'ok') return 'success'
+  if (v === 'failed_step') return 'descendant_error'
+  return (STATUSES as readonly string[]).includes(v ?? '') ? v! : ''
+}
+
 /**
- * The status chip. Failed means "has an error anywhere": the span itself
- * failed, or one under it did (descendant_error), so on trace roots it is
- * "the trace has an error anywhere" (matching Sessions, where a session
- * with a failed step also shows up under the attention cards).
+ * The status chip on Traces: one span status. Failed is the span itself
+ * (on trace roots, the trace itself) failing, as Failed on Sessions is the
+ * session itself failing; a trace that went on after a failed step is
+ * descendant_error, as on Sessions. So the same chip keeps the same runs.
  */
 export function statusOp(status: string): Operation {
-  if (status === 'error') return { $in: [{ $getField: 'summary.weft.status' }, [{ $literal: 'error' }, { $literal: 'descendant_error' }]] }
   return { $eq: [{ $getField: 'summary.weft.status' }, { $literal: status }] }
 }
 

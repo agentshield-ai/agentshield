@@ -11,14 +11,17 @@ look. Each card's number is exactly the list you get when you click it.
 
 | Card | What it counts |
 |---|---|
-| Failed sessions | Sessions that ended with an error. |
-| Failed steps | Sessions that did not fail, but where a tool call, model call or hand-off failed along the way. The agent may have retried, worked around it, or given a weaker answer. |
+| Failed sessions | Sessions that failed themselves: a top-level run ended with an error. |
+| Failed steps | Sessions that ended without failing, but where a tool call, model call, hand-off or delegated agent failed along the way. The agent may have retried, worked around it, or given a weaker answer. |
 | Blocked or needing approval | Sessions where AgentShield blocked a tool call, or asked a person for approval three or more times. |
 | Low scores | Sessions with any score below 0.5. |
 | Cost spikes | Sessions costing at least three times the typical (median) session. |
 
 Hover the ⓘ next to a card for how it is counted. The server counts every
-session in the range, however many there are.
+session in the range, however many there are. With filters set, a card
+counts the list its link opens: the card's own condition replaces a filter on
+the same thing (with **Security: Needs approval** set, the security card
+counts every blocked or approval-heavy session).
 
 ## Find a session
 
@@ -32,8 +35,10 @@ Badges flag problems:
 - **Go to the failure**: on a failed session, opens the step that failed.
 - **Verdicts only — no agent spans recorded**: AgentShield checked tool calls
   in this session, but the agent itself sent no spans to Weft, so its steps,
-  duration and cost are unknown (the duration shows as —). Connect the agent
-  (see [Set up](setup.md)) to record them.
+  duration and cost are unknown (the duration shows as —), and so is its
+  outcome: its status shows as **No agent data**, never Succeeded or Failed,
+  even when a call was blocked. `status:unknown` lists these sessions.
+  Connect the agent (see [Set up](setup.md)) to record them.
 
 Use the filter bar to narrow the list, for example `agent:researcher
 status:failed`. Plain text finds sessions by what was said and done in them,

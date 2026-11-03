@@ -1,6 +1,9 @@
 package models
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // EvaluationRequest represents a request for evaluation
 // Shared between evaluate and triage packages to avoid circular dependencies
@@ -26,9 +29,11 @@ type EvaluationRequest struct {
 	// is computed as usual; the evaluate span is tagged agentshield.replay,
 	// the verdict is neither stored nor pushed to Weft, and the session is
 	// kept out of other sessions' cross-session fields. It is honoured only
-	// for session ids in the replay namespace (ReplaySessionPrefix): the HTTP
-	// API rejects it on any other session, so a caller cannot use it to hide
-	// live traffic or to remove a live session from correlation.
+	// for session ids in the replay namespace (ReplaySessionPrefix), and the
+	// namespace is reserved for it: the HTTP API rejects a replay flag on any
+	// other session and a namespaced session or event id without the flag
+	// (CheckReplayNamespace), so a caller can neither hide live traffic nor
+	// remove a live session from correlation.
 	Replay bool `json:"replay,omitempty"`
 }
 
@@ -36,9 +41,41 @@ type EvaluationRequest struct {
 // Weft's replay always uses "weft-replay:<job>:<session>".
 const ReplaySessionPrefix = "weft-replay:"
 
+// ReplayEventPrefix starts the event id of every replayed evaluation
+// ("weft-replay-<job>-<n>"). Weft versions before the replay attribute
+// recognised replays by it, so live traffic must not use it either.
+const ReplayEventPrefix = "weft-replay-"
+
 // IsReplaySession reports whether sessionID is in the replay namespace.
 func IsReplaySession(sessionID string) bool {
 	return strings.HasPrefix(sessionID, ReplaySessionPrefix)
+}
+
+// IsReplayEventID reports whether eventID carries the replay event prefix.
+func IsReplayEventID(eventID string) bool {
+	return strings.HasPrefix(eventID, ReplayEventPrefix)
+}
+
+// CheckReplayNamespace enforces that the replay namespace is used by replay
+// only, and replay only inside it. A replay must carry replay: true and a
+// session id starting with ReplaySessionPrefix; a request with a session id
+// in that namespace, or an event id starting with ReplayEventPrefix, must be
+// a replay. Weft drops replayed evaluations from sessions and detections, so
+// a live call that could borrow either id would be hidden from it.
+func CheckReplayNamespace(req *EvaluationRequest) error {
+	if req.Replay {
+		if !IsReplaySession(req.SessionID) {
+			return fmt.Errorf("replay is only allowed for session ids starting with %q", ReplaySessionPrefix)
+		}
+		return nil
+	}
+	if IsReplaySession(req.SessionID) {
+		return fmt.Errorf("session ids starting with %q are reserved for replay (replay: true)", ReplaySessionPrefix)
+	}
+	if IsReplayEventID(req.EventID) {
+		return fmt.Errorf("event ids starting with %q are reserved for replay (replay: true)", ReplayEventPrefix)
+	}
+	return nil
 }
 
 // Action represents the action to take based on evaluation

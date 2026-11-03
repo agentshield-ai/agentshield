@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 )
@@ -94,8 +95,9 @@ func TestSessionsAttentionCountsEverySession(t *testing.T) {
 	}
 
 	// Detections filtered through sessions resolve every matching session.
+	// ok means nothing failed anywhere, so step-1 (a failed tool call) is not ok.
 	ids, err := s.MatchingSessionIDs(ctx, SessionsQuery{ProjectID: proj, Status: "ok"})
-	if err != nil || len(ids) != 4 {
+	if err != nil || len(ids) != 3 {
 		t.Fatalf("ok sessions = %v %v", ids, err)
 	}
 	_, total, err := s.QueryDetections(ctx, DetectionQuery{ProjectID: proj, Sessions: &SessionsQuery{HasDetection: HasDetectionFlagged}})
@@ -175,5 +177,145 @@ func TestDetectionStatsByAgentExcludesReplay(t *testing.T) {
 	}
 	if len(st.ByAgent) != 2 {
 		t.Errorf("replay by_agent = %+v", st.ByAgent)
+	}
+}
+
+// The status filter means the same as on Traces: error, the session itself
+// (a top-level span) failed; failed_step, it ended without failing but a step
+// under it failed (a tool call, or a delegated agent); ok, nothing failed
+// anywhere; running, a top-level span is open; unknown, verdicts only.
+func TestSessionStatusFilterMatchesTraces(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	calls := append(attnSession(0, "root-error", true, false), attnSession(1, "recovered", false, true)...)
+	calls = append(calls, attnSession(2, "ok-1", false, false)...)
+	calls = append(calls, attnSession(3, "both", true, true)...)
+	// A delegated agent that failed under a root that did not.
+	sub := attnSession(4, "sub-failed", false, false)
+	p := sub[0].Start.ID
+	e := "sub-agent failed"
+	sub = append(sub, CompleteCall{Start: CallStart{ProjectID: proj, ID: "sub-sub-failed", TraceID: sub[0].Start.TraceID, ParentID: &p, OpName: "invoke_agent",
+		StartedAt: detTS(4*time.Millisecond + 5*time.Millisecond), Attributes: map[string]any{"otel": map[string]any{"attributes": map[string]any{
+			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "helper"}}}, Inputs: map[string]any{}},
+		End: &CallEnd{EndedAt: detTS(4*time.Millisecond + 50*time.Millisecond), Summary: map[string]any{}, Exception: &e}})
+	calls = append(calls, sub...)
+	// Running: the root has not ended (a failed step under it does not matter).
+	run := attnSession(5, "running-1", false, true)
+	run[0].End = nil
+	calls = append(calls, run...)
+	// A session known only from an engine verdict (a blocked tool call).
+	calls = append(calls, verdictSpan("v-1", "e-v", "verdicts-only", "", 0))
+	if _, err := s.UpsertComplete(ctx, calls); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string][]string{
+		"error":                 {"both", "root-error"},
+		SessionStatusFailedStep: {"recovered", "sub-failed"},
+		"ok":                    {"ok-1"},
+		"running":               {"running-1"},
+		SessionStatusUnknown:    {"verdicts-only"},
+	}
+	for status, ids := range want {
+		got, err := s.MatchingSessionIDs(ctx, SessionsQuery{ProjectID: proj, Status: status})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(got)
+		if fmt.Sprint(got) != fmt.Sprint(ids) {
+			t.Errorf("status=%s: %v, want %v", status, got, ids)
+		}
+	}
+	// The same split on the traces' roots (summary.weft.status).
+	for root, st := range map[string]string{"r-root-error": "error", "r-recovered": "descendant_error", "r-ok-1": "success", "r-sub-failed": "descendant_error", "r-both": "error", "r-running-1": "running"} {
+		c, err := s.GetCall(ctx, proj, root, false, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Status() != st {
+			t.Errorf("trace root %s status %s, want %s", root, c.Status(), st)
+		}
+	}
+	if ss, err := s.GetAgentSession(ctx, proj, "verdicts-only"); err != nil || ss.Status != SessionStatusUnknown || !ss.VerdictsOnly {
+		t.Errorf("verdict-only session: %+v %v", ss, err)
+	}
+	if _, _, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, Status: "bogus"}); err == nil {
+		t.Error("bad status accepted")
+	}
+}
+
+// A card's link opens the request's filters with the card's filter laid over
+// them ({...base, ...card.filter}); when both set the same key, the card's
+// value wins. The card must count exactly that list, not the intersection of
+// the two values (the verifier's cases: has=approval with the security card,
+// score_below with the low-score card, has_detection=block with security).
+func TestSessionsAttentionCountsTheLinkedList(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	var calls []CompleteCall
+	for i, id := range []string{"s-block", "s-heavy", "s-1appr", "s-low", "s-mid", "s-hi", "s-fail", "s-step"} {
+		calls = append(calls, attnSession(i, id, id == "s-fail", id == "s-step")...)
+	}
+	if _, err := s.UpsertComplete(ctx, calls); err != nil {
+		t.Fatal(err)
+	}
+	mustUpsert(t, s, det("e-b", "s-block", "Bash", "", "block", 0),
+		det("e-h1", "s-heavy", "Bash", "", "require_approval", 0), det("e-h2", "s-heavy", "Bash", "", "require_approval", 0),
+		det("e-h3", "s-heavy", "Bash", "", "require_approval", 0), det("e-1", "s-1appr", "Bash", "", "require_approval", 0))
+	for sess, v := range map[string]float64{"s-low": 0.2, "s-mid": 0.4, "s-hi": 0.9} {
+		v := v
+		if _, err := s.CreateScopeScore(ctx, ScopeScoreCreate{ProjectID: proj, Scope: ScopeSession, SessionID: sess, Scorer: "goal", Value: &v}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bases := []SessionsQuery{
+		{ProjectID: proj},
+		{ProjectID: proj, HasDetection: DetectionRequireApproval},
+		{ProjectID: proj, HasDetection: DetectionBlock},
+		{ProjectID: proj, ScoreBelow: "0.3"},
+		{ProjectID: proj, ScoreBelow: "goal:0.9"},
+		{ProjectID: proj, Status: "error"},
+		{ProjectID: proj, Status: "ok"},
+	}
+	for _, base := range bases {
+		a, err := s.SessionsAttention(ctx, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range a.Items {
+			if len(c.Filter) == 0 {
+				continue
+			}
+			q, err := withCardFilter(base, c.Filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, total, err := s.QuerySessions(ctx, q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if total != c.Count {
+				t.Errorf("base %+v, card %s: count %d, its link lists %d", base, c.ID, c.Count, total)
+			}
+			if total > 0 && (c.Latest == nil || c.Latest.SessionID != rows[0].SessionID) {
+				t.Errorf("base %+v, card %s: latest %+v, list starts with %s", base, c.ID, c.Latest, rows[0].SessionID)
+			}
+		}
+	}
+	// The verifier's first case, spelled out: with has=approval the security
+	// card lists (and counts) every flagged session, the blocked one too.
+	a, err := s.SessionsAttention(ctx, SessionsQuery{ProjectID: proj, HasDetection: DetectionRequireApproval})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Items[2].ID != "security" || a.Items[2].Count != 2 || a.Blocked != 1 || a.ApprovalHeavy != 1 {
+		t.Errorf("security card under has=approval: %+v blocked %d approval-heavy %d", a.Items[2], a.Blocked, a.ApprovalHeavy)
+	}
+	// And with score_below=0.3 the low-score card is every session below 0.5.
+	if a, err = s.SessionsAttention(ctx, SessionsQuery{ProjectID: proj, ScoreBelow: "0.3"}); err != nil {
+		t.Fatal(err)
+	}
+	if a.Items[3].ID != "low_score" || a.Items[3].Count != 2 || a.LowestScore == nil || *a.LowestScore != 0.2 {
+		t.Errorf("low-score card under score_below=0.3: %+v lowest %v", a.Items[3], a.LowestScore)
 	}
 }

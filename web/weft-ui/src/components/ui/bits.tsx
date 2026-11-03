@@ -63,6 +63,8 @@ const STATUS: Record<SessionStatus, { icon: IconName; label: string; cls: string
   ok: { icon: 'ok', label: 'Succeeded', cls: 'ok' },
   error: { icon: 'error', label: 'Failed', cls: 'error' },
   running: { icon: 'running', label: 'Running', cls: 'running' },
+  // Known only from AgentShield verdicts: no agent spans, so no outcome.
+  unknown: { icon: 'info', label: 'No agent data', cls: 'muted' },
 }
 
 export function StatusPill({ status, label }: { status: SessionStatus | string; label?: string }) {

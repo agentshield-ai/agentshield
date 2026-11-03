@@ -160,11 +160,26 @@ func TestShieldIngestValidationAndIdempotency(t *testing.T) {
 	}
 	e.key = "k1"
 
-	body := shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "weft-replay-job-1", "action": "block"},
-		map[string]any{"event_id": "evt-r2", "session_id": "weft-replay:job:s1", "action": "block"})
+	// Engines never push replays: replay-namespaced ids are rejected (400),
+	// not silently dropped, and nothing in the request is stored.
+	for name, body := range map[string]map[string]any{
+		"replay event id":         shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "weft-replay-hide-1", "session_id": "victim-9", "action": "block"}),
+		"replay session id":       shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "evt-r2", "session_id": "weft-replay:job:s1", "action": "block"}),
+		"replay override":         {"project_id": shieldProj, "overrides": []any{map[string]any{"event_id": "weft-replay-job-1", "session_id": "s1"}}},
+		"replay override session": {"project_id": shieldProj, "overrides": []any{map[string]any{"event_id": "evt-1", "session_id": "weft-replay:job:s1"}}},
+	} {
+		if code, out := e.do(http.MethodPost, "/api/v1/shield/ingest", body, ""); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out), "reserved for replay") {
+			t.Fatalf("%s: %d %v", name, code, out)
+		}
+	}
+	if list := e.get("/api/v1/detections", url.Values{}); list["total_count"].(float64) != 0 {
+		t.Fatalf("rejected ingest stored detections: %v", list)
+	}
+
+	body := shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"))
 	body["overrides"] = []any{map[string]any{"event_id": "evt-later", "session_id": "s1"}}
 	code, out := e.do(http.MethodPost, "/api/v1/shield/ingest", body, "")
-	if code != http.StatusOK || out["accepted"].(float64) != 1 || out["created"].(float64) != 1 || out["ignored"].(float64) != 2 || out["overrides_pending"].(float64) != 1 {
+	if code != http.StatusOK || out["accepted"].(float64) != 1 || out["created"].(float64) != 1 || out["overrides_pending"].(float64) != 1 {
 		t.Fatalf("ingest: %d %v", code, out)
 	}
 	firstID := out["ids"].([]any)[0].(map[string]any)["id"]

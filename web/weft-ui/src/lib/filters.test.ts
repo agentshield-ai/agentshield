@@ -142,7 +142,12 @@ describe('one chip set on every page', () => {
     expect(sessionScope('security', all)).toEqual({ team: 'code-crew', status: 'error', scoreBelow: { value: 0.5 }, model: 'm', costMin: 0.1 })
     expect(sessionScope('traces', all)).toEqual({ team: 'code-crew', has: 'block', scoreBelow: { value: 0.5 }, costMin: 0.1 })
     // Session-only values go through sessions even where the chip is otherwise the page's own.
-    expect(sessionScope('traces', { status: 'failed_step' })).toEqual({ status: 'failed_step' })
+    // Traces reads "went on after a failed step" off its own rows (descendant_error), as Sessions does.
+    expect(sessionScope('traces', { status: 'failed_step' })).toEqual({})
+    expect(sessionScope('agents', { status: 'failed_step' })).toEqual({ status: 'failed_step' })
+    // "No agent data" exists only on sessions.
+    expect(sessionScope('traces', { status: 'unknown' })).toEqual({ status: 'unknown' })
+    expect(sessionScope('sessions', { status: 'unknown' })).toEqual({})
     expect(sessionScope('security', { has: 'flagged' })).toEqual({ has: 'flagged' })
     expect(sessionScope('agents', { status: 'running' })).toEqual({ status: 'running' })
     expect(sessionScope('agents', { has: 'flagged' })).toEqual({})
@@ -156,6 +161,9 @@ describe('one chip set on every page', () => {
 
   it('knows blocked-or-approval-heavy and went-on-after-a-failed-step', () => {
     expect(parseFilterText('has:flagged status:failed_step')).toEqual({ has: 'flagged', status: 'failed_step' })
+    expect(parseFilterText('status:unknown')).toEqual({ status: 'unknown' })
+    expect(chipsOf({ status: 'unknown' })[0]).toMatchObject({ value: 'No agent data', help: expect.stringContaining('AgentShield verdicts') })
+    expect(chipsOf({ status: 'error' })[0].help).toContain('itself failed')
     expect(sessionsParams({ has: 'flagged', status: 'failed_step' }, 'all')).toEqual({ has_detection: 'flagged', status: 'failed_step' })
     expect(isFlagged({ require_approval: 3 })).toBe(true)
     expect(isFlagged({ require_approval: 2, allow: 9 })).toBe(false)

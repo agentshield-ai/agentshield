@@ -34,7 +34,7 @@ All rows are scoped by `project_id` (`entity/project`).
 
 | Object | Source | Key fields |
 |---|---|---|
-| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `duration_ms` (null when unknown), `verdicts_only` (known only from AgentShield verdicts), `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`) |
+| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `duration_ms` (null when unknown), `verdicts_only` (known only from AgentShield verdicts), `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`; `unknown` for `verdicts_only`) |
 | **Agent** | `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.agent.version` on `invoke_agent` spans | name, versions, models, tools, sessions, handoffs in and out, detection rate (flagged tool calls / tool calls, API.md), scores |
 | **Team** | `weft.team.id` / `weft.team.name` on any span of a session; otherwise derived as the set of agents that took part in a session (`team_id` = `auto:` + sorted agent names joined by `+`) | `team_id`, `name`, `agents[]`, `session_count`, aggregated graph |
 | **Turn** | the existing turn detection (`is_turn`) | unchanged |
@@ -90,8 +90,8 @@ body for POST). Lists take `limit`, `offset` and `sort_by`, and return
 
 | Route | Purpose |
 |---|---|
-| `GET /api/v1/sessions` | list sessions. Filters: `agent`, `team_id`, `status` (`running` / `ok` / `error` / `failed_step`), `has_detection` (`any` / `block` / `require_approval` / `flagged`), `min_score` (`scorer:value`), `score_below`, `cost_min`, `q` (text search), `from`, `to` |
-| `GET /api/v1/sessions/attention` | the Sessions home's attention cards, counted on the server over every session matching the same filters, each with the filter that lists its sessions |
+| `GET /api/v1/sessions` | list sessions. Filters: `agent`, `team_id`, `status` (`running` / `ok` / `error` / `failed_step` / `unknown`), `has_detection` (`any` / `block` / `require_approval` / `flagged`), `min_score` (`scorer:value`), `score_below`, `cost_min`, `q` (text search), `from`, `to` |
+| `GET /api/v1/sessions/attention` | the Sessions home's attention cards, counted on the server over every session matching the same filters, each with the filter that lists its sessions; a card counts exactly the list its link opens (the request's filters with the card's filter laid over them) |
 | `GET /api/v1/sessions/{id}` | the session summary (§2 fields) |
 | `GET /api/v1/sessions/{id}/timeline` | ordered items: `turn`, `message`, `reasoning`, `llm`, `tool_call`, `handoff`, `error`, each with `span_id`, `agent_name`, `started_at`, `ended_at` and a type-specific payload. Detections are fetched separately (`/detections?session_id=`) and merged by `span_id` / `tool_call_id` in the UI |
 | `GET /api/v1/sessions/{id}/graph` | `{nodes: [{agent, calls, errors, tokens, cost_usd, detections}], edges: [{from, to, kind, count, errors, p50_ms}]}` |
@@ -99,7 +99,7 @@ body for POST). Lists take `limit`, `offset` and `sort_by`, and return
 | `GET /api/v1/agents`, `GET /api/v1/agents/{name}` | as today, plus `handoffs_in`, `handoffs_out`, `reasoning_tokens`, `detection_counts`, `scores` |
 | `GET /api/v1/teams`, `GET /api/v1/teams/{id}` | team list; a team's agents, sessions, the aggregated graph and per-hand-off statistics (count, error rate, latency, mean score) |
 | `GET /api/v1/handoffs` | query hand-offs: `session_id`, `from_agent`, `to_agent`, `team_id` |
-| `GET /api/v1/detections`, `GET /api/v1/detections/stats` | query detections (`session_id`, `agent`, `action`, `rule_id`, `source`, time range, and any sessions filter as `session.<filter>`, resolved on the server); counts by rule, action, agent (engine verdicts) and day |
+| `GET /api/v1/detections`, `GET /api/v1/detections/stats` | query detections (`session_id`, `agent`, `action`, `rule_id`, `source`, time range, and any sessions filter as `session.<filter>`, resolved on the server); counts by rule, action, agent (with the detection rate; engine verdicts, or replay detections with `source=replay`) and day |
 | `POST /api/v1/shield/ingest` | AgentShield pushes verdicts here (§5.2) |
 | `POST /api/v1/shield/replay` | `{session_ids[] or filter, rules_dir?, label?}` starts a replay job, and returns `{job_id}` |
 | `GET /api/v1/shield/replay/{job_id}` | job status, and a diff against the engine's original verdicts: `newly_blocked`, `no_longer_blocked`, `changed` |
@@ -181,12 +181,18 @@ field on `EvaluationRequest`), a `weft-replay-` event id and a
 `weft-replay:<job>:` session id. The engine still evaluates them, but tags
 the `evaluate` span `agentshield.replay`, neither stores nor pushes the
 verdict, and keeps the session out of live sessions' cross-session fields.
-The engine honours the flag only on session ids in the `weft-replay:`
-namespace and rejects it (400) on any other session, so it cannot be used to
-hide live traffic. Weft never turns a replay evaluation that comes back over
-OTLP or the push into an engine detection, a session or agent activity, and
-the Traces list hides those engine traces unless asked
-(`summary.weft.replay`). Replay never creates sessions.
+The namespace is reserved for replay: the engine honours the flag only on
+session ids in the `weft-replay:` namespace, and rejects (400, logged) a
+request with the flag on any other session, and a request without it whose
+session id is in that namespace or whose event id starts `weft-replay-`
+(overrides in the namespace too), so none of them can hide live traffic.
+Over OTLP, Weft treats an evaluate span as a replay only when it carries
+`agentshield.replay = true` or, for engines that predate that attribute, a
+`weft-replay:` session id; it never turns one into an engine detection, a
+session or agent activity, and the Traces list hides those engine traces
+unless asked (`summary.weft.replay`). Engines never push replays, so the push
+(`/api/v1/shield/ingest`) rejects replay-namespaced ids with 400. Replay never
+creates sessions.
 
 ## 6. Scoped evaluation
 

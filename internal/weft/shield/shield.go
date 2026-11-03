@@ -402,12 +402,13 @@ type remoteEvaluator struct {
 }
 
 func (r *remoteEvaluator) evaluate(ctx context.Context, sessionKey string, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
-	// Replay requests are marked so they are not mistaken for live traffic
-	// (store.IsReplayEvaluation): replay is set, so the engine tags its
-	// evaluate span agentshield.replay, does not push the verdict and keeps
-	// the session out of live cross-session fields; the session id is
-	// namespaced per job and the event id starts with "weft-replay-" for
-	// engines that predate the flag. Weft's OTLP and push ingest drop them.
+	// Replay requests are marked so they are not mistaken for live traffic:
+	// replay is set, so the engine tags its evaluate span agentshield.replay,
+	// does not store or push the verdict and keeps the session out of live
+	// cross-session fields; the session id is namespaced per job (the engine
+	// requires it with the flag, and Weft's OTLP ingest also recognises
+	// engines that predate the flag by it), and the event id starts with
+	// "weft-replay-". The engine reserves both for replay.
 	req.Replay = true
 	req.SessionID = store.ReplaySessionPrefix + r.jobID + ":" + sessionKey
 	body, err := json.Marshal(req)

@@ -20,6 +20,7 @@ import {
   parseFilterText,
   removeKey,
   sessionScopeNote,
+  STATUS_HELP,
   STATUS_LABEL,
   TIME_LABEL,
   TIME_OPTIONS,
@@ -379,7 +380,7 @@ export function FilterBar({
         <ul className="chips-row" aria-label="Active filters">
           {chips.map((c) => (
             <li key={c.key} className="fchip">
-              <button type="button" className="fchip-body" onClick={() => setEditing(c.key)} aria-label={`Edit filter ${c.label}: ${c.value}`}>
+              <button type="button" className="fchip-body" onClick={() => setEditing(c.key)} aria-label={`Edit filter ${c.label}: ${c.value}`} title={c.help}>
                 <span className="fchip-key">{c.label}</span>
                 <span className="fchip-val">{c.value}</span>
               </button>
@@ -461,7 +462,7 @@ export function FilterBar({
         />
       )}
       <p id="filter-syntax-help" className="sr-only">
-        Type text to search. You can also type filters such as agent:name, team:id, status:failed, status:failed_step, has:block, has:approval, has:flagged, score&lt;0.5,
+        Type text to search. You can also type filters such as agent:name, team:id, status:failed, status:failed_step, status:ok, status:unknown, has:block, has:approval, has:flagged, score&lt;0.5,
         model:name, tool:name, cost&gt;0.1, time:7d and press Enter.
       </p>
     </div>
@@ -477,10 +478,12 @@ const TEXT_SEARCH_LABEL: Record<FilterPage, string> = {
   traces: 'Text in any span of the trace: names, inputs, outputs, messages, reasoning, tool calls, errors or hand-offs',
 }
 
-/** What the status chip means where it differs from Sessions. */
+/** How the status chip reads a page's rows (it means the same as on Sessions). */
 const STATUS_NOTE: Partial<Record<FilterPage, string>> = {
+  sessions:
+    'Failed: the session itself failed. Went on after a failed step: it ended without failing, but a tool call, model call, hand-off or delegated agent failed. Succeeded: nothing failed. The same chip keeps the same runs on Traces.',
   traces:
-    'On Traces, Failed means the trace has an error anywhere: its top-level span or any span under it failed (so it includes traces that went on after a failed step). Listing spans, it means the span or something under it failed.',
+    "Status means the same as on Sessions, read off each trace's top-level span: Failed, the top-level span failed; Went on after a failed step, it did not but a span under it did; Succeeded, nothing failed. Listing spans, it applies to each span. No agent data keeps no traces (those sessions recorded none).",
 }
 
 function FilterEditor({
@@ -533,11 +536,11 @@ function FilterEditor({
       ) : null}
     </label>
   )
-  const radios = <T extends string>(name: string, value: T | undefined, labels: Record<T, string>, set: (v: T) => void) => (
+  const radios = <T extends string>(name: string, value: T | undefined, labels: Record<T, string>, set: (v: T) => void, help?: Record<T, string>) => (
     <fieldset className="radios">
       <legend className="sr-only">{name}</legend>
       {(Object.keys(labels) as T[]).map((k, i) => (
-        <label key={k} className="checkbox">
+        <label key={k} className="checkbox" title={help?.[k]}>
           <input
             ref={
               i === 0
@@ -607,7 +610,7 @@ function FilterEditor({
     case 'status':
       body = (
         <>
-          {radios<StatusFilter>('status', draft.status, STATUS_LABEL, (v) => setDraft({ ...draft, status: v }))}
+          {radios<StatusFilter>('status', draft.status, STATUS_LABEL, (v) => setDraft({ ...draft, status: v }), STATUS_HELP)}
           {STATUS_NOTE[page] && <p className="small muted filter-note">{STATUS_NOTE[page]}</p>}
         </>
       )

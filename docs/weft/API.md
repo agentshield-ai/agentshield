@@ -1936,7 +1936,7 @@ existed are indexed once, the first time the server starts.
 |---|---|
 | `agent` | an agent took part |
 | `team_id` | the session's team |
-| `status` | `running` (a root span has not ended), `error` (a root span or agent invocation failed), `ok`, or `failed_step` (not `error`, but a tool call, model call or hand-off in it failed: the session went on after a failed step) |
+| `status` | `error` (the session itself failed: one of its top-level spans, the roots of its traces, ended with an error), `failed_step` (it ended without failing, but a step under a top-level span failed: a tool call, model call, hand-off or delegated agent; the session went on after a failed step), `ok` (it ended and nothing in it failed), `running` (a top-level span has not ended) or `unknown` (verdicts only, below). The values mean the same on the Traces list, read off each trace's root (`summary.weft.status` `error`, `descendant_error`, `success`, `running`) |
 | `has_detection` | `any`, an action (`block`, `require_approval`, …) with at least one detection, or `flagged` (blocked at least once, or 3 or more `require_approval`) |
 | `min_score`, `max_score` | `scorer:value` against the mean of the session's session-scope scores by that scorer (inclusive) |
 | `score_below` | `value` or `scorer:value`: a session-scope score mean (of any scorer, or the named one) strictly below `value` |
@@ -1951,7 +1951,10 @@ concern) and detections do not move them. A session known solely through
 verdicts (no agent spans recorded) has `verdicts_only: true`: it takes
 `started_at` and `last_activity` from its verdicts, so it sorts and filters
 by time, but its `duration_ms` is `null` (verdict times say when tool calls
-were checked, not how long the session ran; it sorts as shortest).
+were checked, not how long the session ran; it sorts as shortest), and its
+`status` is `unknown`: whether it succeeded is not known (a blocked tool call
+does not mean the session failed). Only `status=unknown` lists such
+sessions; `ok`, `error`, `failed_step` and `running` never do.
 
 `sort_by`: `last_activity` (default, desc), `started_at`, `duration_ms`,
 `span_count`, `turn_count`, `tool_call_count`, `handoff_count`,
@@ -1980,9 +1983,15 @@ once). `low_score`: the lowest session-scope score mean is below
 `low_score_threshold`. `cost`: cost at least `cost_spike_threshold`, which
 is `cost_spike_factor` times the median known session cost, rounded up to
 two significant digits, and null (with an empty `filter`) when fewer than
-four sessions have a known cost. Each card's `filter`, added to the
-request's own filters, lists exactly the sessions it counts; `latest` is the
-counted session with the most recent activity.
+four sessions have a known cost (the median is over the sessions matching
+the request). Each card counts exactly the sessions that its link lists: the
+request's filters with the card's `filter` laid over them, the card's value
+replacing the request's own for the same key (`{...request, ...filter}`; for
+example, with `has_detection=require_approval` the `security` card counts
+every `flagged` session, not only the flagged sessions that also asked for
+approval). `blocked` and `approval_heavy` split the `security` card's
+sessions and `lowest_score` is the lowest among the `low_score` card's;
+`latest` is the counted session with the most recent activity.
 
 `GET /api/v1/sessions/{id}` returns one summary, plus `trace_ids`.
 
@@ -2313,10 +2322,13 @@ Same filters. Returns `{total, by_action, by_severity, by_source, overridden,
 linked, by_rule: [{rule_id, title, level, count, by_action}], by_agent:
 [{agent, count, by_action, tool_calls, flagged_tool_calls, detection_rate}],
 by_day: [{day, count, by_action, by_severity}]}`. Pass `source=engine` to
-leave replays out of the totals. `by_agent` counts engine verdicts only, like
-the detection rate beside it: replay detections are left out of its `count`
-and `by_action` unless `source=replay` is requested (then they are all it
-counts).
+leave replays out of the totals. `by_agent` follows the detection source,
+and so does the detection rate beside it: by default (and with
+`source=engine`) its `count`, `by_action`, `flagged_tool_calls` and
+`detection_rate` are engine verdicts only; with `source=replay` they are all
+replay detections (narrowed by `ruleset` when given), so the rate says what
+share of the agent's recorded tool calls the replayed rules would have
+flagged.
 
 #### Detection rate
 
@@ -2328,7 +2340,12 @@ The agents API and these stats use one definition:
   started in the time range (and session, when one is given).
 - `flagged_tool_calls`: those of them with at least one engine verdict (not a
   replay) other than `allow` linked to them (the detection's `span_id`) that
-  matches the request's other filters (`action`, `rule_id`, ...).
+  matches the request's other filters (`action`, `rule_id`, ...). In the
+  stats with `source=replay`, replay detections take the place of engine
+  verdicts (a replay's action is what enforce mode would do, and every
+  replay detection is linked to the tool span it re-evaluated); a tool call
+  flagged by several rulesets counts once. The agents API always uses engine
+  verdicts.
 
 A tool call with several detections counts once, and detections that are not
 linked to a recorded tool call (no matching span, or a session Weft has no
@@ -2357,12 +2374,14 @@ required; `action`, `mode`, `severity` and rule levels from the lists above;
 characters. Re-sending an `event_id` updates the same detection (idempotent);
 `overridden` never reverts. An override without `event_id` marks the session's
 latest `block` / `require_approval`; one whose detection has not arrived yet
-is kept and applied when it does. Remote replay traffic is ignored:
-detections and overrides whose `event_id` starts with `weft-replay-` or whose
-`session_id` starts with `weft-replay:`. Response:
+is kept and applied when it does. The replay namespace is rejected (400):
+a detection or override whose `event_id` starts with `weft-replay-` or whose
+`session_id` starts with `weft-replay:` fails the whole request, because
+engines never push replay evaluations and reserve those ids for them.
+Response:
 
 ```json
-{"accepted": 1, "created": 1, "duplicates": 0, "ignored": 0,
+{"accepted": 1, "created": 1, "duplicates": 0,
  "overrides_applied": 1, "overrides_pending": 0,
  "ids": [{"id": "01a1a0b7-26ce-765f-8d58-c15ed46fd607", "event_id": "e-1", "created": true}]}
 ```
@@ -2373,10 +2392,15 @@ Over OTLP, spans of instrumentation scope `agentshield` (or with
 `agentshield.rule.matched` events; engines that predate them (`verdict.action`,
 `rule.matched` events with `rule.name` / `rule.severity`) are understood too.
 The event id is the span's `event.id` attribute, so a verdict sent both ways
-is stored once. Evaluate spans of remote replay requests (attribute
-`agentshield.replay = true`, or an `event.id` starting `weft-replay-`, or a
-session starting `weft-replay:`) stay ordinary spans but never become
-detections, sessions or agent activity. Their whole trace (the engine's HTTP
+is stored once. Evaluate spans of remote replay requests stay ordinary spans
+but never become detections, sessions or agent activity. A span is a replay
+when it carries `agentshield.replay = true`, or, as a fallback for engines
+that predate that attribute, when its session (`gen_ai.conversation.id` /
+`session.id`) starts `weft-replay:`. Current engines accept such a session id
+only on a replay request, which also gets the attribute, so the fallback
+cannot hide their live traffic; an engine older than this check could still
+accept a live call in that namespace. An `event.id` starting `weft-replay-`
+alone does not make a span a replay. Their whole trace (the engine's HTTP
 span included) is marked `summary.weft.replay = true`, which the Traces list
 hides by default, as Sessions does.
 
@@ -2406,11 +2430,14 @@ request to the engine carries `"replay": true`, an `event_id` starting
 engine still evaluates it, tags its evaluate span `agentshield.replay`, does
 not store it in its own alert store (`/api/v1/alerts`, `agentshield alerts`),
 does not push the verdict to Weft and keeps the session out of live sessions'
-cross-session fields, and Weft ignores whatever comes back over OTLP or the
-push. The engine honours `replay` only on session ids starting
-`weft-replay:`; a request with `"replay": true` on any other session id is
-rejected with 400 and logged, so the flag cannot hide live traffic or take a
-live session out of correlation.
+cross-session fields, and Weft ignores whatever comes back over OTLP. The
+namespace is reserved for replay: the engine honours `replay` only on session
+ids starting `weft-replay:`, and rejects with 400 (and logs) a request with
+`"replay": true` on any other session id, and a request without it whose
+`session_id` starts `weft-replay:` or whose `event_id` starts `weft-replay-`.
+`POST /api/v1/override` rejects ids in the namespace the same way. So neither
+the flag nor the ids can hide live traffic or take a live session out of
+correlation.
 
 ### `GET /api/v1/shield/replay/{job_id}`
 

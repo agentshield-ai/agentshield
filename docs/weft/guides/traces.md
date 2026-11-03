@@ -19,11 +19,13 @@ need the details.
 - Plain text in the filter box finds a trace when any of its spans contains
   it: names, inputs, outputs, messages, reasoning, tool calls, error
   messages and hand-offs, not only the top-level span.
-- `status:failed` (**Status: Failed**) on Traces means *the trace has an
-  error anywhere*: its top-level span failed, or any span under it did. That
-  includes traces that went on after a failed step, which Sessions counts
-  separately as "Failed steps". Listing spans, it keeps spans that failed or
-  have a failed span under them.
+- **Status** means the same as on Sessions: **Failed** keeps traces whose
+  top-level span ended with an error; **Went on after a failed step** keeps
+  traces whose top-level span ended without one but with a failed span under
+  it; **Succeeded** keeps traces where nothing failed. So the same chip keeps
+  the same runs on both pages. Listing spans, it applies to each span (a
+  span that failed, or one with a failed span under it). See
+  [Status](filters.md#status).
 - **Add filter → Advanced: field condition** adds a condition on any field,
   such as an input value or a token count. It shows as a **Field** chip with
   the others.

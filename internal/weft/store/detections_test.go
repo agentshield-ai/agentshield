@@ -579,8 +579,40 @@ func TestReplayEvaluationSpansAreNotLiveData(t *testing.T) {
 	if _, err := s.GetCall(ctx, proj, "rp-1", false, false, false); err != nil {
 		t.Errorf("replay span not stored: %v", err)
 	}
-	if IsReplayEvaluation("evt-1", "s1") || !IsReplayEvaluation("weft-replay-j-1", "") || !IsReplayEvaluation("", "weft-replay:j:s") {
-		t.Error("IsReplayEvaluation")
+	if InReplayNamespace("evt-1", "s1") || !InReplayNamespace("weft-replay-j-1", "") || !InReplayNamespace("", "weft-replay:j:s") {
+		t.Error("InReplayNamespace")
+	}
+}
+
+// A span is a replay only when the engine says so (agentshield.replay) or,
+// for engines that predate the attribute, when its session id is in the
+// replay namespace. A replay-looking event id on a live session is not
+// evidence of a replay: it used to hide a live verdict, its session and its
+// trace (the verifier's "weft-replay-hide-1" on session "victim-9").
+func TestReplayEventIDAloneIsLiveTraffic(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{replayEngineSpan("live-1", "weft-replay-hide-1", "victim-9", false)}); err != nil {
+		t.Fatal(err)
+	}
+	d := getDet(t, s, "weft-replay-hide-1")
+	if d.Source != DetectionSourceEngine || d.Action != "block" || d.SessionID != "victim-9" {
+		t.Fatalf("live verdict = %+v", d)
+	}
+	if _, err := s.GetAgentSession(ctx, proj, "victim-9"); err != nil {
+		t.Fatalf("live session hidden: %v", err)
+	}
+	var hidden int
+	if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM replay_traces WHERE project_id = ? AND trace_id = ?`, proj, "rt-live-1").Scan(&hidden); err != nil || hidden != 0 {
+		t.Fatalf("live trace hidden from the Traces list: %d %v", hidden, err)
+	}
+	// The namespaced session id without the attribute (an engine that
+	// predates it) is still a replay.
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{replayEngineSpan("old-1", "evt-o", "weft-replay:j:s", false)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM replay_traces WHERE project_id = ? AND trace_id = ?`, proj, "rt-old-1").Scan(&hidden); err != nil || hidden != 1 {
+		t.Fatalf("old-engine replay trace not marked: %d %v", hidden, err)
 	}
 }
 
@@ -688,6 +720,43 @@ func TestDetectionRateIsFlaggedToolCallsOverToolCalls(t *testing.T) {
 			t.Errorf("block-only row = %+v", r)
 		}
 	}
+	// With source=replay, the count and the rate both come from replay
+	// detections linked to the tool calls: a replay flags tool calls a and c
+	// (one call twice, under two rulesets) and allows b.
+	var rp []DetectionInput
+	for _, r := range []struct{ span, ruleset, action string }{{"a", "candidate", "block"}, {"c", "candidate", "require_approval"}, {"b", "candidate", "allow"}, {"a", "other", "block"}} {
+		rp = append(rp, DetectionInput{EventID: "replay:" + r.ruleset + ":" + r.span, SessionID: "s1", ToolName: "Bash", AgentName: "installer", Action: r.action,
+			Mode: "shadow", Source: DetectionSourceReplay, Ruleset: r.ruleset, SpanID: r.span, TraceID: "t1", CreatedAt: Micros(detBase.Add(time.Hour))})
+	}
+	mustUpsert(t, s, rp...)
+	rowOf := func(q DetectionQuery) *AgentCount {
+		st, err := s.DetectionStatsFor(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range st.ByAgent {
+			if st.ByAgent[i].Agent == "installer" {
+				return &st.ByAgent[i]
+			}
+		}
+		return nil
+	}
+	if r := rowOf(DetectionQuery{ProjectID: proj, Source: DetectionSourceReplay}); r == nil || r.Count != 4 || r.FlaggedToolCalls != 2 || r.ToolCalls != 3 || r.Rate == nil || *r.Rate != 0.6667 {
+		t.Errorf("source=replay row = %+v", r)
+	}
+	if r := rowOf(DetectionQuery{ProjectID: proj, Source: DetectionSourceReplay, Ruleset: "other"}); r == nil || r.Count != 1 || r.FlaggedToolCalls != 1 || r.Rate == nil || *r.Rate != 0.3333 {
+		t.Errorf("source=replay ruleset=other row = %+v", r)
+	}
+	// Engine stats (the default and source=engine) are unchanged by replays.
+	for _, src := range []string{"", DetectionSourceEngine} {
+		if r := rowOf(DetectionQuery{ProjectID: proj, Source: src}); r == nil || r.Count != 10 || r.FlaggedToolCalls != 2 || *r.Rate != 0.6667 {
+			t.Errorf("source=%q row = %+v", src, r)
+		}
+	}
+	if a, err := s.GetAgentV1(ctx, proj, "installer"); err != nil || a.FlaggedToolCalls != 2 {
+		t.Errorf("agent rate after replay: %+v %v", a, err)
+	}
+
 	// An agent with tool calls and no verdicts has a rate of 0.
 	putSpans(t, s, agentRoot("root2", "t2", "s2", "quiet", 0), toolSpan("q", "t2", "root2", "", "Bash", "tq", "", 0))
 	if q, err := s.GetAgentV1(ctx, proj, "quiet"); err != nil || q.DetectionRate == nil || *q.DetectionRate != 0 {

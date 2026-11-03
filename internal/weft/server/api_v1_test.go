@@ -600,7 +600,7 @@ func TestAPIv1VerdictSpans(t *testing.T) {
 		}
 	}
 	g := e.v1Get("/api/v1/sessions/guarded-only?" + P)
-	if v1Num(g["span_count"]) != 0 || g["started_at"] == nil || g["status"] != "ok" {
+	if v1Num(g["span_count"]) != 0 || g["started_at"] == nil || g["status"] != "unknown" {
 		t.Fatalf("verdict-only session %v", g)
 	}
 	if tl := e.v1Get("/api/v1/sessions/guarded-only/timeline?" + P); v1Num(tl["total_count"]) != 0 {

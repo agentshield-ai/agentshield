@@ -647,13 +647,17 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SECURITY: the replay flag changes what happens to a verdict (not stored,
-	// not pushed to Weft, session isolated from correlation), so it is
-	// honoured only inside the replay session namespace that Weft's replay
-	// uses. On any other session it would let a caller hide live traffic.
-	if req.Replay && !models.IsReplaySession(req.SessionID) {
-		http.Error(w, "Invalid input: replay is only allowed for session ids starting with \""+models.ReplaySessionPrefix+"\"", http.StatusBadRequest)
-		slog.Warn("Rejected replay flag on a non-replay session", "session_id", req.SessionID, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
+	// SECURITY: the replay namespace is reserved for replay. The replay flag
+	// changes what happens to a verdict (not stored, not pushed to Weft,
+	// session isolated from correlation), so it is honoured only inside the
+	// replay session namespace that Weft's replay uses; and Weft drops any
+	// evaluation in that namespace (or with a replay event id) from sessions
+	// and detections, so live traffic may not use those ids either. Either
+	// misuse would let a caller hide live traffic.
+	if err := models.CheckReplayNamespace(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
+		slog.Warn("Rejected misuse of the replay namespace", "error", err, "replay", req.Replay,
+			"session_id", req.SessionID, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
 		return
 	}
 
@@ -1052,6 +1056,15 @@ func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Invalid event_id: %v", err), http.StatusBadRequest)
 			return
 		}
+	}
+
+	// SECURITY: overrides are reported for live verdicts only; replayed
+	// evaluations (the reserved replay namespace) are never overridden, and
+	// forwarding one would make Weft reject the push batch it is in.
+	if models.IsReplaySession(req.SessionID) || models.IsReplayEventID(req.EventID) {
+		http.Error(w, "Invalid input: overrides are not accepted for replayed evaluations", http.StatusBadRequest)
+		slog.Warn("Rejected override in the replay namespace", "session_id", req.SessionID, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
+		return
 	}
 
 	ok := s.sessionRegistry.RecordOverride(req.SessionID, req.EventID)

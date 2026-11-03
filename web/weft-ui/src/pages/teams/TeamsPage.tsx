@@ -12,11 +12,13 @@ import { agentUrl, teamUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { GuidedEmpty } from '../../components/ui/EmptyState'
-import { AgentChip, DetectionBadges, Tip } from '../../components/ui/bits'
+import { AgentChip, DetectionBadges, Tip, CapNote } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
 import { usePageHelp } from '../../components/ui/PageHelp'
 
 const DEFAULT_TIME: TimeRange = '24h'
+/** The most teams one page loads (the server's order: most recent activity first). */
+const LIST_LIMIT = 500
 
 /** The chip Teams applies to a team itself; agent, text and time go to the server, the rest through sessions (useSessionScope). */
 export function teamMatches(t: TeamSummary, s: FilterState): boolean {
@@ -46,7 +48,7 @@ export function TeamsPage() {
   const time = widen.time
   const q = useQuery({
     queryKey: ['v1', pid, 'teams', base, time, state.from, state.to],
-    queryFn: () => v1.teams(pid, { ...base, ...timeWindow(state, time), limit: 500 }),
+    queryFn: () => v1.teams(pid, { ...base, ...timeWindow(state, time), limit: LIST_LIMIT }),
     enabled: widen.ready,
     placeholderData: keepPreviousData,
   })
@@ -81,6 +83,7 @@ export function TeamsPage() {
           <ErrorBox error={q.error} />
           <ErrorBox error={scope.error} />
           {scope.truncated && <ScopeCapNote total={scope.total} />}
+          {q.data && <CapNote shown={q.data.items.length} total={q.data.total_count} what="teams" why="the most recently active ones; the filters apply to these. Narrow the time range or search by name to see the rest" />}
           {q.isLoading || !scope.ready ? (
             <Loading />
           ) : rows.length === 0 ? (

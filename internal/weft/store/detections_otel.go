@@ -16,10 +16,12 @@ import (
 // Replay evaluations. Weft's remote replay (internal/weft/shield) sends each
 // re-evaluation of a recorded tool call to the engine with replay: true, an
 // event id "weft-replay-<job>-<n>" and a session id "weft-replay:<job>:<id>".
-// An engine that exports its evaluate spans to Weft, or pushes its verdicts,
-// reports these back. They are not live traffic: they never become
-// detections, sessions or agent activity (the replay job stores its own
-// results as source=replay detections).
+// An engine that exports its evaluate spans to Weft reports these back. They
+// are not live traffic: they never become detections, sessions or agent
+// activity (the replay job stores its own results as source=replay
+// detections). The engine reserves the namespace for replay: it rejects a
+// live request with a namespaced session id or a replay event id, and a
+// replay without the namespaced session id (models.CheckReplayNamespace).
 const (
 	ReplayEventPrefix   = "weft-replay-"
 	ReplaySessionPrefix = "weft-replay:"
@@ -27,8 +29,10 @@ const (
 	AttrReplay = "agentshield.replay"
 )
 
-// IsReplayEvaluation reports whether an engine verdict came from a replay.
-func IsReplayEvaluation(eventID, sessionID string) bool {
+// InReplayNamespace reports whether an event or session id is in the replay
+// namespace. Engines never push replays, so /api/v1/shield/ingest rejects
+// these ids rather than storing or silently dropping them.
+func InReplayNamespace(eventID, sessionID string) bool {
 	return strings.HasPrefix(eventID, ReplayEventPrefix) || strings.HasPrefix(sessionID, ReplaySessionPrefix)
 }
 
@@ -77,11 +81,10 @@ CREATE TABLE IF NOT EXISTS replay_traces (
 	registerMigration(func(db *sql.DB) error {
 		return runOnce(db, "replay-evaluations-1", func(tx *sql.Tx) error {
 			if _, err := tx.Exec(`DELETE FROM detection_rules WHERE (project_id, detection_id) IN (SELECT project_id, id FROM detections
-				WHERE source = 'engine' AND (substr(event_id, 1, 12) = 'weft-replay-' OR substr(session_id, 1, 12) = 'weft-replay:'))`); err != nil {
+				WHERE source = 'engine' AND substr(session_id, 1, 12) = 'weft-replay:')`); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(`DELETE FROM detections WHERE source = 'engine'
-				AND (substr(event_id, 1, 12) = 'weft-replay-' OR substr(session_id, 1, 12) = 'weft-replay:')`); err != nil {
+			if _, err := tx.Exec(`DELETE FROM detections WHERE source = 'engine' AND substr(session_id, 1, 12) = 'weft-replay:'`); err != nil {
 				return err
 			}
 			_, err := tx.Exec(`UPDATE agent_spans SET conversation_id = '', conversation_name = '', own_conversation = 0, is_turn = 0,
@@ -114,10 +117,15 @@ func indexReplayTrace(ctx context.Context, tx *sql.Tx, projectID, id string) err
 	return err
 }
 
-// isReplaySpan reports an engine evaluate span of a replayed tool call.
+// isReplaySpan reports an engine evaluate span of a replayed tool call: one
+// tagged agentshield.replay = true. Engines older than that attribute cannot
+// set it, so a span whose session id is in the replay namespace counts too;
+// current engines accept that session id only on a replay request (with the
+// attribute), so the fallback cannot hide their live traffic. The event id
+// prefix alone is not enough: it is no evidence of a replay, and an older
+// engine would accept it on a live call.
 func isReplaySpan(a spanAttrs) bool {
-	return a.truthy(AttrReplay) ||
-		IsReplayEvaluation(a.str("event.id", "agentshield.event.id"), a.str("gen_ai.conversation.id", "session.id"))
+	return a.truthy(AttrReplay) || strings.HasPrefix(a.str("gen_ai.conversation.id", "session.id"), ReplaySessionPrefix)
 }
 
 // DetectionFromSpan derives a detection from a stored call's attributes, or

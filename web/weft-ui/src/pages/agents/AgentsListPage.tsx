@@ -13,10 +13,12 @@ import { agentAnalyticsUrl, agentUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { GuidedEmpty } from '../../components/ui/EmptyState'
-import { AgentChip, DetectionBadges, ScorePill, Tip } from '../../components/ui/bits'
+import { AgentChip, DetectionBadges, ScorePill, Tip, CapNote } from '../../components/ui/bits'
 import { usePageHelp } from '../../components/ui/PageHelp'
 
 const DEFAULT_TIME: TimeRange = '24h'
+/** The most agents one page loads (the server's order: most recent activity first). */
+const LIST_LIMIT = 500
 
 /** The chips Agents applies to an agent's own figures; the rest go through sessions (useSessionScope). */
 export function agentMatches(a: AgentSummary, s: FilterState): boolean {
@@ -50,7 +52,7 @@ export function AgentsListPage() {
   const time = widen.time
   const q = useQuery({
     queryKey: ['v1', pid, 'agents', base, time, state.from, state.to],
-    queryFn: () => v1.agents(pid, { ...base, ...timeWindow(state, time), limit: 500 }),
+    queryFn: () => v1.agents(pid, { ...base, ...timeWindow(state, time), limit: LIST_LIMIT }),
     enabled: widen.ready,
     placeholderData: keepPreviousData,
   })
@@ -94,6 +96,7 @@ export function AgentsListPage() {
           <ErrorBox error={q.error} />
           <ErrorBox error={scope.error} />
           {scope.truncated && <ScopeCapNote total={scope.total} />}
+          {q.data && <CapNote shown={q.data.items.length} total={q.data.total_count} what="agents" why="the most recently active ones; the filters apply to these. Narrow the time range or search by name to see the rest" />}
           {q.isLoading || !scope.ready ? (
             <Loading />
           ) : rows.length === 0 ? (

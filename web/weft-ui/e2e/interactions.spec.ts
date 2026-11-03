@@ -180,16 +180,42 @@ test('Traces defaults to the last 24 hours, widens when empty, and saves views',
   await expect(page).toHaveURL(/cols=output/)
 })
 
-test('Traces: Failed means an error anywhere, text finds any span, field conditions live in Add filter', async ({ page }) => {
+test('the status chip keeps the same runs on Sessions and Traces', async ({ page }) => {
   const errors = watchErrors(page)
-  // Every session with a failed step or a failure has a trace with an error somewhere in it.
-  const api = async (q: string) =>
-    (await (await page.request.get(`/api/v1/sessions?project_id=${encodeURIComponent(project())}&${q}`)).json()).total_count as number
-  const withErrors = (await api('status=error')) + (await api('status=failed_step'))
-  expect(withErrors).toBeGreaterThan(0)
-  await page.goto(`/${project()}/traces?status=error&time=all`)
-  await expect(page.locator('.traces-table tbody tr').first()).toBeVisible()
-  expect(await page.locator('.traces-table tbody tr').count()).toBeGreaterThanOrEqual(withErrors)
+  const P = process.env.WEFT_E2E_STATUS!
+  // Each seeded session is one trace, whose top-level span is its agent.
+  const expected: Record<string, string[]> = {
+    error: ['failer'],
+    failed_step: ['delegator', 'recoverer'],
+    ok: ['finisher'],
+  }
+  const agentOf: Record<string, string> = {
+    'Status check: a run that fails': 'failer',
+    'Status check: a run that recovers': 'recoverer',
+    'Status check: a helper that fails': 'delegator',
+    'Status check: a run where nothing fails': 'finisher',
+  }
+  for (const [status, agents] of Object.entries(expected)) {
+    await page.goto(`/${P}/sessions?status=${status}&time=all`)
+    const rows = page.locator('.session-row')
+    await expect(rows).toHaveCount(agents.length)
+    const sessions = (await rows.allInnerTexts()).map((t) => Object.entries(agentOf).find(([title]) => t.includes(title))?.[1]).sort()
+    expect(sessions, `Sessions, status=${status}`).toEqual(agents)
+    await page.goto(`/${P}/traces?status=${status}&time=all`)
+    const traces = page.locator('.traces-table tbody tr')
+    await expect(traces).toHaveCount(agents.length)
+    const roots = (await traces.allInnerTexts()).map((t) => Object.values(agentOf).find((a) => new RegExp(`\\b${a}\\b`).test(t))).sort()
+    expect(roots, `Traces, status=${status}`).toEqual(agents)
+  }
+  // The chip says what it keeps.
+  await page.goto(`/${P}/traces?status=failed_step&time=all`)
+  await expect(page.getByRole('button', { name: 'Edit filter Status: Went on after a failed step' })).toHaveAttribute('title', /a step in it failed/)
+  await expect(page.getByRole('note')).toHaveCount(0) // applied to the traces themselves, not through sessions
+  expect(errors).toEqual([])
+})
+
+test('Traces: text finds any span, field conditions live in Add filter', async ({ page }) => {
+  const errors = watchErrors(page)
   // Free text matches a child span's error message, not only the root span.
   await page.goto(`/${project()}/traces?q=${encodeURIComponent('3 tests failed')}&time=all`)
   await expect(page.locator('.traces-table tbody tr')).toHaveCount(1)
@@ -215,5 +241,20 @@ test('Sessions text search finds tool errors; the projects page has help', async
   await page.goto('/')
   await expect(page.getByRole('complementary', { name: 'About Projects' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Read the guide' })).toHaveAttribute('href', '/help/setup.md')
+  expect(errors).toEqual([])
+})
+
+test('Agents and Teams say when they show only the first 500', async ({ page }) => {
+  const errors = watchErrors(page)
+  const P = process.env.WEFT_E2E_MANY!
+  await page.goto(`/${P}/agents`)
+  await expect(page.getByRole('status').filter({ hasText: 'Showing the first 500 of 501 agents' })).toBeVisible()
+  await expect(page.locator('table.agents-table tbody tr')).toHaveCount(500)
+  await page.goto(`/${P}/teams`)
+  await expect(page.getByRole('status').filter({ hasText: 'Showing the first 500 of 501 teams' })).toBeVisible()
+  // Below the cap there is no note.
+  await page.goto(`/${project()}/agents?time=all`)
+  await expect(page.locator('table.agents-table tbody tr').first()).toBeVisible()
+  await expect(page.getByText(/Showing the first \d+ of/)).toHaveCount(0)
   expect(errors).toEqual([])
 })

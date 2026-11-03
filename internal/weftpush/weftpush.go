@@ -170,6 +170,11 @@ func (p *Pusher) Verdict(req *models.EvaluationRequest, resp *evaluate.Evaluatio
 	if resp.Action == models.ActionAllow && !p.sendAll {
 		return
 	}
+	// Replayed evaluations are never pushed (Weft rejects the replay
+	// namespace on /api/v1/shield/ingest, which would fail the whole batch).
+	if req.Replay || models.IsReplaySession(req.SessionID) || models.IsReplayEventID(req.EventID) {
+		return
+	}
 	d := &Detection{
 		EventID:     req.EventID,
 		SessionID:   req.SessionID,
@@ -198,7 +203,7 @@ func (p *Pusher) Verdict(req *models.EvaluationRequest, resp *evaluate.Evaluatio
 // Override queues a user override of the verdict for eventID (which may be
 // empty: the session's latest blocking verdict). It never blocks.
 func (p *Pusher) Override(sessionID, eventID string) {
-	if p == nil || sessionID == "" {
+	if p == nil || sessionID == "" || models.IsReplaySession(sessionID) || models.IsReplayEventID(eventID) {
 		return
 	}
 	p.enqueue(item{ovr: &Override{EventID: eventID, SessionID: sessionID, Timestamp: p.Now().UTC().Format(time.RFC3339Nano)}})
