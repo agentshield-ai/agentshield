@@ -31,6 +31,9 @@ type RuleResult struct {
 	Description   string            `json:"description"`
 	Matched       bool              `json:"matched"`
 	MatchedFields map[string]string `json:"matched_fields,omitempty"`
+	// Tags are the rule's Sigma tags (e.g. attack.t1059). Shared with the
+	// loaded rule; callers must not modify them.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // LoadedRule represents a loaded Sigma rule with metadata
@@ -340,6 +343,7 @@ func (e *Engine) Evaluate(fields map[string]string) []RuleResult {
 				Description:   rules[i].description,
 				Matched:       true,
 				MatchedFields: matched,
+				Tags:          rules[i].rule.Tags,
 			})
 		}
 	}

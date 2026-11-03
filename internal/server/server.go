@@ -130,6 +130,18 @@ func validateEvaluationRequest(req *models.EvaluationRequest) error {
 		}
 	}
 
+	// Validate correlation ids (optional; forwarded to Weft and OTel spans)
+	if req.ToolCallID != "" {
+		if err := validateStringInput(req.ToolCallID, 256, "tool_call_id"); err != nil {
+			return err
+		}
+	}
+	if req.AgentName != "" {
+		if err := validateStringInput(req.AgentName, 256, "agent_name"); err != nil {
+			return err
+		}
+	}
+
 	if req.Context != "" {
 		if req.Context != "prod" && req.Context != "test" {
 			return fmt.Errorf("context must be 'prod' or 'test'")

@@ -14,6 +14,11 @@ type EvaluationRequest struct {
 	Fields    map[string]string      `json:"fields"`
 	RawParams map[string]interface{} `json:"params,omitempty"`  // Plugin compat alias for Args (accepts any JSON value)
 	Context   string                 `json:"context,omitempty"` // Optional execution context: prod|test
+	// ToolCallID is the harness's tool-use id (e.g. Claude Code's tool_use_id),
+	// used to attach the verdict to the exact tool span in Weft.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	// AgentName names the agent that made the call (gen_ai.agent.name).
+	AgentName string `json:"agent_name,omitempty"`
 }
 
 // Action represents the action to take based on evaluation

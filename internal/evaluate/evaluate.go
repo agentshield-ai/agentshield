@@ -144,12 +144,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	if e.tracer != nil {
 		var span trace.Span
 		ctx, span = e.tracer.Start(ctx, "evaluate",
-			trace.WithAttributes(
-				attribute.String("event.id", req.EventID),
-				attribute.String("session.id", req.SessionID),
-				attribute.String("tool.name", req.Tool),
-				attribute.String("source", req.Source),
-			),
+			trace.WithAttributes(evaluateSpanAttributes(req)...),
 		)
 		defer func() {
 			if response != nil {
@@ -159,6 +154,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 					attribute.Bool("verdict.cached", response.Cached),
 					attribute.String("verdict.mode", string(response.EffectiveMode)),
 				)
+				recordVerdictOnSpan(span, response)
 			}
 			span.End()
 		}()
