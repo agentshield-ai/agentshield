@@ -106,7 +106,7 @@ func TestDetectionNormalizeValidation(t *testing.T) {
 		{EventID: "e", Action: "block", Mode: "x"}, // bad mode
 		{EventID: "e", Action: "block", Source: "elsewhere"},
 		{EventID: "e", Action: "block", SessionID: strings.Repeat("s", 300)},
-		{EventID: "e", Action: "block", ToolName: "a\x00b"},
+		{EventID: "e", Action: "block", ToolCallID: "a\x00b"}, // ids stay strict; names are cleaned (TestLiveVerdictWithUntidyNamesIsKept)
 		{EventID: "e", Action: "block", Rules: []DetectionRule{{Title: "no id"}}},
 		{EventID: "e", Action: "block", Rules: []DetectionRule{{ID: "r", Level: "extreme"}}},
 		{EventID: "e", Action: "block", Severity: "huge"},
@@ -824,5 +824,36 @@ func TestReplayTracesMarked(t *testing.T) {
 	}
 	if got := roots(true); got != "http-1" {
 		t.Errorf("replay roots = %q", got)
+	}
+}
+
+// The engine accepts control characters in agent and tool names and long
+// sources on live verdicts; Weft must store such a block (cleaned), not drop
+// it, on both the push and the OTel path, and must not fail the batch.
+func TestLiveVerdictWithUntidyNamesIsKept(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	in := det("untidy-1", "s1", "Ba\nsh", "", "block", 0)
+	in.AgentName = "co\nder"
+	in.EventSource = strings.Repeat("x", 200)
+	ok := det("tidy-1", "s1", "Read", "", "block", time.Second)
+	if _, err := s.UpsertDetections(ctx, proj, []DetectionInput{in, ok}); err != nil {
+		t.Fatalf("push batch rejected: %v", err)
+	}
+	d := getDet(t, s, "untidy-1")
+	if d.ToolName != "Ba sh" || d.AgentName != "co der" || len(d.EventSource) != 128 {
+		t.Fatalf("cleaned fields = %q %q %d", d.ToolName, d.AgentName, len(d.EventSource))
+	}
+	getDet(t, s, "tidy-1")
+
+	span := replayEngineSpan("otel-untidy", "untidy-otel", "s2", false)
+	attrs := span.Start.Attributes["otel"].(map[string]any)["attributes"].(map[string]any)
+	attrs["gen_ai.agent.name"] = "co\nder"
+	attrs["gen_ai.tool.name"] = "Ba\tsh"
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{span}); err != nil {
+		t.Fatal(err)
+	}
+	if d := getDet(t, s, "untidy-otel"); d.Action != "block" || d.ToolName != "Ba sh" || d.AgentName != "co der" {
+		t.Fatalf("OTel verdict = %+v", d)
 	}
 }

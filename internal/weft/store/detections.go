@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -223,8 +224,34 @@ func detCheckLen(field, v string, max int) error {
 	return nil
 }
 
-// Normalize validates a detection and fills defaults.
+// detClean makes a descriptive field (a name or label, never an id) safe to
+// store instead of rejecting it: control characters become spaces, runs of
+// whitespace collapse, and the value is cut to max bytes on a rune boundary.
+// The engine accepts such values on live verdicts, so rejecting them here
+// would drop a real block (and, on push, the rest of its batch).
+func detClean(v string, max int) string {
+	if strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		v = strings.Join(strings.FieldsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f || r == ' ' }), " ")
+	}
+	v = strings.TrimSpace(v)
+	if len(v) > max {
+		cut := max
+		for cut > 0 && !utf8.RuneStart(v[cut]) {
+			cut--
+		}
+		v = v[:cut]
+	}
+	return v
+}
+
+// Normalize validates a detection and fills defaults. Identifiers are
+// checked strictly; descriptive fields are cleaned (detClean).
 func (d *DetectionInput) Normalize() error {
+	d.ToolName = detClean(d.ToolName, 256)
+	d.AgentName = detClean(d.AgentName, 256)
+	d.EventSource = detClean(d.EventSource, 128)
+	d.Ruleset = detClean(d.Ruleset, 256)
+	d.Severity = detClean(d.Severity, 32)
 	d.EventID = strings.TrimSpace(d.EventID)
 	if d.EventID == "" {
 		return Invalidf("event_id is required")
@@ -270,9 +297,7 @@ func (d *DetectionInput) Normalize() error {
 		if err := detCheckLen("rule id", r.ID, 256); err != nil {
 			return err
 		}
-		if err := detCheckLen("rule title", r.Title, 1024); err != nil {
-			return err
-		}
+		r.Title = detClean(r.Title, 1024)
 		r.Level = normSeverity(r.Level)
 		if r.Level == "unknown" {
 			return Invalidf("rule level must be low, medium, high or critical")
