@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // AgentShield's engine exports an `evaluate` span per verdict (instrumentation
@@ -33,7 +34,11 @@ const (
 // namespace. Engines never push replays, so /api/v1/shield/ingest rejects
 // these ids rather than storing or silently dropping them.
 func InReplayNamespace(eventID, sessionID string) bool {
-	return strings.HasPrefix(eventID, ReplayEventPrefix) || strings.HasPrefix(sessionID, ReplaySessionPrefix)
+	// Ingest trims ids, so check the trimmed form: " weft-replay-x" would
+	// otherwise be stored inside the namespace.
+	e := strings.TrimLeftFunc(eventID, unicode.IsSpace)
+	s := strings.TrimLeftFunc(sessionID, unicode.IsSpace)
+	return strings.HasPrefix(e, ReplayEventPrefix) || strings.HasPrefix(s, ReplaySessionPrefix)
 }
 
 func init() {
@@ -125,7 +130,19 @@ func indexReplayTrace(ctx context.Context, tx *sql.Tx, projectID, id string) err
 // prefix alone is not enough: it is no evidence of a replay, and an older
 // engine would accept it on a live call.
 func isReplaySpan(a spanAttrs) bool {
-	return a.truthy(AttrReplay) || strings.HasPrefix(a.str("gen_ai.conversation.id", "session.id"), ReplaySessionPrefix)
+	if a.truthy(AttrReplay) {
+		return true
+	}
+	// Engines older than the replay attribute: the namespaced session id.
+	// Compare the raw value exactly as the engine does; trimming here would
+	// let a padded live id (" weft-replay:x", which the engine treats as
+	// live) be dropped as a replay.
+	for _, k := range []string{"gen_ai.conversation.id", "session.id"} {
+		if v, ok := a.get(k).(string); ok && v != "" {
+			return strings.HasPrefix(v, ReplaySessionPrefix)
+		}
+	}
+	return false
 }
 
 // DetectionFromSpan derives a detection from a stored call's attributes, or

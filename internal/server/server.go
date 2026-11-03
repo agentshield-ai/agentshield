@@ -1061,6 +1061,10 @@ func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
 	// SECURITY: overrides are reported for live verdicts only; replayed
 	// evaluations (the reserved replay namespace) are never overridden, and
 	// forwarding one would make Weft reject the push batch it is in.
+	if err := firstErr(models.CheckID("session_id", req.SessionID), models.CheckID("event_id", req.EventID)); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid input: %v", err), http.StatusBadRequest)
+		return
+	}
 	if models.IsReplaySession(req.SessionID) || models.IsReplayEventID(req.EventID) {
 		http.Error(w, "Invalid input: overrides are not accepted for replayed evaluations", http.StatusBadRequest)
 		slog.Warn("Rejected override in the replay namespace", "session_id", req.SessionID, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
@@ -1133,4 +1137,14 @@ func (s *Server) handleFeedbackQuery(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		slog.Warn("Failed to write response", "error", err)
 	}
+}
+
+// firstErr returns the first non-nil error.
+func firstErr(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

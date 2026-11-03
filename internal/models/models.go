@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // EvaluationRequest represents a request for evaluation
@@ -48,12 +49,29 @@ const ReplayEventPrefix = "weft-replay-"
 
 // IsReplaySession reports whether sessionID is in the replay namespace.
 func IsReplaySession(sessionID string) bool {
-	return strings.HasPrefix(sessionID, ReplaySessionPrefix)
+	return strings.HasPrefix(strings.TrimLeftFunc(sessionID, unicode.IsSpace), ReplaySessionPrefix)
 }
 
 // IsReplayEventID reports whether eventID carries the replay event prefix.
 func IsReplayEventID(eventID string) bool {
-	return strings.HasPrefix(eventID, ReplayEventPrefix)
+	return strings.HasPrefix(strings.TrimLeftFunc(eventID, unicode.IsSpace), ReplayEventPrefix)
+}
+
+// CheckID rejects an identifier with control characters (tab, newline and
+// carriage return included) or leading or trailing whitespace. Identifiers
+// are compared exactly by the engine but trimmed by some consumers (Weft),
+// so padded ids could fall on different sides of the replay namespace on
+// each side and hide live traffic. No shipped plugin produces such ids.
+func CheckID(field, id string) error {
+	for _, r := range id {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return fmt.Errorf("%s contains control characters", field)
+		}
+	}
+	if strings.TrimFunc(id, unicode.IsSpace) != id {
+		return fmt.Errorf("%s has leading or trailing whitespace", field)
+	}
+	return nil
 }
 
 // CheckReplayNamespace enforces that the replay namespace is used by replay
@@ -63,6 +81,11 @@ func IsReplayEventID(eventID string) bool {
 // a replay. Weft drops replayed evaluations from sessions and detections, so
 // a live call that could borrow either id would be hidden from it.
 func CheckReplayNamespace(req *EvaluationRequest) error {
+	for _, f := range []struct{ name, v string }{{"event_id", req.EventID}, {"session_id", req.SessionID}, {"tool_call_id", req.ToolCallID}} {
+		if err := CheckID(f.name, f.v); err != nil {
+			return err
+		}
+	}
 	if req.Replay {
 		if !IsReplaySession(req.SessionID) {
 			return fmt.Errorf("replay is only allowed for session ids starting with %q", ReplaySessionPrefix)

@@ -616,6 +616,29 @@ func TestReplayEventIDAloneIsLiveTraffic(t *testing.T) {
 	}
 }
 
+// A live verdict whose session id merely contains the namespace after
+// padding is live traffic: Weft compares the raw id, as the engine does.
+func TestPaddedNamespaceSessionIsLiveTraffic(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for i, sid := range []string{" weft-replay:1", "\u00a0weft-replay:2"} {
+		id := fmt.Sprintf("pad-%d", i)
+		if _, err := s.UpsertComplete(ctx, []CompleteCall{replayEngineSpan(id, "evt-"+id, sid, false)}); err != nil {
+			t.Fatal(err)
+		}
+		var hidden int
+		if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM replay_traces WHERE project_id = ? AND trace_id = ?`, proj, "rt-"+id).Scan(&hidden); err != nil || hidden != 0 {
+			t.Fatalf("%q: live trace hidden as replay: %d %v", sid, hidden, err)
+		}
+		if d := getDet(t, s, "evt-"+id); d.Source != DetectionSourceEngine {
+			t.Fatalf("%q: live verdict dropped: %+v", sid, d)
+		}
+	}
+	if !InReplayNamespace(" weft-replay-x6", "s") || !InReplayNamespace("e", "\tweft-replay:x") {
+		t.Fatal("ingest must reject ids that fall in the namespace once trimmed")
+	}
+}
+
 // verdictSpan is an engine evaluate span for session at offset.
 func verdictSpan(id, eventID, session, toolCallID string, at time.Duration) CompleteCall {
 	return CompleteCall{Start: CallStart{ProjectID: proj, ID: id, TraceID: "vt-" + id, OpName: "evaluate", StartedAt: detTS(at),

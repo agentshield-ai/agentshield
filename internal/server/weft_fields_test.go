@@ -324,6 +324,17 @@ func TestCheckReplayNamespace(t *testing.T) {
 		{models.EvaluationRequest{EventID: "e", SessionID: "weft-replay:j:s"}, false},
 		{models.EvaluationRequest{EventID: "e", SessionID: "s", Replay: true}, false},
 		{models.EvaluationRequest{EventID: "weft-replay-j-0", Replay: true}, false},
+		// Padded or control-character ids are rejected outright: Weft trims
+		// ids, so they could otherwise land inside the namespace there while
+		// the engine treats them as live.
+		{models.EvaluationRequest{EventID: "e", SessionID: "\tweft-replay:1"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: " weft-replay:1"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "\u00a0weft-replay:1"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "\u3000weft-replay:1"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "s\n"}, false},
+		{models.EvaluationRequest{EventID: " weft-replay-x6", SessionID: "s"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "s", ToolCallID: "t\r"}, false},
+		{models.EvaluationRequest{EventID: "e", SessionID: "sess with inner space"}, true},
 	}
 	for _, c := range cases {
 		if err := models.CheckReplayNamespace(&c.req); (err == nil) != c.ok {
