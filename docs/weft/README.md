@@ -364,6 +364,13 @@ one-off Argon2id run plus a Wasm heap per connection).
   and read the reply back as feedback. `--egress-allow-private` reopens that
   for every member, so prefer a narrow `--egress-allow` list on shared
   servers. See [Outbound requests](#outbound-requests).
+- Secret names in scorers, OAuth settings and custom providers resolve only
+  from the secret store, never from the server's environment. The environment
+  supplies only the key of a built-in provider at its default or
+  operator-set base URL (`OPENAI_API_KEY` for `openai/…`, and so on), and that
+  key is not sent when a project stores its own base URL for the provider.
+- The guard also refuses the Weft host's own interface addresses (a service
+  bound to `0.0.0.0` is reachable on them) and documentation ranges.
 - Remote scorer requests carry call inputs and outputs and often credentials,
   so their URLs must be `https://` unless `--remote-scorer-allow-insecure-http`
   is set.

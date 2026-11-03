@@ -30,6 +30,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -235,7 +236,38 @@ const (
 	// Unresolved: behind an HTTP(S) proxy, a name this host cannot resolve
 	// cannot be checked, so it is refused unless listed in --egress-allow.
 	Unresolved Category = "unresolved"
+	// HostAddr: an address of one of the Weft host's own interfaces.
+	HostAddr Category = "host-address"
 )
+
+// hostAddrs caches the host's interface addresses, refreshed every minute.
+var hostAddrs struct {
+	sync.Mutex
+	at  time.Time
+	set map[netip.Addr]bool
+}
+
+// interfaceAddrs is net.InterfaceAddrs (a variable for tests).
+var interfaceAddrs = net.InterfaceAddrs
+
+func hostOwnAddr(ip netip.Addr) bool {
+	hostAddrs.Lock()
+	defer hostAddrs.Unlock()
+	if hostAddrs.set == nil || time.Since(hostAddrs.at) > time.Minute {
+		set := map[netip.Addr]bool{}
+		if as, err := interfaceAddrs(); err == nil {
+			for _, a := range as {
+				if pfx, err := netip.ParsePrefix(a.String()); err == nil {
+					set[pfx.Addr().Unmap()] = true
+				} else if ad, err := netip.ParseAddr(a.String()); err == nil {
+					set[ad.Unmap()] = true
+				}
+			}
+		}
+		hostAddrs.set, hostAddrs.at = set, time.Now()
+	}
+	return hostAddrs.set[ip.Unmap()]
+}
 
 var metadataAddrs = map[netip.Addr]bool{
 	netip.MustParseAddr("169.254.169.254"): true, // AWS, GCP, Azure, OpenStack, ...
@@ -244,6 +276,7 @@ var metadataAddrs = map[netip.Addr]bool{
 	netip.MustParseAddr("100.100.100.200"): true, // Alibaba Cloud
 	netip.MustParseAddr("fd00:ec2::254"):   true, // AWS IMDS over IPv6
 	netip.MustParseAddr("fd00:ec2::23"):    true, // AWS EKS pod identity over IPv6
+	netip.MustParseAddr("168.63.129.16"):   true, // Azure WireServer
 }
 
 type rangeCat struct {
@@ -267,6 +300,9 @@ var ranges = func() []rangeCat {
 		{"240.0.0.0/4", Reserved}, // includes 255.255.255.255
 		{"192.0.0.0/24", Reserved}, {"198.18.0.0/15", Reserved},
 		{"100::/64", Reserved}, // discard-only
+		// Documentation and other ranges IANA marks not globally reachable.
+		{"192.0.2.0/24", Reserved}, {"198.51.100.0/24", Reserved}, {"203.0.113.0/24", Reserved},
+		{"2001:db8::/32", Reserved}, {"64:ff9b:1::/48", Reserved}, {"::ffff:0:0:0/96", Reserved},
 	} {
 		out = append(out, rangeCat{netip.MustParsePrefix(r.cidr), r.c})
 	}
@@ -319,6 +355,11 @@ func (p *Policy) Check(host string, ip netip.Addr, port string) error {
 		return nil
 	}
 	c := Classify(ip)
+	if c == Public && hostOwnAddr(ip) {
+		// A service bound to 0.0.0.0 on the Weft host is reachable on the
+		// host's public interface address too.
+		c = HostAddr
+	}
 	if c == Public {
 		return nil
 	}

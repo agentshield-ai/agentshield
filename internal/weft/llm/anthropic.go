@@ -215,7 +215,8 @@ func openAIUsage(in, outT float64, u map[string]any) map[string]any {
 }
 
 func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[string]any, emit func(map[string]any) error) (map[string]any, error) {
-	key, ok := c.secret(ctx, "ANTHROPIC_API_KEY")
+	// The Anthropic base URL comes only from the operator's environment.
+	key, ok := c.routeKey(ctx, Route{KeyName: "ANTHROPIC_API_KEY", envKey: true})
 	if !ok {
 		return nil, fmt.Errorf("no API key configured: set the ANTHROPIC_API_KEY secret")
 	}

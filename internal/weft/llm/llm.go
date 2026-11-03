@@ -43,7 +43,13 @@ type Client struct {
 	HTTP      *http.Client
 }
 
-// New creates a client. secret falls back to environment variables.
+// New creates a client. Secrets come only from the secret store (secret).
+// The server's own environment is consulted only for the API key of a
+// built-in provider whose base URL is the operator's (the default or an
+// environment variable), never for a name a project or user chose: otherwise
+// anyone able to name a secret (a scorer header, an OAuth client secret, a
+// custom provider key) could have the server send its environment, such as
+// OPENAI_API_KEY or WEFT_DB_ENCRYPTION_KEY, to a URL they control.
 func New(secret SecretFunc, providers ProviderFunc) *Client {
 	return &Client{Secret: secret, Providers: providers, HTTP: egress.NewClient(10*time.Minute, true)}
 }
@@ -54,8 +60,20 @@ func (c *Client) secret(ctx context.Context, name string) (string, bool) {
 			return v, true
 		}
 	}
-	v := os.Getenv(name)
-	return v, v != ""
+	return "", false
+}
+
+// routeKey returns the API key for rt: the stored secret, or, for a built-in
+// provider at its operator-chosen base URL (rt.envKey), the environment.
+func (c *Client) routeKey(ctx context.Context, rt Route) (string, bool) {
+	if v, ok := c.secret(ctx, rt.KeyName); ok {
+		return v, true
+	}
+	if rt.envKey {
+		v := os.Getenv(rt.KeyName)
+		return v, v != ""
+	}
+	return "", false
 }
 
 // openAICompatible are well-known OpenAI-compatible providers.
@@ -79,6 +97,9 @@ type Route struct {
 	BaseURL string
 	KeyName string
 	Headers map[string]string
+	// envKey: KeyName may be read from the server environment (built-in
+	// provider, base URL not chosen by a project).
+	envKey bool
 }
 
 // Resolve maps a model id to a route.
@@ -92,7 +113,7 @@ func (c *Client) Resolve(ctx context.Context, projectID, model string) (Route, e
 		case "mock":
 			return Route{Kind: "mock", Model: name}, nil
 		case "anthropic":
-			return Route{Kind: "anthropic", Model: name, KeyName: "ANTHROPIC_API_KEY"}, nil
+			return Route{Kind: "anthropic", Model: name, KeyName: "ANTHROPIC_API_KEY", envKey: true}, nil
 		}
 		if p, ok := openAICompatible[prefix]; ok {
 			return c.openAIRoute(ctx, prefix, name, p.BaseURL, p.KeyName), nil
@@ -110,7 +131,7 @@ func (c *Client) Resolve(ctx context.Context, projectID, model string) (Route, e
 	}
 	switch {
 	case strings.HasPrefix(model, "claude"):
-		return Route{Kind: "anthropic", Model: model, KeyName: "ANTHROPIC_API_KEY"}, nil
+		return Route{Kind: "anthropic", Model: model, KeyName: "ANTHROPIC_API_KEY", envKey: true}, nil
 	case strings.HasPrefix(model, "gemini"):
 		p := openAICompatible["gemini"]
 		return c.openAIRoute(ctx, "gemini", model, p.BaseURL, p.KeyName), nil
@@ -132,17 +153,18 @@ func (c *Client) Resolve(ctx context.Context, projectID, model string) (Route, e
 }
 
 func (c *Client) openAIRoute(ctx context.Context, provider, model, base, key string) Route {
-	if provider == "openai" {
-		if v, ok := c.secret(ctx, "OPENAI_BASE_URL"); ok {
+	envKey := true
+	baseVar := map[string]string{"openai": "OPENAI_BASE_URL", "ollama": "OLLAMA_BASE_URL"}[provider]
+	if baseVar != "" {
+		if v, ok := c.secret(ctx, baseVar); ok {
+			// A stored base URL may point anywhere, so the operator's
+			// environment key is not sent there.
+			base, envKey = v, false
+		} else if v := os.Getenv(baseVar); v != "" {
 			base = v
 		}
 	}
-	if provider == "ollama" {
-		if v, ok := c.secret(ctx, "OLLAMA_BASE_URL"); ok {
-			base = v
-		}
-	}
-	return Route{Kind: "openai", Model: model, BaseURL: strings.TrimRight(base, "/"), KeyName: key}
+	return Route{Kind: "openai", Model: model, BaseURL: strings.TrimRight(base, "/"), KeyName: key, envKey: envKey}
 }
 
 // Complete runs a non-streaming chat completion.
@@ -247,7 +269,7 @@ func (c *Client) openAIComplete(ctx context.Context, rt Route, inputs map[string
 	}
 	headers := map[string]string{}
 	if rt.KeyName != "" {
-		key, ok := c.secret(ctx, rt.KeyName)
+		key, ok := c.routeKey(ctx, rt)
 		if !ok && !strings.HasPrefix(rt.BaseURL, "http://localhost") && !strings.HasPrefix(rt.BaseURL, "http://127.0.0.1") {
 			return nil, fmt.Errorf("no API key configured: set the %s secret", rt.KeyName)
 		}
@@ -535,7 +557,7 @@ func (c *Client) Models(ctx context.Context) []ModelInfo {
 	}
 	avail := map[string]bool{}
 	for p, k := range providerKeys {
-		_, avail[p] = c.secret(ctx, k)
+		_, avail[p] = c.routeKey(ctx, Route{KeyName: k, envKey: true})
 	}
 	for _, d := range store.DefaultPrices {
 		if d.Provider == "mock" || strings.HasPrefix(d.LLMID, "text-embedding") {

@@ -76,7 +76,7 @@ func TestClassify(t *testing.T) {
 		{"fd00:ec2:0:0:0:0:0:254", Metadata},   // uncompressed IMDS
 		{"FD00:EC2::254", Metadata},            // upper case
 		{"fe80::a9fe:a9fe", LinkLocal},         // link-local v6
-		{"2001:db8::1", Public},                // documentation, not internal
+		{"2001:db8::1", Reserved},              // documentation range, not globally reachable
 		{"::ffff:1.2.3.4", Public},             // mapped public
 		{"64:ff9b::102:304", Public},           // NAT64 public 1.2.3.4
 		{"2002:102:304::", Public},             // 6to4 public
@@ -536,4 +536,33 @@ func TestMixedResolutionRefusedDirect(t *testing.T) {
 	}})
 	_, err := get(t, "http://mixed.example/")
 	assertBlocked(t, err, "10.0.0.7")
+}
+
+// The host's own interface addresses are refused even when public (a service
+// bound to 0.0.0.0 is reachable on them), as are documentation ranges.
+func TestHostOwnAndDocumentationAddresses(t *testing.T) {
+	prev := interfaceAddrs
+	interfaceAddrs = func() ([]net.Addr, error) {
+		_, n, _ := net.ParseCIDR("93.184.216.99/24")
+		n.IP = net.ParseIP("93.184.216.99")
+		return []net.Addr{n}, nil
+	}
+	hostAddrs.Lock()
+	hostAddrs.set = nil
+	hostAddrs.Unlock()
+	defer func() {
+		interfaceAddrs = prev
+		hostAddrs.Lock()
+		hostAddrs.set = nil
+		hostAddrs.Unlock()
+	}()
+	p := MustNew(Config{Logger: discardLogger()})
+	for _, a := range []string{"93.184.216.99", "192.0.2.2", "198.51.100.7", "203.0.113.9", "2001:db8::1", "168.63.129.16"} {
+		if err := p.Check("h", netip.MustParseAddr(a), "80"); !IsBlocked(err) {
+			t.Errorf("%s allowed", a)
+		}
+	}
+	if err := p.Check("h", netip.MustParseAddr("93.184.216.34"), "80"); err != nil {
+		t.Errorf("public address refused: %v", err)
+	}
 }

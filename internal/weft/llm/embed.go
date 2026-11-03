@@ -23,7 +23,7 @@ type EmbeddingResult struct {
 func (c *Client) routeHeaders(ctx context.Context, rt Route) (map[string]string, error) {
 	headers := map[string]string{}
 	if rt.KeyName != "" {
-		key, ok := c.secret(ctx, rt.KeyName)
+		key, ok := c.routeKey(ctx, rt)
 		if !ok && !strings.HasPrefix(rt.BaseURL, "http://localhost") && !strings.HasPrefix(rt.BaseURL, "http://127.0.0.1") {
 			return nil, fmt.Errorf("no API key configured: set the %s secret", rt.KeyName)
 		}
