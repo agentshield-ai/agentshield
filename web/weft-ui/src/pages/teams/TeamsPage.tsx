@@ -5,6 +5,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type TeamSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { useSessionScope } from '../../hooks/useSessionScope'
+import { ScopeCapNote } from '../../components/ui/FilterBar'
 import { timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
 import { fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentUrl, teamUrl } from '../../lib/urls'
@@ -79,6 +80,7 @@ export function TeamsPage() {
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <ErrorBox error={q.error} />
           <ErrorBox error={scope.error} />
+          {scope.truncated && <ScopeCapNote total={scope.total} />}
           {q.isLoading || !scope.ready ? (
             <Loading />
           ) : rows.length === 0 ? (

@@ -33,6 +33,45 @@ func IsReplayEvaluation(eventID, sessionID string) bool {
 }
 
 func init() {
+	// replay_traces lists the traces that hold a replayed evaluate span (the
+	// engine's HTTP span and its evaluate child). The Traces list hides them
+	// by default through the summary.weft.replay call field.
+	registerSchema(`
+CREATE TABLE IF NOT EXISTS replay_traces (
+	project_id TEXT NOT NULL,
+	trace_id TEXT NOT NULL,
+	PRIMARY KEY (project_id, trace_id)
+);
+`)
+	registerCallHook(indexReplayTrace)
+	registerMigration(func(db *sql.DB) error {
+		return runOnce(db, "replay-traces-1", func(tx *sql.Tx) error {
+			rows, err := tx.Query(`SELECT project_id, id FROM calls WHERE instr(attributes, 'agentshield') > 0
+				AND (instr(attributes, 'weft-replay') > 0 OR instr(attributes, 'agentshield.replay') > 0)`)
+			if err != nil {
+				return err
+			}
+			var keys [][2]string
+			for rows.Next() {
+				var p, id string
+				if err := rows.Scan(&p, &id); err != nil {
+					rows.Close()
+					return err
+				}
+				keys = append(keys, [2]string{p, id})
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			for _, k := range keys {
+				if err := indexReplayTrace(context.Background(), tx, k[0], k[1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	})
 	// Databases written before replay evaluations were recognised may hold
 	// engine detections and phantom sessions for them; drop both once.
 	registerMigration(func(db *sql.DB) error {
@@ -51,6 +90,28 @@ func init() {
 			return err
 		})
 	})
+}
+
+// replayTraceSQL is 1 when call c belongs to a trace with a replayed
+// evaluate span (callsquery.go, field summary.weft.replay).
+const replayTraceSQL = `(CASE WHEN EXISTS (SELECT 1 FROM replay_traces rt WHERE rt.project_id = c.project_id AND rt.trace_id = c.trace_id) THEN 1 ELSE 0 END)`
+
+// indexReplayTrace (a call hook) records the trace of a replayed evaluate span.
+func indexReplayTrace(ctx context.Context, tx *sql.Tx, projectID, id string) error {
+	var traceID, attrs string
+	err := tx.QueryRowContext(ctx, `SELECT trace_id, attributes FROM calls WHERE project_id = ? AND id = ?`, projectID, id).Scan(&traceID, &attrs)
+	if err == sql.ErrNoRows || (err == nil && (traceID == "" || !strings.Contains(attrs, "agentshield"))) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	am := decodeMap(attrs)
+	if !isVerdictSpan(am) || !isReplaySpan(newSpanAttrs(am)) {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO replay_traces(project_id, trace_id) VALUES(?, ?)`, projectID, traceID)
+	return err
 }
 
 // isReplaySpan reports an engine evaluate span of a replayed tool call.

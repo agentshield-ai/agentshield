@@ -1,5 +1,7 @@
 package models
 
+import "strings"
+
 // EvaluationRequest represents a request for evaluation
 // Shared between evaluate and triage packages to avoid circular dependencies
 type EvaluationRequest struct {
@@ -22,9 +24,21 @@ type EvaluationRequest struct {
 	// Replay marks a re-evaluation of a recorded tool call (Weft's replay,
 	// docs/weft/DESIGN.md §5.4) rather than live agent traffic. The verdict
 	// is computed as usual; the evaluate span is tagged agentshield.replay,
-	// the verdict is not pushed to Weft, and the session is kept out of
-	// other sessions' cross-session fields.
+	// the verdict is neither stored nor pushed to Weft, and the session is
+	// kept out of other sessions' cross-session fields. It is honoured only
+	// for session ids in the replay namespace (ReplaySessionPrefix): the HTTP
+	// API rejects it on any other session, so a caller cannot use it to hide
+	// live traffic or to remove a live session from correlation.
 	Replay bool `json:"replay,omitempty"`
+}
+
+// ReplaySessionPrefix is the session namespace of replayed evaluations.
+// Weft's replay always uses "weft-replay:<job>:<session>".
+const ReplaySessionPrefix = "weft-replay:"
+
+// IsReplaySession reports whether sessionID is in the replay namespace.
+func IsReplaySession(sessionID string) bool {
+	return strings.HasPrefix(sessionID, ReplaySessionPrefix)
 }
 
 // Action represents the action to take based on evaluation

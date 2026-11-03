@@ -18,7 +18,8 @@ reasoning that led the agent there.
   overrode.
 - **Over time:** verdicts per hour or day, by action or by severity.
 - **Rules that fire most:** click a rule to list only its detections.
-- **By agent:** each agent's verdicts out of its tool calls.
+- **By agent:** each agent's verdicts out of its tool calls. Like the rate,
+  the counts are AgentShield's live verdicts; replays are not counted.
 - **Approval fatigue:** sessions that asked a person for approval many times.
   People start approving without reading.
 - **Override escalation:** sessions where people kept overriding verdicts.

@@ -151,6 +151,8 @@ func callField(path string) (string, []any, bool, error) {
 		return statusSQL, nil, false, nil
 	case "summary.weft.latency_ms":
 		return latencySQL, nil, false, nil
+	case "summary.weft.replay":
+		return replayTraceSQL, nil, false, nil // detections_otel.go
 	case "summary.weft.trace_name":
 		return "c.op_base_name", nil, false, nil
 	case "summary.weft.display_name":
@@ -299,12 +301,25 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 		}
 	}
 	if search = strings.TrimSpace(search); search != "" {
+		// The call's own fields, plus the extracted text in span_search
+		// (agents_search.go). Listing trace roots, a root matches when any
+		// span of its trace (or a reasoning step in it) contains the text.
+		pat := likePattern(normSearchQuery(search))
+		indexed := `c.id IN (SELECT t.span_id FROM span_search t WHERE t.project_id = ? AND t.text LIKE ? ESCAPE '\')`
+		indexedArgs := []any{projectID, pat}
+		if f != nil && f.TraceRootsOnly {
+			indexed = `c.trace_id IN (SELECT c2.trace_id FROM span_search t JOIN calls c2 ON c2.project_id = t.project_id AND c2.id = t.span_id
+					WHERE t.project_id = ? AND c2.deleted_at IS NULL AND t.text LIKE ? ESCAPE '\'
+				UNION SELECT r.trace_id FROM reasoning_steps r WHERE r.project_id = ? AND r.text LIKE ? ESCAPE '\')`
+			indexedArgs = []any{projectID, pat, projectID, pat}
+		}
 		conds = append(conds, `(instr(lower(c.op_name), lower(?)) > 0 OR instr(lower(COALESCE(c.display_name, '')), lower(?)) > 0
 			OR instr(lower(c.inputs), lower(?)) > 0 OR instr(lower(COALESCE(c.output, '')), lower(?)) > 0
-			OR instr(lower(COALESCE(c.exception, '')), lower(?)) > 0 OR c.id = ? OR c.trace_id = ?)`)
+			OR instr(lower(COALESCE(c.exception, '')), lower(?)) > 0 OR c.id = ? OR c.trace_id = ? OR `+indexed+`)`)
 		for i := 0; i < 7; i++ {
 			args = append(args, search)
 		}
+		args = append(args, indexedArgs...)
 	}
 	return strings.Join(conds, " AND "), args, nil
 }

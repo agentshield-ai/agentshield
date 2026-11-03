@@ -133,7 +133,7 @@ summaries are stored as sent instead of being rolled up again.
     "thread_ids": [], "turn_ids": []
   },
   "query": {"$expr": Operation},
-  "search": "free text over op name, display name, inputs, output, exception",
+  "search": "free text over op name, display name, inputs, output, exception and the span's indexed text; with trace_roots_only, a root matches when any span of its trace does",
   "sort_by": [{"field": "started_at", "direction": "desc"}],  // default started_at desc
   "limit": 100, "offset": 0,
   "columns": ["id", "inputs.x"],     // optional projection hint
@@ -151,7 +151,7 @@ summaries are stored as sent instead of being rolled up again.
 - Operands: `{"$literal": v}`, `{"$getField": "inputs.question"}`,
   `{"$convert": {"input": a, "to": "double|int|string|bool|exists"}}`, or a nested operation.
 
-Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, user_id, run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
+Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, user_id, run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, `summary.weft.replay` (`true` for every span of a trace that holds an AgentShield evaluation of a replayed tool call: the engine's `/api/v1/evaluate` span and its `evaluate` child; the UI's Traces list hides these unless *Replay evaluations* is ticked), and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
 Sort fields use the same paths.
 
 **`/calls/stats` response**
@@ -1936,22 +1936,53 @@ existed are indexed once, the first time the server starts.
 |---|---|
 | `agent` | an agent took part |
 | `team_id` | the session's team |
-| `status` | `running` (a root span has not ended), `error` (a root span or agent invocation failed), `ok` |
-| `has_detection` | `any`, or an action (`block`, `require_approval`, …) with at least one detection |
-| `min_score`, `max_score` | `scorer:value` against the mean of the session's session-scope scores by that scorer |
+| `status` | `running` (a root span has not ended), `error` (a root span or agent invocation failed), `ok`, or `failed_step` (not `error`, but a tool call, model call or hand-off in it failed: the session went on after a failed step) |
+| `has_detection` | `any`, an action (`block`, `require_approval`, …) with at least one detection, or `flagged` (blocked at least once, or 3 or more `require_approval`) |
+| `min_score`, `max_score` | `scorer:value` against the mean of the session's session-scope scores by that scorer (inclusive) |
+| `score_below` | `value` or `scorer:value`: a session-scope score mean (of any scorer, or the named one) strictly below `value` |
+| `cost_min` | sessions costing at least this many USD (an unknown cost counts as 0) |
 | `model`, `tool` | a model or tool was used |
-| `q` | text (case-insensitive, at most 200 characters) in the session id, name, title, agents or team, in its reasoning steps, in its messages (user and assistant messages of model calls, input and output of agent and turn spans) or in its tool calls (tool name and arguments, executed or requested by a model). Message and tool text is indexed at ingest, up to 8000 characters per span |
+| `q` | text (case-insensitive, at most 200 characters) in the session id, name, title, agents or team, in its reasoning steps, in its messages (user and assistant messages of model calls, input and output of agent and turn spans, tool results, and the input and output of any other span), in its tool calls (tool name and arguments, executed or requested by a model), in error messages (a failed span's exception, without the stack trace) or in its hand-offs (input and output previews). This text is indexed at ingest, up to 8000 characters per span and kind; databases from before an index change are re-indexed once when opened |
 | `from`, `to` | sessions with activity in `[from, to)` |
 
 A session's `started_at`, `last_activity` and `duration_ms` come from its own
 spans. AgentShield verdicts (which may arrive well after the tool call they
-concern) and detections do not move them; only a session known solely through
-verdicts takes its times from them.
+concern) and detections do not move them. A session known solely through
+verdicts (no agent spans recorded) has `verdicts_only: true`: it takes
+`started_at` and `last_activity` from its verdicts, so it sorts and filters
+by time, but its `duration_ms` is `null` (verdict times say when tool calls
+were checked, not how long the session ran; it sorts as shortest).
 
 `sort_by`: `last_activity` (default, desc), `started_at`, `duration_ms`,
 `span_count`, `turn_count`, `tool_call_count`, `handoff_count`,
 `reasoning_step_count`, `error_count`, `detection_count`, `input_tokens`,
 `output_tokens`, `reasoning_tokens`, `cost_usd`, `status`, `name`, `session_id`.
+
+`GET /api/v1/sessions/attention` takes the same filters (paging and sort
+are ignored) and counts the Sessions page's attention cards over every
+matching session (never a single page of them):
+
+```json
+{"items": [
+  {"id": "failed", "count": 3, "filter": {"status": "error"}, "latest": {"session_id": "s-9", "title": "Ship release 2.1"}},
+  {"id": "failed_step", "count": 1, "filter": {"status": "failed_step"}, "latest": {"session_id": "s-4", "title": "…"}},
+  {"id": "security", "count": 2, "filter": {"has_detection": "flagged"}, "latest": {"session_id": "s-7", "title": "…"}},
+  {"id": "low_score", "count": 0, "filter": {"score_below": "0.5"}, "latest": null},
+  {"id": "cost", "count": 1, "filter": {"cost_min": "0.0048"}, "latest": {"session_id": "s-2", "title": "…"}}],
+ "sessions": 41, "blocked": 1, "approval_heavy": 1, "lowest_score": null, "cost_spike_threshold": 0.0048,
+ "approval_heavy_threshold": 3, "low_score_threshold": 0.5, "cost_spike_factor": 3}
+```
+
+`failed`: status `error`. `failed_step`: status `failed_step`. `security`:
+blocked at least once or `approval_heavy_threshold` or more approval
+requests (`blocked` and `approval_heavy` split it; a session with both counts
+once). `low_score`: the lowest session-scope score mean is below
+`low_score_threshold`. `cost`: cost at least `cost_spike_threshold`, which
+is `cost_spike_factor` times the median known session cost, rounded up to
+two significant digits, and null (with an empty `filter`) when fewer than
+four sessions have a known cost. Each card's `filter`, added to the
+request's own filters, lists exactly the sessions it counts; `latest` is the
+counted session with the most recent activity.
 
 `GET /api/v1/sessions/{id}` returns one summary, plus `trace_ids`.
 
@@ -1959,7 +1990,7 @@ verdicts takes its times from them.
 {
   "session_id": "trip-42", "name": "", "title": "Find three facts about Oslo and summarise them",
   "started_at": "2026-11-03T09:16:02.572650Z", "last_activity": "2026-11-03T09:16:06.572650Z", "duration_ms": 4000,
-  "agents": ["orchestrator", "researcher"], "team_id": "trip-planners", "team_name": "Trip planners",
+  "verdicts_only": false, "agents": ["orchestrator", "researcher"], "team_id": "trip-planners", "team_name": "Trip planners",
   "turn_count": 1, "trace_count": 1, "span_count": 8, "llm_call_count": 4, "tool_call_count": 2,
   "handoff_count": 1, "reasoning_step_count": 3, "detection_count": {}, "error_count": 0,
   "input_tokens": 830, "output_tokens": 310, "reasoning_tokens": 50, "cost_usd": 0.006525, "status": "ok",
@@ -2257,9 +2288,18 @@ POST the member role. Times are RFC 3339 (or unix seconds in `from` / `to`).
 
 ### `GET /api/v1/detections`
 
-Filters: `session_id`, `agent`, `action` (comma-separated or repeated),
-`rule_id`, `source`, `ruleset`, `span_id`, `tool_call_id`, `tool_name`,
-`overridden` and `linked` (`true`/`false`), `from`, `to` (on `created_at`).
+Filters: `session_id`, `session_ids` (repeated, at most 1000), `agent`,
+`action` (comma-separated or repeated), `rule_id`, `source`, `ruleset`,
+`span_id`, `tool_call_id`, `tool_name`, `overridden` and `linked`
+(`true`/`false`), `from`, `to` (on `created_at`). Session filters: any
+`/api/v1/sessions` filter prefixed `session.` (`session.team_id`,
+`session.status`, `session.has_detection`, `session.score_below`,
+`session.cost_min`, `session.model`, `session.agent`, …) keeps detections in
+the sessions that match it. The server resolves the sessions itself, over
+every matching session (no cap), using the detection time range for the
+sessions unless `session.from` / `session.to` are given; a filter no session
+matches matches no detection. The Security page applies its session chips
+this way.
 `limit` (default 100, max 1000), `offset`, `sort_by` = `created_at` (newest
 first, default), `-created_at`, `severity` or `action`. Returns
 `{items: [detection], total_count}`. Each item also has `session_title`
@@ -2273,7 +2313,10 @@ Same filters. Returns `{total, by_action, by_severity, by_source, overridden,
 linked, by_rule: [{rule_id, title, level, count, by_action}], by_agent:
 [{agent, count, by_action, tool_calls, flagged_tool_calls, detection_rate}],
 by_day: [{day, count, by_action, by_severity}]}`. Pass `source=engine` to
-leave replays out of the counts.
+leave replays out of the totals. `by_agent` counts engine verdicts only, like
+the detection rate beside it: replay detections are left out of its `count`
+and `by_action` unless `source=replay` is requested (then they are all it
+counts).
 
 #### Detection rate
 
@@ -2332,8 +2375,10 @@ Over OTLP, spans of instrumentation scope `agentshield` (or with
 The event id is the span's `event.id` attribute, so a verdict sent both ways
 is stored once. Evaluate spans of remote replay requests (attribute
 `agentshield.replay = true`, or an `event.id` starting `weft-replay-`, or a
-session starting `weft-replay:`) stay ordinary spans in the raw Traces
-view but never become detections, sessions or agent activity.
+session starting `weft-replay:`) stay ordinary spans but never become
+detections, sessions or agent activity. Their whole trace (the engine's HTTP
+span included) is marked `summary.weft.replay = true`, which the Traces list
+hides by default, as Sessions does.
 
 ### `POST /api/v1/shield/replay`
 
@@ -2359,9 +2404,13 @@ label replaces them). Replay never creates sessions. With `--shield-url`, each
 request to the engine carries `"replay": true`, an `event_id` starting
 `weft-replay-<job>-` and a `session_id` `weft-replay:<job>:<session>`: the
 engine still evaluates it, tags its evaluate span `agentshield.replay`, does
-not push the verdict to Weft and keeps the session out of live sessions'
+not store it in its own alert store (`/api/v1/alerts`, `agentshield alerts`),
+does not push the verdict to Weft and keeps the session out of live sessions'
 cross-session fields, and Weft ignores whatever comes back over OTLP or the
-push.
+push. The engine honours `replay` only on session ids starting
+`weft-replay:`; a request with `"replay": true` on any other session id is
+rejected with 400 and logged, so the flag cannot hide live traffic or take a
+live session out of correlation.
 
 ### `GET /api/v1/shield/replay/{job_id}`
 

@@ -40,6 +40,7 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
           <span className="agents">
             {s.agents.length ? s.agents.map((a) => <AgentChip key={a} name={a} to={agentUrl(projectId, a)} size="sm" />) : <span className="faint">no agents recorded</span>}
           </span>
+          {s.verdicts_only && <VerdictsOnlyNote />}
           {s.team_id && !s.team_id.startsWith('auto:') && (
             <Link className="team-link small" to={teamUrl(projectId, s.team_id)}>
               <Icon name="teams" size={12} /> {s.team_name || s.team_id}
@@ -53,7 +54,7 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
       <dl className="session-figures">
         <div>
           <dt>Duration</dt>
-          <dd>{fmtDuration(s.duration_ms)}</dd>
+          <dd title={s.verdicts_only ? 'Unknown: only security verdicts were recorded for this session' : undefined}>{fmtDuration(s.duration_ms)}</dd>
         </div>
         <div>
           <dt>Steps</dt>
@@ -102,6 +103,18 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
         ))}
       </div>
     </li>
+  )
+}
+
+/** A session known only from AgentShield verdicts: no agent spans were recorded. */
+export function VerdictsOnlyNote() {
+  return (
+    <span
+      className="pill verdicts-only"
+      title="AgentShield checked tool calls in this session, but no agent spans were sent to Weft, so steps, duration and cost are unknown. Instrument the agent (see Help) to record them."
+    >
+      <Icon name="shield" size={12} /> Verdicts only — no agent spans recorded
+    </span>
   )
 }
 

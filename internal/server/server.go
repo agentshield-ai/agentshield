@@ -647,6 +647,16 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SECURITY: the replay flag changes what happens to a verdict (not stored,
+	// not pushed to Weft, session isolated from correlation), so it is
+	// honoured only inside the replay session namespace that Weft's replay
+	// uses. On any other session it would let a caller hide live traffic.
+	if req.Replay && !models.IsReplaySession(req.SessionID) {
+		http.Error(w, "Invalid input: replay is only allowed for session ids starting with \""+models.ReplaySessionPrefix+"\"", http.StatusBadRequest)
+		slog.Warn("Rejected replay flag on a non-replay session", "session_id", req.SessionID, "event_id", req.EventID, "remote_addr", r.RemoteAddr)
+		return
+	}
+
 	// Evaluate the request
 	response, err := s.evaluator.EvaluateWithContext(r.Context(), &req)
 	if err != nil {
@@ -655,8 +665,9 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store alerts in database (non-fatal on failure)
-	if len(response.Alerts) > 0 {
+	// Store alerts in database (non-fatal on failure). Replay re-evaluations
+	// are not alerts: they never reach /api/v1/alerts or `agentshield alerts`.
+	if len(response.Alerts) > 0 && !req.Replay {
 		s.storeMatchedAlerts(response, &req)
 	}
 

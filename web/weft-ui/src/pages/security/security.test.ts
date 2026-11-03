@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Detection, DetectionStats } from '../../api/v1'
 import { detectionParams, statsFromDetections } from './SecurityPage'
+import { sessionScopeParams } from '../../hooks/useSessionScope'
 
 const det = (over: Partial<Detection>): Detection =>
   ({
@@ -29,9 +30,16 @@ const det = (over: Partial<Detection>): Detection =>
   }) as Detection
 
 describe('Security page filters', () => {
-  it('maps the security chip to actions and session chips to session_ids', () => {
+  it('maps the security chip to actions and session chips to session.<filter> (resolved by the server, no id list)', () => {
     expect(detectionParams({ has: 'flagged', agent: 'coder' }, 'all')).toEqual({ source: 'engine', agent: 'coder', action: 'block,require_approval' })
-    expect(detectionParams({ team: 't' }, 'all', ['a', 'b']).session_ids).toEqual(['a', 'b'])
+    const state = { team: 't', status: 'failed_step' as const, has: 'flagged' as const }
+    const p = detectionParams(state, '24h', sessionScopeParams('security', state, '24h'))
+    expect(p['session.team_id']).toBe('t')
+    expect(p['session.status']).toBe('failed_step')
+    expect(p['session.has_detection']).toBe('flagged')
+    expect(p.session_ids).toBeUndefined()
+    expect(p['session.from']).toBeUndefined() // the detections' range applies to the sessions too
+    expect(typeof p.from).toBe('string')
   })
 
   it('counts the figures from the detections the text filter kept', () => {

@@ -179,3 +179,41 @@ test('Traces defaults to the last 24 hours, widens when empty, and saves views',
   await expect(page).toHaveURL(/status=error/)
   await expect(page).toHaveURL(/cols=output/)
 })
+
+test('Traces: Failed means an error anywhere, text finds any span, field conditions live in Add filter', async ({ page }) => {
+  const errors = watchErrors(page)
+  // Every session with a failed step or a failure has a trace with an error somewhere in it.
+  const api = async (q: string) =>
+    (await (await page.request.get(`/api/v1/sessions?project_id=${encodeURIComponent(project())}&${q}`)).json()).total_count as number
+  const withErrors = (await api('status=error')) + (await api('status=failed_step'))
+  expect(withErrors).toBeGreaterThan(0)
+  await page.goto(`/${project()}/traces?status=error&time=all`)
+  await expect(page.locator('.traces-table tbody tr').first()).toBeVisible()
+  expect(await page.locator('.traces-table tbody tr').count()).toBeGreaterThanOrEqual(withErrors)
+  // Free text matches a child span's error message, not only the root span.
+  await page.goto(`/${project()}/traces?q=${encodeURIComponent('3 tests failed')}&time=all`)
+  await expect(page.locator('.traces-table tbody tr')).toHaveCount(1)
+  // One filter button: field conditions are an "Add filter" option.
+  await page.goto(`/${project()}/traces?time=all`)
+  await expect(page.getByRole('button', { name: '+ Filter' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Add filter' }).click()
+  await page.getByRole('tab', { name: 'Advanced: field condition' }).click()
+  await page.getByRole('combobox', { name: 'Field', exact: true }).fill('op_name')
+  await page.getByRole('combobox', { name: 'Operator' }).selectOption('contains')
+  await page.getByRole('textbox', { name: 'Value' }).fill('orchestrator')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByRole('button', { name: 'Remove filter Field: op_name contains orchestrator' })).toBeVisible()
+  await expect(page).toHaveURL(/f=/)
+  await expect(page.locator('.traces-table tbody tr').first()).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('Sessions text search finds tool errors; the projects page has help', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${project()}/sessions?q=${encodeURIComponent('3 tests failed')}&time=all`)
+  await expect(page.locator('.session-row')).toHaveCount(1)
+  await page.goto('/')
+  await expect(page.getByRole('complementary', { name: 'About Projects' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Read the guide' })).toHaveAttribute('href', '/help/setup.md')
+  expect(errors).toEqual([])
+})

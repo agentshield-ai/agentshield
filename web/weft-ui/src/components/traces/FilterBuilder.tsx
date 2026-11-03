@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useState } from 'react'
 import type { Operand, Operation } from '../../api/types'
-import { useFlip } from './Menu'
 
-// Field + operator + value clauses, ANDed into a calls `query.$expr`.
+// Field + operator + value clauses, ANDed into a calls `query.$expr`. The
+// shared filter bar offers them as "Advanced: field condition" (Traces).
 
 export type FilterOp = 'eq' | 'neq' | 'contains' | 'not_contains' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'exists' | 'not_exists'
 
@@ -140,16 +140,19 @@ export function clauseLabel(c: FilterClause): string {
 
 // ---------------------------------------------------------------- UI
 
-function ClauseEditor({
+export function ClauseEditor({
   initial,
   fields,
   onSave,
   onCancel,
+  bare,
 }: {
   initial: FilterClause
   fields: string[]
   onSave: (c: FilterClause) => void
   onCancel: () => void
+  /** Inside another editor panel: no panel of its own. */
+  bare?: boolean
 }) {
   const [c, setC] = useState(initial)
   const listId = useId()
@@ -157,7 +160,8 @@ function ClauseEditor({
   const valid = clauseValid(c)
   return (
     <form
-      className="col filter-editor"
+      className={bare ? 'col' : 'col filter-editor'}
+      aria-label="Field condition"
       onSubmit={(e) => {
         e.preventDefault()
         if (valid) onSave(c)
@@ -208,65 +212,5 @@ function ClauseEditor({
         </button>
       </div>
     </form>
-  )
-}
-
-/** Chips for the current clauses plus an "Add filter" popover. */
-export function FilterBuilder({
-  clauses,
-  fields,
-  onChange,
-}: {
-  clauses: FilterClause[]
-  fields: string[]
-  onChange: (cs: FilterClause[]) => void
-}) {
-  // index being edited; -1 = new clause; null = closed
-  const [editing, setEditing] = useState<number | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-  const [menuRef, menuStyle] = useFlip(editing != null)
-  useEffect(() => {
-    if (editing == null) return
-    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setEditing(null)
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [editing])
-  return (
-    <div className="row wrap filter-bar" ref={ref}>
-      {clauses.map((c, i) => (
-        <span key={i} className="filter-chip">
-          <button className="filter-chip-label mono" onClick={() => setEditing(i)} title="Edit filter">
-            {clauseLabel(c)}
-          </button>
-          <button className="filter-chip-x" aria-label="Remove filter" onClick={() => onChange(clauses.filter((_, j) => j !== i))}>
-            ✕
-          </button>
-        </span>
-      ))}
-      <div className="dd">
-        <button className="btn sm" onClick={() => setEditing(editing === -1 ? null : -1)} aria-expanded={editing === -1}>
-          + Filter
-        </button>
-        {editing != null && (
-          <div className="dd-menu" ref={menuRef} style={{ width: 340, padding: 12, ...menuStyle }}>
-            <ClauseEditor
-              key={editing}
-              initial={editing >= 0 ? clauses[editing] : { field: '', op: 'eq', value: '' }}
-              fields={fields}
-              onCancel={() => setEditing(null)}
-              onSave={(c) => {
-                onChange(editing >= 0 ? clauses.map((x, j) => (j === editing ? c : x)) : [...clauses, c])
-                setEditing(null)
-              }}
-            />
-          </div>
-        )}
-      </div>
-      {clauses.length > 1 && (
-        <button className="btn ghost sm" onClick={() => onChange([])}>
-          Clear all
-        </button>
-      )}
-    </div>
   )
 }

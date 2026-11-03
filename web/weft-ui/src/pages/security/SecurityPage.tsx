@@ -7,14 +7,14 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v1, type Detection, type DetectionAction, type DetectionStats } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
-import { useSessionScope, type SessionScope } from '../../hooks/useSessionScope'
+import { SCOPE_LIMIT, sessionScopeParams, useSessionScope, type SessionScope } from '../../hooks/useSessionScope'
 import { timeWindow, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
 import { flaggedOf, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { Snippets } from '../../components/ui/EmptyState'
-import { ActionBadge, AgentChip, Bar, Callout, CopyId, Metric, Panel, SeverityText, Tip } from '../../components/ui/bits'
+import { ActionBadge, AgentChip, Bar, Callout, CapNote, CopyId, Metric, Panel, SeverityText, Tip } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
 import { docsUrl, usePageHelp } from '../../components/ui/PageHelp'
 import { notify } from '../../components/ui/Toasts'
@@ -23,8 +23,14 @@ import { ReplayResult } from '../sessions/SessionPage'
 
 const DEFAULT_TIME: TimeRange = '24h'
 
-/** /api/v1/detections parameters; `sessionIds` applies the chips that go through sessions (team, status, score, …). */
-export function detectionParams(s: FilterState, time: TimeRange, sessionIds?: string[]): Record<string, string | string[]> {
+/**
+ * /api/v1/detections parameters. `sessionFilter` holds the /api/v1/sessions
+ * parameters of the chips that go through sessions (team, status, score, …);
+ * they are sent as session.<name> and the server resolves every matching
+ * session itself (no list of ids, no cap). The detections' time range is the
+ * sessions' range too.
+ */
+export function detectionParams(s: FilterState, time: TimeRange, sessionFilter?: Record<string, string> | null): Record<string, string | string[]> {
   const p: Record<string, string | string[]> = { source: 'engine' }
   if (s.agent) p.agent = s.agent
   if (s.tool) p.tool_name = s.tool
@@ -32,7 +38,7 @@ export function detectionParams(s: FilterState, time: TimeRange, sessionIds?: st
   else if (s.has === 'approval') p.action = 'require_approval'
   else if (s.has === 'flagged') p.action = 'block,require_approval'
   else if (s.has === 'any') p.action = 'block,require_approval,log'
-  if (sessionIds) p.session_ids = sessionIds
+  for (const [k, v] of Object.entries(sessionFilter ?? {})) if (k !== 'from' && k !== 'to') p[`session.${k}`] = v
   const w = timeWindow(s, time)
   if (w.from) p.from = w.from
   if (w.to) p.to = w.to
@@ -117,10 +123,11 @@ export function SecurityPage() {
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.detectionStats(pid, detectionParams({ ...state, time: r }, r))).total, [pid, 'detections', noTime])
   const time = widen.time
   // Team, status, score, model and cost belong to sessions: keep detections in matching sessions.
+  // The server resolves those sessions for detections and their figures.
+  const dp = detectionParams(state, time, sessionScopeParams('security', state, time))
+  const ready = widen.ready
+  // The matching sessions themselves (at most SCOPE_LIMIT) narrow the approval-fatigue panels and pick what a replay covers.
   const scope = useSessionScope(pid, 'security', state, time, widen.ready)
-  const noMatch = scope.active && scope.ready && scope.ids.size === 0
-  const dp = detectionParams(state, time, scope.active ? [...scope.ids].sort() : undefined)
-  const ready = widen.ready && scope.ready && !noMatch
   const serverStats = useQuery({ queryKey: ['v1', pid, 'detections', 'stats', dp], queryFn: () => v1.detectionStats(pid, dp), enabled: ready, placeholderData: keepPreviousData })
   const list = useQuery({
     queryKey: ['v1', pid, 'detections', 'list', dp],
@@ -136,10 +143,10 @@ export function SecurityPage() {
     placeholderData: keepPreviousData,
   })
   const [by, setBy] = useState<'action' | 'severity'>('action')
-  const dets = noMatch ? [] : (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q))
+  const dets = (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q))
   // The text filter runs here, so the figures are counted from the matching detections.
   const stats = {
-    data: noMatch ? statsFromDetections([]) : state.q && list.data ? statsFromDetections(dets, serverStats.data) : serverStats.data,
+    data: state.q && list.data ? statsFromDetections(dets, serverStats.data) : serverStats.data,
     error: serverStats.error,
   }
   const buckets = useMemo(() => {
@@ -184,6 +191,14 @@ export function SecurityPage() {
           />
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <ErrorBox error={stats.error ?? list.error ?? scope.error} />
+          {list.data && (
+            <CapNote
+              shown={list.data.items.length}
+              total={list.data.total_count}
+              what="detections"
+              why={state.q ? 'the newest ones; the text filter, the chart, the figures and the list use only these' : 'the newest ones in the chart and the list; the figures count them all'}
+            />
+          )}
           <div className="metrics">
             <Metric
               label="Verdicts"
@@ -316,6 +331,9 @@ export function SecurityPage() {
               )}
             </Panel>
             <FatiguePanels pid={pid} insights={insights.data} keep={(s) => (!scope.active || scope.ids.has(s.session_id)) && (!state.agent || s.agents.includes(state.agent))} />
+            {scope.truncated && (
+              <CapNote shown={SCOPE_LIMIT} total={scope.total} what="matching sessions" why="the approval-fatigue panels and replay use the most recent ones" />
+            )}
           </div>
           <RecentDetections
             pid={pid}

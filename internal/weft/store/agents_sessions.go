@@ -669,12 +669,18 @@ func (s *Store) sessionExists(ctx context.Context, pid, sessionID string) error 
 
 // SessionSummary is one session (DESIGN.md §2).
 type SessionSummary struct {
-	SessionID          string              `json:"session_id"`
-	Name               string              `json:"name"`
-	Title              string              `json:"title"`
-	StartedAt          *string             `json:"started_at"`
-	LastActivity       *string             `json:"last_activity"`
-	DurationMS         int64               `json:"duration_ms"`
+	SessionID    string  `json:"session_id"`
+	Name         string  `json:"name"`
+	Title        string  `json:"title"`
+	StartedAt    *string `json:"started_at"`
+	LastActivity *string `json:"last_activity"`
+	// DurationMS is null when unknown: a session seen only through
+	// AgentShield verdicts (VerdictsOnly) has no agent spans to time.
+	DurationMS *int64 `json:"duration_ms"`
+	// VerdictsOnly marks a session known only from AgentShield verdicts (no
+	// agent spans recorded). Its started_at and last_activity come from the
+	// verdicts, so it still sorts and filters by time.
+	VerdictsOnly       bool                `json:"verdicts_only"`
 	Agents             []string            `json:"agents"`
 	TeamID             string              `json:"team_id"`
 	TeamName           string              `json:"team_name"`
@@ -799,7 +805,8 @@ func summarizeSession(id string, spans []*agentSpan) *SessionSummary {
 		ss.CostUSD = fptr(math.Round(cost*1e8) / 1e8)
 	}
 	ss.StartedAt, ss.LastActivity = microsPtr(ss.firstUS), microsPtr(ss.lastUS)
-	ss.DurationMS = (ss.lastUS - ss.firstUS) / 1000
+	d := (ss.lastUS - ss.firstUS) / 1000
+	ss.DurationMS = &d
 	ss.Status = sessionStatus(spans)
 	if titleSpan != nil {
 		ss.titleSrc = titleSpan.ID
@@ -822,9 +829,44 @@ type SessionsQuery struct {
 	Tool     string
 	Q        string
 	From, To string
-	Limit    int
-	Offset   int
-	SortBy   string
+	// ScoreBelow: "value" or "scorer:value": a session-scope score mean
+	// (of any scorer, or of the named one) strictly below value.
+	ScoreBelow string
+	// CostMin keeps sessions costing at least this (unknown cost counts as 0).
+	CostMin *float64
+	Limit   int
+	Offset  int
+	SortBy  string
+}
+
+// Session status filters beyond the stored status (QuerySessions).
+const (
+	// SessionStatusFailedStep: the session did not fail, but a tool call,
+	// model call or hand-off in it did ("went on after a failed step").
+	SessionStatusFailedStep = "failed_step"
+	// HasDetectionFlagged: blocked at least once, or asked for approval
+	// ApprovalHeavy or more times.
+	HasDetectionFlagged = "flagged"
+	// ApprovalHeavy is the number of approval requests that makes a session
+	// approval-heavy (approval fatigue).
+	ApprovalHeavy = 3
+)
+
+// IsFlaggedSession reports a session that was blocked at least once or asked
+// for approval ApprovalHeavy or more times.
+func IsFlaggedSession(counts map[string]int) bool {
+	return counts[DetectionBlock] > 0 || counts[DetectionRequireApproval] >= ApprovalHeavy
+}
+
+// lowestScore is the lowest session-scope score mean, or false without one.
+func lowestScore(ss *SessionSummary) (float64, bool) {
+	low, ok := 0.0, false
+	for _, a := range ss.Scores {
+		if a.Mean != nil && (!ok || *a.Mean < low) {
+			low, ok = *a.Mean, true
+		}
+	}
+	return low, ok
 }
 
 func parseScoreFilter(s string) (string, float64, error) {
@@ -900,8 +942,10 @@ func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]
 		ss := summarizeSession(id, l)
 		// started_at, last_activity and duration come from the session's
 		// own spans: a verdict can arrive long after the tool call it
-		// concerns. Only a session seen through verdicts alone takes its
-		// times from them.
+		// concerns. A session seen through verdicts alone takes started_at
+		// and last_activity from them (so it sorts and filters by time), but
+		// its duration is unknown: verdict times say when tool calls were
+		// checked, not how long the session ran.
 		if len(l) == 0 {
 			for _, v := range vby[id] {
 				if ss.firstUS == 0 || v.StartedUS < ss.firstUS {
@@ -912,7 +956,8 @@ func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]
 				}
 			}
 			ss.StartedAt, ss.LastActivity = microsPtr(ss.firstUS), microsPtr(ss.lastUS)
-			ss.DurationMS = (ss.lastUS - ss.firstUS) / 1000
+			ss.DurationMS = nil
+			ss.VerdictsOnly = true
 		}
 		out = append(out, ss)
 		sids = append(sids, id)
@@ -1079,7 +1124,10 @@ func sessionField(ss *SessionSummary, f string) any {
 	case "last_activity":
 		return ss.lastUS
 	case "duration_ms":
-		return ss.DurationMS
+		if ss.DurationMS == nil {
+			return int64(-1) // unknown sorts as shortest
+		}
+		return *ss.DurationMS
 	case "span_count":
 		return int64(ss.SpanCount)
 	case "turn_count":
@@ -1117,40 +1165,84 @@ var sessionSortFields = map[string]bool{"started_at": true, "last_activity": tru
 
 // QuerySessions lists sessions matching q, newest activity first by default.
 func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionSummary, int, error) {
-	pid, err := refs.NormalizeProject(q.ProjectID)
+	out, pid, qq, err := s.matchingSessions(ctx, q)
 	if err != nil {
-		return nil, 0, &InvalidError{Msg: err.Error()}
+		return nil, 0, err
+	}
+	total := len(out)
+	paged := pageRows(out, q.Limit, q.Offset, 50, 1000)
+	if qq == "" {
+		if err := s.fillTitles(ctx, pid, paged); err != nil {
+			return nil, 0, err
+		}
+	}
+	for _, ss := range paged {
+		ss.TraceIDs = nil
+	}
+	return paged, total, nil
+}
+
+// MatchingSessionIDs returns the ids of every session matching q (no
+// paging), for filters that apply through sessions (detections).
+func (s *Store) MatchingSessionIDs(ctx context.Context, q SessionsQuery) ([]string, error) {
+	out, _, _, err := s.matchingSessions(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(out))
+	for i, ss := range out {
+		ids[i] = ss.SessionID
+	}
+	return ids, nil
+}
+
+// matchingSessions returns every session matching q, sorted, unpaged; qq is
+// the normalised text query (titles are filled when it is set).
+func (s *Store) matchingSessions(ctx context.Context, q SessionsQuery) (out []*SessionSummary, pid, qq string, err error) {
+	pid, err = refs.NormalizeProject(q.ProjectID)
+	if err != nil {
+		return nil, "", "", &InvalidError{Msg: err.Error()}
 	}
 	sb := ParseListSort(q.SortBy, ListSort{Field: "last_activity", Desc: true})
 	if !sessionSortFields[sb.Field] {
-		return nil, 0, Invalidf("cannot sort sessions by %q", sb.Field)
+		return nil, "", "", Invalidf("cannot sort sessions by %q", sb.Field)
 	}
 	switch q.Status {
-	case "", "running", "ok", "error":
+	case "", "running", "ok", "error", SessionStatusFailedStep:
 	default:
-		return nil, 0, Invalidf("status must be running, ok or error")
+		return nil, "", "", Invalidf("status must be running, ok, error or failed_step")
 	}
 	minScorer, minV, err := parseScoreFilter(q.MinScore)
 	if err != nil {
-		return nil, 0, err
+		return nil, "", "", err
 	}
 	maxScorer, maxV, err := parseScoreFilter(q.MaxScore)
 	if err != nil {
-		return nil, 0, err
+		return nil, "", "", err
+	}
+	belowScorer, belowV, belowSet := "", 0.0, strings.TrimSpace(q.ScoreBelow) != ""
+	if belowSet {
+		raw := strings.TrimSpace(q.ScoreBelow)
+		if i := strings.LastIndex(raw, ":"); i >= 0 {
+			belowScorer, raw = strings.TrimSpace(raw[:i]), raw[i+1:]
+		}
+		if belowV, err = strconv.ParseFloat(strings.TrimSpace(raw), 64); err != nil {
+			return nil, "", "", Invalidf("score_below must be value or scorer:value")
+		}
 	}
 	after, before, err := timeRange(&q.From, &q.To)
 	if err != nil {
-		return nil, 0, err
+		return nil, "", "", err
 	}
 	var ids []string
 	if after > 0 || before > 0 {
 		if ids, err = s.sessionsWithin(ctx, pid, after, before); err != nil {
-			return nil, 0, err
+			return nil, "", "", err
 		}
 	}
 	sessions, err := s.buildSessions(ctx, pid, ids)
 	if err != nil {
-		return nil, 0, err
+		return nil, "", "", err
 	}
 	if after > 0 || before > 0 {
 		// sessionsWithin also matches on verdict spans; keep the sessions
@@ -1164,17 +1256,17 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 		}
 		sessions = kept
 	}
-	qq := strings.ToLower(normSearchQuery(q.Q))
+	qq = strings.ToLower(normSearchQuery(q.Q))
 	var textHits map[string]bool
 	if qq != "" {
 		if err := s.fillTitles(ctx, pid, sessions); err != nil {
-			return nil, 0, err
+			return nil, "", "", err
 		}
 		if textHits, err = s.sessionsMatchingText(ctx, pid, qq); err != nil { // agents_search.go
-			return nil, 0, err
+			return nil, "", "", err
 		}
 	}
-	out := sessions[:0]
+	out = sessions[:0]
 	for _, ss := range sessions {
 		if q.Agent != "" && !containsStr(ss.Agents, q.Agent) {
 			continue
@@ -1182,7 +1274,11 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 		if q.TeamID != "" && ss.TeamID != q.TeamID {
 			continue
 		}
-		if q.Status != "" && ss.Status != q.Status {
+		if q.Status == SessionStatusFailedStep {
+			if ss.Status == "error" || ss.ErrorCount == 0 {
+				continue
+			}
+		} else if q.Status != "" && ss.Status != q.Status {
 			continue
 		}
 		if q.Model != "" && !containsStr(ss.Models, q.Model) {
@@ -1195,6 +1291,10 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 		case "":
 		case "any":
 			if sumCounts(ss.DetectionCount) == 0 {
+				continue
+			}
+		case HasDetectionFlagged:
+			if !IsFlaggedSession(ss.DetectionCount) {
 				continue
 			}
 		default:
@@ -1212,6 +1312,27 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 				continue
 			}
 		}
+		if belowSet {
+			hit := false
+			for name, a := range ss.Scores {
+				if (belowScorer == "" || name == belowScorer) && a.Mean != nil && *a.Mean < belowV {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				continue
+			}
+		}
+		if q.CostMin != nil {
+			cost := 0.0
+			if ss.CostUSD != nil {
+				cost = *ss.CostUSD
+			}
+			if cost < *q.CostMin {
+				continue
+			}
+		}
 		if qq != "" {
 			hay := strings.ToLower(strings.Join(append([]string{ss.SessionID, ss.Name, ss.Title, ss.TeamID, ss.TeamName}, ss.Agents...), "\n"))
 			if !strings.Contains(hay, qq) && !textHits[ss.SessionID] {
@@ -1221,17 +1342,7 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 		out = append(out, ss)
 	}
 	sortRows(out, sb, sessionField, func(ss *SessionSummary) string { return ss.SessionID })
-	total := len(out)
-	paged := pageRows(out, q.Limit, q.Offset, 50, 1000)
-	if qq == "" {
-		if err := s.fillTitles(ctx, pid, paged); err != nil {
-			return nil, 0, err
-		}
-	}
-	for _, ss := range paged {
-		ss.TraceIDs = nil
-	}
-	return paged, total, nil
+	return out, pid, qq, nil
 }
 
 // GetAgentSession returns one session's summary.

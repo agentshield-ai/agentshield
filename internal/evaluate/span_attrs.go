@@ -49,7 +49,7 @@ func evaluateSpanAttributes(req *models.EvaluationRequest) []attribute.KeyValue 
 	if req.AgentName != "" {
 		attrs = append(attrs, attribute.String(AttrAgentName, req.AgentName))
 	}
-	if req.Replay {
+	if req.Replay && models.IsReplaySession(req.SessionID) {
 		attrs = append(attrs, attribute.Bool(AttrReplay, true))
 	}
 	return attrs

@@ -5,19 +5,34 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type SessionSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
-import { computeAttention, type AttentionCard } from '../../lib/attention'
-import { filterQueryString, isEmptyFilter, needsClientFilter, sessionMatchesClientFilters, sessionsParams, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
+import { attentionCards, type AttentionCard } from '../../lib/attention'
+import { filterQueryString, isEmptyFilter, sessionsParams, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
 import { sessionsUrl } from '../../lib/urls'
 import { ErrorBox } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { GuidedEmpty, SendTestSession } from '../../components/ui/EmptyState'
 import { Icon } from '../../components/ui/Icons'
 import { usePageHelp } from '../../components/ui/PageHelp'
-import { Tip } from '../../components/ui/bits'
+import { CapNote, Tip } from '../../components/ui/bits'
 import { SessionList, SessionListSkeleton } from '../../components/sessions/SessionList'
 
 const DEFAULT_TIME: TimeRange = '24h'
 const PAGE = 100
+/** The most sessions the list shows (the API's largest page). */
+const MAX_LIST = 1000
+
+/** Cards shown (as "…") until the server's counts arrive. */
+const PLACEHOLDER_CARDS = attentionCards({
+  items: [],
+  sessions: 0,
+  blocked: 0,
+  approval_heavy: 0,
+  lowest_score: null,
+  cost_spike_threshold: null,
+  approval_heavy_threshold: 3,
+  low_score_threshold: 0.5,
+  cost_spike_factor: 3,
+})
 
 const SORTS: { id: string; label: string; field: string }[] = [
   { id: 'recent', label: 'Most recent', field: '-last_activity' },
@@ -50,23 +65,30 @@ export function SessionsPage() {
     serverNoTime,
   ])
   const time = widen.time
+  // The server applies every chip, so the list is paged there.
   const server = sessionsParams(state, time)
-  // Filters the server cannot apply are applied here, so fetch every match (up to 1000) and page locally.
-  const clientFiltered = needsClientFilter(state)
   const list = useQuery({
-    queryKey: ['v1', pid, 'sessions', server, sort.field, clientFiltered ? 'all' : limit],
-    queryFn: () => v1.sessions(pid, { ...server, sort_by: sort.field, limit: clientFiltered ? 1000 : limit }),
+    queryKey: ['v1', pid, 'sessions', server, sort.field, limit],
+    queryFn: () => v1.sessions(pid, { ...server, sort_by: sort.field, limit }),
     enabled: widen.ready,
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   })
-  // Attention cards look at every session in the range (with the other filters), not just the first page.
-  const pool = useQuery({
+  // Attention cards are counted on the server over every session in the range (with the other filters).
+  const attention = useQuery({
     queryKey: ['v1', pid, 'sessions', 'attention', server],
-    queryFn: () => v1.sessions(pid, { ...server, limit: 1000 }),
+    queryFn: () => v1.sessionsAttention(pid, server),
     enabled: widen.ready,
     placeholderData: keepPreviousData,
     refetchInterval: 30_000,
+  })
+  // Agents, models, tools and scorers to suggest in the filter editor (from the most recent sessions).
+  const pool = useQuery({
+    queryKey: ['v1', pid, 'sessions', 'options', server],
+    queryFn: () => v1.sessions(pid, { ...server, limit: 200 }),
+    enabled: widen.ready,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
   })
   const anyData = useQuery({
     queryKey: ['v1', pid, 'sessions', 'any'],
@@ -76,10 +98,9 @@ export function SessionsPage() {
   const filterOptions = useMemo(() => optionsFrom(pool.data?.items ?? []), [pool.data])
   const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000 })
 
-  const matching = (list.data?.items ?? []).filter((s) => sessionMatchesClientFilters(s, state))
-  const total = clientFiltered ? matching.length : (list.data?.total_count ?? 0)
-  const rows = matching.slice(0, limit)
-  const cards = computeAttention((pool.data?.items ?? []).filter((s) => sessionMatchesClientFilters(s, state)))
+  const total = list.data?.total_count ?? 0
+  const rows = list.data?.items ?? []
+  const cards = attention.data ? attentionCards(attention.data) : PLACEHOLDER_CARDS
   const projectEmpty = anyData.data?.total_count === 0
   const filtered = !isEmptyFilter(state, DEFAULT_TIME)
 
@@ -114,7 +135,7 @@ export function SessionsPage() {
             </h2>
             <div className="attn-grid">
               {cards.map((c) => (
-                <AttentionCardView key={c.id} card={c} pid={pid} base={state} loading={pool.isLoading} />
+                <AttentionCardView key={c.id} card={c} pid={pid} base={state} loading={attention.isLoading} />
               ))}
             </div>
           </section>
@@ -144,7 +165,7 @@ export function SessionsPage() {
                 </select>
               </label>
             </div>
-            <ErrorBox error={list.error} />
+            <ErrorBox error={list.error ?? attention.error} />
             {list.isLoading || !widen.ready ? (
               <SessionListSkeleton />
             ) : rows.length === 0 ? (
@@ -161,10 +182,12 @@ export function SessionsPage() {
             ) : (
               <>
                 <SessionList projectId={pid} sessions={rows} />
-                {total > limit && (
-                  <button className="btn" onClick={() => setLimit((l) => l + PAGE)} style={{ alignSelf: 'center' }}>
-                    Show more ({total - limit} more)
+                {total > rows.length && limit < MAX_LIST ? (
+                  <button className="btn" onClick={() => setLimit((l) => Math.min(MAX_LIST, l + PAGE))} style={{ alignSelf: 'center' }}>
+                    Show more ({total - rows.length} more)
                   </button>
+                ) : (
+                  <CapNote shown={rows.length} total={total} what="sessions" why="narrow the filters or the time range to see the rest" />
                 )}
               </>
             )}

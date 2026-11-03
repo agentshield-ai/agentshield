@@ -14,6 +14,9 @@ export interface TraceScope {
   /** Trace ids to keep, or null when no chip needs them. */
   traceIds: string[] | null
   ready: boolean
+  /** The session chips used only the most recent SCOPE_LIMIT of sessionsTotal matching sessions. */
+  sessionsTruncated: boolean
+  sessionsTotal: number
   error: unknown
 }
 
@@ -52,7 +55,8 @@ export function useTraceScope(pid: string, f: FilterState, time: TimeRange, root
       return [...first].filter((t) => rest.every((s) => s.has(t))).sort()
     },
   })
-  if (!conds.length) return { traceIds: null, ready: sessions.ready, error: sessions.error }
-  if (ids && ids.length === 0) return { traceIds: [], ready: true, error: sessions.error }
-  return { traceIds: q.data ?? null, ready: sessions.ready && !!q.data && !q.isPlaceholderData, error: sessions.error ?? q.error }
+  const cap = { sessionsTruncated: sessions.truncated, sessionsTotal: sessions.total }
+  if (!conds.length) return { traceIds: null, ready: sessions.ready, error: sessions.error, ...cap }
+  if (ids && ids.length === 0) return { traceIds: [], ready: true, error: sessions.error, ...cap }
+  return { traceIds: q.data ?? null, ready: sessions.ready && !!q.data && !q.isPlaceholderData, error: sessions.error ?? q.error, ...cap }
 }

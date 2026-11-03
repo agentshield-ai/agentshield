@@ -692,6 +692,33 @@ new OTLPTraceExporter({ url: weft.otel.otlpEndpoint(), headers: weft.otel.otlpHe
 const provider = await weft.otel.configure({ project: 'my-entity/my-project' });
 ```
 
+## Breaking changes
+
+### 0.1.0: Weft's own names
+
+Names that came from another tracing product were renamed, with no aliases
+(the server's optional compatibility adapter, `--weave-compat`, still serves
+that product's own client; see `docs/weft/COMPATIBILITY.md`). Migrate as
+follows:
+
+| Before | Now | Migration |
+|---|---|---|
+| `setWbRun(runId, step)`, `client.setWbRun(...)` | `setRun(runId, step)`, `client.setRun(...)` | rename the call |
+| `init({ wbRunId, wbRunStep })` | `init({ runId, runStep })` | rename the options |
+| `call.wbUserId`, `call.wbUsername` | `call.userId`, `call.username` | rename the property |
+| `call.wbRunId`, `call.wbRunStep`, `call.wbRunStepEnd` | `call.runId`, `call.runStep`, `call.runStepEnd` | rename the property |
+| wire fields `wb_user_id`, `wb_username`, `wb_run_id`, `wb_run_step`, `wb_run_step_end` | `user_id`, `username`, `run_id`, `run_step`, `run_step_end` | rename in queries, sorts and raw API use |
+| `CallsFilter` / `SavedView.setFilter` keys `wb_user_ids`, `wb_run_ids` | `user_ids`, `run_ids` | rename the keys |
+| feedback field `weave_ref` (payloads, `$getField`) | `ref` | rename the field |
+| feedback type `wandb.reaction.1` | `weft.reaction` | rename the type string |
+| feedback type `wandb.note.1` | `weft.note` | rename the type string |
+| feedback type `wandb.annotation.<name>` | `weft.annotation.<name>` | rename the type string |
+| feedback type `wandb.runnable.<scorer>` | `weft.scorer.<scorer>` | rename the type string |
+
+Data already stored is migrated by the server the first time it opens an old
+database (columns, feedback types and saved queries), so only code that names
+the old fields needs changing.
+
 ## Development
 
 ```bash

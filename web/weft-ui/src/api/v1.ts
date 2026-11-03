@@ -18,7 +18,10 @@ export interface SessionSummary {
   title: string
   started_at: string
   last_activity: string
+  /** Null for a verdicts-only session: its duration is unknown. */
   duration_ms: number | null
+  /** Known only from AgentShield verdicts; no agent spans were recorded. */
+  verdicts_only?: boolean
   agents: string[]
   team_id: string | null
   team_name: string | null
@@ -374,6 +377,25 @@ export interface ShieldStatus {
   correlation_window_ms: number
 }
 
+/** GET /api/v1/sessions/attention: the attention cards, counted on the server over every matching session. */
+export interface SessionAttention {
+  items: {
+    id: 'failed' | 'failed_step' | 'security' | 'low_score' | 'cost'
+    count: number
+    /** /api/v1/sessions parameters that, added to the request's, list exactly these sessions. */
+    filter: Record<string, string>
+    latest: { session_id: string; title: string } | null
+  }[]
+  sessions: number
+  blocked: number
+  approval_heavy: number
+  lowest_score: number | null
+  cost_spike_threshold: number | null
+  approval_heavy_threshold: number
+  low_score_threshold: number
+  cost_spike_factor: number
+}
+
 type Params = Record<string, string | number | boolean | string[] | null | undefined>
 
 /** Query string; an array becomes a repeated parameter (session_ids=a&session_ids=b). */
@@ -390,6 +412,7 @@ const seg = (s: string) => encodeURIComponent(s)
 
 export const v1 = {
   sessions: (pid: string, p: Params = {}) => get<List<SessionSummary>>(`/api/v1/sessions?${qs(pid, p)}`),
+  sessionsAttention: (pid: string, p: Params = {}) => get<SessionAttention>(`/api/v1/sessions/attention?${qs(pid, p)}`),
   session: (pid: string, id: string) => get<SessionSummary>(`/api/v1/sessions/${seg(id)}?${qs(pid)}`),
   timeline: (pid: string, id: string, p: Params = {}) => get<List<TimelineItem> & { session_id: string }>(`/api/v1/sessions/${seg(id)}/timeline?${qs(pid, { limit: 1000, ...p })}`),
   graph: (pid: string, id: string) => get<Graph>(`/api/v1/sessions/${seg(id)}/graph?${qs(pid)}`),

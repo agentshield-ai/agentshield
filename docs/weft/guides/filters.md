@@ -7,14 +7,16 @@ same filters and the same typing shortcuts on every page.
 
 Type in the filter box (press `/` to jump to it). Plain text searches: on
 Sessions it finds sessions by their title, agents and team, and by what was
-said and done in them, including the agents' messages, their reasoning and
-their tool calls. These shortcuts become filters when you press Enter:
+said and done in them, including the agents' messages, their reasoning,
+their tool calls, error messages and hand-offs; on Traces it finds traces
+with any span containing the text. These shortcuts become filters when you
+press Enter:
 
 | Type | Keeps |
 |---|---|
 | `agent:researcher` | where this agent took part |
 | `team:trip-planners` | this team |
-| `status:failed` | sessions that failed |
+| `status:failed` | sessions that failed (on Traces: traces with an error anywhere) |
 | `status:failed_step` | sessions that went on after a failed step |
 | `has:block` | where AgentShield blocked a tool call |
 | `has:approval` | where AgentShield asked for approval |
@@ -26,7 +28,14 @@ their tool calls. These shortcuts become filters when you press Enter:
 | `time:7d` | the last 7 days (also `1h`, `24h`, `30d`, `all`) |
 
 Or choose **Add filter** and pick from the lists. Each filter shows as a chip;
-click it to change it, or its × to remove it.
+click it to change it, or its × to remove it. On Traces, **Add filter** also
+offers **Advanced: field condition**, a condition on any span field (for
+example `inputs.question` contains `Oslo`).
+
+Every filter is applied by the server, so lists, counts and the attention
+cards cover every matching session. Where a page has to work from a list of
+matching sessions (Agents, Teams and Traces use the most recent 1,000), it
+says "Showing the first 1,000 of …" when more matched.
 
 ## Filters on pages that do not list sessions
 

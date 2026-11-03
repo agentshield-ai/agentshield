@@ -6,6 +6,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type AgentSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { useSessionScope } from '../../hooks/useSessionScope'
+import { ScopeCapNote } from '../../components/ui/FilterBar'
 import { isFlagged, scoreBelowMatches, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
 import { flaggedOf, fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentAnalyticsUrl, agentUrl } from '../../lib/urls'
@@ -92,6 +93,7 @@ export function AgentsListPage() {
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <ErrorBox error={q.error} />
           <ErrorBox error={scope.error} />
+          {scope.truncated && <ScopeCapNote total={scope.total} />}
           {q.isLoading || !scope.ready ? (
             <Loading />
           ) : rows.length === 0 ? (

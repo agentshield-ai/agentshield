@@ -17,7 +17,8 @@ look. Each card's number is exactly the list you get when you click it.
 | Low scores | Sessions with any score below 0.5. |
 | Cost spikes | Sessions costing at least three times the typical (median) session. |
 
-Hover the ⓘ next to a card for how it is counted.
+Hover the ⓘ next to a card for how it is counted. The server counts every
+session in the range, however many there are.
 
 ## Find a session
 
@@ -29,10 +30,14 @@ Badges flag problems:
   tool call.
 - **N failed steps**: click it to jump to the failed step.
 - **Go to the failure**: on a failed session, opens the step that failed.
+- **Verdicts only — no agent spans recorded**: AgentShield checked tool calls
+  in this session, but the agent itself sent no spans to Weft, so its steps,
+  duration and cost are unknown (the duration shows as —). Connect the agent
+  (see [Set up](setup.md)) to record them.
 
 Use the filter bar to narrow the list, for example `agent:researcher
 status:failed`. Plain text finds sessions by what was said and done in them,
-including the agents' reasoning and tool calls. See
+including the agents' reasoning, tool calls, error messages and hand-offs. See
 [Filters and saved views](filters.md).
 
 ## Read a session

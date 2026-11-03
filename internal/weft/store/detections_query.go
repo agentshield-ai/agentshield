@@ -26,8 +26,16 @@ type DetectionQuery struct {
 	Overridden *bool
 	Linked     *bool
 	From, To   int64 // unix micros on created_at; 0 = open
-	Limit      int
-	Offset     int
+	// Sessions keeps detections in the sessions matching this filter (the
+	// /api/v1/sessions filters; its time range defaults to From/To). The
+	// store resolves it over every matching session, so it is never cut at
+	// a page of session ids.
+	Sessions *SessionsQuery
+	// restrictSessions applies SessionIDs even when empty (a session filter
+	// that matched nothing).
+	restrictSessions bool
+	Limit            int
+	Offset           int
 	// SortBy is created_at (default, newest first), -created_at (oldest
 	// first; a leading "-" or ":asc"/":desc" suffix also accepted), severity.
 	SortBy string
@@ -52,11 +60,9 @@ func (q *DetectionQuery) where() (string, []any) {
 		conds = append(conds, "d.tool_name = ? COLLATE NOCASE")
 		args = append(args, q.ToolName)
 	}
-	if len(q.SessionIDs) > 0 {
-		conds = append(conds, "d.session_id IN ("+placeholders(len(q.SessionIDs))+")")
-		for _, s := range q.SessionIDs {
-			args = append(args, s)
-		}
+	if len(q.SessionIDs) > 0 || q.restrictSessions {
+		conds = append(conds, "d.session_id IN (SELECT value FROM json_each(?))")
+		args = append(args, jsonStringList(q.SessionIDs))
 	}
 	if len(q.Actions) > 0 {
 		conds = append(conds, "d.action IN ("+placeholders(len(q.Actions))+")")
@@ -144,7 +150,57 @@ func scanDetection(sc interface{ Scan(...any) error }) (Detection, error) {
 }
 
 // QueryDetections lists detections and the total matching count.
+// jsonStringList encodes ids as a JSON array (for json_each: one bound
+// parameter however many ids there are).
+func jsonStringList(ids []string) string {
+	if ids == nil {
+		ids = []string{}
+	}
+	b, _ := json.Marshal(ids)
+	return string(b)
+}
+
+// resolveSessions turns q.Sessions into the session ids it matches.
+func (s *Store) resolveSessions(ctx context.Context, q *DetectionQuery) error {
+	if q.Sessions == nil {
+		return nil
+	}
+	sq := *q.Sessions
+	sq.ProjectID = q.ProjectID
+	sq.Limit, sq.Offset, sq.SortBy = 0, 0, ""
+	if sq.From == "" && sq.To == "" {
+		if q.From > 0 {
+			sq.From = FormatMicros(q.From)
+		}
+		if q.To > 0 {
+			sq.To = FormatMicros(q.To)
+		}
+	}
+	ids, err := s.MatchingSessionIDs(ctx, sq)
+	if err != nil {
+		return err
+	}
+	if len(q.SessionIDs) > 0 { // both: the intersection
+		keep := map[string]bool{}
+		for _, id := range ids {
+			keep[id] = true
+		}
+		both := []string{}
+		for _, id := range q.SessionIDs {
+			if keep[id] {
+				both = append(both, id)
+			}
+		}
+		ids = both
+	}
+	q.SessionIDs, q.restrictSessions, q.Sessions = ids, true, nil
+	return nil
+}
+
 func (s *Store) QueryDetections(ctx context.Context, q DetectionQuery) ([]Detection, int, error) {
+	if err := s.resolveSessions(ctx, &q); err != nil {
+		return nil, 0, err
+	}
 	where, args := q.where()
 	order, err := q.orderBy()
 	if err != nil {
@@ -237,6 +293,9 @@ type DetectionStats struct {
 // DetectionStatsFor aggregates the detections q selects (Limit, Offset and
 // SortBy are ignored): counts by action, severity, source, rule, agent and day.
 func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*DetectionStats, error) {
+	if err := s.resolveSessions(ctx, &q); err != nil {
+		return nil, err
+	}
 	where, args := q.where()
 	st := &DetectionStats{ByAction: ActionCounts{}, BySeverity: ActionCounts{}, BySource: ActionCounts{}, ByRule: []RuleCount{}, ByAgent: []AgentCount{}, ByDay: []DayCount{}}
 	rows, err := s.r.QueryContext(ctx, `SELECT d.action, d.severity, d.source, d.agent_name, d.overridden, d.span_id IS NOT NULL,
@@ -265,13 +324,17 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 		if linked {
 			st.Linked += n
 		}
-		a := agents[agent]
-		if a == nil {
-			a = &AgentCount{Agent: agent, ByAction: ActionCounts{}}
-			agents[agent] = a
+		// Per-agent counts are engine verdicts, like the detection rate
+		// beside them; replays count only when source=replay is asked for.
+		if source != DetectionSourceReplay || q.Source == DetectionSourceReplay {
+			a := agents[agent]
+			if a == nil {
+				a = &AgentCount{Agent: agent, ByAction: ActionCounts{}}
+				agents[agent] = a
+			}
+			a.Count += n
+			a.ByAction[action] += n
 		}
-		a.Count += n
-		a.ByAction[action] += n
 		dc := days[day]
 		if dc == nil {
 			dc = &DayCount{Day: day, ByAction: ActionCounts{}, BySeverity: ActionCounts{}}
@@ -373,11 +436,18 @@ func (f ToolCallFlag) Rate() *float64 {
 // (no span, or a session Weft has no spans for) are not part of the rate,
 // so it is always between 0 and 1.
 func (s *Store) ToolCallFlags(ctx context.Context, q DetectionQuery) (map[string]ToolCallFlag, error) {
+	if err := s.resolveSessions(ctx, &q); err != nil {
+		return nil, err
+	}
 	conds := []string{"a.project_id = ?", "a.operation_name = 'execute_tool'", "a.agent_name <> ''", "c.deleted_at IS NULL"}
 	args := []any{q.ProjectID}
 	if q.SessionID != "" {
 		conds = append(conds, "a.conversation_id = ?")
 		args = append(args, q.SessionID)
+	}
+	if len(q.SessionIDs) > 0 || q.restrictSessions {
+		conds = append(conds, "a.conversation_id IN (SELECT value FROM json_each(?))")
+		args = append(args, jsonStringList(q.SessionIDs))
 	}
 	if q.Agent != "" {
 		conds = append(conds, "a.agent_name = ?")

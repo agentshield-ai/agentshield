@@ -22,6 +22,7 @@ import (
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
 		r.Get("/api/v1/sessions", s.v1Sessions)
+		r.Get("/api/v1/sessions/attention", s.v1SessionsAttention)
 		r.Get("/api/v1/sessions/{id}", s.v1Session)
 		r.Get("/api/v1/sessions/{id}/timeline", s.v1SessionTimeline)
 		r.Get("/api/v1/sessions/{id}/graph", s.v1SessionGraph)
@@ -102,17 +103,49 @@ func list[T any](items []T, total int) map[string]any {
 	return map[string]any{"items": items, "total_count": total}
 }
 
+// sessionsQuery reads the /api/v1/sessions filters, each named prefix+name
+// (the detections API takes them as session.<name>).
+func sessionsQuery(pid string, q url.Values, prefix string) (store.SessionsQuery, bool, error) {
+	get := func(name string) string { return strings.TrimSpace(q.Get(prefix + name)) }
+	sq := store.SessionsQuery{ProjectID: pid, Agent: get("agent"), TeamID: get("team_id"),
+		Status: get("status"), HasDetection: get("has_detection"), MinScore: get("min_score"), MaxScore: get("max_score"),
+		ScoreBelow: get("score_below"), Model: get("model"), Tool: get("tool"), Q: get("q"), From: get("from"), To: get("to")}
+	has := sq.Agent != "" || sq.TeamID != "" || sq.Status != "" || sq.HasDetection != "" || sq.MinScore != "" || sq.MaxScore != "" ||
+		sq.ScoreBelow != "" || sq.Model != "" || sq.Tool != "" || sq.Q != ""
+	if c := get("cost_min"); c != "" {
+		f, err := strconv.ParseFloat(c, 64)
+		if err != nil || f < 0 {
+			return sq, false, store.Invalidf("%scost_min must be a non-negative number", prefix)
+		}
+		sq.CostMin = &f
+		has = true
+	}
+	return sq, has, nil
+}
+
 func (s *Server) v1Sessions(w http.ResponseWriter, r *http.Request) {
 	v1(func(ctx context.Context, _ *http.Request, v *v1Req) (any, error) {
-		q := v.q
-		rows, total, err := s.store.QuerySessions(ctx, store.SessionsQuery{ProjectID: v.pid, Agent: q.Get("agent"), TeamID: q.Get("team_id"),
-			Status: q.Get("status"), HasDetection: q.Get("has_detection"), MinScore: q.Get("min_score"), MaxScore: q.Get("max_score"),
-			Model: q.Get("model"), Tool: q.Get("tool"), Q: q.Get("q"), From: q.Get("from"), To: q.Get("to"),
-			Limit: v.limit, Offset: v.offset, SortBy: v.sortBy})
+		sq, _, err := sessionsQuery(v.pid, v.q, "")
+		if err != nil {
+			return nil, err
+		}
+		sq.Limit, sq.Offset, sq.SortBy = v.limit, v.offset, v.sortBy
+		rows, total, err := s.store.QuerySessions(ctx, sq)
 		if err != nil {
 			return nil, err
 		}
 		return list(rows, total), nil
+	})(w, r)
+}
+
+// v1SessionsAttention counts the attention cards over every matching session.
+func (s *Server) v1SessionsAttention(w http.ResponseWriter, r *http.Request) {
+	v1(func(ctx context.Context, _ *http.Request, v *v1Req) (any, error) {
+		sq, _, err := sessionsQuery(v.pid, v.q, "")
+		if err != nil {
+			return nil, err
+		}
+		return s.store.SessionsAttention(ctx, sq)
 	})(w, r)
 }
 

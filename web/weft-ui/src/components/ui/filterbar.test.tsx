@@ -2,16 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { FilterBar } from './FilterBar'
+import { FilterBar, type AdvancedFilter } from './FilterBar'
 import { snippets } from './EmptyState'
 
-function render(url: string, page: 'sessions' | 'security' = 'sessions') {
+function render(url: string, page: 'sessions' | 'security' | 'traces' = 'sessions', advanced?: AdvancedFilter) {
   const qc = new QueryClient({ defaultOptions: { queries: { enabled: false } } })
   return renderToString(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[url]}>
         <Routes>
-          <Route path="/:entity/:project/sessions" element={<FilterBar page={page} defaultTime="24h" />} />
+          <Route path="/:entity/:project/sessions" element={<FilterBar page={page} defaultTime="24h" advanced={advanced} />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -50,6 +50,22 @@ describe('FilterBar', () => {
     expect(html).toContain('Remove filter Team')
     expect(html).toContain('Remove filter Cost at least')
     expect(text(html)).toContain('Team, Cost at least: showing detections in a session that matches these filters.')
+  })
+})
+
+describe('advanced field conditions', () => {
+  it('are chips in the shared bar, with no second filter button', () => {
+    const html = render('/demo/agents/sessions?agent=coder', 'traces', {
+      fields: ['inputs.question'],
+      clauses: [{ field: 'inputs.question', op: 'contains', value: 'Oslo' }],
+      onChange: () => {},
+    })
+    const t = text(html)
+    expect(t).toContain('Field inputs.question contains Oslo')
+    expect(html).toContain('aria-label="Remove filter Field: inputs.question contains Oslo"')
+    expect(t).toContain('Add filter')
+    expect(t).not.toContain('+ Filter')
+    expect(t).toContain('Clear all')
   })
 })
 

@@ -242,3 +242,14 @@ export function Bar({ value, max, tone = 'accent', label }: { value: number; max
     </span>
   )
 }
+
+/** Says a list or figure was built from only the first `shown` of `total` items, so a cap is never silent. */
+export function CapNote({ shown, total, what, why }: { shown: number; total: number; what: string; why?: ReactNode }) {
+  if (total <= shown) return null
+  return (
+    <p className="cap-note" role="status">
+      <Icon name="info" size={13} /> Showing the first {shown.toLocaleString()} of {total.toLocaleString()} {what}
+      {why ? <>: {why}</> : '.'}
+    </p>
+  )
+}

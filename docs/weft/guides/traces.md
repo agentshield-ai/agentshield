@@ -16,8 +16,20 @@ need the details.
   listing spans, they apply to each span. Session filters such as `team:` or
   `has:block` keep the traces of matching sessions. See
   [Filters and saved views](filters.md).
-- **+ Filter** adds conditions on any field, such as an input value or a
-  token count.
+- Plain text in the filter box finds a trace when any of its spans contains
+  it: names, inputs, outputs, messages, reasoning, tool calls, error
+  messages and hand-offs, not only the top-level span.
+- `status:failed` (**Status: Failed**) on Traces means *the trace has an
+  error anywhere*: its top-level span failed, or any span under it did. That
+  includes traces that went on after a failed step, which Sessions counts
+  separately as "Failed steps". Listing spans, it keeps spans that failed or
+  have a failed span under them.
+- **Add filter → Advanced: field condition** adds a condition on any field,
+  such as an input value or a token count. It shows as a **Field** chip with
+  the others.
+- AgentShield's evaluations of replayed tool calls (the engine's own traces
+  of a [replay](security.md#replay-recorded-tool-calls-after-a-rule-change))
+  are hidden, as on Sessions. Tick **Replay evaluations** to list them.
 
 Press `j` and `k` to move through the rows and `Enter` to open one.
 

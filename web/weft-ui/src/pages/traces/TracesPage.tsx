@@ -10,7 +10,7 @@ import { callUrl, compareCallsUrl, threadsUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Spinner, StatusDot } from '../../components/common'
 import { CallCharts } from '../../components/traces/CallCharts'
 import { extractChat, messageText, normaliseMessage } from '../../components/traces/ChatView'
-import { BASE_FILTER_FIELDS, FilterBuilder, clauseToOperation, clauseValid, decodeClauses, encodeClauses, type FilterClause } from '../../components/traces/FilterBuilder'
+import { BASE_FILTER_FIELDS, clauseToOperation, clauseValid, decodeClauses, encodeClauses, type FilterClause } from '../../components/traces/FilterBuilder'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal, Dropdown, MenuItem } from '../../components/traces/Menu'
 import { GettingStarted } from '../../components/traces/GettingStarted'
@@ -19,7 +19,7 @@ import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/Expo
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 import '../../components/traces/columns.css'
-import { FilterBar, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
+import { FilterBar, ScopeCapNote, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { FILTER_PARAMS, parseFilters, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
 import { useTraceScope } from '../../hooks/useTraceScope'
 import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
@@ -49,11 +49,13 @@ const PAGE_SIZES = [25, 50, 100, 200]
 const STATUSES = ['success', 'error', 'running', 'descendant_error'] as const
 const DEFAULT_TIME: TimeRange = '24h'
 /** URL parameters a saved Traces view keeps besides the shared filters. */
-const VIEW_KEYS = ['roots', 'system', 'op', 'f', 'expr', 'sort', 'cols', 'order', 'pin', 'hide', 'limit', 'charts']
+const VIEW_KEYS = ['roots', 'system', 'replay', 'op', 'f', 'expr', 'sort', 'cols', 'order', 'pin', 'hide', 'limit', 'charts']
 
 interface ViewState {
   roots: boolean
   system: boolean
+  /** Include AgentShield replay evaluations (hidden by default, like on Sessions). */
+  replay: boolean
   op: string
   status: string
   q: string
@@ -72,7 +74,7 @@ interface ViewState {
   view: string
 }
 
-function parseState(p: URLSearchParams): ViewState {
+export function parseState(p: URLSearchParams): ViewState {
   const [sf, sd] = (p.get('sort') ?? 'started_at:desc').split(':')
   let expr: Operation | null = null
   try {
@@ -83,6 +85,7 @@ function parseState(p: URLSearchParams): ViewState {
   return {
     roots: p.get('roots') !== '0',
     system: p.get('system') === '1',
+    replay: p.get('replay') === '1',
     op: p.get('op') ?? '',
     // The shared filter bar says ok/error/running; spans also have descendant_error.
     // "Went on after a failed step" is a session status, applied through sessions.
@@ -129,10 +132,21 @@ export function sharedOps(f: FilterState, time: TimeRange = 'all', perSpan = tru
   return ops
 }
 
+/**
+ * The status chip. Failed means "has an error anywhere": the span itself
+ * failed, or one under it did (descendant_error), so on trace roots it is
+ * "the trace has an error anywhere" (matching Sessions, where a session
+ * with a failed step also shows up under the attention cards).
+ */
+export function statusOp(status: string): Operation {
+  if (status === 'error') return { $in: [{ $getField: 'summary.weft.status' }, [{ $literal: 'error' }, { $literal: 'descendant_error' }]] }
+  return { $eq: [{ $getField: 'summary.weft.status' }, { $literal: status }] }
+}
+
 /** Never matches a trace id; stands for "no trace matched the session filters". */
 const NO_TRACE = 'no-matching-trace'
 
-function buildRequest(
+export function buildRequest(
   s: ViewState,
   shared: FilterState = {},
   time: TimeRange = 'all',
@@ -145,7 +159,9 @@ function buildRequest(
   const ops: Operation[] = []
   // Monitor scorers and server-side LLM calls are tagged internal; hide them unless asked.
   if (!s.system) ops.push({ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] })
-  if (s.status) ops.push({ $eq: [{ $getField: 'summary.weft.status' }, { $literal: s.status }] })
+  // AgentShield's evaluations of replayed tool calls (whole engine traces) are not agent activity; hidden unless asked.
+  if (!s.replay) ops.push({ $not: [{ $eq: [{ $getField: 'summary.weft.replay' }, { $literal: true }] }] })
+  if (s.status) ops.push(statusOp(s.status))
   for (const c of s.clauses) if (clauseValid(c)) ops.push(clauseToOperation(c))
   ops.push(...sharedOps(shared, time, !s.roots))
   if (s.expr) ops.push(s.expr)
@@ -430,7 +446,7 @@ export function TracesPage() {
 
   // Saved views also store the span query, for readers of the API.
   const viewDefinition = () => ({ filter: req.filter, query: req.query, sort_by: sortBy, cols: s.cols, search: req.search })
-  const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots || FILTER_PARAMS.some((k) => params.get(k)))
+  const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots || s.replay || FILTER_PARAMS.some((k) => params.get(k)))
 
   const selCalls = [...selected.values()]
   const exportTargets = selCalls.length ? selCalls : rows
@@ -476,9 +492,11 @@ export function TracesPage() {
         viewDefinition={viewDefinition}
         legacyView={legacyTraceView}
         placeholder="Filter traces…  try agent:researcher or tool:Bash"
+        advanced={{ fields: filterFields, clauses: s.clauses, onChange: (cs) => update({ f: encodeClauses(cs) || null }) }}
       />
       {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => update({ time: DEFAULT_TIME })} />}
       <ErrorBox error={scope.error} />
+      {scope.sessionsTruncated && <ScopeCapNote total={scope.sessionsTotal} />}
 
       {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
 
@@ -489,7 +507,9 @@ export function TracesPage() {
         <label className="checkbox small" title="Include scorer spans made by monitors and other internal server spans">
           <input type="checkbox" checked={s.system} onChange={(e) => update({ system: e.target.checked ? '1' : null })} /> System spans
         </label>
-        <FilterBuilder clauses={s.clauses} fields={filterFields} onChange={(cs) => update({ f: encodeClauses(cs) || null })} />
+        <label className="checkbox small" title="Include the engine traces of AgentShield replays (re-evaluations of recorded tool calls). They are not agent activity, so they are hidden by default.">
+          <input type="checkbox" checked={s.replay} onChange={(e) => update({ replay: e.target.checked ? '1' : null })} /> Replay evaluations
+        </label>
         {s.expr && (
           <span className="filter-chip" title={JSON.stringify(s.expr)}>
             <span className="filter-chip-label mono">custom query</span>

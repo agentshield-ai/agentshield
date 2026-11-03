@@ -612,16 +612,20 @@ func TestSessionTimesIgnoreVerdicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := func(d time.Duration) string { return *microsPtr(Micros(detBase.Add(d))) }
-	if ss.DurationMS != 1000 || *ss.StartedAt != at(0) || *ss.LastActivity != at(time.Second) {
-		t.Fatalf("session times include verdicts: started %v last %v duration %d", *ss.StartedAt, *ss.LastActivity, ss.DurationMS)
+	if ss.DurationMS == nil || *ss.DurationMS != 1000 || *ss.StartedAt != at(0) || *ss.LastActivity != at(time.Second) || ss.VerdictsOnly {
+		t.Fatalf("session times include verdicts: started %v last %v duration %v", *ss.StartedAt, *ss.LastActivity, ss.DurationMS)
 	}
 	l, _, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, SortBy: "session_id"})
-	if err != nil || len(l) != 2 || l[0].SessionID != "s-verdicts-only" || l[1].DurationMS != 1000 {
+	if err != nil || len(l) != 2 || l[0].SessionID != "s-verdicts-only" || l[1].DurationMS == nil || *l[1].DurationMS != 1000 {
 		t.Fatalf("list = %+v %v", l, err)
 	}
-	// A session seen only through verdicts still has times.
+	// A session seen only through verdicts still has start and last-activity
+	// times (to sort by), but no duration, and is marked verdicts-only.
 	if l[0].StartedAt == nil || *l[0].StartedAt != at(40*time.Second) {
 		t.Errorf("verdict-only session started_at = %v", l[0].StartedAt)
+	}
+	if l[0].DurationMS != nil || !l[0].VerdictsOnly {
+		t.Errorf("verdict-only session: duration %v, verdicts_only %v", l[0].DurationMS, l[0].VerdictsOnly)
 	}
 	// Time filters use the session's own activity.
 	l, _, err = s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, From: detTS(30 * time.Second)})
@@ -688,5 +692,45 @@ func TestDetectionRateIsFlaggedToolCallsOverToolCalls(t *testing.T) {
 	putSpans(t, s, agentRoot("root2", "t2", "s2", "quiet", 0), toolSpan("q", "t2", "root2", "", "Bash", "tq", "", 0))
 	if q, err := s.GetAgentV1(ctx, proj, "quiet"); err != nil || q.DetectionRate == nil || *q.DetectionRate != 0 {
 		t.Errorf("quiet agent rate = %v %v", q.DetectionRate, err)
+	}
+}
+
+// A replayed evaluation arrives as the engine's HTTP span with the evaluate
+// span under it. The whole trace is marked replay (summary.weft.replay), so
+// the Traces list can hide it by default and still show it on request.
+func TestReplayTracesMarked(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	httpRoot := CompleteCall{Start: CallStart{ProjectID: proj, ID: "http-1", TraceID: "rt-rp-1", OpName: "/api/v1/evaluate", StartedAt: detTS(2 * time.Second),
+		Attributes: map[string]any{"otel": map[string]any{"attributes": map[string]any{"http.route": "/api/v1/evaluate"}}}},
+		End: &CallEnd{EndedAt: detTS(3 * time.Second), Summary: map[string]any{}}}
+	child := replayEngineSpan("rp-1", "weft-replay-job1-0", "weft-replay:job1:s1", true)
+	parent := "http-1"
+	child.Start.ParentID = &parent
+	// The child first, as OTLP exporters often send it.
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{child}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{httpRoot, verdictSpan("live-1", "evt-1", "s1", "toolu_1", time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	roots := func(replay bool) string {
+		var ids []string
+		err := s.QueryCalls(ctx, CallsQuery{ProjectID: proj, Filter: &CallsFilter{TraceRootsOnly: true},
+			Query:  map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "summary.weft.replay"}, map[string]any{"$literal": replay}}}},
+			SortBy: []SortBy{{Field: "id", Direction: "asc"}}}, func(c *Call) error {
+			ids = append(ids, c.ID)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(ids, ",")
+	}
+	if got := roots(false); got != "live-1" {
+		t.Errorf("live roots = %q", got)
+	}
+	if got := roots(true); got != "http-1" {
+		t.Errorf("replay roots = %q", got)
 	}
 }

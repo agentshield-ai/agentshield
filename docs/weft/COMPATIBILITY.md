@@ -146,8 +146,18 @@ sends with the old names are translated on the way in.
   do not repeat it as `summary.weave`.
 - Values the client serialises as custom types (`PIL.Image.Image`,
   `wave.Wave_read`, video, its `Content` type, rich `Markdown`) are stored as
-  sent. The UI renders them as media (`web/weft-ui/src/components/media/clientTypes.ts`);
-  Weft's server-side features treat them as plain objects.
+  sent. The UI renders them as media (`web/weft-ui/src/compat/legacyMedia.ts`,
+  called from `components/media/mediaUtils.ts` only for values tagged with
+  that encoding); Weft's server-side features treat them as plain objects.
+- That decoder is used whether or not the adapter is on, on purpose. Media
+  values are user data: the one-time migration of old databases renames
+  columns, feedback types, legacy attribute keys and saved queries, but never
+  rewrites call inputs, outputs, object values or table rows (checked by
+  `TestLegacyMigrationLeavesMediaValuesAlone` in
+  `internal/weft/store/legacy_names_test.go`). So media a legacy client
+  stored keeps its encoding after the adapter is turned off or the database
+  is migrated, and still has to render. The decoder only reads; it adds no
+  routes, names or behaviour to the server.
 - Feedback and ref rewriting in responses is limited to JSON responses of
   `/feedback/*`, `/call/*`, `/calls/*` and `/agents/feedback/*` (plus
   `weave:///` refs in every JSON response). A user value that happens to

@@ -1047,6 +1047,33 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6345/otel/v1/traces
 OTEL_EXPORTER_OTLP_TRACES_HEADERS=project_id=my-entity/my-project
 ```
 
+## Breaking changes
+
+### 0.1.0: Weft's own names
+
+Names that came from another tracing product were renamed, with no aliases
+(the server's optional compatibility adapter, `--weave-compat`, still serves
+that product's own client; see `docs/weft/COMPATIBILITY.md`). Migrate as
+follows:
+
+| Before | Now | Migration |
+|---|---|---|
+| `weft.set_wb_run(run_id, step)`, `client.set_wb_run(...)` | `weft.set_run(run_id, step)`, `client.set_run(...)` | rename the call |
+| `weft.init(settings={"wb_run_id": ..., "wb_run_step": ...})` | `settings={"run_id": ..., "run_step": ...}` | rename the keys |
+| `call.wb_user_id`, `call.wb_username` | `call.user_id`, `call.username` | rename the attribute |
+| `call.wb_run_id`, `call.wb_run_step`, `call.wb_run_step_end` | `call.run_id`, `call.run_step`, `call.run_step_end` | rename the attribute |
+| query fields and sort keys `wb_user_id`, `wb_run_id` | `user_id`, `run_id` | rename in `$getField` / `sort_by` |
+| `CallsFilter` / `SavedView.set_filter(wb_user_ids=..., wb_run_ids=...)` | `user_ids=...`, `run_ids=...` | rename the keyword |
+| feedback field `weave_ref` (payloads, `$getField`) | `ref` | rename the field |
+| feedback type `wandb.reaction.1` | `weft.reaction` | rename the type string |
+| feedback type `wandb.note.1` | `weft.note` | rename the type string |
+| feedback type `wandb.annotation.<name>` | `weft.annotation.<name>` | rename the type string |
+| feedback type `wandb.runnable.<scorer>` | `weft.scorer.<scorer>` | rename the type string |
+
+Data already stored is migrated by the server the first time it opens an old
+database (columns, feedback types and saved queries), so only code that names
+the old fields needs changing.
+
 ## Tests
 
 ```bash

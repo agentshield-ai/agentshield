@@ -32,9 +32,27 @@ import {
   type TimeRange,
 } from '../../lib/filters'
 import { Icon } from './Icons'
+import { CapNote } from './bits'
+import { SCOPE_LIMIT } from '../../hooks/useSessionScope'
 import { undoable, notify } from './Toasts'
+import { ClauseEditor, clauseLabel, type FilterClause } from '../traces/FilterBuilder'
 
 export type { FilterPage }
+
+/**
+ * A page's advanced filter: conditions on any field of its rows (Traces:
+ * span fields such as inputs.question), offered in the "Add filter" menu as
+ * "Advanced: field condition" and shown as chips with the others.
+ */
+export interface AdvancedFilter {
+  /** Field names to suggest. */
+  fields: string[]
+  clauses: FilterClause[]
+  onChange: (clauses: FilterClause[]) => void
+}
+
+type EditorKey = FilterKey | 'advanced'
+const ADVANCED_LABEL = 'Advanced: field condition'
 
 export interface FilterOptions {
   agents?: string[]
@@ -173,8 +191,11 @@ export function FilterBar({
   viewKeys = [],
   viewDefinition,
   legacyView,
+  advanced,
 }: {
   page: FilterPage
+  /** Field conditions (Traces), folded into "Add filter". */
+  advanced?: AdvancedFilter
   /** Other URL parameters a saved view keeps on this page (Traces: columns, sort, …). */
   viewKeys?: string[]
   /** Extra fields stored in a saved view's definition, for API readers. */
@@ -195,7 +216,10 @@ export function FilterBar({
   // Time has its own picker and text its own box, so neither repeats as a chip.
   const chips = chipsOf(state, { defaultTime }).filter((c) => c.key !== 'time' && c.key !== 'q')
   const scopeNote = sessionScopeNote(page, state)
-  const [editing, setEditing] = useState<FilterKey | null>(null)
+  const [editing, setEditing] = useState<EditorKey | null>(null)
+  // The advanced clause being edited (-1: a new one).
+  const [clauseIdx, setClauseIdx] = useState(-1)
+  const clauses = advanced?.clauses ?? []
   const [text, setText] = useState(state.q ?? '')
   useEffect(() => setText(state.q ?? ''), [state.q])
   const { views, save, remove } = useSavedViews(pid, page, legacyView)
@@ -276,7 +300,15 @@ export function FilterBar({
           </label>
         )}
         <div className="dd">
-          <button type="button" className="btn sm" onClick={() => setEditing(editing ? null : addable[0])} aria-expanded={!!editing}>
+          <button
+          type="button"
+          className="btn sm"
+          onClick={() => {
+            setClauseIdx(-1)
+            setEditing(editing ? null : addable[0])
+          }}
+          aria-expanded={!!editing}
+        >
             <Icon name="plus" size={13} /> Add filter
           </button>
         </div>
@@ -343,7 +375,7 @@ export function FilterBar({
         </div>
         {extra}
       </div>
-      {(chips.length > 0 || state.time === 'custom') && (
+      {(chips.length > 0 || clauses.length > 0 || state.time === 'custom') && (
         <ul className="chips-row" aria-label="Active filters">
           {chips.map((c) => (
             <li key={c.key} className="fchip">
@@ -367,9 +399,35 @@ export function FilterBar({
               </button>
             </li>
           )}
-          {chips.length > 1 && (
+          {clauses.map((c, i) => (
+            <li key={`clause-${i}`} className="fchip">
+              <button
+                type="button"
+                className="fchip-body"
+                onClick={() => {
+                  setClauseIdx(i)
+                  setEditing('advanced')
+                }}
+                aria-label={`Edit filter Field: ${clauseLabel(c)}`}
+              >
+                <span className="fchip-key">Field</span>
+                <span className="fchip-val mono">{clauseLabel(c)}</span>
+              </button>
+              <button type="button" className="fchip-x" aria-label={`Remove filter Field: ${clauseLabel(c)}`} onClick={() => advanced?.onChange(clauses.filter((_, j) => j !== i))}>
+                <Icon name="close" size={11} />
+              </button>
+            </li>
+          ))}
+          {chips.length + clauses.length > 1 && (
             <li>
-              <button type="button" className="btn ghost sm" onClick={() => setState(state.time ? { time: state.time, from: state.from, to: state.to } : {})}>
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => {
+                  if (clauses.length) advanced?.onChange([])
+                  setState(state.time ? { time: state.time, from: state.from, to: state.to } : {})
+                }}
+              >
                 Clear all
               </button>
             </li>
@@ -384,10 +442,17 @@ export function FilterBar({
       {editing && (
         <FilterEditor
           page={page}
-          keys={[...addable, ...(keys.includes('q') ? (['q'] as FilterKey[]) : []), ...(editing === 'time' ? (['time'] as FilterKey[]) : [])]}
+          keys={[
+            ...addable,
+            ...(keys.includes('q') ? (['q'] as FilterKey[]) : []),
+            ...(editing === 'time' ? (['time'] as FilterKey[]) : []),
+            ...(advanced ? (['advanced'] as EditorKey[]) : []),
+          ]}
           initial={editing}
           state={state}
           options={options}
+          advanced={advanced}
+          clauseIdx={clauseIdx}
           onApply={(s) => {
             setState(s)
             setEditing(null)
@@ -405,11 +470,17 @@ export function FilterBar({
 
 /** What the text box searches on each page. */
 const TEXT_SEARCH_LABEL: Record<FilterPage, string> = {
-  sessions: 'Text anywhere in a session: title, id, agents, team, messages, reasoning or tool calls',
+  sessions: 'Text anywhere in a session: title, id, agents, team, messages, reasoning, tool calls, errors or hand-offs',
   agents: 'Text in the agent name',
   teams: 'Text in the team name or its agents',
   security: 'Text in the rule, tool, agent, severity or session',
-  traces: 'Text in the span name, inputs or outputs',
+  traces: 'Text in any span of the trace: names, inputs, outputs, messages, reasoning, tool calls, errors or hand-offs',
+}
+
+/** What the status chip means where it differs from Sessions. */
+const STATUS_NOTE: Partial<Record<FilterPage, string>> = {
+  traces:
+    'On Traces, Failed means the trace has an error anywhere: its top-level span or any span under it failed (so it includes traces that went on after a failed step). Listing spans, it means the span or something under it failed.',
 }
 
 function FilterEditor({
@@ -418,18 +489,22 @@ function FilterEditor({
   initial,
   state,
   options,
+  advanced,
+  clauseIdx,
   onApply,
   onClose,
 }: {
   page: FilterPage
-  keys: FilterKey[]
-  initial: FilterKey
+  keys: EditorKey[]
+  initial: EditorKey
   state: FilterState
   options: FilterOptions
+  advanced?: AdvancedFilter
+  clauseIdx: number
   onApply: (s: FilterState) => void
   onClose: () => void
 }) {
-  const [key, setKey] = useState<FilterKey>(initial)
+  const [key, setKey] = useState<EditorKey>(initial)
   const [draft, setDraft] = useState<FilterState>(state)
   const firstRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
@@ -530,7 +605,12 @@ function FilterEditor({
       )
       break
     case 'status':
-      body = radios<StatusFilter>('status', draft.status, STATUS_LABEL, (v) => setDraft({ ...draft, status: v }))
+      body = (
+        <>
+          {radios<StatusFilter>('status', draft.status, STATUS_LABEL, (v) => setDraft({ ...draft, status: v }))}
+          {STATUS_NOTE[page] && <p className="small muted filter-note">{STATUS_NOTE[page]}</p>}
+        </>
+      )
       break
     case 'has':
       body = radios<HasFilter>('has', draft.has, HAS_LABEL, (v) => setDraft({ ...draft, has: v }))
@@ -617,10 +697,52 @@ function FilterEditor({
       )
       break
   }
+  const tabs = (
+    <div className="filter-editor-keys" role="tablist" aria-label="Filter kind">
+      {keys.map((k) => (
+        <button key={k} type="button" role="tab" aria-selected={k === key} className={`seg-btn ${k === key ? 'on' : ''}`} onClick={() => setKey(k)}>
+          {k === 'advanced' ? ADVANCED_LABEL : k === 'time' ? TIME_LABEL.custom : FILTER_KEY_LABEL[k]}
+        </button>
+      ))}
+    </div>
+  )
+  if (key === 'advanced' && advanced) {
+    const editingClause = clauseIdx >= 0 ? advanced.clauses[clauseIdx] : undefined
+    return (
+      <div
+        className="filter-editor"
+        role="group"
+        aria-label="Edit an advanced field condition"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.stopPropagation()
+            onClose()
+          }
+        }}
+      >
+        {tabs}
+        <p className="small muted filter-note">
+          A condition on any span field, such as <span className="mono">inputs.question</span> contains <span className="mono">Oslo</span>. It applies together with the other
+          filters.
+        </p>
+        <ClauseEditor
+          key={clauseIdx}
+          bare
+          initial={editingClause ?? { field: '', op: 'eq', value: '' }}
+          fields={advanced.fields}
+          onCancel={onClose}
+          onSave={(c) => {
+            advanced.onChange(editingClause ? advanced.clauses.map((x, j) => (j === clauseIdx ? c : x)) : [...advanced.clauses, c])
+            onClose()
+          }}
+        />
+      </div>
+    )
+  }
   return (
     <form
       className="filter-editor"
-      aria-label={`Edit the ${FILTER_KEY_LABEL[key]} filter`}
+      aria-label={`Edit the ${key === 'advanced' ? ADVANCED_LABEL : FILTER_KEY_LABEL[key]} filter`}
       onSubmit={(e) => {
         e.preventDefault()
         onApply(draft)
@@ -632,13 +754,7 @@ function FilterEditor({
         }
       }}
     >
-      <div className="filter-editor-keys" role="tablist" aria-label="Filter kind">
-        {keys.map((k) => (
-          <button key={k} type="button" role="tab" aria-selected={k === key} className={`seg-btn ${k === key ? 'on' : ''}`} onClick={() => setKey(k)}>
-            {k === 'time' ? TIME_LABEL.custom : FILTER_KEY_LABEL[k]}
-          </button>
-        ))}
-      </div>
+      {tabs}
       <div className="filter-editor-body">{body}</div>
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         <button type="button" className="btn sm ghost" onClick={onClose}>
@@ -697,4 +813,9 @@ export function WidenedNote({ time, defaultTime, onReset }: { time: TimeRange; d
       </button>
     </p>
   )
+}
+
+/** Says that session chips were applied through only the most recent SCOPE_LIMIT matching sessions. */
+export function ScopeCapNote({ total }: { total: number }) {
+  return <CapNote shown={SCOPE_LIMIT} total={total} what="matching sessions" why="the session filters use the most recent ones; narrow the time range to cover the rest" />
 }

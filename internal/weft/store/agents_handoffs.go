@@ -945,6 +945,9 @@ func deriveTrace(ctx context.Context, tx *sql.Tx, projectID, traceID string) ([]
 			return nil, err
 		}
 	}
+	if err := indexHandoffSearch(ctx, tx, projectID, traceID); err != nil { // agents_search.go
+		return nil, err
+	}
 	if err := t.updateReasoning(ctx, tx, projectID, traceID, edges); err != nil {
 		return nil, err
 	}

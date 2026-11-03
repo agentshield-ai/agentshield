@@ -147,6 +147,15 @@ func shieldDetectionQuery(r *http.Request) (store.DetectionQuery, error) {
 		}
 		dq.SessionIDs = ids
 	}
+	// session.<filter> (the /api/v1/sessions filters: session.team_id,
+	// session.status, session.score_below, session.cost_min, …) keeps
+	// detections in the sessions that match; the server resolves them over
+	// every matching session, so there is no cap on how many.
+	if sq, has, err := sessionsQuery(pid, q, "session."); err != nil {
+		return dq, err
+	} else if has {
+		dq.Sessions = &sq
+	}
 	if dq.Source != "" && dq.Source != store.DetectionSourceEngine && dq.Source != store.DetectionSourceReplay {
 		return dq, store.Invalidf("source must be engine or replay")
 	}

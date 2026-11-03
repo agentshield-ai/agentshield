@@ -9,6 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/session"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -184,5 +185,27 @@ func TestEvaluateSpan_ReplayAttribute(t *testing.T) {
 	_, spans = evalWithExporter(t, ev, &models.EvaluationRequest{EventID: "live-1", SessionID: "s", Tool: "Bash", Fields: map[string]string{"tool": "Bash"}})
 	if _, ok := attrMap(spans[0].Attributes)[AttrReplay]; ok {
 		t.Fatalf("%s set on a live evaluation", AttrReplay)
+	}
+}
+
+// The replay flag only takes effect inside the replay session namespace: a
+// live session id is neither isolated from cross-session correlation nor
+// tagged as a replay.
+func TestEvaluate_ReplayFlagIgnoredOutsideReplayNamespace(t *testing.T) {
+	ev := NewEvaluator(&mockEngine{mockResults: []engine.RuleResult{{RuleID: "r", Matched: true, Severity: engine.SeverityHigh}}}, config.ModeShadow, "", nil, nil)
+	reg := session.NewRegistry(50, time.Minute)
+	ev.SetSessionRegistry(reg)
+	_, spans := evalWithExporter(t, ev, &models.EvaluationRequest{EventID: "e1", SessionID: "live-1", Tool: "Bash",
+		Fields: map[string]string{"tool": "Bash"}, Replay: true})
+	if _, ok := attrMap(spans[0].Attributes)[AttrReplay]; ok {
+		t.Fatalf("%s set on a live session", AttrReplay)
+	}
+	if f := reg.DeriveAllFields("live-2", time.Minute); f["session.cross_session_count"] != "1" {
+		t.Fatalf("live session isolated by a forged replay flag: %v", f)
+	}
+	_, _ = evalWithExporter(t, ev, &models.EvaluationRequest{EventID: "weft-replay-j-0", SessionID: "weft-replay:j:s", Tool: "Bash",
+		Fields: map[string]string{"tool": "Bash"}, Replay: true})
+	if f := reg.DeriveAllFields("live-2", time.Minute); f["session.cross_session_count"] != "1" {
+		t.Fatalf("namespaced replay counted in live cross-session fields: %v", f)
 	}
 }

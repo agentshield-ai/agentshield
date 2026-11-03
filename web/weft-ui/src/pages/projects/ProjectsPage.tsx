@@ -7,6 +7,7 @@ import { sessionsUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../../components/common'
 import { Logo } from '../../components/Layout'
 import { GettingStarted } from '../../components/traces/GettingStarted'
+import { usePageHelp } from '../../components/ui/PageHelp'
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -34,6 +35,15 @@ export function ProjectsPage() {
   }, [projects.data, filter])
   const total = projects.data?.projects.length ?? 0
   const exampleProject = list[0]?.project_id ?? 'my-team/my-project'
+  const help = usePageHelp(
+    'projects',
+    'Projects',
+    <>
+      A <strong>project</strong> holds everything one team or app sends to Weft: its sessions, agents, traces, security verdicts and evaluations. Open a project to see its sessions,
+      or name a new one below; it is created the first time something is written to it. The setup guide shows how to connect your agents.
+    </>,
+    'setup.md',
+  )
 
   return (
     <div className="page projects-page">
@@ -42,7 +52,9 @@ export function ProjectsPage() {
         <h1>Weft</h1>
         <span className="faint small">{info.data?.version ? `v${info.data.version}` : ''}</span>
         <span className="spacer" />
+        {help.button}
       </div>
+      {help.panel}
 
       <div className="projects-layout">
         <div className="col" style={{ gap: 12, minWidth: 0 }}>

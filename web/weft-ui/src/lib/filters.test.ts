@@ -4,7 +4,6 @@ import {
   FILTER_KEYS,
   FILTER_SUPPORT,
   isFlagged,
-  needsClientFilter,
   sessionScope,
   sessionScopeNote,
   type FilterPage,
@@ -15,7 +14,6 @@ import {
   parseScoreBelow,
   removeKey,
   scoreBelowMatches,
-  sessionMatchesClientFilters,
   sessionsParams,
   stableNow,
   timeWindow,
@@ -106,7 +104,7 @@ describe('per-page parameters', () => {
       team_id: 't',
       status: 'ok',
       has_detection: 'require_approval',
-      max_score: 'S:0.2',
+      score_below: 'S:0.2',
       model: 'm',
       tool: 'x',
       q: 'hi',
@@ -121,12 +119,11 @@ describe('per-page parameters', () => {
     expect(a).toEqual(b)
   })
 
-  it('applies score-below without a scorer and cost on the client', () => {
+  it('sends score-below and cost to the server (no browser-side filtering, no page cap)', () => {
+    expect(sessionsParams({ scoreBelow: { value: 0.5 }, costMin: 1 }, 'all')).toEqual({ score_below: '0.5', cost_min: '1' })
     const s = { scores: { A: { mean: 0.9, count: 1 }, B: { mean: 0.2, count: 2 } }, cost_usd: 0.5 }
     expect(scoreBelowMatches(s, { value: 0.5 })).toBe(true)
     expect(scoreBelowMatches(s, { scorer: 'A', value: 0.5 })).toBe(false)
-    expect(sessionMatchesClientFilters(s, { costMin: 1 })).toBe(false)
-    expect(sessionMatchesClientFilters({ scores: {}, cost_usd: null }, { scoreBelow: { value: 0.5 } })).toBe(false)
   })
 })
 
@@ -159,14 +156,9 @@ describe('one chip set on every page', () => {
 
   it('knows blocked-or-approval-heavy and went-on-after-a-failed-step', () => {
     expect(parseFilterText('has:flagged status:failed_step')).toEqual({ has: 'flagged', status: 'failed_step' })
-    expect(sessionsParams({ has: 'flagged', status: 'failed_step' }, 'all')).toEqual({ has_detection: 'any' })
-    expect(needsClientFilter({ has: 'flagged' })).toBe(true)
-    expect(needsClientFilter({ has: 'block', scoreBelow: { scorer: 'A', value: 1 } })).toBe(false)
+    expect(sessionsParams({ has: 'flagged', status: 'failed_step' }, 'all')).toEqual({ has_detection: 'flagged', status: 'failed_step' })
     expect(isFlagged({ require_approval: 3 })).toBe(true)
     expect(isFlagged({ require_approval: 2, allow: 9 })).toBe(false)
-    const base = { scores: {}, cost_usd: null }
-    expect(sessionMatchesClientFilters({ ...base, status: 'ok', error_count: 1 }, { status: 'failed_step' })).toBe(true)
-    expect(sessionMatchesClientFilters({ ...base, status: 'error', error_count: 1 }, { status: 'failed_step' })).toBe(false)
     expect(chipsOf({ costMin: 0.0048 })[0].value).toBe('$0.0048')
   })
 })

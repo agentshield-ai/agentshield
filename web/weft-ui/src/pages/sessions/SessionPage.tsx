@@ -30,7 +30,7 @@ import {
 import { Icon } from '../../components/ui/Icons'
 import { usePageHelp } from '../../components/ui/PageHelp'
 import { notify, undoable } from '../../components/ui/Toasts'
-import { sessionTitle } from '../../components/sessions/SessionList'
+import { sessionTitle, VerdictsOnlyNote } from '../../components/sessions/SessionList'
 import { DetectionDetails, TimelineView } from '../../components/sessions/TimelineView'
 
 type Tab = 'timeline' | 'graph' | 'reasoning' | 'security' | 'scores' | 'raw'
@@ -130,6 +130,7 @@ export function SessionPage() {
               </Link>
             )}
             <span title={fmtDate(s.started_at)}>started {fmtRelative(s.started_at)}</span>
+            {s.verdicts_only && <VerdictsOnlyNote />}
             <span className="row" style={{ gap: 4 }}>
               {s.agents.map((a) => (
                 <AgentChip key={a} name={a} to={agentUrl(pid, a)} size="sm" />
@@ -141,7 +142,15 @@ export function SessionPage() {
       </header>
       {help.panel}
       <div className="metrics">
-        <Metric label="Duration" value={fmtDuration(s.duration_ms)} tip="From the first span's start to the last span's end, across every trace of the session." />
+        <Metric
+          label="Duration"
+          value={fmtDuration(s.duration_ms)}
+          tip={
+            s.verdicts_only
+              ? 'Unknown: only AgentShield verdicts were recorded for this session, and verdict times say when tool calls were checked, not how long the session ran.'
+              : "From the first span's start to the last span's end, across every trace of the session."
+          }
+        />
         <Metric label="Turns" value={fmtNumber(s.turn_count)} tip="User requests the agents answered: turn spans, or else one per trace." />
         <Metric
           label="Steps"

@@ -279,16 +279,18 @@ export function parseFilterText(text: string, base: FilterState = {}): FilterSta
 
 // ---------------------------------------------------------------- per page
 
-/** /api/v1/sessions parameters for a filter state. Score below without a scorer,
- * cost, "went on after a failed step" and "blocked or approval-heavy" are
- * applied client-side (sessionMatchesClientFilters); the server narrows them. */
+/** /api/v1/sessions parameters for a filter state. Every chip is applied by
+ * the server (status failed_step, has_detection flagged, score_below and
+ * cost_min included), so lists, counts and session scopes are never cut at a
+ * page of sessions fetched to filter in the browser. */
 export function sessionsParams(state: FilterState, fallback: TimeRange, now = stableNow()): Record<string, string> {
   const p: Record<string, string> = {}
   if (state.agent) p.agent = state.agent
   if (state.team) p.team_id = state.team
-  if (state.status && state.status !== 'failed_step') p.status = state.status
-  if (state.has) p.has_detection = state.has === 'approval' ? 'require_approval' : state.has === 'flagged' ? 'any' : state.has
-  if (state.scoreBelow?.scorer) p.max_score = `${state.scoreBelow.scorer}:${state.scoreBelow.value}`
+  if (state.status) p.status = state.status
+  if (state.has) p.has_detection = state.has === 'approval' ? 'require_approval' : state.has
+  if (state.scoreBelow) p.score_below = state.scoreBelow.scorer ? `${state.scoreBelow.scorer}:${state.scoreBelow.value}` : String(state.scoreBelow.value)
+  if (state.costMin != null) p.cost_min = String(state.costMin)
   if (state.model) p.model = state.model
   if (state.tool) p.tool = state.tool
   if (state.q) p.q = state.q
@@ -296,6 +298,22 @@ export function sessionsParams(state: FilterState, fallback: TimeRange, now = st
   if (w.from) p.from = w.from
   if (w.to) p.to = w.to
   return p
+}
+
+/** The filter state for /api/v1/sessions parameters (the inverse of sessionsParams, for filters the server sends). */
+export function filterFromSessionsParams(p: Record<string, string>): FilterState {
+  const s: FilterState = {}
+  if (p.agent) s.agent = p.agent
+  if (p.team_id) s.team = p.team_id
+  if (isStatus(p.status ?? null)) s.status = p.status as StatusFilter
+  if (p.has_detection) s.has = p.has_detection === 'require_approval' ? 'approval' : isHas(p.has_detection) ? p.has_detection : undefined
+  if (p.score_below) s.scoreBelow = parseScoreBelow(p.score_below)
+  if (p.cost_min && Number.isFinite(Number(p.cost_min))) s.costMin = Number(p.cost_min)
+  if (p.model) s.model = p.model
+  if (p.tool) s.tool = p.tool
+  if (p.q) s.q = p.q
+  for (const k of Object.keys(s) as (keyof FilterState)[]) if (s[k] === undefined) delete s[k]
+  return s
 }
 
 interface Scored {
@@ -314,26 +332,6 @@ type Counts = Partial<Record<string, number>> | null | undefined
 /** Blocked at least once, or asked for approval APPROVAL_HEAVY or more times. */
 export function isFlagged(counts: Counts): boolean {
   return (counts?.block ?? 0) > 0 || (counts?.require_approval ?? 0) >= APPROVAL_HEAVY
-}
-
-/** A tool or model call failed, but the session itself did not. */
-export function wentOnAfterFailedStep(s: { status: string; error_count: number }): boolean {
-  return s.status !== 'error' && (s.error_count ?? 0) > 0
-}
-
-type ClientSession = Scored & { cost_usd: number | null; status?: string; error_count?: number; detection_count?: Counts }
-
-export function sessionMatchesClientFilters(s: ClientSession, state: FilterState): boolean {
-  if (state.scoreBelow && !scoreBelowMatches(s, state.scoreBelow)) return false
-  if (state.costMin != null && (s.cost_usd ?? 0) < state.costMin) return false
-  if (state.status === 'failed_step' && !wentOnAfterFailedStep({ status: s.status ?? '', error_count: s.error_count ?? 0 })) return false
-  if (state.has === 'flagged' && !isFlagged(s.detection_count)) return false
-  return true
-}
-
-/** True when the sessions list must be filtered in the browser (so it is fetched whole, up to 1000). */
-export function needsClientFilter(state: FilterState): boolean {
-  return (!!state.scoreBelow && !state.scoreBelow.scorer) || state.costMin != null || state.status === 'failed_step' || state.has === 'flagged'
 }
 
 // ---------------------------------------------------------------- one chip set, five pages

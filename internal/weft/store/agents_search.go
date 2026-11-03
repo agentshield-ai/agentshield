@@ -6,14 +6,20 @@ package store
 // agents, `q` matches:
 //
 //   - reasoning step text (reasoning_steps.text);
-//   - message text: the user and assistant messages of model spans and the
-//     input and output text of agent and turn spans;
+//   - message text: the user and assistant messages of model spans, the
+//     input and output text of agent and turn spans, a tool's result, and
+//     the input and output text of every other span;
 //   - tool calls: the tool name and its arguments, for executed tools and
-//     for tool calls a model requested.
+//     for tool calls a model requested;
+//   - errors: a failed span's exception message (without its stack trace);
+//   - hand-offs: the input and output previews of each hand-off
+//     (agent_handoffs), indexed under the span that recorded it.
 //
-// Message and tool text is extracted once, at ingest, into span_search as
-// plain text (at most searchTextCap characters per span and kind), so a
-// search reads short rows instead of decoding every span's JSON. SQLite FTS5
+// This text is extracted once, at ingest, into span_search as plain text (at
+// most searchTextCap characters per span and kind), so a search reads short
+// rows instead of decoding every span's JSON. The Traces list's free text
+// (`search` with trace_roots_only) reads the same index, so a trace matches
+// when any of its spans does. SQLite FTS5
 // is not available in both of Weft's drivers (the encrypted-database driver
 // is built without it), so matching is a case-insensitive substring match
 // (LIKE) over the project's rows; a query is limited to maxSearchQuery
@@ -33,6 +39,8 @@ const (
 
 	searchKindMessage = "message"
 	searchKindTool    = "tool"
+	searchKindError   = "error"
+	searchKindHandoff = "handoff"
 )
 
 func init() {
@@ -55,6 +63,7 @@ func spanSearchText(op string, isTurn bool, toolName string, inputs map[string]a
 	switch op {
 	case OpExecuteTool:
 		tl = append(tl, toolName, InputText(inputs))
+		msg = append(msg, OutputText(output))
 	case OpChat:
 		for _, m := range append(InputMessages(inputs), OutputMessages(output)...) {
 			if m.Role == "user" || m.Role == "assistant" {
@@ -66,11 +75,25 @@ func spanSearchText(op string, isTurn bool, toolName string, inputs map[string]a
 				tl = append(tl, tc.Name+" "+tc.Arguments)
 			}
 		}
-	}
-	if op == OpInvokeAgent || isTurn {
+	default:
+		// Agent and turn spans, hand-off spans and any other span.
 		msg = append(msg, inputPreview(inputs), outputPreview(output))
 	}
 	return capText(msg), capText(tl)
+}
+
+// errorSearchText is the searchable part of a span's exception: the message,
+// without a stack trace (file paths in a trace would match almost anything).
+func errorSearchText(exception string) string {
+	for _, marker := range []string{"\nTraceback (most recent call last)", "\n\tat ", "\n    at ", "\ngoroutine "} {
+		if i := strings.Index(exception, marker); i >= 0 {
+			exception = exception[:i]
+		}
+	}
+	if len(exception) > 2000 {
+		exception = exception[:2000]
+	}
+	return capText([]string{exception})
 }
 
 func capText(parts []string) string {
@@ -94,25 +117,26 @@ func capText(parts []string) string {
 func indexSpanSearch(ctx context.Context, tx *sql.Tx, projectID, id string) error {
 	var op, toolName, inputs string
 	var isTurn bool
-	var output sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT s.operation_name, s.is_turn, s.tool_name, c.inputs, c.output
+	var output, exception sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT s.operation_name, s.is_turn, s.tool_name, c.inputs, c.output, c.exception
 		FROM agent_spans s JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
-		WHERE s.project_id = ? AND s.id = ?`, projectID, id).Scan(&op, &isTurn, &toolName, &inputs, &output)
+		WHERE s.project_id = ? AND s.id = ?`, projectID, id).Scan(&op, &isTurn, &toolName, &inputs, &output, &exception)
 	if err == sql.ErrNoRows {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var message, tool string
-	if op == OpChat || op == OpExecuteTool || op == OpInvokeAgent || isTurn {
-		var out any
-		if output.Valid {
-			out = decodeJSON(output.String)
-		}
-		message, tool = spanSearchText(op, isTurn, toolName, decodeMap(inputs), out)
+	var out any
+	if output.Valid {
+		out = decodeJSON(output.String)
 	}
-	for _, kt := range [][2]string{{searchKindMessage, message}, {searchKindTool, tool}} {
+	message, tool := spanSearchText(op, isTurn, toolName, decodeMap(inputs), out)
+	errText := ""
+	if exception.Valid {
+		errText = errorSearchText(exception.String)
+	}
+	for _, kt := range [][2]string{{searchKindMessage, message}, {searchKindTool, tool}, {searchKindError, errText}} {
 		if kt[1] == "" {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM span_search WHERE project_id = ? AND span_id = ? AND kind = ?`, projectID, id, kt[0]); err != nil {
 				return err
@@ -127,17 +151,61 @@ func indexSpanSearch(ctx context.Context, tx *sql.Tx, projectID, id string) erro
 	return nil
 }
 
-const spanSearchBackfill = "span_search_v1"
+// indexHandoffSearch refreshes the hand-off search text of a trace's spans
+// from its agent_handoffs rows (called after the trace's hand-offs are
+// derived, so it does not depend on the order spans arrive in).
+func indexHandoffSearch(ctx context.Context, tx *sql.Tx, projectID, traceID string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM span_search WHERE project_id = ? AND kind = ?
+			AND span_id IN (SELECT id FROM calls WHERE project_id = ? AND trace_id = ?)`,
+		projectID, searchKindHandoff, projectID, traceID); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT source_span_id, input_preview, output_preview FROM agent_handoffs
+		WHERE project_id = ? AND trace_id = ? ORDER BY started_at, id`, projectID, traceID)
+	if err != nil {
+		return err
+	}
+	texts := map[string][]string{}
+	var order []string
+	for rows.Next() {
+		var src, in, out string
+		if err := rows.Scan(&src, &in, &out); err != nil {
+			rows.Close()
+			return err
+		}
+		if _, ok := texts[src]; !ok {
+			order = append(order, src)
+		}
+		texts[src] = append(texts[src], in, out)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, src := range order {
+		if t := capText(texts[src]); t != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO span_search(project_id, span_id, kind, text) VALUES(?,?,?,?)
+				ON CONFLICT(project_id, span_id, kind) DO UPDATE SET text = excluded.text`, projectID, src, searchKindHandoff, t); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
-// backfillSpanSearch indexes spans stored before the search index existed,
-// once per database.
+// spanSearchBackfill names the current index version: v2 added every span's
+// input and output, tool results, exception messages and hand-off previews.
+const spanSearchBackfill = "span_search_v2"
+
+// backfillSpanSearch indexes spans stored before the current search index
+// existed, once per database.
 func backfillSpanSearch(db *sql.DB) error {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM weft_backfills WHERE name = ?`, spanSearchBackfill).Scan(&n); err != nil || n > 0 {
 		return err
 	}
 	rows, err := db.Query(`SELECT s.project_id, s.id FROM agent_spans s JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
-		WHERE c.deleted_at IS NULL AND (s.operation_name IN ('chat', 'execute_tool', 'invoke_agent') OR s.is_turn = 1)`)
+		WHERE c.deleted_at IS NULL`)
 	if err != nil {
 		return err
 	}
@@ -162,6 +230,28 @@ func backfillSpanSearch(db *sql.DB) error {
 	defer func() { _ = tx.Rollback() }()
 	for _, k := range keys {
 		if err := indexSpanSearch(ctx, tx, k[0], k[1]); err != nil {
+			return err
+		}
+	}
+	traces, err := tx.QueryContext(ctx, `SELECT DISTINCT project_id, trace_id FROM agent_handoffs`)
+	if err != nil {
+		return err
+	}
+	var tkeys [][2]string
+	for traces.Next() {
+		var p, tr string
+		if err := traces.Scan(&p, &tr); err != nil {
+			traces.Close()
+			return err
+		}
+		tkeys = append(tkeys, [2]string{p, tr})
+	}
+	traces.Close()
+	if err := traces.Err(); err != nil {
+		return err
+	}
+	for _, k := range tkeys {
+		if err := indexHandoffSearch(ctx, tx, k[0], k[1]); err != nil {
 			return err
 		}
 	}
