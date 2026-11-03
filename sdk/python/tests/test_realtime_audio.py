@@ -354,7 +354,7 @@ def test_aiohttp_ws_connect_is_traced(client, fake, rtserver):
 
 
 def test_manual_websocket_wrappers(client, fake, rtserver, monkeypatch):
-    """Weave's wrap_websocket_connect / wrap_websocket_async, with autopatching off."""
+    """wrap_websocket_connect / wrap_websocket_async, with autopatching off."""
     import websockets
 
     from weft.integrations import wrap_websocket_async, wrap_websocket_connect
@@ -380,8 +380,8 @@ def test_manual_websocket_wrappers(client, fake, rtserver, monkeypatch):
 
 
 def test_openai_agents_realtime_runner_is_traced(client, fake, rtserver):
-    """The real OpenAI Agents SDK (``agents.realtime.RealtimeRunner``, the route
-    Weave's realtime page documents for Python) connects with ``websockets.connect``."""
+    """The real OpenAI Agents SDK (``agents.realtime.RealtimeRunner``) connects
+    with ``websockets.connect``."""
     pytest.importorskip("agents.realtime")
     from agents.realtime import RealtimeAgent, RealtimeRunner
     from agents.realtime.model_inputs import RealtimeModelSendRawMessage

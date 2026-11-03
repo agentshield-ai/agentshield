@@ -154,20 +154,20 @@ func TestImageCreateMock(t *testing.T) {
 	res := e.post("/image/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/image", "prompt": "a red fox", "n": 2}})
 	resp := res["response"].(map[string]any)
 	data := resp["data"].([]any)
-	if len(data) != 2 || res["weave_call_id"] == nil {
+	if len(data) != 2 || res["call_id"] == nil {
 		t.Fatalf("image/create = %v", res)
 	}
 	png, err := base64.StdEncoding.DecodeString(data[0].(map[string]any)["b64_json"].(string))
 	if err != nil || !bytes.HasPrefix(png, []byte("\x89PNG")) {
 		t.Fatalf("not a PNG: %v", err)
 	}
-	call := e.post("/call/read", map[string]any{"project_id": pid, "id": res["weave_call_id"]})["call"].(map[string]any)
+	call := e.post("/call/read", map[string]any{"project_id": pid, "id": res["call_id"]})["call"].(map[string]any)
 	if !strings.Contains(call["op_name"].(string), "weft.images.generate") || call["inputs"].(map[string]any)["prompt"] != "a red fox" {
 		t.Fatalf("image call = %v", call)
 	}
 	untracked := e.post("/image/create", map[string]any{"project_id": pid, "track_llm_call": false,
 		"inputs": map[string]any{"model": "mock/image", "prompt": "x"}})
-	if untracked["weave_call_id"] != nil || len(untracked["response"].(map[string]any)["data"].([]any)) != 1 {
+	if untracked["call_id"] != nil || len(untracked["response"].(map[string]any)["data"].([]any)) != 1 {
 		t.Fatalf("untracked = %v", untracked)
 	}
 	// Provider errors come back in the response, like /completions/create.
@@ -198,7 +198,7 @@ func TestImageCreateOpenAICompatible(t *testing.T) {
 	if res["response"].(map[string]any)["data"] == nil || got["model"] != "gpt-image-1" || got["size"] != "256x256" {
 		t.Fatalf("image via provider = %v (sent %v)", res, got)
 	}
-	call := e.post("/call/read", map[string]any{"project_id": pid, "id": res["weave_call_id"]})["call"].(map[string]any)
+	call := e.post("/call/read", map[string]any{"project_id": pid, "id": res["call_id"]})["call"].(map[string]any)
 	usage := call["summary"].(map[string]any)["usage"].(map[string]any)
 	if u, ok := usage["imgprov/gpt-image-1"].(map[string]any); !ok || u["total_tokens"].(float64) != 104 || u["images"].(float64) != 1 {
 		t.Fatalf("image usage = %v", usage)

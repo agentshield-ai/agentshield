@@ -35,24 +35,20 @@ type agentSpan struct {
 	CacheReadCost, CacheWCost                   float64
 	HasCost                                     bool
 	WBUserID, WBRunID                           string
-	ParentCallID, ParentCallTraceID             string // weft.parent_call.* (or weave.parent_call.*): the op this span was emitted from
+	ParentCallID, ParentCallTraceID             string // weft.parent_call.*: the op this span was emitted from
 	IsInvocation                                bool
 	attrsJSON                                   string
 	custom                                      map[string]any
 }
 
-// parentCallCol reads weft.parent_call.<field> (DESIGN.md §4), or Weave's
-// weave.parent_call.<field> (the link its OpLinkSpanProcessor stamps on spans
-// started inside an op, which Weave's server promotes to the parent_call_id /
-// parent_call_trace_id columns), from SDK attributes (nested) or OTLP span
-// attributes (flat keys).
+// parentCallCol reads weft.parent_call.<field> (DESIGN.md §4): the op a span
+// was emitted from, stamped on spans that start their own trace inside an
+// op. It is read from SDK attributes (nested) or OTLP span attributes (flat
+// keys).
 func parentCallCol(field string) string {
-	var parts []string
-	for _, ns := range []string{"weft", "weave"} {
-		parts = append(parts, `json_extract(c.attributes, '$.`+ns+`.parent_call.`+field+`')`,
-			`json_extract(c.attributes, '$.otel.attributes."`+ns+`.parent_call.`+field+`"')`,
-			`json_extract(c.attributes, '$."`+ns+`.parent_call.`+field+`"')`)
-	}
+	parts := []string{`json_extract(c.attributes, '$.weft.parent_call.` + field + `')`,
+		`json_extract(c.attributes, '$.otel.attributes."weft.parent_call.` + field + `"')`,
+		`json_extract(c.attributes, '$."weft.parent_call.` + field + `"')`}
 	return `COALESCE(` + strings.Join(parts, ", ") + `, '')`
 }
 
@@ -236,8 +232,7 @@ func (sp *agentSpan) displayName() string {
 
 // agentFieldAliases maps semantic names onto span columns.
 var agentFieldAliases = map[string]string{
-	"id": "span_id", "parent_id": "parent_span_id", "weave.parent_call.id": "parent_call_id", "weave.parent_call.trace_id": "parent_call_trace_id",
-	"weft.parent_call.id": "parent_call_id", "weft.parent_call.trace_id": "parent_call_trace_id",
+	"id": "span_id", "parent_id": "parent_span_id", "weft.parent_call.id": "parent_call_id", "weft.parent_call.trace_id": "parent_call_trace_id",
 	"gen_ai.operation.name": "operation_name", "operation.name": "operation_name", "op": "operation_name", "name": "span_name",
 	"agent.name": "agent_name", "gen_ai.agent.name": "agent_name", "agent.id": "agent_id", "gen_ai.agent.id": "agent_id",
 	"agent.version": "agent_version", "gen_ai.agent.version": "agent_version", "agent.description": "agent_description",
@@ -450,12 +445,12 @@ func (sp *agentSpan) ref(r AgentValueRef) any {
 
 // ---------------------------------------------------------------- custom attributes
 
-var reservedAttrPrefixes = []string{"gen_ai.", "weave.", "wandb.", "weft.", "llm.", "input.", "output.", "openinference.",
+var reservedAttrPrefixes = []string{"gen_ai.", "weft.", "llm.", "input.", "output.", "openinference.",
 	"traceloop.", "ai.", "mlflow.", "gcp.vertex.agent.", "pydantic_ai.", "logfire.", "otel.", "telemetry.", "session.",
 	"tool.", "tool_call.", "message.", "embedding.", "retrieval.", "reranker.", "document.", "exception.", "code.", "thread.",
 	"agent.", "graph.", "operation.", "resource.", "user.id", "enduser.id", "gen_ai"}
 
-var reservedAttrKeys = map[string]bool{"otel": true, "weft": true, "weave": true, "_weave": true, "wandb": true,
+var reservedAttrKeys = map[string]bool{"otel": true, "weft": true,
 	"agent_name": true, "model_name": true, "all_messages_events": true, "final_result": true, "tool_arguments": true,
 	"tool_response": true, "model_request_parameters": true, "logfire.msg": true, "logfire.json_schema": true}
 
@@ -988,7 +983,7 @@ type AgentsQueryReq struct {
 	StartedBefore *string `json:"started_before,omitempty"`
 }
 
-// AgentStats is one row of /agents/query (Weave's Agent) or, with
+// AgentStats is one row of /agents/query (an agent) or, with
 // AgentVersion set, of /agents/agent-versions/query.
 type AgentStats struct {
 	AgentName         string   `json:"agent_name"`
@@ -1313,7 +1308,7 @@ type SpanMessage struct {
 	FinishReason string `json:"finish_reason"`
 }
 
-// AgentSpan is Weave's AgentSpanSchema.
+// AgentSpan is one span of /agents/spans/query.
 type AgentSpan struct {
 	AgentDescription         *string            `json:"agent_description"`
 	AgentID                  *string            `json:"agent_id"`
@@ -1422,7 +1417,7 @@ type AgentSpanGroup struct {
 	agg *spanAgg
 }
 
-// AgentDistribution is Weave's AgentSpanGroupDistributionItem.
+// AgentDistribution is one group of a span distribution.
 type AgentDistribution struct {
 	Alias        string           `json:"alias"`
 	Key          string           `json:"key"`

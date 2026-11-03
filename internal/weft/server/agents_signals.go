@@ -11,9 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Agent signals (Weft extensions to Weave's /agents/* API): turn-scoped
-// tags and ratings scored by an LLM judge and stored as feedback in Weave's
-// feedback batch schema (scorer_ratings, scorer_tags, confidences, reasons).
+// Agent signals (under /agents/*): turn-scoped tags and ratings scored by an
+// LLM judge and stored as feedback with scorer fields (scorer_ratings,
+// scorer_tags, confidences, reasons).
 
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
@@ -38,7 +38,7 @@ type agentFeedbackBatchReq struct {
 }
 
 // agentFeedbackBatchCreate is /feedback/batch/create with the scorer and
-// span fields of Weave's batch schema kept (normalised) in the payload.
+// span fields of the batch schema kept (normalised) in the payload.
 func (s *Server) agentFeedbackBatchCreate(ctx context.Context, r *http.Request, req *agentFeedbackBatchReq) (any, error) {
 	if len(req.Batch) > 1000 {
 		return nil, store.Invalidf("batch too large (max 1000)")

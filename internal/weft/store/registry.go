@@ -11,7 +11,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 )
 
-// Registry: project-level collections ("portfolios" in W&B Registry) that
+// Registry: project-level collections ("portfolios") that
 // link object versions (models, datasets, prompts, ...) from any project.
 // Each link gets the next version index in its collection; aliases point at
 // one version each and move when reassigned. "latest" always names the
@@ -88,7 +88,7 @@ func (s *Store) LinkToRegistry(ctx context.Context, ref, registryPID, collection
 			return 0, Invalidf("alias %q is reserved", a)
 		}
 	}
-	r, err := refs.Parse(refs.Normalize(ref))
+	r, err := refs.Parse(ref)
 	if err != nil {
 		return 0, &InvalidError{Msg: err.Error()}
 	}

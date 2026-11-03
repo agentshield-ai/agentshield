@@ -2,7 +2,7 @@
 // give the shortest way to produce it, with snippets that use this server's
 // URL and the current project, plus a one-click test session.
 import { useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { v1 } from '../../api/v1'
@@ -200,9 +200,9 @@ export function GuidedEmpty({
         <span>or connect your agents</span>
       </div>
       <Snippets projectId={projectId} only={only} initial={initial} />
-      <a className="help-link" href={docsUrl(doc)} target="_blank" rel="noreferrer">
-        Full setup guide <Icon name="external" size={12} />
-      </a>
+      <Link className="help-link" to={docsUrl(doc)}>
+        Full setup guide
+      </Link>
     </section>
   )
 }

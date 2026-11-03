@@ -48,7 +48,7 @@ def add_usage(
                         d[kk] = d.get(kk, 0) + vv
 
 
-# Prompt caching, the way Weave prices it (docs/weft/API.md "Cached tokens"):
+# Prompt caching, the way the server prices it (docs/weft/API.md "Cached tokens"):
 # prompt_tokens is the gross prompt count and cache_read_input_tokens /
 # cache_creation_input_tokens are the parts of it read from / written to a cache.
 

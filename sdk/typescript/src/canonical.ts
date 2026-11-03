@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 /**
- * Digests, computed exactly like the server (and W&B Weave):
+ * Digests, computed exactly like the server:
  *  - bytes/files: URL-safe base64 of SHA-256 with '-'→'X', '_'→'Y', no padding
  *  - objects and table rows: that digest of Python-style `json.dumps(v, sort_keys=True)`
  *    (", " / ": " separators, keys by code point, \uXXXX escapes, number text as sent)
@@ -66,7 +66,7 @@ export function digestJson(v: unknown): string {
 /** Backwards-compatible name. */
 export const canonicalJson = digestJson;
 
-/** Weave-style digest of raw bytes (also file digests). */
+/** Digest of raw bytes (also file digests). */
 export function b64digest(data: Uint8Array | string): string {
   return createHash('sha256').update(data).digest('base64url').replace(/-/g, 'X').replace(/_/g, 'Y');
 }

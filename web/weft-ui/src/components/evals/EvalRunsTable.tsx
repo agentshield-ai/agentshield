@@ -202,7 +202,7 @@ function previewArgs(v: unknown): string {
   if (typeof v === 'object' && !Array.isArray(v)) {
     return Object.entries(v as Record<string, unknown>)
       .filter(([k]) => k !== 'self')
-      .map(([k, x]) => `${k}=${typeof x === 'string' ? (x.startsWith('weft:///') || x.startsWith('weave:///') ? (parseRef(x)?.name ?? x) : JSON.stringify(x.slice(0, 60))) : JSON.stringify(x)?.slice(0, 60)}`)
+      .map(([k, x]) => `${k}=${typeof x === 'string' ? (x.startsWith('weft:///') ? (parseRef(x)?.name ?? x) : JSON.stringify(x.slice(0, 60))) : JSON.stringify(x)?.slice(0, 60)}`)
       .join(', ')
   }
   return JSON.stringify(v).slice(0, 200)

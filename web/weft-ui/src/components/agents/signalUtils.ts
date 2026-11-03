@@ -89,7 +89,7 @@ export function fmtScore(v: number | null | undefined): string {
   return v.toFixed(2)
 }
 
-/** good ≥ 0.7, bad < 0.4 on a 0–1 scale (1 is good, as Weave recommends). */
+/** good ≥ 0.7, bad < 0.4 on a 0–1 scale (1 is good). */
 export function scoreTone(v: number | null | undefined): 'good' | 'mid' | 'bad' | 'none' {
   if (v == null || !Number.isFinite(v)) return 'none'
   if (v >= 0.7) return 'good'

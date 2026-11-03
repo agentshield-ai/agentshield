@@ -13,7 +13,7 @@ function refUri(v: unknown): string {
   return String(v);
 }
 
-/** Schema for human feedback stored as `wandb.annotation.<name>`. */
+/** Schema for human feedback stored as `weft.annotation.<name>`. */
 export class AnnotationSpec extends WeftObject {
   fieldSchema: Record<string, unknown>;
   uniqueAmongCreators: boolean;

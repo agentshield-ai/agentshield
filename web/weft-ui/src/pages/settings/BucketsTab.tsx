@@ -201,7 +201,7 @@ export function BucketsTab({ projectId }: { projectId: string }) {
           <div className="hint">
             The bucket's CORS rules must allow <span className="mono">GET</span> and <span className="mono">HEAD</span> from this Weft origin (
             <span className="mono">{origin}</span>). Registering and <b>Test</b> read the test object and check those rules (a preflight from this origin
-            and the object's <span className="mono">Access-Control-Allow-Origin</span>), as Weave does.
+            and the object's <span className="mono">Access-Control-Allow-Origin</span>).
           </div>
           {!admin && me.data && <div className="hint">Registering, testing and removing buckets needs a server admin.</div>}
           <ErrorBox error={list.error} />

@@ -112,7 +112,7 @@ describe('TypeSafe', () => {
     expect(llms.every((c) => !c.attributes.weft?.parent_call)).toBe(true);
   });
 
-  it('inside an op starts its own trace linked to the op by weft.parent_call.* (Weave: weave.parent_call.*)', async () => {
+  it('inside an op starts its own trace linked to the op by weft.parent_call.*', async () => {
     const ts = weft.wrapTypeSafe(new TypeSafeClient());
     const classify = weft.op(async function classify(msg: string) {
       return (await ts.systemOne({ state: msg, questions: ['refund?'] })).answers;

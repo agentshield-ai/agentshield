@@ -125,10 +125,10 @@ def test_claude_agent_sdk_thread_and_usage(live, monkeypatch):
 
 def test_local_scorer_object_roundtrip_and_ner_redaction(live, monkeypatch):
     monkeypatch.setattr(ls, "load_sequence_classifier", lambda *a, **k: lambda t: [0, 0, 0, 0, 0])
-    tox = ls.WeaveToxicityScorerV1(total_threshold=4)
+    tox = ls.ToxicityScorer(total_threshold=4)
     ref = weft.publish(tox, name="toxicity")
     back = weft.get(ref)
-    assert type(back).__name__ == "WeaveToxicityScorerV1" and back.total_threshold == 4
+    assert type(back).__name__ == "ToxicityScorer" and back.total_threshold == 4
     assert back.score(output="fine").passed
 
     class Analyzer:

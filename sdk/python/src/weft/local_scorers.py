@@ -1,4 +1,4 @@
-"""Local small-model scorers and guardrails (Weave's local scorers).
+"""Local small-model scorers and guardrails.
 
 These scorers run a small model in this process. They need the optional
 ``scorers`` extra (``pip install 'weft[scorers]'``: transformers, torch,
@@ -6,7 +6,7 @@ presidio-analyzer ...); the base install does not pull them in, imports are
 lazy, and a missing dependency raises an ``ImportError`` that says what to
 install. Models are loaded on first use (or with ``scorer.load()``), from
 ``model_name_or_path`` (a Hugging Face model id or a local directory),
-defaulting to the same Hugging Face models Weave uses.
+defaulting to the published Hugging Face models listed below (``MODEL_PATHS``).
 
 They serialise like any scorer (class name and settings, never the model),
 so evaluations that use them show up in the UI; the server cannot run them
@@ -15,17 +15,17 @@ so evaluations that use them show up in the UI; the server cannot run them
 
 | Class | Model | ``score(...)`` |
 |---|---|---|
-| ``WeaveToxicityScorerV1`` | ``wandb/WeaveToxicityScorerV1`` (Celadon) | ``output`` |
-| ``WeaveBiasScorerV1`` | ``wandb/WeaveBiasScorerV1`` | ``output`` |
-| ``WeaveCoherenceScorerV1`` | ``wandb/WeaveCoherenceScorerV1`` | ``query``, ``output`` (``chat_history``/``context``) |
-| ``WeaveFluencyScorerV1`` | ``wandb/WeaveFluencyScorerV1`` | ``output`` |
-| ``WeaveHallucinationScorerV1`` | ``wandb/WeaveHallucinationScorerV1`` (HHEM 2.1) | ``query``, ``context``, ``output`` |
-| ``WeaveContextRelevanceScorerV1`` | ``wandb/WeaveContextRelevanceScorerV1`` | ``query``, ``output`` (the context) |
-| ``WeaveTrustScorerV1`` | the five above | ``query``, ``context``, ``output`` |
+| ``ToxicityScorer`` | ``wandb/WeaveToxicityScorerV1`` (Celadon) | ``output`` |
+| ``BiasScorer`` | ``wandb/WeaveBiasScorerV1`` | ``output`` |
+| ``CoherenceScorer`` | ``wandb/WeaveCoherenceScorerV1`` | ``query``, ``output`` (``chat_history``/``context``) |
+| ``FluencyScorer`` | ``wandb/WeaveFluencyScorerV1`` | ``output`` |
+| ``HallucinationScorer`` | ``wandb/WeaveHallucinationScorerV1`` (HHEM 2.1) | ``query``, ``context``, ``output`` |
+| ``ContextRelevanceScorer`` | ``wandb/WeaveContextRelevanceScorerV1`` | ``query``, ``output`` (the context) |
+| ``TrustScorer`` | the five above | ``query``, ``context``, ``output`` |
 | ``PresidioScorer`` | Presidio analyzer (+ anonymizer) | ``output`` |
 
-Each returns a ``WeaveScorerResult`` (a dict with ``passed`` and
-``metadata``), like Weave.
+Each returns a ``LocalScorerResult`` (a dict with ``passed`` and
+``metadata``).
 """
 
 from __future__ import annotations
@@ -60,8 +60,8 @@ DEFAULT_ROLLING_WINDOW_MAX_TOKENS = 512
 DEFAULT_ROLLING_WINDOW_OVERLAP = 50
 
 
-class WeaveScorerResult(dict):
-    """``{"passed": bool, "metadata": {...}}`` with attribute access (Weave's result type)."""
+class LocalScorerResult(dict):
+    """``{"passed": bool, "metadata": {...}}`` with attribute access."""
 
     def __init__(self, passed: bool, metadata: Optional[Dict[str, Any]] = None):
         super().__init__(passed=bool(passed), metadata=dict(metadata or {}))
@@ -149,7 +149,7 @@ def aggregate(preds: Sequence[Sequence[float]], method: str = "max") -> List[flo
 
 def load_relevance_model(model: str, device: str = "cpu", max_length: int = 1280, *, what: str = "") -> Callable[[str, str, float], Tuple[List[Dict[str, Any]], int, int]]:
     """``score_document(query, document, threshold) -> (spans, relevant_tokens, total_tokens)``."""
-    require("transformers", "torch", "numpy", what=what or "WeaveContextRelevanceScorerV1")
+    require("transformers", "torch", "numpy", what=what or "ContextRelevanceScorer")
     import numpy as np  # type: ignore
     import torch  # type: ignore
     from transformers import AutoModelForTokenClassification, AutoTokenizer  # type: ignore
@@ -233,7 +233,7 @@ def _text(v: Any) -> str:
     return "" if v is None else str(v)
 
 
-class WeaveToxicityScorerV1(LocalModelScorer):
+class ToxicityScorer(LocalModelScorer):
     """Toxicity in five categories (Race/Origin, Gender/Sex, Religion, Ability,
     Violence; 0-3 each) with the Celadon model. Fails when the total reaches
     ``total_threshold`` or one category reaches ``category_threshold``."""
@@ -251,13 +251,13 @@ class WeaveToxicityScorerV1(LocalModelScorer):
                                         overlap=self.overlap, aggregation=self.aggregation_method, what=type(self).__name__)
 
     @op(kind="scorer")
-    def score(self, *, output: Any, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, output: Any, **kwargs: Any) -> LocalScorerResult:
         preds = [float(p) for p in self.load()(_text(output))]
         passed = not (sum(preds) >= self.total_threshold or any(p >= self.category_threshold for p in preds))
-        return WeaveScorerResult(passed, dict(zip(self.categories, preds)))
+        return LocalScorerResult(passed, dict(zip(self.categories, preds)))
 
 
-class WeaveBiasScorerV1(LocalModelScorer):
+class BiasScorer(LocalModelScorer):
     """Gender and race/origin bias probabilities; fails when either reaches ``threshold``."""
 
     default_model: ClassVar[str] = MODEL_PATHS["bias"]
@@ -272,7 +272,7 @@ class WeaveBiasScorerV1(LocalModelScorer):
                                         overlap=self.overlap, aggregation=self.aggregation_method, what=type(self).__name__)
 
     @op(kind="scorer")
-    def score(self, *, output: Any, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, output: Any, **kwargs: Any) -> LocalScorerResult:
         preds = [float(p) for p in self.load()(_text(output))]
         meta: Dict[str, Any] = {}
         flags = []
@@ -280,10 +280,10 @@ class WeaveBiasScorerV1(LocalModelScorer):
             meta[f"{cat}_score"] = p
             meta[cat] = p >= self.threshold
             flags.append(meta[cat])
-        return WeaveScorerResult(not any(flags), meta)
+        return LocalScorerResult(not any(flags), meta)
 
 
-class WeaveCoherenceScorerV1(LocalModelScorer):
+class CoherenceScorer(LocalModelScorer):
     """Whether the output is a coherent answer to the query (label, id and score)."""
 
     default_model: ClassVar[str] = MODEL_PATHS["coherence"]
@@ -295,7 +295,7 @@ class WeaveCoherenceScorerV1(LocalModelScorer):
 
     @op(kind="scorer")
     def score(self, *, query: str = "", output: Any = None, chat_history: Optional[List[Dict[str, str]]] = None,
-              context: Optional[Union[str, List[str]]] = None, **kwargs: Any) -> WeaveScorerResult:
+              context: Optional[Union[str, List[str]]] = None, **kwargs: Any) -> LocalScorerResult:
         if chat_history is not None and context is not None:
             raise ValueError("pass either chat_history or context, not both")
         prompt = query
@@ -312,11 +312,11 @@ class WeaveCoherenceScorerV1(LocalModelScorer):
             res = res[0]
         label = res["label"]
         label2id = getattr(getattr(getattr(pipe, "model", None), "config", None), "label2id", None) or {}
-        return WeaveScorerResult("incoherent" not in str(label).lower(),
+        return LocalScorerResult("incoherent" not in str(label).lower(),
                                  {"coherence_label": label, "coherence_id": label2id.get(label), "score": float(res["score"])})
 
 
-class WeaveFluencyScorerV1(LocalModelScorer):
+class FluencyScorer(LocalModelScorer):
     """Probability that the text is fluent; passes when it reaches ``threshold``."""
 
     default_model: ClassVar[str] = MODEL_PATHS["fluency"]
@@ -327,14 +327,14 @@ class WeaveFluencyScorerV1(LocalModelScorer):
         return load_pipeline(self.task, self.model_id, self.device, what=type(self).__name__, top_k=2)
 
     @op(kind="scorer")
-    def score(self, *, output: Any, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, output: Any, **kwargs: Any) -> LocalScorerResult:
         res = self.load()(_text(output))
         preds = res[0] if res and isinstance(res[0], list) else res
         fluent = next((float(p["score"]) for p in preds if str(p["label"]).lower() == "fluent"), 0.0)
-        return WeaveScorerResult(fluent >= self.threshold, {"score": fluent})
+        return LocalScorerResult(fluent >= self.threshold, {"score": fluent})
 
 
-class WeaveHallucinationScorerV1(LocalModelScorer):
+class HallucinationScorer(LocalModelScorer):
     """Hallucination score of the output given the query and context (HHEM);
     higher = more hallucinated; passes below ``threshold``."""
 
@@ -346,17 +346,17 @@ class WeaveHallucinationScorerV1(LocalModelScorer):
         return load_pipeline(self.task, self.model_id, self.device, what=type(self).__name__, trust_remote_code=True)
 
     @op(kind="scorer")
-    def score(self, *, query: str = "", context: Union[str, List[str], None] = None, output: Any = None, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, query: str = "", context: Union[str, List[str], None] = None, output: Any = None, **kwargs: Any) -> LocalScorerResult:
         pred = self.load()((f"{query}\n\n{_text(context)}", _text(output)))
         if isinstance(pred, list):
             pred = pred[0]
         if isinstance(pred, dict):
             pred = pred.get("score", 0.0)
         score = 1.0 - float(pred)
-        return WeaveScorerResult(score < self.threshold, {"score": score})
+        return LocalScorerResult(score < self.threshold, {"score": score})
 
 
-class WeaveContextRelevanceScorerV1(LocalModelScorer):
+class ContextRelevanceScorer(LocalModelScorer):
     """Share of the context relevant to the query (token-level); passes at ``threshold``.
     Pass the context (string or list) as ``output``."""
 
@@ -369,7 +369,7 @@ class WeaveContextRelevanceScorerV1(LocalModelScorer):
         return load_relevance_model(self.model_id, self.device, self.model_max_length, what=type(self).__name__)
 
     @op(kind="scorer")
-    def score(self, *, query: str = "", output: Union[str, List[str], None] = None, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, query: str = "", output: Union[str, List[str], None] = None, **kwargs: Any) -> LocalScorerResult:
         docs = [output] if isinstance(output, str) else list(output or kwargs.get("context") or [])
         if isinstance(kwargs.get("context"), str) and not docs:
             docs = [kwargs["context"]]
@@ -387,13 +387,13 @@ class WeaveContextRelevanceScorerV1(LocalModelScorer):
         meta: Dict[str, Any] = {"score": final}
         if self.return_all_spans:
             meta["all_spans"] = spans
-        return WeaveScorerResult(final >= self.threshold, meta)
+        return LocalScorerResult(final >= self.threshold, meta)
 
 
 _EMOJI = re.compile("[\U0001f300-\U0001faff\U00002700-\U000027bf\U0001f000-\U0001f2ff]")
 
 
-class WeaveTrustScorerV1(LocalModelScorer):
+class TrustScorer(LocalModelScorer):
     """Runs toxicity, hallucination and context relevance (critical) plus
     fluency and coherence (advisory). ``trust_level`` is high, medium
     (advisory issues) or low (critical issues; the score fails)."""
@@ -406,17 +406,17 @@ class WeaveTrustScorerV1(LocalModelScorer):
     run_in_parallel: bool = True
 
     _scorers: Dict[str, Any] = PrivateAttr(default_factory=dict)
-    critical: ClassVar[Tuple[str, ...]] = ("WeaveToxicityScorerV1", "WeaveHallucinationScorerV1", "WeaveContextRelevanceScorerV1")
-    advisory: ClassVar[Tuple[str, ...]] = ("WeaveFluencyScorerV1", "WeaveCoherenceScorerV1")
+    critical: ClassVar[Tuple[str, ...]] = ("ToxicityScorer", "HallucinationScorer", "ContextRelevanceScorer")
+    advisory: ClassVar[Tuple[str, ...]] = ("FluencyScorer", "CoherenceScorer")
 
     def _load(self) -> Any:
         if not self._scorers:
             self._scorers = {
-                "WeaveToxicityScorerV1": WeaveToxicityScorerV1(model_name_or_path=self.toxicity_model_name_or_path, device=self.device),
-                "WeaveHallucinationScorerV1": WeaveHallucinationScorerV1(model_name_or_path=self.hallucination_model_name_or_path, device=self.device),
-                "WeaveContextRelevanceScorerV1": WeaveContextRelevanceScorerV1(model_name_or_path=self.context_relevance_model_name_or_path, device=self.device),
-                "WeaveFluencyScorerV1": WeaveFluencyScorerV1(model_name_or_path=self.fluency_model_name_or_path, device=self.device),
-                "WeaveCoherenceScorerV1": WeaveCoherenceScorerV1(model_name_or_path=self.coherence_model_name_or_path, device=self.device),
+                "ToxicityScorer": ToxicityScorer(model_name_or_path=self.toxicity_model_name_or_path, device=self.device),
+                "HallucinationScorer": HallucinationScorer(model_name_or_path=self.hallucination_model_name_or_path, device=self.device),
+                "ContextRelevanceScorer": ContextRelevanceScorer(model_name_or_path=self.context_relevance_model_name_or_path, device=self.device),
+                "FluencyScorer": FluencyScorer(model_name_or_path=self.fluency_model_name_or_path, device=self.device),
+                "CoherenceScorer": CoherenceScorer(model_name_or_path=self.coherence_model_name_or_path, device=self.device),
             }
             for s in self._scorers.values():
                 s.load()
@@ -432,17 +432,17 @@ class WeaveTrustScorerV1(LocalModelScorer):
         return text
 
     @op(kind="scorer")
-    def score(self, *, query: str = "", context: Union[str, List[str], None] = None, output: Any = None, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, query: str = "", context: Union[str, List[str], None] = None, output: Any = None, **kwargs: Any) -> LocalScorerResult:
         scorers = self.load()
         out = self._clean(_text(output))
         ctx: Any = self._clean(context) if isinstance(context, str) else context
         q = self._clean(query)
         calls: Dict[str, Callable[[], Any]] = {
-            "WeaveToxicityScorerV1": lambda: scorers["WeaveToxicityScorerV1"].score(output=out),
-            "WeaveHallucinationScorerV1": lambda: scorers["WeaveHallucinationScorerV1"].score(query=q, context=ctx, output=out),
-            "WeaveContextRelevanceScorerV1": lambda: scorers["WeaveContextRelevanceScorerV1"].score(query=q, output=ctx),
-            "WeaveFluencyScorerV1": lambda: scorers["WeaveFluencyScorerV1"].score(output=out),
-            "WeaveCoherenceScorerV1": lambda: scorers["WeaveCoherenceScorerV1"].score(query=q, output=out),
+            "ToxicityScorer": lambda: scorers["ToxicityScorer"].score(output=out),
+            "HallucinationScorer": lambda: scorers["HallucinationScorer"].score(query=q, context=ctx, output=out),
+            "ContextRelevanceScorer": lambda: scorers["ContextRelevanceScorer"].score(query=q, output=ctx),
+            "FluencyScorer": lambda: scorers["FluencyScorer"].score(output=out),
+            "CoherenceScorer": lambda: scorers["CoherenceScorer"].score(query=q, output=out),
         }
         if self.run_in_parallel:
             from ._context import ThreadPoolExecutor as CtxPool
@@ -458,11 +458,11 @@ class WeaveTrustScorerV1(LocalModelScorer):
         scores: Dict[str, Any] = {}
         for k, r in raw.items():
             meta = r["metadata"]
-            if k == "WeaveToxicityScorerV1":
+            if k == "ToxicityScorer":
                 scores[k] = meta
             elif "score" in meta:
                 scores[k] = meta["score"]
-        return WeaveScorerResult(not critical, {"trust_level": level, "critical_issues": critical, "advisory_issues": advisory,
+        return LocalScorerResult(not critical, {"trust_level": level, "critical_issues": critical, "advisory_issues": advisory,
                                                 "raw_outputs": raw, "scores": scores})
 
 
@@ -485,7 +485,7 @@ class PresidioScorer(Scorer):
         return self._analyzer
 
     @op(kind="guardrail")
-    def score(self, *, output: Any, entities: Optional[List[str]] = None, **kwargs: Any) -> WeaveScorerResult:
+    def score(self, *, output: Any, entities: Optional[List[str]] = None, **kwargs: Any) -> LocalScorerResult:
         analyzer = self.load()
         text = _text(output)
         ents = entities if entities is not None else self.selected_entities
@@ -505,28 +505,19 @@ class PresidioScorer(Scorer):
                 anonymized = text
                 for r in sorted(results, key=lambda r: r.start, reverse=True):
                     anonymized = anonymized[: r.start] + f"<{r.entity_type}>" + anonymized[r.end :]
-        return WeaveScorerResult(not found, {"detected_entities": found, "reason": "\n".join(lines), "anonymized_text": anonymized})
+        return LocalScorerResult(not found, {"detected_entities": found, "reason": "\n".join(lines), "anonymized_text": anonymized})
 
-
-# Short aliases (Weave docs also use these names).
-ToxicityScorer = WeaveToxicityScorerV1
-BiasScorer = WeaveBiasScorerV1
-CoherenceScorer = WeaveCoherenceScorerV1
-FluencyScorer = WeaveFluencyScorerV1
-HallucinationScorer = WeaveHallucinationScorerV1
-ContextRelevanceScorer = WeaveContextRelevanceScorerV1
-TrustScorer = WeaveTrustScorerV1
 
 LOCAL_SCORERS = (
-    "WeaveToxicityScorerV1",
-    "WeaveBiasScorerV1",
-    "WeaveCoherenceScorerV1",
-    "WeaveFluencyScorerV1",
-    "WeaveHallucinationScorerV1",
-    "WeaveContextRelevanceScorerV1",
-    "WeaveTrustScorerV1",
+    "ToxicityScorer",
+    "BiasScorer",
+    "CoherenceScorer",
+    "FluencyScorer",
+    "HallucinationScorer",
+    "ContextRelevanceScorer",
+    "TrustScorer",
     "PresidioScorer",
 )
 
-__all__ = list(LOCAL_SCORERS) + ["WeaveScorerResult", "LocalModelScorer", "load_pipeline", "load_sequence_classifier",
+__all__ = list(LOCAL_SCORERS) + ["LocalScorerResult", "LocalModelScorer", "load_pipeline", "load_sequence_classifier",
                                  "load_relevance_model", "load_presidio"]

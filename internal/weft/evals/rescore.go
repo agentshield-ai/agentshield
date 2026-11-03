@@ -12,7 +12,7 @@ import (
 )
 
 // Rescore re-runs server-runnable scorers over the predictions of an existing
-// evaluation run (Weave's /evaluations/rescore). It records a new
+// evaluation run (/evaluations/rescore). It records a new
 // Evaluation.evaluate call whose predict_and_score children reuse the source
 // run's examples and model outputs, so no model is called. It returns the new
 // call id; progress is reported by EvaluationStatus.
@@ -36,7 +36,7 @@ func (e *Engine) Rescore(ctx context.Context, projectID, sourceRunID string, sco
 	}
 	var scorers []*Scorer
 	for _, r := range scorerRefs {
-		sc, err := e.loadScorer(ctx, refs.Normalize(r))
+		sc, err := e.loadScorer(ctx, r)
 		if err != nil {
 			return "", err
 		}

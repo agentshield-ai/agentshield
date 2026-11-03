@@ -95,27 +95,25 @@ await weft.init('my-project', {
     retryBackoffMs: 250, retryMaxBackoffMs: 4000,   // WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL (seconds)
     httpTimeoutMs: 30_000,                     // WEFT_HTTP_TIMEOUT (seconds)
     logLevel: 'warning',                       // debug, info, warning, error, critical (WEFT_LOG_LEVEL)
-    wbRunId: 'run-abc', wbRunStep: () => step, // W&B run linkage (also client.setWbRun / weft.setWbRun)
+    wbRunId: 'run-abc', wbRunStep: () => step, // run linkage (also client.setWbRun / weft.setWbRun)
   },
 });
 ```
 
-The environment variables use Weave's names with a `WEFT_` prefix and seconds
-like the Python SDK; explicit settings and `sender` options win over them.
+The environment variables are the Python SDK's (`WEFT_*`, seconds); explicit
+settings and `sender` options win over them.
 `weft.setLogLevel()` changes the level later; the SDK's messages go through
 `weft.logger` (to `console`). With `wbRunId`/`setWbRun(runId, step)` calls
 carry `wb_run_id` (`<entity>/<project>/<run id>`), `wb_run_step` and
-`wb_run_step_end`, as Weave does for an active `wandb` run.
+`wb_run_step_end`, linking them to a training or experiment run.
 
 With `enableDiskFallback`, anything that cannot be sent goes to a JSONL file
 instead of being dropped. That covers batches that still fail after retries,
 queue overflow, and what is still queued when the process exits. The next
-`init()` for the same server and project replays it. Weave's WAL is different
-(every request is written first and a background "WAL sender" drains it), so
-its `WEAVE_DISABLE_WAL_SENDER` maps to `disableWalSender` /
-`WEFT_DISABLE_WAL_SENDER`: with the WAL on, every write goes to the file and
+`init()` for the same server and project replays it. With `disableWalSender` /
+`WEFT_DISABLE_WAL_SENDER` and the WAL on, every write goes to the file and
 nothing is sent or replayed until a run without it. `WEFT_DEBUG_HTTP=1`
-(Weave's `WEAVE_DEBUG_HTTP`) prints every request and response (method, URL,
+prints every request and response (method, URL,
 headers with `Authorization` redacted, JSON bodies, status, elapsed time) to
 stderr.
 
@@ -130,7 +128,7 @@ stderr.
   keys. Override with `parameterNames`.
 - `kind` (`agent`, `llm`, `tool`, `chain`, `retriever`, `embedding`,
   `scorer`, ...) and `color` are stored as `attributes.weft.span_kind` and
-  `attributes.weft.color`, mirrored to `attributes.weave.kind` and `.color`.
+  `attributes.weft.color`.
   `tracingSampleRate` samples root calls, and a root's children follow it.
   `weft.withTracingDisabled(() => ...)` runs code without recording anything.
 - `weft.op(this, fn)` traces a method and records the instance as `self` (its
@@ -175,7 +173,7 @@ The request body is recorded as inputs and the response as output. Streams are
 accumulated into one response. `summary.usage` is
 `{model: {requests, prompt_tokens, completion_tokens, total_tokens}}`, plus
 `cache_read_input_tokens` / `cache_creation_input_tokens` as parts of a gross
-`prompt_tokens` (Weave's pricing; Anthropic and Bedrock cache counts are added
+`prompt_tokens` (the server's pricing; Anthropic and Bedrock cache counts are added
 to their input count, OpenAI `*_tokens_details.cached_tokens` and Gemini
 `cachedContentTokenCount` are already in it) and `reasoning_tokens`. Streamed
 OpenAI chat requests get `stream_options: { include_usage: true }` unless you
@@ -220,7 +218,7 @@ instructions and voice, with usage including cached and audio tokens; function
 calls are `openai.realtime.tool.<name>` (tool) calls that end at your
 `function_call_output`. The model comes from the connection URL.
 
-Audio is saved as WAV files (`weft.Audio`), as in Weave: the user's audio
+Audio is saved as WAV files (`weft.Audio`): the user's audio
 (`input_audio_buffer.append`, cut per item at the server-VAD speech markers or
 at each commit) on the item's `input_audio` part, and the model's audio
 (`response.output_audio.delta`) on the response's `output_audio` part. PCM16
@@ -228,9 +226,8 @@ at the session's rate and G.711 u-law/A-law are written. Each clip is capped
 at `WEFT_REALTIME_MAX_AUDIO_BYTES` (default 25 MiB; the server takes files up
 to 64 MiB) and marked `audio_truncated` past it; `0` records sizes only.
 
-The OpenAI Agents SDK's `RealtimeSession` (`@openai/agents-realtime`, the
-route Weave documents for TypeScript) is traced by Weave's
-`patchRealtimeSession()`: it imports the package (or takes it:
+The OpenAI Agents SDK's `RealtimeSession` (`@openai/agents-realtime`) is
+traced by `patchRealtimeSession()`: it imports the package (or takes it:
 `patchRealtimeSession(await import('@openai/agents-realtime'))`) and patches
 `RealtimeSession.prototype.connect`, so every session, including ones created
 earlier, is traced from its `connect()`. Without an argument it looks for the
@@ -249,16 +246,15 @@ websocket client, feed a `new weft.RealtimeTracer()` with `onClientEvent(e)`,
 `onServerEvent(e)` and `close()`.
 
 **TypeSafe.** `wrapTypeSafe(client, { captureContent? })` or
-`patchTypeSafeModule(mod)` / `instrumentTypeSafe(mod)` (Weave's names)
+`patchTypeSafeModule(mod)` / `instrumentTypeSafe(mod)`
 record each `systemOne({ state, questions, model? })` as an LLM (`chat`) call
 of provider `typesafe`: the state as the user message, the questions as the
 `typesafe.questions` attribute, the answers, response model, usage and request
-id, inside the running turn or its own `typesafe SDK` turn. As in Weave, that
-turn is a trace of its own even inside an op; when an op is running, the turn
+id, inside the running turn or its own `typesafe SDK` turn. That turn is a
+trace of its own even inside an op; when an op is running, the turn
 and the LLM call carry a link to it, `attributes.weft.parent_call.id` and
-`.trace_id` (Weave stamps the same link as `weave.parent_call.*`; the server
-reads both and exposes them as the agent span fields `parent_call_id` /
-`parent_call_trace_id`). Errors keep their
+`.trace_id`, which the server exposes as the agent span fields
+`parent_call_id` / `parent_call_trace_id`. Errors keep their
 type and HTTP status but not TypeSafe's message (it holds the response body).
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
 `captureContent: false` or a conversation with `includeContent: false` drops
@@ -405,13 +401,13 @@ await weft.publish(new weft.Leaderboard({ name: 'qa-board', columns: [
 await weft.publish(new weft.Monitor({ name: 'judge-chats', opNames: ['openai.chat.completions.create'], samplingRate: 0.2, scorers: [judge] }));
 ```
 
-`SavedView` has Weave's fluent query API; views open in the UI and UI views load here:
+`SavedView` has a fluent query API; views open in the UI and UI views load here:
 
 ```ts
 const view = await new weft.SavedView({ label: 'Slow errors' })
   .filterOp('answer')
-  .addFilter('summary.weave.status', 'equals', 'error')
-  .addFilter('summary.weave.latency_ms', '>', 1000)
+  .addFilter('summary.weft.status', 'equals', 'error')
+  .addFilter('summary.weft.latency_ms', '>', 1000)
   .sortBy('started_at', 'desc')
   .addColumn('inputs.question', 'Question')
   .save();                                  // named after the label
@@ -427,7 +423,7 @@ Operators: `contains`, `does not contain`, `equals`, `does not equal`, `in`,
 
 ## Agents: conversations, turns, LLM calls and tools
 
-Weave's conversation SDK with camelCase names. Turns, LLM calls, tools and
+`weft.startConversation()` and friends. Turns, LLM calls, tools and
 sub-agents are recorded as calls the agents index understands, so they show
 up in **Agents** (`/agents/*`), Threads and Traces (see the Python README for
 the call shapes). `span.run(fn)` is Python's `with`: the span is current while
@@ -606,7 +602,7 @@ const summary = await ev.logSummary();     // same call structure as Evaluation
 ```
 
 Without an output the predict call stays open: `await pred.run(async (p) => { p.output = await agent(q); })`
-records calls made inside as its children (and stamps `weave.eval.*` on
+records calls made inside as its children (and stamps `weft.eval.*` on
 conversation spans started there), then finishes the prediction.
 
 **Linking existing traces (agent evals):** the third argument may be options,
@@ -620,7 +616,7 @@ ev.logPrediction({ q: 'hi' }, 'hello', { call: turn, exampleId: 'ex-1' });
 ```
 
 Links are stored as `attributes.weft.linked_calls`, `attributes.weft.genai_span_ref`
-(`[{trace_id, span_id}]`, Weave's v2 field) and `attributes.weft.linked_conversation_ids`.
+(`[{trace_id, span_id}]`, the v2 predictions field) and `attributes.weft.linked_conversation_ids`.
 
 Pass a `Dataset` as `dataset` to link predictions to its rows. Load a
 published one with `await weft.ref('qa').get()` first. A prediction whose
@@ -639,7 +635,7 @@ if ((check.result as any).flagged) { /* block */ }
 
 `applyScorer` calls the scorer with
 `{ modelOutput: <call output>, datasetRow: <call inputs + kwargs> }`. It
-records the scorer call as its own trace and attaches `wandb.runnable.<scorer>`
+records the scorer call as its own trace and attaches `weft.scorer.<scorer>`
 feedback (with `runnable_ref` and `call_ref`) to the scored call.
 
 ## Querying
@@ -655,11 +651,11 @@ await client.queryCosts({ llmIds: ['my-model'] }); await client.purgeCosts(ids);
 await client.whoami();                     // { user_id, auth_required }
 await client.countCalls({ filter: { op_names: ['answer'] } });
 await client.deleteCalls([id]);
-await client.getFeedback({ query: { $eq: [{ $getField: 'feedback_type' }, { $literal: 'wandb.note.1' }] } });
+await client.getFeedback({ query: { $eq: [{ $getField: 'feedback_type' }, { $literal: 'weft.note' }] } });
 await call!.feedback.list(); await call!.feedback.purge(feedbackId);
 await call!.children(); call!.status; call!.uiUrl;
 await client.getThreads({ limit: 20 });
-await client.registerCustomRuntime({        // Weave's registerCustomRuntime; resolves to { data, error: null }
+await client.registerCustomRuntime({        // an OpenAI-compatible endpoint; resolves to { data, error: null }
   name: 'my-vllm', baseUrl: 'https://vllm.internal/v1',
   runtimeIds: ['llama-3-8b', { id: 'qwen2-7b', maxTokens: 8192 }],   // the complete list
   apiKeySecret: 'VLLM_KEY', headers: { 'X-Team': 'ml' },
@@ -673,11 +669,11 @@ await weft.get('qa:latest'); weft.parseUri('weft:///e/p/object/qa:<digest>');
 const rows = await client.getCallsRecords({ filter: { op_names: ['answer'] }, includeUsernames: true });
 calls[0].toRecord();   // { id, op_name, inputs, output, status, summary, wb_run_id, ... }
 
-// registry (Weave's link_prompt_to_registry, and any object)
-await weft.linkPromptToRegistry(prompt, { targetPath: 'wandb-registry-prompts/support-bot', aliases: ['production'] });
+// registry (prompt versions, and any object)
+await weft.linkPromptToRegistry(prompt, { targetPath: 'prompts/support-bot', aliases: ['production'] });
 await weft.linkToRegistry(dataset, { targetPath: 'my-team/datasets-registry/golden-sets' });
-await client.queryRegistry('wandb-registry-prompts', { collection: 'support-bot' });
-await client.getFromRegistry('wandb-registry-prompts/support-bot', 'production');   // alias, 'v0', 0 or 'latest'
+await client.queryRegistry('prompts', { collection: 'support-bot' });
+await client.getFromRegistry('prompts/support-bot', 'production');   // alias, 'v0', 0 or 'latest'
 ```
 
 `getCalls` already returns an array (`Call[]`). `targetPath` is

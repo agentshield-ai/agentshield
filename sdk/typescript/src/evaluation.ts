@@ -165,7 +165,7 @@ export interface LogPredictionOptions {
    * them: a Call, a call id or call URI, a conversation span (Turn, LLM, ...),
    * a `LogResult`, a `Conversation`, or a list of these. The links are stored
    * on the prediction as `attributes.weft.linked_calls`,
-   * `attributes.weft.genai_span_ref` (`[{trace_id, span_id}]`, as in Weave's
+   * `attributes.weft.genai_span_ref` (`[{trace_id, span_id}]`, as in the
    * v2 predictions API) and `attributes.weft.linked_conversation_ids`. Without
    * an explicit output, a linked Call's output (and duration) is used.
    */
@@ -173,7 +173,7 @@ export interface LogPredictionOptions {
   exampleId?: string;
   rowDigest?: string;
   trialIndex?: number;
-  /** Eval kind stamped on linked spans (default "agent", as in Weave). */
+  /** Eval kind stamped on linked spans (default "agent"). */
   evalKind?: string | null;
 }
 
@@ -219,7 +219,7 @@ function linkedCalls(link: unknown): Linked {
 /**
  * Returned by `EvaluationLogger.logPrediction`; log scores, then `finish()`.
  * `await pred.run(async () => { ...; pred.output = x })` runs code as children
- * of the predict call (and stamps `weave.eval.*` on conversation spans started
+ * of the predict call (and stamps `weft.eval.*` on conversation spans started
  * inside), then finishes the prediction.
  */
 export class ScoreLogger {

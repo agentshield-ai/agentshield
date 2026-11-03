@@ -1,4 +1,4 @@
-"""Digests, computed exactly like the server (and W&B Weave).
+"""Digests, computed exactly like the server.
 
 - bytes/files: URL-safe base64 of SHA-256 with ``-``→``X``, ``_``→``Y``, no padding
 - objects and table rows: that digest of ``json.dumps(val, sort_keys=True)``
@@ -86,7 +86,7 @@ canonical_json = digest_json
 
 
 def b64digest(data: bytes) -> str:
-    """Weave-style digest of raw bytes (also file digests)."""
+    """Digest of raw bytes (also file digests)."""
     enc = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode("ascii")
     return enc.replace("-", "X").replace("_", "Y")
 

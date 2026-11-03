@@ -42,6 +42,7 @@ type InsightBucket struct {
 // FatigueSession is a session's approval load.
 type FatigueSession struct {
 	SessionID       string   `json:"session_id"`
+	SessionTitle    string   `json:"session_title,omitempty"`
 	Agents          []string `json:"agents"`
 	RequireApproval int      `json:"require_approval"`
 	Approved        int      `json:"approved"` // overridden require_approval verdicts
@@ -71,6 +72,7 @@ type ApprovalFatigue struct {
 // EscalationSession is a session's override history.
 type EscalationSession struct {
 	SessionID           string   `json:"session_id"`
+	SessionTitle        string   `json:"session_title,omitempty"`
 	Agents              []string `json:"agents"`
 	Overrides           int      `json:"overrides"`
 	OverriddenBlocks    int      `json:"overridden_blocks"`

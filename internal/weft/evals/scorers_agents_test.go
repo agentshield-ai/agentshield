@@ -85,7 +85,7 @@ func TestScopeJudgesOffline(t *testing.T) {
 		t.Fatalf("scores %d %v", total, err)
 	}
 	for _, sc := range scores {
-		if sc.Model != "mock/json" || sc.WeaveRef == "" || sc.SessionID != "j1" {
+		if sc.Model != "mock/json" || sc.Ref == "" || sc.SessionID != "j1" {
 			t.Fatalf("score %+v", sc)
 		}
 	}

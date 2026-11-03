@@ -27,7 +27,7 @@ def test_kind_and_color_attributes(client, fake):
     [a] = fake.calls_by_op("agent")
     [t] = fake.calls_by_op("tool")
     assert a["attributes"]["weft"]["span_kind"] == "agent" and a["attributes"]["weft"]["color"] == "purple"
-    assert a["attributes"]["weave"] == {"kind": "agent", "color": "purple"}
+    assert "kind" not in a["attributes"]
     assert t["attributes"]["weft"]["span_kind"] == "tool" and "color" not in t["attributes"]["weft"]
     # built-in scorer ops are tagged as scorers
     scorers.ExactMatchScorer().score(output="a", expected="a")
@@ -221,7 +221,7 @@ def test_object_management(client, fake):
 
 
 def test_module_level_tags_and_aliases(client, fake):
-    """Weave's module-level weave.add_tags & co. (weave/trace/api.py), on the global client."""
+    """Module-level add_tags & co., on the global client."""
     ref0 = weft.publish({"v": 0}, name="mod")
     ref1 = weft.publish({"v": 1}, name="mod")
     weft.set_aliases(ref1, "production")
@@ -245,7 +245,7 @@ def test_module_level_tags_need_init():
 
 
 def test_alias_fallback_to_legacy_endpoint(client, fake):
-    fake.weave_routes = False
+    fake.alias_routes = False
     ref = weft.publish({"v": 0}, name="old")
     client.set_alias(ref, "prod")
     assert fake.aliases[("old", "prod")] == ref.digest

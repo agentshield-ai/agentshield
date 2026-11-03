@@ -164,7 +164,7 @@ function EventView({ m, projectId, agentName }: { m: ChatMessage; projectId: str
                   {m.status_message ? m.status_message.split('\n')[0] : t.tool_arguments}
                 </div>
               )}
-              {/* A tool that returned media (a bucket URI, an image) shows it without expanding, as Weave does. */}
+              {/* A tool that returned media (a bucket URI, an image) shows it without expanding. */}
               {!m.status_message && isMedia(result) && (
                 <div className="agent-tool-media">
                   <MediaView value={result} projectId={projectId} />
@@ -238,19 +238,19 @@ export function TurnView({ turn, index, projectId, badges }: { turn: TraceChat; 
         {!!turn.feedback?.length && (
           <div className="chips" style={{ flexWrap: 'wrap' }}>
             {turn.feedback
-              .filter((f) => f.feedback_type === 'wandb.reaction.1')
+              .filter((f) => f.feedback_type === 'weft.reaction')
               .map((f) => (
                 <span key={f.id} className="chip">
                   {String(f.payload.emoji ?? '')}
                 </span>
               ))}
-            {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'wandb.reaction.1')).ratings.map((r, i) => (
+            {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'weft.reaction')).ratings.map((r, i) => (
               <span key={`r${i}`} className="chip row" style={{ gap: 6 }} title={[r.reason, r.confidence != null ? `confidence ${Math.round(r.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
                 {r.name}
                 <ScorePill value={r.value} />
               </span>
             ))}
-            {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'wandb.reaction.1')).tags.map((t) => (
+            {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'weft.reaction')).tags.map((t) => (
               <span key={`t${t.name}`} className="chip tag-chip" title={[t.reason, t.confidence != null ? `confidence ${Math.round(t.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
                 {t.name}
               </span>

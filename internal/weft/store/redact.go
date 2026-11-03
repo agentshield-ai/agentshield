@@ -171,7 +171,7 @@ func NewRedactor(set SensitiveDataSettings) (*Redactor, error) {
 
 // String redacts one string. Refs are left alone.
 func (r *Redactor) String(s string) string {
-	if s == "" || strings.HasPrefix(s, "weft:///") || strings.HasPrefix(s, "weave:///") {
+	if s == "" || strings.HasPrefix(s, "weft:///") {
 		return s
 	}
 	for _, c := range r.custom {

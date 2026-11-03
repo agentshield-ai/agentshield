@@ -189,8 +189,8 @@ describe('applyScorer', () => {
     expect(r.scoreCall!.parentId).toBeNull();
     const r2 = await call!.applyScorer(new weft.ContainsScorer({ name: 'mentions_prompt', targetColumn: 'prompt' }));
     expect(r2.result).toBe(false);
-    const fb = fake.feedback.filter((f) => f.weave_ref === call!.uri());
-    expect(fb.map((f) => f.feedback_type)).toEqual(['wandb.runnable.toxicity', 'wandb.runnable.mentions_prompt']);
+    const fb = fake.feedback.filter((f) => f.ref === call!.uri());
+    expect(fb.map((f) => f.feedback_type)).toEqual(['weft.scorer.toxicity', 'weft.scorer.mentions_prompt']);
     expect(fb[0].payload).toEqual({ output: { flagged: true, threshold: 0.9 } });
     expect(fb[0].runnable_ref).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/op\/toxicity:/);
     expect(fb[0].call_ref).toBe(r.scoreCall!.uri());
@@ -235,7 +235,7 @@ describe('platform objects', () => {
     await call!.feedback.addAnnotation(spec, 4);
     await expect(call!.feedback.addAnnotation(spec, 8)).rejects.toThrow();
     const fb = fake.feedback.at(-1);
-    expect(fb.feedback_type).toBe('wandb.annotation.quality');
+    expect(fb.feedback_type).toBe('weft.annotation.quality');
     expect(fb.annotation_ref).toBe(spec.ref!.uri());
     expect(await client.whoami()).toEqual({ user_id: 'anonymous', auth_required: false });
   });

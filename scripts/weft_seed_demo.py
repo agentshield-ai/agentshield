@@ -134,10 +134,10 @@ def seed_traces(c, ops, n=40):
                 exception="RateLimitError: 429 Too Many Requests" if failed else None)
         tr.send()
         if not failed and random.random() < 0.4:
-            c.post("/feedback/create", {"project_id": c.project, "weave_ref": c.ref("call", root),
-                                        "feedback_type": "wandb.reaction.1", "payload": {"emoji": random.choice(["👍", "👍", "👎", "🎉"])}})
+            c.post("/feedback/create", {"project_id": c.project, "ref": c.ref("call", root),
+                                        "feedback_type": "weft.reaction", "payload": {"emoji": random.choice(["👍", "👍", "👎", "🎉"])}})
         if random.random() < 0.15:
-            c.post("/feedback/create", {"project_id": c.project, "weave_ref": c.ref("call", root), "feedback_type": "wandb.note.1",
+            c.post("/feedback/create", {"project_id": c.project, "ref": c.ref("call", root), "feedback_type": "weft.note",
                                         "payload": {"note": "Answer is correct but could link to the help article."}})
 
 

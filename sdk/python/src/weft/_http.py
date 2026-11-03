@@ -127,10 +127,9 @@ class HTTPClient:
 
 
 # ---------------------------------------------------------------- WEFT_DEBUG_HTTP
-# Weave's WEAVE_DEBUG_HTTP: print every request and response (time, thread,
-# method, URL, headers with Authorization redacted, body; then elapsed time,
-# status, headers and body). Weave prints to the console with rich; Weft
-# writes plain text to stderr so program output on stdout is not mixed with it.
+# Print every request and response (time, thread, method, URL, headers with
+# Authorization redacted, body; then elapsed time, status, headers and body)
+# as plain text to stderr, so program output on stdout is not mixed with it.
 _DIV_REQUEST = "-" * 21
 _DIV_RESPONSE = "----- Response below -----"
 _DEBUG_BODY_LIMIT = 64 * 1024

@@ -1,6 +1,6 @@
 package store
 
-// Agents: a span index over calls that powers Weave's /agents/* API.
+// Agents: a span index over calls that powers the /agents/* API.
 //
 // Every call gets one agent_spans row, written by an ingest hook inside the
 // same transaction as the call. The row holds the semantic fields derived
@@ -203,7 +203,7 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 	// Operation.
 	op := normKind(a.str("gen_ai.operation.name"))
 	if op == "" {
-		op = normKind(a.str("weft.span_kind", "weave.span_kind", "weave.kind", "openinference.span.kind", "traceloop.span.kind", "mlflow.spanType"))
+		op = normKind(a.str("weft.span_kind", "openinference.span.kind", "traceloop.span.kind", "mlflow.spanType"))
 	}
 	if op == "" {
 		vid := a.str("ai.operationId", "operation.name")
@@ -246,7 +246,7 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 	d.Operation = op
 
 	// Agent identity.
-	d.AgentName = a.str("gen_ai.agent.name", "weft.agent.name", "weft.agent_name", "weave.agent.name", "agent.name", "agent_name",
+	d.AgentName = a.str("gen_ai.agent.name", "weft.agent.name", "weft.agent_name", "agent.name", "agent_name",
 		"gcp.vertex.agent.agent_name")
 	if d.AgentName == "" && normKind(a.str("traceloop.span.kind")) == OpInvokeAgent {
 		d.AgentName = a.str("traceloop.entity.name")
@@ -274,10 +274,10 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 		d.ConversationID = *threadID
 	}
 	if d.ConversationID == "" {
-		d.ConversationID = a.str("gen_ai.conversation.id", "gcp.vertex.agent.session_id", "session.id", "wandb.thread_id")
+		d.ConversationID = a.str("gen_ai.conversation.id", "gcp.vertex.agent.session_id", "session.id", "weft.thread_id")
 	}
-	d.ConversationName = a.str("gen_ai.conversation.name", "weft.conversation.name", "wandb.thread_name")
-	d.IsTurn = (turnID != nil && *turnID == id) || a.truthy("wandb.is_turn", "weft.is_turn", "weave.is_turn")
+	d.ConversationName = a.str("gen_ai.conversation.name", "weft.conversation.name")
+	d.IsTurn = (turnID != nil && *turnID == id) || a.truthy("weft.is_turn")
 
 	// Tool.
 	d.ToolName = a.str("gen_ai.tool.name", "tool.name", "ai.toolCall.name", "gcp.vertex.agent.tool_name")

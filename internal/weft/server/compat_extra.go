@@ -17,9 +17,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Smaller Weave trace-server endpoints, following the vendored server SDK
-// schemas: feedback analytics, table and file stats, usage roll-ups, thread
-// streaming, evaluation aliases and rescoring, and dataset lineage.
+// Smaller trace API endpoints: feedback analytics, table and file stats,
+// usage roll-ups, thread streaming, evaluation aliases and rescoring, and
+// dataset lineage.
 
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
@@ -342,7 +342,7 @@ func scorerID(row store.FeedbackRow) string {
 			return r.Name
 		}
 	}
-	return strings.TrimPrefix(row.FeedbackType, "wandb.runnable.")
+	return strings.TrimPrefix(row.FeedbackType, "weft.scorer.")
 }
 
 // feedbackScores flattens a payload's output into ratings (numbers) and tags
@@ -630,7 +630,7 @@ func (s *Server) filesQueryStats(ctx context.Context, _ *http.Request, req *proj
 
 // ---------------------------------------------------------------- usage
 
-// usageItems renders rolled-up usage per model in Weave's LLMUsageSchema shape.
+// usageItems renders rolled-up usage per model (one item per model).
 func usageItems(u store.Contribution, pb *store.PriceBook, atUS int64) map[string]any {
 	out := map[string]any{}
 	var costs map[string]any
@@ -788,7 +788,7 @@ func (s *Server) threadsStreamQuery(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- evaluations
 
-// evaluationsStatus is /evaluation_status in Weave's tagged-union shape.
+// evaluationsStatus is /evaluation_status as a tagged union ({"status": {"code": ...}}).
 func (s *Server) evaluationsStatus(ctx context.Context, _ *http.Request, req *evalStatusReq) (any, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {

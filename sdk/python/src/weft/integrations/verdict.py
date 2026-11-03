@@ -4,8 +4,7 @@ Verdict has its own tracing interface (``verdict.util.tracing.Tracer``).
 ``patch_verdict`` adds a ``WeftVerdictTracer`` to every ``Pipeline`` (it wraps
 the pipeline module's ``ensure_tracing_manager``, used by ``Pipeline(...)``
 and ``Pipeline.run(tracers=...)``), first among the pipeline's tracers, so
-Verdict's own call ids follow Weft's. As in Weave, each Verdict span becomes a
-call:
+Verdict's own call ids follow Weft's. Each Verdict span becomes a call:
 
 * ``verdict.<Pipeline name>`` (workflow): the pipeline run, with
   ``input_data``, ``max_workers`` and the per-leaf outputs;
@@ -14,10 +13,10 @@ call:
   execution, with its input schema and response.
 
 Units run in Verdict's thread pool; parents are resolved from Verdict's
-``(trace_id, parent_id)`` like Weave does. Verdict starts each block of a
+``(trace_id, parent_id)``. Verdict starts each block of a
 chain (``a >> b``) with the *finished* previous block as its parent, so
 finished calls stay resolvable until the call that opened the trace (the
-pipeline run) ends, and ``b`` nests under ``a`` in one trace, as in Weave.
+pipeline run) ends, and ``b`` nests under ``a`` in one trace.
 Each unit call is the current weft call while it runs, so LLM requests made
 through patched clients
 (``litellm``, ``openai``, ``instructor`` ...) nest under the unit. A pipeline

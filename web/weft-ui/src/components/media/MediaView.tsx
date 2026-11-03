@@ -128,8 +128,8 @@ function Rendered({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   }
 }
 
-/** Weave Content: read metadata.json for the mimetype, then render. */
-function WeaveContent({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
+/** Client Content (clientTypes.ts): read metadata.json for the mimetype, then render. */
+function ClientContent({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   const meta = useQuery({
     queryKey: ['file-text', projectId, spec.metaDigest],
     queryFn: () => api.fileContentText(projectId, spec.metaDigest!),
@@ -295,7 +295,7 @@ function ExternalInline({ projectId, spec }: { projectId: string; spec: MediaSpe
 }
 
 function MediaBlock({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
-  if (spec.kind === 'content') return <WeaveContent projectId={projectId} spec={spec} />
+  if (spec.kind === 'content') return <ClientContent projectId={projectId} spec={spec} />
   if (spec.uri && !spec.digest && !spec.dataUrl) return <ExternalMedia key={spec.uri} projectId={projectId} spec={spec} />
   const showCaption = spec.kind !== 'image' || !!spec.filename
   return (

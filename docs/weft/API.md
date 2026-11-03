@@ -1,8 +1,12 @@
 # Weft trace server API
 
-Weft is an OpenTelemetry-native LLM tracing and evaluation server. It follows
-the data model popularised by W&B Weave (calls, ops, objects, tables,
-feedback, evaluations) and accepts OTLP spans directly.
+Weft is an OpenTelemetry-native LLM tracing and evaluation server. This page
+documents its trace API, which Weft's own SDKs, UI and plugins use: calls,
+ops, objects, tables, feedback and evaluations, plus the native `/api/v1`
+API (sessions, agents, teams, detections). It also accepts OTLP spans
+directly. Clients of another tracing product can use the optional
+compatibility adapter described in [COMPATIBILITY.md](COMPATIBILITY.md); it is
+off by default and nothing on this page depends on it.
 
 Base URL defaults to `http://localhost:6345`. All endpoints are `POST` with a
 JSON body unless marked `GET`. Errors return a non-2xx status with
@@ -17,7 +21,7 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
   the hex span id (16 chars) and hex trace id (32 chars).
 - **Digests** are unpadded base64url SHA-256 of canonical JSON (keys sorted,
   no whitespace). Identical values always produce identical digests.
-- **Refs** (`weave:///` is accepted as an alias of `weft:///` everywhere):
+- **Refs**:
   - object: `weft:///<entity>/<project>/object/<name>:<digest>`
   - op: `weft:///<entity>/<project>/op/<name>:<digest>`
   - table: `weft:///<entity>/<project>/table/<digest>`
@@ -42,7 +46,7 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
 | Endpoint | Response |
 |---|---|
 | `GET /health` | `{"status":"ok"}` |
-| `GET /server_info` | `{"version": "...", "auth_required": bool, "otel_endpoint": "/otel/v1/traces"}` |
+| `GET /server_info` | `{"version": "...", "auth_required": bool, "otel_endpoint": "/otel/v1/traces", "trace_server_version": "..."}` (with the compatibility adapter on, also the fields it adds; see COMPATIBILITY.md) |
 | `GET /auth/check` | `{"ok": true}` or 401 |
 | `GET /auth/whoami` | `{"user_id": "alice" \| "anonymous", "auth_required": bool}` |
 | `GET /projects` | `{"projects": [{"project_id","entity","project","call_count","trace_count","object_count","last_activity"}]}` |
@@ -65,7 +69,7 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
   "summary": {
     "usage": {"gpt-4o-mini": {"requests":1,"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}},
     "status_counts": {"success": 3, "error": 0},   // descendants (rolled up)
-    "weave": {                                     // computed on read
+    "weft": {                                      // computed on read
       "status": "success|error|running|descendant_error",
       "latency_ms": 1234, "trace_name": "my_fn", "display_name": null,
       "costs": {"gpt-4o-mini": {"requests":1,"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,
@@ -93,7 +97,11 @@ The optional fields are described in [Optional call fields](#optional-call-field
 **Usage roll-up.** Clients report only a call's *own* LLM usage in
 `summary.usage` at call end. The server sums usage and `status_counts` from all
 descendants, so `summary.usage` on a root call is the total for the trace.
-`summary.weave.costs` is present when `include_costs` is true; see
+A client whose summaries already include their descendants sends
+`X-Weft-Summary: cumulative` with `/call/end` and `/call/upsert_batch`; those
+summaries are stored as sent instead of being rolled up again.
+`summary.weft` is computed on read (status, latency, trace and display name).
+`summary.weft.costs` is present when `include_costs` is true; see
 [Cached tokens](#cached-tokens) for how cache reads and writes are priced.
 
 ### Endpoints
@@ -110,7 +118,7 @@ descendants, so `summary.usage` on a root call is the total for the trace.
 | `/calls/delete` | `{project_id, call_ids, wb_user_id?}` | `{}` (soft delete, cascades to descendants) |
 | `/call/update` | `{project_id, call_id, display_name}` | `{}` |
 | `/calls/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | see below |
-| `/calls/score` | `{project_id, call_ids, scorer_refs}` (server-runnable scorers) | `{"results": [{"call_id","scorer","output","scorer_call_id","feedback_id","error"?}]}`; each result is also stored as `wandb.runnable.<scorer>` feedback on the call |
+| `/calls/score` | `{project_id, call_ids, scorer_refs}` (server-runnable scorers) | `{"results": [{"call_id","scorer","output","scorer_call_id","feedback_id","error"?}]}`; each result is also stored as `weft.scorer.<scorer>` feedback on the call |
 | `/calls/op_counts` | `{project_id, trace_roots_only?}` | `{"ops": [{"op_name","op_base_name","count","error_count","last_called"}]}` |
 
 **CallsQuery**
@@ -143,7 +151,7 @@ descendants, so `summary.usage` on a root call is the total for the trace.
 - Operands: `{"$literal": v}`, `{"$getField": "inputs.question"}`,
   `{"$convert": {"input": a, "to": "double|int|string|bool|exists"}}`, or a nested operation.
 
-Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, wb_user_id, wb_run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weave.status`, `summary.weave.latency_ms`, `summary.weave.trace_name`, `summary.total_tokens`, and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.wandb.reaction.1.emoji`, `feedback.wandb.runnable.my_judge.output.score`).
+Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, wb_user_id, wb_run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
 Sort fields use the same paths.
 
 **`/calls/stats` response**
@@ -277,25 +285,33 @@ Media values: `{"_type":"Image","file_digest":"<d>","mime_type":"image/png"}`,
 ## Feedback
 
 Feedback schema:
-`{"id","project_id","weave_ref","feedback_type","payload","creator","created_at","wb_user_id","annotation_ref","runnable_ref","call_ref","trigger_ref"}`
+`{"id","project_id","ref","feedback_type","payload","creator","created_at","wb_user_id","annotation_ref","runnable_ref","call_ref","trigger_ref"}`
 
-Feedback types:
-- `wandb.reaction.1` payload `{"emoji": "👍"}`
-- `wandb.note.1` payload `{"note": "text"}`
-- `wandb.annotation.<spec name>` payload `{"value": ...}`, `annotation_ref` = AnnotationSpec ref
-- `wandb.runnable.<scorer name>` payload `{"output": <score>}`, `runnable_ref` = scorer ref, `call_ref` = the scorer's own call, `trigger_ref` = monitor ref when a monitor produced it
+Feedback types Weft gives meaning to (the `weft.` prefix is reserved for them):
+- `weft.reaction` payload `{"emoji": "👍"}`
+- `weft.note` payload `{"note": "text"}`
+- `weft.annotation.<spec name>` payload `{"value": ...}`, `annotation_ref` = AnnotationSpec ref
+- `weft.scorer.<scorer name>`: a scorer's result on one call, payload `{"output": <score>}`, `runnable_ref` = scorer ref, `call_ref` = the scorer's own call, `trigger_ref` = monitor ref when a monitor produced it
+- `weft.score.<scorer>`: a scoped score (session, agent, hand-off, turn, span; see [Scores](#scores))
+- `weft.signal`: an agent signal result on a turn (scorer fields in the payload, see [Agents](#agents))
+- `weft.user_feedback`: feedback on an agent turn given through `/agents/feedback/batch/create` without a type of its own
 - anything else: free-form
 
-`weave_ref` targets the scored thing, usually `weft:///e/p/call/<id>`.
+`ref` targets the scored thing, usually `weft:///e/p/call/<id>`.
+
+Databases written by earlier versions are migrated when the server opens
+them: the `ref` column and the types above get these names, and queries saved
+in views, dashboards, monitors and automations with the earlier names keep
+working.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/feedback/create` | `{project_id, weave_ref, feedback_type, payload, creator?, wb_user_id?, annotation_ref?, runnable_ref?, call_ref?, trigger_ref?}` | `{"id","created_at","wb_user_id","payload"}` |
+| `/feedback/create` | `{project_id, ref, feedback_type, payload, creator?, wb_user_id?, annotation_ref?, runnable_ref?, call_ref?, trigger_ref?}` | `{"id","created_at","wb_user_id","payload"}` |
 | `/feedback/query` | `{project_id, query?, sort_by?, limit?, offset?}` | `{"result": [Feedback]}` |
 | `/feedback/replace` | create body plus `feedback_id` | same as create (new id) |
 | `/feedback/purge` | `{project_id, query}` (typically `$eq id`) | `{}` |
 
-Feedback query fields: `id, weave_ref, feedback_type, created_at, creator, wb_user_id, annotation_ref, runnable_ref, call_ref, trigger_ref, payload.<path>`.
+Feedback query fields: `id, ref, feedback_type, created_at, creator, wb_user_id, annotation_ref, runnable_ref, call_ref, trigger_ref, payload.<path>`.
 
 ## Costs
 
@@ -318,7 +334,7 @@ completion_token_cost_unit, effective_date, pricing_level, pricing_level_id`
 
 ### Cached tokens
 
-Weft prices prompt caching the way Weave does. In `summary.usage`,
+In `summary.usage`,
 `prompt_tokens` (or `input_tokens`) is the **gross** prompt count, and
 `cache_read_input_tokens` and `cache_creation_input_tokens` are the parts of
 it read from and written to a provider cache. A model's cost is:
@@ -342,7 +358,7 @@ provider shapes all price correctly:
 | OpenAI Chat Completions | `prompt_tokens` (includes cached), `prompt_tokens_details.cached_tokens` | `cache_read_input_tokens` = `cached_tokens` |
 | OpenAI Responses | `input_tokens`, `input_tokens_details.cached_tokens` | same |
 | OpenAI-compatible routers | `prompt_tokens_details.cache_write_tokens` | `cache_creation_input_tokens` |
-| Anthropic (native) | `input_tokens` **excludes** `cache_read_input_tokens` and `cache_creation_input_tokens` | weave's anthropic integration and Weft's harness plugins send the gross count. When an entry's cache counts exceed its prompt count, the server adds them to the prompt; otherwise the entry is taken as gross (Weave's convention) |
+| Anthropic (native) | `input_tokens` **excludes** `cache_read_input_tokens` and `cache_creation_input_tokens` | Weft's SDK integrations and harness plugins send the gross count. When an entry's cache counts exceed its prompt count, the server adds them to the prompt; otherwise the entry is taken as gross |
 | Gemini / Vertex | `prompt_token_count` (includes cached), `candidates_token_count`, `total_token_count`, `cached_content_token_count`, `thoughts_token_count` (snake or camel case) | `prompt_tokens`, `completion_tokens`, `total_tokens`, `cache_read_input_tokens`, `reasoning_tokens` |
 | Bedrock Converse | `inputTokens` (excludes cache), `cacheReadInputTokens`, `cacheWriteInputTokens` | gross `prompt_tokens` plus the cache fields |
 | OTel GenAI semconv | `gen_ai.usage.input_tokens` (includes cache), `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens` | mapped by `/otel/v1/traces`; OpenInference `llm.token_count.prompt_details.cache_read/cache_write`, OpenLLMetry `gen_ai.usage.cache_read_input_tokens`, Vercel `ai.usage.cachedInputTokens` too |
@@ -351,36 +367,32 @@ provider shapes all price correctly:
 Existing canonical fields always win over derived ones. Weft's own LLM calls
 (playground, judges, `evaluate_model`) record Anthropic usage in this form.
 
-**Cost fields.** Weave's names: `cache_read_input_token_cost`,
+**Cost fields.** `cache_read_input_token_cost`,
 `cache_creation_input_token_cost` (prices), `cache_read_input_tokens`,
 `cache_creation_input_tokens` (counts) and
 `cache_read_input_tokens_total_cost`, `cache_creation_input_tokens_total_cost`
-(amounts, as in Weave's `LLMAggregatedUsage` from `/calls/usage`).
+(amounts, as in `/calls/usage`).
 `prompt_tokens_total_cost` is the cost of **all** prompt tokens (uncached +
 cache reads + cache writes); the two cache totals are the parts of it spent on
 the cache. A call's cost is therefore always `prompt_tokens_total_cost +
-completion_tokens_total_cost`; do not add the cache totals again. Weave's
-server does not publish how it splits these fields, so this partition is
-Weft's definition.
+completion_tokens_total_cost`; do not add the cache totals again.
 
-**Missing cache prices.** In Weave's API an omitted cache price defaults to 0.
-In Weft an omitted (or `null`) cache price is stored as `null` and those
+**Missing cache prices.** An omitted (or `null`) cache price is stored as `null` and those
 tokens are billed at `prompt_token_cost`, so a project price added without
 cache rates never makes cached tokens free; send `0` explicitly for free
 cache reads. Built-in prices for models whose provider does not price cache
 reads or writes separately (OpenAI cache writes, Gemini cache writes, Mistral,
-DeepSeek) are `null` and behave the same way. Weave has a single cache-write price, so
+DeepSeek) are `null` and behave the same way. There is a single cache-write price, so
 Anthropic's 1-hour cache writes (2× input) are priced at the built-in
 5-minute rate (1.25×); set a project `cache_creation_input_token_cost` if you
 mostly use 1-hour caching.
 
-The same rates are used everywhere costs appear: `summary.weave.costs`,
-`/calls/usage` and `/trace/usage`, `/calls/stats` (`cost_usd`, and Weave's
+The same rates are used everywhere costs appear: `summary.weft.costs`,
+`/calls/usage` and `/trace/usage`, `/calls/stats` (`cost_usd`, and the metric buckets'
 `input_cost` / `output_cost` / `total_cost`, where `input_cost` includes the
 cache costs), `/calls/metrics` (`cost`), `/threads/query`, `/calls/export`,
 evaluation summaries and the Agents views (`input_cost_usd` includes the cache
-costs, *Weft*: `cache_read_cost_usd`, `cache_creation_cost_usd` on spans, as
-in Weave's `AgentSpanSchema`). Roll-ups sum token counts per model and price
+costs, plus `cache_read_cost_usd`, `cache_creation_cost_usd` on spans). Roll-ups sum token counts per model and price
 the sum once, so nested calls are never double counted.
 
 ## LLMs and playground
@@ -388,8 +400,8 @@ the sum once, so nested calls are never double counted.
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /llm/models` | | `{"models": [{"id","provider","label","available","max_tokens"}]}` (`available` = key configured) |
-| `/completions/create` | `{project_id, inputs: {model, messages, temperature?, max_tokens?, top_p?, frequency_penalty?, presence_penalty?, stop?, n?, response_format?, tools?}, track_llm_call?: true}` | `{"response": OpenAIChatCompletion \| {"error": "..."}, "weave_call_id": "..."}` |
-| `/completions/create_stream` | same | `application/jsonl` of OpenAI chunk objects, last line `{"_meta":{"weave_call_id": "..."}}` |
+| `/completions/create` | `{project_id, inputs: {model, messages, temperature?, max_tokens?, top_p?, frequency_penalty?, presence_penalty?, stop?, n?, response_format?, tools?}, track_llm_call?: true}` | `{"response": OpenAIChatCompletion \| {"error": "..."}, "call_id": "..."}` |
+| `/completions/create_stream` | same | `application/jsonl` of OpenAI chunk objects, last line `{"_meta":{"call_id": "..."}}` |
 | `/secrets/set` | `{name, value}` | `{}` |
 | `GET /secrets/list` | | `{"secrets": [{"name","source":"env\|db"}]}` (never values) |
 | `/secrets/delete` | `{name}` | `{}` |
@@ -448,7 +460,7 @@ Active `Monitor` objects (latest version) are evaluated whenever a call ends
 or an OTLP span is ingested. Calls whose op base name is in `op_names` (empty
 means all root calls), that match `query`, and pass `sampling_rate` are scored
 asynchronously by each server-runnable scorer. The result is stored as
-`wandb.runnable.<scorer name>` feedback with `trigger_ref` set to the monitor
+`weft.scorer.<scorer name>` feedback with `trigger_ref` set to the monitor
 ref, and the scorer's own call is recorded with `op_name = "<scorer name>.score"`.
 Scorer calls and completions are never themselves monitored.
 
@@ -457,7 +469,7 @@ Scorer calls and completions are never themselves monitored.
 `POST /otel/v1/traces` accepts OTLP/HTTP `ExportTraceServiceRequest` as
 `application/x-protobuf` or `application/json`, gzip allowed. The project comes
 from the `project_id` header (also `x-weft-project`), else the resource
-attribute `weft.project` / `wandb.entity` + `wandb.project`, else `default/default`.
+attribute `weft.project`, else `default/default`.
 
 Span → call mapping:
 
@@ -465,18 +477,18 @@ Span → call mapping:
 |---|---|
 | `id`, `trace_id`, `parent_id` | hex span id, trace id, parent span id |
 | `op_name` | `weft.op_name`, else span name |
-| `display_name` | `weft.display_name`, `wandb.display_name`, `weave.display_name`; Traceloop `traceloop.entity.name` (or `traceloop.workflow.name` on workflow spans) |
+| `display_name` | `weft.display_name`; Traceloop `traceloop.entity.name` (or `traceloop.workflow.name` on workflow spans) |
 | `started_at`, `ended_at` | span start/end |
 | `inputs` | `weft.inputs` (JSON), OpenInference LLM spans' `llm.input_messages.*`, `input.value` (OpenInference; serialised LangChain/LangGraph messages become chat messages), framework layouts (see below), `gen_ai.input.messages`, `llm.input_messages.N.message.*`, `gen_ai.prompt.N.*` (OpenLLMetry), `gen_ai.prompt`, `traceloop.entity.input`, `gen_ai.*.message` span events. Request params (`gen_ai.request.*`, `llm.invocation_parameters`) are added. |
 | `output` | `weft.output`, OpenInference LLM spans' `llm.output_messages.*`, `output.value`, framework layouts (see below), `gen_ai.output.messages`, `llm.output_messages.N.message.*`, `gen_ai.completion.N.*`, `gen_ai.completion`, `traceloop.entity.output`, `gen_ai.choice` events |
 | `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata`; also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
 | `exception` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
-| `thread_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `wandb.is_turn` / `weft.is_turn` is true |
+| `thread_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
 | `wb_user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
 | `attributes` | `weft.attributes.*` (prefix stripped), plus `otel: {span_name, kind, status, resource, scope, attributes, events, links}` |
 
 The response is an OTLP `ExportTraceServiceResponse` in the request's encoding.
-`POST /agents/otel/v1/traces` (Weave's agents OTLP path) is the same endpoint.
+`POST /agents/otel/v1/traces` is the same endpoint.
 
 Framework layouts (checked after `input.value` / `output.value`):
 
@@ -496,8 +508,7 @@ GenAI message parts: `text` parts are joined; `tool_call` parts become OpenAI
 
 ## Annotation queues
 
-Queues collect calls for human review. The paths and fields are Weave's
-`/annotation_queues` API, so the official client works. A queue's
+Queues collect calls for human review (Review queues in the UI). A queue's
 `scorer_refs` are the `AnnotationSpec` refs reviewers fill in. Progress is
 tracked per annotator (the API key's user, else `X-Weft-User`, else
 `anonymous`).
@@ -519,6 +530,7 @@ Item: `{"id","project_id","queue_id","call_id","call_op_name","call_trace_id","c
 | `POST /annotation_queues/{queue_id}/items` | `{project_id, call_ids, display_fields}` (`display_fields`: call paths shown to reviewers, e.g. `inputs.question`) | `{"added_count","duplicates"}` |
 | `POST /annotation_queues/{queue_id}/items/query` | `{project_id, filter?: {id?, added_by?, annotation_states?, call_id?, call_op_name?, call_trace_id?}, sort_by?: [{field: created_at\|updated_at\|call_started_at\|call_ended_at\|call_op_name\|annotation_state, direction}], limit?, offset?, include_position?, annotator_user_id?}` (`annotator_user_id` is a Weft extension to view another reviewer's states) | `{"items": [Item]}` in queue order |
 | `POST /annotation_queues/{queue_id}/items/{item_id}/progress` | `{project_id, queue_id, annotation_state}` | `{"item"}` |
+| `DELETE /annotation_queues/{queue_id}/items/{item_id}?project_id=` | | `{}`; removes the item (soft delete; its feedback stays, and the call can be added again). 404 when it is already gone. The UI delays this call to offer undo. |
 
 Feedback given while reviewing carries the queue: `/feedback/create`,
 `/feedback/replace` and `/feedback/batch/create` accept `queue_id`, Feedback
@@ -537,14 +549,14 @@ apply within 5 seconds).
 {"_type":"Automation","_class_name":"Automation","_bases":["Object","BaseModel"],"name":"low-quality","description":"",
  "enabled": true,                       // default true
  "trigger": {"type":"score_threshold",  // a scorer result crosses a threshold
-             "scorer":"judge",          // scorer name or ref (feedback wandb.runnable.<name>), or a full feedback type such as wandb.annotation.quality
+             "scorer":"judge",          // scorer name or ref (feedback weft.scorer.<name>), or a full feedback type such as weft.annotation.quality
              "path":"score",            // dotted path inside the score (payload.output, or payload.value for annotations); "" = the score itself; true/false count as 1/0
              "operator":"lt",           // gt gte lt lte eq ne (or > >= < <= == !=)
              "threshold": 3,
              "monitor_ref": null},      // optional: only scores written by this monitor
  // or {"type":"error_rate","op_names":["agent"],"window_minutes":60,"threshold":0.1,"min_calls":5}
  //    share of finished calls with an exception (op_names empty = trace roots; internal scorer/judge calls excluded); checked every minute
- // or {"type":"feedback_created","feedback_types":["wandb.reaction.*","wandb.note.1"]}   // exact types or prefixes ending in *; empty = any
+ // or {"type":"feedback_created","feedback_types":["weft.reaction","weft.note"]}   // exact types or prefixes ending in *; empty = any
  "action": {"type":"slack",             // or "webhook"
             "url":"https://hooks.slack.com/services/…",   // or "url_secret": name of a secret holding the URL
             "headers": {},              // webhook only
@@ -558,9 +570,9 @@ background loop. Slack receives `{"text": message}`. Webhooks receive:
 
 ```jsonc
 {"automation": {"name","object_id","ref"}, "project_id", "trigger": {...}, "message", "fired_at", "test": false,
- "event": {"type":"score_threshold","feedback_id","feedback_type","weave_ref","call_id","value","path","operator","threshold","monitor_ref"}
+ "event": {"type":"score_threshold","feedback_id","feedback_type","ref","call_id","value","path","operator","threshold","monitor_ref"}
        // error_rate: {"type","total_calls","error_calls","error_rate","threshold","window_minutes","op_names"}
-       // feedback_created: {"type","feedback_id","feedback_type","weave_ref","call_id","payload","creator","wb_user_id","queue_id"}
+       // feedback_created: {"type","feedback_id","feedback_type","ref","call_id","payload","creator","wb_user_id","queue_id"}
 }
 ```
 
@@ -598,10 +610,10 @@ is all input columns as JSON; `{output}` is the output text.
     // → cosine similarity (number) of output and row[target_column] embeddings; any OpenAI-compatible provider, or mock/* offline
 {"_class_name":"RemoteScorer", … "url":"https://…", "headers_secret":"MY_SCORER_HEADERS", "timeout": 30}
     // POSTs {"output","inputs"} and returns the JSON response (or its text). headers_secret names a secret holding a JSON
-    // object of headers or a bare token (sent as Authorization: Bearer). Weave's endpoint_url and auth_config.bearer_secret_name are accepted too;
+    // object of headers or a bare token (sent as Authorization: Bearer). endpoint_url and auth_config.bearer_secret_name are accepted as aliases;
     // auth_config with token_url uses OAuth client credentials (see "OAuth client credentials" below).
-    // The url must be https unless the server runs with --remote-scorer-allow-insecure-http (Weave:
-    // WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP, default false); an http url fails before any request is sent.
+    // The url must be https unless the server runs with --remote-scorer-allow-insecure-http
+    // (default off); an http url fails before any request is sent.
 {"_class_name":"RuleScorer", … "rule": {"$contains": {"input": {"$getField":"output"}, "substr": {"$literal":"sorry"}}}, "threshold": null}
     // rule: a query-language operation ($literal $getField $and $or $not $eq $gt $gte $lt $lte $in $contains $convert; optionally
     // wrapped in $expr) evaluated on {output, inputs, <each input column>}; the value is the score; with threshold a number scores value >= threshold.
@@ -647,7 +659,7 @@ by dashboards and the "Add chart to dashboard" builder.
  "filter": CallsFilter, "query": {"$expr": ...}, "search": "...",   // as in CallsQuery
  "metrics": [{"name": "p95", "field": "latency_ms", "agg": "p95"},
              {"name": "calls", "agg": "count"},
-             {"name": "score", "field": "feedback.wandb.runnable.judge.output.score", "agg": "avg"}],
+             {"name": "score", "field": "feedback.weft.scorer.judge.output.score", "agg": "avg"}],
  "group_by": "model",            // optional
  "bucket_seconds": 3600,         // optional; ~60 buckets when absent
  "start": "...", "end": "...",   // optional; default to the span of matching calls
@@ -740,11 +752,8 @@ viewer, a sandboxed iframe for HTML, rendered Markdown):
   both accepted everywhere)
 - `{"_type": "Markdown", "markup": "..."}` inline
 - `data:<mime>;base64,...` strings
-- the official weave client's `CustomWeaveType` values: `PIL.Image.Image`
-  (`files["image.<ext>"]`), `wave.Wave_read` / `Audio` (`files["audio.<ext>"]`),
-  video (`files["video.<ext>"]`), `weave.type_wrappers.Content.content.Content`
-  (`files["content"]` plus `files["metadata.json"]` for the mimetype) and rich
-  `Markdown` (`val.markup` or `files["markup.md"]`)
+- custom media types stored through the compatibility adapter (see
+  [COMPATIBILITY.md](COMPATIBILITY.md#limits))
 
 HTML is shown with `sandbox=""` (no scripts, forms or same-origin access).
 
@@ -776,7 +785,7 @@ the project settings below). Static keys count as admin.
   `project_id` in the JSON body (top level, inside `start`/`end`/`obj`/`table`
   and in `batch` items), `project_ids`, and top-level ref values (`refs`,
   `*_ref`, `evaluation`, `model` …). Any project outside the scope, or a request
-  naming none (except `/auth/*`, `/projects`, `/llm/models`, `/graphql`,
+  naming none (except `/auth/*`, `/projects`, `/llm/models`,
   `/secrets/list`), gets 403. `GET /projects` lists only the key's projects.
 - **Read-only.** `GET` requests and `POST` endpoints whose last path segment is
   a read (`query`, `read`, `stream_query`, `stats`, `query_stats`, `read_batch`,
@@ -797,7 +806,7 @@ the project settings below). Static keys count as admin.
 ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","admin","created_by","created_at","last_used_at","revoked_at"}`
 (`last_used_at` is updated at most once a minute).
 
-### Project settings (Weave paths)
+### Project settings
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -816,7 +825,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
   `now - retention_days`, and feedback on calls created before it. Objects,
   tables and files are versioned assets and are kept.
 - **Ingest sampling** is applied to every ingest path (`/call/start|end`,
-  `/call/upsert_batch`, `/v2/.../calls/complete`, OTLP). A trace is kept when
+  `/call/upsert_batch`, OTLP). A trace is kept when
   `SHA-256(trace_id)` (first 8 bytes, as a fraction of 2^64) is below
   `sample_rate`, so a root and all of its children share the decision on any
   server. Ends for dropped calls are dropped too (dropped ids are remembered
@@ -829,7 +838,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
   Google `AIza…`, JWTs, `Bearer …`), `EMAIL_ADDRESS`, `IBAN_CODE` (mod-97
   checked), `CREDIT_CARD` (Luhn checked), `US_SSN`, `PHONE_NUMBER`,
   `IP_ADDRESS`. Matches become `<ENTITY>`; custom RE2 patterns become
-  `<NAME>` (upper-cased). Ref strings (`weft:///`, `weave:///`) and map keys are
+  `<NAME>` (upper-cased). Ref strings (`weft:///`) and map keys are
   never changed. Existing data is not rewritten.
 - **NER entities (Presidio).** Start the server with
   `--pii-analyzer-url http://<presidio-analyzer>:5002` (env
@@ -846,8 +855,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
   read response says whether NER applies now (policy on, analyzer configured,
   enabled, at least one NER entity selected).
   - NER runs at ingest before the write transaction, on every ingest path
-    (`/call/start|end`, `/call/upsert_batch`, `/v2/.../calls/complete`,
-    OTLP). The strings of a request (inputs, attributes, output, exception;
+    (`/call/start|end`, `/call/upsert_batch`, OTLP). The strings of a request (inputs, attributes, output, exception;
     refs, numbers and short or lowercase-only Latin strings are skipped) are
     joined into chunks of up to 50,000 characters, one analyzer request per
     chunk, and each entity becomes `<ENTITY>`. The regex rules then run as
@@ -865,7 +873,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
 - **Project delete** removes the project's rows from every table with a
   `project_id` column, including settings, links and tags.
 
-### Tags and aliases (Weave paths)
+### Tags and aliases
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -879,7 +887,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
 ObjSchema carries `tags` (always included, so `include_tags_and_aliases` is
 honoured). Tags match `[A-Za-z0-9_.:/ -]{1,128}`.
 
-### Compatibility endpoints
+### More trace endpoints
 
 | Endpoint | Notes |
 |---|---|
@@ -929,23 +937,21 @@ Evaluation runs, predictions and scores are calls, so they show up in
 | `POST /predictions` `{model, inputs, output, evaluation_run_id?, genai_span_ref?}` | in a run: an `Evaluation.predict_and_score` child of the run (inputs `self`, `model`, `example` = inputs) with a finished `<model>.predict` child holding the output; outside a run: one finished `<model>.predict` call → `{prediction_id}` |
 | `GET /predictions/{id}`, `GET /predictions?evaluation_run_id` | `{prediction_id, model, inputs, output, evaluation_run_id, wb_user_id}` (list is JSONL) |
 | `POST /predictions/{id}/finish` | ends the `predict_and_score` call with `{output, scores: {<scorer>: value}, model_latency}` from its score children → `{success}` |
-| `POST /scores` `{prediction_id, scorer, value, evaluation_run_id?}` | a finished `<scorer>.score` child of the prediction (inputs `self` = scorer, `output`, the prediction inputs) plus `wandb.runnable.<scorer>` feedback on the prediction → `{score_id}`; `scorer` may be a ref or a plain name |
+| `POST /scores` `{prediction_id, scorer, value, evaluation_run_id?}` | a finished `<scorer>.score` child of the prediction (inputs `self` = scorer, `output`, the prediction inputs) plus `weft.scorer.<scorer>` feedback on the prediction → `{score_id}`; `scorer` may be a ref or a plain name |
 | `GET /scores/{id}`, `GET /scores?evaluation_run_id` | `{score_id, scorer, value, evaluation_run_id, wb_user_id}` |
 | `DELETE /predictions?prediction_ids=`, `DELETE /scores?score_ids=` | soft delete → `{num_deleted}` |
 | `POST /eval_results/query` | `{evaluation_call_ids \| evaluation_run_ids, include_rows?, include_summary?, include_raw_data_rows?, include_predict_and_score_children?, require_intersection?, sort_by?: [{field: "scores.<name>" \| "inputs.<path>" \| "outputs.<path>", direction, evaluation_call_id?}], limit?, offset?}` → `{rows: [{row_digest, raw_data_row, evaluations: [{evaluation_call_id, trials: [{predict_and_score_call_id, predict_call_id, scorer_call_ids, model_output, model_latency_seconds, scores, total_tokens}]}]}], summary: {row_count, evaluations: [{evaluation_call_id, display_name, evaluation_ref, model_ref, started_at, trial_count, predict_total_tokens, scorer_stats: [{scorer_key, path, value_type: binary\|continuous\|text, trial_count, pass_true_count, pass_known_count, pass_rate, pass_signal_coverage, numeric_count, numeric_mean}]}]}, total_rows, warnings}`. `include_*` default to true. `filters` are not supported and produce a warning; costs are not computed. |
 
 ## Agents
 
-Weave's Agents API, at Weave's paths with its request and response fields,
-so the official client's `client.agents.*` works. Agents, versions,
+The Agents API (`/agents/*`). Agents, versions,
 conversations, turns and spans are derived from calls: every call (SDK call
 or OTLP span) gets a row in a span index written in the same transaction.
 Fields marked *Weft* are extensions.
 
 **Span kind** (`operation_name`), first match wins: `gen_ai.operation.name`;
 `weft.span_kind` (flat OTLP attribute, or `attributes.weft.span_kind` set by
-the Weft SDKs), `weave.span_kind`, `weave.kind` (the official client's op
-kind), `openinference.span.kind`, `traceloop.span.kind`, `mlflow.spanType`;
+the Weft SDKs), `openinference.span.kind`, `traceloop.span.kind`, `mlflow.spanType`;
 Vercel `ai.operationId` / `operation.name` (`*.doGenerate|doStream` → `chat`,
 `ai.toolCall` → `execute_tool`, `ai.embed*` → `embeddings`, `ai.generateText`
 etc. → `chain`); ADK `gcp.vertex.agent.llm_request` → `chat`; `llm.request.type`;
@@ -961,7 +967,7 @@ Kind vocabularies map onto `invoke_agent` (agent, AGENT, subagent, turn),
 | agent name | `gen_ai.agent.name`, `weft.agent.name`, `agent.name` (OpenInference), `agent_name` (Pydantic AI), `traceloop.entity.name` on Traceloop agent spans; for `invoke_agent` spans without one, the span name after `invoke_agent `, else the display name or op name |
 | agent id / version / description | `gen_ai.agent.id\|version\|description` (`weft.agent.*` also accepted) |
 | conversation | the call's `thread_id` (OTLP: `gen_ai.conversation.id`, `session.id`, …), `gen_ai.conversation.name` |
-| turn | `turn_id == id`, or `wandb.is_turn` / `weft.is_turn` |
+| turn | `turn_id == id`, or `weft.is_turn` |
 | tool | `gen_ai.tool.name`, `tool.name`, `ai.toolCall.name`; else the `execute_tool` span name suffix, display name or op name. `gen_ai.tool.call.id`, `ai.toolCall.id` |
 | model, provider | `gen_ai.request.model`, `ai.model.id`, `llm.model_name`, `model_name`, SDK `inputs.model`, else the single model in usage; `gen_ai.provider.name`, `gen_ai.system`, `ai.model.provider` (`openai.chat` → `openai`), `llm.provider`, SDK op prefix |
 
@@ -972,7 +978,7 @@ span that names its agent, or the top-most span of an agent's run when the
 agent never emits `invoke_agent`. Usage and cost are each span's own (not
 rolled up), so sums never double count. Deleted calls drop out. Custom
 attributes are span attributes outside the reserved conventions (`gen_ai.*`,
-`weave.*`, `wandb.*`, `weft.*`, `llm.*`, `input.*`, `output.*`, `ai.*`,
+`weft.*`, `llm.*`, `input.*`, `output.*`, `ai.*`,
 `mlflow.*`, `traceloop.*`, `openinference.*`, `gcp.vertex.agent.*`, …) plus
 the call's own attributes; nested values flatten to dotted keys and the
 OpenInference `metadata` JSON flattens under `metadata.`.
@@ -992,14 +998,14 @@ OpenInference `metadata` JSON flattens under `metadata.`.
 | *Weft*: `/agents/signals/presets` (GET or POST) | — | `{"presets": [{"id","name","kind": "tag"\|"rating","description"}]}` |
 | *Weft*: `/agents/signals/run` | `{project_id, model, signals: [{preset} \| {id, name?, kind, description}] (1–12), agent_name?, conversation_id?, trace_ids?, started_after?, started_before?, limit? (20 most recent turns, max 200), rescore?}` | `{"turns","scored","skipped","failed","results": [{"span_id","trace_id","signal","kind","score"?,"matched"?,"confidence"?,"reason"?,"feedback_id"?,"error"?}]}` |
 | *Weft*: `/agents/signals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, signal?, kind?, tag?, min_score?, max_score?, matched_only? (true), started_after?, started_before?, limit? (100), offset?}` | `{"results": [SignalResult], "summary": [{"signal","signal_name","kind","count","matched","avg","tag_counts"}], "total_count"}` |
-| *Weft*: `/agents/feedback/batch/create` (same as `/feedback/batch/create`) | Weave's `FeedbackBatchCreateParams` (`{batch: [{project_id, weave_ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}`) | `{"res": [{"id","created_at","wb_user_id","payload"}]}` |
+| *Weft*: `/agents/feedback/batch/create` (same as `/feedback/batch/create`) | `{batch: [{project_id, ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","wb_user_id","payload"}]}` |
 
 **Signals.** A signal scores one *turn* (a conversation turn, or an agent
 invocation at the top of its trace outside conversations) with an LLM judge
 (`model`; `mock/json` works offline). Tag signals ask for `{matched,
 confidence, reason}`, rating signals for `{score, confidence, reason}`;
 1–5, 1–10 and 0–100 scales are rescaled to 0–1. Each result is feedback on
-the turn's root call with `feedback_type` `wandb.agent_monitor` and payload
+the turn's root call with `feedback_type` `weft.signal` and payload
 `{signal, signal_name, signal_kind, model, scorer_call_id, output, reason,
 scorer_ratings | scorer_tags, scorer_*_confidences, scorer_*_reasons,
 span_trace_id, span_conversation_id, span_agent_name, span_agent_version,
@@ -1012,8 +1018,8 @@ enabled, sample_rate? (0–1, default 1)}]}`, edited in the Signals tab) scores
 every agent turn as its root call ends, through the same worker as monitors:
 enabled signals only, each at its sample rate, never internal calls, once
 per turn and signal version (creator `weft-signals-auto`). It needs `model`. The judge's own calls are internal (`attributes.weft.internal`)
-and are not agent spans. `/agents/feedback/batch/create` normalises like
-Weave: tags are lowercased, trimmed and de-duplicated (at most 10; a tag over
+and are not agent spans. `/agents/feedback/batch/create` normalises:
+tags are lowercased, trimmed and de-duplicated (at most 10; a tag over
 36 characters rejects the item), reasons lose control and markup characters
 and are cut to 256 characters, confidences are clamped to 0–1; missing
 `span_*` fields are filled from the span index. Chat views
@@ -1023,7 +1029,7 @@ and are cut to 256 characters, confidences are clamped to 0–1; missing
 kind, signal, signal_id, signal_name, score, tags, confidence, reason,
 creator, created_at, span_id, trace_id, conversation_id, conversation_name,
 agent_name, agent_version, turn_started_at, turn_status, last_message,
-scorer_call_id}`; ratings and tags from annotations, `wandb.runnable.*`
+scorer_call_id}`; ratings and tags from annotations, `weft.scorer.*`
 scorers and reactions on turns are listed too. Results are newest turn first.
 
 **`signal_filters`** `{ratings?: [{scorer_key, op: gte|gt|lte|lt|eq, value}],
@@ -1060,8 +1066,7 @@ input_cost_usd, output_cost_usd, total_cost_usd, cache_read_cost_usd,
 cache_creation_cost_usd, wb_user_id, wb_run_id, parent_call_id,
 parent_call_trace_id` (the op a span was emitted from when it started its own
 trace inside one: the `weft.parent_call.id` / `weft.parent_call.trace_id`
-attributes the Weft SDKs stamp, or the `weave.parent_call.*` ones Weave's
-`OpLinkSpanProcessor` stamps, from SDK or OTLP spans; so
+attributes the Weft SDKs stamp, from SDK or OTLP spans; so
 "which agent spans did this call produce" is
 `{"$eq": [{"$getField": "parent_call_id"}, {"$literal": "<call id>"}]}`), the
 booleans `is_turn, is_error, is_invocation, is_agent, is_llm, is_tool`, and
@@ -1072,7 +1077,7 @@ The query language is the calls one (`$and $or $not $eq $gt $gte $lt $lte $in
 $contains $convert`); timestamps compare chronologically. Unknown fields in
 `group_by` and `sort_by` are a 400.
 
-**Span** (`spans[]`) follows Weave's `AgentSpanSchema`. `input_messages`,
+**Span** (`spans[]`). `input_messages`,
 `output_messages` (`{role, content, finish_reason}`; content is text, or a
 JSON parts array for structured messages), `system_instructions`,
 `finish_reasons`, `reasoning_content`, `tool_call_arguments`,
@@ -1109,8 +1114,8 @@ value, or a per-group measure, into equal-width bins with `<alias>_min`,
 `<alias>_max` and `bucket_index`. `columns` describes every column with its
 `role` (`time|bucket|group|metric`).
 
-**TraceChat** (`/agents/traces/chat` and each conversation turn) follows
-Weave's `AgentTraceChatRes`: `messages` is the trajectory in tree order
+**TraceChat** (`/agents/traces/chat` and each conversation turn):
+`messages` is the trajectory in tree order
 (children by start time):
 
 - `user_message`: the last user message of the turn root's inputs, else of its
@@ -1138,9 +1143,9 @@ tool_call_count`.
 conversation's root spans (each usually the root of its own trace), in start
 order. `offset` skips the most recent turns and each page is chronological.
 Feedback markers in `/agents/conversations/spans` come from feedback on turn
-roots: scorer feedback (`wandb.runnable.*`, numeric or boolean output, or the
-numeric fields of an output object) becomes `wandb.agent_monitor` ratings;
-numeric annotations become `wandb.agent_user_feedback` ratings, and
+roots: scorer feedback (`weft.scorer.*`, numeric or boolean output, or the
+numeric fields of an output object) becomes `weft.signal` ratings;
+numeric annotations become `weft.user_feedback` ratings, and
 reactions and string annotations become its tags.
 
 Not implemented: `signal_filters` and `insight_filters` are accepted and
@@ -1148,15 +1153,15 @@ ignored; `agent_handoff` and `context_compacted` messages are never produced;
 `content_refs`, `artifact_refs` and `object_refs` are always empty. Queries
 aggregate up to 200,000 spans in memory.
 
-## Weave API parity additions
+## More endpoints
 
-These endpoints complete Weave's API surface (every path of
-`trace.wandb.ai/openapi.json` is registered). Where Weave depends on a W&B or
-CoreWeave service, Weft implements the endpoint in its own terms, as noted.
+Custom runtimes, server-side evaluation of any model, files and media, image
+generation, alternative response shapes, the registry, the model catalog and
+geolocation.
 
 ### Custom runtimes
 
-`PUT /v2/{entity}/{project}/runtimes/{runtime_name}` (Weave's
+`PUT /v2/{entity}/{project}/runtimes/{runtime_name}` (the SDKs'
 `client.register_custom_runtime`) creates or replaces a runtime:
 
 ```jsonc
@@ -1172,15 +1177,14 @@ CoreWeave service, Weft implements the endpoint in its own terms, as noted.
  "kind", "ref"}                                  // kind and ref are Weft additions
 ```
 
-The name must match Weave's pattern (no whitespace; `:` only between
+The name must match the runtime name pattern (no whitespace; `:` only between
 segments) and must not be a built-in provider prefix (`openai`, `anthropic`,
 `mock`, ...). Weft stores the runtime as a `Provider` object (object id = the
 name with characters outside `[A-Za-z0-9_.-]` replaced by `-`) and one
 `ProviderModel` per runtime ID; IDs omitted on a later PUT are deleted. So
 `<runtime>/<id>` works everywhere a model id does: the playground,
 `/completions/create`, `/image/create`, LLM judges, `LLMStructuredCompletionModel`
-and `GET /llm/models?project_id=`. Updates apply immediately (Weave allows up to
-60 s). *Weft*: `GET /v2/{entity}/{project}/runtimes` → `{"runtimes": [...]}`.
+and `GET /llm/models?project_id=`. Updates apply immediately. *Weft*: `GET /v2/{entity}/{project}/runtimes` → `{"runtimes": [...]}`.
 
 A `"kind": "predict"` runtime is an HTTP endpoint that serves a model's
 predict (below); it has no `ProviderModel` objects.
@@ -1198,7 +1202,7 @@ columns) under each `Evaluation.predict_and_score`:
 | any class with `runtime` = a `predict` runtime (name or ref) | `POST` to the runtime's `base_url` with its headers and `api_key_secret`; `runtime_id` (or the runtime's first ID) is sent too |
 | any class with `runtime` = an OpenAI-compatible runtime | chat completion of `<runtime>/<runtime_id>` (default: the first ID). Messages come from `default_params.messages_template` if set, else `system_prompt` and `prompt_template` (`{column}` placeholders), else the row's `input`/`question`/`prompt`/`query`/`text` column; `temperature`, `max_tokens`, `top_p`, `response_format` attributes are passed on |
 
-Other models are rejected with 400, as before. A Python `weave.Model`
+Other models are rejected with 400, as before. A Python `weft.Model`
 subclass works as long as its published attributes include `predict_url` or
 `runtime`; its own `predict` op is not executed by the server.
 
@@ -1219,8 +1223,7 @@ Predict protocol:
 `POST /files/resolve_url` `{project_id, uris, expires_in?}` →
 `{"download_urls": [...], "expires_at": "<RFC 3339>" | null}`, one URL per uri:
 
-- a file digest from `/file/create` (also `weft-file://<digest>` or
-  `weave-file://<digest>`): a presigned URL when the file is in the S3 backend,
+- a file digest from `/file/create` (also `weft-file://<digest>`): a presigned URL when the file is in the S3 backend,
   otherwise this server's `GET /file/content?project_id=..&digest=..` URL
   (built from the request host, honouring `X-Forwarded-Proto/Host`);
 - `s3://<backend bucket>/<key>` where the key is under this project's prefix:
@@ -1232,12 +1235,12 @@ Predict protocol:
   (S3) or V4 signed (GCS) URL.
 
 `expires_at` is the earliest expiry of the presigned URLs (default lifetime 1 h;
-*Weft*: `expires_in` seconds, 1 s to 7 days). As in Weave, one unresolvable
+*Weft*: `expires_in` seconds, 1 s to 7 days). One unresolvable
 uri (unknown digest, unregistered bucket, other scheme) fails the request with
 a 400 naming it.
 
 *Weft*: `per_uri_errors: true` reports failures per URI instead, so one
-request can resolve a mixed batch: the response keeps Weave's shape and adds
+request can resolve a mixed batch: the response keeps its shape and adds
 `errors`, aligned with `uris`, where each entry is `null` or
 `{"code", "message"}`; a failed URI's `download_urls` entry is `""`. Codes:
 `bucket_not_registered` (no registration of the project or its team covers
@@ -1268,7 +1271,7 @@ Requests are signed with AWS Signature Version 4 (stdlib only,
 profiles or SSO).
 
 `POST /image/create` `{project_id, inputs: {model, prompt, n?}, track_llm_call?}`
-→ `{"response": {...} | {"error": "..."}, "weave_call_id": "..." | null}`.
+→ `{"response": {...} | {"error": "..."}, "call_id": "..." | null}`.
 The model is routed like chat models; OpenAI-compatible providers, `Provider`
 objects and runtimes call `<base_url>/images/generations` (Weft also passes
 `size`, `quality`, `style`, `response_format`, `background`, `output_format`
@@ -1277,12 +1280,12 @@ from `inputs`). `mock/<anything>` returns deterministic 64×64 PNGs
 are `weft.images.generate` calls with the response as output and token usage
 (plus `images`) in the summary.
 
-### Weave response shapes
+### Alternative response shapes
 
 - **`/calls/stats`**: a request with any of `granularity`, `usage_metrics`,
-  `call_metrics` or `timezone` gets Weave's shape; otherwise Weft's own shape
+  `call_metrics` or `timezone` gets metric buckets; otherwise the time series
   (`bucket_seconds` → `buckets`/`totals`, used by the UI) is unchanged.
-  Weave shape: `{project_id, start, end?, granularity?, usage_metrics?: [{metric, aggregations?, percentiles?}], call_metrics?: [...], filter?, timezone?}`
+  Metric buckets: `{project_id, start, end?, granularity?, usage_metrics?: [{metric, aggregations?, percentiles?}], call_metrics?: [...], filter?, timezone?}`
   → `{start, end, granularity, timezone, usage_buckets, call_buckets}`.
   Usage metrics (`input_tokens`, `output_tokens`, `total_tokens`,
   `cache_read_input_tokens`, `cache_creation_input_tokens`, `input_cost`,
@@ -1292,8 +1295,8 @@ are `weft.images.generate` calls with the response as output and token usage
   `count_false`; default `sum`) and `p<pct>_<metric>`, plus `timestamp`,
   `count` and `model`. `sum`/`count`/`avg` are 0 in empty buckets,
   `min`/`max`/percentiles null; every bucket × model pair is listed. Granularity
-  defaults like Weave (5 min up to 2 h, 1 h up to 12 h, 6 h up to 3 d, 12 h up
-  to 14 d, else 1 d) and is widened to keep at most 10,000 buckets. Buckets
+  defaults to 5 min up to 2 h, 1 h up to 12 h, 6 h up to 3 d, 12 h up
+  to 14 d, else 1 d, and is widened to keep at most 10,000 buckets. Buckets
   align to the interval in `timezone`. Token usage is each call's own usage
   (the whole trace's with `filter.trace_roots_only`); costs use the project's
   price book, and unpriced models have null costs. At most 200,000 calls are
@@ -1305,7 +1308,7 @@ are `weft.images.generate` calls with the response as output and token usage
 - **`GET /version`** → `{"version", "server": "weft", "trace_server_version"}`,
   no API key needed.
 
-### W&B and CoreWeave services, Weft implementations
+### Registry, model catalog and geolocation
 
 **Registry.** `POST /link_to_registry` `{ref, target: {portfolio_name, entity_name, project_name}, aliases?}`
 → `{"version_index"}` links an object version (any project) into the
@@ -1322,8 +1325,8 @@ nothing matches.
 
 **Inference catalog.** Weft's own model catalog: the built-in models of
 `/llm/models` with Weft's list prices, plus the project's `ProviderModel`
-objects (custom providers and runtimes) when `?project_id=` is given. Unlike
-Weave these need an API key when auth is on.
+objects (custom providers and runtimes) when `?project_id=` is given. These
+need an API key when auth is on.
 
 | Endpoint | Shape |
 |---|---|
@@ -1370,7 +1373,7 @@ Weft has users, teams and three roles:
   query, body, wrappers, batch items and refs, the `/v2/{entity}/{project}/`
   path, the OTLP `project_id` header). A non-admin request that names no
   project gets 403, except `/auth/*`, `/projects`, `/llm/models`,
-  `/graphql`, `/secrets/list`. `GET /projects` lists only projects where the
+  `/secrets/list`. `GET /projects` lists only projects where the
   caller has a role. Refusals are 403 with a `reason` such as
   `"the member role on acme/app is needed; you have viewer"`.
 
@@ -1495,22 +1498,18 @@ Refused by default:
 | Unspecified, multicast, reserved | `0.0.0.0/8`, `::`, `224.0.0.0/4`, `ff00::/8`, `240.0.0.0/4` (incl. broadcast), `192.0.0.0/24`, `198.18.0.0/15`, `100::/64` |
 | Embedded IPv4 forms of the above | IPv4-mapped `::ffff:127.0.0.1`, IPv4-compatible `::127.0.0.1`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` |
 
-This matches what Weave documents for remote scorers ("loopback, private,
-internal and cloud metadata addresses are rejected"); Weft applies it to
-every user-supplied destination. As in Weave, a `RemoteScorer` (and a
+Weft applies this to every user-supplied destination. A `RemoteScorer` (and a
 `predict_url` model) does not follow redirects: a 3xx response fails the
 call. Webhooks and provider calls follow redirects, each hop checked.
 `RemoteScorer` URLs must also use `https://` unless the operator starts the
 server with `--remote-scorer-allow-insecure-http`
-(`WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true`; Weave's
-`WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP` is read too).
+(`WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true`).
 
 A refused request fails with `destination not allowed` (for example a scorer
 result `{"error": "remote scorer: destination not allowed"}`); the resolved
 address and the reason are only in the server log, at warn level. Operators
 open destinations with `--egress-allow` / `WEFT_EGRESS_ALLOW` (hosts,
-`host:port`, `*.domain`, IPs and CIDRs, comma-separated; Weave's
-`..._ALLOWED_HOSTS` and `..._ALLOWED_PRIVATE_CIDRS`) or
+`host:port`, `*.domain`, IPs and CIDRs, comma-separated) or
 `--egress-allow-private` / `WEFT_EGRESS_ALLOW_PRIVATE=true` (loopback,
 private, link-local and CGNAT; cloud metadata, unspecified and multicast stay
 refused unless listed in `--egress-allow`). Provider base URLs set in the
@@ -1564,8 +1563,8 @@ Agents view's **Evals** tab and the **View spans** / **View conversations**
 actions on evaluations. A span belongs to evaluation run R and prediction P
 (an `Evaluation.predict_and_score` call under R) when:
 
-- it carries `weave.eval.run_id = R` and `weave.eval.predict_and_score_call_id = P`
-  (flat, nested under `attributes.weave.eval`, or as OTel span attributes);
+- it carries `weft.eval.run_id = R` and `weft.eval.predict_and_score_call_id = P`
+  (flat, nested under `attributes.weft.eval`, or as OTel span attributes);
   spans the SDKs record inside `EvaluationLogger.log_prediction()` get them.
   A span with only `predict_and_score_call_id` is linked to P's parent run;
 - P links it through `attributes.weft.linked_calls` or
@@ -1614,9 +1613,9 @@ have an **Evals** tab, and a conversation page shows the evaluations and
 predictions it belongs to, with scores, and marks the turns of each
 prediction.
 
-## Bulk export (Weave paths)
+## Bulk export
 
-Weave's "Bulk Export" API exports a whole project as files.
+The bulk export API exports a whole project as files.
 
 `POST /v1/entities/{entity}/projects/{project}:export` `{"targets": ["calls", "objects", "feedback"]}`
 (1 to 3 distinct targets; no other fields) → **202**
@@ -1637,7 +1636,7 @@ Weave's "Bulk Export" API exports a whole project as files.
 
 - The job runs in the background. Each target is one gzip-compressed JSON
   Lines file with one row per line: calls as `/calls/stream_query` returns
-  them (with `summary.weave.costs` and `storage_size_bytes`), object versions
+  them (with `summary.weft.costs` and `storage_size_bytes`), object versions
   as `/objs/query` returns them (with `val`), feedback as `/feedback/query`
   returns it. Rows created after the job started are left out, so
   `expected_rows` (counted at the start) and `written_rows` differ only if rows
@@ -1658,7 +1657,7 @@ Weave's "Bulk Export" API exports a whole project as files.
 - **Access.** Starting a job and reading its status or artifacts need the
   admin role on the project (team admin, project admin or server admin), or
   member on a personal project whose entity is the caller's user id; 403 is
-  `{"detail": "<reason>"}`. Errors use Weave's shapes: 400/404/409/503
+  `{"detail": "<reason>"}`. Errors: 400/404/409/503
   `{"detail": {"code", "message"}}` and 422 `{"detail": [{"loc", "msg", "type"}]}`
   (missing or empty `targets`, unknown targets, extra fields, a job id that is
   not a UUID).
@@ -1667,7 +1666,7 @@ Weave's "Bulk Export" API exports a whole project as files.
 
 Media that already lives in a customer bucket can be logged by URI
 (`s3://bucket/key`, `gs://bucket/key`) and rendered without importing the
-bytes, as in Weave's "Reference media in your own bucket". A bucket must be
+bytes. A bucket must be
 registered first, for a team (entity: every project of the team may use it)
 or for one project, in **Settings → Buckets** or with the endpoints below.
 `/files/resolve_url` then presigns any URI in a registered bucket that the
@@ -1685,8 +1684,8 @@ How the UI renders bucket URIs:
   `fileData.fileUri`, an `image_url` with an `s3://`/`gs://` URL, or a
   message whose whole text is the URI. `Content.from_uri` values render as
   before. Strings that only mention a URI (`"see s3://b/x.png"`), prefixes
-  ending in `/`, and `https://` strings stay text; Weave renders bucket URIs
-  only.
+  ending in `/`, and `https://` strings stay text: only bucket URIs render
+  as media.
 - **Kind** comes from the file extension (or the part's `mime_type` /
   `modality`): images, video, audio and PDFs render inline; other files show
   the URI with a **Get download link** button that presigns on demand.
@@ -1736,7 +1735,7 @@ Credentials are never returned.
   `Check` is `{"ok": bool, "error": string|null, "origin"?}` (`origin` on
   `cors`). `read` is null when the test could not start (missing secret,
   bad `test_object_key`), `cors` when the bucket could not be reached; `error`
-  joins the failures. Configure the bucket as Weave's page shows, with this
+  joins the failures. Configure the bucket's CORS rules with this
   Weft's origin in `AllowedOrigins` / `origin` (`GET`, `HEAD`). Images, audio
   and video load without CORS; PDFs are fetched by the page and need it.
   The Buckets tab shows registrations to anyone who can view the project; its
@@ -1764,13 +1763,13 @@ Credentials are never returned.
 
 ## Optional call fields
 
-Weave's `CallSchema` has optional fields that Weft now accepts, stores and
+Calls have optional fields that Weft accepts, stores and
 returns (`/call/read`, `/calls/query`, `/calls/stream_query`):
 
 | Field | Written by | Returned |
 |---|---|---|
-| `wb_run_step` | `/call/start` (`start.wb_run_step`), `/call/upsert_batch`, `/v2/{e}/{p}/calls/complete` | always (null when not sent) |
-| `wb_run_step_end` | `/call/end` (`end.wb_run_step_end`), `/call/upsert_batch`, `/v2/{e}/{p}/calls/complete` | always (null when not sent) |
+| `wb_run_step` | `/call/start` (`start.wb_run_step`), `/call/upsert_batch` | always (null when not sent) |
+| `wb_run_step_end` | `/call/end` (`end.wb_run_step_end`), `/call/upsert_batch` | always (null when not sent) |
 | `expire_at` | derived: `started_at` + the project's `retention_days` (`/project/ttl_settings/update`) | always; null when the project keeps calls forever. It moves with the TTL, matching the purge, which deletes calls by `started_at` |
 | `total_storage_size_bytes` | derived: sum of `storage_size_bytes` over the trace | on trace roots, with `include_total_storage_size: true` (`/call/read`, `/calls/query`, `/calls/stream_query`) |
 | `wb_username` | derived from `wb_user_id` | with `include_usernames: true`: the Weft user id (handle) when `wb_user_id` names a user, the `wb_user_id` itself when it is a valid handle without a user row (static `user=key` names), otherwise omitted |
@@ -1820,17 +1819,12 @@ emits GenAI spans (`invoke_agent <agent>`, `chat <model>`,
 fixture found: message roles are Kotlin enum names (`User`, `Assistant`,
 `System`) and are lower-cased; the empty `tool` entry Koog writes before every
 user message is dropped; `koog.node.input/output` and
-`koog.subgraph.input/output` become inputs / output; and with Koog's Weave
-exporter, `gen_ai.completion.N.tool_calls.M.function` (`{"name","arguments"}`
+`koog.subgraph.input/output` become inputs / output; and with Koog's
+indexed-attribute exporter, `gen_ai.completion.N.tool_calls.M.function` (`{"name","arguments"}`
 JSON) becomes an OpenAI tool call. `gen_ai.conversation.id` (the run id) is
 the thread.
 
-**verl** has no OTel layout of its own. With `trace.backend=weave` it traces
-rollouts through the official `weave` client (`create_call` with the method's
-qualified name and attributes `step`, `sample_index`, `rollout_n`,
-`validate`, `experiment_name`; outputs with token ids and, with
-`token2text`, `prompt_text` / `response_text`), which Weft serves unchanged
-(test `TestVerlWeaveCalls`, filtering by `attributes.step`). With
+**verl** has no OTel layout of its own. With
 `trace.backend=mlflow` and MLflow's OTLP exporter pointed at Weft, its spans
 use the MLflow mapping (`mlflow.spanInputs` / `mlflow.spanOutputs`; test
 `TestVerlMLflowFixture`).
@@ -2115,13 +2109,13 @@ Scope scores are feedback rows whose payload carries `scope` (`session`,
 `handoff_id`, `turn_id`, `span_id`), `scorer`, `value` (a number; booleans
 are 1 or 0), `reason`, and optionally `output` and `model`. The server's
 scorers write them with `feedback_type` `weft.score.<scorer>`, attached
-(`weave_ref`) to the target's first span; SDKs can write their own with
+(`ref`) to the target's first span; SDKs can write their own with
 `/feedback/create` and any feedback type, as long as the payload has a valid
 `scope`.
 
 `GET /api/v1/scores` lists them, newest first. Filters: `scope`,
 `session_id`, `agent`, `handoff_id`, `scorer`. With `session_id`, call-level
-scorer results (`wandb.runnable.*` feedback on the session's spans) are
+scorer results (`weft.scorer.*` feedback on the session's spans) are
 included as `span` scores.
 
 ```json
@@ -2129,7 +2123,7 @@ included as `span` scores.
   {"id": "01a1a0b1-ae46-78b2-b0ee-9baf12ebad2e", "scope": "handoff", "session_id": "trip-42", "handoff_id": "459997d98657e7e6c51106885dd22d25",
    "scorer": "HandoffQualityJudge", "value": 0.75, "reason": "…", "model": "mock/json",
    "output": {"appropriate": true, "result_used": true, "score": 0.75, "reasoning": "…"},
-   "weave_ref": "weft:///demo/agents/call/00000000000000a4", "feedback_type": "weft.score.HandoffQualityJudge",
+   "ref": "weft:///demo/agents/call/00000000000000a4", "feedback_type": "weft.score.HandoffQualityJudge",
    "creator": null, "created_at": "2026-11-03T09:16:07.478592Z"}
 ]}
 ```
@@ -2195,6 +2189,14 @@ through the normal OTLP ingest and the verdict through the detection store.
 Each call writes a new session and returns
 `{project_id, session_id, trace_id, spans, detections}`.
 
+### Guides
+
+`GET /api/v1/help` → `{"items": [{"name": "README.md", "title"}, ...]}` lists
+the guides in `docs/weft` that are built into the server; `GET
+/api/v1/help/{name}` → `{"name", "title", "markdown"}` returns one (404 for
+other names). The UI shows them at `/help/<name>`, so they match the running
+version and work offline.
+
 ## AgentShield detections
 
 AgentShield verdicts stored as detections (DESIGN.md §2, §5). Every request
@@ -2230,8 +2232,10 @@ Filters: `session_id`, `agent`, `action` (comma-separated or repeated),
 `overridden` and `linked` (`true`/`false`), `from`, `to` (on `created_at`).
 `limit` (default 100, max 1000), `offset`, `sort_by` = `created_at` (newest
 first, default), `-created_at`, `severity` or `action`. Returns
-`{items: [detection], total_count}`. The session timeline merges these by
-`span_id` (or `tool_call_id`).
+`{items: [detection], total_count}`. Each item also has `session_title`
+(the session's name, else its first user request; absent when it has
+neither), so lists can label sessions by more than their id. The session
+timeline merges these by `span_id` (or `tool_call_id`).
 
 ### `GET /api/v1/detections/stats`
 
@@ -2334,12 +2338,12 @@ Query: `from`, `to`, `bucket` (`hour` / `day`), `fatigue_threshold` (default
 (default 50). Over engine detections other than `allow`:
 
 - `approval_fatigue`: `{threshold, series: [{bucket, require_approval,
-  overridden}], by_session: [{session_id, agents, require_approval, approved,
+  overridden}], by_session: [{session_id, session_title?, agents, require_approval, approved,
   first_at, last_at, per_hour, fatigued}], by_agent: [{agent,
   require_approval, approved, sessions, approval_rate}]}`; `approved` counts
   overridden approvals.
 - `override_escalation`: `{threshold, series: [{bucket, overrides,
-  overridden_blocks}], by_session: [{session_id, agents, overrides,
+  overridden_blocks}], by_session: [{session_id, session_title?, agents, overrides,
   overridden_blocks, overridden_approvals, rule_ids, first_at, last_at,
   escalating}]}`; escalating at the threshold or two overridden blocks.
 - `cross_agent`: per team (`weft.team.id` on a span of the session, else

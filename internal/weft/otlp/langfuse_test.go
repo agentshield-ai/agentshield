@@ -116,7 +116,7 @@ func TestOpenLitFixture(t *testing.T) {
 }
 
 // Koog (ai.koog.agents.features.opentelemetry): GenAI messages with Kotlin
-// role names and empty tool entries, node spans, and the Weave adapter's
+// role names and empty tool entries, node spans, and the indexed-attribute adapter's
 // indexed prompt/completion attributes.
 func TestKoogFixture(t *testing.T) {
 	chat := oneCall(t, "chat gpt-4o", map[string]any{
@@ -161,8 +161,8 @@ func TestKoogFixture(t *testing.T) {
 		t.Fatalf("tool = %v %v", tool.Start.Inputs, tool.End.Output)
 	}
 
-	// Weave adapter (WeaveSpanAdapter.kt): indexed attributes, tool calls as function JSON.
-	weave := oneCall(t, "chat gpt-4o", map[string]any{
+	// Indexed-attribute adapter: gen_ai.prompt.N / gen_ai.completion.N, tool calls as function JSON.
+	indexed := oneCall(t, "chat gpt-4o", map[string]any{
 		"gen_ai.operation.name": "chat", "gen_ai.request.model": "gpt-4o",
 		"gen_ai.prompt.0.role": "system", "gen_ai.prompt.0.content": "You answer weather questions.",
 		"gen_ai.prompt.1.role": "user", "gen_ai.prompt.1.content": "Weather in Oslo?",
@@ -171,24 +171,25 @@ func TestKoogFixture(t *testing.T) {
 		"gen_ai.completion.0.tool_calls.0.id":       "call_1", "gen_ai.completion.0.tool_calls.0.type": "function",
 		"gen_ai.usage.prompt_tokens": 50, "gen_ai.usage.completion_tokens": 9,
 	})
-	if len(msgsOf(t, weave.Start.Inputs["messages"])) != 2 {
-		t.Fatalf("weave inputs = %v", weave.Start.Inputs)
+	if len(msgsOf(t, indexed.Start.Inputs["messages"])) != 2 {
+		t.Fatalf("indexed inputs = %v", indexed.Start.Inputs)
 	}
-	wtc := firstChoice(t, weave.End.Output)["tool_calls"].([]any)[0].(map[string]any)
+	wtc := firstChoice(t, indexed.End.Output)["tool_calls"].([]any)[0].(map[string]any)
 	if wtc["id"] != "call_1" || wtc["function"].(map[string]any)["name"] != "weather" ||
 		wtc["function"].(map[string]any)["arguments"] != `{"city":"Oslo"}` {
-		t.Fatalf("weave tool call = %v", wtc)
+		t.Fatalf("indexed tool call = %v", wtc)
 	}
-	if u := usageOf(weave)["gpt-4o"].(map[string]any); num(u["total_tokens"]) != 59 {
-		t.Fatalf("weave usage = %v", usageOf(weave))
+	if u := usageOf(indexed)["gpt-4o"].(map[string]any); num(u["total_tokens"]) != 59 {
+		t.Fatalf("indexed usage = %v", usageOf(indexed))
 	}
 }
 
 // verl (verl/utils/rollout_trace.py) with trace.backend=mlflow: rollout ops
 // become MLflow spans named by the method's qualified name, with
 // span.set_inputs / set_outputs and prompt/response token ids plus decoded
-// text (token2text). With trace.backend=weave verl uses the weave client,
-// covered by the server's official-client tests (TestVerlWeaveCalls).
+// text (token2text). verl's other tracing backend writes through another
+// product's client; that path is covered by the compatibility adapter's
+// tests (package compat).
 func TestVerlMLflowFixture(t *testing.T) {
 	c := oneCall(t, "ToolAgentLoop.run", map[string]any{
 		"mlflow.spanType":    `"UNKNOWN"`,

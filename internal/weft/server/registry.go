@@ -13,8 +13,8 @@ import (
 )
 
 // POST /link_to_registry links an object version into a registry collection
-// (W&B Registry "portfolio") of a target project; POST /registry/query (a
-// Weft addition) reads collections, versions and aliases back.
+// (a "portfolio") of a target project; POST /registry/query reads
+// collections, versions and aliases back.
 
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {

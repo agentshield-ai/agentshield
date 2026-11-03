@@ -23,7 +23,7 @@
  * - `openai.realtime.tool.<name>` (tool): a function call requested by the
  *   model, ended when the client sends its `function_call_output`.
  *
- * Audio is recorded as WAV media, as in Weave: the user's input audio
+ * Audio is recorded as WAV media: the user's input audio
  * (`input_audio_buffer.append`, cut per item at the server-VAD speech markers
  * or at each commit) on the `input_audio` content parts of a response's
  * inputs, and the model's audio (`response.output_audio.delta`) on the
@@ -33,8 +33,8 @@
  * accepts files up to 64 MiB) and longer clips are cut and marked
  * `audio_truncated`; `0` records sizes only.
  *
- * The OpenAI Agents SDK's `RealtimeSession` (`@openai/agents-realtime`, the
- * route Weave documents for TypeScript) is traced with
+ * The OpenAI Agents SDK's `RealtimeSession` (`@openai/agents-realtime`) is
+ * traced with
  * `weft.patchRealtimeSession()` (or `instrumentRealtimeSession(RealtimeSession)`
  * / `wrapRealtimeSession(session)`). For any other websocket client feed the
  * events to a `RealtimeTracer` yourself (`onClientEvent`, `onServerEvent`,
@@ -768,7 +768,7 @@ async function loadRealtimeModules(): Promise<any[]> {
 }
 
 /**
- * Weave's `patchRealtimeSession()`: trace every `RealtimeSession` from
+ * `patchRealtimeSession()`: trace every `RealtimeSession` from
  * `@openai/agents-realtime`. Pass the module (`await import('@openai/agents-realtime')`)
  * or let Weft find it: from the SDK's own location, and from the application's
  * (the working directory and the entry script's directory), both its ESM and

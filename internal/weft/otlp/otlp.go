@@ -175,14 +175,6 @@ func ProjectFor(headerProject string, resource map[string]any) string {
 	if p, ok := resource["weft.project"].(string); ok && p != "" {
 		return p
 	}
-	ent, _ := resource["wandb.entity"].(string)
-	p, _ := resource["wandb.project"].(string)
-	if p != "" {
-		if ent == "" {
-			ent = "default"
-		}
-		return ent + "/" + p
-	}
 	return "default/default"
 }
 
@@ -231,7 +223,7 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 		ProjectID: project,
 		ID:        id,
 		TraceID:   hex.EncodeToString(sp.GetTraceId()),
-		OpName:    firstString(attrs, "weft.op_name", "weave.op_name"),
+		OpName:    firstString(attrs, "weft.op_name"),
 		StartedAt: nanosToTime(sp.GetStartTimeUnixNano()),
 	}
 	if st.OpName == "" {
@@ -244,14 +236,14 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 		p := hex.EncodeToString(sp.GetParentSpanId())
 		st.ParentID = &p
 	}
-	st.DisplayName = optString(attrs, "weft.display_name", "wandb.display_name", "weave.display_name")
+	st.DisplayName = optString(attrs, "weft.display_name")
 	if st.DisplayName == nil {
 		st.DisplayName = frameworkDisplayName(attrs)
 	}
-	st.ThreadID = optString(attrs, "weft.thread_id", "wandb.thread_id", "gen_ai.conversation.id", "session.id",
+	st.ThreadID = optString(attrs, "weft.thread_id", "gen_ai.conversation.id", "session.id",
 		"gcp.vertex.agent.session_id", "ai.telemetry.metadata.sessionId", "ai.telemetry.metadata.threadId", "ai.telemetry.metadata.conversationId")
-	st.TurnID = optString(attrs, "weft.turn_id", "wandb.turn_id")
-	if st.TurnID == nil && (isTrue(attrs["wandb.is_turn"]) || isTrue(attrs["weft.is_turn"])) {
+	st.TurnID = optString(attrs, "weft.turn_id")
+	if st.TurnID == nil && isTrue(attrs["weft.is_turn"]) {
 		st.TurnID = &id
 	}
 	st.WBUserID = optString(attrs, "user.id", "enduser.id", "ai.telemetry.metadata.userId")

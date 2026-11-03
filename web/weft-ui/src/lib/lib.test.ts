@@ -11,9 +11,9 @@ describe('refs', () => {
     const r = parseRef('weft:///acme/app/object/my_ds:abc123/attr/rows/id/r1')!
     expect(r).toMatchObject({ projectId: 'acme/app', kind: 'object', name: 'my_ds', digest: 'abc123', extra: ['attr', 'rows', 'id', 'r1'] })
   })
-  it('accepts the weave scheme', () => {
-    expect(isRef('weave:///e/p/call/1')).toBe(true)
-    expect(parseRef('weave:///e/p/op/f:d')?.kind).toBe('op')
+  it('rejects other schemes', () => {
+    expect(isRef('other:///e/p/call/1')).toBe(false)
+    expect(parseRef('other:///e/p/op/f:d')).toBeNull()
   })
   it('rejects non-refs', () => {
     expect(isRef('https://example.com')).toBe(false)
@@ -43,7 +43,7 @@ describe('format', () => {
     const call = {
       summary: {
         usage: { a: { prompt_tokens: 10, completion_tokens: 5 }, b: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } },
-        weave: { status: 'success', latency_ms: 1, trace_name: 'x', display_name: null, costs: { a: { prompt_tokens_total_cost: 0.1, completion_tokens_total_cost: 0.2 } } },
+        weft: { status: 'success', latency_ms: 1, trace_name: 'x', display_name: null, costs: { a: { prompt_tokens_total_cost: 0.1, completion_tokens_total_cost: 0.2 } } },
       },
     } as unknown as Call
     expect(callTokens(call)).toEqual({ prompt: 13, completion: 7, total: 20 })
@@ -59,11 +59,11 @@ describe('format', () => {
 
 describe('query builders', () => {
   it('builds $expr trees', () => {
-    expect(toQuery(and(eq('op_name', 'f'), null, gt('summary.weave.latency_ms', 100)))).toEqual({
+    expect(toQuery(and(eq('op_name', 'f'), null, gt('summary.weft.latency_ms', 100)))).toEqual({
       $expr: {
         $and: [
           { $eq: [{ $getField: 'op_name' }, { $literal: 'f' }] },
-          { $gt: [{ $convert: { input: { $getField: 'summary.weave.latency_ms' }, to: 'double' } }, { $literal: 100 }] },
+          { $gt: [{ $convert: { input: { $getField: 'summary.weft.latency_ms' }, to: 'double' } }, { $literal: 100 }] },
         ],
       },
     })

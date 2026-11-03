@@ -297,7 +297,7 @@ func exportRow(c *store.Call, withFeedback bool) map[string]any {
 		pr, co, tot = pr+a, co+b, tot+t
 	}
 	var cost any
-	if w, ok := c.Summary["weave"].(map[string]any); ok {
+	if w, ok := c.Summary["weft"].(map[string]any); ok {
 		if costs, ok := w["costs"].(map[string]any); ok && len(costs) > 0 {
 			sum := 0.0
 			for _, x := range costs {

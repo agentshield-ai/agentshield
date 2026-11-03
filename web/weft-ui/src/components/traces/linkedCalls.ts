@@ -4,7 +4,7 @@
 //   attributes.weft.linked_calls ([{call_id, trace_id?}] or ids / call refs),
 //   attributes.weft.genai_span_ref ([{trace_id, span_id}]) and
 //   attributes.weft.linked_conversation_ids.
-// - Agent spans started inside a prediction carry weave.eval.* attributes
+// - Agent spans started inside a prediction carry weft.eval.* attributes
 //   (run_id, predict_and_score_call_id, ...), flat, nested or as OTel attributes.
 
 export interface LinkedCall {
@@ -28,10 +28,10 @@ type Obj = Record<string, unknown>
 const asObj = (v: unknown): Obj | undefined => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : undefined)
 const s = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
 
-/** A call id from an id, a weft:/// or weave:/// call ref, or {call_id|span_id|id}. */
+/** A call id from an id, a weft:/// call ref, or {call_id|span_id|id}. */
 function callOf(v: unknown): LinkedCall | null {
   if (typeof v === 'string') {
-    const m = /^(?:weft|weave):\/\/\/[^/]+\/[^/]+\/call\/([^/?#]+)/.exec(v)
+    const m = /^weft:\/\/\/[^/]+\/[^/]+\/call\/([^/?#]+)/.exec(v)
     if (m) return { callId: m[1] }
     return /^[\w-]{6,}$/.test(v) ? { callId: v } : null
   }
@@ -63,14 +63,14 @@ export function linksOf(attributes: unknown): Links {
   }
   const conversations = (Array.isArray(weft.linked_conversation_ids) ? weft.linked_conversation_ids : []).filter((x): x is string => typeof x === 'string' && !!x)
 
-  // weave.eval.*: flat keys, nested attributes.weave.eval, or OTel span attributes.
+  // weft.eval.*: flat keys, nested attributes.weft.eval, or OTel span attributes.
   const ev: Record<string, string> = {}
   const collect = (o: Obj | undefined, prefix: string) => {
     for (const [k, v] of Object.entries(o ?? {})) if (k.startsWith(prefix) && (typeof v === 'string' || typeof v === 'number')) ev[k.slice(prefix.length)] = String(v)
   }
-  collect(a, 'weave.eval.')
-  collect(asObj(asObj(a.otel)?.attributes), 'weave.eval.')
-  for (const [k, v] of Object.entries(asObj(asObj(a.weave)?.eval) ?? {})) if (typeof v === 'string' || typeof v === 'number') ev[k] = String(v)
+  collect(a, 'weft.eval.')
+  collect(asObj(asObj(a.otel)?.attributes), 'weft.eval.')
+  for (const [k, v] of Object.entries(asObj(weft.eval) ?? {})) if (typeof v === 'string' || typeof v === 'number') ev[k] = String(v)
   let evalLink: EvalLink | null = null
   if (Object.keys(ev).length) {
     const { run_id, predict_and_score_call_id, ...extra } = ev

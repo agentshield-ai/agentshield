@@ -14,7 +14,7 @@ import { compact } from './agentUtils'
 import './agents.css'
 
 // Agent evals: evaluation runs whose predictions link to agent spans (spans
-// tagged weave.eval.*, or turns and conversations linked through
+// tagged weft.eval.*, or turns and conversations linked through
 // EvaluationLogger.log_prediction(call=...)).
 
 const LIMIT = 50
@@ -100,9 +100,9 @@ export function useAgentEvalRuns(projectId: string, runIds: string[]) {
 
 const LINK_HELP = (
   <span className="small">
-    Run the agent inside <code>with ev.log_prediction(inputs) as pred:</code> of an <code>EvaluationLogger</code> (its spans get <code>weave.eval.*</code>{' '}
+    Run the agent inside <code>with ev.log_prediction(inputs) as pred:</code> of an <code>EvaluationLogger</code> (its spans get <code>weft.eval.*</code>{' '}
     attributes), link turns or conversations you already recorded with <code>ev.log_prediction(inputs, call=conversation)</code>, or set{' '}
-    <code>weave.eval.run_id</code> and <code>weave.eval.predict_and_score_call_id</code> on your own OpenTelemetry spans.
+    <code>weft.eval.run_id</code> and <code>weft.eval.predict_and_score_call_id</code> on your own OpenTelemetry spans.
   </span>
 )
 

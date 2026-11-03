@@ -1,4 +1,4 @@
-"""Bedrock Agents, Verdict, CallsIter.to_pandas(), registry linking and W&B
+"""Bedrock Agents, Verdict, CallsIter.to_pandas(), registry linking and
 run linkage against a real Weft server. Skipped unless WEFT_TEST_SERVER_URL is
 set, e.g.::
 

@@ -43,7 +43,7 @@ export function ImageMode({
       const inputs: ImageInputs = { model: chosen, prompt, n, size }
       const t0 = performance.now()
       const r = await playgroundApi.imageCreate(projectId, inputs)
-      const out = { response: r.response, callId: r.weave_call_id ?? undefined, latencyMs: performance.now() - t0 }
+      const out = { response: r.response, callId: r.call_id ?? undefined, latencyMs: performance.now() - t0 }
       onRun(inputs, { ...out, error: r.response?.error })
       return out
     },

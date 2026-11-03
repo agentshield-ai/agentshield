@@ -47,7 +47,7 @@ export class Call {
   exception: string | null;
   attributes: Record<string, unknown>;
   summary: Record<string, any>;
-  /** W&B linkage (`wb_user_id`, `wb_username` with `includeUsernames`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`). */
+  /** User and run linkage (`wb_user_id`, `wb_username` with `includeUsernames`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`). */
   wbUserId: string | null;
   wbUsername: string | null;
   wbRunId: string | null;
@@ -59,7 +59,7 @@ export class Call {
   rawOutput?: unknown;
   /** @internal */ ended = false;
   /** @internal */ fetched = false;
-  /** @internal True for calls recorded by conversation spans (turns, LLM, tool, subagent), which Weave records as OTel spans. */
+  /** @internal True for calls recorded by conversation spans (turns, LLM, tool, subagent) rather than by ops. */
   conversationSpan = false;
   /** @internal The conversation span (Turn, LLM, Tool, SubAgent, Handoff) recording this call. */
   span: unknown = null;
@@ -154,7 +154,7 @@ export class Call {
 
   /** `success`, `error`, `running` or `descendant_error` (server value when fetched). */
   get status(): string {
-    const s = this.summary?.weave?.status;
+    const s = this.summary?.weft?.status;
     if (typeof s === 'string' && s) return s;
     if (this.exception) return 'error';
     return this.endedAt ? 'success' : 'running';
@@ -186,7 +186,7 @@ export class Call {
   /**
    * Score this call (guardrails / online evaluation). The scorer receives
    * `{ modelOutput: <call output>, datasetRow: <call inputs + additionalScorerKwargs> }`;
-   * its call is recorded as its own trace and `wandb.runnable.<scorer>` feedback
+   * its call is recorded as its own trace and `weft.scorer.<scorer>` feedback
    * (with runnable_ref and call_ref) is attached to this call. Resolves to the result.
    */
   async applyScorer(
@@ -216,7 +216,7 @@ export class Call {
     if (scoreCall?.exception) throw new Error(`scorer ${name} failed: ${scoreCall.exception.split('\n')[0]}`);
     let feedbackId: string | null = null;
     if (scoreCall) {
-      feedbackId = await this.feedback.add(`wandb.runnable.${name}`, { output: result }, { runnable_ref: runnableRef, call_ref: scoreCall.uri() });
+      feedbackId = await this.feedback.add(`weft.scorer.${name}`, { output: result }, { runnable_ref: runnableRef, call_ref: scoreCall.uri() });
     }
     return { result, scoreCall, feedbackId };
   }
@@ -236,7 +236,7 @@ export class CallFeedback {
     await this.client.flush();
     const res = await this.client.http.post('/feedback/create', {
       project_id: this.call.projectId,
-      weave_ref: this.call.uri(),
+      ref: this.call.uri(),
       feedback_type: feedbackType,
       payload,
       ...extra,
@@ -245,18 +245,18 @@ export class CallFeedback {
   }
 
   addReaction(emoji: string): Promise<string> {
-    return this.add('wandb.reaction.1', { emoji });
+    return this.add('weft.reaction', { emoji });
   }
 
   addNote(note: string): Promise<string> {
-    return this.add('wandb.note.1', { note });
+    return this.add('weft.note', { note });
   }
 
   /** Human annotation following an AnnotationSpec (published if needed). */
   async addAnnotation(spec: { __weftRef?: Ref; name?: string; valueIsValid?: (v: unknown) => boolean }, value: unknown): Promise<string> {
     const ref = spec.__weftRef ?? (await this.client.publish(spec));
     if (spec.valueIsValid && !spec.valueIsValid(value)) throw new Error(`value ${JSON.stringify(value)} does not match annotation spec ${ref.name}`);
-    return this.add(`wandb.annotation.${ref.name}`, { value }, { annotation_ref: ref.uri() });
+    return this.add(`weft.annotation.${ref.name}`, { value }, { annotation_ref: ref.uri() });
   }
 
   /** Delete one feedback item by id. */
@@ -271,7 +271,7 @@ export class CallFeedback {
     await this.client.flush();
     const res = await this.client.http.post('/feedback/query', {
       project_id: this.call.projectId,
-      query: { $expr: { $eq: [{ $getField: 'weave_ref' }, { $literal: this.call.uri() }] } },
+      query: { $expr: { $eq: [{ $getField: 'ref' }, { $literal: this.call.uri() }] } },
       sort_by: [{ field: 'created_at', direction: 'asc' }],
     });
     return res.result ?? [];

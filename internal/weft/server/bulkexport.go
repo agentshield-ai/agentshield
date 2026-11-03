@@ -21,7 +21,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Bulk Export API (Weave OpenAPI tag "Bulk Export"):
+// Bulk Export API:
 //
 //	POST /v1/entities/{entity}/projects/{project}:export      start a job (202)
 //	GET  /v1/entities/{entity}/projects/{project}/exports/{id} job status

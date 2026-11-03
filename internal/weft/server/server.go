@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/compat"
 	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
@@ -55,6 +56,9 @@ type Config struct {
 	Logger *slog.Logger
 	// IAM configures users, sessions, SSO and the audit log (iam.go).
 	IAM IAMConfig
+	// Compat turns on the compatibility adapter for clients of another
+	// tracing product (package compat, docs/weft/COMPATIBILITY.md).
+	Compat bool
 }
 
 // Server is the HTTP API.
@@ -66,6 +70,8 @@ type Server struct {
 	engine *evals.Engine
 	log    *slog.Logger
 	stops  []func()
+	// compat is the compatibility adapter; nil when it is off.
+	compat *compat.Adapter
 }
 
 // New builds a server around a store.
@@ -80,6 +86,9 @@ func New(cfg Config, st *store.Store) *Server {
 		return v, ok && err == nil
 	}, s.resolveProvider)
 	s.engine = evals.New(st, s.llm, log)
+	if cfg.Compat {
+		s.compat = compat.New(compatHost{s})
+	}
 	for _, start := range startExtensions {
 		s.stops = append(s.stops, start(s))
 	}
@@ -132,14 +141,22 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(s.requestLog)
-	r.Use(weaveCompat)
+	if s.compat != nil {
+		r.Use(s.compat.Middleware)
+	}
 	r.Use(s.cors)
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"status": "ok"}) })
 	r.Get("/server_info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"version": Version, "auth_required": s.authRequired(), "otel_endpoint": "/otel/v1/traces",
-			// Fields read by the official weave client.
-			"min_required_weave_python_version": "0.0.0", "trace_server_version": Version})
+		info := map[string]any{"version": Version, "auth_required": s.authRequired(), "otel_endpoint": "/otel/v1/traces",
+			"trace_server_version": Version}
+		if s.compat != nil {
+			s.compat.ServerInfo(info)
+		}
+		writeJSON(w, info)
 	})
+	if s.compat != nil {
+		s.compat.MountPublic(r)
+	}
 
 	for _, ext := range publicRouteExtensions {
 		ext(s, r)
@@ -213,12 +230,10 @@ func (s *Server) Handler() http.Handler {
 		for _, ext := range routeExtensions {
 			ext(s, r)
 		}
-		r.Post("/graphql", s.graphql)
-		r.Post("/v2/{entity}/{project}/calls/complete", s.callsComplete)
-		r.Post("/v2/{entity}/{project}/call/start", handle(s.callStart))
-		r.Post("/v2/{entity}/{project}/call/end", handle(s.callEnd))
 		r.Post("/feedback/batch/create", handle(s.feedbackBatchCreate))
-		r.Post("/service/projects_info", s.projectsInfo)
+		if s.compat != nil {
+			s.compat.MountAuthed(r)
+		}
 	})
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
@@ -282,9 +297,6 @@ func (s *Server) originAllowed(origin string) bool {
 
 func presentedKey(r *http.Request) string {
 	if k := r.Header.Get("X-Weft-Api-Key"); k != "" {
-		return k
-	}
-	if k := r.Header.Get("Wandb-Api-Key"); k != "" {
 		return k
 	}
 	auth := r.Header.Get("Authorization")
@@ -489,7 +501,7 @@ type callEndReq struct {
 }
 
 func (s *Server) callEnd(ctx context.Context, r *http.Request, req *callEndReq) (any, error) {
-	req.End.Cumulative = wantsWeaveRefs(r)
+	req.End.Cumulative = cumulativeSummaries(r)
 	if req.End.EndedAt == "" {
 		req.End.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -526,7 +538,7 @@ func (s *Server) callUpsertBatch(ctx context.Context, r *http.Request, req *batc
 			}
 			res[i] = map[string]any{"id": b.Req.Start.ID, "trace_id": b.Req.Start.TraceID}
 		case b.Mode == "end" && b.Req.End != nil:
-			b.Req.End.Cumulative = wantsWeaveRefs(r)
+			b.Req.End.Cumulative = cumulativeSummaries(r)
 			if b.Req.End.EndedAt == "" {
 				b.Req.End.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			}
@@ -636,7 +648,7 @@ func (s *Server) callsQueryStats(ctx context.Context, _ *http.Request, req *quer
 	if err != nil {
 		return nil, err
 	}
-	// Weave: with a limit, count stops at the limit and has_more says whether more match.
+	// With a limit, count stops at the limit and has_more says whether more match.
 	hasMore := false
 	if req.Limit != nil && *req.Limit >= 0 && n > *req.Limit {
 		n, hasMore = *req.Limit, true
@@ -665,14 +677,14 @@ type callsStatsReq struct {
 	Start         string             `json:"start"`
 	End           string             `json:"end"`
 	BucketSeconds int64              `json:"bucket_seconds"`
-	// Weave's CallStatsReq fields; when any is present the response uses
-	// Weave's shape (usage_buckets/call_buckets), see apishape.go.
-	weaveCallStatsFields
+	// Metric-bucket fields; when any is present the response has
+	// usage_buckets/call_buckets, see apishape.go.
+	metricStatsFields
 }
 
 func (s *Server) callsStats(ctx context.Context, _ *http.Request, req *callsStatsReq) (any, error) {
-	if req.isWeave() {
-		return s.weaveCallsStats(ctx, req)
+	if req.isMetricStats() {
+		return s.metricCallsStats(ctx, req)
 	}
 	return s.store.ComputeCallsStats(ctx, req.ProjectID, req.Filter, req.Query, req.Search, req.Start, req.End, req.BucketSeconds)
 }
@@ -928,7 +940,7 @@ func (s *Server) feedbackCreate(ctx context.Context, r *http.Request, req *store
 	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload}, nil
 }
 
-// feedbackBatchReq is Weave's FeedbackBatchCreateParams. The scorer_* and
+// feedbackBatchReq is the body of /feedback/batch/create. The scorer_* and
 // span_* fields are normalised and kept in the payload (store/agents_signals.go).
 type feedbackBatchReq struct {
 	Batch []store.AgentFeedbackItem `json:"batch"`
@@ -1112,7 +1124,7 @@ func (s *Server) completionsCreate(ctx context.Context, _ *http.Request, req *co
 		out["response"] = resp
 	}
 	if callID != "" {
-		out["weave_call_id"] = callID
+		out["call_id"] = callID
 	}
 	return out, nil
 }
@@ -1151,7 +1163,7 @@ func (s *Server) completionsStream(w http.ResponseWriter, r *http.Request) {
 	if req.TrackLLMCall == nil || *req.TrackLLMCall {
 		id, err := s.engine.RecordStreamedCompletion(context.WithoutCancel(r.Context()), pid, req.Inputs, started, final, streamErr)
 		if err == nil {
-			meta["weave_call_id"] = id
+			meta["call_id"] = id
 		}
 	}
 	_ = enc.Encode(map[string]any{"_meta": meta})
@@ -1273,6 +1285,9 @@ func (s *Server) otelTraces(w http.ResponseWriter, r *http.Request) {
 	if hp == "" {
 		hp = r.Header.Get("X-Weft-Project")
 	}
+	if s.compat != nil {
+		compat.RewriteOTLP(req)
+	}
 	calls, err := otlp.ToCalls(req, hp)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1287,4 +1302,22 @@ func (s *Server) otelTraces(w http.ResponseWriter, r *http.Request) {
 	resp, ctype := otlp.EncodeResponse(isJSON, 0, "")
 	w.Header().Set("Content-Type", ctype)
 	_, _ = w.Write(resp)
+}
+
+// cumulativeSummaries reports a request whose call summaries already include
+// their descendants (X-Weft-Summary: cumulative), so they are stored as sent
+// instead of being rolled up again.
+func cumulativeSummaries(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("X-Weft-Summary"), "cumulative")
+}
+
+// compatHost gives the compatibility adapter what it needs from the server.
+type compatHost struct{ s *Server }
+
+func (h compatHost) Store() *store.Store                { return h.s.store }
+func (h compatHost) CallStart() http.HandlerFunc        { return handle(h.s.callStart) }
+func (h compatHost) CallEnd() http.HandlerFunc          { return handle(h.s.callEnd) }
+func (h compatHost) CallsEnded(ended []store.EndedCall) { h.s.engine.Notify(ended) }
+func (h compatHost) User(r *http.Request, explicit *string) *string {
+	return userFrom(r, explicit)
 }

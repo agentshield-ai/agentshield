@@ -1,4 +1,4 @@
-"""Per-integration autopatch settings (Weave's ``autopatch_settings`` equivalent).
+"""Per-integration autopatch settings (``autopatch_settings``).
 
 ``weft.init(..., autopatch_settings={...})`` accepts a dict, or an
 ``AutopatchSettings`` object, keyed by integration name::

@@ -112,7 +112,7 @@ export class Sender {
     opts: SenderOptions = {},
   ) {
     const mq = opts.maxQueue ?? 10_000;
-    this.maxQueue = mq > 0 ? mq : Number.POSITIVE_INFINITY; // 0 = unbounded, as in Weave
+    this.maxQueue = mq > 0 ? mq : Number.POSITIVE_INFINITY; // 0 = unbounded
     this.batchSize = opts.batchSize ?? 100;
     this.flushIntervalMs = opts.flushIntervalMs ?? 100;
     this.maxRetries = opts.maxRetries ?? 3;

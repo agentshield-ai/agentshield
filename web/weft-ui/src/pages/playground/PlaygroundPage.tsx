@@ -309,7 +309,7 @@ export function PlaygroundPage() {
           inputs,
           (chunk) => {
             chunks.push(chunk)
-            if (chunk?._meta?.weave_call_id) callId = chunk._meta.weave_call_id
+            if (chunk?._meta?.call_id) callId = chunk._meta.call_id
             if (chunk?.error) streamError = typeof chunk.error === 'string' ? chunk.error : (chunk.error.message ?? JSON.stringify(chunk.error))
             if (chunk?.usage) usage = chunk.usage
             const ch = chunk?.choices?.[0]
@@ -351,13 +351,13 @@ export function PlaygroundPage() {
           const r = await api.completionsCreate(projectId, inputs)
           const resp = r.response
           record.current({
-            id: r.weave_call_id ?? `local-${Date.now()}-${panel.id}`,
+            id: r.call_id ?? `local-${Date.now()}-${panel.id}`,
             at: new Date().toISOString(),
             mode: 'chat',
             model: panel.model,
             inputs: inputs as Any,
             output: messageText(resp.choices?.[0]?.message),
-            callId: r.weave_call_id,
+            callId: r.call_id,
             latencyMs: performance.now() - t0,
             tokens: resp.usage?.total_tokens,
             error: resp.error,
@@ -369,7 +369,7 @@ export function PlaygroundPage() {
               message: resp.choices?.[0]?.message,
               finishReason: resp.choices?.[0]?.finish_reason,
               usage: resp.usage,
-              callId: r.weave_call_id,
+              callId: r.call_id,
               error: resp.error,
               latencyMs: performance.now() - t0,
               raw: resp,

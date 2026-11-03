@@ -25,7 +25,7 @@ func TestV2ObjectsCRUD(t *testing.T) {
 	if n := e.post("/table/query_stats", map[string]any{"project_id": pid, "digest": dsr["rows"].(string)[strings.LastIndex(dsr["rows"].(string), "/")+1:]}); n["count"] != float64(2) {
 		t.Fatalf("dataset rows = %v", n)
 	}
-	e.admJSON("POST", base+"/models", "", map[string]any{"name": "m", "source_code": "class M(weave.Model): ...", "attributes": map[string]any{"temp": 0.1}})
+	e.admJSON("POST", base+"/models", "", map[string]any{"name": "m", "source_code": "class M(weft.Model): ...", "attributes": map[string]any{"temp": 0.1}})
 	mr := e.admJSON("GET", base+"/models/m", "", nil)
 	if mr["attributes"].(map[string]any)["temp"] != 0.1 || mr["source_code"] == "" {
 		t.Fatalf("model read = %v", mr)
@@ -35,8 +35,8 @@ func TestV2ObjectsCRUD(t *testing.T) {
 	if !strings.Contains(sr["score_op"].(string), "/op/acc.score:") {
 		t.Fatalf("scorer read = %v", sr)
 	}
-	dsRef := "weave:///acme/evals/object/qa:" + ds["digest"].(string)
-	scRef := "weave:///acme/evals/object/acc:" + sc["digest"].(string)
+	dsRef := "weft:///acme/evals/object/qa:" + ds["digest"].(string)
+	scRef := "weft:///acme/evals/object/acc:" + sc["digest"].(string)
 	ev := e.admJSON("POST", base+"/evaluations", "", map[string]any{"name": "ev", "dataset": dsRef, "scorers": []any{scRef}, "trials": 2})
 	evr := e.admJSON("GET", base+"/evaluations/ev/versions/"+ev["digest"].(string), "", nil)
 	if evr["trials"] != float64(2) || len(evr["scorers"].([]any)) != 1 {
@@ -65,7 +65,7 @@ func TestV2EvaluationFlow(t *testing.T) {
 	e := newEnv(t)
 	base := "/v2/acme/evals"
 	ds := e.admJSON("POST", base+"/datasets", "", map[string]any{"name": "qa", "rows": []any{map[string]any{"q": "a", "expected": "A"}, map[string]any{"q": "b", "expected": "B"}}})
-	dsRef := "weave:///acme/evals/object/qa:" + ds["digest"].(string)
+	dsRef := "weft:///acme/evals/object/qa:" + ds["digest"].(string)
 	exact := publish(e, "exact", map[string]any{"_class_name": "ExactMatchScorer", "_bases": []any{"Scorer", "Object", "BaseModel"}, "target_column": "expected"})
 	ev := e.admJSON("POST", base+"/evaluations", "", map[string]any{"name": "ev", "dataset": dsRef, "scorers": []any{exact}})
 	evRef := "weft:///acme/evals/object/ev:" + ev["digest"].(string)

@@ -92,7 +92,7 @@ func (e *Engine) LoadRuntime(ctx context.Context, projectID, nameOrRef string) (
 	var o *store.Obj
 	var err error
 	if refs.IsRef(nameOrRef) {
-		o, _, err = e.loadObject(ctx, refs.Normalize(nameOrRef))
+		o, _, err = e.loadObject(ctx, nameOrRef)
 	} else {
 		o, err = e.Store.ReadObject(ctx, projectID, RuntimeObjectID(nameOrRef), "latest")
 		if errors.Is(err, store.ErrNotFound) {

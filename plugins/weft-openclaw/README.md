@@ -1,8 +1,7 @@
 # Weft for OpenClaw
 
 An [OpenClaw](https://openclaw.dev/) gateway plugin that traces agent runs into
-[Weft](../../docs/weft/README.md) as agent conversations, like W&B Weave's
-`weave-openclaw` plugin:
+[Weft](../../docs/weft/README.md) as agent conversations:
 
 ```
 invoke_agent main               one per agent run (a turn); conversation = the OpenClaw session id

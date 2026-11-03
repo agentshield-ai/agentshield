@@ -13,7 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// W&B Inference (CoreWeave) catalog endpoints, served from Weft's own model
+// Model catalog endpoints, served from Weft's own model
 // catalog: the built-in models of /llm/models with their list prices, plus
 // the project's ProviderModel objects (custom providers and runtimes) when
 // ?project_id= is given. GET /geolocate answers locally: Weft has no GeoIP

@@ -35,7 +35,7 @@ type CallEnd struct {
 	Exception *string        `json:"exception"`
 	Output    any            `json:"output"`
 	Summary   map[string]any `json:"summary"`
-	// WBRunStepEnd is the W&B run step when the call ended.
+	// WBRunStepEnd is the linked run's step when the call ended.
 	WBRunStepEnd *int64 `json:"wb_run_step_end"`
 	// Cumulative marks a summary that already includes descendants' usage.
 	Cumulative bool `json:"-"`
@@ -106,7 +106,7 @@ func (st *CallStart) normalize() error {
 	if st.ParentID != nil && (!validID(*st.ParentID) || *st.ParentID == st.ID) {
 		return Invalidf("invalid parent id")
 	}
-	st.OpName = refs.Normalize(strings.TrimSpace(st.OpName))
+	st.OpName = strings.TrimSpace(st.OpName)
 	if st.OpName == "" {
 		return Invalidf("op_name is required")
 	}
@@ -124,7 +124,6 @@ func (st *CallStart) normalize() error {
 	if st.Attributes == nil {
 		st.Attributes = map[string]any{}
 	}
-	refs.NormalizeValue(st.Inputs)
 	return nil
 }
 
@@ -144,7 +143,6 @@ func (en *CallEnd) normalize() error {
 		s := "error"
 		en.Exception = &s
 	}
-	en.Output = refs.NormalizeValue(en.Output)
 	return nil
 }
 
@@ -153,6 +151,7 @@ func (s *Store) StartCall(ctx context.Context, st CallStart) error {
 	if err := st.normalize(); err != nil {
 		return err
 	}
+	s.hookStart(&st)
 	s.nerRedact(ctx, []*CallStart{&st}, nil)
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.touchProject(ctx, tx, st.ProjectID); err != nil {
@@ -188,6 +187,7 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 			if err := items[i].Start.normalize(); err != nil {
 				return nil, err
 			}
+			s.hookStart(items[i].Start)
 		case "end":
 			if items[i].End == nil {
 				return nil, Invalidf("batch item %d: missing end", i)
@@ -251,6 +251,7 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 		if err := calls[i].Start.normalize(); err != nil {
 			return nil, err
 		}
+		s.hookStart(&calls[i].Start)
 		if calls[i].End != nil {
 			calls[i].End.ProjectID = calls[i].Start.ProjectID
 			calls[i].End.ID = calls[i].Start.ID

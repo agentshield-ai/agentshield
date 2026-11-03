@@ -2,7 +2,7 @@
 // their actions: a JSON webhook POST or a Slack incoming-webhook message.
 //
 // Triggers:
-//   - score_threshold: a scorer result (wandb.runnable.<scorer> feedback, as
+//   - score_threshold: a scorer result (weft.scorer.<scorer> feedback, as
 //     written by monitors and /calls/score) crosses a threshold;
 //   - error_rate: the share of failed calls of the given ops over a window
 //     reaches a threshold (checked by a background loop);
@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
@@ -274,7 +275,7 @@ func (r *Runner) automations(ctx context.Context, projectID string) ([]*store.Ob
 }
 
 func feedbackCallID(f store.Feedback) string {
-	if rf, err := refs.Parse(f.WeaveRef); err == nil && rf.Kind == refs.KindCall {
+	if rf, err := refs.Parse(f.Ref); err == nil && rf.Kind == refs.KindCall {
 		return rf.Name
 	}
 	return ""
@@ -283,15 +284,18 @@ func feedbackCallID(f store.Feedback) string {
 // ScorerFeedbackType maps a trigger's scorer field to the feedback type it watches.
 func ScorerFeedbackType(scorer string) string {
 	scorer = strings.TrimSpace(scorer)
-	if strings.HasPrefix(scorer, "wandb.") {
+	if legacy.IsLegacyFeedbackType(scorer) { // saved before the rename
+		return legacy.FeedbackType(scorer)
+	}
+	if strings.HasPrefix(scorer, "weft.") {
 		return scorer
 	}
 	if refs.IsRef(scorer) {
-		if rf, err := refs.Parse(refs.Normalize(scorer)); err == nil {
+		if rf, err := refs.Parse(scorer); err == nil {
 			scorer = rf.Name
 		}
 	}
-	return "wandb.runnable." + scorer
+	return "weft.scorer." + scorer
 }
 
 // scoreValue extracts the compared number from score feedback.
@@ -328,7 +332,7 @@ func typeMatches(patterns []string, t string) bool {
 		return true
 	}
 	for _, p := range patterns {
-		p = strings.TrimSpace(p)
+		p = legacy.FeedbackTypePattern(strings.TrimSpace(p)) // patterns saved before the rename
 		if p == t || (strings.HasSuffix(p, "*") && strings.HasPrefix(t, strings.TrimSuffix(p, "*"))) {
 			return true
 		}
@@ -355,21 +359,21 @@ func (r *Runner) HandleFeedback(ctx context.Context, f store.Feedback) []*store.
 			if f.FeedbackType != ScorerFeedbackType(a.Trigger.Scorer) {
 				continue
 			}
-			if mr := a.Trigger.MonitorRef; mr != "" && (f.TriggerRef == nil || refs.Normalize(mr) != *f.TriggerRef) {
+			if mr := a.Trigger.MonitorRef; mr != "" && (f.TriggerRef == nil || mr != *f.TriggerRef) {
 				continue
 			}
 			n, raw, ok := scoreValue(f, a.Trigger.Path)
 			if !ok || !operators[a.Trigger.Operator](n, a.Trigger.Threshold) {
 				continue
 			}
-			event = map[string]any{"type": "score_threshold", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "weave_ref": f.WeaveRef,
+			event = map[string]any{"type": "score_threshold", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "ref": f.Ref,
 				"call_id": feedbackCallID(f), "value": raw, "path": a.Trigger.Path, "operator": a.Trigger.Operator, "threshold": a.Trigger.Threshold,
 				"monitor_ref": f.TriggerRef}
 		case "feedback_created":
 			if !typeMatches(a.Trigger.FeedbackTypes, f.FeedbackType) {
 				continue
 			}
-			event = map[string]any{"type": "feedback_created", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "weave_ref": f.WeaveRef,
+			event = map[string]any{"type": "feedback_created", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "ref": f.Ref,
 				"call_id": feedbackCallID(f), "payload": f.Payload, "creator": f.Creator, "wb_user_id": f.WBUserID, "queue_id": f.QueueID}
 		default:
 			continue
@@ -409,7 +413,7 @@ func (r *Runner) CheckErrorRates(ctx context.Context, projectID string) ([]*stor
 			ops := make([]string, 0, len(a.Trigger.OpNames))
 			for _, n := range a.Trigger.OpNames {
 				if n = strings.TrimSpace(n); n != "" {
-					ops = append(ops, store.OpBaseName(refs.Normalize(n)))
+					ops = append(ops, store.OpBaseName(n))
 				}
 			}
 			since := time.Now().Add(-a.window())
@@ -474,7 +478,7 @@ func SampleEvent(a *Automation) map[string]any {
 		return map[string]any{"type": "error_rate", "total_calls": 10, "error_calls": 5, "error_rate": 0.5,
 			"threshold": a.Trigger.Threshold, "window_minutes": a.window().Minutes(), "op_names": a.Trigger.OpNames}
 	}
-	ft := "wandb.note.1"
+	ft := "weft.note"
 	if len(a.Trigger.FeedbackTypes) > 0 {
 		ft = strings.TrimSuffix(a.Trigger.FeedbackTypes[0], "*")
 	}

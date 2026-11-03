@@ -21,8 +21,7 @@ chosen with ``redact_pii_engine`` (env ``WEFT_REDACT_PII_ENGINE``):
 * ``"regex"``: regular expressions only.
 
 ``redact_pii_fields`` (env ``WEFT_REDACT_PII_FIELDS``, comma-separated) picks
-the entity types (default ``DEFAULT_PII_ENTITIES``, Weave's list plus
-ORGANIZATION); ``redact_pii_exclude_fields`` (env
+the entity types (default ``DEFAULT_PII_ENTITIES``); ``redact_pii_exclude_fields`` (env
 ``WEFT_REDACT_PII_EXCLUDE_FIELDS``) removes some. ``redact_pii_analyzer`` may
 be any object with Presidio's ``analyze(text=, entities=, language=)`` method,
 or a ``callable(text) -> [(entity_type, start, end), ...]``.
@@ -66,7 +65,7 @@ _PII_PATTERNS = [
 
 _REGEX_ENTITIES = {"EMAIL_ADDRESS", "US_SSN", "CREDIT_CARD", "PHONE_NUMBER", "IP_ADDRESS"}
 
-#: Entities redacted by default when ``redact_pii`` is on (Weave's defaults plus ORGANIZATION).
+#: Entities redacted by default when ``redact_pii`` is on.
 DEFAULT_PII_ENTITIES = (
     "CREDIT_CARD",
     "CRYPTO",

@@ -383,7 +383,7 @@ class ScoreLogger:
 
     Also a context manager: calls made inside ``with ev.log_prediction(inputs) as pred:``
     become children of the prediction's predict call, conversation spans started
-    there carry ``weave.eval.*`` link attributes, and set ``pred.output`` before
+    there carry ``weft.eval.*`` link attributes, and set ``pred.output`` before
     the block ends.
     """
 
@@ -607,7 +607,7 @@ class EvaluationLogger:
         (``Turn``, ``LLM``, ...), a ``LogResult`` or a ``Conversation`` (or a
         list). The links are stored on the prediction as
         ``attributes.weft.linked_calls`` / ``attributes.weft.genai_span_ref``
-        (``[{"trace_id", "span_id"}]``, as in Weave's v2 predictions API) and
+        (``[{"trace_id", "span_id"}]``, as in the v2 predictions API) and
         ``attributes.weft.linked_conversation_ids``. When ``output`` is omitted
         the linked call's output is used, and ``model_latency`` defaults to its
         duration.

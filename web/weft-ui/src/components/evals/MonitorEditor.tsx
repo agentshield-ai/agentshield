@@ -7,7 +7,7 @@ import { NameField, usePublish, type Created } from '../objects/ObjectForms'
 import { classVal, errMsg } from '../objects/objectUtils'
 import { ScorerPicker } from './ScorerPicker'
 
-const QUERY_EXAMPLE = `{"$expr": {"$gt": [{"$getField": "summary.weave.latency_ms"}, {"$literal": 1000}]}}`
+const QUERY_EXAMPLE = `{"$expr": {"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 1000}]}}`
 
 export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: ObjSchema; onClose: () => void; onSaved: (c: Created) => void }) {
   const publish = usePublish(projectId)

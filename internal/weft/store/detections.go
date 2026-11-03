@@ -155,10 +155,13 @@ type DetectionRule struct {
 // tool_call_id, nearest_time or replay; session when it is attached to its
 // session only, none when it has no session either.
 type Detection struct {
-	ID           string          `json:"id"`
-	ProjectID    string          `json:"project_id"`
-	EventID      string          `json:"event_id"`
-	SessionID    string          `json:"session_id"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	EventID   string `json:"event_id"`
+	SessionID string `json:"session_id"`
+	// SessionTitle labels the session in lists (its name, else its first
+	// user request); filled by /api/v1/detections, empty elsewhere.
+	SessionTitle string          `json:"session_title,omitempty"`
 	SpanID       *string         `json:"span_id"`
 	TraceID      *string         `json:"trace_id"`
 	Link         string          `json:"link"`

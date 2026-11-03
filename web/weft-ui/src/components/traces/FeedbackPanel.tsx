@@ -39,13 +39,13 @@ export function isMine(f: Feedback): boolean {
 }
 
 export function useCallFeedback(projectId: string, callId: string) {
-  const weaveRef = callRef(projectId, callId)
+  const targetRef = callRef(projectId, callId)
   return useQuery({
-    queryKey: ['feedback', projectId, weaveRef],
+    queryKey: ['feedback', projectId, targetRef],
     queryFn: () =>
       api.feedbackQuery({
         project_id: projectId,
-        query: { $expr: { $eq: [{ $getField: 'weave_ref' }, { $literal: weaveRef }] } },
+        query: { $expr: { $eq: [{ $getField: 'ref' }, { $literal: targetRef }] } },
         sort_by: [{ field: 'created_at', direction: 'desc' }],
         limit: 1000,
       }),
@@ -54,13 +54,13 @@ export function useCallFeedback(projectId: string, callId: string) {
 
 function useFeedbackMutations(projectId: string, callId: string) {
   const qc = useQueryClient()
-  const weaveRef = callRef(projectId, callId)
+  const targetRef = callRef(projectId, callId)
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['feedback', projectId, weaveRef] })
+    void qc.invalidateQueries({ queryKey: ['feedback', projectId, targetRef] })
     void qc.invalidateQueries({ queryKey: ['calls', projectId] })
   }
   const create = useMutation({
-    mutationFn: (req: { feedback_type: string; payload: Any; annotation_ref?: string }) => api.feedbackCreate({ project_id: projectId, weave_ref: weaveRef, ...req }),
+    mutationFn: (req: { feedback_type: string; payload: Any; annotation_ref?: string }) => api.feedbackCreate({ project_id: projectId, ref: targetRef, ...req }),
     onSuccess: (r) => {
       rememberUserId(r.wb_user_id)
       invalidate()
@@ -68,7 +68,7 @@ function useFeedbackMutations(projectId: string, callId: string) {
   })
   const replace = useMutation({
     mutationFn: (req: { feedback_id: string; feedback_type: string; payload: Any; annotation_ref?: string }) =>
-      api.feedbackReplace({ project_id: projectId, weave_ref: weaveRef, ...req }),
+      api.feedbackReplace({ project_id: projectId, ref: targetRef, ...req }),
     onSuccess: invalidate,
   })
   const purge = useMutation({ mutationFn: (id: string) => api.feedbackPurge(projectId, id), onSuccess: invalidate })
@@ -79,7 +79,7 @@ function useFeedbackMutations(projectId: string, callId: string) {
 
 export function Reactions({ projectId, callId, feedback }: { projectId: string; callId: string; feedback: Feedback[] }) {
   const { create, purge } = useFeedbackMutations(projectId, callId)
-  const reactions = feedback.filter((f) => f.feedback_type === 'wandb.reaction.1')
+  const reactions = feedback.filter((f) => f.feedback_type === 'weft.reaction')
   const emojis = [...new Set([...REACTION_EMOJIS, ...reactions.map((r) => r.payload?.emoji).filter(Boolean)])]
   const busy = create.isPending || purge.isPending
   return (
@@ -94,7 +94,7 @@ export function Reactions({ projectId, callId, feedback }: { projectId: string; 
             disabled={busy}
             aria-pressed={!!mine}
             title={rs.length ? rs.map((r) => r.creator ?? r.wb_user_id ?? 'anonymous').join(', ') : `React with ${e}`}
-            onClick={() => (mine ? purge.mutate(mine.id) : create.mutate({ feedback_type: 'wandb.reaction.1', payload: { emoji: e } }))}
+            onClick={() => (mine ? purge.mutate(mine.id) : create.mutate({ feedback_type: 'weft.reaction', payload: { emoji: e } }))}
           >
             <span>{e}</span>
             {rs.length > 0 && <span className="small">{rs.length}</span>}
@@ -111,10 +111,10 @@ export function Reactions({ projectId, callId, feedback }: { projectId: string; 
 function Notes({ projectId, callId, feedback }: { projectId: string; callId: string; feedback: Feedback[] }) {
   const { create, purge } = useFeedbackMutations(projectId, callId)
   const [text, setText] = useState('')
-  const notes = feedback.filter((f) => f.feedback_type === 'wandb.note.1')
+  const notes = feedback.filter((f) => f.feedback_type === 'weft.note')
   const submit = () => {
     if (!text.trim()) return
-    create.mutate({ feedback_type: 'wandb.note.1', payload: { note: text.trim() } }, { onSuccess: () => setText('') })
+    create.mutate({ feedback_type: 'weft.note', payload: { note: text.trim() } }, { onSuccess: () => setText('') })
   }
   return (
     <div className="col" style={{ gap: 10 }}>
@@ -244,7 +244,7 @@ export function AnnotationInput({ schema, value, onChange }: { schema: FieldSche
 function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: string; callId: string; spec: ObjSchema; feedback: Feedback[] }) {
   const { create, replace, purge } = useFeedbackMutations(projectId, callId)
   const name = specName(spec)
-  const type = `wandb.annotation.${name}`
+  const type = `weft.annotation.${name}`
   const schema: FieldSchema = spec.val?.field_schema ?? {}
   const unique = spec.val?.unique_among_creators !== false
   const rows = feedback.filter((f) => f.feedback_type === type)
@@ -335,7 +335,7 @@ function Annotations({ projectId, call, feedback }: { projectId: string; call?: 
 
 // ---------------------------------------------------------------- panel
 
-const KNOWN = (t: string) => t === 'wandb.reaction.1' || t === 'wandb.note.1' || t.startsWith('wandb.annotation.') || t.startsWith('wandb.runnable.')
+const KNOWN = (t: string) => t === 'weft.reaction' || t === 'weft.note' || t.startsWith('weft.annotation.') || t.startsWith('weft.scorer.')
 
 export function FeedbackPanel({ projectId, call }: { projectId: string; call: Call }) {
   const fb = useCallFeedback(projectId, call.id)
@@ -451,7 +451,7 @@ function ScoresList({ projectId, call }: { projectId: string; call: Call }) {
   const fb = useCallFeedback(projectId, call.id)
   if (fb.isLoading) return <Loading />
   if (fb.error) return <ErrorBox error={fb.error} />
-  const scores = (fb.data?.result ?? []).filter((f) => f.feedback_type.startsWith('wandb.runnable.'))
+  const scores = (fb.data?.result ?? []).filter((f) => f.feedback_type.startsWith('weft.scorer.'))
   const evalScores = call.output && typeof call.output === 'object' && call.output.scores && typeof call.output.scores === 'object' ? (call.output.scores as Record<string, Any>) : null
   if (!scores.length && !evalScores)
     return <Empty>No scores yet. Scores appear here when a monitor or an evaluation scorer runs on this call.</Empty>
@@ -475,7 +475,7 @@ function ScoresList({ projectId, call }: { projectId: string; call: Call }) {
                 return (
                   <tr key={f.id}>
                     <td>
-                      <div className="mono">{f.feedback_type.slice('wandb.runnable.'.length)}</div>
+                      <div className="mono">{f.feedback_type.slice('weft.scorer.'.length)}</div>
                       {f.runnable_ref && <RefChip refStr={f.runnable_ref} />}
                     </td>
                     <td style={{ minWidth: 200 }}>

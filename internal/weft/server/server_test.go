@@ -125,7 +125,7 @@ func TestOTLPJSONOverHTTP(t *testing.T) {
 	if sum["usage"].(map[string]any)["gpt-4o"].(map[string]any)["prompt_tokens"].(float64) != 100 {
 		t.Fatalf("root usage not rolled up: %v", sum["usage"])
 	}
-	if sum["weave"].(map[string]any)["costs"] == nil {
+	if sum["weft"].(map[string]any)["costs"] == nil {
 		t.Fatal("expected costs")
 	}
 }
@@ -233,7 +233,7 @@ func TestMonitorScoresEndedCalls(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		fb := e.post("/feedback/query", map[string]any{"project_id": pid,
-			"query": map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "feedback_type"}, map[string]any{"$literal": "wandb.runnable.contains-ok"}}}}})
+			"query": map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "feedback_type"}, map[string]any{"$literal": "weft.scorer.contains-ok"}}}}})
 		if res := fb["result"].([]any); len(res) == 1 {
 			f := res[0].(map[string]any)
 			if f["payload"].(map[string]any)["output"] != true || !strings.Contains(f["trigger_ref"].(string), "/object/mon:") {
@@ -304,8 +304,8 @@ func TestNamedKeysAndWhoami(t *testing.T) {
 	if !strings.Contains(string(out), `"user_id":"alice"`) {
 		t.Fatalf("whoami = %s", out)
 	}
-	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/x",
-		"feedback_type": "wandb.note.1", "payload": map[string]any{"note": "hi"}})
+	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/x",
+		"feedback_type": "weft.note", "payload": map[string]any{"note": "hi"}})
 	if fb["wb_user_id"] != "alice" {
 		t.Fatalf("feedback user = %v", fb["wb_user_id"])
 	}
@@ -342,7 +342,7 @@ func TestScoreCallsOnDemand(t *testing.T) {
 	}
 	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "s1", "include_feedback": true})["call"].(map[string]any)
 	fb := c["feedback"].([]any)
-	if len(fb) != 1 || fb[0].(map[string]any)["feedback_type"] != "wandb.runnable.has-paris" {
+	if len(fb) != 1 || fb[0].(map[string]any)["feedback_type"] != "weft.scorer.has-paris" {
 		t.Fatalf("feedback = %v", fb)
 	}
 	if code, _ := e.raw("/calls/score", map[string]any{"project_id": pid, "call_ids": []any{"s1"}, "scorer_refs": []any{"weft:///" + pid + "/object/nope:x"}}, nil); code != 400 {

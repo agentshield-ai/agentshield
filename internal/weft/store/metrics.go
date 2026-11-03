@@ -125,7 +125,7 @@ func (a *metricAcc) result(agg string) *float64 {
 // usage-derived fields computed in Go from the call's usage and the price book.
 var usageFields = map[string]bool{
 	"total_tokens": true, "prompt_tokens": true, "completion_tokens": true, "cost": true, "cost_usd": true,
-	"summary.total_tokens": true, "summary.weave.total_tokens": true,
+	"summary.total_tokens": true, "summary.weft.total_tokens": true,
 }
 
 // metricFieldSQL resolves a metric field to a SQL expression. Usage-derived

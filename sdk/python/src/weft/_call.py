@@ -43,7 +43,7 @@ class Call:
     _raw_output: Any = field(default=None, repr=False, compare=False)
     _child_count: int = field(default=0, repr=False, compare=False)
     # True for calls recorded by weft.conversation spans (Turn, LLM, Tool,
-    # SubAgent), which Weave records as OTel spans rather than calls.
+    # SubAgent) rather than by ops.
     _conversation_span: bool = field(default=False, repr=False, compare=False)
     # The conversation span (Turn, LLM, Tool, SubAgent, Handoff) recording this call.
     _weft_span: Any = field(default=None, repr=False, compare=False)
@@ -97,9 +97,9 @@ class Call:
 
     @property
     def status(self) -> str:
-        weave = (self.summary or {}).get("weave") or {}
-        if weave.get("status"):
-            return weave["status"]
+        computed = (self.summary or {}).get("weft") or {}
+        if computed.get("status"):
+            return computed["status"]
         if self.exception:
             return "error"
         return "success" if self.ended_at else "running"
@@ -160,7 +160,7 @@ class Call:
         fid = None
         if score_call is not None:
             fid = self.feedback.add(
-                f"wandb.runnable.{name}",
+                f"weft.scorer.{name}",
                 {"output": res},
                 runnable_ref=runnable_ref,
                 call_ref=score_call.uri(),
@@ -172,7 +172,7 @@ class Call:
 
         Runs ``scorer`` on the call's inputs and output (argument names are
         matched to input names; ``output`` receives the call output), records
-        the scorer call, and attaches ``wandb.runnable.<scorer>`` feedback with
+        the scorer call, and attaches ``weft.scorer.<scorer>`` feedback with
         ``runnable_ref`` and ``call_ref``. Returns the result so callers can
         block on it.
         """
@@ -287,7 +287,7 @@ class CallFeedback:
         client.flush()
         body: Dict[str, Any] = {
             "project_id": self.call.project_id,
-            "weave_ref": self.call.uri(),
+            "ref": self.call.uri(),
             "feedback_type": feedback_type,
             "payload": payload if isinstance(payload, dict) else {"value": payload},
         }
@@ -298,10 +298,10 @@ class CallFeedback:
         return res.get("id", "")
 
     def add_reaction(self, emoji: str, creator: Optional[str] = None) -> str:
-        return self.add("wandb.reaction.1", {"emoji": emoji}, creator=creator)
+        return self.add("weft.reaction", {"emoji": emoji}, creator=creator)
 
     def add_note(self, note: str, creator: Optional[str] = None) -> str:
-        return self.add("wandb.note.1", {"note": note}, creator=creator)
+        return self.add("weft.note", {"note": note}, creator=creator)
 
     def add_annotation(self, spec: Any, value: Any, creator: Optional[str] = None) -> str:
         """Human annotation following an ``AnnotationSpec`` (published if needed)."""
@@ -309,7 +309,7 @@ class CallFeedback:
         ref = getattr(spec, "_weft_ref", None) or client.publish(spec)
         if hasattr(spec, "value_is_valid") and not spec.value_is_valid(value):
             raise ValueError(f"value {value!r} does not match annotation spec {ref.name}")
-        return self.add(f"wandb.annotation.{ref.name}", {"value": value}, creator=creator, annotation_ref=ref)
+        return self.add(f"weft.annotation.{ref.name}", {"value": value}, creator=creator, annotation_ref=ref)
 
     def purge(self, feedback_id: str) -> None:
         client = self._client()
@@ -325,7 +325,7 @@ class CallFeedback:
             "/feedback/query",
             {
                 "project_id": self.call.project_id,
-                "query": {"$expr": {"$eq": [{"$getField": "weave_ref"}, {"$literal": self.call.uri()}]}},
+                "query": {"$expr": {"$eq": [{"$getField": "ref"}, {"$literal": self.call.uri()}]}},
                 "sort_by": [{"field": "created_at", "direction": "asc"}],
             },
         )

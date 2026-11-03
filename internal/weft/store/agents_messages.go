@@ -488,7 +488,7 @@ func assistantText(msgs []ChatMsg) (text, reasoning string) {
 	return strings.Join(ts, "\n"), strings.Join(rs, "\n")
 }
 
-// messageContent renders a message as Weave's span message content: plain
+// messageContent renders a message as span message content: plain
 // text for simple messages, a JSON parts array for structured ones.
 func messageContent(m ChatMsg) string {
 	if !m.Structured || len(m.Parts) == 0 {

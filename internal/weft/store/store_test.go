@@ -80,13 +80,13 @@ func TestRollupInOrder(t *testing.T) {
 	if sc["success"] != int64(1) || sc["error"] != int64(1) {
 		t.Fatalf("root status_counts = %v", sc)
 	}
-	if st := root.Summary["weave"].(map[string]any)["status"]; st != "descendant_error" {
+	if st := root.Summary["weft"].(map[string]any)["status"]; st != "descendant_error" {
 		t.Fatalf("root status = %v", st)
 	}
-	if lat := root.Summary["weave"].(map[string]any)["latency_ms"]; lat != int64(1500) {
+	if lat := root.Summary["weft"].(map[string]any)["latency_ms"]; lat != int64(1500) {
 		t.Fatalf("latency = %v", lat)
 	}
-	costs := root.Summary["weave"].(map[string]any)["costs"].(map[string]any)["gpt-4o"].(map[string]any)
+	costs := root.Summary["weft"].(map[string]any)["costs"].(map[string]any)["gpt-4o"].(map[string]any)
 	if costs["prompt_tokens_total_cost"].(float64) <= 0 {
 		t.Fatalf("expected cost, got %v", costs)
 	}
@@ -178,7 +178,7 @@ func TestQueryExpressions(t *testing.T) {
 		want int
 	}{
 		{`{"$expr":{"$gt":[{"$getField":"inputs.n"},{"$literal":0}]}}`, 2},
-		{`{"$expr":{"$eq":[{"$getField":"summary.weave.status"},{"$literal":"error"}]}}`, 1},
+		{`{"$expr":{"$eq":[{"$getField":"summary.weft.status"},{"$literal":"error"}]}}`, 1},
 		{`{"$expr":{"$contains":{"input":{"$getField":"inputs.text"},"substr":{"$literal":"hello x3"},"case_insensitive":true}}}`, 1},
 		{`{"$expr":{"$not":[{"$eq":[{"$getField":"id"},{"$literal":"x1"}]}]}}`, 2},
 		{`{"$expr":{"$in":[{"$getField":"id"},[{"$literal":"x1"},{"$literal":"x3"}]]}}`, 2},
@@ -217,12 +217,12 @@ func TestFeedbackFieldQuery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.CreateFeedback(ctx, FeedbackCreate{ProjectID: proj, WeaveRef: refs.CallRef(proj, "f1"), FeedbackType: "wandb.reaction.1",
+	if _, err := s.CreateFeedback(ctx, FeedbackCreate{ProjectID: proj, Ref: refs.CallRef(proj, "f1"), FeedbackType: "weft.reaction",
 		Payload: map[string]any{"emoji": "👍"}}); err != nil {
 		t.Fatal(err)
 	}
 	calls, err := s.ListCalls(ctx, CallsQuery{ProjectID: proj, IncludeFeedback: true,
-		Query: jsonVal(t, `{"$expr":{"$eq":[{"$getField":"feedback.wandb.reaction.1.emoji"},{"$literal":"👍"}]}}`)})
+		Query: jsonVal(t, `{"$expr":{"$eq":[{"$getField":"feedback.weft.reaction.emoji"},{"$literal":"👍"}]}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

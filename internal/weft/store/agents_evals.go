@@ -5,7 +5,7 @@ package store
 // activity listed.
 //
 // A span belongs to evaluation run R (prediction P) when
-//   - it carries weave.eval.run_id = R (and weave.eval.predict_and_score_call_id
+//   - it carries weft.eval.run_id = R (and weft.eval.predict_and_score_call_id
 //     = P), as spans recorded inside EvaluationLogger.log_prediction() do, or
 //     OTel spans an agent service tags itself;
 //   - an Evaluation.predict_and_score call P under R links to it through
@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS agent_eval_links_target ON agent_eval_links(project_i
 	registerMigration(backfillEvalLinks)
 }
 
-// Link kinds: a span tagged with weave.eval.*, a call linked from a
+// Link kinds: a span tagged with weft.eval.*, a call linked from a
 // prediction, and a conversation linked from a prediction.
 const (
 	evalLinkAttr         = "attr"
@@ -62,13 +62,13 @@ type evalLink struct {
 	kind, target, runID, pasID, traceID string
 }
 
-// linkedCallID reads a call id from an id, a weft:/// or weave:/// call ref,
+// linkedCallID reads a call id from an id, a weft:/// call ref,
 // or {call_id|span_id|id, trace_id?}.
 func linkedCallID(v any) (id, trace string) {
 	switch t := v.(type) {
 	case string:
 		s := strings.TrimSpace(t)
-		if i := strings.Index(s, "/call/"); i >= 0 && (strings.HasPrefix(s, "weft:///") || strings.HasPrefix(s, "weave:///")) {
+		if i := strings.Index(s, "/call/"); i >= 0 && strings.HasPrefix(s, "weft:///") {
 			s = s[i+len("/call/"):]
 			if j := strings.IndexAny(s, "/?#"); j >= 0 {
 				s = s[:j]
@@ -101,7 +101,7 @@ func listOf(v any) []any {
 func evalLinksOf(opName, id string, parentID *string, attributes map[string]any, pasParent func(string) string) []evalLink {
 	a := newSpanAttrs(attributes)
 	var out []evalLink
-	run, pas := a.str("weave.eval.run_id"), a.str("weave.eval.predict_and_score_call_id")
+	run, pas := a.str("weft.eval.run_id"), a.str("weft.eval.predict_and_score_call_id")
 	if run == "" && pas != "" && pasParent != nil {
 		run = pasParent(pas)
 	}

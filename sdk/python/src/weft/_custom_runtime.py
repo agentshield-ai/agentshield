@@ -1,5 +1,4 @@
-"""``weft.CustomRuntimeID``: the runtime ID type ``WeftClient.register_custom_runtime`` takes
-(Weave's ``weave.CustomRuntimeID``)."""
+"""``weft.CustomRuntimeID``: the runtime ID type ``WeftClient.register_custom_runtime`` takes."""
 
 from __future__ import annotations
 

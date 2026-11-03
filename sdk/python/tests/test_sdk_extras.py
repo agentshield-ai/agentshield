@@ -123,7 +123,7 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
         weft.SavedView(label="Long answers")
         .filter_op("answer")
         .add_filter("output", "contains", "B")
-        .add_filter("summary.weave.latency_ms", ">=", 0)
+        .add_filter("summary.weft.latency_ms", ">=", 0)
         .add_filter("Status", "is not empty")
         .sort_by("started_at", "asc")
         .add_column("inputs.q", "Question")
@@ -142,7 +142,7 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
     assert body["sort_by"] == [{"field": "started_at", "direction": "asc"}] and body["limit"] == 5
     clauses = body["query"]["$expr"]["$and"]
     assert clauses[0] == {"$contains": {"input": {"$getField": "output"}, "substr": {"$literal": "B"}}}
-    assert clauses[1] == {"$gte": [{"$getField": "summary.weave.latency_ms"}, {"$literal": 0.0}]}
+    assert clauses[1] == {"$gte": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 0.0}]}
     assert view.get_table_columns() == [{"path": "inputs.q", "label": "Question"}]
     assert [f.operator for f in view.filters] == ["(string): contains", "(number): >=", "(any): isNotEmpty"]
 
@@ -163,7 +163,7 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
     assert loaded.ui_url().endswith("/test-entity/test-proj/traces?view=Long-answers")
 
     loaded.remove_filter("output").remove_filter(0).hide_column("inputs.q").remove_columns()
-    assert [f.field for f in loaded.filters] == ["summary.weave.status"]
+    assert [f.field for f in loaded.filters] == ["summary.weft.status"]
     loaded.remove_filters().filter_op(None)
     assert "query" not in loaded.definition and "filter" not in loaded.definition
 
@@ -275,7 +275,7 @@ def test_log_prediction_context_manager_nests_and_links_agent_spans(client, fake
     [r] = [c for c in fake.calls.values() if fake.op_base(c) == "retrieve"]
     assert r["parent_id"] == pc["id"]
     t = fake.calls[turn.call_id]
-    link = t["attributes"]["weave"]["eval"]
+    link = t["attributes"]["weft"]["eval"]
     assert link["predict_and_score_call_id"] == pred.predict_and_score_call.id
     assert link["run_id"] == ev.call.id and link["example_id"] == "ex-1" and link["trial_index"] == 0
     assert link["evaluation_name"] == "ctx eval" and link["kind"] == "agent"
@@ -286,7 +286,7 @@ def test_log_prediction_context_manager_nests_and_links_agent_spans(client, fake
     with weft.start_turn(user_message="later") as later:
         pass
     client.flush()
-    assert "eval" not in (fake.calls[later.call_id]["attributes"].get("weave") or {})
+    assert "eval" not in (fake.calls[later.call_id]["attributes"].get("weft") or {})
 
 
 # ---------------------------------------------------------------- dataset helpers

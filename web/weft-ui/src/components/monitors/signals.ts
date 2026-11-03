@@ -23,7 +23,7 @@ export interface SignalTemplate {
   category: SignalCategory
   /** Which kind of model the signal needs. */
   model: 'judge' | 'moderation' | null
-  /** Scorer name; feedback lands as wandb.runnable.<scorer>. */
+  /** Scorer name; feedback lands as weft.scorer.<scorer>. */
   scorer: string
   /** Score field to alert on, e.g. in an Automation's score_threshold trigger. */
   scorePath: string

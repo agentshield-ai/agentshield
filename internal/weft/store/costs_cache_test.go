@@ -10,7 +10,7 @@ func approx(a, b float64) bool { return math.Abs(a-b) < 1e-12 }
 
 // TestCachedTokenPricing covers the usage shapes of each provider and the
 // audit's worked example (A11): 10,000 input tokens of which 9,000 are cache
-// reads, plus 100 output, on claude-sonnet-4-5 costs $0.0072 (Weave's method),
+// reads, plus 100 output, on claude-sonnet-4-5 costs $0.0072 (cache reads at the cache price),
 // not $0.0315.
 func TestCachedTokenPricing(t *testing.T) {
 	cases := []struct {
@@ -19,7 +19,7 @@ func TestCachedTokenPricing(t *testing.T) {
 		prompt, cr, cw, comp float64
 		cost                 float64
 	}{
-		{"audit A11: gross input with cache reads (Weave/weft SDK convention)", "claude-sonnet-4-5",
+		{"audit A11: gross input with cache reads (Weft SDK convention)", "claude-sonnet-4-5",
 			map[string]any{"requests": 1, "input_tokens": 10000, "output_tokens": 100, "cache_read_input_tokens": 9000},
 			10000, 9000, 0, 100, 1000*3e-6 + 9000*0.3e-6 + 100*15e-6},
 		{"anthropic native: input_tokens excludes cache reads", "claude-sonnet-4-5",
@@ -29,7 +29,7 @@ func TestCachedTokenPricing(t *testing.T) {
 			map[string]any{"input_tokens": 50, "output_tokens": 10, "cache_creation_input_tokens": 2000,
 				"cache_creation": map[string]any{"ephemeral_5m_input_tokens": 2000}, "service_tier": "standard"},
 			2050, 0, 2000, 10, 50*3e-6 + 2000*3.75e-6 + 10*15e-6},
-		{"anthropic via weave's on_finish (gross) with cache write", "claude-sonnet-4-5",
+		{"anthropic via an SDK integration (gross) with cache write", "claude-sonnet-4-5",
 			map[string]any{"input_tokens": 2050, "output_tokens": 10, "cache_creation_input_tokens": 2000},
 			2050, 0, 2000, 10, 50*3e-6 + 2000*3.75e-6 + 10*15e-6},
 		{"anthropic native: reads and writes", "claude-opus-5-5",
@@ -53,7 +53,7 @@ func TestCachedTokenPricing(t *testing.T) {
 			map[string]any{"promptTokenCount": 10000, "candidatesTokenCount": 200, "totalTokenCount": 10200, "cachedContentTokenCount": 8000,
 				"thoughtsTokenCount": 30},
 			10000, 8000, 0, 200, 2000*1.25e-6 + 8000*0.125e-6 + 200*10e-6},
-		{"gemini via weave's integration (canonical)", "gemini-2.5-flash",
+		{"gemini via an SDK integration (canonical)", "gemini-2.5-flash",
 			map[string]any{"prompt_tokens": 10000, "completion_tokens": 200, "total_tokens": 10200, "cache_read_input_tokens": 8000},
 			10000, 8000, 0, 200, 2000*0.3e-6 + 8000*0.03e-6 + 200*2.5e-6},
 		{"otel genai semconv as mapped by otlp (input includes cache)", "claude-sonnet-4-5",

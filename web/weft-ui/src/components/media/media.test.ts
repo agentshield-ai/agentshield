@@ -26,7 +26,7 @@ describe('media detection', () => {
     expect(detectMedia({ _type: 'Content', filename: 'notes.md', data: 'IyBoaQ==' })).toMatchObject({ kind: 'markdown', dataUrl: 'data:text/markdown;base64,IyBoaQ==' })
     expect(detectMedia({ _type: 'Content', mimetype: 'application/zip', file_digest: 'd' })?.kind).toBe('file')
   })
-  it("detects the official weave client's custom types", () => {
+  it('detects custom types stored through the compatibility adapter', () => {
     const img = { _type: 'CustomWeaveType', weave_type: { type: 'PIL.Image.Image' }, files: { 'image.jpg': 'd1' }, load_op: null }
     expect(detectMedia(img)).toMatchObject({ kind: 'image', digest: 'd1', mimetype: 'image/jpeg' })
     const wav = { _type: 'CustomWeaveType', weave_type: { type: 'wave.Wave_read' }, files: { 'audio.wav': 'd2', '_metadata.json': 'm' } }

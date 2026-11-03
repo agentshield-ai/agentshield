@@ -23,8 +23,7 @@ import { getRef, toJson } from './serialize.js';
 export const DEFAULT_SERVER_URL = 'http://localhost:6345';
 
 /**
- * Link to a conversation in the Agents view (Weave's Python
- * `weave.trace.urls.agent_conversation_path`). The base is `serverUrl`, else
+ * Link to a conversation in the Agents view. The base is `serverUrl`, else
  * the global client's server, else `WEFT_SERVER_URL`, else the default.
  */
 export function agentConversationPath(entityName: string, projectName: string, conversationId: string, serverUrl?: string): string {
@@ -73,7 +72,7 @@ export interface ClientSettings extends RedactSettings {
   walDir?: string;
   /**
    * With the WAL on, write every request to it and send nothing; a later run
-   * without this setting replays it (Weave's WEAVE_DISABLE_WAL_SENDER; env WEFT_DISABLE_WAL_SENDER).
+   * without this setting replays it (env WEFT_DISABLE_WAL_SENDER).
    */
   disableWalSender?: boolean;
   maxQueueSize?: number;
@@ -89,7 +88,7 @@ export interface ClientSettings extends RedactSettings {
   httpTimeoutMs?: number;
   /** SDK log level: debug, info, warning (default), error, critical (env WEFT_LOG_LEVEL). */
   logLevel?: LogLevel | string;
-  /** Link calls to a W&B run (`wb_run_id`, `wb_run_step`); see `WeftClient.setWbRun`. */
+  /** Link calls to a run (`wb_run_id`, `wb_run_step`); see `WeftClient.setWbRun`. */
   wbRunId?: string;
   wbRunStep?: number | (() => number | undefined);
 }
@@ -128,14 +127,14 @@ function settingBool(v: boolean | undefined, env: string, dflt: boolean): boolea
 
 export const CODE_CAPTURE_DISABLED = '// Code capture disabled\n';
 
-/** A runtime ID for `registerCustomRuntime` (Weave's `CustomRuntimeId`). */
+/** A runtime ID for `registerCustomRuntime`. */
 export interface CustomRuntimeId {
   id: string;
   /** Default 4096 (set by the server). */
   maxTokens?: number;
 }
 
-/** Weave's `RegisterCustomRuntimeOptions`. */
+/** Options of `registerCustomRuntime`. */
 export interface RegisterCustomRuntimeOptions {
   name: string;
   /** Where the runtime serves the OpenAI chat API, e.g. `http://gpu-box:8000/v1`. */
@@ -147,7 +146,7 @@ export interface RegisterCustomRuntimeOptions {
   headers?: Readonly<Record<string, string>>;
 }
 
-/** The server's reply (Weave's `CustomRuntimeApplyRes`; `kind` and `ref` are Weft additions). */
+/** The server's reply (`kind` and `ref` name what was registered). */
 export interface CustomRuntimeApplyRes {
   name: string;
   base_url: string;
@@ -172,7 +171,7 @@ export interface GetCallsOptions {
   columns?: string[];
   /** Resolve refs at these paths (e.g. "inputs.example"). */
   expandColumns?: string[];
-  /** Ask the server for `wb_username` (Weave's `include_usernames`). */
+  /** Ask the server for `wb_username` (`include_usernames`). */
   includeUsernames?: boolean;
   /** Ask the server for `storage_size_bytes`. */
   includeStorageSize?: boolean;
@@ -303,7 +302,7 @@ export class WeftClient {
   }
 
   /**
-   * Link calls started from now on to a W&B run: `wb_run_id` (sent as
+   * Link calls started from now on to a training or experiment run: `wb_run_id` (sent as
    * `<entity>/<project>/<runId>` unless already qualified) and `wb_run_step`
    * / `wb_run_step_end` (an int, or a function read at call start and end).
    * `null` clears it.
@@ -389,10 +388,6 @@ export class WeftClient {
     if (kind) weftAttrs.span_kind = kind;
     if (color) weftAttrs.color = color;
     attributes.weft = weftAttrs;
-    if (kind || color) {
-      const weave = attributes.weave && typeof attributes.weave === 'object' ? { ...(attributes.weave as object) } : {};
-      attributes.weave = { ...weave, ...(kind ? { kind } : {}), ...(color ? { color } : {}) };
-    }
     const data: CallData = {
       id,
       project_id: this.projectId,
@@ -590,10 +585,10 @@ export class WeftClient {
 
   /**
    * Register a custom runtime (an OpenAI-compatible endpoint), replacing its
-   * complete configuration if it exists (Weave's `registerCustomRuntime`;
-   * `PUT /v2/{entity}/{project}/runtimes/{name}`). Each ID is then usable as
-   * the model `<name>/<id>`. Resolves to `{data, error: null}` like Weave's
-   * `Response`; failures throw `WeftHTTPError`.
+   * complete configuration if it exists
+   * (`PUT /v2/{entity}/{project}/runtimes/{name}`). Each ID is then usable as
+   * the model `<name>/<id>`. Resolves to `{data, error: null}`; failures throw
+   * `WeftHTTPError`.
    */
   async registerCustomRuntime(options: RegisterCustomRuntimeOptions): Promise<{ data: RegisterCustomRuntimeResult; error: null }> {
     const enc = encodeURIComponent;
@@ -935,7 +930,7 @@ export class WeftClient {
     return { versionIndex: res.version_index, ref: r.uri(), targetPath: `${entity}/${regProject}/${collection}` };
   }
 
-  /** Weave's `link_prompt_to_registry`: link a published prompt version into a registry collection. */
+  /** Link a published prompt version into a registry collection. */
   linkPromptToRegistry(prompt: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
     return this.linkToRegistry(prompt, opts);
   }

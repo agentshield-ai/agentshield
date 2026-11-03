@@ -1,7 +1,7 @@
 /**
  * The SDK's logger. `WEFT_LOG_LEVEL` (or `settings.logLevel`, or
  * `setLogLevel`) picks the lowest level printed: `debug`, `info`, `warning`
- * (default), `error` or `critical`, like Weave's `WEAVE_LOG_LEVEL`. Messages go
+ * (default), `error` or `critical`. Messages go
  * to stderr through `console`.
  */
 export type LogLevel = 'debug' | 'info' | 'warning' | 'error' | 'critical';

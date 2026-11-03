@@ -191,8 +191,8 @@ def test_apply_scorer_records_feedback(client, fake):
     r2 = call.apply_scorer_sync(Length(name="length"))
     assert r2.result == len("I hate this")
     client.flush()
-    fbs = [f for f in fake.feedback if f["weave_ref"] == call.uri()]
-    assert [f["feedback_type"] for f in fbs] == ["wandb.runnable.toxicity", "wandb.runnable.length"]
+    fbs = [f for f in fake.feedback if f["ref"] == call.uri()]
+    assert [f["feedback_type"] for f in fbs] == ["weft.scorer.toxicity", "weft.scorer.length"]
     assert fbs[0]["payload"] == {"output": {"flagged": True, "threshold": 0.9}}
     assert fbs[0]["runnable_ref"].startswith("weft:///test-entity/test-proj/op/toxicity:")
     assert fbs[0]["call_ref"] == r.score_call.uri()
@@ -233,11 +233,11 @@ def test_platform_objects_serialise(client, fake):
 
     judge = scorers.LLMAsAJudgeScorer(name="judge", model="gpt-4o-mini", scoring_prompt="{output}")
     mon = weft.Monitor(name="mon", op_names=["openai.chat.completions.create"], sampling_rate=0.5,
-                       query={"$gt": [{"$getField": "summary.weave.latency_ms"}, {"$literal": 10}]}, scorers=[judge])
+                       query={"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 10}]}, scorers=[judge])
     weft.publish(mon)
     mv = fake.objs["mon"][0]["val"]
     assert mv["_class_name"] == "Monitor" and mv["active"] is True and mv["sampling_rate"] == 0.5
-    assert mv["query"] == {"$expr": {"$gt": [{"$getField": "summary.weave.latency_ms"}, {"$literal": 10}]}}
+    assert mv["query"] == {"$expr": {"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 10}]}}
     assert mv["scorers"][0].startswith("weft:///test-entity/test-proj/object/judge:")
     mon.deactivate()
     assert fake.objs["mon"][1]["val"]["active"] is False
@@ -281,13 +281,13 @@ def test_client_parity_methods(client, fake):
 
     spec = weft.AnnotationSpec(name="stars", field_schema={"type": "integer", "minimum": 1, "maximum": 5})
     sref = weft.publish(spec)
-    call.feedback.add("wandb.annotation.stars", {"value": 4}, annotation_ref=sref)
+    call.feedback.add("weft.annotation.stars", {"value": 4}, annotation_ref=sref)
     call.feedback.add_annotation(spec, 5)
     with pytest.raises(ValueError):
         call.feedback.add_annotation(spec, 7)
-    fb = client.get_feedback(query={"$eq": [{"$getField": "weave_ref"}, {"$literal": call.uri()}]}, limit=10)
+    fb = client.get_feedback(query={"$eq": [{"$getField": "ref"}, {"$literal": call.uri()}]}, limit=10)
     assert [f["annotation_ref"] for f in fb] == [sref.uri(), sref.uri()]
-    assert fb[1]["feedback_type"] == "wandb.annotation.stars"
+    assert fb[1]["feedback_type"] == "weft.annotation.stars"
 
     ids = client.add_cost("m1", 1e-6, 2e-6)
     assert [c["llm_id"] for c in client.query_costs(["m1"])] == ["m1"]

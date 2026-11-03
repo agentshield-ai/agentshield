@@ -115,7 +115,7 @@ func TestAPIKeysScopes(t *testing.T) {
 		{"POST", "/call/start", map[string]any{"start": map[string]any{"project_id": other, "op_name": "x"}}},
 		{"POST", "/calls/query", map[string]any{"project_id": other}},
 		{"POST", "/obj/create", map[string]any{"obj": map[string]any{"project_id": other, "object_id": "o", "val": 1}}},
-		{"POST", "/refs/read_batch", map[string]any{"refs": []any{"weave:///acme/other/object/o:abc"}}},
+		{"POST", "/refs/read_batch", map[string]any{"refs": []any{"weft:///acme/other/object/o:abc"}}},
 		{"GET", "/v2/acme/other/datasets", nil},
 		{"POST", "/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": other}}}},
 		{"POST", "/api_keys/create", map[string]any{"name": "x"}},
@@ -200,7 +200,7 @@ func TestTTLPurge(t *testing.T) {
 	old := time.Now().AddDate(0, 0, -10)
 	batch := append(startEnd(pid, "old", "old", nil, old, map[string]any{}, 1), startEnd(pid, "new", "new", nil, time.Now(), map[string]any{}, 1)...)
 	e.post("/call/upsert_batch", map[string]any{"batch": batch})
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/new", "feedback_type": "wandb.note.1", "payload": map[string]any{"note": "x"}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/new", "feedback_type": "weft.note", "payload": map[string]any{"note": "x"}})
 
 	if r := e.post("/project/ttl_settings/read", map[string]any{"project_id": pid}); r["retention_days"] != nil {
 		t.Fatalf("default ttl = %v", r)
@@ -366,7 +366,7 @@ func TestProjectDelete(t *testing.T) {
 		e.post("/call/upsert_batch", map[string]any{"batch": startEnd(p, "c", "c", nil, time.Now(), map[string]any{}, 1)})
 		e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": p, "object_id": "o", "val": map[string]any{"a": 1}}})
 		e.post("/table/create", map[string]any{"table": map[string]any{"project_id": p, "rows": []any{map[string]any{"x": 1}}}})
-		e.post("/feedback/create", map[string]any{"project_id": p, "weave_ref": "weft:///" + p + "/call/c", "feedback_type": "wandb.note.1", "payload": map[string]any{"note": "n"}})
+		e.post("/feedback/create", map[string]any{"project_id": p, "ref": "weft:///" + p + "/call/c", "feedback_type": "weft.note", "payload": map[string]any{"note": "n"}})
 		e.post("/project/ttl_settings/update", map[string]any{"project_id": p, "retention_days": 3})
 	}
 	if code, _ := e.raw("/project/delete", map[string]any{"project_id": pid, "confirm": "acme/other"}, nil); code != 400 {

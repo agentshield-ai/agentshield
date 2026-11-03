@@ -13,7 +13,7 @@ import { agentUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { Snippets } from '../../components/ui/EmptyState'
-import { ActionBadge, AgentChip, Bar, Callout, Metric, Panel, SeverityText, Tip } from '../../components/ui/bits'
+import { ActionBadge, AgentChip, Bar, Callout, CopyId, Metric, Panel, SeverityText, Tip } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
 import { docsUrl, usePageHelp } from '../../components/ui/PageHelp'
 import { notify } from '../../components/ui/Toasts'
@@ -280,6 +280,19 @@ export function SecurityPage() {
   )
 }
 
+/** A session labelled by its name or first request, its id in the tooltip and copyable. */
+function SessionLink({ pid, id, title, step }: { pid: string; id: string; title?: string; step?: string }) {
+  const t = title?.trim()
+  return (
+    <span className="session-link">
+      <Link to={sessionUrl(pid, id, step ? { step } : undefined)} className={t ? 'small' : 'mono small'} title={`Session ${id}`}>
+        {t ? (t.length > 60 ? t.slice(0, 59) + '…' : t) : id}
+      </Link>
+      {t && <CopyId id={id} label="Session ID" short={8} />}
+    </span>
+  )
+}
+
 function FatiguePanels({ pid, insights }: { pid: string; insights?: Awaited<ReturnType<typeof v1.insights>> }) {
   const fatigue = insights?.approval_fatigue
   const esc = insights?.override_escalation
@@ -297,9 +310,7 @@ function FatiguePanels({ pid, insights }: { pid: string; insights?: Awaited<Retu
           <ul className="plain insight-list">
             {tired.slice(0, 6).map((s) => (
               <li key={s.session_id}>
-                <Link to={sessionUrl(pid, s.session_id, { step: 'problem' })} className="mono small">
-                  {s.session_id}
-                </Link>{' '}
+                <SessionLink pid={pid} id={s.session_id} title={s.session_title} step="problem" />{' '}
                 {s.agents.map((a) => (
                   <AgentChip key={a} name={a} size="sm" />
                 ))}{' '}
@@ -323,9 +334,7 @@ function FatiguePanels({ pid, insights }: { pid: string; insights?: Awaited<Retu
           <ul className="plain insight-list">
             {escalating.slice(0, 6).map((s) => (
               <li key={s.session_id}>
-                <Link to={sessionUrl(pid, s.session_id, { step: 'problem' })} className="mono small">
-                  {s.session_id}
-                </Link>{' '}
+                <SessionLink pid={pid} id={s.session_id} title={s.session_title} step="problem" />{' '}
                 <span className="small">
                   <strong>{s.overrides}</strong> overrides ({s.overridden_blocks} blocks, {s.overridden_approvals} approvals)
                 </span>
@@ -388,9 +397,7 @@ function RecentDetections({ pid, dets, ruleFilter, onClearRule }: { pid: string;
               </span>
               <span className="det-ctx small">
                 <AgentChip name={d.agent_name} size="sm" /> <span className="mono">{d.tool_name}</span> in{' '}
-                <Link to={sessionUrl(pid, d.session_id)} className="mono">
-                  {d.session_id}
-                </Link>
+                <SessionLink pid={pid} id={d.session_id} title={d.session_title} />
                 <span className="faint" title={fmtDate(d.created_at)}>
                   {' '}
                   · {fmtRelative(d.created_at)}
@@ -455,9 +462,7 @@ function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: bool
         <Callout tone="info" title="Replay is not configured on this server">
           Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or <span className="mono">--shield-url</span>{' '}
           to use a running engine.{' '}
-          <a href={docsUrl('README.md#agentshield-integration')} target="_blank" rel="noreferrer">
-            How replay works
-          </a>
+          <Link to={docsUrl('README.md#agentshield-integration')}>How replay works</Link>
         </Callout>
       )}
       {jobs.data && jobs.data.items.length > 0 && (
@@ -520,9 +525,7 @@ function SetupGuide({ pid, replay }: { pid: string; replay: boolean }) {
       </ol>
       <p className="small muted">
         Replay of recorded tool calls is {replay ? <strong>available on this server</strong> : 'off on this server (start Weft with --shield-rules-dir to turn it on)'}.{' '}
-        <a href={docsUrl('README.md#agentshield-integration')} target="_blank" rel="noreferrer">
-          Full guide <Icon name="external" size={12} />
-        </a>
+        <Link to={docsUrl('README.md#agentshield-integration')}>Full guide</Link>
       </p>
     </section>
   )

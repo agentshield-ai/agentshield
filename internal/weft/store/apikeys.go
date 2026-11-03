@@ -111,7 +111,7 @@ func (s *Store) CreateAPIKey(ctx context.Context, c APIKeyCreate) (*APIKey, stri
 	if c.Admin && c.ReadOnly {
 		return nil, "", Invalidf("admin keys cannot be read-only")
 	}
-	// 40 hex characters: the length W&B clients expect of an API key.
+	// 40 hex characters, a length every client accepts.
 	b := make([]byte, 20)
 	if _, err := rand.Read(b); err != nil {
 		return nil, "", err

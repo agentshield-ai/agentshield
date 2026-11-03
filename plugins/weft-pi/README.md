@@ -2,8 +2,7 @@
 
 A [Pi](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
 coding-agent extension that traces Pi sessions into
-[Weft](../../docs/weft/README.md) as agent conversations, like W&B Weave's Pi
-harness integration (`createOtelExtension`):
+[Weft](../../docs/weft/README.md) as agent conversations:
 
 ```
 invoke_agent pi            one per prompt (agent_start .. agent_end): a turn; conversation = the Pi session id
@@ -37,9 +36,9 @@ Weft link and what was sent.
 
 This is based on Pi's extension documentation (`docs/extensions.md` and
 `docs/session-format.md` in `@mariozechner/pi-coding-agent` 0.73.1: event
-names and payloads, `AgentMessage` shapes, `ctx.sessionManager`) and on
-Weave's Pi harness page (span layout: `invoke_agent` per prompt, `chat` per LLM
-call, `execute_tool` per tool). It was checked against a real Pi agent session
+names and payloads, `AgentMessage` shapes, `ctx.sessionManager`), with the
+GenAI span layout (`invoke_agent` per prompt, `chat` per LLM call,
+`execute_tool` per tool). It was checked against a real Pi agent session
 (the SDK's `createAgentSession` with Pi's faux LLM provider; see
 `test/real-pi.test.mjs`), which showed that Pi emits `context` before
 `turn_start` from the second turn on.
@@ -60,7 +59,7 @@ pi
 Or copy/link the folder to `~/.pi/agent/extensions/weft-pi/` (Pi loads
 `index.js`), or try it once with `pi -e ./plugins/weft-pi/index.js`.
 
-**With the Pi SDK** (as Weave's `createOtelExtension`):
+**With the Pi SDK** (`createWeftExtension` as an extension factory):
 
 ```ts
 import { createAgentSession, DefaultResourceLoader, SessionManager } from '@mariozechner/pi-coding-agent';

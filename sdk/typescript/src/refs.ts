@@ -1,4 +1,4 @@
-export const SCHEMES = ['weft:///', 'weave:///'];
+export const SCHEMES = ['weft:///'];
 
 export function isRefUri(s: unknown): boolean {
   return typeof s === 'string' && SCHEMES.some((p) => s.startsWith(p));

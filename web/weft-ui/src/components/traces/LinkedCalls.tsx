@@ -46,7 +46,7 @@ export function LinkedCalls({ projectId, attributes, compact }: { projectId: str
             </Link>
           )}
           {Object.entries(l.evalLink.extra).map(([k, v]) => (
-            <span key={k} className="chip faint mono" title={`weave.eval.${k}`}>
+            <span key={k} className="chip faint mono" title={`weft.eval.${k}`}>
               {k}: {v}
             </span>
           ))}

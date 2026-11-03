@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Price is a per-token price for one model (Weave's CostQueryOutput).
+// Price is a per-token price for one model (an item of /cost/query).
 //
-// Cache prices follow Weave's cost fields: cache_read_input_token_cost and
+// Cache prices: cache_read_input_token_cost and
 // cache_creation_input_token_cost price the cache-read and cache-write
 // subsets of the prompt tokens. A nil cache price means "not priced
 // separately": those tokens are billed at prompt_token_cost.
@@ -50,10 +50,10 @@ func (p Price) CacheCreationRate() float64 {
 	return p.PromptTokenCost
 }
 
-// TokenCounts is one model's usage split into the token classes Weave prices.
+// TokenCounts is one model's usage split into the token classes that are priced.
 // Prompt is the gross prompt count and includes CacheRead and CacheCreation
-// (Weave's convention, and OpenAI's, Gemini's and the OTel GenAI
-// conventions'); Uncached is what remains at the full input rate.
+// (OpenAI's, Gemini's and the OTel GenAI conventions); Uncached is what
+// remains at the full input rate.
 type TokenCounts struct {
 	Requests, Prompt, Completion, Total float64
 	CacheRead, CacheCreation            float64
@@ -298,7 +298,7 @@ func (pb *PriceBook) ModelCost(model string, m map[string]float64, atUS int64) (
 }
 
 // Costs computes per-model costs for usage at time atUS, in the shape of
-// summary.weave.costs. prompt_tokens_total_cost is the cost of all prompt
+// summary.weft.costs. prompt_tokens_total_cost is the cost of all prompt
 // tokens; cache_read_input_tokens_total_cost and
 // cache_creation_input_tokens_total_cost are the parts of it spent on cache
 // reads and writes, so the call's cost is prompt_tokens_total_cost +
@@ -357,7 +357,7 @@ func (pb *PriceBook) TotalCost(usage Contribution, atUS int64) float64 {
 
 // CostInput is one entry of /cost/create.
 // Omitted cache prices are stored as NULL and bill cache tokens at the prompt
-// price (Weave's API defaults them to 0; see docs/weft/API.md).
+// price (see docs/weft/API.md).
 type CostInput struct {
 	PromptTokenCost             float64  `json:"prompt_token_cost"`
 	CompletionTokenCost         float64  `json:"completion_token_cost"`
@@ -533,7 +533,7 @@ func nullFloat(v *float64) any {
 	return *v
 }
 
-// llm_prices gained Weave's cache-read and cache-write prices; NULL means
+// llm_prices gained cache-read and cache-write prices; NULL means
 // "bill at the prompt price".
 func init() {
 	registerMigration(func(db *sql.DB) error {

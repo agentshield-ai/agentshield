@@ -67,7 +67,7 @@ if importlib.util.find_spec("transformers") is None:
     local_scorers.load_sequence_classifier = lambda *a, **k: (lambda text: [2, 0, 0, 0, 0] if "idiot" in text else [0, 0, 0, 0, 0])
 
 dataset = weft.Dataset(name="bios", rows=[{"name": "Ada Lovelace"}, {"name": "an idiot"}])
-evaluation = weft.Evaluation(dataset=dataset, scorers=[local_scorers.WeaveToxicityScorerV1()])
+evaluation = weft.Evaluation(dataset=dataset, scorers=[local_scorers.ToxicityScorer()])
 
 print(write_bio("Ada Lovelace"))
 print(asyncio.run(evaluation.evaluate(write_bio)))

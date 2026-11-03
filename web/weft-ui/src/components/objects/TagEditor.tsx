@@ -1,4 +1,4 @@
-// Version tags (Weave /objs/{id}/versions/{digest}/tags): chips with add/remove.
+// Version tags (/objs/{id}/versions/{digest}/tags): chips with add/remove.
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'

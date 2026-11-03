@@ -23,7 +23,7 @@ def _as_uri(v: Any) -> Any:
 
 
 class AnnotationSpec(Object):
-    """Schema for human feedback (``wandb.annotation.<name>``).
+    """Schema for human feedback (``weft.annotation.<name>``).
 
     ``field_schema`` is a small JSON schema, e.g. ``{"type": "integer", "minimum": 1, "maximum": 5}``,
     ``{"type": "string", "enum": ["good", "bad"]}``, ``{"type": "boolean"}`` or

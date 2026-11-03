@@ -1,4 +1,4 @@
-"""Bedrock Agents, Verdict, CallsIter.to_pandas(), registry linking, W&B run
+"""Bedrock Agents, Verdict, CallsIter.to_pandas(), registry linking, run
 linkage and the retry/queue/timeout/log-level environment variables, against
 fake modules and the fake server."""
 
@@ -446,7 +446,7 @@ def test_verdict_chained_blocks_stay_in_one_trace(client, fake, monkeypatch):
 
 
 def test_verdict_real_library_chain(client, fake):
-    """The real ``verdict`` package: one trace per pipeline run, as under Weave."""
+    """The real ``verdict`` package: one trace per pipeline run."""
     pytest.importorskip("verdict")
     from verdict import Pipeline
     from verdict.schema import Schema
@@ -536,31 +536,31 @@ def test_get_calls_passes_usernames_and_storage_size(client, fake):
 def test_link_prompt_and_any_object_to_registry(client, fake):
     prompt = weft.StringPrompt("Answer {q} briefly.")
     weft.publish(prompt, name="support-prompt")
-    res = weft.link_prompt_to_registry(prompt, target_path="wandb-registry-prompts/support", aliases=["production"])
-    assert res["version_index"] == 0 and res["target_path"] == "test-entity/wandb-registry-prompts/support"
+    res = weft.link_prompt_to_registry(prompt, target_path="prompts/support", aliases=["production"])
+    assert res["version_index"] == 0 and res["target_path"] == "test-entity/prompts/support"
     req = [r for r in fake.requests if r["path"] == "/link_to_registry"][-1]["body"]
     assert req["ref"] == prompt._weft_ref.uri() and req["aliases"] == ["production"]
-    assert req["target"] == {"portfolio_name": "support", "entity_name": "test-entity", "project_name": "wandb-registry-prompts"}
+    assert req["target"] == {"portfolio_name": "support", "entity_name": "test-entity", "project_name": "prompts"}
 
     ds = weft.Dataset(name="golden", rows=[{"q": "1+1", "a": "2"}])
     assert weft.link_to_registry(ds, target_path="other-team/datasets-registry/golden-sets")["version_index"] == 0  # published on the fly
-    assert weft.link_to_registry("support-prompt:v0", target_path="wandb-registry-prompts/support")["version_index"] == 0, "same version, same index"
+    assert weft.link_to_registry("support-prompt:v0", target_path="prompts/support")["version_index"] == 0, "same version, same index"
     prompt2 = weft.StringPrompt("Answer {q} in one word.")
     weft.publish(prompt2, name="support-prompt")
-    assert weft.link_to_registry(prompt2._weft_ref.uri(), target_path="wandb-registry-prompts/support", aliases=["production"])["version_index"] == 1
-    [col] = client.query_registry("wandb-registry-prompts", "support")
+    assert weft.link_to_registry(prompt2._weft_ref.uri(), target_path="prompts/support", aliases=["production"])["version_index"] == 1
+    [col] = client.query_registry("prompts", "support")
     assert [v["version_index"] for v in col["versions"]] == [1, 0]
-    [prod] = client.query_registry("wandb-registry-prompts", "support", alias="production")[0]["versions"]
+    [prod] = client.query_registry("prompts", "support", alias="production")[0]["versions"]
     assert prod["version_index"] == 1
-    assert client.get_from_registry("wandb-registry-prompts/support", "production").format(q="x") == "Answer x in one word."
-    assert client.get_from_registry("wandb-registry-prompts/support", "v0").format(q="x") == "Answer x briefly."
+    assert client.get_from_registry("prompts/support", "production").format(q="x") == "Answer x in one word."
+    assert client.get_from_registry("prompts/support", "v0").format(q="x") == "Answer x briefly."
     with pytest.raises(ValueError, match="target_path"):
         weft.link_to_registry(prompt, target_path="no-collection")
     with pytest.raises(TypeError):
         client.link_to_registry(weft.CallRef("e", "p", "c1"), target_path="r/c")
 
 
-# ---------------------------------------------------------------- W&B run linkage
+# ---------------------------------------------------------------- run linkage
 def test_wb_run_id_and_steps_are_sent(client, fake, monkeypatch):
     step = {"n": 3}
 
@@ -573,15 +573,13 @@ def test_wb_run_id_and_steps_are_sent(client, fake, monkeypatch):
     train_step()
     weft.set_wb_run(None)
     train_step()
-
-    run = types.SimpleNamespace(id="wandb-run-1", step=7)
-    _mods(monkeypatch, wandb={"run": run})
+    weft.set_wb_run("acme/train/run-2", step=7)
     train_step()
     client.flush()
     c1, c2, c3 = fake.calls_by_op("train_step")
     assert c1["wb_run_id"] == "test-entity/test-proj/run-abc" and c1["wb_run_step"] == 3 and c1["wb_run_step_end"] == 4
     assert "wb_run_id" not in c2
-    assert c3["wb_run_id"] == "test-entity/test-proj/wandb-run-1" and c3["wb_run_step"] == 7
+    assert c3["wb_run_id"] == "acme/train/run-2" and c3["wb_run_step"] == 7
     assert weft.Call.from_server({"id": "x", "wb_run_step": 2, "wb_username": "ann"}, None).to_dict()["wb_username"] == "ann"
 
 

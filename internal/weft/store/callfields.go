@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-// Optional Weave CallSchema fields:
+// Optional call fields:
 //
-//   - wb_run_step / wb_run_step_end: the W&B run step when the call started
-//     and ended, accepted on /call/start, /call/end, /call/upsert_batch and
-//     /v2/{entity}/{project}/calls/complete, stored in their own columns.
+//   - wb_run_step / wb_run_step_end: the step of the linked run (wb_run_id)
+//     when the call started and ended, accepted on /call/start, /call/end and
+//     /call/upsert_batch, stored in their own columns.
 //   - expire_at: started_at plus the project's retention_days
 //     (/project/ttl_settings), null when the project keeps calls forever. It
 //     is derived when read, so changing the TTL moves it for existing calls,

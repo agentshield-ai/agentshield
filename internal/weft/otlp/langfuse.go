@@ -15,7 +15,7 @@ package otlp
 // gen_ai.input/output.messages use Kotlin role names ("User", "Assistant")
 // and emit an empty "tool" entry before each user message; node and
 // subgraph spans carry koog.node.input/output and koog.subgraph.input/output.
-// With Koog's Weave adapter, tool calls arrive as
+// With Koog's indexed-attribute span adapter, tool calls arrive as
 // gen_ai.completion.N.tool_calls.M.function = {"name","arguments"} JSON.
 //
 // OpenLit: GenAI conventions plus gen_ai.usage.cost, gen_ai.client.token.usage,

@@ -199,7 +199,7 @@ export const api = {
   // ---------------------------------------------------------------- feedback
   feedbackCreate: (req: {
     project_id: string
-    weave_ref: string
+    ref: string
     feedback_type: string
     payload: Any
     creator?: string
@@ -212,7 +212,7 @@ export const api = {
     post<{ result: Feedback[] }>('/feedback/query', req),
   feedbackPurge: (project_id: string, id: string) =>
     post<object>('/feedback/purge', { project_id, query: { $expr: { $eq: [{ $getField: 'id' }, { $literal: id }] } } }),
-  feedbackReplace: (req: { feedback_id: string; project_id: string; weave_ref: string; feedback_type: string; payload: Any; annotation_ref?: string }) =>
+  feedbackReplace: (req: { feedback_id: string; project_id: string; ref: string; feedback_type: string; payload: Any; annotation_ref?: string }) =>
     post<{ id: string }>('/feedback/replace', req),
 
   // ---------------------------------------------------------------- costs
@@ -237,7 +237,7 @@ export const api = {
   // ---------------------------------------------------------------- llm
   llmModels: () => get<{ models: LLMModelInfo[] }>('/llm/models'),
   completionsCreate: (project_id: string, inputs: CompletionInputs, track_llm_call = true) =>
-    post<{ response: ChatCompletion; weave_call_id?: string }>('/completions/create', { project_id, inputs, track_llm_call }),
+    post<{ response: ChatCompletion; call_id?: string }>('/completions/create', { project_id, inputs, track_llm_call }),
   completionsStream: (project_id: string, inputs: CompletionInputs, onChunk: (chunk: Any) => void, signal?: AbortSignal) =>
     postStream<Any>('/completions/create_stream', { project_id, inputs, track_llm_call: true }, onChunk, signal),
   secretsList: () => get<{ secrets: { name: string; source: 'env' | 'db' }[] }>('/secrets/list'),

@@ -25,7 +25,7 @@ describe('panel requests', () => {
   })
   it('ands query expressions', () => {
     const a: Query = { $expr: { $eq: [{ $getField: 'op_name' }, { $literal: 'x' }] } }
-    const b: Query = { $expr: { $gt: [{ $getField: 'summary.weave.latency_ms' }, { $literal: 5 }] } }
+    const b: Query = { $expr: { $gt: [{ $getField: 'summary.weft.latency_ms' }, { $literal: 5 }] } }
     expect(mergeQueries(a, undefined)).toEqual(a)
     expect(mergeQueries(a, b)).toEqual({ $expr: { $and: [a.$expr, b.$expr] } })
     expect(mergeQueries(undefined, { $expr: {} } as never)).toBeUndefined()
@@ -85,7 +85,7 @@ describe('code snippets', () => {
   const spec = {
     projectId: 'e/p',
     filter: { trace_roots_only: true, op_names: [] },
-    query: { $expr: { $eq: [{ $getField: 'summary.weave.status' }, { $literal: 'error' }] } } as never,
+    query: { $expr: { $eq: [{ $getField: 'summary.weft.status' }, { $literal: 'error' }] } } as never,
     search: "it's",
     sortBy: [{ field: 'started_at', direction: 'desc' as const }],
   }

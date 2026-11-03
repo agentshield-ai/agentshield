@@ -61,11 +61,11 @@ export function fmtScore(v: unknown): string {
 }
 
 export function callStatus(c: Call): CallStatus {
-  return c.summary?.weave?.status ?? (c.exception ? 'error' : c.ended_at ? 'success' : 'running')
+  return c.summary?.weft?.status ?? (c.exception ? 'error' : c.ended_at ? 'success' : 'running')
 }
 
 export function callLatencyMs(c: Call): number | null {
-  if (c.summary?.weave?.latency_ms != null) return c.summary.weave.latency_ms
+  if (c.summary?.weft?.latency_ms != null) return c.summary.weft.latency_ms
   if (!c.ended_at) return null
   return new Date(c.ended_at).getTime() - new Date(c.started_at).getTime()
 }
@@ -85,7 +85,7 @@ export function callTokens(c: Call): { prompt: number; completion: number; total
 }
 
 export function callCost(c: Call): number | null {
-  const costs = c.summary?.weave?.costs
+  const costs = c.summary?.weft?.costs
   if (!costs) return null
   let t = 0
   for (const v of Object.values(costs)) t += (v.prompt_tokens_total_cost ?? 0) + (v.completion_tokens_total_cost ?? 0)

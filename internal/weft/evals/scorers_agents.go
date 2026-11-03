@@ -201,7 +201,7 @@ func (e *Engine) RunScopeScorers(ctx context.Context, req ScopeRunReq, user *str
 			scorers = append(scorers, &Scorer{Name: name, Val: val})
 			continue
 		}
-		sc, err := e.loadScorer(ctx, refs.Normalize(name))
+		sc, err := e.loadScorer(ctx, name)
 		if err != nil {
 			return nil, err
 		}

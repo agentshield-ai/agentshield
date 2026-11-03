@@ -4,7 +4,7 @@ Three routes are traced, all through the same ``RealtimeTracer``:
 
 * the ``openai`` SDK's realtime connections (``client.realtime.connect(...)``
   and ``client.beta.realtime.connect(...)``, sync and async);
-* raw websocket clients, patched the way Weave patches them:
+* raw websocket clients:
   ``websockets.connect`` (asyncio; also what the OpenAI Agents SDK's
   ``RealtimeRunner`` uses), ``websocket.WebSocketApp`` (``websocket-client``)
   and ``aiohttp.ClientSession.ws_connect``. Only connections to a Realtime
@@ -13,7 +13,7 @@ Three routes are traced, all through the same ``RealtimeTracer``:
   other websocket traffic is untouched;
 * anything else: feed events to a ``RealtimeTracer`` yourself, or wrap one
   connection with ``wrap_websocket_async`` / ``wrap_websocket_connect`` /
-  ``wrap_websocket_sync`` (Weave's names; any URL).
+  ``wrap_websocket_sync`` (any URL).
 
 Calls:
 
@@ -29,7 +29,7 @@ Calls:
 * ``openai.realtime.tool.<name>`` (tool): a function call requested by the
   model, ended when the client sends its ``function_call_output``.
 
-Audio is recorded as WAV media, as in Weave: the user's input audio
+Audio is recorded as WAV media: the user's input audio
 (``input_audio_buffer.append``, cut per item at the server-VAD speech markers
 or at each commit) on the ``input_audio`` content parts of the response's
 inputs, and the model's audio (``response.output_audio.delta``) on the
@@ -902,7 +902,7 @@ def _instrument_websocket_app(app: Any, url: Any = None) -> Any:
     return app
 
 
-# Weave's manual wrappers (weave.integrations.openai_realtime), for when autopatching is off.
+# Manual wrappers, for when autopatching is off.
 def wrap_websocket_async(connection: Any) -> Any:
     """Trace one connected async websocket (``websockets`` or ``aiohttp``); returns it."""
     return _attach(connection, getattr(connection, "request", None) and getattr(getattr(connection, "request", None), "path", None))

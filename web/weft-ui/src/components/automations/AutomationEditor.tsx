@@ -11,7 +11,7 @@ import { errMsg, KIND_META, refOf, useObjects } from '../objects/objectUtils'
 import { cleanAutomation, emptyAutomation, OPERATORS, TRIGGER_LABELS, validateAutomation } from './automationUtils'
 import { RunStatus } from './RunsTable'
 
-const FEEDBACK_PRESETS = ['wandb.reaction.*', 'wandb.note.1', 'wandb.annotation.*', 'wandb.runnable.*']
+const FEEDBACK_PRESETS = ['weft.reaction', 'weft.note', 'weft.annotation.*', 'weft.scorer.*']
 
 const MESSAGE_HELP = 'Placeholders: {automation} {project_id} {summary} {call_id} {value} {threshold} {feedback_type} {error_rate} {total_calls} {error_calls}'
 
@@ -139,7 +139,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
                   <option key={o.object_id} value={o.object_id} />
                 ))}
               </datalist>
-              <span className="hint">Scorer name (results written by monitors or Run scorer), or a full feedback type such as wandb.annotation.quality.</span>
+              <span className="hint">Scorer name (results written by monitors or Run scorer), or a full feedback type such as weft.annotation.quality.</span>
             </label>
             <label className="field">
               Score field
@@ -223,7 +223,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
               </button>
             ))}
           </span>
-          <span className="hint">Exact types, or a prefix ending in * (wandb.reaction.* matches every emoji reaction).</span>
+          <span className="hint">Exact types, or a prefix ending in * (weft.reaction matches every emoji reaction).</span>
         </label>
       )}
 

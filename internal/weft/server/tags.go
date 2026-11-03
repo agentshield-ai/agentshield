@@ -9,7 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Weave's object tag and alias REST endpoints. Aliases share storage with
+// Object tag and alias REST endpoints. Aliases share storage with
 // /obj/alias/set|remove.
 
 func init() {

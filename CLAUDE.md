@@ -199,7 +199,7 @@ In-memory LRU cache (default 10,000 entries, 5-min TTL) avoids re-evaluating ide
 
 ### Weft (`cmd/weft`, `internal/weft/`, `web/weft-ui/`, `sdk/`)
 
-Standalone OpenTelemetry-native LLM tracing and evaluation server (a Weave-style feature set), separate from the detection engine. See [docs/weft/README.md](docs/weft/README.md); the API contract is [docs/weft/API.md](docs/weft/API.md) — keep it, `web/weft-ui/src/api/types.ts` and the SDKs in sync.
+Standalone OpenTelemetry-native observability and evaluation server for agents and agent teams (sessions, hand-offs, reasoning, AgentShield detections, evaluations), separate from the detection engine. See [docs/weft/README.md](docs/weft/README.md) and [docs/weft/DESIGN.md](docs/weft/DESIGN.md); the API contract is [docs/weft/API.md](docs/weft/API.md) — keep it, `web/weft-ui/src/api/types.ts` and the SDKs in sync.
 
 ```bash
 make weft && ./bin/weft                # server + embedded UI on 127.0.0.1:6345
@@ -213,6 +213,9 @@ python3 scripts/weft_seed_demo.py      # demo data (offline mock models)
 - `llm/` — provider routing (OpenAI-compatible, Anthropic, custom `Provider` objects, offline `mock/echo` and `mock/json`).
 - `evals/` — built-in scorers, LLM judges, server-side `evaluate_model`, comparisons, leaderboards, monitors.
 - Object digests are SHA-256 of canonical JSON (sorted keys); stored values keep the publisher's key order.
+- `compat/` — the optional adapter for another product's client (off by default, flag in COMPATIBILITY.md); `compat/legacy/` holds every old name (feedback types, attribute keys, query fields) used by the adapter and by the store's one-time migration. Nothing else may refer to that product; see [docs/weft/COMPATIBILITY.md](docs/weft/COMPATIBILITY.md).
+- Feedback uses Weft's names: field `ref`, types `weft.reaction`, `weft.note`, `weft.scorer.<scorer>`, `weft.annotation.<name>`, `weft.score.<scorer>`, `weft.signal`; the computed call summary block is `summary.weft`.
+- `docs/weft/*.md` guides are embedded (`docs/weft/docs.go`) and served at `/api/v1/help`; the UI renders them at `/help/<guide>`.
 - `web/weft-ui` needs `legacy-peer-deps` (`.npmrc`) because npm 10 crashes resolving vitest 4 optional peers.
 
 ## Key Environment Variables

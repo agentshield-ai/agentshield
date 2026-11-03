@@ -17,13 +17,13 @@ const call = (id: string, over: Partial<Call> & Record<string, unknown>): Call =
 
 describe('scatter charts', () => {
   const a = call('a', { summary: { usage: { 'gpt-4o': { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } }, attributes: { env: 'prod' } })
-  const b = call('b', { ended_at: '2026-01-01T00:00:00.500Z', output: { score: '0.5' }, feedback: [{ feedback_type: 'wandb.runnable.judge', payload: { output: { ok: true } } }] } as never)
+  const b = call('b', { ended_at: '2026-01-01T00:00:00.500Z', output: { score: '0.5' }, feedback: [{ feedback_type: 'weft.scorer.judge', payload: { output: { ok: true } } }] } as never)
   it('reads per-call metric values', () => {
     expect(callFieldValue(a, 'latency_ms')).toBe(2000)
     expect(callFieldValue(a, 'total_tokens')).toBe(15)
     expect(callFieldValue(b, 'total_tokens')).toBeNull()
     expect(callFieldValue(b, 'output.score')).toBe(0.5)
-    expect(callFieldValue(b, 'feedback.wandb.runnable.judge.output.ok')).toBe(1)
+    expect(callFieldValue(b, 'feedback.weft.scorer.judge.output.ok')).toBe(1)
     expect(callFieldValue(a, 'attributes.env')).toBeNull()
   })
   it('groups calls', () => {

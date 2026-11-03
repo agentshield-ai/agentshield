@@ -259,7 +259,7 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 			if callish {
 				addC(str(m, "id"))
 			}
-			addRef(str(m, "weave_ref"))
+			addRef(str(m, "ref"))
 		}
 	}
 	addO(str(top, "object_id"))
@@ -269,7 +269,7 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 	for k, v := range top {
 		switch x := v.(type) {
 		case string:
-			if k == "weave_ref" || strings.HasSuffix(k, "_ref") || k == "ref" {
+			if k == "ref" || strings.HasSuffix(k, "_ref") || k == "ref" {
 				addRef(x)
 			}
 		case []any:

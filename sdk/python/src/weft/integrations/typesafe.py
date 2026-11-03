@@ -15,9 +15,8 @@ span of provider ``typesafe``:
   also inside an ``@weft.op`` (the integration creates no op call of its
   own). When an op is running, both spans are linked to it by the
   ``weft.parent_call.trace_id`` and ``weft.parent_call.id`` attributes
-  (DESIGN.md §4; the server exposes them, like Weave's
-  ``weave.parent_call.*``, as the agent span fields ``parent_call_trace_id``
-  / ``parent_call_id``). The span is not made
+  (DESIGN.md §4; the server exposes them as the agent span fields
+  ``parent_call_trace_id`` / ``parent_call_id``). The span is not made
   the current call, so nothing nests under it.
 * errors: ``error.type`` and ``http.response.status_code``, with the
   exception recorded as its type only: TypeSafe's API errors carry the

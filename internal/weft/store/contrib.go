@@ -24,7 +24,7 @@ func ParseContribution(s string) Contribution {
 
 // TotalContribution is a call's own contribution plus its descendants'.
 // Calls from clients that already roll descendants into their summary
-// (cumulative, e.g. the official weave client) report their total directly;
+// (cumulative, X-Weft-Summary: cumulative) report their total directly;
 // for those the summary is authoritative once the call has ended.
 func TotalContribution(summary map[string]any, ended, failed, cumulative bool, rollup Contribution) Contribution {
 	if cumulative && ended {
@@ -81,27 +81,27 @@ func (c *Contribution) addSummaryUsage(summary map[string]any) {
 }
 
 // NormalizeUsage flattens one model's usage entry into numeric fields with
-// Weave's canonical cache names, so cached tokens can be priced:
+// canonical cache names, so cached tokens can be priced:
 //
 //   - cache_read_input_tokens and cache_creation_input_tokens are the
 //     cache-read and cache-write subsets of the prompt, and prompt_tokens /
-//     input_tokens is the gross prompt (Weave's convention).
+//     input_tokens is the gross prompt.
 //   - OpenAI: prompt_tokens_details.cached_tokens (Chat Completions) and
 //     input_tokens_details.cached_tokens (Responses) are already included in
 //     the prompt count and become cache_read_input_tokens; cache_write_tokens
-//     (OpenAI-compatible providers) becomes cache_creation_input_tokens, as
-//     in weave's openai integration. Nested reasoning_tokens are lifted too.
+//     (OpenAI-compatible providers) becomes cache_creation_input_tokens.
+//     Nested reasoning_tokens are lifted too.
 //   - Gemini/Vertex usage_metadata names (prompt_token_count,
 //     candidates_token_count, total_token_count, cached_content_token_count,
 //     thoughts_token_count, and their camelCase forms) become prompt_tokens,
 //     completion_tokens, total_tokens, cache_read_input_tokens and
-//     reasoning_tokens, as in weave's google_genai integration.
+//     reasoning_tokens.
 //   - Bedrock Converse (inputTokens, cacheReadInputTokens,
 //     cacheWriteInputTokens): inputTokens excludes cached tokens, so they are
-//     added to the prompt, as in weave's bedrock integration.
+//     added to the prompt.
 //   - Anthropic's native usage reports input_tokens without the cache reads
-//     and writes. Producers should send the gross count (weave's anthropic
-//     integration and Weft's harness plugins do). When an entry cannot be
+//     and writes. Producers should send the gross count (Weft's SDK
+//     integrations and harness plugins do). When an entry cannot be
 //     gross (cache reads + writes exceed the prompt count), the cache counts
 //     are added to the prompt; otherwise the entry is taken as gross.
 //

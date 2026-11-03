@@ -22,7 +22,7 @@ export class FakeWeft {
   tags = new Map<string, string[]>(); // `${object}|${digest}`
   aliases = new Map<string, string>(); // `${object}|${alias}` -> digest
   embeddingsEnabled = false;
-  weaveRoutes = true;
+  aliasRoutes = true;
   /** Extra POST routes for individual tests: path -> handler(body). */
   routes = new Map<string, (body: any) => unknown>();
   url = '';
@@ -55,12 +55,12 @@ export class FakeWeft {
         if (req.method === 'GET' && path.startsWith('/tags?')) return send(200, { tags: [...new Set([...this.tags.values()].flat())].sort() });
         if (req.method === 'PUT') {
           let m = /^\/objs\/([^/]+)\/aliases$/.exec(path);
-          if (m && this.weaveRoutes) {
+          if (m && this.aliasRoutes) {
             for (const a of body.aliases) this.aliases.set(`${decodeURIComponent(m[1])}|${a}`, body.digest);
             return send(200, {});
           }
           m = /^\/objs\/([^/]+)\/versions\/([^/]+)\/tags$/.exec(path);
-          if (m && this.weaveRoutes) {
+          if (m && this.aliasRoutes) {
             const key = `${decodeURIComponent(m[1])}|${m[2]}`;
             const cur = this.tags.get(key) ?? [];
             for (const t of body.tags) if (!cur.includes(t)) cur.push(t);
@@ -123,12 +123,12 @@ export class FakeWeft {
     const extra = this.routes.get(path);
     if (extra) return extra(body);
     let m = /^\/objs\/([^/]+)\/aliases\/remove$/.exec(path);
-    if (m && this.weaveRoutes) {
+    if (m && this.aliasRoutes) {
       for (const a of body.aliases) this.aliases.delete(`${decodeURIComponent(m[1])}|${a}`);
       return {};
     }
     m = /^\/objs\/([^/]+)\/versions\/([^/]+)\/tags\/remove$/.exec(path);
-    if (m && this.weaveRoutes) {
+    if (m && this.aliasRoutes) {
       const key = `${decodeURIComponent(m[1])}|${m[2]}`;
       this.tags.set(key, (this.tags.get(key) ?? []).filter((t) => !body.tags.includes(t)));
       return {};
@@ -240,7 +240,7 @@ export class FakeWeft {
       }
       case '/feedback/query': {
         const val = body.query.$expr.$eq[1].$literal;
-        return { result: this.feedback.filter((f) => f.weave_ref === val) };
+        return { result: this.feedback.filter((f) => f.ref === val) };
       }
       case '/cost/create':
         return { ids: Object.keys(body.costs).map((k, i) => [`c${i}`, k]) };

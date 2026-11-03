@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// RemoteScorer URLs must use https unless the operator allows http, as in
-// Weave (WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP=false by default).
+// RemoteScorer URLs must use https unless the operator allows http (off by
+// default).
 func TestRemoteScorerRequiresHTTPS(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -39,9 +39,9 @@ def test_feedback_display_name_delete(client, fake):
     call.feedback.add_note("great")
     call.feedback.add("custom.score", {"value": 3})
     fbs = list(call.feedback)
-    assert [fb["feedback_type"] for fb in fbs] == ["wandb.reaction.1", "wandb.note.1", "custom.score"]
+    assert [fb["feedback_type"] for fb in fbs] == ["weft.reaction", "weft.note", "custom.score"]
     assert fbs[0]["payload"] == {"emoji": "👍"}
-    assert fbs[0]["weave_ref"] == f"weft:///test-entity/test-proj/call/{call.id}"
+    assert fbs[0]["ref"] == f"weft:///test-entity/test-proj/call/{call.id}"
     call.feedback.purge(fbs[2]["id"])
     assert len(call.feedback) == 2
     call.set_display_name("renamed")

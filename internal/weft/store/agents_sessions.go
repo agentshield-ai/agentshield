@@ -981,6 +981,36 @@ func containsStr(l []string, s string) bool {
 	return false
 }
 
+// SessionTitles returns a label for each of the given sessions: its name
+// when it has one, else its title (the first user request). Sessions with
+// neither are left out.
+func (s *Store) SessionTitles(ctx context.Context, projectID string, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	pid, err := refs.NormalizeProject(projectID)
+	if err != nil {
+		return nil, &InvalidError{Msg: err.Error()}
+	}
+	sessions, err := s.buildSessions(ctx, pid, ids)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.fillTitles(ctx, pid, sessions); err != nil {
+		return nil, err
+	}
+	for _, ss := range sessions {
+		switch {
+		case ss.Name != "" && ss.Name != ss.SessionID:
+			out[ss.SessionID] = ss.Name
+		case ss.Title != "":
+			out[ss.SessionID] = ss.Title
+		}
+	}
+	return out, nil
+}
+
 // fillTitles sets each session's title: the first user request.
 func (s *Store) fillTitles(ctx context.Context, pid string, sessions []*SessionSummary) error {
 	var ids []string

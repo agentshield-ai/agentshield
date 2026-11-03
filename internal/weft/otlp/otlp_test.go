@@ -69,7 +69,7 @@ func TestProtobufGenAISpan(t *testing.T) {
 }
 
 func TestJSONHexIDsAndOpenInference(t *testing.T) {
-	body := []byte(`{"resourceSpans":[{"resource":{"attributes":[{"key":"wandb.project","value":{"stringValue":"proj"}}]},
+	body := []byte(`{"resourceSpans":[{"resource":{"attributes":[{"key":"weft.project","value":{"stringValue":"proj"}}]},
 	 "scopeSpans":[{"scope":{"name":"openinference"},"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174",
 	  "name":"llm","kind":3,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000000500000000",
 	  "attributes":[{"key":"llm.input_messages.0.message.role","value":{"stringValue":"user"}},

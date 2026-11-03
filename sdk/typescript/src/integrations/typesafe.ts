@@ -14,8 +14,8 @@
  *   of its own trace, also inside an op (the integration creates no op call of
  *   its own). When an op is running, the spans are linked to it by the
  *   `weft.parent_call.id` and `weft.parent_call.trace_id` attributes
- *   (DESIGN.md §4; the server exposes them, like Weave's `weave.parent_call.*`,
- *   as the agent span fields `parent_call_id` / `parent_call_trace_id`);
+ *   (DESIGN.md §4; the server exposes them as the agent span fields
+ *   `parent_call_id` / `parent_call_trace_id`);
  * - errors: `error.type` and `http.response.status_code`; the provider error
  *   text (it carries the response body) is not copied.
  *

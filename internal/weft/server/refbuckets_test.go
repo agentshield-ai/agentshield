@@ -18,8 +18,7 @@ func TestReferenceBucketsS3AndGCS(t *testing.T) {
 	gfake.Objects["/cust-gcs/shots/cat.png"] = []byte("GCSPNG")
 
 	e := newEnv(t)
-	// CORS rules for the Weft origin (here the test server's), as Weave's
-	// byob-references page configures them.
+	// CORS rules for the Weft origin (here the test server's).
 	s3fake.SetCORS("cust-media", s3test.CORSRule{AllowedOrigins: []string{e.srv.URL}, AllowedMethods: []string{"GET", "HEAD"},
 		AllowedHeaders: []string{"*"}, ExposeHeaders: []string{"ETag"}, MaxAgeSeconds: 3000})
 	gfake.SetCORS("cust-gcs", gcstest.CORSEntry{Origin: []string{e.srv.URL}, Method: []string{"GET", "HEAD"}, ResponseHeader: []string{"ETag"}, MaxAgeSeconds: 3000})
@@ -101,7 +100,7 @@ func TestReferenceBucketsS3AndGCS(t *testing.T) {
 			t.Fatalf("uri %d: url %v error %v, want %s", i, urls[i], errs[i], code)
 		}
 	}
-	// Without it the response keeps Weave's shape (no "errors").
+	// Without it the response keeps the plain shape (no "errors").
 	if res = e.post("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{"https://example.com/a.png"}}); len(res) != 2 {
 		t.Fatalf("plain resolve = %v", res)
 	}
@@ -158,7 +157,7 @@ func TestReferenceBucketsNeedServerAdmin(t *testing.T) {
 }
 
 // The bucket test checks CORS for the Weft origin (the request's Origin, else
-// this server's own scheme://host), as Weave's does, and create refuses a
+// this server's own scheme://host), and create refuses a
 // bucket whose CORS rules do not allow it unless skip_test.
 func TestReferenceBucketCORSCheck(t *testing.T) {
 	s3fake, s3srv := s3test.NewFake(t, "CUSTKEY", "CUSTSECRET", "eu-west-1")

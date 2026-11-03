@@ -8,7 +8,7 @@ const call = (id: string, inputs: Record<string, unknown>, output: unknown) => (
 const fb = (callId: string, type: string, value: unknown, at: string, user = 'alice'): Feedback => ({
   id: `${callId}-${type}-${at}`,
   project_id: 'e/p',
-  weave_ref: `weft:///e/p/call/${callId}`,
+  ref: `weft:///e/p/call/${callId}`,
   feedback_type: type,
   payload: { value },
   creator: null,
@@ -44,10 +44,10 @@ describe('queue export', () => {
     ['c2', call('c2', { question: 'b?' }, 'B')],
   ])
   const feedback = [
-    fb('c1', 'wandb.annotation.quality', 2, '2025-01-01T00:00:00Z'),
-    fb('c1', 'wandb.annotation.quality', 5, '2025-01-02T00:00:00Z', 'bob'),
-    fb('c1', 'wandb.annotation.correct', true, '2025-01-01T00:00:00Z'),
-    fb('c1', 'wandb.reaction.1', null, '2025-01-01T00:00:00Z', 'carol'),
+    fb('c1', 'weft.annotation.quality', 2, '2025-01-01T00:00:00Z'),
+    fb('c1', 'weft.annotation.quality', 5, '2025-01-02T00:00:00Z', 'bob'),
+    fb('c1', 'weft.annotation.correct', true, '2025-01-01T00:00:00Z'),
+    fb('c1', 'weft.reaction', null, '2025-01-01T00:00:00Z', 'carol'),
   ]
   it('keeps annotated calls with the latest value per spec', () => {
     const rows = buildExportRows([{ call_id: 'c1' }, { call_id: 'c2' }, { call_id: 'gone' }], calls, feedback, ['quality', 'correct', 'tone'])
@@ -79,10 +79,10 @@ describe('automations', () => {
   })
   it('drops fields of other trigger types and prefers the secret', () => {
     const a = emptyAutomation('x')
-    a.trigger = { type: 'feedback_created', feedback_types: [' wandb.reaction.* ', ''], scorer: 'old', threshold: 3 }
+    a.trigger = { type: 'feedback_created', feedback_types: [' weft.reaction ', ''], scorer: 'old', threshold: 3 }
     a.action = { type: 'webhook', url: 'https://x.test', url_secret: 'HOOK', headers: {}, message: '' }
     const c = cleanAutomation(a)
-    expect(c.trigger).toEqual({ type: 'feedback_created', feedback_types: ['wandb.reaction.*'] })
+    expect(c.trigger).toEqual({ type: 'feedback_created', feedback_types: ['weft.reaction'] })
     expect(c.action).toEqual({ type: 'webhook', url_secret: 'HOOK' })
   })
 })

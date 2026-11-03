@@ -8,8 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Weave response shapes for endpoints whose Weft shape differs, plus
-// GET /version.
+// Alternative response shapes some endpoints offer (selected by request
+// fields), plus GET /version.
 
 func init() {
 	// Public like /server_info: no API key needed.
@@ -20,21 +20,22 @@ func init() {
 	})
 }
 
-// weaveCallStatsFields are CallStatsReq fields that Weft's own /calls/stats
-// request does not use. Any of them selects Weave's request/response shape.
-type weaveCallStatsFields struct {
-	Granularity  *int64                   `json:"granularity"`
-	UsageMetrics *[]store.WeaveMetricSpec `json:"usage_metrics"`
-	CallMetrics  *[]store.WeaveMetricSpec `json:"call_metrics"`
-	Timezone     *string                  `json:"timezone"`
+// metricStatsFields select the metric-bucket form of /calls/stats
+// (usage_buckets and call_buckets with per-metric aggregations) instead of
+// the plain time series. Any of them selects it.
+type metricStatsFields struct {
+	Granularity  *int64                    `json:"granularity"`
+	UsageMetrics *[]store.BucketMetricSpec `json:"usage_metrics"`
+	CallMetrics  *[]store.BucketMetricSpec `json:"call_metrics"`
+	Timezone     *string                   `json:"timezone"`
 }
 
-func (f weaveCallStatsFields) isWeave() bool {
+func (f metricStatsFields) isMetricStats() bool {
 	return f.Granularity != nil || f.UsageMetrics != nil || f.CallMetrics != nil || f.Timezone != nil
 }
 
-func (s *Server) weaveCallsStats(ctx context.Context, req *callsStatsReq) (any, error) {
-	q := store.WeaveCallStatsReq{ProjectID: req.ProjectID, Start: req.Start, End: req.End, Granularity: req.Granularity, Filter: req.Filter}
+func (s *Server) metricCallsStats(ctx context.Context, req *callsStatsReq) (any, error) {
+	q := store.MetricStatsReq{ProjectID: req.ProjectID, Start: req.Start, End: req.End, Granularity: req.Granularity, Filter: req.Filter}
 	if req.UsageMetrics != nil {
 		q.UsageMetrics = *req.UsageMetrics
 	}
@@ -44,5 +45,5 @@ func (s *Server) weaveCallsStats(ctx context.Context, req *callsStatsReq) (any, 
 	if req.Timezone != nil {
 		q.Timezone = *req.Timezone
 	}
-	return s.store.ComputeWeaveCallStats(ctx, q)
+	return s.store.ComputeMetricStats(ctx, q)
 }

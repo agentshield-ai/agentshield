@@ -36,7 +36,7 @@ describe('bucket URIs as plain strings (reference buckets)', () => {
     expect(detectMedia('s3://-bkt/a.png')).toBeNull()
     expect(detectMedia('az://container/a.png')).toBeNull()
     expect(detectMedia('ftp://host/a.png')).toBeNull()
-    // Weave renders bucket URIs only; https strings stay text (links).
+    // Only bucket URIs render as media; https strings stay text (links).
     expect(detectMedia('https://example.com/cat.png')).toBeNull()
     expect(detectMedia('S3://bkt/a.png')).toBeNull()
     expect(isReferenceUri(42)).toBe(false)

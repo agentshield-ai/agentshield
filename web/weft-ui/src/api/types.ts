@@ -44,7 +44,8 @@ export interface LLMCost {
 export interface CallSummary {
   usage?: Record<string, UsageEntry>
   status_counts?: { success?: number; error?: number }
-  weave?: {
+  /** Computed on read. */
+  weft?: {
     status: CallStatus
     latency_ms: number | null
     trace_name: string
@@ -57,7 +58,7 @@ export interface CallSummary {
 export interface Feedback {
   id: string
   project_id: string
-  weave_ref: string
+  ref: string
   feedback_type: string
   payload: Any
   creator: string | null
@@ -234,7 +235,7 @@ export interface ObjSchema {
   val: Any
   wb_user_id: string | null
   aliases: string[]
-  /** Version tags (Weave /objs/{id}/versions/{digest}/tags). */
+  /** Version tags (/objs/{id}/versions/{digest}/tags). */
   tags?: string[]
   size_bytes: number
   version_count?: number

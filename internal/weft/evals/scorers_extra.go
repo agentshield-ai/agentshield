@@ -22,9 +22,8 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 )
 
-// Additional server-runnable scorers. Field names follow the Weave SDK
-// classes of the same name (model_id, threshold, system_prompt, …), plus the
-// Weft aliases documented in docs/weft/API.md.
+// Additional server-runnable scorers. Their fields (model_id, threshold,
+// system_prompt, …) and aliases are documented in docs/weft/API.md.
 
 // scorerFunc computes a score; rec is the scorer's own call (parent for LLM
 // calls) and attrs the attributes it was started with.
@@ -460,8 +459,8 @@ func scoreEmbeddingSimilarity(e *Engine, ctx context.Context, projectID string, 
 // textOf is the text compared by text scorers (chat outputs are unwrapped).
 func textOf(v any) string { return outputText(v) }
 
-// RemoteScorer POSTs {"output", "inputs"} to url (Weave's endpoint_url is
-// accepted too) and uses the JSON response (or its text) as the score.
+// RemoteScorer POSTs {"output", "inputs"} to url (endpoint_url is accepted
+// as an alias) and uses the JSON response (or its text) as the score.
 func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example map[string]any, output any, _ *callRec, _ map[string]any) (any, error) {
 	target := strField(val, "url", "endpoint_url")
 	u, err := url.Parse(target)
@@ -537,15 +536,14 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	return v, nil
 }
 
-// AllowInsecureRemoteScorerHTTP permits http:// RemoteScorer URLs. As in
-// Weave (WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP), it is off by
-// default, so scorer requests, which carry call inputs and outputs and may
+// AllowInsecureRemoteScorerHTTP permits http:// RemoteScorer URLs. It is off
+// by default, so scorer requests, which carry call inputs and outputs and may
 // carry credentials, are only sent over TLS. cmd/weft sets it from
 // --remote-scorer-allow-insecure-http.
 var AllowInsecureRemoteScorerHTTP bool
 
 // remoteHTTP calls remote scorers and remote (predict) models. Destinations
-// pass the egress guard, and, as in Weave, redirects are not followed: a 3xx
+// pass the egress guard, and redirects are not followed: a 3xx
 // response fails the call.
 var remoteHTTP = egress.NewClient(0, false)
 

@@ -92,7 +92,8 @@ What remains is recorded, per pair of Weft file and reference file, in
 [`scripts/weft_provenance_baseline.json`](../../scripts/weft_provenance_baseline.json)
 with a reason. In summary:
 
-- **Wire format of the Weave-compatible API**: field lists of calls, objects,
+- **Wire format of the trace API** (shared with Weave's where that was
+  kept): field lists of calls, objects,
   feedback, costs, threads, annotation queues, agent spans and stats in
   `docs/weft/API.md`, `internal/weft/store`, `internal/weft/server`,
   `web/weft-ui/src/api/*` and the SDK call types.
@@ -128,8 +129,14 @@ with a reason. In summary:
   file as modified (Apache-2.0 §4(b)) and add an entry to `NOTICE`.
 - Weave's documentation is not reused; Weft's docs are written from Weft's
   behaviour.
-- Mentions of Weave in comments and docs that explain compatibility ("Weave's
-  name for this", "the Weave-compatible link keys") are factual and kept.
+- Weave is named only where compatibility with its client is the subject:
+  the optional adapter (`internal/weft/compat`, off by default),
+  [COMPATIBILITY.md](COMPATIBILITY.md), this page, `NOTICE`,
+  `scripts/weft_weave_compat_check.py`, `scripts/weft_provenance_scan.py` and
+  its baseline. Everything else describes Weft's behaviour in Weft's terms
+  (2026-11-03: comments, identifiers, UI copy, docs, SDK docs and examples
+  were rewritten; Weft's own feedback types, attribute keys and field names
+  replaced the ones it had shared with Weave, see COMPATIBILITY.md).
 
 ## Third-party code in the embedded UI
 

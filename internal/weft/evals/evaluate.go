@@ -137,11 +137,11 @@ func (e *Engine) EvaluateModel(ctx context.Context, projectID, evaluationRef, mo
 	if err != nil {
 		return "", &store.InvalidError{Msg: err.Error()}
 	}
-	evalObj, evalVal, err := e.loadObject(ctx, refs.Normalize(evaluationRef))
+	evalObj, evalVal, err := e.loadObject(ctx, evaluationRef)
 	if err != nil {
 		return "", err
 	}
-	modelObj, modelVal, err := e.loadObject(ctx, refs.Normalize(modelRef))
+	modelObj, modelVal, err := e.loadObject(ctx, modelRef)
 	if err != nil {
 		return "", err
 	}
@@ -681,7 +681,6 @@ func (e *Engine) ComputeLeaderboard(ctx context.Context, projectID, objectID, di
 		cm, _ := c.(map[string]any)
 		col := LeaderboardColumn{Index: i}
 		col.EvaluationObjectRef, _ = cm["evaluation_object_ref"].(string)
-		col.EvaluationObjectRef = refs.Normalize(col.EvaluationObjectRef)
 		col.ScorerName, _ = cm["scorer_name"].(string)
 		col.SummaryMetricPath, _ = cm["summary_metric_path"].(string)
 		col.ShouldMinimize, _ = cm["should_minimize"].(bool)

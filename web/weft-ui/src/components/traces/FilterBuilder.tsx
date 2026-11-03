@@ -38,13 +38,13 @@ export const BASE_FILTER_FIELDS = [
   'wb_user_id',
   'started_at',
   'ended_at',
-  'summary.weave.status',
-  'summary.weave.latency_ms',
-  'summary.weave.trace_name',
+  'summary.weft.status',
+  'summary.weft.latency_ms',
+  'summary.weft.trace_name',
   'summary.total_tokens',
 ]
 
-const NUMERIC_FIELDS = new Set(['summary.weave.latency_ms', 'summary.total_tokens'])
+const NUMERIC_FIELDS = new Set(['summary.weft.latency_ms', 'summary.total_tokens'])
 
 const fieldOp = (path: string): Operand => ({ $getField: path })
 const lit = (v: unknown): Operand => ({ $literal: v })
@@ -182,7 +182,7 @@ function ClauseEditor({
           ))}
         </select>
         {!op?.noValue &&
-          (c.field === 'summary.weave.status' ? (
+          (c.field === 'summary.weft.status' ? (
             <select className="input grow" value={c.value} onChange={(e) => setC({ ...c, value: e.target.value })} aria-label="Value">
               <option value="">Choose…</option>
               {['success', 'error', 'running', 'descendant_error'].map((s) => (

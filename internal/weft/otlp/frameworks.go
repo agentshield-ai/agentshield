@@ -720,7 +720,7 @@ func frameworkUsage(attrs map[string]any, set func(name string, keys ...string))
 		"llm.token_count.prompt_details.cache_read", "ai.usage.cachedInputTokens")
 	// OTel GenAI semconv: gen_ai.usage.cache_read.input_tokens and
 	// gen_ai.usage.cache_creation.input_tokens are included in
-	// gen_ai.usage.input_tokens (Weave's convention too).
+	// gen_ai.usage.input_tokens (the common convention).
 	set("cache_creation_input_tokens", "gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.cache_write.input_tokens",
 		"gen_ai.usage.cache_creation_input_tokens",
 		"llm.token_count.prompt_details.cache_write")

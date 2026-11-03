@@ -33,7 +33,7 @@ describe('op options and settings', () => {
     const [a] = fake.callsByOp('agent');
     expect(a.attributes.weft.span_kind).toBe('agent');
     expect(a.attributes.weft.color).toBe('purple');
-    expect(a.attributes.weave).toEqual({ kind: 'agent', color: 'purple' });
+    expect((a.attributes as Record<string, unknown>).kind).toBeUndefined();
     expect(fake.callsByOp('tool')[0].attributes.weft.span_kind).toBe('tool');
     await new weft.ExactMatchScorer().scoreOp({ modelOutput: 'a', datasetRow: { expected: 'a' } });
     await client.flush();
@@ -167,7 +167,7 @@ describe('object management', () => {
   });
 
   it('falls back to the legacy alias endpoint', async () => {
-    fake.weaveRoutes = false;
+    fake.aliasRoutes = false;
     const r = await weft.publish({ v: 0 }, 'old');
     await client.setAliases(r, 'prod');
     expect(fake.aliases.get('old|prod')).toBe(r.digest);

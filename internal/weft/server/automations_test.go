@@ -74,14 +74,14 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 	}
 	e.post("/secrets/set", map[string]any{"name": "SLACK_HOOK", "value": slack.srv.URL})
 	publish(e, "thumbs", automationVal("thumbs",
-		map[string]any{"type": "feedback_created", "feedback_types": []any{"wandb.reaction.*"}},
+		map[string]any{"type": "feedback_created", "feedback_types": []any{"weft.reaction"}},
 		map[string]any{"type": "slack", "url_secret": "SLACK_HOOK", "message": "{automation}: {feedback_type} on {call_id}"}))
 
 	ref := "weft:///" + pid + "/call/c1"
 	// Above threshold: no fire.
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.runnable.judge", "payload": map[string]any{"output": map[string]any{"score": 4}}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"score": 4}}})
 	// Below threshold: fires.
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.runnable.judge", "payload": map[string]any{"output": map[string]any{"score": 1}}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"score": 1}}})
 	waitFor(t, "score webhook", func() bool { return sink.count() == 1 })
 	body := sink.last()
 	ev := body["event"].(map[string]any)
@@ -89,9 +89,9 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 		t.Fatalf("webhook body: %v", body)
 	}
 
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": "👎"}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👎"}})
 	waitFor(t, "slack message", func() bool { return slack.count() == 1 })
-	if txt := slack.last()["text"]; txt != "thumbs: wandb.reaction.1 on c1" {
+	if txt := slack.last()["text"]; txt != "thumbs: weft.reaction on c1" {
 		t.Fatalf("slack text: %v", txt)
 	}
 

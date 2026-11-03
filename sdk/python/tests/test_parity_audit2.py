@@ -153,7 +153,7 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
     assert len(llms) == 5
     under_op, under_turn, op_turn, off_env, off_setting = llms
     turns = {c["id"]: c for c in fake.calls_by_op("invoke_agent")}
-    # Inside an op (as in Weave): its own "typesafe SDK" turn on a new trace,
+    # Inside an op: its own "typesafe SDK" turn on a new trace,
     # linked to the op by weft.parent_call.* on both spans, not nested.
     own = turns[under_op["parent_id"]]
     assert own["display_name"] == "invoke_agent typesafe SDK" and own["parent_id"] is None
@@ -167,7 +167,7 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
     assert "parent_call" not in under_turn["attributes"].get("weft", {})
     assert "parent_call" not in turns[under_turn["parent_id"]]["attributes"].get("weft", {})
     # A turn running inside an op: under the turn, linked to the op (the
-    # innermost op, not the turn), as Weave's OpLinkSpanProcessor stamps it.
+    # innermost op, not the turn).
     assert op_turn["parent_id"] == helper_turn_id
     assert op_turn["attributes"]["weft"]["parent_call"] == {"trace_id": handle_call["trace_id"], "id": handle_call["id"]}
     for c in (off_env, off_setting):

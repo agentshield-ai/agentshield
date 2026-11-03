@@ -24,7 +24,8 @@ scripts/weft_ui_licenses.mjs when the UI is built (make weft-ui).
 Ported code
 ------------------------------------------------------------------------------
 
-None. Weft implements an API that is compatible with W&B Weave (Apache-2.0),
-but its code, prompts and documentation are its own; see
+None. Weft's optional compatibility adapter (internal/weft/compat) serves the
+client of W&B Weave (Apache-2.0), but Weft's code, prompts and documentation
+are its own; see
 docs/weft/PROVENANCE.md for the scan that checks this and for the decisions
 taken.

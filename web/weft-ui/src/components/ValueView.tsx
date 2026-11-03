@@ -13,7 +13,7 @@ import { RefChip } from './RefChip'
 // - objects/arrays render as a collapsible tree
 
 // Media detection and rendering (Image, Audio, Video, PDF, Html, Markdown,
-// Content, and the official weave client's CustomWeaveType files) live in
+// Content, and client custom types, see media/clientTypes.ts) live in
 // ./media; re-exported here for existing imports.
 export { MediaView, isMedia }
 

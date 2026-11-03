@@ -648,7 +648,7 @@ func (s *Server) sensitiveSettings(ctx context.Context, projectID string) (map[s
 	return sensitiveView(sd, s.store.HasPIIAnalyzer()), nil
 }
 
-// sensitiveView is the read shape: Weave's fields plus Weft's NER settings.
+// sensitiveView is the read shape: the policy fields plus the NER settings.
 // available_entities lists the NER entities only when the server has a PII
 // analyzer (--pii-analyzer-url); ner_active says whether they apply now.
 func sensitiveView(sd store.SensitiveDataSettings, analyzer bool) map[string]any {

@@ -11,7 +11,7 @@ from weft._canonical import canonical_json, digest
 from weft._serialize import to_json
 
 
-def test_digests_follow_weave_scheme():
+def test_digests_match_the_server_scheme():
     import base64
     import hashlib
     import json

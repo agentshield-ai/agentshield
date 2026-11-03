@@ -202,14 +202,14 @@ func TestGoogleADK(t *testing.T) {
 func TestGenAIToolAndTurnAttributes(t *testing.T) {
 	c := oneCall(t, "execute_tool search", map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "search",
 		"gen_ai.tool.call.id": "call_9", "gen_ai.tool.call.arguments": `{"q":"otel"}`, "gen_ai.tool.call.result": `{"hits":2}`,
-		"wandb.is_turn": true, "wandb.thread_id": "th-1"})
+		"weft.is_turn": true, "weft.thread_id": "th-1"})
 	if c.Start.Inputs["q"] != "otel" || num(c.End.Output.(map[string]any)["hits"]) != 2 {
 		t.Fatalf("tool = %v %v", c.Start.Inputs, c.End.Output)
 	}
 	if c.Start.TurnID == nil || *c.Start.TurnID != c.Start.ID || *c.Start.ThreadID != "th-1" {
 		t.Fatalf("turn = %v thread = %v", c.Start.TurnID, c.Start.ThreadID)
 	}
-	notTurn := oneCall(t, "x", map[string]any{"wandb.is_turn": false})
+	notTurn := oneCall(t, "x", map[string]any{"weft.is_turn": false})
 	if notTurn.Start.TurnID != nil {
 		t.Fatal("is_turn=false made a turn")
 	}

@@ -19,7 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Weave's v2 REST API under /v2/{entity}/{project}/, mapped onto Weft's
+// The v2 REST API under /v2/{entity}/{project}/, mapped onto Weft's
 // objects and calls:
 //
 //   ops, datasets, models, scorers, evaluations  -> versioned objects
@@ -27,7 +27,7 @@ import (
 //   predictions     -> Evaluation.predict_and_score calls (with a <model>.predict child),
 //                      or a lone <model>.predict call outside a run
 //   scores          -> <scorer>.score calls under the prediction, plus
-//                      wandb.runnable.<scorer> feedback on it
+//                      weft.scorer.<scorer> feedback on it
 //
 // so v2 runs appear in /evaluations/compare, leaderboards and the UI.
 
@@ -247,15 +247,15 @@ var v2Kinds = []v2Kind{
 			}
 			ds := str(b, "dataset")
 			if !refs.IsRef(ds) {
-				return "", nil, store.Invalidf("dataset must be a weave:/// object ref")
+				return "", nil, store.Invalidf("dataset must be a weft:/// object ref")
 			}
 			scorers := []any{}
 			if xs, ok := b["scorers"].([]any); ok {
 				for _, x := range xs {
 					if sr, ok := x.(string); ok && refs.IsRef(sr) {
-						scorers = append(scorers, refs.Normalize(sr))
+						scorers = append(scorers, sr)
 					} else {
-						return "", nil, store.Invalidf("scorers must be weave:/// refs")
+						return "", nil, store.Invalidf("scorers must be weft:/// refs")
 					}
 				}
 			}
@@ -264,7 +264,7 @@ var v2Kinds = []v2Kind{
 				trials = int(t)
 			}
 			val := map[string]any{"_type": "Evaluation", "_class_name": "Evaluation", "_bases": []any{"Object", "BaseModel"},
-				"name": name, "description": b["description"], "dataset": refs.Normalize(ds), "scorers": scorers, "trials": trials,
+				"name": name, "description": b["description"], "dataset": ds, "scorers": scorers, "trials": trials,
 				"evaluation_name": b["evaluation_name"], "metadata": b["eval_attributes"]}
 			return store.SanitizeObjectID(name), val, nil
 		},
@@ -438,9 +438,9 @@ type v2RunCreateReq struct {
 func (s *Server) v2RunCreate(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, req *v2RunCreateReq) (any, error) {
 		if !refs.IsRef(req.Evaluation) || !refs.IsRef(req.Model) {
-			return nil, store.Invalidf("evaluation and model must be weave:/// refs")
+			return nil, store.Invalidf("evaluation and model must be weft:/// refs")
 		}
-		evalRef, modelRef := refs.Normalize(req.Evaluation), refs.Normalize(req.Model)
+		evalRef, modelRef := req.Evaluation, req.Model
 		weft := map[string]any{"v2": "evaluation_run"}
 		if req.SourceEvaluationRunID != nil && *req.SourceEvaluationRunID != "" {
 			weft["source_evaluation_run_id"] = *req.SourceEvaluationRunID
@@ -497,10 +497,10 @@ func (s *Server) v2RunList(w http.ResponseWriter, r *http.Request) {
 	}
 	evals, models := map[string]bool{}, map[string]bool{}
 	for _, e := range queryList(r, "evaluations") {
-		evals[refs.Normalize(e)] = true
+		evals[e] = true
 	}
 	for _, m := range queryList(r, "models") {
-		models[refs.Normalize(m)] = true
+		models[m] = true
 	}
 	out := []map[string]any{}
 	for _, c := range calls {
@@ -596,7 +596,7 @@ func (s *Server) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
 		if req.Inputs == nil {
 			return nil, store.Invalidf("inputs is required")
 		}
-		model := refs.Normalize(req.Model)
+		model := req.Model
 		user := userFrom(r, nil)
 		ts := now()
 		predictOp := refBaseName(model) + ".predict"
@@ -801,7 +801,7 @@ func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		scorer := refs.Normalize(req.Scorer)
+		scorer := req.Scorer
 		name := refBaseName(scorer)
 		runID := v2Attr(pred, "evaluation_run_id")
 		if req.EvaluationRunID != nil && *req.EvaluationRunID != "" {
@@ -828,7 +828,7 @@ func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		fb := store.FeedbackCreate{ProjectID: pid, WeaveRef: refs.CallRef(pid, pred.ID), FeedbackType: "wandb.runnable." + name,
+		fb := store.FeedbackCreate{ProjectID: pid, Ref: refs.CallRef(pid, pred.ID), FeedbackType: "weft.scorer." + name,
 			Payload: map[string]any{"output": req.Value}, WBUserID: user}
 		callRef := refs.CallRef(pid, id)
 		fb.CallRef = &callRef

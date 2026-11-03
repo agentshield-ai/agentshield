@@ -42,6 +42,26 @@ type Store struct {
 	pii *piiState
 	// encrypted reports whether the database file is encrypted; see dbcrypt.go.
 	encrypted bool
+	// hooks adjust what clients send before it is stored; see SetIngestHooks.
+	hooks IngestHooks
+}
+
+// IngestHooks let an adapter for another product's clients (package compat)
+// translate what those clients send before it is stored.
+type IngestHooks struct {
+	// Attributes rewrites a call's attributes in place.
+	Attributes func(map[string]any)
+	// IsOp reports an object value that encodes an op in a client's own format.
+	IsOp func(map[string]any) bool
+}
+
+// SetIngestHooks installs ingest hooks. Call it once, before serving.
+func (s *Store) SetIngestHooks(h IngestHooks) { s.hooks = h }
+
+func (s *Store) hookStart(st *CallStart) {
+	if s.hooks.Attributes != nil && st != nil {
+		s.hooks.Attributes(st.Attributes)
+	}
 }
 
 const schema = `
@@ -136,7 +156,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS feedback (
 	id TEXT PRIMARY KEY,
 	project_id TEXT NOT NULL,
-	weave_ref TEXT NOT NULL,
+	ref TEXT NOT NULL,
 	feedback_type TEXT NOT NULL,
 	payload TEXT NOT NULL,
 	creator TEXT,
@@ -147,7 +167,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 	call_ref TEXT,
 	trigger_ref TEXT
 );
-CREATE INDEX IF NOT EXISTS feedback_ref ON feedback(project_id, weave_ref);
+CREATE INDEX IF NOT EXISTS feedback_ref ON feedback(project_id, ref);
 CREATE INDEX IF NOT EXISTS feedback_trigger ON feedback(project_id, trigger_ref);
 
 CREATE TABLE IF NOT EXISTS llm_prices (
@@ -194,6 +214,10 @@ func OpenWith(path string, opts OpenOptions) (*Store, error) {
 	if _, err := w.Exec(schema); err != nil {
 		_ = w.Close()
 		return nil, fmt.Errorf("initialising schema: %w", err)
+	}
+	if err := migrateLegacyNames(w); err != nil { // legacy_names.go
+		_ = w.Close()
+		return nil, fmt.Errorf("migrating legacy names: %w", err)
 	}
 	if err := runExtensions(w); err != nil {
 		_ = w.Close()

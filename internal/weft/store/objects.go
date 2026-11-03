@@ -89,15 +89,15 @@ var classHierarchy = map[string]string{
 }
 
 // classify returns kind, base class and leaf class of an object value.
-func classify(val any, forced string) (kind string, base, leaf *string) {
+// isOp recognises ops in another client's encoding (IngestHooks.IsOp).
+func classify(val any, forced string, isOp func(map[string]any) bool) (kind string, base, leaf *string) {
 	kind = "object"
 	m, _ := val.(map[string]any)
 	if m != nil {
 		if t, _ := m["_type"].(string); t == "Op" {
 			kind = "op"
 		}
-		// Ops serialised by the official weave client.
-		if wt, ok := m["weave_type"].(map[string]any); ok && m["_type"] == "CustomWeaveType" && wt["type"] == "Op" {
+		if isOp != nil && isOp(m) {
 			kind = "op"
 		}
 	}
@@ -178,7 +178,6 @@ func (s *Store) CreateObject(ctx context.Context, projectID, objectID string, va
 // the digest always uses canonical (sorted) JSON.
 func prepValue(val any, raw []byte) (any, string, string, error) {
 	if raw != nil {
-		raw = bytes.ReplaceAll(raw, []byte(`"weave:///`), []byte(`"weft:///`))
 		v, err := refs.Decode(raw)
 		if err != nil {
 			return nil, "", "", err
@@ -193,7 +192,6 @@ func prepValue(val any, raw []byte) (any, string, string, error) {
 		}
 		return v, d, buf.String(), nil
 	}
-	val = refs.NormalizeValue(val)
 	d, canon, err := refs.Digest(val)
 	if err != nil {
 		return nil, "", "", err
@@ -214,7 +212,7 @@ func (s *Store) CreateObjectRaw(ctx context.Context, projectID, objectID string,
 	if err != nil {
 		return "", 0, Invalidf("val is not JSON-serialisable: %v", err)
 	}
-	kind, base, leaf := classify(val, forcedClass)
+	kind, base, leaf := classify(val, forcedClass, s.hooks.IsOp)
 	var version int
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.touchProject(ctx, tx, pid); err != nil {

@@ -1,4 +1,4 @@
-"""SavedView: a saved traces/evaluations view with a fluent query API (like ``weave.SavedView``).
+"""SavedView: a saved traces/evaluations view with a fluent query API.
 
 The stored object follows the Weft UI convention (see ``docs/weft/API.md``)::
 
@@ -9,8 +9,8 @@ The stored object follows the Weft UI convention (see ``docs/weft/API.md``)::
 
 >>> view = (weft.SavedView(label="Slow errors")
 ...         .filter_op("answer")
-...         .add_filter("summary.weave.status", "equals", "error")
-...         .add_filter("summary.weave.latency_ms", ">", 1000)
+...         .add_filter("summary.weft.status", "equals", "error")
+...         .add_filter("summary.weft.latency_ms", ">", 1000)
 ...         .sort_by("started_at", "desc")
 ...         .save())
 >>> calls = view.get_calls(limit=20)
@@ -36,9 +36,9 @@ KNOWN_COLUMNS = [
     "wb_user_id", "wb_run_id", "feedback",
 ]
 
-COLUMN_ALIASES = {"Status": "summary.weave.status"}
+COLUMN_ALIASES = {"Status": "summary.weft.status"}
 
-# User operator → Material-UI style operator (as stored by Weave).
+# User operator → stored operator (Material-UI style, as the UI stores it).
 OPERATOR_MAP = {
     "contains": "(string): contains",
     "does not contain": "(string): notContains",
@@ -61,7 +61,7 @@ OPERATOR_MAP = {
     "is not empty": "(any): isNotEmpty",
 }
 VALUELESS_OPERATORS = {"(any): isEmpty", "(any): isNotEmpty"}
-FIELDS_NO_FLOAT_CONVERT = {"summary.weave.latency_ms", "started_at", "ended_at"}
+FIELDS_NO_FLOAT_CONVERT = {"summary.weft.latency_ms", "started_at", "ended_at"}
 DEFAULT_PIN = {"left": ["CustomCheckbox", "op_name"], "right": []}
 CALLS_FILTER_KEYS = {
     "op_names", "input_refs", "output_refs", "parent_ids", "trace_ids", "call_ids", "trace_roots_only",
@@ -70,7 +70,7 @@ CALLS_FILTER_KEYS = {
 
 
 class Filter(BaseModel):
-    """One filter of a view: ``field operator value`` (operator in Weave's stored form)."""
+    """One filter of a view: ``field operator value`` (operator in its stored form)."""
 
     field: str
     operator: str
@@ -538,7 +538,7 @@ class SavedView(Object):
         if self.definition.get("columns"):
             return [{"path": _path_str(c.get("path") or []), "label": c.get("label") or _path_str(c.get("path") or [])}
                     for c in self.definition["columns"]]
-        paths = ["id", "summary.weave.trace_name", "summary.weave.status", "started_at"]
+        paths = ["id", "summary.weft.trace_name", "summary.weft.status", "started_at"]
         for c in self._cols():
             if c not in paths and _path_parts(c)[0] in KNOWN_COLUMNS:
                 paths.append(c)
@@ -551,7 +551,7 @@ class SavedView(Object):
             if p in paths:
                 paths.remove(p)
                 paths.insert(0, p)
-        headers = {"id": "ID", "summary.weave.trace_name": "Trace", "summary.weave.status": "Status", "started_at": "Called"}
+        headers = {"id": "ID", "summary.weft.trace_name": "Trace", "summary.weft.status": "Status", "started_at": "Called"}
         return [{"path": p, "label": headers.get(p, p)} for p in paths]
 
     # ---- persistence -----------------------------------------------------------------------

@@ -8,11 +8,8 @@
 // every redirect hop. By default Weft refuses loopback, private (RFC 1918,
 // IPv6 ULA), link-local, carrier-grade NAT, unspecified, multicast and
 // reserved addresses, cloud metadata endpoints, and the IPv4-mapped, NAT64 and
-// 6to4 forms of all of those. This matches what Weave documents for its own
-// outbound requests ("loopback, private, internal and cloud metadata addresses
-// are rejected"), plus an operator allowlist of hosts, host:port pairs and
-// CIDRs (Weave: WF_SCORING_WORKER_REMOTE_SCORER_ALLOWED_HOSTS and
-// _ALLOWED_PRIVATE_CIDRS).
+// 6to4 forms of all of those, except for an operator allowlist of hosts,
+// host:port pairs and CIDRs.
 //
 // Destinations the operator configures on the command line (the PII analyzer,
 // the OIDC issuer, the S3/GCS files backend) do not go through this package:

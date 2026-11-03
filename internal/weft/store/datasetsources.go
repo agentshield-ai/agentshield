@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Dataset lineage (Weave's /dataset_sources/*): links from dataset rows to
+// Dataset lineage (/dataset_sources/*): links from dataset rows to
 // the calls (or spans, conversations) they were built from.
 
 func init() {

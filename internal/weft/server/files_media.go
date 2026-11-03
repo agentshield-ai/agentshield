@@ -69,17 +69,17 @@ func resolveErrf(code, format string, a ...any) *resolveError {
 }
 
 // filesResolveURL resolves each uri to a download URL:
-//   - a file digest (as returned by /file/create; "weft-file://<digest>" and
-//     "weave-file://<digest>" are accepted too): a presigned URL when the file
+//   - a file digest (as returned by /file/create; "weft-file://<digest>" is
+//     accepted too): a presigned URL when the file
 //     lives in a presigning backend (S3), otherwise this server's /file/content URL;
 //   - s3://<backend bucket>/<key> under this project's prefix: a presigned URL;
 //   - s3:// and gs:// URIs in a reference bucket registered for the project
 //     or its team (refbuckets.go): a presigned (S3) or V4 signed (GCS) URL;
 //   - http(s) URLs: returned unchanged.
 //
-// expires_at is the earliest expiry of the presigned URLs, or null. As in
-// Weave, one unresolvable uri fails the request (400) unless per_uri_errors
-// asks for per-URI results.
+// expires_at is the earliest expiry of the presigned URLs, or null. One
+// unresolvable uri fails the request (400) unless per_uri_errors asks for
+// per-URI results.
 func (s *Server) filesResolveURL(ctx context.Context, r *http.Request, req *filesResolveReq) (any, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {
@@ -145,10 +145,7 @@ func (s *Server) filesResolveURL(ctx context.Context, r *http.Request, req *file
 			}
 			return presign(key)
 		}
-		digest := uri
-		for _, p := range []string{"weft-file://", "weave-file://"} {
-			digest = strings.TrimPrefix(digest, p)
-		}
+		digest := strings.TrimPrefix(uri, "weft-file://")
 		if !fileDigestRe.MatchString(digest) {
 			return "", resolveErrf(resolveInvalidURI, "cannot resolve %q: expected a file digest, an s3:// uri or an http(s) URL", uri)
 		}
@@ -256,5 +253,5 @@ func (s *Server) imageCreate(ctx context.Context, _ *http.Request, req *imageCre
 	if err != nil {
 		resp = map[string]any{"error": err.Error()}
 	}
-	return map[string]any{"response": resp, "weave_call_id": callID}, nil
+	return map[string]any{"response": resp, "call_id": callID}, nil
 }

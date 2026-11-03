@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
-import { weaveLinkTarget } from './api/weaveLinks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, setApiKey } from './api/client'
 import { Loading } from './components/common'
@@ -30,6 +29,7 @@ const LeaderboardsPage = lazyNamed(() => import('./pages/leaderboards/Leaderboar
 const LeaderboardPage = lazyNamed(() => import('./pages/leaderboards/LeaderboardPage'), 'LeaderboardPage')
 const MonitorsPage = lazyNamed(() => import('./pages/monitors/MonitorsPage'), 'MonitorsPage')
 const MonitorPage = lazyNamed(() => import('./pages/monitors/MonitorPage'), 'MonitorPage')
+const HelpPage = lazyNamed(() => import('./pages/help/HelpPage'), 'HelpPage')
 const SettingsPage = lazyNamed(() => import('./pages/settings/SettingsPage'), 'SettingsPage')
 const AdminPage = lazyNamed(() => import('./pages/admin/AdminPage'), 'AdminPage')
 const QueuesPage = lazyNamed(() => import('./pages/queues/QueuesPage'), 'QueuesPage')
@@ -48,20 +48,6 @@ const SecurityPage = lazyNamed(() => import('./pages/security/SecurityPage'), 'S
 const ScoresPage = lazyNamed(() => import('./pages/scores/ScoresPage'), 'ScoresPage')
 const DashboardsPage = lazyNamed(() => import('./pages/dashboards/DashboardsPage'), 'DashboardsPage')
 const DashboardPage = lazyNamed(() => import('./pages/dashboards/DashboardPage'), 'DashboardPage')
-
-// Links built by the official weave client and Weave's UI use a /weave/ segment
-// (e.g. /e/p/weave/calls/<id>, /e/p/weave/agents/conversations/<id>). Map the
-// ones Weft has an equivalent for and send the rest to Traces.
-function WeaveLinkRedirect() {
-  const { entity, project, '*': rest } = useParams()
-  const loc = useLocation()
-  return <Navigate to={weaveLinkTarget(entity ?? '', project ?? '', rest ?? '') + loc.search} replace />
-}
-
-function WeaveCallRedirect() {
-  const { entity, project, callId } = useParams()
-  return <Navigate to={`/${entity}/${project}/calls/${callId}`} replace />
-}
 
 /** Renamed paths keep working: /queues → /review-queues, /ops → /functions. */
 function Renamed({ to }: { to: string }) {
@@ -110,6 +96,8 @@ export function App() {
           <Route element={<PlainLayout />}>
             <Route path="/" element={<ProjectsPage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/help" element={<HelpPage />} />
+            <Route path="/help/:doc" element={<HelpPage />} />
           </Route>
           <Route path="/:entity/:project" element={<ProjectLayout />}>
             <Route index element={<Navigate to="sessions" replace />} />
@@ -155,10 +143,6 @@ export function App() {
             <Route path="conversations/:conversationId" element={<ConversationPage />} />
             <Route path="dashboards" element={<DashboardsPage />} />
             <Route path="dashboards/:objectId" element={<DashboardPage />} />
-            {/* Links printed by the official weave client */}
-            <Route path="weave" element={<Navigate to="../traces" relative="path" replace />} />
-            <Route path="weave/*" element={<WeaveLinkRedirect />} />
-            <Route path="r/call/:callId" element={<WeaveCallRedirect />} />
           </Route>
           <Route
             path="*"

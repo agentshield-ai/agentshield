@@ -1,8 +1,7 @@
 # Weft for Claude Code
 
 Traces [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions
-into [Weft](../../docs/weft/README.md) as agent conversations, the way W&B
-Weave's Claude Code plugin does for Weave:
+into [Weft](../../docs/weft/README.md) as agent conversations:
 
 ```
 invoke_agent claude-code          one per prompt (a turn); conversation = the Claude Code session

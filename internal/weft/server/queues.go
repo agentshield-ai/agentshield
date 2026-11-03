@@ -10,8 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Annotation queues, at the paths and with the field names of Weave's
-// /annotation_queues API so the official client works.
+// Annotation queues (review queues in the UI) under /annotation_queues.
 
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
@@ -24,6 +23,7 @@ func init() {
 		r.Post("/annotation_queues/{queue_id}/items", handle(s.queueItemsAdd))
 		r.Post("/annotation_queues/{queue_id}/items/query", handle(s.queueItemsQuery))
 		r.Post("/annotation_queues/{queue_id}/items/{item_id}/progress", handle(s.queueItemProgress))
+		r.Delete("/annotation_queues/{queue_id}/items/{item_id}", handle(s.queueItemDelete))
 	})
 }
 
@@ -66,7 +66,7 @@ type queueQueryReq struct {
 	SortBy    []store.QueueSort `json:"sort_by"`
 }
 
-// queueQuery streams AnnotationQueueSchema objects as NDJSON, like Weave.
+// queueQuery streams annotation queues as NDJSON.
 func (s *Server) queueQuery(w http.ResponseWriter, r *http.Request) {
 	var req queueQueryReq
 	if err := decodeBody(r, &req); err != nil {
@@ -222,4 +222,21 @@ func (s *Server) queueItemProgress(ctx context.Context, r *http.Request, req *qu
 		return nil, err
 	}
 	return map[string]any{"item": it}, nil
+}
+
+type queueItemDeleteReq struct {
+	ProjectID string `json:"project_id"`
+}
+
+// queueItemDelete removes one item from a queue (the UI offers undo by
+// delaying this call).
+func (s *Server) queueItemDelete(ctx context.Context, r *http.Request, req *queueItemDeleteReq) (any, error) {
+	pid, err := queueProject(r, req.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.DeleteAnnotationQueueItem(ctx, pid, chi.URLParam(r, "queue_id"), chi.URLParam(r, "item_id")); err != nil {
+		return nil, err
+	}
+	return map[string]any{}, nil
 }

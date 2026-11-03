@@ -118,10 +118,10 @@ documents them as Weft's own API.
 - Spans whose instrumentation scope is `agentshield` (or that carry
   `agentshield.verdict.action`) become detections (§5.1). They are also stored
   as ordinary spans.
-- Weft SDK attributes: `weft.team.id`, `weft.team.name`, `weft.handoff.*`, and
+- Weft SDK attributes: `weft.team.id`, `weft.team.name`, `weft.handoff.*`,
   `weft.parent_call.id` / `weft.parent_call.trace_id` (a linked trace, as used
-  by TypeSafe). For a transition period, ingest also accepts the attribute
-  names the compatibility adapter maps (§8).
+  by TypeSafe) and `weft.eval.*` (evaluation links). Other names for these
+  are accepted only through the compatibility adapter (§8).
 
 ## 5. AgentShield integration
 
@@ -289,26 +289,30 @@ review and by task-based browser tests.
     undone for a few seconds, and only irreversible deletes ask for
     confirmation.
 12. **Help in place.** Each page has a short "What is this page?" panel that
-    can be dismissed, and a link to the relevant guide in `docs/weft/`.
+    can be dismissed, and a link to the relevant guide in `docs/weft/`. The
+    guides are embedded in the server and shown in the UI at `/help/<guide>`,
+    so they match the running version and work offline.
 
 ## 8. Compatibility adapter
 
 `--weave-compat` (`WEFT_WEAVE_COMPAT=true`) is off by default. It lives in one
-package (`internal/weft/compat`), and it turns on everything that exists only
-for clients of the W&B Weave product:
+package (`internal/weft/compat`, with the old names in
+`internal/weft/compat/legacy`), and it turns on everything that exists only
+for clients of another tracing product:
 
-- the W&B GraphQL login endpoints;
-- the client's `v2` call routes;
-- the `weave:///` ref scheme in responses, and client detection by user agent;
-- `weave.*` attribute aliases on ingest (`weave.parent_call.*`,
-  `weave.eval.*`);
-- `/weave/...` UI link redirects;
-- `WF_*` environment-variable aliases.
+- that product's login endpoints and its client's call routes;
+- its ref scheme and field and feedback-type names, translated on the way in
+  and, for its client (detected by user agent), on the way out;
+- its attribute names, mapped onto `weft.*` on ingest;
+- redirects for the UI links its client prints;
+- its environment-variable names for the settings Weft shares.
 
-With the adapter off, those routes return 404 and Weft's own SDKs, UI and
-plugins still work fully. The adapter is documented in one page,
-`docs/weft/COMPATIBILITY.md`, and CI runs the official-client check with the
-flag on.
+With the adapter off, those routes return 404, other ref schemes are plain
+strings, and Weft's own SDKs, UI and plugins still work fully. Databases
+written with the old names are migrated once when the server opens them,
+whether or not the adapter is on. The adapter is documented in one page,
+[COMPATIBILITY.md](COMPATIBILITY.md), and CI runs the official-client check
+with the flag on and everything else with it off.
 
 ## 9. Provenance
 

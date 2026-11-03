@@ -38,7 +38,7 @@ const PII: Array<[RegExp, string]> = [
   [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<IP_ADDRESS>'],
 ];
 
-/** Entities redacted by default when `redactPii` is on (Weave's defaults plus ORGANIZATION). */
+/** Entities redacted by default when `redactPii` is on. */
 export const DEFAULT_PII_ENTITIES = [
   'CREDIT_CARD',
   'CRYPTO',

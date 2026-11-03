@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     # Calls can be filtered by feedback fields with the query language.
     liked = client.get_calls(
-        query={"$eq": [{"$getField": "feedback.wandb.reaction.1.emoji"}, {"$literal": "👍"}]},
+        query={"$eq": [{"$getField": "feedback.weft.reaction.emoji"}, {"$literal": "👍"}]},
         include_feedback=True,
     )
     print("liked calls:", [c.display_name or c.op_base_name for c in liked])

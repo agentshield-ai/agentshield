@@ -6,7 +6,7 @@ import (
 )
 
 // feedback.queue_id links feedback written while reviewing an annotation
-// queue to that queue (NULL otherwise), as in Weave.
+// queue to that queue (NULL otherwise).
 func init() {
 	registerMigration(func(db *sql.DB) error {
 		ok, err := HasColumn(db, "feedback", "queue_id")

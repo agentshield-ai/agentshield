@@ -1,10 +1,11 @@
 # Weft
 
-Weft is an OpenTelemetry-native tracing and evaluation platform for LLM
-applications and agents. Its feature set follows W&B Weave: nested traces of
-every LLM and tool call, versioned datasets, models, prompts and scorers,
-evaluations with side-by-side comparison, leaderboards, human and automated
-feedback, online monitors, cost tracking and an LLM playground.
+Weft is an OpenTelemetry-native observability and evaluation platform for
+agents, teams of agents and LLM applications: sessions, agents and the
+hand-offs between them, each model's reasoning, nested traces of every LLM and
+tool call, AgentShield security verdicts, versioned datasets, models, prompts
+and scorers, evaluations with side-by-side comparison, leaderboards, human and
+automated feedback, online monitors, cost tracking and an LLM playground.
 
 It ships as one Go binary (`cmd/weft`) that holds the API, the OTLP receiver
 and the web UI, backed by a single SQLite file. Python and TypeScript SDKs
@@ -34,11 +35,11 @@ make weft         # build bin/weft
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
-| `--pii-analyzer-url` | `WEFT_PII_ANALYZER_URL` | empty (regex PII redaction only); a Presidio Analyzer REST URL adds PERSON, LOCATION and ORGANIZATION redaction at ingest for projects with sensitive-data redaction on, see [API.md](API.md#project-settings-weave-paths) |
+| `--pii-analyzer-url` | `WEFT_PII_ANALYZER_URL` | empty (regex PII redaction only); a Presidio Analyzer REST URL adds PERSON, LOCATION and ORGANIZATION redaction at ingest for projects with sensitive-data redaction on, see [API.md](API.md#project-settings) |
 | `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error calls are stored with regex redaction only |
 | `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |
 | `--egress-allow-private` | `WEFT_EGRESS_ALLOW_PRIVATE` | `false`; `true` allows loopback, private, link-local and CGNAT destinations (cloud metadata addresses stay blocked) |
-| `--remote-scorer-allow-insecure-http` | `WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP` (or Weave's `WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP`) | `false`; `true` allows `http://` RemoteScorer URLs, which otherwise must be `https://` |
+| `--remote-scorer-allow-insecure-http` | `WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP` | `false`; `true` allows `http://` RemoteScorer URLs, which otherwise must be `https://` |
 | `--ref-buckets-env-credentials` | `WEFT_REF_BUCKETS_ENV_CREDENTIALS` | `false`; `true` lets S3 reference buckets registered without `secret_name` use the server's `AWS_*` credentials, for AWS endpoints only. Otherwise every bucket needs a stored secret |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
@@ -62,6 +63,12 @@ make weft         # build bin/weft
 | `--shield-token` | `WEFT_SHIELD_TOKEN` | the engine's bearer token for `--shield-url` (prefer the env var) |
 | `--shield-timeout` | `WEFT_SHIELD_TIMEOUT` | `10s` per remote evaluation |
 | | `WEFT_SESSION_KEY` | session-cookie signing key (32+ chars); default is derived from the secret key |
+
+The optional compatibility adapter has a flag of its own, off by default; see
+[COMPATIBILITY.md](COMPATIBILITY.md).
+
+The guides in `docs/weft` are built into the server: open **/help** in the UI
+(each page's "Read the guide" link goes there).
 
 Provider keys for the playground, LLM judges and monitors come from the
 environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) or
@@ -168,15 +175,14 @@ the `openai` package's realtime connections, and the OpenAI Agents SDK
 TypeScript via `weft.patchRealtimeSession()`, which finds
 `@openai/agents-realtime` from the application's directory as well as the
 SDK's and patches both its ESM and CommonJS builds). The Python SDK also patches raw
-`websockets`, `websocket-client` and `aiohttp` Realtime clients, as Weave
-does. Weave's lower-level client methods are there too:
+`websockets`, `websocket-client` and `aiohttp` Realtime clients. Lower-level
+client methods are there too:
 `register_custom_runtime` / `registerCustomRuntime`, `threads_query`,
 `require_current_call`, the module-level tag and alias functions
-(`weft.add_tags`, `weft.list_aliases`, `weft.get_tags_and_aliases`, … as in
-`weave`), `weft.urls.agent_conversation_path` (TypeScript:
+(`weft.add_tags`, `weft.list_aliases`, `weft.get_tags_and_aliases`, …),
+`weft.urls.agent_conversation_path` (TypeScript:
 `agentConversationPath`, `client.conversationUrl`), and the
-`WEFT_DEBUG_HTTP` / `WEFT_DISABLE_WAL_SENDER` equivalents of Weave's
-variables.
+`WEFT_DEBUG_HTTP` / `WEFT_DISABLE_WAL_SENDER` switches.
 
 **Agent teams.** Both SDKs record what the Sessions, Teams and hand-off
 views are built from ([DESIGN.md](DESIGN.md) §2):
@@ -225,25 +231,9 @@ for annotation specs, monitors, leaderboards and saved views, and redaction of
 credential-like keys (`api_key`, `password`, `token`, …) before data leaves
 the process.
 
-**The official `weave` Python client** works unchanged. Point it at Weft:
-
-```bash
-export WANDB_BASE_URL=http://127.0.0.1:6345      # W&B login and project setup (GraphQL shim)
-export WF_TRACE_SERVER_URL=http://127.0.0.1:6345 # traces, objects, feedback
-export WANDB_API_KEY=<a Weft API key, or any 40 characters when auth is off>
-```
-
-```python
-import weave
-weave.init("my-team/my-app")   # ops, datasets, models, evaluations, feedback work as usual
-```
-
-Weft answers the GraphQL calls weave makes at login, accepts its `v2`
-call endpoints, uses Weave's digest scheme so client-computed refs resolve,
-and returns `weave:///` refs to weave clients. Weave's client rolls child
-usage into parent summaries; Weft records those as cumulative so tokens and
-cost are not counted twice. `scripts/weft_weave_compat_check.py` drives the
-official client end to end and runs in CI (weave 0.54.0).
+**Clients of other tracing products.** An optional compatibility adapter,
+off by default, lets the client of one other product send traces to Weft.
+It is described, with its limits, in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 **Demo data:** `python3 scripts/weft_seed_demo.py` fills `demo/support-bot` with
 agent traces, threads, OTLP spans, datasets, evaluations, a leaderboard, a
@@ -348,9 +338,9 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 | Area | What Weft does |
 |---|---|
 | Traces | Calls with inputs, output, exception, attributes, summary. Trace tree and timeline views, filters (op, status, free text, any field via the query builder), sorting, saved views, charts (volume, errors, latency percentiles, tokens, cost), export, bulk delete, compare calls. |
-| Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models, with cache-read and cache-write prices, so prompt-cached tokens are billed at the provider's cache rates as in Weave ([Cached tokens](API.md#cached-tokens)); per-project price overrides (**Settings → Costs**). |
+| Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models, with cache-read and cache-write prices, so prompt-cached tokens are billed at the provider's cache rates ([Cached tokens](API.md#cached-tokens)); per-project price overrides (**Settings → Costs**). |
 | Threads | Calls sharing a `thread_id` group into conversations with turn latency and token totals. |
-| Agents | Weave's Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from calls (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or SDK ops with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
+| Agents | The Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from calls (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or SDK ops with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
 | Security | AgentShield verdicts as detections linked to the tool spans they concern (by OTel or push), stats by rule, agent and day, approval-fatigue, override-escalation and cross-agent insights, replay of recorded sessions against changed rules with a diff, and `ToolSafetyScorer`. |
 | Objects | Content-addressed, versioned objects (datasets, models, prompts, scorers, ops, anything JSON). Aliases, version diffs, refs (`weft:///entity/project/object/name:digest`). |
 | Datasets | Row tables with paging and editing; create from CSV/JSON or from selected calls. |
@@ -360,7 +350,7 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 | Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
 | Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
 | Access control | Users, teams (entities) and viewer/member/admin roles per team or project; API keys belong to users and carry their roles; OIDC single sign-on (PKCE) with auto-provisioning, domain and group-to-role mapping; an audit log of every write, admin action and refused request with query and CSV export. **Settings → Members / Audit log**, **Users & teams** page. |
-| Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest (regex entities and custom patterns, plus PERSON/LOCATION/ORGANIZATION through an optional Presidio analyzer, configurable per project), project delete. Settings tabs for each; Weave paths (`/project/ttl_settings/*`, …). |
+| Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest (regex entities and custom patterns, plus PERSON/LOCATION/ORGANIZATION through an optional Presidio analyzer, configurable per project), project delete. Settings tabs for each (`/project/ttl_settings/*`, …). |
 
 ## Layout
 
@@ -372,12 +362,14 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 | `internal/weft/llm` | provider routing, Anthropic translation, streaming, mock models |
 | `internal/weft/evals` | scorers, server-side evaluation, comparison, leaderboards, monitors |
 | `internal/weft/shield` | AgentShield replay of recorded tool calls |
-| `internal/weft/server` | HTTP API, auth, UI serving |
+| `internal/weft/server` | HTTP API, auth, UI serving, built-in guides (`/api/v1/help`) |
+| `internal/weft/compat` | optional compatibility adapter, off by default ([COMPATIBILITY.md](COMPATIBILITY.md)); `compat/legacy` holds the old names used by it and by the one-time database migration |
 | `web/weft-ui` | React UI |
 | `sdk/python`, `sdk/typescript` | client SDKs |
 | `examples/weft` | runnable SDK examples |
 | `scripts/weft_seed_demo.py` | demo data seeding |
 | `docs/weft/API.md` | API contract |
+| `docs/weft/*.md`, `docs/weft/docs.go` | guides, embedded in the server and shown in the UI at `/help` |
 | `docs/weft/PROVENANCE.md`, `scripts/weft_provenance_scan.py` | provenance scan and attribution record |
 
 ## Testing

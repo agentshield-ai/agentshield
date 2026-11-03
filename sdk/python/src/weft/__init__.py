@@ -129,7 +129,7 @@ __all__ = [
     "link_to_registry",
     "link_prompt_to_registry",
     "set_wb_run",
-    # tags and aliases (weave.add_tags & co.)
+    # tags and aliases of object versions
     "add_tags",
     "remove_tags",
     "get_tags",
@@ -175,7 +175,7 @@ __all__ = [
     "Html",
     "Markdown",
     "tracing_disabled",
-    # agent conversations (weave.start_conversation & co.)
+    # agent conversations (start_conversation & co.)
     "conversation",
     "LLM",
     "Conversation",

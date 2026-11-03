@@ -1,8 +1,7 @@
 /**
  * Agent conversation tracing: conversations, turns, LLM calls, tools and sub-agents.
  *
- * Mirrors Weave's conversation SDK (`weave.start_conversation` & co.) with the
- * same semantics; names are camelCase (`startConversation`, `startTurn`,
+ * Names are camelCase (`startConversation`, `startTurn`,
  * `startLLM`, `startTool`, `startSubagent`, `logTurn`, `logConversation`).
  * Each span is recorded as a Weft call the server's agents index reads:
  * turns and sub-agents are `invoke_agent` calls (`attributes.gen_ai.agent.name`,
@@ -61,7 +60,7 @@ export interface Message {
   parts?: MessagePart[];
 }
 
-/** Message builders (as in Weave's `Message.user(...)` etc.). */
+/** Message builders (`Message.user(...)` etc.). */
 export const Message = {
   user: (text: string): Message => ({ role: 'user', content: text }),
   system: (text: string): Message => ({ role: 'system', content: text }),
@@ -292,7 +291,7 @@ function evalLinkAttributes(): Record<string, unknown> {
   const ctx = currentContext().evalSpan;
   if (!ctx) return {};
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(ctx)) if (v !== null && v !== undefined) out[`weave.eval.${k}`] = v;
+  for (const [k, v] of Object.entries(ctx)) if (v !== null && v !== undefined) out[`weft.eval.${k}`] = v;
   return out;
 }
 
@@ -480,7 +479,6 @@ export abstract class SpanBase {
       weftAttrs.reasoning = [...((weftAttrs.reasoning as unknown[]) ?? []), ...client.reasoningAttr(this.reasoningSteps)];
     }
     attrs.weft = weftAttrs;
-    attrs.weave = { ...(attrs.weave && typeof attrs.weave === 'object' ? attrs.weave : {}), kind: this.kind };
     const serAttrs = toJson(attrs, client) as Record<string, unknown>;
     const serInputs = client.redactor.apply(client.scrubReasoning(toJson(inputs, client))) as Record<string, unknown>;
     const serOutput = client.redactor.apply(client.scrubReasoning(toJson(output, client)));

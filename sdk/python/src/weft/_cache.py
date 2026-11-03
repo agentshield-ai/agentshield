@@ -1,4 +1,4 @@
-"""Client-side cache of immutable server responses (like Weave's caching middleware).
+"""Client-side cache of immutable server responses.
 
 Content-addressed reads never change, so their responses are kept in memory
 (LRU) and on disk (SQLite, default ``~/.cache/weft``) and reused across

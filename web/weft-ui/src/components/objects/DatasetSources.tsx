@@ -1,4 +1,4 @@
-// Dataset lineage (Weave /dataset_sources/*): the calls, spans or
+// Dataset lineage (/dataset_sources/*): the calls, spans or
 // conversations that rows of this dataset were built from.
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'

@@ -9,7 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 )
 
-// Object version tags (Weave's /objs/{id}/versions/{digest}/tags). Aliases
+// Object version tags (/objs/{id}/versions/{digest}/tags). Aliases
 // live in object_aliases (objects.go); this file adds tags and the
 // project-wide alias and tag listings.
 

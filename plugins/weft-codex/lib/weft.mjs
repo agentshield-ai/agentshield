@@ -176,7 +176,6 @@ export function callItems(cfg, c) {
   const attributes = {
     ...(c.attributes ?? {}),
     weft: { span_kind: kind, source: cfg.plugin, plugin_version: c.pluginVersion ?? CORE_VERSION, ...(c.attributes?.weft ?? {}) },
-    weave: { kind },
   };
   for (const [k, v] of Object.entries(c.genai ?? {})) if (v !== undefined && v !== null && v !== '') attributes[k] = v;
   const start = {

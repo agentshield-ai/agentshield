@@ -55,7 +55,7 @@ def test_verdict_real_library_one_trace_live(live):
     p.run(Schema.of(values=3), display=False)
     live.flush()
     calls = live.get_calls().to_list()
-    assert len(calls) == 5 and len({c.trace_id for c in calls}) == 1, "one trace, as under Weave"
+    assert len(calls) == 5 and len({c.trace_id for c in calls}) == 1, "one trace per pipeline run"
     [root] = [c for c in calls if c.parent_id is None]
     maps = sorted((c for c in calls if c.display_name == "Map"), key=lambda c: c.started_at)
     assert maps[0].parent_id == root.id and maps[1].parent_id == maps[0].id
@@ -154,7 +154,7 @@ def test_list_aliases_and_get_tags_and_aliases(live):
     assert tags == ["reviewed"]
     assert {"production", "staging"} <= set(aliases)
     assert {"production", "staging"} <= set(live.list_aliases())
-    # The module-level functions (weave.list_aliases & co.) use the global client.
+    # The module-level functions (list_aliases & co.) use the global client.
     assert weft.get_tags_and_aliases(ref) == live.get_tags_and_aliases(ref)
     assert weft.list_aliases() == live.list_aliases() and weft.list_tags() == live.list_tags()
     weft.remove_aliases(ref, "staging")

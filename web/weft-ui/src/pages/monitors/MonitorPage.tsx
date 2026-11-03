@@ -16,7 +16,7 @@ import { fmtDate, fmtRelative, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
 import { callUrl, objectUrl, objectVersionsUrl } from '../../lib/urls'
 
-const RUNNABLE_PREFIX = 'wandb.runnable.'
+const RUNNABLE_PREFIX = 'weft.scorer.'
 
 const scorerOf = (f: Feedback) => (f.feedback_type.startsWith(RUNNABLE_PREFIX) ? f.feedback_type.slice(RUNNABLE_PREFIX.length) : f.feedback_type)
 
@@ -133,7 +133,7 @@ export function MonitorPage() {
           ) : (
             <div className="stat-grid">
               <Stat label="Scores" value={fb.length >= 1000 ? '1000+' : fb.length.toLocaleString()} />
-              <Stat label="Calls scored" value={new Set(fb.map((f) => f.weave_ref)).size.toLocaleString()} />
+              <Stat label="Calls scored" value={new Set(fb.map((f) => f.ref)).size.toLocaleString()} />
               <Stat label="Last score" value={fb[0] ? fmtRelative(fb[0].created_at) : '—'} title={fb[0] ? fmtDate(fb[0].created_at) : undefined} />
               {scorerNames.slice(0, 3).map((s) => (
                 <Stat key={s} label={s} value={summarize(fb.filter((f) => scorerOf(f) === s))} />
@@ -179,7 +179,7 @@ export function MonitorPage() {
               </thead>
               <tbody>
                 {shown.slice(0, 300).map((f) => {
-                  const target = parseRef(f.weave_ref)
+                  const target = parseRef(f.ref)
                   const sc = f.call_ref ? parseRef(f.call_ref) : null
                   const out = f.payload?.output
                   return (
@@ -193,7 +193,7 @@ export function MonitorPage() {
                             {target.name.slice(-8)}
                           </Link>
                         ) : (
-                          <RefChip refStr={f.weave_ref} />
+                          <RefChip refStr={f.ref} />
                         )}
                       </td>
                       <td>

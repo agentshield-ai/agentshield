@@ -1,11 +1,11 @@
 /**
- * SavedView: a saved traces/evaluations view with a fluent query API (like `weave.SavedView`).
+ * SavedView: a saved traces/evaluations view with a fluent query API.
  *
  * ```ts
  * const view = await new weft.SavedView({ label: 'Slow errors' })
  *   .filterOp('answer')
- *   .addFilter('summary.weave.status', 'equals', 'error')
- *   .addFilter('summary.weave.latency_ms', '>', 1000)
+ *   .addFilter('summary.weft.status', 'equals', 'error')
+ *   .addFilter('summary.weft.latency_ms', '>', 1000)
  *   .sortBy('started_at', 'desc')
  *   .save();
  * const calls = await view.getCalls({ limit: 20 });
@@ -25,9 +25,9 @@ export const KNOWN_COLUMNS = [
   'exception', 'func_name', 'parent_id', 'project_id', 'trace_id', 'thread_id', 'turn_id', 'ui_url',
   'wb_user_id', 'wb_run_id', 'feedback',
 ];
-const COLUMN_ALIASES: Record<string, string> = { Status: 'summary.weave.status' };
+const COLUMN_ALIASES: Record<string, string> = { Status: 'summary.weft.status' };
 
-/** User operator → Weave's stored operator. */
+/** User operator → stored operator (as the UI stores it). */
 export const OPERATOR_MAP: Record<string, string> = {
   contains: '(string): contains',
   'does not contain': '(string): notContains',
@@ -50,7 +50,7 @@ export const OPERATOR_MAP: Record<string, string> = {
   'is not empty': '(any): isNotEmpty',
 };
 const VALUELESS = new Set(['(any): isEmpty', '(any): isNotEmpty']);
-const NO_FLOAT_CONVERT = new Set(['summary.weave.latency_ms', 'started_at', 'ended_at']);
+const NO_FLOAT_CONVERT = new Set(['summary.weft.latency_ms', 'started_at', 'ended_at']);
 const DEFAULT_PIN = { left: ['CustomCheckbox', 'op_name'], right: [] as string[] };
 export const CALLS_FILTER_KEYS = new Set([
   'op_names', 'input_refs', 'output_refs', 'parent_ids', 'trace_ids', 'call_ids', 'trace_roots_only',
@@ -59,7 +59,7 @@ export const CALLS_FILTER_KEYS = new Set([
 
 export interface ViewFilter {
   field: string;
-  /** Operator in Weave's stored form, e.g. "(string): contains". */
+  /** Operator in its stored form, e.g. "(string): contains". */
   operator: string;
   value?: unknown;
 }
@@ -482,7 +482,7 @@ export class SavedView extends WeftObject {
     if (this.definition.columns?.length) {
       return this.definition.columns.map((c: any) => ({ path: pathStr(c.path ?? []), label: c.label ?? pathStr(c.path ?? []) }));
     }
-    const paths = ['id', 'summary.weave.trace_name', 'summary.weave.status', 'started_at'];
+    const paths = ['id', 'summary.weft.trace_name', 'summary.weft.status', 'started_at'];
     for (const c of this.cols()) if (!paths.includes(c) && KNOWN_COLUMNS.includes(String(pathParts(c)[0]))) paths.push(c);
     const pin = this.pin();
     for (const p of pin.right) {
@@ -493,7 +493,7 @@ export class SavedView extends WeftObject {
       const i = paths.indexOf(p);
       if (i >= 0) paths.unshift(...paths.splice(i, 1));
     }
-    const headers: Record<string, string> = { id: 'ID', 'summary.weave.trace_name': 'Trace', 'summary.weave.status': 'Status', started_at: 'Called' };
+    const headers: Record<string, string> = { id: 'ID', 'summary.weft.trace_name': 'Trace', 'summary.weft.status': 'Status', started_at: 'Called' };
     return paths.map((p) => ({ path: p, label: headers[p] ?? p }));
   }
 

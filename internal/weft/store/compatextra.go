@@ -9,7 +9,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 )
 
-// Store helpers for Weave compatibility endpoints (tables from digests,
+// Store helpers for smaller trace API endpoints (tables from digests,
 // batched table stats, file stats, feedback analytics).
 
 // CreateTableFromDigests builds a table from existing row digests.
@@ -131,7 +131,6 @@ func prefixOrExact(col string, vals []string) (string, []any) {
 	var parts []string
 	var args []any
 	for _, v := range vals {
-		v = refs.Normalize(v)
 		if strings.HasSuffix(v, "*") {
 			parts = append(parts, col+" LIKE ? ESCAPE '\\'")
 			args = append(args, likeEscape(strings.TrimSuffix(v, "*"))+"%")

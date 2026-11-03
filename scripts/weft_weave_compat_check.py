@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Drive the official `weave` Python client against a Weft server and assert
-the results through Weft's own API.
+"""Drive the official `weave` Python client against a Weft server started with
+the compatibility adapter on (--weave-compat, docs/weft/COMPATIBILITY.md) and
+assert the results through Weft's own API.
 
+    ./bin/weft --weave-compat &
     pip install weave
     WEFT_URL=http://127.0.0.1:6345 python scripts/weft_weave_compat_check.py
+
+Against a server without the adapter the client cannot log in, and the script
+fails at weave.init().
 
 The script points weave at Weft (WANDB_BASE_URL for the W&B GraphQL shim,
 WF_TRACE_SERVER_URL for traces), runs ops, publishes and reloads a dataset,
@@ -49,7 +54,12 @@ check.failed = False
 
 
 def main():
-    client = weave.init(PROJECT)
+    try:
+        client = weave.init(PROJECT)
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL weave.init: {type(e).__name__}: {e}")
+        print("     Is the server running with the compatibility adapter (--weave-compat)?")
+        sys.exit(1)
 
     @weave.op
     def fake_llm(prompt: str) -> dict:
@@ -95,7 +105,10 @@ def main():
     root = weft("/call/read", {"project_id": PROJECT, "id": call.id, "include_feedback": True})["call"]
     usage = root["summary"]["usage"]["gpt-4o-mini"]
     check(usage["prompt_tokens"] == 20 and usage["requests"] == 2, f"usage rolled up once, not double counted ({usage})")
-    check({f["feedback_type"] for f in root["feedback"]} >= {"wandb.reaction.1", "wandb.note.1"}, "feedback stored")
+    check({f["feedback_type"] for f in root["feedback"]} >= {"weft.reaction", "weft.note"}, "feedback stored under Weft's names")
+    check(all(f["ref"] == f"weft:///{PROJECT}/call/{call.id}" for f in root["feedback"]), "feedback refs in Weft's scheme")
+    client_types = {f.feedback_type for f in client.get_call(call.id).feedback}
+    check(client_types >= {"wandb.reaction.1", "wandb.note.1"}, f"the client reads its own feedback names back ({client_types})")
     kids = weft("/calls/query", {"project_id": PROJECT, "filter": {"parent_ids": [call.id]}})["calls"]
     check(len(kids) == 3, "child calls linked to the parent")
 

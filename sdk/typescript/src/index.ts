@@ -189,17 +189,17 @@ export function linkToRegistry(obj: unknown, opts: { targetPath: string; aliases
   return requireClient().linkToRegistry(obj, opts);
 }
 
-/** Weave's `link_prompt_to_registry`: link a published prompt version into a registry collection. */
+/** Link a published prompt version into a registry collection (global client). */
 export function linkPromptToRegistry(prompt: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
   return requireClient().linkPromptToRegistry(prompt, opts);
 }
 
-/** Link calls of the global client to a W&B run (`wb_run_id`, `wb_run_step`); `null` clears it. */
+/** Link calls of the global client to a run (`wb_run_id`, `wb_run_step`); `null` clears it. */
 export function setWbRun(runId: string | null, step?: number | (() => number | undefined)): void {
   requireClient().setWbRun(runId, step);
 }
 
-/** Parse a `weft:///` (or `weave:///`) URI into a Ref. */
+/** Parse a `weft:///` URI into a Ref. */
 export function parseUri(uri: string): Ref {
   return RefClass.parse(uri);
 }

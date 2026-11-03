@@ -1,4 +1,4 @@
-"""Agent conversation tracing (Weave's start_conversation API), an agent eval
+"""Agent conversation tracing (weft.start_conversation), an agent eval
 that links existing traces, a saved view, and media logged by reference.
 
     WEFT_SERVER_URL=http://localhost:6345 python examples/weft/python/agent_conversation.py

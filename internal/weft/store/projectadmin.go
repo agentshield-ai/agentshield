@@ -67,7 +67,7 @@ type RedactionPattern struct {
 
 // SensitiveDataSettings is a project's ingest redaction policy.
 type SensitiveDataSettings struct {
-	// Policy is "off" or "pii-v1" (Weave's names).
+	// Policy is "off" or "pii-v1".
 	Policy string `json:"policy"`
 	// Entities restricts the built-in detectors; empty means all.
 	Entities       []string           `json:"entities"`
@@ -321,7 +321,7 @@ func (s *Store) PurgeBefore(ctx context.Context, projectID string, cutoff time.T
 			return err
 		}
 		res.Calls, _ = r.RowsAffected()
-		r, err = tx.ExecContext(ctx, `DELETE FROM feedback WHERE project_id = ? AND created_at < ? AND weave_ref LIKE ?`,
+		r, err = tx.ExecContext(ctx, `DELETE FROM feedback WHERE project_id = ? AND created_at < ? AND ref LIKE ?`,
 			pid, us, "%/call/%")
 		if err != nil {
 			return err

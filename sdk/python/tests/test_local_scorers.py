@@ -14,8 +14,8 @@ from weft._redact import Redactor, build_ner
 def test_base_install_has_no_heavy_deps_and_errors_clearly(monkeypatch):
     real = importlib.util.find_spec
     monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name in ("torch", "transformers", "presidio_analyzer") else real(name, *a))
-    s = weft.scorers.WeaveToxicityScorerV1()
-    with pytest.raises(ImportError, match=r"WeaveToxicityScorerV1 needs transformers, torch.*weft\[scorers\]"):
+    s = weft.scorers.ToxicityScorer()
+    with pytest.raises(ImportError, match=r"ToxicityScorer needs transformers, torch.*weft\[scorers\]"):
         s.score(output="hi")
     with pytest.raises(ImportError, match="PresidioScorer needs presidio_analyzer"):
         ls.PresidioScorer().score(output="hi")
@@ -31,11 +31,11 @@ def test_toxicity_and_bias(monkeypatch):
         return lambda text: [0.8, 0.1]
 
     monkeypatch.setattr(ls, "load_sequence_classifier", fake_classifier)
-    tox = ls.WeaveToxicityScorerV1(device="mps")
+    tox = ls.ToxicityScorer(device="mps")
     bad = tox.score(output="I hate them")
     assert bad.passed is False and bad.metadata == {"Race/Origin": 3.0, "Gender/Sex": 0.0, "Religion": 0.0, "Ability": 0.0, "Violence": 1.0}
     assert tox.score(output="hello").passed
-    bias = ls.WeaveBiasScorerV1(model_name_or_path="/models/bias")
+    bias = ls.BiasScorer(model_name_or_path="/models/bias")
     r = bias.score(output="text")
     assert r == {"passed": False, "metadata": {"gender_bias_score": 0.8, "gender_bias": True, "racial_bias_score": 0.1, "racial_bias": False}}
     assert seen["models"] == [("wandb/WeaveToxicityScorerV1", "mps", "argmax"), ("/models/bias", "cpu", "sigmoid")]  # loaded once each
@@ -59,12 +59,12 @@ def test_pipeline_scorers(monkeypatch):
         raise AssertionError(model)
 
     monkeypatch.setattr(ls, "load_pipeline", fake_pipeline)
-    coh = ls.WeaveCoherenceScorerV1().score(query="How are you?", output="Fine, thanks.")
+    coh = ls.CoherenceScorer().score(query="How are you?", output="Fine, thanks.")
     assert coh.passed and coh.metadata == {"coherence_label": "Mostly Coherent", "coherence_id": 3, "score": 0.7}
     with pytest.raises(ValueError):
-        ls.WeaveCoherenceScorerV1().score(query="q", output="o", chat_history=[], context="c")
-    assert ls.WeaveFluencyScorerV1().score(output="Fine.").metadata == {"score": 0.9}
-    h = ls.WeaveHallucinationScorerV1()
+        ls.CoherenceScorer().score(query="q", output="o", chat_history=[], context="c")
+    assert ls.FluencyScorer().score(output="Fine.").metadata == {"score": 0.9}
+    h = ls.HallucinationScorer()
     assert not h.score(query="capital?", context=["France"], output="Paris").passed  # 1 - 0.2 = 0.8 >= 0.35
     assert h.score(query="capital?", context="France", output="Lyon").metadata["score"] == pytest.approx(0.1)
 
@@ -76,7 +76,7 @@ def test_context_relevance(monkeypatch):
         return score_doc
 
     monkeypatch.setattr(ls, "load_relevance_model", fake_loader)
-    r = ls.WeaveContextRelevanceScorerV1(return_all_spans=True).score(query="capital?", output=["Paris is the capital", "Bread"])
+    r = ls.ContextRelevanceScorer(return_all_spans=True).score(query="capital?", output=["Paris is the capital", "Bread"])
     assert r.metadata["score"] == pytest.approx(0.3) and not r.passed and r.metadata["all_spans"] == [{"text": "Paris", "score": 0.9}]
 
 
@@ -92,13 +92,13 @@ def test_trust_scorer(monkeypatch):
         return lambda pair: 0.9
 
     monkeypatch.setattr(ls, "load_pipeline", fake_pipeline)
-    r = ls.WeaveTrustScorerV1(run_in_parallel=False).score(query="capital?", context="Paris is the capital", output="Paris 🗼 .")
+    r = ls.TrustScorer(run_in_parallel=False).score(query="capital?", context="Paris is the capital", output="Paris 🗼 .")
     assert r.passed and r.metadata["trust_level"] == "medium_advisory-issues-found"
-    assert r.metadata["advisory_issues"] == ["WeaveCoherenceScorerV1"] and r.metadata["critical_issues"] == []
-    assert r.metadata["scores"]["WeaveFluencyScorerV1"] == 0.95
+    assert r.metadata["advisory_issues"] == ["CoherenceScorer"] and r.metadata["critical_issues"] == []
+    assert r.metadata["scores"]["FluencyScorer"] == 0.95
     monkeypatch.setattr(ls, "load_sequence_classifier", lambda *a, **k: lambda t: [3, 3, 0, 0, 0])
-    r2 = ls.WeaveTrustScorerV1().score(query="q", context="c", output="o")
-    assert not r2.passed and "WeaveToxicityScorerV1" in r2.metadata["critical_issues"]
+    r2 = ls.TrustScorer().score(query="q", context="c", output="o")
+    assert not r2.passed and "ToxicityScorer" in r2.metadata["critical_issues"]
 
 
 class _Result:
@@ -147,10 +147,10 @@ def test_local_scorers_serialise_and_run_in_evaluation(client, fake, monkeypatch
 
     ev = weft.Evaluation(dataset=ds, scorers=[tox])
     summary = __import__("asyncio").run(ev.evaluate(echo))
-    assert summary["WeaveToxicityScorerV1"]["passed"]["true_count"] == 1
+    assert summary["ToxicityScorer"]["passed"]["true_count"] == 1
     client.flush()
     objs = [o for versions in fake.objs.values() for o in versions]
-    vals = [o.get("val") for o in objs if isinstance(o.get("val"), dict) and o["val"].get("_class_name") == "WeaveToxicityScorerV1"]
+    vals = [o.get("val") for o in objs if isinstance(o.get("val"), dict) and o["val"].get("_class_name") == "ToxicityScorer"]
     assert vals and vals[0]["model_name_or_path"] == "" and vals[0]["total_threshold"] == 5 and "_model" not in vals[0]
     assert "LocalModelScorer" in vals[0]["_bases"]
 

@@ -6,7 +6,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
-SCHEMES = ("weft:///", "weave:///")
+SCHEMES = ("weft:///",)
 _EXTRA_KINDS = ("attr", "key", "index", "id")
 
 

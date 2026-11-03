@@ -8,9 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Weave's Agents API (/agents/*): agents, versions, spans, conversations and
+// The Agents API (/agents/*): agents, versions, spans, conversations and
 // chat timelines derived from calls through the store's span index. Request
-// and response shapes follow the weave client's generated server SDK.
+// and response shapes are documented in docs/weft/API.md.
 
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
@@ -23,7 +23,7 @@ func init() {
 		r.Post("/agents/conversations/spans", handle(s.agentConversationSpans))
 		r.Post("/agents/conversations/chat", handle(s.agentConversationChat))
 		r.Post("/agents/traces/chat", handle(s.agentTraceChat))
-		// Weave's agents OTLP endpoint; the same ingest as /otel/v1/traces.
+		// An alias of /otel/v1/traces for agent exporters.
 		r.Post("/agents/otel/v1/traces", s.otelTraces)
 	})
 }

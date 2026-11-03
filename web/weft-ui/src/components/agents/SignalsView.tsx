@@ -309,7 +309,7 @@ function RunPanel({
 }
 
 /**
- * Signals: tag and rating results on turns (Weave's Agents → Signals tab),
+ * Signals: tag and rating results on turns (the Agents → Signals tab),
  * with the active-signal drawer, preset/custom signal creation, a judge run,
  * a score volume timeline and per-signal trends.
  */

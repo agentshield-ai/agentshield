@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -31,7 +32,7 @@ type Call struct {
 	DeletedAt        *string        `json:"deleted_at"`
 	Feedback         []Feedback     `json:"feedback,omitempty"`
 	StorageSizeBytes *int64         `json:"storage_size_bytes,omitempty"`
-	// Optional Weave CallSchema fields (callfields.go).
+	// Optional call fields (callfields.go).
 	TotalStorageSizeBytes *int64  `json:"total_storage_size_bytes,omitempty"`
 	WBUsername            *string `json:"wb_username,omitempty"`
 	WBRunStep             *int64  `json:"wb_run_step"`
@@ -141,21 +142,22 @@ var callColumns = map[string]string{
 
 // callField resolves a field path on the calls table (alias c).
 func callField(path string) (string, []any, bool, error) {
+	path = legacy.QueryField(path) // queries saved before the rename
 	if col, ok := callColumns[path]; ok {
 		return col, nil, false, nil
 	}
 	switch path {
 	case "started_at", "ended_at", "deleted_at":
 		return "c." + path, nil, true, nil
-	case "summary.weave.status":
+	case "summary.weft.status":
 		return statusSQL, nil, false, nil
-	case "summary.weave.latency_ms":
+	case "summary.weft.latency_ms":
 		return latencySQL, nil, false, nil
-	case "summary.weave.trace_name":
+	case "summary.weft.trace_name":
 		return "c.op_base_name", nil, false, nil
-	case "summary.weave.display_name":
+	case "summary.weft.display_name":
 		return "COALESCE(c.display_name, c.op_base_name)", nil, false, nil
-	case "summary.total_tokens", "summary.weave.total_tokens":
+	case "summary.total_tokens", "summary.weft.total_tokens":
 		return "c.total_tokens", nil, false, nil
 	case "storage_size_bytes":
 		return "c.storage_size", nil, false, nil
@@ -185,6 +187,13 @@ func callField(path string) (string, []any, bool, error) {
 	return "", nil, false, unknownField(path)
 }
 
+// feedbackTypeHasName reports whether weft.<kind> feedback types carry a
+// name segment (weft.scorer.<scorer>, weft.annotation.<name>,
+// weft.score.<scorer>); the others (weft.reaction, weft.note, ...) do not.
+func feedbackTypeHasName(kind string) bool {
+	return kind == "scorer" || kind == "annotation" || kind == "score"
+}
+
 // feedbackField resolves feedback.<type>.<payload path> to the payload value of
 // the most recent matching feedback on the call.
 func feedbackField(segs []string) (string, []any, bool, error) {
@@ -196,8 +205,10 @@ func feedbackField(segs []string) (string, []any, bool, error) {
 	switch {
 	case strings.Contains(segs[0], "."):
 		ftype, rest = segs[0], segs[1:]
-	case segs[0] == "wandb" && len(segs) >= 3:
+	case segs[0] == "weft" && len(segs) >= 3 && feedbackTypeHasName(segs[1]):
 		ftype, rest = strings.Join(segs[:3], "."), segs[3:]
+	case segs[0] == "weft" && len(segs) >= 2:
+		ftype, rest = strings.Join(segs[:2], "."), segs[2:]
 	default:
 		ftype, rest = segs[0], segs[1:]
 	}
@@ -205,7 +216,7 @@ func feedbackField(segs []string) (string, []any, bool, error) {
 		rest = rest[1:]
 	}
 	return `(SELECT json_extract(f.payload, ?) FROM feedback f WHERE f.project_id = c.project_id
-		AND f.weave_ref = ('weft:///' || c.project_id || '/call/' || c.id) AND f.feedback_type = ?
+		AND f.ref = ('weft:///' || c.project_id || '/call/' || c.id) AND f.feedback_type = ?
 		ORDER BY f.created_at DESC LIMIT 1)`, []any{jsonPath(rest), ftype}, false, nil
 }
 
@@ -229,7 +240,6 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 		if len(f.OpNames) > 0 {
 			var ors []string
 			for _, n := range f.OpNames {
-				n = refs.Normalize(n)
 				if refs.IsRef(n) {
 					r, err := refs.Parse(n)
 					if err != nil {
@@ -269,7 +279,7 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 			if len(x.vals) > 0 {
 				norm := make([]string, len(x.vals))
 				for i, v := range x.vals {
-					norm[i] = refs.Normalize(v)
+					norm[i] = v
 				}
 				s, a := inList("value", norm)
 				conds = append(conds, "EXISTS (SELECT 1 FROM json_each("+x.col+") WHERE "+s+")")
@@ -382,19 +392,19 @@ func (c *Call) finishSummary() {
 		sc[k] = numberValue(v)
 	}
 	sum["status_counts"] = sc
-	weave, _ := sum["weave"].(map[string]any)
-	if weave == nil {
-		weave = map[string]any{}
+	computed, _ := sum["weft"].(map[string]any)
+	if computed == nil {
+		computed = map[string]any{}
 	}
-	weave["status"] = c.Status()
+	computed["status"] = c.Status()
 	if l := c.LatencyMS(); l != nil {
-		weave["latency_ms"] = numberValue(*l)
+		computed["latency_ms"] = numberValue(*l)
 	} else {
-		weave["latency_ms"] = nil
+		computed["latency_ms"] = nil
 	}
-	weave["trace_name"] = c.opBaseName
-	weave["display_name"] = c.DisplayName
-	sum["weave"] = weave
+	computed["trace_name"] = c.opBaseName
+	computed["display_name"] = c.DisplayName
+	sum["weft"] = computed
 	c.Summary = sum
 }
 
@@ -528,7 +538,7 @@ func (s *Store) enrichCalls(ctx context.Context, projectID string, calls []*Call
 		c.finishSummary()
 		if prices != nil {
 			if costs := prices.Costs(c.TotalUsage(), c.startedUS); len(costs) > 0 {
-				c.Summary["weave"].(map[string]any)["costs"] = costs
+				c.Summary["weft"].(map[string]any)["costs"] = costs
 			}
 		}
 		if !q.IncludeStorageSize {
@@ -549,7 +559,7 @@ func (s *Store) enrichCalls(ctx context.Context, projectID string, calls []*Call
 			return err
 		}
 		for _, f := range fbs {
-			if c := byRef[f.WeaveRef]; c != nil {
+			if c := byRef[f.Ref]; c != nil {
 				c.Feedback = append(c.Feedback, f)
 			}
 		}

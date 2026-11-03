@@ -129,16 +129,16 @@ func TestAgentFeedbackBatchAndSignalFilters(t *testing.T) {
 	seedAgentData(t, e, time.Now().Add(-time.Hour))
 	turns := convTurns(t, e)
 	t1, t2 := turns[0], turns[1]
-	ref := func(id string) string { return "weave:///" + pid + "/call/" + id }
+	ref := func(id string) string { return "weft:///" + pid + "/call/" + id }
 
 	res := e.post("/agents/feedback/batch/create", map[string]any{"batch": []any{
-		map[string]any{"project_id": pid, "weave_ref": ref(t1["span_id"].(string)), "feedback_type": "wandb.agent_monitor",
+		map[string]any{"project_id": pid, "ref": ref(t1["span_id"].(string)), "feedback_type": "weft.signal",
 			"payload":                   map[string]any{"signal": "manual"},
 			"scorer_ratings":            map[string]any{"response_quality": 0.9, "user_satisfaction": 0.1},
 			"scorer_rating_confidences": map[string]any{"response_quality": 1.7}, "scorer_rating_reasons": map[string]any{"response_quality": "Answered\n\n<b>fully</b>"},
 			"scorer_tags": []any{"User_Frustration", "user_frustration ", "Weather"}, "scorer_tag_confidences": map[string]any{"USER_FRUSTRATION": 0.8},
 			"scorer_tag_reasons": map[string]any{"user_frustration": "Asked twice"}},
-		map[string]any{"project_id": pid, "weave_ref": ref(t2["span_id"].(string)), "feedback_type": "wandb.agent_monitor", "payload": map[string]any{},
+		map[string]any{"project_id": pid, "ref": ref(t2["span_id"].(string)), "feedback_type": "weft.signal", "payload": map[string]any{},
 			"scorer_ratings": map[string]any{"response_quality": 0.2}},
 	}})
 	stored := res["res"].([]any)[0].(map[string]any)["payload"].(map[string]any)
@@ -156,7 +156,7 @@ func TestAgentFeedbackBatchAndSignalFilters(t *testing.T) {
 	}
 	// A tag over 36 characters rejects the item.
 	if code, _ := e.raw("/agents/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid,
-		"weave_ref": ref(t1["span_id"].(string)), "feedback_type": "wandb.agent_monitor", "payload": map[string]any{},
+		"ref": ref(t1["span_id"].(string)), "feedback_type": "weft.signal", "payload": map[string]any{},
 		"scorer_tags": []any{strings.Repeat("x", 37)}}}}, nil); code != 400 {
 		t.Fatalf("long tag accepted: %d", code)
 	}
@@ -212,8 +212,8 @@ func TestAgentFeedbackBatchAndSignalFilters(t *testing.T) {
 		t.Fatal("bad insight field accepted")
 	}
 	// Explicit insights in a payload.
-	e.post("/agents/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "weave_ref": ref(t2["span_id"].(string)),
-		"feedback_type": "wandb.agent_monitor", "payload": map[string]any{"insights": map[string]any{"failure_severity": "major", "intent_category": []any{"weather"}}}}}})
+	e.post("/agents/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "ref": ref(t2["span_id"].(string)),
+		"feedback_type": "weft.signal", "payload": map[string]any{"insights": map[string]any{"failure_severity": "major", "intent_category": []any{"weather"}}}}}})
 	got = spanIDsWhere(t, e, map[string]any{"insight_filters": []any{map[string]any{"field": "failure_severity", "values": []any{"major", "minor"}},
 		map[string]any{"field": "intent_category", "values": []any{"weather"}}}})
 	if len(got) != 2 {
@@ -232,19 +232,19 @@ func TestAgentFeedbackBatchAndSignalFilters(t *testing.T) {
 	}
 }
 
-// Weave's /feedback/batch/create keeps and normalises the scorer and span
+// /feedback/batch/create keeps and normalises the scorer and span
 // fields; plain feedback is stored unchanged.
 func TestFeedbackBatchCreateScorerFields(t *testing.T) {
 	e := newEnv(t)
 	seedAgentData(t, e, time.Now().Add(-time.Hour))
 	turn := convTurns(t, e)[0]
-	ref := "weave:///" + pid + "/call/" + turn["span_id"].(string)
+	ref := "weft:///" + pid + "/call/" + turn["span_id"].(string)
 	res := e.post("/feedback/batch/create", map[string]any{"batch": []any{
-		map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.agent_monitor", "payload": map[string]any{"note": "x"},
+		map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.signal", "payload": map[string]any{"note": "x"},
 			"scorer_ratings": map[string]any{"quality": 0.7}, "scorer_rating_confidences": map[string]any{"quality": 3},
 			"scorer_rating_reasons": map[string]any{"quality": "ok\u0007 <i>fine</i>"}, "scorer_tags": []any{"NSFW", "nsfw"},
 			"scorer_tag_reasons": map[string]any{"NSFW": "explicit"}, "scorer_trace_id": "judge-trace", "span_agent_name": "given-agent"},
-		map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": "👍"}},
+		map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}},
 	}})
 	items := res["res"].([]any)
 	p := items[0].(map[string]any)["payload"].(map[string]any)
@@ -260,7 +260,7 @@ func TestFeedbackBatchCreateScorerFields(t *testing.T) {
 	if plain := items[1].(map[string]any)["payload"].(map[string]any); len(plain) != 1 || plain["emoji"] != "👍" {
 		t.Fatalf("plain feedback changed: %v", plain)
 	}
-	if code, _ := e.raw("/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "weave_ref": ref,
+	if code, _ := e.raw("/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "ref": ref,
 		"feedback_type": "x", "payload": map[string]any{}, "scorer_tags": []any{strings.Repeat("t", 40)}}}}, nil); code != 400 {
 		t.Fatalf("long tag accepted: %d", code)
 	}

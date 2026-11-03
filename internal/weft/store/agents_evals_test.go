@@ -15,11 +15,11 @@ func TestEvalLinksOf(t *testing.T) {
 		attrs map[string]any
 		want  []evalLink
 	}{
-		{"nested weave.eval (Python SDK)", "weft:///e/p/op/turn:abc", map[string]any{"weave": map[string]any{"eval": map[string]any{"run_id": run, "predict_and_score_call_id": "pas-1"}}},
+		{"nested weft.eval (Python SDK)", "weft:///e/p/op/turn:abc", map[string]any{"weft": map[string]any{"eval": map[string]any{"run_id": run, "predict_and_score_call_id": "pas-1"}}},
 			[]evalLink{{kind: evalLinkAttr, target: "span", runID: run, pasID: "pas-1"}}},
-		{"flat OTel attributes", "invoke_agent bot", map[string]any{"otel": map[string]any{"attributes": map[string]any{"weave.eval.run_id": run, "weave.eval.predict_and_score_call_id": "pas-2"}}},
+		{"flat OTel attributes", "invoke_agent bot", map[string]any{"otel": map[string]any{"attributes": map[string]any{"weft.eval.run_id": run, "weft.eval.predict_and_score_call_id": "pas-2"}}},
 			[]evalLink{{kind: evalLinkAttr, target: "span", runID: run, pasID: "pas-2"}}},
-		{"prediction only resolves its run", "x", map[string]any{"weave.eval.predict_and_score_call_id": "pas-3"},
+		{"prediction only resolves its run", "x", map[string]any{"weft.eval.predict_and_score_call_id": "pas-3"},
 			[]evalLink{{kind: evalLinkAttr, target: "span", runID: "run-from-pas", pasID: "pas-3"}}},
 		{"plain call", "x", map[string]any{"weft": map[string]any{"span_kind": "agent"}}, nil},
 		{"prediction links", "weft:///e/p/op/Evaluation.predict_and_score:abc", map[string]any{"weft": map[string]any{
@@ -71,7 +71,7 @@ func TestEvalLinksIndexAndBackfill(t *testing.T) {
 	}
 	start("run", "Evaluation.evaluate", nil, nil)
 	start("pas", "Evaluation.predict_and_score", &parent, map[string]any{"weft": map[string]any{"linked_calls": []any{"turn"}}})
-	start("turn", "agent_turn", nil, map[string]any{"weave": map[string]any{"eval": map[string]any{"run_id": "run", "predict_and_score_call_id": "pas"}}})
+	start("turn", "agent_turn", nil, map[string]any{"weft": map[string]any{"eval": map[string]any{"run_id": "run", "predict_and_score_call_id": "pas"}}})
 	if n, err := st.evalLinkCount(ctx, p); err != nil || n != 2 {
 		t.Fatalf("indexed links = %d, %v", n, err)
 	}

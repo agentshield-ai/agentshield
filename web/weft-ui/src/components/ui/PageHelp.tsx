@@ -1,9 +1,9 @@
 // "What is this page?" (DESIGN.md §7.1 rule 12): a short, dismissible
-// explanation with a link to the guide in docs/weft/.
+// explanation with a link to the guide in docs/weft/, which the server
+// embeds and the UI shows at /help/<guide>.
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Icon } from './Icons'
-
-export const DOCS_BASE = 'https://github.com/agentshield-ai/agentshield/blob/main/docs/weft/'
 
 const key = (id: string) => `weft.help.${id}`
 
@@ -24,8 +24,9 @@ function writeDismissed(id: string, v: boolean) {
   }
 }
 
+/** The in-app path of a guide, e.g. docsUrl('API.md#objects') → /help/API.md#objects. */
 export function docsUrl(doc: string): string {
-  return DOCS_BASE + doc
+  return '/help/' + doc
 }
 
 /** The panel, plus a header button that brings it back once dismissed. */
@@ -37,9 +38,9 @@ export function usePageHelp(id: string, title: string, body: ReactNode, doc: str
       <div className="grow">
         <div className="help-title">What is this page?</div>
         <div className="help-body">{body}</div>
-        <a className="help-link" href={docsUrl(doc)} target="_blank" rel="noreferrer">
-          Read the guide <Icon name="external" size={12} />
-        </a>
+        <Link className="help-link" to={docsUrl(doc)}>
+          Read the guide
+        </Link>
       </div>
       <button
         type="button"

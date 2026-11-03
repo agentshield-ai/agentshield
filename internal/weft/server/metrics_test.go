@@ -50,8 +50,8 @@ func seedMetricCalls(t *testing.T, e *testEnv, base time.Time) {
 		}
 		e.post("/call/end", map[string]any{"end": end})
 		if s.score != nil {
-			e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/" + id,
-				"feedback_type": "wandb.runnable.judge", "payload": map[string]any{"output": map[string]any{"correct": *s.score}}})
+			e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/" + id,
+				"feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"correct": *s.score}}})
 		}
 	}
 }
@@ -98,7 +98,7 @@ func TestCallsMetricsAggregations(t *testing.T) {
 			map[string]any{"name": "err", "agg": "error_rate"},
 			map[string]any{"name": "out_len", "field": "output.len", "agg": "sum"},
 			map[string]any{"name": "in_n", "field": "inputs.n", "agg": "max"},
-			map[string]any{"name": "correct", "field": "feedback.wandb.runnable.judge.output.correct", "agg": "avg"},
+			map[string]any{"name": "correct", "field": "feedback.weft.scorer.judge.output.correct", "agg": "avg"},
 		},
 	})
 	tot := res["totals"].(map[string]any)

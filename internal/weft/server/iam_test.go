@@ -92,15 +92,15 @@ func TestRBACRoles(t *testing.T) {
 	e.mustCode(200, "POST", "/calls/query", f.carol, map[string]any{"project_id": "acme/app"})
 	e.mustCode(403, "POST", "/call/start", f.carol, callStart("acme/app", "c1"))
 	e.mustCode(403, "POST", "/obj/create", f.carol, map[string]any{"obj": map[string]any{"project_id": "acme/app", "object_id": "o", "val": 1}})
-	e.mustCode(403, "POST", "/feedback/create", f.carol, map[string]any{"project_id": "acme/app", "weave_ref": "weave:///acme/app/call/b1",
-		"feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": "👍"}})
+	e.mustCode(403, "POST", "/feedback/create", f.carol, map[string]any{"project_id": "acme/app", "ref": "weft:///acme/app/call/b1",
+		"feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
 	e.mustCode(403, "POST", "/calls/delete", f.carol, map[string]any{"project_id": "acme/app", "call_ids": []any{"b1"}})
 	// A direct project role is stronger than the team role.
 	e.mustCode(200, "POST", "/call/start", f.carol, callStart("acme/special", "c2"))
 	// No role: no access at all.
 	e.mustCode(403, "POST", "/calls/query", f.dave, map[string]any{"project_id": "acme/app"})
 	e.mustCode(403, "GET", "/v2/acme/app/datasets", f.dave, nil)
-	e.mustCode(403, "POST", "/refs/read_batch", f.dave, map[string]any{"refs": []any{"weave:///acme/app/object/o:abc"}})
+	e.mustCode(403, "POST", "/refs/read_batch", f.dave, map[string]any{"refs": []any{"weft:///acme/app/object/o:abc"}})
 	e.mustCode(200, "POST", "/call/start", f.dave, callStart("beta/app", "d1"))
 
 	// Members cannot use admin endpoints.

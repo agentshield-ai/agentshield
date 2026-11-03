@@ -15,7 +15,7 @@ export class WeftHTTPError extends Error {
 }
 
 // ---------------------------------------------------------------- WEFT_DEBUG_HTTP
-// Weave's WEAVE_DEBUG_HTTP: print every request and response (time, method,
+// Print every request and response (time, method,
 // URL, headers with Authorization redacted, body; then elapsed time, status,
 // headers and body) to stderr. Read on every request.
 const DIV_REQUEST = '-'.repeat(21);

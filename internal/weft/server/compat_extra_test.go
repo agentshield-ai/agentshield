@@ -110,12 +110,12 @@ func TestCompatExtraEndpoints(t *testing.T) {
 	scorer := "weft:///" + pid + "/object/judge:abc"
 	monitor := "weft:///" + pid + "/object/mon:v1"
 	for i, score := range []any{0.2, 0.8, 1.0} {
-		e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": callRef, "feedback_type": "wandb.runnable.judge",
+		e.post("/feedback/create", map[string]any{"project_id": pid, "ref": callRef, "feedback_type": "weft.scorer.judge",
 			"payload": map[string]any{"output": map[string]any{"score": score, "passed": i > 0, "label": "ok"}}, "runnable_ref": scorer, "trigger_ref": monitor})
 	}
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": callRef, "feedback_type": "wandb.note.1", "payload": map[string]any{"note": "n"}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": callRef, "feedback_type": "weft.note", "payload": map[string]any{"note": "n"}})
 	from := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	fs := e.post("/feedback/stats", map[string]any{"project_id": pid, "start": from, "feedback_type": "wandb.runnable.judge", "granularity": 3600,
+	fs := e.post("/feedback/stats", map[string]any{"project_id": pid, "start": from, "feedback_type": "weft.scorer.judge", "granularity": 3600,
 		"metrics": []any{map[string]any{"json_path": "output.score", "value_type": "numeric", "aggregations": []any{"avg", "max"}, "percentiles": []any{50}},
 			map[string]any{"json_path": "output.passed", "value_type": "boolean"}}})
 	ws := fs["window_stats"].(map[string]any)
@@ -133,7 +133,7 @@ func TestCompatExtraEndpoints(t *testing.T) {
 		t.Fatalf("buckets = %v", fs["buckets"])
 	}
 	ag := e.post("/feedback/aggregate", map[string]any{"project_id": pid, "after_ms": time.Now().Add(-time.Hour).UnixMilli(),
-		"before_ms": time.Now().Add(time.Minute).UnixMilli(), "feedback_types": []any{"wandb.runnable."}, "group_by": []any{"scorer_id"}, "monitor_ids": []any{"weft:///" + pid + "/object/mon:*"}})
+		"before_ms": time.Now().Add(time.Minute).UnixMilli(), "feedback_types": []any{"weft.scorer."}, "group_by": []any{"scorer_id"}, "monitor_ids": []any{"weft:///" + pid + "/object/mon:*"}})
 	bs := ag["buckets"].([]any)
 	if len(bs) != 1 {
 		t.Fatalf("aggregate = %v", ag)
@@ -153,7 +153,7 @@ func TestCompatExtraEndpoints(t *testing.T) {
 		t.Fatalf("payload schema = %v", ps)
 	}
 
-	// Evaluation status (Weave shape) for an unknown call.
+	// Evaluation status (tagged union) for an unknown call.
 	if s := e.post("/evaluations/status", map[string]any{"project_id": pid, "call_id": "nope"})["status"].(map[string]any); s["code"] != "not_found" {
 		t.Fatalf("status = %v", s)
 	}
@@ -212,7 +212,7 @@ func TestRootCostsNotDoubled(t *testing.T) {
 		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": "r", "ended_at": "2026-01-01T00:00:02Z"}}},
 	}})
 	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "r", "include_costs": true})["call"].(map[string]any)
-	cost := c["summary"].(map[string]any)["weave"].(map[string]any)["costs"].(map[string]any)["gpt-4o"].(map[string]any)
+	cost := c["summary"].(map[string]any)["weft"].(map[string]any)["costs"].(map[string]any)["gpt-4o"].(map[string]any)
 	if cost["prompt_tokens"] != float64(1000) || cost["requests"] != float64(1) {
 		t.Fatalf("root costs double-count the roll-up: %v", cost)
 	}

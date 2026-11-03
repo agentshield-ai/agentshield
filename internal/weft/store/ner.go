@@ -184,7 +184,7 @@ func (sl *slot) set(v string) {
 // nerCandidate reports whether a string can contain a named entity worth
 // sending to the analyzer (refs, ids, numbers and very short strings cannot).
 func nerCandidate(s string) bool {
-	if len(s) < 3 || strings.HasPrefix(s, "weft:///") || strings.HasPrefix(s, "weave:///") || !utf8.ValidString(s) {
+	if len(s) < 3 || strings.HasPrefix(s, "weft:///") || !utf8.ValidString(s) {
 		return false
 	}
 	upper := 0

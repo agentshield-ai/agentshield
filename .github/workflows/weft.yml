@@ -10,6 +10,8 @@ on:
       - 'sdk/**'
       - 'plugins/weft-*/**'
       - 'scripts/weft_ui_licenses.mjs'
+      - 'scripts/weft_weave_compat_check.py'
+      - 'docs/weft/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/weft.yml'
@@ -21,6 +23,8 @@ on:
       - 'sdk/**'
       - 'plugins/weft-*/**'
       - 'scripts/weft_ui_licenses.mjs'
+      - 'scripts/weft_weave_compat_check.py'
+      - 'docs/weft/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/weft.yml'
@@ -110,7 +114,12 @@ jobs:
         run: node --test plugins/weft-claude-code/test/*.test.mjs plugins/weft-codex/test/*.test.mjs plugins/weft-openclaw/test/*.test.mjs plugins/weft-pi/test/*.test.mjs
       - name: Demo seed script
         run: python3 scripts/weft_seed_demo.py --traces 5
-      - name: Official weave client against Weft
+      - name: Compatibility adapter is off by default
         run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345/graphql)" = 404
+      - name: Official weave client against Weft (compatibility adapter on)
+        run: |
+          ./bin/weft --addr 127.0.0.1:6346 --db "$RUNNER_TEMP/weft-compat.db" --weave-compat &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:6346/health && break; sleep 1; done
           python -m pip install 'weave==0.54.0'
-          WEFT_URL=http://127.0.0.1:6345 python scripts/weft_weave_compat_check.py
+          WEFT_URL=http://127.0.0.1:6346 python scripts/weft_weave_compat_check.py

@@ -204,7 +204,7 @@ export interface Score {
   reason?: string
   model?: string
   output?: unknown
-  weave_ref?: string
+  ref?: string
   feedback_type?: string
   creator?: string | null
   created_at: string
@@ -233,6 +233,8 @@ export interface Detection {
   id: string
   event_id: string
   session_id: string
+  /** The session's name or first request; set on /api/v1/detections lists. */
+  session_title?: string
   span_id: string | null
   trace_id: string | null
   link: 'tool_call_id' | 'nearest_time' | 'replay' | 'session' | 'none'
@@ -271,7 +273,7 @@ export interface ShieldInsights {
   approval_fatigue: {
     threshold: number
     series: { bucket: string; require_approval: number; overridden: number }[]
-    by_session: { session_id: string; agents: string[]; require_approval: number; approved: number; first_at: string; last_at: string; per_hour: number; fatigued: boolean }[]
+    by_session: { session_id: string; session_title?: string; agents: string[]; require_approval: number; approved: number; first_at: string; last_at: string; per_hour: number; fatigued: boolean }[]
     by_agent: { agent: string; require_approval: number; approved: number; sessions: number; approval_rate: number }[]
   }
   override_escalation: {
@@ -279,6 +281,8 @@ export interface ShieldInsights {
     series: { bucket: string; overrides: number; overridden_blocks: number }[]
     by_session: {
       session_id: string
+      /** The session's name or first request (absent when it has neither). */
+      session_title?: string
       agents: string[]
       overrides: number
       overridden_blocks: number

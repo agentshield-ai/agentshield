@@ -1,4 +1,4 @@
-// Leaderboard objects (Weave's Leaderboard class) saved from the UI.
+// Leaderboard objects saved from the UI.
 import { api } from './client'
 import type { LeaderboardColumnSpec, LbMetric } from '../components/evals/leaderboardUtils'
 

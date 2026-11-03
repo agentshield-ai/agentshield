@@ -20,14 +20,14 @@ describe('linked calls', () => {
     expect(l.evalLink).toBeNull()
     expect(hasLinks(l)).toBe(true)
   })
-  it('reads weave.eval.* attributes flat, nested or from OTel', () => {
-    expect(linksOf({ 'weave.eval.run_id': 'r1', 'weave.eval.predict_and_score_call_id': 'p1', 'weave.eval.kind': 'agent' }).evalLink).toEqual({
+  it('reads weft.eval.* attributes flat, nested or from OTel', () => {
+    expect(linksOf({ 'weft.eval.run_id': 'r1', 'weft.eval.predict_and_score_call_id': 'p1', 'weft.eval.kind': 'agent' }).evalLink).toEqual({
       runId: 'r1',
       predictAndScoreCallId: 'p1',
       extra: { kind: 'agent' },
     })
-    expect(linksOf({ otel: { attributes: { 'weave.eval.run_id': 'r2' } } }).evalLink?.runId).toBe('r2')
-    expect(linksOf({ weave: { eval: { predict_and_score_call_id: 'p3', trial_index: 0 } } }).evalLink).toEqual({ runId: undefined, predictAndScoreCallId: 'p3', extra: { trial_index: '0' } })
+    expect(linksOf({ otel: { attributes: { 'weft.eval.run_id': 'r2' } } }).evalLink?.runId).toBe('r2')
+    expect(linksOf({ weft: { eval: { predict_and_score_call_id: 'p3', trial_index: 0 } } }).evalLink).toEqual({ runId: undefined, predictAndScoreCallId: 'p3', extra: { trial_index: '0' } })
   })
   it('ignores unrelated attributes', () => {
     const l = linksOf({ weft: { internal: true, linked_calls: ['x', null, 3] }, env: 'prod' })

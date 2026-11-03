@@ -37,7 +37,7 @@ func seedStatsCalls(e *testEnv) {
 	}})
 }
 
-func TestCallsStatsWeaveShape(t *testing.T) {
+func TestCallsStatsMetricBuckets(t *testing.T) {
 	e := newEnv(t)
 	seedStatsCalls(e)
 	res := e.post("/calls/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z", "end": "2026-01-01T12:00:00Z",
@@ -130,15 +130,15 @@ func TestQueryStatsHasMoreAndFeedbackTotalCount(t *testing.T) {
 		t.Fatalf("limited query_stats = %v", lim)
 	}
 	for i, id := range []string{"r1", "r1", "r2"} {
-		e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/" + id,
-			"feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": []string{"👍", "👎", "👍"}[i]}})
+		e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/" + id,
+			"feedback_type": "weft.reaction", "payload": map[string]any{"emoji": []string{"👍", "👎", "👍"}[i]}})
 	}
 	fq := e.post("/feedback/query", map[string]any{"project_id": pid, "limit": 1})
 	if len(fq["result"].([]any)) != 1 || fq["total_count"].(float64) != 3 {
 		t.Fatalf("feedback query = %v", fq)
 	}
 	filtered := e.post("/feedback/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{
-		"$eq": []any{map[string]any{"$getField": "weave_ref"}, map[string]any{"$literal": "weft:///" + pid + "/call/r2"}}}}})
+		"$eq": []any{map[string]any{"$getField": "ref"}, map[string]any{"$literal": "weft:///" + pid + "/call/r2"}}}}})
 	if filtered["total_count"].(float64) != 1 {
 		t.Fatalf("filtered feedback total = %v", filtered)
 	}

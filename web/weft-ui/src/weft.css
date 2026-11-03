@@ -440,6 +440,100 @@ ul.plain {
   font-size: 13px;
 }
 
+/* ---------- guides (/help) ---------- */
+.help-page {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px 16px 48px;
+}
+.help-nav {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+}
+.help-nav h2 {
+  margin: 16px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.help-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.help-nav li a {
+  display: block;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  text-decoration: none;
+}
+.help-nav li a.active,
+.help-nav li a:hover {
+  background: var(--accent-2);
+  color: var(--text);
+}
+.help-doc {
+  min-width: 0;
+  max-width: 90ch;
+  line-height: 1.6;
+  color: var(--text);
+}
+.help-doc h1,
+.help-doc h2,
+.help-doc h3,
+.help-doc h4 {
+  scroll-margin-top: 16px;
+  margin: 1.4em 0 0.5em;
+  line-height: 1.3;
+}
+.help-doc h1:first-child {
+  margin-top: 0;
+}
+.help-doc p,
+.help-doc ul,
+.help-doc ol {
+  margin: 0 0 12px;
+}
+.help-doc table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  margin: 0 0 16px;
+  font-size: 13px;
+}
+.help-doc th,
+.help-doc td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  vertical-align: top;
+  text-align: left;
+}
+.help-doc code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--code-bg);
+  padding: 0 4px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.help-doc pre code {
+  padding: 0;
+  background: none;
+  overflow-wrap: normal;
+}
+@media (max-width: 720px) {
+  .help-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .help-nav {
+    position: static;
+  }
+}
+
 /* ---------- tooltips ---------- */
 .tip {
   position: relative;

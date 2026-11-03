@@ -123,22 +123,6 @@ def _apply_log_level(settings: Dict[str, Any]) -> Optional[str]:
     return level
 
 
-def _wandb_run_context() -> Optional["tuple[str, Optional[int]]"]:
-    """(run id, step) of an active ``wandb`` run when wandb is already imported (as Weave does)."""
-    wandb = sys.modules.get("wandb")
-    run = getattr(wandb, "run", None) if wandb is not None else None
-    if run is None:
-        return None
-    run_id = getattr(run, "id", None)
-    if not run_id:
-        return None
-    try:
-        step: Optional[int] = int(run.step)
-    except Exception:
-        step = None
-    return str(run_id), step
-
-
 def get_client() -> Optional["WeftClient"]:
     return _global_client
 
@@ -228,11 +212,11 @@ class WeftClient:
         self.log_level = _apply_log_level(st)
         from ._cache import CachingHTTPClient, build_cache
 
-        # Weave's settings and env variables, WEFT_-prefixed (see init()).
+        # Settings and their WEFT_* environment variables (see init()).
         self.http_timeout = _setting_num(st, "http_timeout", "WEFT_HTTP_TIMEOUT", 30.0, float, timeout)
         queue_env = "WEFT_MAX_CALLS_QUEUE_SIZE" if _env_raw("WEFT_MAX_CALLS_QUEUE_SIZE") is not None else "WEFT_MAX_QUEUE_SIZE"
         queue = _setting_num(st, "max_queue_size", queue_env, 10_000, int, max_queue)
-        self.max_queue_size = queue if queue > 0 else sys.maxsize  # 0 = unbounded, as in Weave
+        self.max_queue_size = queue if queue > 0 else sys.maxsize  # 0 = unbounded
         self.retry_max_attempts = _setting_num(st, "retry_max_attempts", "WEFT_RETRY_MAX_ATTEMPTS", 3, int)
         self.retry_backoff = _setting_num(st, "retry_backoff", "WEFT_RETRY_BACKOFF", 0.25, float)
         self.retry_max_backoff = _setting_num(st, "retry_max_backoff", "WEFT_RETRY_MAX_INTERVAL", 4.0, float)
@@ -258,7 +242,7 @@ class WeftClient:
             backoff=self.retry_backoff,
             max_backoff=self.retry_max_backoff,
             wal_path=wal_path,
-            # Weave's WEAVE_DISABLE_WAL_SENDER: with the WAL on, write requests to it and send nothing.
+            # With the WAL on, write requests to it and send nothing.
             wal_only=_setting_bool(st, "disable_wal_sender", "WEFT_DISABLE_WAL_SENDER", False),
         )
         self.wal_path = wal_path
@@ -268,7 +252,7 @@ class WeftClient:
             n = self._sender.replay_wal()
             if n:
                 logger.info("weft: replaying %d unsent items from %s", n, wal_path)
-        # W&B run linkage (wb_run_id / wb_run_step); see set_wb_run().
+        # Run linkage (wb_run_id / wb_run_step); see set_wb_run().
         self._wb_run: Optional[Any] = None
         if st.get("wb_run_id"):
             self.set_wb_run(st["wb_run_id"], st.get("wb_run_step"))
@@ -279,16 +263,15 @@ class WeftClient:
             settings=self.settings,
         )
 
-    # ------------------------------------------------------------------ W&B run linkage
+    # ------------------------------------------------------------------ run linkage
     def set_wb_run(self, run_id: Optional[str], step: Any = None) -> None:
-        """Link calls started from now on to a W&B run (``wb_run_id``, ``wb_run_step``).
+        """Link calls started from now on to a training or experiment run
+        (``wb_run_id``, ``wb_run_step``).
 
-        ``run_id`` is a run id (sent as ``<entity>/<project>/<run_id>``, as Weave
-        does) or a full ``entity/project/run_id``. ``step`` is an int or a
-        callable returning the current step; it is read at call start
-        (``wb_run_step``) and end (``wb_run_step_end``). ``None`` clears it.
-        Without an explicit run, an active ``wandb.run`` is used when ``wandb``
-        is imported.
+        ``run_id`` is a run id (sent as ``<entity>/<project>/<run_id>``) or a
+        full ``entity/project/run_id``. ``step`` is an int or a callable
+        returning the current step; it is read at call start (``wb_run_step``)
+        and end (``wb_run_step_end``). ``None`` clears it.
         """
         if not run_id:
             self._wb_run = None
@@ -311,10 +294,7 @@ class WeftClient:
             except (TypeError, ValueError):
                 step = None
             return rid, step
-        ctx = _wandb_run_context()
-        if ctx is None:
-            return None
-        return f"{self.entity}/{self.project}/{ctx[0]}", ctx[1]
+        return None
 
     # ------------------------------------------------------------------ basics
     @property
@@ -409,13 +389,6 @@ class WeftClient:
         if color:
             weft_attrs["color"] = color
         attrs["weft"] = weft_attrs
-        if kind or color:
-            weave_attrs = dict(attrs.get("weave") or {}) if isinstance(attrs.get("weave"), dict) else {}
-            if kind:
-                weave_attrs["kind"] = kind
-            if color:
-                weave_attrs["color"] = color
-            attrs["weave"] = weave_attrs
 
         call = Call(
             id=call_id,
@@ -708,7 +681,7 @@ class WeftClient:
 
     # ------------------------------------------------------------------ threads, custom runtimes
     def threads_query(self, req: Any = None, **kwargs: Any) -> Any:
-        """Weave's ``client.threads_query(ThreadsQueryReq(...))``: threads (calls grouped by
+        """``client.threads_query(ThreadsQueryReq(...))``: threads (calls grouped by
         ``thread_id``) with turn counts, times and turn-duration percentiles.
 
         ``req`` is a ``weft.trace_server_interface.ThreadsQueryReq`` or a dict; keyword
@@ -742,7 +715,7 @@ class WeftClient:
         headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         """Register a custom runtime (an OpenAI-compatible endpoint), replacing its
-        configuration if it exists (Weave's ``register_custom_runtime``).
+        configuration if it exists.
 
         ``runtime_ids`` is the complete list: IDs left out are removed. A string ID
         gets the default ``max_tokens`` (4096); pass ``weft.CustomRuntimeID(id=...,
@@ -880,11 +853,11 @@ class WeftClient:
         return list(self._http.request("GET", "/tags", query={"project_id": self.project_id}).get("tags") or [])
 
     def list_aliases(self) -> List[str]:
-        """All distinct aliases in the project (Weave: ``client.list_aliases()``)."""
+        """All distinct aliases in the project."""
         return list(self._http.request("GET", "/aliases", query={"project_id": self.project_id}).get("aliases") or [])
 
     def get_tags_and_aliases(self, obj_ref: Any) -> "tuple[List[str], List[str]]":
-        """``(tags, aliases)`` of an object version in one request (Weave's name and order)."""
+        """``(tags, aliases)`` of an object version in one request."""
         r = self._obj_ref(obj_ref)
         obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
         return list(obj.get("tags") or []), list(obj.get("aliases") or [])
@@ -898,7 +871,7 @@ class WeftClient:
         if len(parts) == 3 and all(parts):
             return parts[0], parts[1], parts[2]
         raise ValueError(
-            "target_path must be '<registry_project>/<collection>' (e.g. 'wandb-registry-prompts/support-bot') "
+            "target_path must be '<registry_project>/<collection>' (e.g. 'prompts/support-bot') "
             "or '<entity>/<registry_project>/<collection>'"
         )
 
@@ -906,7 +879,7 @@ class WeftClient:
         """Link a published object version into a registry collection (``POST /link_to_registry``).
 
         ``obj`` is a published object (or one to publish now), a ref, a
-        ``weft:///`` / ``weave:///`` URI or ``"name:version"``. ``target_path`` is
+        ``weft:///`` URI or ``"name:version"``. ``target_path`` is
         ``<registry_project>/<collection>`` (the registry project is in this
         client's entity) or ``<entity>/<registry_project>/<collection>``.
         ``aliases`` move to the new registry version (``latest`` and ``v<N>``
@@ -936,7 +909,7 @@ class WeftClient:
         return {"version_index": res.get("version_index"), "ref": r.uri(), "target_path": f"{entity}/{reg_project}/{collection}"}
 
     def link_prompt_to_registry(self, prompt: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Weave's ``link_prompt_to_registry``: link a published prompt version into a registry collection."""
+        """Link a published prompt version into a registry collection."""
         return self.link_to_registry(prompt, target_path=target_path, aliases=aliases)
 
     def query_registry(
@@ -1368,7 +1341,7 @@ def init(
     if not project:
         raise ValueError("weft.init requires a project name (or WEFT_PROJECT)")
     disabled = env_flag("WEFT_DISABLED") or bool(kwargs.pop("disabled", False))
-    # Per-integration settings (Weave's autopatch_settings), see integrations/_settings.py.
+    # Per-integration settings, see integrations/_settings.py.
     autopatch_settings = kwargs.pop("autopatch_settings", None)
     client = WeftClient(project, server_url=server_url, api_key=api_key, disabled=disabled, **kwargs)
     with _global_lock:
@@ -1426,14 +1399,13 @@ def link_to_registry(obj: Any, *, target_path: str, aliases: Optional[List[str]]
 
 
 def link_prompt_to_registry(prompt: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Weave's ``weave.link_prompt_to_registry``: link a published prompt version into a registry collection."""
+    """Link a published prompt version into a registry collection (global client)."""
     return require_client().link_prompt_to_registry(prompt, target_path=target_path, aliases=aliases)
 
 
-# Tags and aliases of object versions (Weave's weave.add_tags & co., module
-# level in weave/trace/api.py), on the global client.
+# Tags and aliases of object versions, on the global client.
 def add_tags(obj_ref: Any, tags: List[str]) -> None:
-    """Tag an object version, given as an ObjectRef or a weave:/// / weft:/// URI."""
+    """Tag an object version, given as an ObjectRef or a weft:/// URI."""
     require_client().add_tags(obj_ref, tags)
 
 
@@ -1478,6 +1450,6 @@ def list_aliases() -> List[str]:
 
 
 def set_wb_run(run_id: Optional[str], step: Any = None) -> None:
-    """Link calls of the global client to a W&B run; see ``WeftClient.set_wb_run``."""
+    """Link calls of the global client to a run; see ``WeftClient.set_wb_run``."""
     require_client().set_wb_run(run_id, step)
 

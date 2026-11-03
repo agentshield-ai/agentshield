@@ -26,7 +26,7 @@ const (
 	KindCall   Kind = "call"
 )
 
-// Ref is a parsed weft:/// (or weave:///) URI.
+// Ref is a parsed weft:/// URI.
 type Ref struct {
 	Entity  string
 	Project string
@@ -73,28 +73,15 @@ func (r Ref) Base() Ref {
 	return r
 }
 
-// IsRef reports whether s looks like a weft or weave ref URI.
+// IsRef reports whether s looks like a weft ref URI.
 func IsRef(s string) bool {
-	return strings.HasPrefix(s, "weft:///") || strings.HasPrefix(s, "weave:///")
-}
-
-// Normalize rewrites a weave:/// ref to the weft:/// scheme; other strings are returned unchanged.
-func Normalize(s string) string {
-	if strings.HasPrefix(s, "weave:///") {
-		return "weft:///" + s[len("weave:///"):]
-	}
-	return s
+	return strings.HasPrefix(s, "weft:///")
 }
 
 // Parse parses a ref URI.
 func Parse(s string) (Ref, error) {
-	var rest string
-	switch {
-	case strings.HasPrefix(s, "weft:///"):
-		rest = s[len("weft:///"):]
-	case strings.HasPrefix(s, "weave:///"):
-		rest = s[len("weave:///"):]
-	default:
+	rest, ok := strings.CutPrefix(s, "weft:///")
+	if !ok {
 		return Ref{}, fmt.Errorf("not a ref: %q", s)
 	}
 	parts := strings.Split(rest, "/")
@@ -195,14 +182,13 @@ func CanonicalJSON(v any) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-// Digests follow W&B Weave's scheme so that refs are interchangeable with
-// the official weave client (which computes file digests, and optionally
-// object digests, locally):
+// Digests are computed the same way by the server and the SDKs (which
+// compute file digests, and optionally object digests, locally):
 //   - bytes: SHA-256, URL-safe base64 with '-'→'X', '_'→'Y', no padding
 //   - objects and table rows: that digest of Python json.dumps(v, sort_keys=True)
 //   - tables: hex SHA-256 of the concatenated row digests
 
-// DigestBytes is the Weave-style digest of b.
+// DigestBytes is the digest of b.
 func DigestBytes(b []byte) string {
 	sum := sha256.Sum256(b)
 	enc := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -395,26 +381,6 @@ func Decode(b []byte) (any, error) {
 		return nil, err
 	}
 	return v, nil
-}
-
-// NormalizeValue rewrites every weave:/// ref string inside v to weft:///.
-func NormalizeValue(v any) any {
-	switch t := v.(type) {
-	case string:
-		return Normalize(t)
-	case map[string]any:
-		for k, x := range t {
-			t[k] = NormalizeValue(x)
-		}
-		return t
-	case []any:
-		for i, x := range t {
-			t[i] = NormalizeValue(x)
-		}
-		return t
-	default:
-		return v
-	}
 }
 
 // CollectRefs returns the ref strings found in v (depth limited).

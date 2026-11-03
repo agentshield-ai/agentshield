@@ -179,7 +179,9 @@ func demoSpans(sessionID, suffix string) []demoSpan {
 }
 
 func demoOTLP(base time.Time, traceID string, spans []demoSpan, spanID func(string) string) ([]byte, error) {
-	ts := func(ms int) string { return strconv.FormatInt(base.Add(time.Duration(ms)*time.Millisecond).UnixNano(), 10) }
+	ts := func(ms int) string {
+		return strconv.FormatInt(base.Add(time.Duration(ms)*time.Millisecond).UnixNano(), 10)
+	}
 	out := make([]any, 0, len(spans))
 	for _, sp := range spans {
 		attrs := make([]any, 0, len(sp.attrs))

@@ -1,4 +1,4 @@
-// Annotation queues (Weave /annotation_queues API).
+// Annotation (review) queues (/annotation_queues).
 import { ApiError, getApiKey, post, postStream } from './client'
 
 export type AnnotationState = 'unstarted' | 'in_progress' | 'completed' | 'skipped'
@@ -86,10 +86,13 @@ export const queuesApi = {
     id: string,
     opts: { filter?: { annotation_states?: AnnotationState[]; call_id?: string; id?: string }; limit?: number; offset?: number; include_position?: boolean } = {},
   ) => post<{ items: AnnotationQueueItem[] }>(`${q(id)}/items/query`, { project_id, include_position: true, ...opts }),
+  /** Remove one item (its feedback stays); the call can be added again. */
+  removeItem: (project_id: string, id: string, item_id: string) =>
+    send<Record<string, never>>('DELETE', `${q(id)}/items/${encodeURIComponent(item_id)}?project_id=${encodeURIComponent(project_id)}`),
   progress: (project_id: string, id: string, item_id: string, annotation_state: AnnotationState) =>
     post<{ item: AnnotationQueueItem }>(`${q(id)}/items/${encodeURIComponent(item_id)}/progress`, { project_id, queue_id: id, annotation_state }),
   /** Annotation feedback written from a queue carries its queue_id. */
-  annotate: (req: { project_id: string; weave_ref: string; feedback_type: string; payload: unknown; annotation_ref?: string; queue_id: string; replace_id?: string }) => {
+  annotate: (req: { project_id: string; ref: string; feedback_type: string; payload: unknown; annotation_ref?: string; queue_id: string; replace_id?: string }) => {
     const { replace_id, ...body } = req
     return replace_id
       ? post<{ id: string; wb_user_id?: string }>('/feedback/replace', { ...body, feedback_id: replace_id })

@@ -1,4 +1,4 @@
-"""UI links (Weave's ``weave.trace.urls``), against the Weft server.
+"""UI links against the Weft server.
 
 ``agent_conversation_path(entity, project, conversation_id)`` links to a
 conversation in **Agents**; ``redirect_call`` to a call. The base is the
@@ -31,9 +31,6 @@ def project_weft_root_url(entity_name: str, project_name: str) -> str:
     return remote_project_root_url(entity_name, project_name)
 
 
-project_weave_root_url = project_weft_root_url
-
-
 def redirect_call(entity_name: str, project_name: str, call_id: str) -> str:
     return f"{remote_project_root_url(entity_name, project_name)}/calls/{quote(call_id)}"
 
@@ -60,7 +57,6 @@ __all__ = [
     "redirect_call",
     "remote_project_root_url",
     "project_weft_root_url",
-    "project_weave_root_url",
     "op_version_path",
     "object_version_path",
     "leaderboard_path",

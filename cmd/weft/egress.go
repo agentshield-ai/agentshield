@@ -25,12 +25,12 @@ type egressFlags struct {
 
 func registerEgressFlags() *egressFlags {
 	priv, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("WEFT_EGRESS_ALLOW_PRIVATE")))
-	insecure := envBool("WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP") || envBool("WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP")
+	insecure := envBool("WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP")
 	return &egressFlags{
 		bucketEnv: flag.Bool("ref-buckets-env-credentials", envBool("WEFT_REF_BUCKETS_ENV_CREDENTIALS"),
 			"let S3 reference buckets registered without secret_name use the server's AWS_* environment credentials (AWS endpoints only; env WEFT_REF_BUCKETS_ENV_CREDENTIALS=true)"),
 		insecureHTTP: flag.Bool("remote-scorer-allow-insecure-http", insecure,
-			"allow http:// RemoteScorer URLs; https is required otherwise (env WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true, or Weave's WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP)"),
+			"allow http:// RemoteScorer URLs; https is required otherwise (env WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true)"),
 		allow: flag.String("egress-allow", os.Getenv("WEFT_EGRESS_ALLOW"),
 			"comma-separated destinations outbound requests may reach even when internal: host, host:port, *.domain, IP or CIDR, "+
 				"e.g. localhost:11434,10.0.0.0/8 (env WEFT_EGRESS_ALLOW). Loopback, private, link-local, CGNAT and cloud metadata addresses are refused otherwise"),

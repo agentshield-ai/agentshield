@@ -202,7 +202,7 @@ func fromAnthropic(resp map[string]any) map[string]any {
 // openAIUsage converts Anthropic usage to the OpenAI shape. Anthropic's
 // input_tokens excludes cache reads and writes; OpenAI's prompt_tokens
 // includes them and reports them under prompt_tokens_details, which is how
-// Weft (and Weave) price cached tokens.
+// Weft prices cached tokens.
 func openAIUsage(in, outT float64, u map[string]any) map[string]any {
 	cr, _ := store.ToFloat(u["cache_read_input_tokens"])
 	cw, _ := store.ToFloat(u["cache_creation_input_tokens"])

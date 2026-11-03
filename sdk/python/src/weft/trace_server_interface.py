@@ -1,5 +1,5 @@
-"""Request and response models for the lower-level client methods, under the
-names Weave uses (``weave.trace_server.trace_server_interface``).
+"""Request and response models for the lower-level client methods (the trace
+API's request and response shapes, see docs/weft/API.md).
 
 ```python
 from weft.trace_server_interface import SortBy, ThreadsQueryReq
@@ -38,7 +38,7 @@ class ThreadsQueryFilter(BaseModel):
 class ThreadsQueryReq(BaseModel):
     """``/threads/query``. ``project_id`` defaults to the client's project; a bare
     project name is taken in the client's entity. ``sortable_datetime_after`` /
-    ``_before`` (Weave's names) map to ``filter.after_datetime`` / ``before_datetime``."""
+    ``_before`` map to ``filter.after_datetime`` / ``before_datetime``."""
 
     project_id: Optional[str] = None
     filter: Optional[ThreadsQueryFilter] = None
@@ -76,8 +76,8 @@ class CustomRuntimeIDRes(BaseModel):
 
 
 class CustomRuntimeApplyRes(BaseModel):
-    """What ``register_custom_runtime`` returns (Weave's ``V2RuntimeApplyResponse``;
-    ``kind`` and ``ref`` are Weft additions)."""
+    """What ``register_custom_runtime`` returns (``data`` and ``error``, plus
+    ``kind`` and ``ref``)."""
 
     model_config = ConfigDict(extra="allow")
 

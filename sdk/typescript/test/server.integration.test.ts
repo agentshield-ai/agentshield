@@ -149,8 +149,8 @@ describe.skipIf(!URL)('real server', () => {
     const spec = new weft.AnnotationSpec({ name: 'ts-stars', fieldSchema: { type: 'integer', minimum: 1, maximum: 5 } });
     await rc!.feedback.addAnnotation(spec, 5);
     const fb = await rc!.feedback.list();
-    expect(fb.map((f) => f.feedback_type).sort()).toEqual(['wandb.annotation.ts-stars', 'wandb.runnable.polite']);
-    const runnable = fb.find((f) => f.feedback_type === 'wandb.runnable.polite');
+    expect(fb.map((f) => f.feedback_type).sort()).toEqual(['weft.annotation.ts-stars', 'weft.scorer.polite']);
+    const runnable = fb.find((f) => f.feedback_type === 'weft.scorer.polite');
     expect(runnable.call_ref).toBe(r.scoreCall!.uri());
     await weft.publish(new weft.Leaderboard({ name: 'ts-lb', columns: [{ evaluationObjectRef: ev, scorerName: 'exact', summaryMetricPath: 'true_fraction' }] }));
     const lb = await client.http.post('/leaderboard/compute', { project_id: client.projectId, object_id: 'ts-lb' });

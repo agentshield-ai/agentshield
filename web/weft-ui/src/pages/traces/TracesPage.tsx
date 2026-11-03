@@ -40,7 +40,7 @@ const BASE_COL_LABEL: Record<BaseCol, string> = {
 }
 const SORT_FIELD: Partial<Record<BaseCol, string>> = {
   started: 'started_at',
-  latency: 'summary.weave.latency_ms',
+  latency: 'summary.weft.latency_ms',
   tokens: 'summary.total_tokens',
   name: 'op_name',
 }
@@ -127,7 +127,7 @@ function buildRequest(s: ViewState, shared: FilterState = {}): { filter: CallsFi
   const ops: Operation[] = []
   // Monitor scorers and server-side LLM calls are tagged internal; hide them unless asked.
   if (!s.system) ops.push({ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] })
-  if (s.status) ops.push({ $eq: [{ $getField: 'summary.weave.status' }, { $literal: s.status }] })
+  if (s.status) ops.push({ $eq: [{ $getField: 'summary.weft.status' }, { $literal: s.status }] })
   for (const c of s.clauses) if (clauseValid(c)) ops.push(clauseToOperation(c))
   ops.push(...sharedOps(shared))
   if (s.expr) ops.push(s.expr)
@@ -863,8 +863,8 @@ function CallRow({
   const tokens = callTokens(c)
   const cost = callCost(c)
   const reactions = reactionCounts(c.feedback)
-  const scores = (c.feedback ?? []).filter((f) => f.feedback_type.startsWith('wandb.runnable.')).length
-  const notes = (c.feedback ?? []).filter((f) => f.feedback_type === 'wandb.note.1').length
+  const scores = (c.feedback ?? []).filter((f) => f.feedback_type.startsWith('weft.scorer.')).length
+  const notes = (c.feedback ?? []).filter((f) => f.feedback_type === 'weft.note').length
   const childCounts = c.summary?.status_counts
   const opBase = opDisplayName(c.op_name)
   const label = callLabel(c)

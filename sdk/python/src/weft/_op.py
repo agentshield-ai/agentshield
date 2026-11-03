@@ -220,7 +220,7 @@ def op(fn: Any = None, **kwargs: Any) -> Any:
 
     ``kind`` (agent, llm, tool, chain, retriever, embedding, scorer, ...) and
     ``color`` are stored on every call as ``attributes.weft.span_kind`` /
-    ``attributes.weft.color`` (mirrored to ``attributes.weave.kind``/``color``).
+    ``attributes.weft.color``.
     """
     if fn is None:
         return lambda f: Op(f, **kwargs)

@@ -242,7 +242,7 @@ function CallDetail({
   const tokens = callTokens(call)
   const cost = callCost(call)
   const chatInputs = findInputMessages(call.inputs)
-  const scoreCount = (fb.data?.result ?? []).filter((f) => f.feedback_type.startsWith('wandb.runnable.')).length
+  const scoreCount = (fb.data?.result ?? []).filter((f) => f.feedback_type.startsWith('weft.scorer.')).length
   const fbCount = (fb.data?.result ?? []).length - scoreCount
 
   const del = useMutation({
@@ -508,11 +508,11 @@ function ChatParams({ projectId, inputs }: { projectId: string; inputs: Record<s
 
 function SummaryTab({ call }: { call: Call }) {
   const usage = call.summary?.usage ?? {}
-  const costs = call.summary?.weave?.costs ?? {}
+  const costs = call.summary?.weft?.costs ?? {}
   const models = [...new Set([...Object.keys(usage), ...Object.keys(costs)])]
   const sc = call.summary?.status_counts
   const totalCost = callCost(call)
-  const rest = Object.fromEntries(Object.entries(call.summary ?? {}).filter(([k]) => !['usage', 'status_counts', 'weave'].includes(k)))
+  const rest = Object.fromEntries(Object.entries(call.summary ?? {}).filter(([k]) => !['usage', 'status_counts', 'weft'].includes(k)))
   return (
     <div className="col" style={{ gap: 14 }}>
       <div className="stat-grid">

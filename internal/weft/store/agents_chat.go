@@ -28,7 +28,7 @@ type AgentChatFeedback struct {
 	ScorerTags              []string           `json:"scorer_tags"`
 	TriggerRef              *string            `json:"trigger_ref"`
 	WBUserID                *string            `json:"wb_user_id"`
-	WeaveRef                string             `json:"weave_ref"`
+	Ref                     string             `json:"ref"`
 }
 
 func chatFeedback(fs []Feedback) []AgentChatFeedback {
@@ -37,7 +37,7 @@ func chatFeedback(fs []Feedback) []AgentChatFeedback {
 		created := f.CreatedAt
 		cf := AgentChatFeedback{ID: f.ID, AnnotationRef: f.AnnotationRef, CallRef: f.CallRef, CreatedAt: &created, Creator: f.Creator,
 			FeedbackType: f.FeedbackType, Payload: asMap(f.Payload), RunnableRef: f.RunnableRef, TriggerRef: f.TriggerRef, WBUserID: f.WBUserID,
-			WeaveRef: f.WeaveRef, ScorerRatingConfidences: map[string]float64{}, ScorerRatingReasons: map[string]string{},
+			Ref: f.Ref, ScorerRatingConfidences: map[string]float64{}, ScorerRatingReasons: map[string]string{},
 			ScorerRatings: map[string]float64{}, ScorerTagConfidences: map[string]float64{}, ScorerTagReasons: map[string]string{}, ScorerTags: []string{}}
 		if cf.Payload == nil {
 			cf.Payload = map[string]any{"value": f.Payload}
@@ -46,7 +46,7 @@ func chatFeedback(fs []Feedback) []AgentChatFeedback {
 			cf.ScorerRatings[r.Name] = r.Value
 		}
 		cf.ScorerTags = append(cf.ScorerTags, feedbackTags(f)...)
-		// Signal feedback keeps Weave's scorer_* fields in its payload.
+		// Signal feedback keeps its scorer_* fields in its payload.
 		if sc, ok := signalScoresOf(f.Payload); ok {
 			for k, v := range sc.ScorerRatingConfidences {
 				cf.ScorerRatingConfidences[k] = v
@@ -136,7 +136,7 @@ type AgentChatMessage struct {
 	Media         []any   `json:"media,omitempty"`
 }
 
-// AgentTraceChat is Weave's AgentTraceChatRes.
+// AgentTraceChat is the response of /agents/traces/chat.
 type AgentTraceChat struct {
 	AgentName                     *string             `json:"agent_name"`
 	AgentVersion                  *string             `json:"agent_version"`
@@ -537,7 +537,7 @@ func (s *Store) TraceChat(ctx context.Context, req AgentTraceChatReq) (*AgentTra
 }
 
 // conversationTurns picks a conversation's turns: spans flagged as turns
-// (turn_id == id, wandb.is_turn), else the spans whose parent is outside
+// (turn_id == id, weft.is_turn), else the spans whose parent is outside
 // the conversation (each usually the root of its own trace).
 func conversationTurns(spans []*agentSpan) []*agentSpan {
 	var flagged, roots []*agentSpan
@@ -571,7 +571,7 @@ type AgentConversationChatReq struct {
 	Offset                int    `json:"offset"`
 }
 
-// AgentConversationChat is Weave's AgentConversationChatRes.
+// AgentConversationChat is the response of /agents/conversations/chat.
 type AgentConversationChat struct {
 	ConversationID string              `json:"conversation_id"`
 	Feedback       []AgentChatFeedback `json:"feedback"`
@@ -735,8 +735,8 @@ func feedbackRatings(f Feedback) []ConversationRating {
 		}
 	}
 	switch {
-	case strings.HasPrefix(f.FeedbackType, "wandb.runnable."):
-		name := strings.TrimPrefix(f.FeedbackType, "wandb.runnable.")
+	case strings.HasPrefix(f.FeedbackType, "weft.scorer."):
+		name := strings.TrimPrefix(f.FeedbackType, "weft.scorer.")
 		o := p["output"]
 		if om := asMap(o); om != nil {
 			keys := make([]string, 0, len(om))
@@ -750,8 +750,8 @@ func feedbackRatings(f Feedback) []ConversationRating {
 		} else {
 			add(name, o)
 		}
-	case strings.HasPrefix(f.FeedbackType, "wandb.annotation."):
-		add(strings.TrimPrefix(f.FeedbackType, "wandb.annotation."), p["value"])
+	case strings.HasPrefix(f.FeedbackType, "weft.annotation."):
+		add(strings.TrimPrefix(f.FeedbackType, "weft.annotation."), p["value"])
 	}
 	return out
 }
@@ -762,15 +762,15 @@ func feedbackTags(f Feedback) []string {
 	}
 	p := asMap(f.Payload)
 	switch {
-	case f.FeedbackType == "wandb.reaction.1":
+	case f.FeedbackType == "weft.reaction":
 		if e, ok := p["emoji"].(string); ok {
 			return []string{e}
 		}
-	case strings.HasPrefix(f.FeedbackType, "wandb.annotation."):
+	case strings.HasPrefix(f.FeedbackType, "weft.annotation."):
 		if s, ok := p["value"].(string); ok && s != "" {
-			return []string{strings.TrimPrefix(f.FeedbackType, "wandb.annotation.") + ": " + s}
+			return []string{strings.TrimPrefix(f.FeedbackType, "weft.annotation.") + ": " + s}
 		}
-	case f.FeedbackType == "wandb.agent_user_feedback" || f.FeedbackType == "wandb.agent_monitor":
+	case f.FeedbackType == "weft.user_feedback" || f.FeedbackType == "weft.signal":
 		if l, ok := p["tags"].([]any); ok {
 			var out []string
 			for _, x := range l {
@@ -831,10 +831,10 @@ func (s *Store) ConversationSpanSequences(ctx context.Context, req AgentConversa
 	grouped := map[fkey]*ConversationSpansFeedback{}
 	var order []fkey
 	for _, f := range fbs {
-		ct := turnRef[f.WeaveRef]
-		typ := "wandb.agent_user_feedback"
-		if strings.HasPrefix(f.FeedbackType, "wandb.runnable.") || f.FeedbackType == "wandb.agent_monitor" {
-			typ = "wandb.agent_monitor"
+		ct := turnRef[f.Ref]
+		typ := "weft.user_feedback"
+		if strings.HasPrefix(f.FeedbackType, "weft.scorer.") || f.FeedbackType == "weft.signal" {
+			typ = "weft.signal"
 		}
 		ratings, tags := feedbackRatings(f), feedbackTags(f)
 		if len(ratings) == 0 && len(tags) == 0 {
@@ -969,7 +969,7 @@ type AgentSearchResult struct {
 	MatchedMessages  []AgentSearchMessage `json:"matched_messages"`
 }
 
-// searchRole maps a message onto Weave's message roles: tool responses are
+// searchRole maps a message onto the search roles: tool responses are
 // tool_result and assistant messages that only request tools are tool_call.
 func searchRole(m ChatMsg) string {
 	switch {

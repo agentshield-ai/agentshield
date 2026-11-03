@@ -1,5 +1,5 @@
 /**
- * Agent conversation tracing (Weave's start_conversation API in TypeScript), an
+ * Agent conversation tracing (weft.startConversation), an
  * agent eval linking existing traces, and a saved view.
  *
  *   cd sdk/typescript && npm install && npm run build

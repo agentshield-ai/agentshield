@@ -173,7 +173,7 @@ def test_include_content_false_drops_messages(client, fake):
 def test_set_attributes_record_error_and_events(client, fake):
     with weft.start_conversation(agent_name="a") as conv:
         with conv.start_turn() as turn:
-            turn.set_attributes({"weave.tag": "x", "custom": 1})
+            turn.set_attributes({"team.tag": "x", "custom": 1})
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 turn.add_event("permission_request", {"tool": "rm"})
@@ -181,7 +181,7 @@ def test_set_attributes_record_error_and_events(client, fake):
     turn.set_attributes({"late": True})  # ignored after end
     _flushed(fake, client)
     [t] = _by_op(fake, "invoke_agent")
-    assert t["attributes"]["weave.tag"] == "x" and t["attributes"]["custom"] == 1 and "late" not in t["attributes"]
+    assert t["attributes"]["team.tag"] == "x" and t["attributes"]["custom"] == 1 and "late" not in t["attributes"]
     assert t["attributes"]["weft"]["events"][0]["name"] == "permission_request"
     assert "ValueError: soft failure" in t["exception"]
 

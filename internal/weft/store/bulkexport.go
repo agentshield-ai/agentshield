@@ -10,7 +10,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 )
 
-// Bulk project export jobs (Weave "Bulk Export":
+// Bulk project export jobs (
 // POST /v1/entities/{entity}/projects/{project}:export). The server runs one
 // job at a time; job rows survive restarts, and a job interrupted by a
 // restart is marked failed when the server starts again. Artifacts are

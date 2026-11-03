@@ -1,4 +1,4 @@
-// Custom runtimes (Weave's register_custom_runtime). See docs/weft/API.md "Custom runtimes".
+// Custom runtimes (the SDKs' register_custom_runtime). See docs/weft/API.md "Custom runtimes".
 import { get } from './client'
 
 export interface Runtime {

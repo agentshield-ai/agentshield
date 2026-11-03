@@ -225,7 +225,7 @@ describe('op tracing', () => {
     const call = (await client.getCall(calls[0].id))!;
     await call.feedback.addReaction('👍');
     await call.feedback.addNote('good');
-    expect((await call.feedback.list()).map((x) => x.feedback_type)).toEqual(['wandb.reaction.1', 'wandb.note.1']);
+    expect((await call.feedback.list()).map((x) => x.feedback_type)).toEqual(['weft.reaction', 'weft.note']);
     await call.setDisplayName('renamed');
     expect(fake.calls.get(call.id).display_name).toBe('renamed');
     await call.delete();

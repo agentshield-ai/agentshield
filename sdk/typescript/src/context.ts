@@ -24,7 +24,7 @@ export interface WeftContext {
   conversation?: unknown;
   turn?: unknown;
   llm?: unknown;
-  /** `weave.eval.*` link attributes of the EvaluationLogger prediction being recorded. */
+  /** `weft.eval.*` link attributes of the EvaluationLogger prediction being recorded. */
   evalSpan?: Record<string, unknown> | null;
 }
 

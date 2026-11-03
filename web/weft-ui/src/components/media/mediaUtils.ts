@@ -1,14 +1,14 @@
+import { detectClientType } from './clientTypes'
 // Detects media values in call inputs/outputs and object values (unit tested).
 //
 // Recognised shapes:
 // - data: URLs (image, audio, video, pdf, html, markdown, text)
 // - {_type: Image|Audio|Video|Pdf|Html|Markdown|File, file_digest, mime_type|mimetype}
 // - {_type: "Content", mimetype, file_digest | data (base64), filename}  (Weft SDKs)
-// - {_type: "CustomWeaveType", weave_type: {type}, files: {...}, val?}  (official weave client):
-//   PIL.Image.Image → image.<ext>, wave.Wave_read / Audio → audio.<ext>, VideoFileClip → video.<ext>,
-//   weave.type_wrappers.Content.content.Content → content + metadata.json, rich Markdown → val.markup | markup.md
-// - a plain string that is exactly an s3:// or gs:// object URI (reference buckets, Weave's
-//   "bring your own bucket"): the whole value must be the URI, so prose mentioning one stays text.
+// - custom types stored by another product's client through the compatibility adapter
+//   (clientTypes.ts)
+// - a plain string that is exactly an s3:// or gs:// object URI (reference buckets, "bring your
+//   own bucket"): the whole value must be the URI, so prose mentioning one stays text.
 //   The kind comes from the file extension; other extensions render as a download link.
 // - GenAI message parts: {type: "uri", uri, mime_type?, modality?} (the SDKs' attach_media(uri=…)),
 //   {type: "blob", content (base64), mime_type}, Gemini {inlineData: {mimeType, data}} and
@@ -25,16 +25,16 @@ export interface MediaSpec {
   digest?: string
   dataUrl?: string
   text?: string
-  /** For weave Content: the metadata.json digest, read to learn the mimetype. */
+  /** For client Content (clientTypes.ts): the metadata.json digest, read to learn the mimetype. */
   metaDigest?: string
   /** External storage (s3://, gs://, https://) resolved through /files/resolve_url. */
   uri?: string
 }
 
-const FILE_URI_RE = /^(?:weft|weave)-file:\/\/(?:[^/]+\/)*([A-Za-z0-9_-]{8,})$/
+const FILE_URI_RE = /^weft-file:\/\/(?:[^/]+\/)*([A-Za-z0-9_-]{8,})$/
 const EXTERNAL_URI_RE = /^(?:s3|gs|az|https?):\/\/\S+$/i
 
-/** A media value's uri: a file digest for weft-file:// and weave-file://, else an external uri. */
+/** A media value's uri: a file digest for weft-file://, else an external uri. */
 export function mediaUri(uri: string | undefined): { digest?: string; uri?: string } | null {
   if (!uri) return null
   const f = FILE_URI_RE.exec(uri.trim())
@@ -54,8 +54,8 @@ export function isReferenceUri(v: unknown): boolean {
 }
 
 /**
- * Kinds rendered inline from a bucket URI. Weave renders images and video
- * inline; Weft adds audio and PDF. Everything else is a download link.
+ * Kinds rendered inline from a bucket URI: images, video, audio and PDF.
+ * Everything else is a download link.
  */
 const INLINE_REF_KINDS: ReadonlySet<MediaKind> = new Set<MediaKind>(['image', 'audio', 'video', 'pdf'])
 
@@ -159,7 +159,8 @@ export function detectMedia(v: unknown): MediaSpec | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null
   const o = v as Record<string, unknown>
   const type = str(o._type)
-  if (type === 'CustomWeaveType') return detectWeaveCustom(o)
+  const client = detectClientType(o)
+  if (client !== undefined) return client
   if (!type) return detectPart(o)
   const mime = str(o.mimetype) ?? str(o.mime_type) ?? str(o.content_type)
   const filename = str(o.filename) ?? str(o.name)
@@ -237,41 +238,7 @@ function detectPart(o: Record<string, unknown>): MediaSpec | null {
   return null
 }
 
-function detectWeaveCustom(o: Record<string, unknown>): MediaSpec | null {
-  const wt = (o.weave_type as { type?: string } | undefined)?.type ?? ''
-  const files = (o.files && typeof o.files === 'object' ? o.files : {}) as Record<string, string>
-  const val = (o.val && typeof o.val === 'object' ? o.val : {}) as Record<string, unknown>
-  const names = Object.keys(files)
-  const pick = (prefix: string) => names.find((n) => n.startsWith(prefix))
-  if (wt.endsWith('Content.content.Content') || wt.endsWith('.Content')) {
-    if (!files.content) return null
-    return { kind: 'content', digest: files.content, metaDigest: files['metadata.json'] }
-  }
-  if (/markdown/i.test(wt)) {
-    if (typeof val.markup === 'string') return { kind: 'markdown', text: val.markup }
-    if (files['markup.md']) return { kind: 'markdown', digest: files['markup.md'], mimetype: 'text/markdown' }
-    return null
-  }
-  const byPrefix: [RegExp, string, MediaKind][] = [
-    [/^PIL\.|Image/, 'image.', 'image'],
-    [/wave\.Wave_read|Audio/, 'audio.', 'audio'],
-    [/moviepy|Video/, 'video.', 'video'],
-  ]
-  for (const [re, prefix, kind] of byPrefix) {
-    if (!re.test(wt)) continue
-    const f = pick(prefix)
-    if (f) return { kind, digest: files[f], filename: f, mimetype: mimeFromFilename(f) }
-  }
-  // Any other single-file custom type with a recognisable extension.
-  const media = names.filter((n) => !n.endsWith('.json'))
-  if (media.length === 1) {
-    const mt = mimeFromFilename(media[0])
-    if (mt) return { kind: kindFromMime(mt), digest: files[media[0]], filename: media[0], mimetype: mt }
-  }
-  return null
-}
-
-/** Resolve a weave Content spec once its metadata.json has been read. */
+/** Resolve a client Content spec (clientTypes.ts) once its metadata.json has been read. */
 export function resolveContent(spec: MediaSpec, metadata: unknown): MediaSpec {
   const m = (metadata && typeof metadata === 'object' ? metadata : {}) as Record<string, unknown>
   const mt = str(m.mimetype) ?? mimeFromFilename(str(m.filename)) ?? 'application/octet-stream'

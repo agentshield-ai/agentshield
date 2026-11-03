@@ -79,7 +79,7 @@ class NoCurrentCallError(Exception):
 
 
 def require_current_call() -> "Call":
-    """Weave's ``require_current_call``: the call of the op that is running now.
+    """The call of the op that is running now.
 
     Raises ``NoCurrentCallError`` when called outside an op (or before
     ``weft.init``)."""
@@ -169,7 +169,7 @@ def current_thread_context() -> Optional[ThreadContext]:
     return _thread.get()
 
 
-# Eval metadata of the EvaluationLogger prediction being recorded (``weave.eval.*``
+# Eval metadata of the EvaluationLogger prediction being recorded (``weft.eval.*``
 # span attributes: run_id, predict_and_score_call_id, project_id, kind, ...).
 _eval_span: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("weft_eval_span", default=None)
 

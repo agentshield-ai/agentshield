@@ -9,7 +9,7 @@ import (
 )
 
 // Agent evals (Weft extensions): evaluation runs with the agent spans and
-// conversations linked to them (weave.eval.* span attributes, or
+// conversations linked to them (weft.eval.* span attributes, or
 // EvaluationLogger predictions' weft.linked_calls / genai_span_ref /
 // linked_conversation_ids). /agents/spans/query, /agents/spans/stats and
 // /agents/spans/custom-attrs/schema take evaluation_run_id and

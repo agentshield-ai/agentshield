@@ -62,8 +62,8 @@ export function SignalsGallery({ projectId, onCreated }: { projectId: string; on
                       </div>
                       <span className="muted small grow">{s.description}</span>
                       <div className="row" style={{ minWidth: 0 }}>
-                        <span className="faint small mono grow truncate" style={{ minWidth: 0 }} title={`Feedback type wandb.runnable.${s.scorer}`}>
-                          wandb.runnable.{s.scorer}
+                        <span className="faint small mono grow truncate" style={{ minWidth: 0 }} title={`Feedback type weft.scorer.${s.scorer}`}>
+                          weft.scorer.{s.scorer}
                         </span>
                         {have ? (
                           <Link className="btn sm" to={monitorUrl(projectId, have)}>

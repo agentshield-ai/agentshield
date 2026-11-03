@@ -55,8 +55,8 @@ func seedExportProject(e *testEnv, n int) {
 	e.post("/call/upsert_batch", map[string]any{"batch": batch})
 	publish(e, "ds", map[string]any{"rows": []any{1}})
 	publish(e, "ds", map[string]any{"rows": []any{1, 2}})
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/call-000",
-		"feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": "👍"}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/call-000",
+		"feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
 }
 
 func waitExport(t *testing.T, e *testEnv, jobID string) map[string]any {
@@ -149,7 +149,7 @@ func TestBulkExportSQLite(t *testing.T) {
 				t.Fatalf("object rows = %v", rows)
 			}
 		case "feedback":
-			if rows[0]["feedback_type"] != "wandb.reaction.1" {
+			if rows[0]["feedback_type"] != "weft.reaction" {
 				t.Fatalf("feedback row = %v", rows[0])
 			}
 		}

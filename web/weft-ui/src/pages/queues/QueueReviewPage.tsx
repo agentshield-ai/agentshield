@@ -15,6 +15,7 @@ import { ValueView } from '../../components/ValueView'
 import { useProjectId } from '../../hooks/useProject'
 import { callStatus, fmtDate, fmtDuration, callLatencyMs } from '../../lib/format'
 import { callUrl, objectUrl } from '../../lib/urls'
+import { undoable } from '../../components/ui/Toasts'
 
 interface QueueSpec {
   ref: string
@@ -64,7 +65,9 @@ export function QueueReviewPage() {
   })
   const itemsKey = ['annotation-queue-items', projectId, queueId]
   const items = useQuery({ queryKey: itemsKey, queryFn: () => queuesApi.items(projectId, queueId, { limit: 10000 }).then((r) => r.items) })
-  const list = items.data ?? []
+  // Items removed in this session, hidden at once; the delete commits after the undo window.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
+  const list = useMemo(() => (items.data ?? []).filter((x) => !hidden.has(x.id)), [items.data, hidden])
   const [idx, setIdx] = useState<number | null>(null)
   const [exporting, setExporting] = useState(false)
   useEffect(() => {
@@ -73,7 +76,29 @@ export function QueueReviewPage() {
       setIdx(first >= 0 ? first : 0)
     }
   }, [items.data, idx])
+  useEffect(() => {
+    if (idx !== null && list.length && idx >= list.length) setIdx(list.length - 1)
+  }, [idx, list.length])
   const cur = idx !== null ? list[idx] : undefined
+  const removeItem = useCallback(
+    (item: AnnotationQueueItem) =>
+      undoable({
+        message: `Removed “${opDisplayName(item.call_op_name)}” from the queue`,
+        apply: () => setHidden((h) => new Set(h).add(item.id)),
+        revert: () =>
+          setHidden((h) => {
+            const n = new Set(h)
+            n.delete(item.id)
+            return n
+          }),
+        commit: async () => {
+          await queuesApi.removeItem(projectId, queueId, item.id)
+          await qc.invalidateQueries({ queryKey: itemsKey })
+          void qc.invalidateQueries({ queryKey: ['annotation-queue-stats', projectId] })
+        },
+      }),
+    [projectId, queueId, qc],
+  )
   const progress = progressCounts(list)
 
   const setLocalState = useCallback(
@@ -186,7 +211,7 @@ export function QueueReviewPage() {
                 goNextPending(idx!, after)
               }}
             />
-            <ItemList items={list} current={idx ?? 0} onPick={setIdx} />
+            <ItemList items={list} current={idx ?? 0} onPick={setIdx} onRemove={removeItem} />
           </div>
         </div>
       ) : (
@@ -305,14 +330,14 @@ function AnnotationPane({
 
   const submit = useMutation({
     mutationFn: async () => {
-      const weave_ref = callRef(projectId, item.call_id)
+      const ref = callRef(projectId, item.call_id)
       for (const s of specs) {
         const v = drafts[s.name]
         const mine = mineBySpec.get(s.name)
         if (!hasValue(v) || (mine && mine.payload?.value === v)) continue
         const r = await queuesApi.annotate({
           project_id: projectId,
-          weave_ref,
+          ref,
           feedback_type: annotationType(s.name),
           payload: { value: v },
           annotation_ref: s.ref,
@@ -321,7 +346,7 @@ function AnnotationPane({
         })
         rememberUserId(r.wb_user_id)
       }
-      await qc.invalidateQueries({ queryKey: ['feedback', projectId, weave_ref] })
+      await qc.invalidateQueries({ queryKey: ['feedback', projectId, ref] })
       await onSubmitted()
     },
   })
@@ -424,7 +449,17 @@ function AnnotationPane({
   )
 }
 
-function ItemList({ items, current, onPick }: { items: AnnotationQueueItem[]; current: number; onPick: (i: number) => void }) {
+function ItemList({
+  items,
+  current,
+  onPick,
+  onRemove,
+}: {
+  items: AnnotationQueueItem[]
+  current: number
+  onPick: (i: number) => void
+  onRemove: (item: AnnotationQueueItem) => void
+}) {
   return (
     <div className="card">
       <div className="card-header">
@@ -432,27 +467,32 @@ function ItemList({ items, current, onPick }: { items: AnnotationQueueItem[]; cu
       </div>
       <div style={{ maxHeight: 280, overflow: 'auto' }}>
         {items.map((it, i) => (
-          <button
+          <div
             key={it.id}
-            className="linkish row small"
-            style={{
-              width: '100%',
-              gap: 8,
-              padding: '5px 12px',
-              textAlign: 'left',
-              background: i === current ? 'var(--accent-2)' : undefined,
-              border: 'none',
-              borderBottom: '1px solid var(--border)',
-              cursor: 'pointer',
-            }}
-            onClick={() => onPick(i)}
-            aria-current={i === current}
+            className="row small"
+            style={{ gap: 4, paddingRight: 6, background: i === current ? 'var(--accent-2)' : undefined, borderBottom: '1px solid var(--border)' }}
           >
-            <span className="dot" style={{ background: STATE_COLOR[it.annotation_state], width: 8, height: 8, borderRadius: 4, flex: 'none' }} />
-            <span className="mono faint">{it.position_in_queue ?? i + 1}</span>
-            <span className="mono truncate grow">{opDisplayName(it.call_op_name)}</span>
-            <span className="faint">{STATE_LABEL[it.annotation_state]}</span>
-          </button>
+            <button
+              className="linkish row small grow"
+              style={{ minWidth: 0, gap: 8, padding: '5px 6px 5px 12px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
+              onClick={() => onPick(i)}
+              aria-current={i === current}
+            >
+              <span className="dot" style={{ background: STATE_COLOR[it.annotation_state], width: 8, height: 8, borderRadius: 4, flex: 'none' }} />
+              <span className="mono faint">{it.position_in_queue ?? i + 1}</span>
+              <span className="mono truncate grow">{opDisplayName(it.call_op_name)}</span>
+              <span className="faint">{STATE_LABEL[it.annotation_state]}</span>
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={`Remove ${opDisplayName(it.call_op_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
+              title="Remove from the queue (annotations already given are kept)"
+              onClick={() => onRemove(it)}
+            >
+              ✕
+            </button>
+          </div>
         ))}
       </div>
     </div>

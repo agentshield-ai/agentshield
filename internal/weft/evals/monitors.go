@@ -143,7 +143,7 @@ func monitorMatchesOp(val map[string]any, call *store.Call) bool {
 	}
 	for _, o := range ops {
 		s, _ := o.(string)
-		if s == call.OpName || store.OpBaseName(refs.Normalize(s)) == call.OpBaseName() {
+		if s == call.OpName || store.OpBaseName(s) == call.OpBaseName() {
 			return true
 		}
 	}
@@ -161,7 +161,7 @@ type ScoreResult struct {
 }
 
 // ScoreCalls runs server-runnable scorers on existing calls and stores the
-// results as wandb.runnable.<scorer> feedback.
+// results as weft.scorer.<scorer> feedback.
 func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scorerRefs []string, user *string) ([]ScoreResult, error) {
 	if len(callIDs) == 0 || len(callIDs) > 100 {
 		return nil, store.Invalidf("call_ids must list 1 to 100 calls")
@@ -171,7 +171,7 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 	}
 	scorers := make([]*Scorer, 0, len(scorerRefs))
 	for _, r := range scorerRefs {
-		sc, err := e.loadScorer(ctx, refs.Normalize(r))
+		sc, err := e.loadScorer(ctx, r)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +202,7 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 			res.Output = jsonSafe(score)
 			callRef := refs.CallRef(projectID, rec.id)
 			fb, err := e.Store.CreateFeedback(ctx, store.FeedbackCreate{
-				ProjectID: projectID, WeaveRef: refs.CallRef(projectID, id), FeedbackType: "wandb.runnable." + sc.Name,
+				ProjectID: projectID, Ref: refs.CallRef(projectID, id), FeedbackType: "weft.scorer." + sc.Name,
 				Payload: map[string]any{"output": res.Output}, WBUserID: user, RunnableRef: &sc.Ref, CallRef: &callRef,
 			})
 			if err != nil {
@@ -233,7 +233,7 @@ func (e *Engine) scoreForMonitor(ctx context.Context, monitor *store.Obj, scorer
 	callRef := refs.CallRef(call.ProjectID, rec.id)
 	creator := "monitor:" + monitor.ObjectID
 	_, err = e.Store.CreateFeedback(ctx, store.FeedbackCreate{
-		ProjectID: call.ProjectID, WeaveRef: refs.CallRef(call.ProjectID, call.ID), FeedbackType: "wandb.runnable." + sc.Name,
+		ProjectID: call.ProjectID, Ref: refs.CallRef(call.ProjectID, call.ID), FeedbackType: "weft.scorer." + sc.Name,
 		Payload: map[string]any{"output": jsonSafe(score)}, Creator: &creator,
 		RunnableRef: &sc.Ref, CallRef: &callRef, TriggerRef: &monitorRef,
 	})

@@ -1,8 +1,8 @@
 import { get, post } from './client'
 import type { Any, Query, SortBy } from './types'
 
-// Weave's Agents API (/agents/*). Shapes follow the weave server SDK, plus
-// the Weft extensions documented in docs/weft/API.md.
+// The Agents API (/agents/*), including signals, insights and agent evals.
+// Shapes are documented in docs/weft/API.md.
 
 export type StatusCode = 'UNSET' | 'OK' | 'ERROR'
 
@@ -54,7 +54,7 @@ export interface AgentSpan {
   span_id: string
   trace_id: string
   parent_span_id: string | null
-  /** The op (call id / trace id) the span was emitted from, when it started its own trace inside one (Weave's weave.parent_call.*). */
+  /** The op (call id / trace id) the span was emitted from, when it started its own trace inside one (weft.parent_call.*). */
   parent_call_id?: string | null
   parent_call_trace_id?: string | null
   operation_name: string | null
@@ -210,7 +210,7 @@ export interface ChatFeedback {
   id: string
   feedback_type: string
   payload: Record<string, Any>
-  weave_ref: string
+  ref: string
   creator: string | null
   created_at: string | null
   scorer_ratings: Record<string, number>
@@ -496,10 +496,10 @@ export interface SignalsQueryRes {
   total_count: number
 }
 
-/** One item of Weave's feedback batch schema (scorer and span fields included). */
+/** One item of the feedback batch schema (scorer and span fields included). */
 export interface AgentFeedbackItem {
   project_id: string
-  weave_ref: string
+  ref: string
   feedback_type: string
   payload: Record<string, Any>
   scorer_ratings?: Record<string, number>

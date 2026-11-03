@@ -37,7 +37,7 @@ class FakeWeft:
         self.aliases: Dict[tuple, str] = {}  # (object_id, alias) -> digest
         self.registry: Dict[tuple, List[Dict[str, Any]]] = {}  # (project_id, collection) -> versions
         self.embeddings_enabled = False
-        self.weave_routes = True  # serve /objs/{id}/aliases and tag routes
+        self.alias_routes = True  # serve /objs/{id}/aliases and tag routes
         self.runtimes: Dict[str, Any] = {}
         self.lock = threading.Lock()
         fake = self
@@ -157,12 +157,12 @@ class FakeWeft:
                                    "headers": body.get("headers") or {}, "runtime_ids": ids, "kind": body.get("kind") or "openai"}
             return self.runtimes[name]
         m = re.fullmatch(r"/objs/([^/]+)/aliases", path)
-        if m and self.weave_routes:
+        if m and self.alias_routes:
             for a in body["aliases"]:
                 self.aliases[(m.group(1), a)] = body["digest"]
             return {}
         m = re.fullmatch(r"/objs/([^/]+)/versions/([^/]+)/tags", path)
-        if m and self.weave_routes:
+        if m and self.alias_routes:
             cur = self.tags.setdefault((m.group(1), m.group(2)), [])
             cur.extend(t for t in body["tags"] if t not in cur)
             return {}
@@ -187,12 +187,12 @@ class FakeWeft:
                 return {"threads": out}
             return ("".join(json.dumps(t) + "\n" for t in out).encode(), "application/jsonl")
         m = re.fullmatch(r"/objs/([^/]+)/aliases/remove", path)
-        if m and self.weave_routes:
+        if m and self.alias_routes:
             for a in body["aliases"]:
                 self.aliases.pop((m.group(1), a), None)
             return {}
         m = re.fullmatch(r"/objs/([^/]+)/versions/([^/]+)/tags/remove", path)
-        if m and self.weave_routes:
+        if m and self.alias_routes:
             key = (m.group(1), m.group(2))
             self.tags[key] = [t for t in self.tags.get(key, []) if t not in body["tags"]]
             return {}

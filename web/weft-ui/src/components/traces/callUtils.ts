@@ -43,7 +43,7 @@ export function flattenTree(roots: TreeNode[], isOpen: (id: string) => boolean =
 }
 
 export function callLabel(c: Call): string {
-  return c.display_name || c.summary?.weave?.display_name || opDisplayName(c.op_name)
+  return c.display_name || c.summary?.weft?.display_name || opDisplayName(c.op_name)
 }
 
 // ---------------------------------------------------------------- field discovery
@@ -71,14 +71,14 @@ export function discoverFields(calls: Call[], roots: ('inputs' | 'output' | 'att
 
 /** Feedback query paths discovered from feedback attached to calls. */
 export function discoverFeedbackFields(calls: Call[]): string[] {
-  const out = new Set<string>(['feedback.wandb.reaction.1.emoji', 'feedback.wandb.note.1.note'])
+  const out = new Set<string>(['feedback.weft.reaction.emoji', 'feedback.weft.note.note'])
   for (const c of calls)
     for (const f of c.feedback ?? []) {
-      if (f.feedback_type.startsWith('wandb.runnable.')) {
+      if (f.feedback_type.startsWith('weft.scorer.')) {
         const o = f.payload?.output
         if (o && typeof o === 'object' && !Array.isArray(o)) for (const k of Object.keys(o)) out.add(`feedback.${f.feedback_type}.output.${k}`)
         else out.add(`feedback.${f.feedback_type}.output`)
-      } else if (f.feedback_type.startsWith('wandb.annotation.')) out.add(`feedback.${f.feedback_type}.value`)
+      } else if (f.feedback_type.startsWith('weft.annotation.')) out.add(`feedback.${f.feedback_type}.value`)
     }
   return [...out].sort()
 }
@@ -87,7 +87,7 @@ export function discoverFeedbackFields(calls: Call[]): string[] {
 
 export function reactionCounts(fb: Feedback[] | undefined): [string, number][] {
   const m = new Map<string, number>()
-  for (const f of fb ?? []) if (f.feedback_type === 'wandb.reaction.1' && f.payload?.emoji) m.set(f.payload.emoji, (m.get(f.payload.emoji) ?? 0) + 1)
+  for (const f of fb ?? []) if (f.feedback_type === 'weft.reaction' && f.payload?.emoji) m.set(f.payload.emoji, (m.get(f.payload.emoji) ?? 0) + 1)
   return [...m.entries()].sort((a, b) => b[1] - a[1])
 }
 

@@ -19,13 +19,12 @@ func TestOptionalCallSchemaFields(t *testing.T) {
 	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "child", "ended_at": ts, "output": "x", "summary": map[string]any{}}})
 	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "root", "ended_at": ts, "output": "done",
 		"summary": map[string]any{}, "wb_run_step_end": 9}})
-	// The weave client's calls_complete path carries both steps.
-	code, b := e.raw("/v2/acme/evals/calls/complete", map[string]any{"batch": []any{map[string]any{"id": "c2", "op_name": "op",
-		"trace_id": "t2", "started_at": ts, "ended_at": ts, "inputs": map[string]any{}, "summary": map[string]any{},
-		"wb_run_id": "run-1", "wb_run_step": 11, "wb_run_step_end": 12, "wb_user_id": "svc/robot"}}}, nil)
-	if code != 200 {
-		t.Fatalf("calls/complete -> %d %s", code, b)
-	}
+	// The batch path carries both steps.
+	e.post("/call/upsert_batch", map[string]any{"batch": []any{
+		map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": "c2", "op_name": "op",
+			"trace_id": "t2", "started_at": ts, "inputs": map[string]any{}, "wb_run_id": "run-1", "wb_run_step": 11, "wb_user_id": "svc/robot"}}},
+		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": "c2", "ended_at": ts,
+			"summary": map[string]any{}, "wb_run_step_end": 12}}}}})
 
 	read := func(id string, extra map[string]any) map[string]any {
 		body := map[string]any{"project_id": pid, "id": id}
@@ -54,7 +53,7 @@ func TestOptionalCallSchemaFields(t *testing.T) {
 	}
 	c2 := read("c2", nil)
 	if c2["wb_run_step"] != float64(11) || c2["wb_run_step_end"] != float64(12) {
-		t.Fatalf("calls/complete steps = %v %v", c2["wb_run_step"], c2["wb_run_step_end"])
+		t.Fatalf("batch steps = %v %v", c2["wb_run_step"], c2["wb_run_step_end"])
 	}
 
 	// Storage sizes: the root carries the trace total, children none.
@@ -79,7 +78,7 @@ func TestOptionalCallSchemaFields(t *testing.T) {
 	}
 
 	// calls/stream_query honours the same flags; an id that is not a handle has no username.
-	code, b = e.raw("/calls/stream_query", map[string]any{"project_id": pid, "include_usernames": true, "include_total_storage_size": true,
+	code, b := e.raw("/calls/stream_query", map[string]any{"project_id": pid, "include_usernames": true, "include_total_storage_size": true,
 		"sort_by": []any{map[string]any{"field": "started_at", "direction": "asc"}}}, nil)
 	if code != 200 {
 		t.Fatalf("stream_query -> %d %s", code, b)

@@ -252,7 +252,7 @@ function OpView({ o, projectId }: { o: ObjSchema; projectId: string }) {
         .then((r) => r.calls),
   })
   const v = o.val ?? {}
-  // Ops serialised by the official weave client keep their source in a file (files["obj.py"]).
+  // Some ops keep their source in a file (files["obj.py"]) instead of val.code.
   const fileDigest: string | undefined = !v.code && v.files && typeof v.files === 'object' ? (v.files['obj.py'] ?? Object.values(v.files)[0]) : undefined
   const fileCode = useQuery({
     queryKey: ['op-file', projectId, fileDigest],
@@ -547,13 +547,13 @@ function ScorerView({ o, projectId }: { o: ObjSchema; projectId: string }) {
               </thead>
               <tbody>
                 {feedback.data.map((f) => {
-                  const p = parseRef(f.weave_ref)
+                  const p = parseRef(f.ref)
                   return (
                     <tr key={f.id}>
                       <td className="muted" title={fmtDate(f.created_at)}>
                         {fmtRelative(f.created_at)}
                       </td>
-                      <td>{p?.kind === 'call' ? <Link to={callUrl(projectId, p.name)} className="mono">{p.name.slice(-8)}</Link> : <RefChip refStr={f.weave_ref} />}</td>
+                      <td>{p?.kind === 'call' ? <Link to={callUrl(projectId, p.name)} className="mono">{p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
                       <td>
                         <span className="cell-preview mono small">{preview(f.payload?.output ?? f.payload, 160)}</span>
                       </td>

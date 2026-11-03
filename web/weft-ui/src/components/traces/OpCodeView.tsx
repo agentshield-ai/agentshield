@@ -7,7 +7,7 @@ import { refUrl } from '../../lib/urls'
 import { CodeBlock } from '../objects/bits'
 import { ErrorBox, Spinner } from '../common'
 
-/** Source of the op a call ran: val.code, or files['obj.py'] for ops published by the official weave client. */
+/** Source of the op a call ran: val.code, or files['obj.py'] for ops that keep their source in a file. */
 export function useOpSource(opName: string) {
   const ref = parseRef(opName)
   const isOp = ref?.kind === 'op' && !!ref.digest

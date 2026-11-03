@@ -133,7 +133,7 @@ describe('op kind and colour', () => {
     ])
     expect(nodes.find((n) => n.id === 'agent')).toMatchObject({ kind: 'agent', color: '#e8590c' })
     const { opStyle, safeColor } = await import('./opStyle')
-    expect(opStyle({ attributes: { weave: { kind: 'llm', color: 'blue' } } })).toEqual({ kind: 'llm', color: 'var(--c6)' })
+    expect(opStyle({ attributes: { weft: { span_kind: 'llm', color: 'blue' } } })).toEqual({ kind: 'llm', color: 'var(--c6)' })
     expect(safeColor('red; background:url(x)')).toBeUndefined()
     expect(safeColor('#ABC')).toBe('#abc')
   })

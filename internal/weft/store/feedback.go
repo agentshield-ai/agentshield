@@ -13,7 +13,7 @@ import (
 type Feedback struct {
 	ID            string  `json:"id"`
 	ProjectID     string  `json:"project_id"`
-	WeaveRef      string  `json:"weave_ref"`
+	Ref           string  `json:"ref"`
 	FeedbackType  string  `json:"feedback_type"`
 	Payload       any     `json:"payload"`
 	Creator       *string `json:"creator"`
@@ -32,7 +32,7 @@ type FeedbackCreate struct {
 	// ID is an optional client-chosen id (UUID); generated when empty.
 	ID            string  `json:"-"`
 	ProjectID     string  `json:"project_id"`
-	WeaveRef      string  `json:"weave_ref"`
+	Ref           string  `json:"ref"`
 	FeedbackType  string  `json:"feedback_type"`
 	Payload       any     `json:"payload"`
 	Creator       *string `json:"creator"`
@@ -49,7 +49,7 @@ func normRefPtr(p *string) *string {
 	if p == nil || *p == "" {
 		return nil
 	}
-	v := refs.Normalize(*p)
+	v := *p
 	return &v
 }
 
@@ -59,20 +59,20 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 	if err != nil {
 		return nil, &InvalidError{Msg: err.Error()}
 	}
-	f.WeaveRef = refs.Normalize(strings.TrimSpace(f.WeaveRef))
-	if _, err := refs.Parse(f.WeaveRef); err != nil {
-		return nil, Invalidf("weave_ref: %v", err)
+	f.Ref = strings.TrimSpace(f.Ref)
+	if _, err := refs.Parse(f.Ref); err != nil {
+		return nil, Invalidf("ref: %v", err)
 	}
 	if f.FeedbackType == "" || len(f.FeedbackType) > 256 {
 		return nil, Invalidf("feedback_type is required")
 	}
 	switch f.FeedbackType {
-	case "wandb.reaction.1":
+	case "weft.reaction":
 		m, _ := f.Payload.(map[string]any)
 		if e, _ := m["emoji"].(string); e == "" || len(e) > 64 {
 			return nil, Invalidf("reaction payload needs an emoji")
 		}
-	case "wandb.note.1":
+	case "weft.note":
 		m, _ := f.Payload.(map[string]any)
 		if n, _ := m["note"].(string); n == "" || len(n) > 65536 {
 			return nil, Invalidf("note payload needs a note (max 64KiB)")
@@ -81,7 +81,7 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 	if f.Payload == nil {
 		f.Payload = map[string]any{}
 	}
-	payload, err := encodeJSON(refs.NormalizeValue(f.Payload))
+	payload, err := encodeJSON(f.Payload)
 	if err != nil {
 		return nil, Invalidf("payload is not JSON-serialisable")
 	}
@@ -94,7 +94,7 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 		user = &u
 	}
 	fb := &Feedback{
-		ID: feedbackID(f.ID), ProjectID: pid, WeaveRef: f.WeaveRef, FeedbackType: f.FeedbackType,
+		ID: feedbackID(f.ID), ProjectID: pid, Ref: f.Ref, FeedbackType: f.FeedbackType,
 		Payload: decodeJSON(payload), Creator: f.Creator, WBUserID: user,
 		AnnotationRef: normRefPtr(f.AnnotationRef), RunnableRef: normRefPtr(f.RunnableRef),
 		CallRef: normRefPtr(f.CallRef), TriggerRef: normRefPtr(f.TriggerRef),
@@ -111,9 +111,9 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 		if err := s.touchProject(ctx, tx, pid); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO feedback(id, project_id, weave_ref, feedback_type, payload, creator, created_at, wb_user_id,
+		_, err := tx.ExecContext(ctx, `INSERT INTO feedback(id, project_id, ref, feedback_type, payload, creator, created_at, wb_user_id,
 			annotation_ref, runnable_ref, call_ref, trigger_ref, queue_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			fb.ID, pid, fb.WeaveRef, fb.FeedbackType, payload, nullStr(fb.Creator), now, nullStr(fb.WBUserID),
+			fb.ID, pid, fb.Ref, fb.FeedbackType, payload, nullStr(fb.Creator), now, nullStr(fb.WBUserID),
 			nullStr(fb.AnnotationRef), nullStr(fb.RunnableRef), nullStr(fb.CallRef), nullStr(fb.TriggerRef), nullStr(fb.QueueID))
 		return err
 	})
@@ -125,7 +125,7 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 }
 
 var feedbackColumns = map[string]bool{
-	"id": true, "weave_ref": true, "feedback_type": true, "creator": true, "wb_user_id": true,
+	"id": true, "ref": true, "feedback_type": true, "creator": true, "wb_user_id": true,
 	"annotation_ref": true, "runnable_ref": true, "call_ref": true, "trigger_ref": true, "project_id": true, "queue_id": true,
 }
 
@@ -147,7 +147,7 @@ func feedbackFieldResolver(path string) (string, []any, bool, error) {
 	return "", nil, false, unknownField(path)
 }
 
-const feedbackSelect = `SELECT f.id, f.project_id, f.weave_ref, f.feedback_type, f.payload, f.creator, f.created_at, f.wb_user_id,
+const feedbackSelect = `SELECT f.id, f.project_id, f.ref, f.feedback_type, f.payload, f.creator, f.created_at, f.wb_user_id,
 	f.annotation_ref, f.runnable_ref, f.call_ref, f.trigger_ref, f.queue_id FROM feedback f`
 
 func scanFeedback(rows *sql.Rows) (Feedback, error) {
@@ -155,7 +155,7 @@ func scanFeedback(rows *sql.Rows) (Feedback, error) {
 	var payload string
 	var created int64
 	var creator, user, ann, run, call, trig, queue sql.NullString
-	if err := rows.Scan(&f.ID, &f.ProjectID, &f.WeaveRef, &f.FeedbackType, &payload, &creator, &created, &user, &ann, &run, &call, &trig, &queue); err != nil {
+	if err := rows.Scan(&f.ID, &f.ProjectID, &f.Ref, &f.FeedbackType, &payload, &creator, &created, &user, &ann, &run, &call, &trig, &queue); err != nil {
 		return f, err
 	}
 	f.Payload = decodeJSON(payload)
@@ -232,7 +232,7 @@ func (s *Store) feedbackForRefs(ctx context.Context, projectID string, refList [
 	var out []Feedback
 	for start := 0; start < len(refList); start += 500 {
 		end := min(start+500, len(refList))
-		q, a := inList("f.weave_ref", refList[start:end])
+		q, a := inList("f.ref", refList[start:end])
 		rows, err := s.r.QueryContext(ctx, feedbackSelect+" WHERE f.project_id = ? AND "+q+" ORDER BY f.created_at", append([]any{projectID}, a...)...)
 		if err != nil {
 			return nil, err

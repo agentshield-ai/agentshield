@@ -35,7 +35,7 @@ describe('SavedView', () => {
     const view = new weft.SavedView({ label: 'Long answers' })
       .filterOp('answer')
       .addFilter('output', 'contains', 'B')
-      .addFilter('summary.weave.latency_ms', '>=', 0)
+      .addFilter('summary.weft.latency_ms', '>=', 0)
       .addFilter('Status', 'is not empty')
       .sortBy('started_at', 'asc')
       .addColumn('inputs.q', 'Question')
@@ -48,7 +48,7 @@ describe('SavedView', () => {
     expect(body.project_id).toBe('ts-entity/ts-proj');
     expect(body.filter).toEqual({ op_names: ['weft:///ts-entity/ts-proj/op/answer:*'] });
     expect(body.query.$expr.$and[0]).toEqual({ $contains: { input: { $getField: 'output' }, substr: { $literal: 'B' } } });
-    expect(body.query.$expr.$and[1]).toEqual({ $gte: [{ $getField: 'summary.weave.latency_ms' }, { $literal: 0 }] });
+    expect(body.query.$expr.$and[1]).toEqual({ $gte: [{ $getField: 'summary.weft.latency_ms' }, { $literal: 0 }] });
     expect(view.filters.map((f) => f.operator)).toEqual(['(string): contains', '(number): >=', '(any): isNotEmpty']);
     expect(view.getTableColumns()).toEqual([{ path: 'inputs.q', label: 'Question' }]);
     await view.save();
@@ -147,7 +147,7 @@ describe('EvaluationLogger links', () => {
     const pc = fake.calls.get(pred.predictCall!.id);
     expect(pc.output).toEqual({ docs: ['hi'] });
     expect(fake.callsByOp('retrieve')[0].parent_id).toBe(pc.id);
-    const link = fake.calls.get(turn!.callId!).attributes.weave.eval;
+    const link = fake.calls.get(turn!.callId!).attributes.weft.eval;
     expect(link.predict_and_score_call_id).toBe(pred.predictAndScoreCall!.id);
     expect(link.run_id).toBe(ev.call!.id);
     expect(link.example_id).toBe('ex-1');
@@ -219,7 +219,7 @@ describe('objects, client queries and media references', () => {
     await client.deleteCalls([call!.id]);
     expect(fake.calls.get(call!.id).deleted_at).toBe('now');
     const fid = await call!.feedback.addNote('hi');
-    expect((await client.getFeedback({ query: { $eq: [{ $getField: 'weave_ref' }, { $literal: call!.uri() }] } }))[0].id).toBe(fid);
+    expect((await client.getFeedback({ query: { $eq: [{ $getField: 'ref' }, { $literal: call!.uri() }] } }))[0].id).toBe(fid);
     await call!.feedback.purge(fid);
     expect(last('/feedback/purge').query.$expr.$eq[1].$literal).toBe(fid);
     expect((await client.getThreads({ threadIds: ['t1'], limit: 5 }))[0].echo).toMatchObject({ filter: { thread_ids: ['t1'] }, limit: 5 });

@@ -1,10 +1,10 @@
 package store
 
 // Agent signals: tags and ratings that a judge model attaches to a turn
-// (the Agents "Signals" tab; the wire format is Weave-compatible).
+// (the Agents "Signals" tab).
 //
 // A signal result is ordinary feedback on a turn's root call. The scorer
-// fields of Weave's feedback batch schema (scorer_ratings, scorer_tags and
+// fields of the feedback batch schema (scorer_ratings, scorer_tags and
 // their confidences and reasons) and the span_* denormalised turn fields are
 // kept in the feedback payload under the same keys, so /feedback/query
 // returns them and the agent chat views lift them back into the top-level
@@ -138,7 +138,7 @@ func NormalizeSignalTags(tags []string) ([]string, error) {
 
 func clamp01(v float64) float64 { return math.Max(0, math.Min(1, v)) }
 
-// SignalScores is the scorer part of Weave's feedback batch schema.
+// SignalScores is the scorer part of the feedback batch schema.
 type SignalScores struct {
 	ScorerRatings           map[string]float64 `json:"scorer_ratings,omitempty"`
 	ScorerRatingConfidences map[string]float64 `json:"scorer_rating_confidences,omitempty"`
@@ -297,12 +297,12 @@ func signalRatings(sc SignalScores) []ConversationRating {
 
 // ---------------------------------------------------------------- feedback create
 
-// AgentFeedbackItem is one element of Weave's feedback batch schema
+// AgentFeedbackItem is one element of the feedback batch schema
 // (FeedbackBatchCreateParams.Batch), including the scorer and span fields.
 type AgentFeedbackItem struct {
 	ID            *string        `json:"id"`
 	ProjectID     string         `json:"project_id"`
-	WeaveRef      string         `json:"weave_ref"`
+	Ref           string         `json:"ref"`
 	FeedbackType  string         `json:"feedback_type"`
 	Payload       map[string]any `json:"payload"`
 	AnnotationRef *string        `json:"annotation_ref"`
@@ -349,7 +349,7 @@ func (s *Store) CreateAgentFeedback(ctx context.Context, it AgentFeedbackItem) (
 	}
 	// Plain feedback (no scorer or span fields) is stored as given.
 	enrich := !it.SignalScores.Empty() || it.Payload["scorer_tags"] != nil || it.ScorerTags != nil || hasSpan
-	if r, err := refs.Parse(refs.Normalize(strings.TrimSpace(it.WeaveRef))); enrich && err == nil && r.Kind == refs.KindCall {
+	if r, err := refs.Parse(strings.TrimSpace(it.Ref)); enrich && err == nil && r.Kind == refs.KindCall {
 		var trace, conv, agent, version string
 		var exc sql.NullString
 		var ended sql.NullInt64
@@ -382,7 +382,7 @@ func (s *Store) CreateAgentFeedback(ctx context.Context, it AgentFeedbackItem) (
 	if it.ID != nil {
 		id = *it.ID
 	}
-	return s.CreateFeedback(ctx, FeedbackCreate{ID: id, ProjectID: pid, WeaveRef: it.WeaveRef, FeedbackType: it.FeedbackType, Payload: payload,
+	return s.CreateFeedback(ctx, FeedbackCreate{ID: id, ProjectID: pid, Ref: it.Ref, FeedbackType: it.FeedbackType, Payload: payload,
 		Creator: it.Creator, WBUserID: it.WBUserID, AnnotationRef: it.AnnotationRef, RunnableRef: it.RunnableRef, CallRef: it.CallRef,
 		TriggerRef: it.TriggerRef, QueueID: it.QueueID})
 }
@@ -610,7 +610,7 @@ func (s *Store) SignalScoredTurns(ctx context.Context, projectID, signalID, vers
 			continue
 		}
 		if v, _ := p["signal_version"].(string); version == "" || v == "" || v == version {
-			out[byRef[f.WeaveRef]] = true
+			out[byRef[f.Ref]] = true
 		}
 	}
 	return out, nil
@@ -639,7 +639,7 @@ type turnFeedbackFilter struct {
 func (s *Store) loadTurnFeedback(ctx context.Context, pid string, f turnFeedbackFilter) ([]turnFeedback, error) {
 	prefix := strings.TrimSuffix(refs.CallRef(pid, "x"), "x")
 	n := utf8.RuneCountInString(prefix)
-	where := []string{"f.project_id = ?", "substr(f.weave_ref, 1, ?) = ?", "c.deleted_at IS NULL"}
+	where := []string{"f.project_id = ?", "substr(f.ref, 1, ?) = ?", "c.deleted_at IS NULL"}
 	args := []any{n + 1, pid, n, prefix}
 	if f.After > 0 {
 		where = append(where, "c.started_at >= ?")
@@ -663,7 +663,7 @@ func (s *Store) loadTurnFeedback(ctx context.Context, pid string, f turnFeedback
 	}
 	rows, err := s.r.QueryContext(ctx, `SELECT f.id, f.feedback_type, f.payload, f.created_at, f.creator, f.wb_user_id,
 		s.id, s.trace_id, s.conversation_id, s.conversation_name, s.agent_name, s.agent_version, c.started_at, c.exception IS NOT NULL, c.ended_at IS NOT NULL
-		FROM feedback f JOIN agent_spans s ON s.project_id = f.project_id AND s.id = substr(f.weave_ref, ?)
+		FROM feedback f JOIN agent_spans s ON s.project_id = f.project_id AND s.id = substr(f.ref, ?)
 		JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
 		WHERE `+strings.Join(where, " AND ")+` ORDER BY f.created_at DESC LIMIT 50000`, args...)
 	if err != nil {
@@ -719,7 +719,7 @@ type AgentSignalFilters struct {
 	Tags    []string                  `json:"tags"`
 }
 
-// AgentInsightFilter is Weave's conversation insight filter. Values within a
+// AgentInsightFilter is a conversation insight filter. Values within a
 // filter are ORed, filters are ANDed. Insight values come from turn feedback
 // whose payload has an "insights" map; intent_sentiment is also derived from
 // sentiment/satisfaction ratings and the user_frustration tag.
@@ -792,7 +792,7 @@ func compareOp(v float64, op string, want float64) bool {
 	return false
 }
 
-// SentimentBucket maps a 0..1 sentiment or satisfaction rating onto Weave's
+// SentimentBucket maps a 0..1 sentiment or satisfaction rating onto the
 // intent_sentiment values.
 func SentimentBucket(v float64) string {
 	switch {
@@ -1100,10 +1100,10 @@ func (s *Store) QuerySignalResults(ctx context.Context, req AgentSignalsQueryReq
 			row.Signal = "tags"
 			if row.SignalID != nil {
 				row.Signal = *row.SignalID
-			} else if fb.FeedbackType == "wandb.reaction.1" {
+			} else if fb.FeedbackType == "weft.reaction" {
 				row.Signal = "reactions"
-			} else if strings.HasPrefix(fb.FeedbackType, "wandb.") {
-				row.Signal = strings.TrimPrefix(fb.FeedbackType, "wandb.")
+			} else if strings.HasPrefix(fb.FeedbackType, "weft.") {
+				row.Signal = strings.TrimPrefix(fb.FeedbackType, "weft.")
 			}
 			for _, tg := range tags {
 				if c, ok := sc.ScorerTagConfidences[strings.ToLower(tg)]; ok && row.Confidence == nil {

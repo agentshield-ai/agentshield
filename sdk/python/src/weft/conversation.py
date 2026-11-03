@@ -1,7 +1,6 @@
 """Agent conversation tracing: conversations, turns, LLM calls, tools and sub-agents.
 
-Mirrors Weave's conversation SDK (``weave.start_conversation`` and friends)
-with the same names and semantics. Each span is recorded as a Weft call that
+``weft.start_conversation`` and friends. Each span is recorded as a Weft call that
 the server's agents index understands:
 
 - a **turn** is an ``invoke_agent`` call (``attributes.weft.span_kind = "agent"``,
@@ -104,7 +103,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Data types (same fields as weave.conversation.types)
+# Data types
 # ---------------------------------------------------------------------------
 
 
@@ -529,11 +528,11 @@ def agent_name_override(agent_name: str) -> Iterator[None]:
 
 
 def _eval_link_attributes() -> Dict[str, Any]:
-    """``weave.eval.*`` attributes linking spans made during an EvaluationLogger prediction."""
+    """``weft.eval.*`` attributes linking spans made during an EvaluationLogger prediction."""
     ctx = _context.current_eval_span_context()
     if not ctx:
         return {}
-    return {f"weave.eval.{k}": v for k, v in ctx.items() if v is not None}
+    return {f"weft.eval.{k}": v for k, v in ctx.items() if v is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -710,7 +709,7 @@ class _SpanBase(BaseModel):
         return self
 
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None, timestamp: Optional[datetime.datetime] = None) -> Any:
-        """Deprecated (as in Weave): record a point-in-time event; prefer ``set_attributes``."""
+        """Deprecated: record a point-in-time event; prefer ``set_attributes``."""
         warnings.warn("`add_event` is kept for compatibility only; put the data in `set_attributes`.", DeprecationWarning, stacklevel=2)
         if self._ended:
             return self
@@ -757,9 +756,6 @@ class _SpanBase(BaseModel):
         if self._reasoning and client.capture_reasoning:
             weft_attrs["reasoning"] = list(weft_attrs.get("reasoning") or []) + client._reasoning_attr(self._reasoning)
         attrs["weft"] = weft_attrs
-        weave_attrs = dict(attrs.get("weave") or {}) if isinstance(attrs.get("weave"), dict) else {}
-        weave_attrs["kind"] = self._kind
-        attrs["weave"] = weave_attrs
         attrs = to_json(attrs, client)
         ser_inputs = client._scrub_reasoning(to_json(inputs, client))
         ser_output = client._scrub_reasoning(to_json(output, client))

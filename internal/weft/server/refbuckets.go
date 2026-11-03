@@ -153,7 +153,7 @@ type bucketCheck struct {
 
 // bucketTestResult is what /reference_buckets/test returns and what create
 // requires to pass: ok only when the test object could be read and the
-// bucket's CORS rules let the Weft origin GET it, as Weave's test checks.
+// bucket's CORS rules let the Weft origin GET it.
 type bucketTestResult struct {
 	OK    bool    `json:"ok"`
 	Error *string `json:"error"`

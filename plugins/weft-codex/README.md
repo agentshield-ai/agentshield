@@ -1,8 +1,7 @@
 # Weft for Codex
 
 Traces [OpenAI Codex CLI](https://developers.openai.com/codex/cli) sessions
-into [Weft](../../docs/weft/README.md) as agent conversations, like W&B Weave's
-Codex plugin:
+into [Weft](../../docs/weft/README.md) as agent conversations:
 
 ```
 invoke_agent codex           one per turn; conversation = the Codex session id
@@ -35,7 +34,7 @@ Where only managed hooks are allowed, use Codex's `notify` program instead:
 the same script accepts the `agent-turn-complete` payload and finds the
 rollout by session id.
 
-Known gaps, as in Weave's plugin: a turn that is aborted or errors is sent
+Known gaps: a turn that is aborted or errors is sent
 with the next turn (Codex fires no Stop for it), and sub-agents appear as
 their spawning tool call.
 

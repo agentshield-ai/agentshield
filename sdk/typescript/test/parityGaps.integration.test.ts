@@ -1,6 +1,6 @@
 /**
  * Bedrock Agents, OpenAI Realtime, NER redaction, registry linking, call
- * records and W&B run linkage against a real server:
+ * records and run linkage against a real server:
  *   WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 npx vitest run test/parityGaps.integration.test.ts
  */
 import { randomUUID } from 'node:crypto';
@@ -116,7 +116,7 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
     expect((await client.getFromRegistry(`${reg}/personas`, 'staging')).format({ persona: 'a pirate' })).toBe('You are a pirate.');
   });
 
-  it('returns call records with W&B run linkage', async () => {
+  it('returns call records with run linkage', async () => {
     const stepFn = weft.op(function stepFn(x: number) {
       return x * 2;
     });

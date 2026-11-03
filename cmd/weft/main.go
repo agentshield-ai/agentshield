@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/compat"
 	"github.com/agentshield-ai/agentshield/internal/weft/server"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/webui"
@@ -61,9 +62,16 @@ func main() {
 	piiCfg := registerPIIFlags()       // pii.go
 	egressCfg := registerEgressFlags() // egress.go
 	shieldCfg := registerShieldFlags() // shield.go
+	compatFlag := flag.Bool(compat.FlagName, false,
+		"turn on the compatibility adapter for the official weave client, see docs/weft/COMPATIBILITY.md (env "+compat.EnvName+"=true)")
 
 	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
 	flag.Parse()
+	compatOn := compat.Enabled(flag.CommandLine, *compatFlag)
+	var compatAliases []string
+	if compatOn {
+		compatAliases = compat.ApplyEnvAliases(flag.CommandLine, os.Getenv)
+	}
 
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(*logLevel)); err != nil {
@@ -72,6 +80,9 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 	slog.SetDefault(log)
+	for _, a := range compatAliases {
+		log.Info("compatibility adapter: read setting from environment alias", "env", a)
+	}
 
 	if dir := filepath.Dir(*dbPath); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -123,7 +134,7 @@ func main() {
 		log.Warn(permMsg, "problem", w)
 	}
 
-	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log}
+	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log, Compat: compatOn}
 	if err := iamCfg.apply(&cfg, *dbPath, log); err != nil {
 		log.Error("configuring SSO and sessions", "err", err)
 		os.Exit(2)
@@ -156,7 +167,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode, "compat_adapter", compatOn)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

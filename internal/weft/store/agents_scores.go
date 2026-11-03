@@ -4,7 +4,7 @@ package store
 // carries a scope and the target ids. Any feedback whose payload has a valid
 // "scope" counts, whatever its feedback_type, so SDKs can write scores with
 // /feedback/create; the server's scope scorers use feedback_type
-// "weft.score.<scorer>". Call-level scorer results (wandb.runnable.*) are
+// "weft.score.<scorer>". Call-level scorer results (weft.scorer.*) are
 // reported as span-scope scores when a session is named.
 
 import (
@@ -42,7 +42,7 @@ type ScopeScore struct {
 	Reason       string   `json:"reason,omitempty"`
 	Output       any      `json:"output,omitempty"`
 	Model        string   `json:"model,omitempty"`
-	WeaveRef     string   `json:"weave_ref"`
+	Ref          string   `json:"ref"`
 	FeedbackType string   `json:"feedback_type"`
 	Creator      *string  `json:"creator"`
 	CreatedAt    string   `json:"created_at"`
@@ -95,11 +95,11 @@ func ScoreValue(v any) *float64 {
 
 func scoreFromFeedback(id, ref, ftype, payload string, creator sql.NullString, created int64) (ScopeScore, bool) {
 	p := decodeMap(payload)
-	sc := ScopeScore{ID: id, WeaveRef: ref, FeedbackType: ftype, Creator: strPtr(creator), CreatedAt: FormatMicros(created), createdUS: created}
+	sc := ScopeScore{ID: id, Ref: ref, FeedbackType: ftype, Creator: strPtr(creator), CreatedAt: FormatMicros(created), createdUS: created}
 	str := func(k string) string { s, _ := p[k].(string); return s }
 	sc.Scope = str("scope")
-	if sc.Scope == "" && strings.HasPrefix(ftype, "wandb.runnable.") {
-		sc.Scope, sc.Scorer = ScopeSpan, strings.TrimPrefix(ftype, "wandb.runnable.")
+	if sc.Scope == "" && strings.HasPrefix(ftype, "weft.scorer.") {
+		sc.Scope, sc.Scorer = ScopeSpan, strings.TrimPrefix(ftype, "weft.scorer.")
 		if r, err := refs.Parse(ref); err == nil && r.Kind == refs.KindCall {
 			sc.SpanID = r.Name
 		}
@@ -116,7 +116,7 @@ func scoreFromFeedback(id, ref, ftype, payload string, creator sql.NullString, c
 	sc.SessionID, sc.Agent, sc.HandoffID, sc.TurnID, sc.SpanID = str("session_id"), str("agent"), str("handoff_id"), str("turn_id"), str("span_id")
 	sc.Scorer, sc.Reason, sc.Model = str("scorer"), str("reason"), str("model")
 	if sc.Scorer == "" {
-		sc.Scorer = strings.TrimPrefix(strings.TrimPrefix(ftype, "weft.score."), "wandb.runnable.")
+		sc.Scorer = strings.TrimPrefix(strings.TrimPrefix(ftype, "weft.score."), "weft.scorer.")
 	}
 	sc.Output = p["output"]
 	if v := ScoreValue(p["value"]); v != nil {
@@ -166,7 +166,7 @@ func (s *Store) QueryScopeScores(ctx context.Context, q ScopeScoresQuery) ([]Sco
 		where = append(where, c)
 		args = append(args, a...)
 	}
-	out, err := s.readScores(ctx, `SELECT id, weave_ref, feedback_type, payload, creator, created_at FROM feedback WHERE `+
+	out, err := s.readScores(ctx, `SELECT id, ref, feedback_type, payload, creator, created_at FROM feedback WHERE `+
 		strings.Join(where, " AND "), args...)
 	if err != nil {
 		return nil, 0, err
@@ -184,15 +184,15 @@ func (s *Store) QueryScopeScores(ctx context.Context, q ScopeScoresQuery) ([]Sco
 		sort.Strings(ids)
 		for start := 0; start < len(ids); start += 400 {
 			end := min(start+400, len(ids))
-			c, a := inList("weave_ref", ids[start:end])
+			c, a := inList("ref", ids[start:end])
 			args := append([]any{pid}, a...)
 			cond := ""
 			if q.Scorer != "" {
 				cond = " AND feedback_type = ?"
-				args = append(args, "wandb.runnable."+q.Scorer)
+				args = append(args, "weft.scorer."+q.Scorer)
 			}
-			more, err := s.readScores(ctx, `SELECT id, weave_ref, feedback_type, payload, creator, created_at FROM feedback
-				WHERE project_id = ? AND feedback_type LIKE 'wandb.runnable.%' AND `+c+cond, args...)
+			more, err := s.readScores(ctx, `SELECT id, ref, feedback_type, payload, creator, created_at FROM feedback
+				WHERE project_id = ? AND feedback_type LIKE 'weft.scorer.%' AND `+c+cond, args...)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -312,7 +312,7 @@ type ScopeScoreCreate struct {
 	CallRef     *string
 }
 
-// scoreAnchor is the span a scope score is attached to (its weave_ref).
+// scoreAnchor is the span a scope score is attached to (its ref).
 func (s *Store) scoreAnchor(ctx context.Context, pid string, c *ScopeScoreCreate) (string, error) {
 	var id string
 	var err error
@@ -381,6 +381,6 @@ func (s *Store) CreateScopeScore(ctx context.Context, c ScopeScoreCreate) (*Feed
 	if c.Output != nil {
 		payload["output"] = c.Output
 	}
-	return s.CreateFeedback(ctx, FeedbackCreate{ProjectID: pid, WeaveRef: ref, FeedbackType: "weft.score." + c.Scorer, Payload: payload,
+	return s.CreateFeedback(ctx, FeedbackCreate{ProjectID: pid, Ref: ref, FeedbackType: "weft.score." + c.Scorer, Payload: payload,
 		Creator: c.Creator, WBUserID: c.WBUserID, RunnableRef: c.RunnableRef, CallRef: c.CallRef})
 }

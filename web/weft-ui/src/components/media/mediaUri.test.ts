@@ -4,7 +4,7 @@ import { detectMedia, mediaUri } from './mediaUtils'
 describe('media stored by reference', () => {
   it('maps weft-file uris to digests and keeps external uris', () => {
     expect(mediaUri('weft-file://9CkzWUDje42we1970o46ApU4')).toEqual({ digest: '9CkzWUDje42we1970o46ApU4' })
-    expect(mediaUri('weave-file://e/p/abcdef0123')).toEqual({ digest: 'abcdef0123' })
+    expect(mediaUri('weft-file://e/p/abcdef0123')).toEqual({ digest: 'abcdef0123' })
     expect(mediaUri('s3://bucket/e/p/img.png')).toEqual({ uri: 's3://bucket/e/p/img.png' })
     expect(mediaUri('https://cdn.example.com/a.mp4?sig=1')).toEqual({ uri: 'https://cdn.example.com/a.mp4?sig=1' })
     expect(mediaUri('javascript:alert(1)')).toBeNull()

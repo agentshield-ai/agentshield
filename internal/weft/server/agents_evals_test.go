@@ -45,8 +45,8 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	add(call("a-turn", "", "tr-a", "conv-a", "support_turn", 0, agent("support_bot", nil), map[string]any{"question": "reset password"}, "use the link"))
 	add(call("a-llm", "a-turn", "tr-a", "conv-a", "chat", 5, llm, map[string]any{}, "use the link"))
 	add(call("d-turn", "", "tr-d", "conv-d", "support_turn", 100, agent("support_bot", nil), map[string]any{"question": "refund"}, "ok"))
-	// A conversation recorded inside a prediction: weave.eval.* on the turn only.
-	add(call("b-turn", "", "tr-b", "conv-b", "billing_turn", 200, agent("billing_bot", map[string]any{"weave": map[string]any{"eval": map[string]any{
+	// A conversation recorded inside a prediction: weft.eval.* on the turn only.
+	add(call("b-turn", "", "tr-b", "conv-b", "billing_turn", 200, agent("billing_bot", map[string]any{"weft": map[string]any{"eval": map[string]any{
 		"run_id": "run-1", "predict_and_score_call_id": "pas-2", "kind": "agent"}}}), map[string]any{"question": "invoice"}, "sent"))
 	add(call("b-llm", "b-turn", "tr-b", "conv-b", "chat", 205, llm, map[string]any{}, "sent"))
 	// Unrelated.
@@ -73,7 +73,7 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	body := otlpBody(now.Add(600*time.Millisecond), []testSpan{
 		{tr, child, root, "chat gpt-4o", 5, 20, map[string]any{"gen_ai.operation.name": "chat", "gen_ai.request.model": "gpt-4o"}, ""},
 		{tr, root, "", "invoke_agent otel_bot", 0, 40, map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "otel_bot",
-			"gen_ai.conversation.id": "conv-otel", "weave.eval.run_id": "run-1", "weave.eval.predict_and_score_call_id": "pas-2"}, ""},
+			"gen_ai.conversation.id": "conv-otel", "weft.eval.run_id": "run-1", "weft.eval.predict_and_score_call_id": "pas-2"}, ""},
 	})
 	if code, b := e.raw("/agents/otel/v1/traces", body, map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("otlp: %d %s", code, b)

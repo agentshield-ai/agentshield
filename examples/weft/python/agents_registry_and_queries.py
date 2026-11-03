@@ -1,4 +1,4 @@
-"""Bedrock Agents and Verdict tracing, the prompt registry, W&B run linkage and
+"""Bedrock Agents and Verdict tracing, the prompt registry, run linkage and
 calls as a DataFrame.
 
     pip install -e sdk/python            # pandas is optional (for to_pandas)
@@ -17,7 +17,7 @@ import sys
 import types
 import uuid
 
-# Retry/queue/timeout settings can come from the environment (Weave's names, WEFT_ prefix).
+# Retry/queue/timeout settings can come from the environment (WEFT_* variables).
 os.environ.setdefault("WEFT_RETRY_MAX_ATTEMPTS", "5")
 os.environ.setdefault("WEFT_HTTP_TIMEOUT", "20")
 
@@ -82,7 +82,7 @@ def main():
     answer = "".join(e["chunk"]["bytes"].decode() for e in res["completion"] if "chunk" in e)
     print("agent:", answer)
 
-    # --- W&B run linkage: calls carry wb_run_id / wb_run_step -------------------
+    # --- Run linkage: calls carry wb_run_id / wb_run_step -----------------------
     step = {"n": 0}
 
     @weft.op

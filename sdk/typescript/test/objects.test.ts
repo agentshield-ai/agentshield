@@ -25,7 +25,7 @@ const ROWS = [
 ];
 
 describe('objects and evaluations', () => {
-  it('digests follow the Weave scheme', () => {
+  it('digests match the server scheme', () => {
     expect(digestJson({ b: 1, a: [1.5, true, null], c: '<&>' })).toBe('{"a": [1.5, true, null], "b": 1, "c": "<&>"}');
     // ensure_ascii escapes, surrogate pairs, code point key order
     expect(digestJson({ 'é': 1, z: 2, A: ['ü😀', String.fromCharCode(0x2028)] })).toBe('{"A": ["\\u00fc\\ud83d\\ude00", "\\u2028"], "z": 2, "\\u00e9": 1}');

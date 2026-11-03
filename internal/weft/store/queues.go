@@ -11,7 +11,7 @@ import (
 )
 
 // Annotation queues: named lists of calls for human review. Each queue lists
-// the AnnotationSpec refs reviewers fill in (scorer_refs, as in Weave), and
+// the AnnotationSpec refs reviewers fill in (scorer_refs), and
 // progress is tracked per annotator.
 
 func init() {
@@ -60,7 +60,7 @@ CREATE INDEX IF NOT EXISTS annotation_queue_progress_queue ON annotation_queue_p
 `)
 }
 
-// AnnotationQueue is the AnnotationQueueSchema of the Weave API.
+// AnnotationQueue is an annotation (review) queue.
 type AnnotationQueue struct {
 	ID          string   `json:"id"`
 	ProjectID   string   `json:"project_id"`
@@ -122,7 +122,7 @@ func normScorerRefs(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := map[string]bool{}
 	for _, r := range in {
-		r = refs.Normalize(strings.TrimSpace(r))
+		r = strings.TrimSpace(r)
 		if r == "" || seen[r] {
 			continue
 		}
@@ -494,6 +494,26 @@ func (s *Store) QueryAnnotationQueueItems(ctx context.Context, projectID, queueI
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// DeleteAnnotationQueueItem removes an item from a queue (soft delete; its
+// feedback stays). The call can be added to the queue again later.
+func (s *Store) DeleteAnnotationQueueItem(ctx context.Context, projectID, queueID, itemID string) error {
+	q, err := s.GetAnnotationQueue(ctx, projectID, queueID, false)
+	if err != nil {
+		return err
+	}
+	now := nowMicros()
+	res, err := s.w.ExecContext(ctx, `UPDATE annotation_queue_items SET deleted_at = ?, updated_at = ?
+		WHERE project_id = ? AND queue_id = ? AND id = ? AND deleted_at IS NULL`, now, now, q.ProjectID, queueID, itemID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	_, err = s.w.ExecContext(ctx, `UPDATE annotation_queues SET updated_at = ? WHERE id = ?`, now, queueID)
+	return err
 }
 
 // SetAnnotationQueueItemState records an annotator's progress on an item.

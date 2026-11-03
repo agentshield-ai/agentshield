@@ -1,9 +1,9 @@
-// Parsing and formatting of weft:/// (and weave:///) refs. See docs/weft/API.md.
+// Parsing and formatting of weft:/// refs. See docs/weft/API.md.
 
 export type RefKind = 'object' | 'op' | 'table' | 'call'
 
 export interface ParsedRef {
-  scheme: 'weft' | 'weave'
+  scheme: 'weft'
   entity: string
   project: string
   projectId: string
@@ -16,7 +16,7 @@ export interface ParsedRef {
   extra: string[]
 }
 
-const REF_RE = /^(weft|weave):\/\/\/([^/]+)\/([^/]+)\/(object|op|table|call)\/(.+)$/
+const REF_RE = /^(weft):\/\/\/([^/]+)\/([^/]+)\/(object|op|table|call)\/(.+)$/
 
 export function isRef(v: unknown): v is string {
   return typeof v === 'string' && REF_RE.test(v)
@@ -39,7 +39,7 @@ export function parseRef(ref: string): ParsedRef | null {
     }
   }
   return {
-    scheme: scheme as 'weft' | 'weave',
+    scheme: scheme as 'weft',
     entity,
     project,
     projectId: `${entity}/${project}`,

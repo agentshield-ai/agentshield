@@ -193,6 +193,17 @@ func (s *Server) detectionsList(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+		ids := make([]string, 0, len(items))
+		for _, d := range items {
+			ids = append(ids, d.SessionID)
+		}
+		titles, err := s.store.SessionTitles(r.Context(), q.ProjectID, uniqueStrings(ids))
+		if err != nil {
+			return nil, err
+		}
+		for i := range items {
+			items[i].SessionTitle = titles[items[i].SessionID]
+		}
 		return map[string]any{"items": items, "total_count": total}, nil
 	})(w, r)
 }
@@ -387,7 +398,28 @@ func (s *Server) shieldInsights(w http.ResponseWriter, r *http.Request) {
 			}
 			iq.Window = d
 		}
-		return s.store.ShieldInsights(r.Context(), iq)
+		ins, err := s.store.ShieldInsights(r.Context(), iq)
+		if err != nil {
+			return nil, err
+		}
+		var ids []string
+		for _, x := range ins.ApprovalFatigue.BySession {
+			ids = append(ids, x.SessionID)
+		}
+		for _, x := range ins.OverrideEscalation.BySession {
+			ids = append(ids, x.SessionID)
+		}
+		titles, err := s.store.SessionTitles(r.Context(), pid, uniqueStrings(ids))
+		if err != nil {
+			return nil, err
+		}
+		for i := range ins.ApprovalFatigue.BySession {
+			ins.ApprovalFatigue.BySession[i].SessionTitle = titles[ins.ApprovalFatigue.BySession[i].SessionID]
+		}
+		for i := range ins.OverrideEscalation.BySession {
+			ins.OverrideEscalation.BySession[i].SessionTitle = titles[ins.OverrideEscalation.BySession[i].SessionID]
+		}
+		return ins, nil
 	})(w, r)
 }
 
@@ -401,4 +433,16 @@ func (s *Server) shieldStatus(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"replay_enabled": mode != "", "replay_engine": mode,
 			"correlation_window_ms": store.CorrelationWindow.Milliseconds()}, nil
 	})(w, r)
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := in[:0:0]
+	for _, x := range in {
+		if x != "" && !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
 }

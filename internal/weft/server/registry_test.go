@@ -10,14 +10,14 @@ func TestLinkToRegistry(t *testing.T) {
 	e := newEnv(t)
 	m1 := publish(e, "classifier", map[string]any{"_class_name": "MyModel", "_bases": []any{"Model", "Object", "BaseModel"}, "v": 1})
 	m2 := publish(e, "classifier", map[string]any{"_class_name": "MyModel", "_bases": []any{"Model", "Object", "BaseModel"}, "v": 2})
-	target := map[string]any{"portfolio_name": "Fraud Models", "entity_name": "acme", "project_name": "wandb-registry-model"}
+	target := map[string]any{"portfolio_name": "Fraud Models", "entity_name": "acme", "project_name": "registry-model"}
 	link := func(ref string, aliases ...string) float64 {
 		t.Helper()
 		al := []any{}
 		for _, a := range aliases {
 			al = append(al, a)
 		}
-		res := e.post("/link_to_registry", map[string]any{"ref": strings.Replace(ref, "weft:///", "weave:///", 1), "target": target, "aliases": al})
+		res := e.post("/link_to_registry", map[string]any{"ref": strings.Replace(ref, "weft:///", "weft:///", 1), "target": target, "aliases": al})
 		return res["version_index"].(float64)
 	}
 	if v := link(m1, "production"); v != 0 {
@@ -30,7 +30,7 @@ func TestLinkToRegistry(t *testing.T) {
 	if v := link(m2, "production"); v != 1 {
 		t.Fatalf("re-link = %v", v)
 	}
-	q := e.post("/registry/query", map[string]any{"project_id": "acme/wandb-registry-model"})
+	q := e.post("/registry/query", map[string]any{"project_id": "acme/registry-model"})
 	cols := q["collections"].([]any)
 	if len(cols) != 1 {
 		t.Fatalf("collections = %v", q)
@@ -48,15 +48,15 @@ func TestLinkToRegistry(t *testing.T) {
 	if toJSON(vs[1].(map[string]any)["aliases"]) != `[]` {
 		t.Fatalf("production should have moved off v0: %v", vs[1])
 	}
-	one := e.post("/registry/query", map[string]any{"project_id": "acme/wandb-registry-model", "portfolio_name": "Fraud Models", "alias": "v0"})
+	one := e.post("/registry/query", map[string]any{"project_id": "acme/registry-model", "portfolio_name": "Fraud Models", "alias": "v0"})
 	if got := one["collections"].([]any)[0].(map[string]any)["versions"].([]any); len(got) != 1 || got[0].(map[string]any)["ref"] != m1 {
 		t.Fatalf("v0 lookup = %v", one)
 	}
-	if code, _ := e.raw("/registry/query", map[string]any{"project_id": "acme/wandb-registry-model", "portfolio_name": "Fraud Models", "alias": "canary"}, nil); code != 404 {
+	if code, _ := e.raw("/registry/query", map[string]any{"project_id": "acme/registry-model", "portfolio_name": "Fraud Models", "alias": "canary"}, nil); code != 404 {
 		t.Fatalf("unknown alias -> %d", code)
 	}
 	for _, bad := range []map[string]any{
-		{"ref": "weave:///acme/evals/object/missing:abc", "target": target},
+		{"ref": "weft:///acme/evals/object/missing:abc", "target": target},
 		{"ref": m1, "target": target, "aliases": []any{"latest"}},
 		{"ref": m1, "target": map[string]any{"portfolio_name": "x"}},
 		{"ref": "weft:///acme/evals/call/abc", "target": target},

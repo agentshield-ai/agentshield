@@ -22,21 +22,8 @@ func TestParseRoundTrip(t *testing.T) {
 	}
 }
 
-func TestParseWeaveScheme(t *testing.T) {
-	r, err := Parse("weave:///ent/proj/object/x:d1/attr/rows")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.ProjectID() != "ent/proj" || r.Name != "x" || r.Digest != "d1" || len(r.Extra) != 2 {
-		t.Fatalf("unexpected parse: %+v", r)
-	}
-	if Normalize("weave:///a/b/call/1") != "weft:///a/b/call/1" {
-		t.Fatal("normalize failed")
-	}
-}
-
 func TestParseErrors(t *testing.T) {
-	for _, c := range []string{"", "http://x", "weft:///e/p", "weft:///e/p/bogus/x", "weft:////p/object/x:d"} {
+	for _, c := range []string{"", "http://x", "weft:///e/p", "weft:///e/p/bogus/x", "weft:////p/object/x:d", "other:///e/p/call/1"} {
 		if _, err := Parse(c); err == nil {
 			t.Errorf("expected error for %q", c)
 		}
@@ -66,9 +53,10 @@ func TestNormalizeProject(t *testing.T) {
 	}
 }
 
-// Expected values computed with Python: json.dumps(v, sort_keys=True) and
-// weave.trace.serialization.digest.str_digest / compute_table_digest.
-func TestWeaveCompatibleDigests(t *testing.T) {
+// Expected values computed independently with Python: json.dumps(v,
+// sort_keys=True), SHA-256, URL-safe base64 with '-'→'X', '_'→'Y' and no
+// padding; tables: hex SHA-256 of the concatenated row digests.
+func TestDigestsMatchPythonJSON(t *testing.T) {
 	v, _ := Decode([]byte(`{"b": [1, 2.5, null, true], "a": "héllo ☃ 😀 \"q\"\n", "c": {"z": 1e-07, "y": 1.0}}`))
 	got, err := DigestJSON(v)
 	if err != nil {

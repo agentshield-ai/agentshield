@@ -79,7 +79,7 @@ func TestRemoteScorerEgressBlocked(t *testing.T) {
 	}
 }
 
-// TestRemoteScorerNoRedirects: as in Weave, a remote scorer's redirect is not
+// TestRemoteScorerNoRedirects: a remote scorer's redirect is not
 // followed, so an allowed endpoint cannot bounce the request elsewhere.
 func TestRemoteScorerNoRedirects(t *testing.T) {
 	e := newEnv(t)

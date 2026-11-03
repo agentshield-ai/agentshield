@@ -156,12 +156,30 @@ func TestAnnotationQueues(t *testing.T) {
 	}
 
 	// feedback carries queue_id and is queryable by it
-	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": "weft:///" + pid + "/call/c1", "feedback_type": "wandb.annotation.quality",
+	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/c1", "feedback_type": "weft.annotation.quality",
 		"payload": map[string]any{"value": 4}, "annotation_ref": spec, "queue_id": qid})
 	res := e.post("/feedback/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{"$eq": []any{
 		map[string]any{"$getField": "queue_id"}, map[string]any{"$literal": qid}}}}})["result"].([]any)
 	if len(res) != 1 || res[0].(map[string]any)["id"] != fb["id"] || res[0].(map[string]any)["queue_id"] != qid {
 		t.Fatalf("feedback by queue: %v", res)
+	}
+
+	// an item can be removed, and its call added again
+	before := e.post("/annotation_queues/"+qid+"/items/query", map[string]any{"project_id": pid})["items"].([]any)
+	victim := before[0].(map[string]any)
+	if code, out := e.do("DELETE", "/annotation_queues/"+qid+"/items/"+victim["id"].(string)+"?project_id="+pid, nil, ""); code != 200 {
+		t.Fatalf("delete item: %d %s", code, out)
+	}
+	if code, _ := e.do("DELETE", "/annotation_queues/"+qid+"/items/"+victim["id"].(string)+"?project_id="+pid, nil, ""); code != 404 {
+		t.Fatalf("second delete: %d", code)
+	}
+	after := e.post("/annotation_queues/"+qid+"/items/query", map[string]any{"project_id": pid})["items"].([]any)
+	if len(after) != len(before)-1 {
+		t.Fatalf("items after delete = %d, before %d", len(after), len(before))
+	}
+	re := e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "call_ids": []any{victim["call_id"]}})
+	if re["added_count"].(float64) != 1 {
+		t.Fatalf("re-add after delete: %v", re)
 	}
 
 	// delete is soft and hides the queue

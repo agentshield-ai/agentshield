@@ -1,8 +1,8 @@
 package evals
 
 // Agent signals: an LLM judge scores one turn against one tag or rating
-// signal, and the result is stored as wandb.agent_monitor feedback in
-// Weave's feedback batch schema (see store/agents_signals.go). Signals run
+// signal, and the result is stored as weft.signal feedback with the
+// feedback batch schema's scorer fields (see store/agents_signals.go). Signals run
 // on demand (/agents/signals/run) and automatically on turns that end while
 // the project's `agent-signals` config has them enabled.
 
@@ -149,7 +149,7 @@ func ParseJudge(content string) (map[string]any, error) {
 	return m, nil
 }
 
-// SignalScores turns a judge reply into Weave scorer fields.
+// SignalScores turns a judge reply into scorer fields.
 func SignalScores(sp SignalSpec, m map[string]any) (store.SignalScores, SignalRunResult, error) {
 	var sc store.SignalScores
 	res := SignalRunResult{Signal: sp.ID, Kind: sp.Kind}
@@ -246,7 +246,7 @@ func CompletionText(resp map[string]any) string {
 }
 
 // ScoreTurnSignal judges one turn against one (resolved) signal and stores
-// the result as wandb.agent_monitor feedback on the turn's root call.
+// the result as weft.signal feedback on the turn's root call.
 func (e *Engine) ScoreTurnSignal(ctx context.Context, projectID string, turn store.SignalTurn, sp SignalSpec, model string, creator, user *string) SignalRunResult {
 	res := SignalRunResult{SpanID: turn.SpanID, TraceID: turn.TraceID, Signal: sp.ID, Kind: sp.Kind}
 	fail := func(err error) SignalRunResult {
@@ -284,8 +284,8 @@ func (e *Engine) ScoreTurnSignal(ctx context.Context, projectID string, turn sto
 	if parsed.Reason != "" {
 		payload["reason"] = parsed.Reason
 	}
-	f, err := e.Store.CreateAgentFeedback(ctx, store.AgentFeedbackItem{ProjectID: projectID, WeaveRef: refs.CallRef(projectID, turn.SpanID),
-		FeedbackType: "wandb.agent_monitor", Payload: payload, Creator: creator, WBUserID: user, SignalScores: sc,
+	f, err := e.Store.CreateAgentFeedback(ctx, store.AgentFeedbackItem{ProjectID: projectID, Ref: refs.CallRef(projectID, turn.SpanID),
+		FeedbackType: "weft.signal", Payload: payload, Creator: creator, WBUserID: user, SignalScores: sc,
 		ScorerTraceID: callID, SpanTraceID: turn.TraceID, SpanConversationID: turn.ConversationID,
 		SpanAgentName: turn.AgentName, SpanAgentVersion: turn.AgentVersion, SpanStatusCode: turn.Status})
 	if err != nil {

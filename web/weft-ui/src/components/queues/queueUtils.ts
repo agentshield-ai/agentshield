@@ -7,7 +7,7 @@ export function specName(spec: Pick<ObjSchema, 'object_id' | 'val'>): string {
   return String(spec.val?.name ?? spec.object_id)
 }
 
-export const annotationType = (name: string) => `wandb.annotation.${name}`
+export const annotationType = (name: string) => `weft.annotation.${name}`
 
 const PENDING = new Set(['unstarted', 'in_progress'])
 
@@ -61,7 +61,7 @@ export function buildExportRows(
 ): Record<string, Any>[] {
   const byCall = new Map<string, Feedback[]>()
   for (const f of feedback) {
-    const m = /\/call\/([^/]+)$/.exec(f.weave_ref)
+    const m = /\/call\/([^/]+)$/.exec(f.ref)
     if (!m) continue
     const list = byCall.get(m[1]) ?? []
     list.push(f)
@@ -71,7 +71,7 @@ export function buildExportRows(
   for (const it of items) {
     const call = calls.get(it.call_id)
     if (!call) continue
-    const fbs = (byCall.get(it.call_id) ?? []).filter((f) => f.feedback_type.startsWith('wandb.annotation.'))
+    const fbs = (byCall.get(it.call_id) ?? []).filter((f) => f.feedback_type.startsWith('weft.annotation.'))
     if (!fbs.length && !includeUnannotated) continue
     const row: Record<string, Any> = { ...callToDatasetRow(call, true) }
     const users = new Set<string>()

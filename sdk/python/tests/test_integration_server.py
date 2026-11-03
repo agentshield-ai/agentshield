@@ -65,8 +65,8 @@ def test_trace_roundtrip_and_usage_rollup(live):
     assert sorted(k.op_base_name for k in kids) == ["llm", "llm", "tool"]
     assert all(k.trace_id == root.trace_id for k in kids)
     full = live.get_call(root.id, include_costs=True)
-    assert full.summary["weave"]["status"] == "success"
-    assert "gpt-4o-mini" in full.summary["weave"].get("costs", {})
+    assert full.summary["weft"]["status"] == "success"
+    assert "gpt-4o-mini" in full.summary["weft"].get("costs", {})
 
 
 def test_op_digest_matches_server(live):
@@ -103,7 +103,7 @@ def test_exceptions_and_status(live):
     errs = _calls(live, op_names=["bad"])
     assert len(errs) == 2 and all(c.exception.startswith("ValueError: kaputt") for c in errs)
     [p] = _calls(live, op_names=["parent"])
-    assert p.summary["weave"]["status"] == "descendant_error"
+    assert p.summary["weft"]["status"] == "descendant_error"
 
 
 def test_threads_and_turns(live):
@@ -249,7 +249,7 @@ def test_feedback_costs_and_call_ops(live):
     call.feedback.add_reaction("👍")
     call.feedback.add_note("nice")
     fb = list(call.feedback)
-    assert {x["feedback_type"] for x in fb} == {"wandb.reaction.1", "wandb.note.1"}
+    assert {x["feedback_type"] for x in fb} == {"weft.reaction", "weft.note"}
     got = live.get_call(call.id, include_feedback=True)
     assert len(got.raw_feedback) == 2
     call.set_display_name("renamed")
@@ -353,11 +353,11 @@ def test_parity_features_live(live):
     _, rc = reply.call("hi")
     r = rc.apply_scorer_sync(polite)
     assert r.result is False
-    fb = [f for f in live.get_feedback() if f["weave_ref"] == rc.uri()]
-    assert fb[0]["feedback_type"] == "wandb.runnable.polite"
+    fb = [f for f in live.get_feedback() if f["ref"] == rc.uri()]
+    assert fb[0]["feedback_type"] == "weft.scorer.polite"
     assert fb[0]["runnable_ref"].startswith(f"weft:///{live.project_id}/op/polite:")
     assert fb[0]["call_ref"] == r.score_call.uri()
-    got = list(live.get_calls(query={"$eq": [{"$getField": "feedback.wandb.runnable.polite.output"}, {"$literal": False}]}))
+    got = list(live.get_calls(query={"$eq": [{"$getField": "feedback.weft.scorer.polite.output"}, {"$literal": False}]}))
     assert [g.id for g in got] == [rc.id]
 
     # annotations, platform objects, leaderboard, compare, server eval

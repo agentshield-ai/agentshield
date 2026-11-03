@@ -47,8 +47,8 @@ func TestDeriveSpanKinds(t *testing.T) {
 		{"pydantic tool", "running tool", otel(map[string]any{"gen_ai.tool.name": "lookup"}), nil, nil, OpExecuteTool, "", "lookup", "", ""},
 		{"weft sdk agent", "weft:///e/p/op/support_bot:abc", map[string]any{"weft.span_kind": "agent"}, nil, nil, OpInvokeAgent, "support_bot", "", "", ""},
 		{"weft sdk nested attr", "my_tool", map[string]any{"weft": map[string]any{"span_kind": "tool"}}, nil, nil, OpExecuteTool, "", "my_tool", "", ""},
-		{"weave client kind", "lookup", map[string]any{"weave": map[string]any{"kind": "tool"}}, nil, nil, OpExecuteTool, "", "lookup", "", ""},
-		{"weave client llm", "my_llm", map[string]any{"weave": map[string]any{"kind": "llm"}}, nil, nil, OpChat, "", "", "", ""},
+		{"nested span kind", "lookup", map[string]any{"weft": map[string]any{"span_kind": "tool"}}, nil, nil, OpExecuteTool, "", "lookup", "", ""},
+		{"nested span kind llm", "my_llm", map[string]any{"weft": map[string]any{"span_kind": "llm"}}, nil, nil, OpChat, "", "", "", ""},
 		{"sdk openai", "openai.chat.completions.create", map[string]any{}, map[string]any{"model": "gpt-4o"}, nil, OpChat, "", "", "gpt-4o", "openai"},
 		{"sdk llm by usage", "my_llm", map[string]any{}, map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}},
 			map[string]any{"usage": map[string]any{"m": map[string]any{"prompt_tokens": 1}}}, OpChat, "", "", "", ""},
@@ -69,8 +69,8 @@ func TestDeriveSpanKinds(t *testing.T) {
 	if d := DeriveSpan("x", "", nil, &turn, "id1", map[string]any{}, map[string]any{}, nil); !d.IsTurn {
 		t.Fatal("turn_id == id is a turn")
 	}
-	if d := DeriveSpan("x", "", nil, nil, "id1", otel(map[string]any{"wandb.is_turn": true}), map[string]any{}, nil); !d.IsTurn {
-		t.Fatal("wandb.is_turn is a turn")
+	if d := DeriveSpan("x", "", nil, nil, "id1", otel(map[string]any{"weft.is_turn": true}), map[string]any{}, nil); !d.IsTurn {
+		t.Fatal("weft.is_turn is a turn")
 	}
 }
 

@@ -23,7 +23,7 @@ export function addUsage(call: Call | null | undefined, model: string | null | u
   }
 }
 
-// Prompt caching, the way Weave prices it (docs/weft/API.md "Cached tokens"): prompt_tokens
+// Prompt caching, the way the server prices it (docs/weft/API.md "Cached tokens"): prompt_tokens
 // is the gross prompt count; cache_read_input_tokens / cache_creation_input_tokens are parts of it.
 
 const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0);

@@ -16,9 +16,8 @@ import (
 )
 
 // Custom runtimes: PUT /v2/{entity}/{project}/runtimes/{runtime_name}
-// registers an endpoint (Weave: an OpenAI-compatible base URL with model IDs;
-// Weft also accepts kind "predict" for an HTTP endpoint that serves a model's
-// predict). The runtime is stored as a Provider object named after the
+// registers an endpoint (an OpenAI-compatible base URL with model IDs, or
+// kind "predict" for an HTTP endpoint that serves a model's predict). The runtime is stored as a Provider object named after the
 // runtime plus one ProviderModel per runtime ID, so "<runtime>/<id>" works in
 // the playground, /completions/create, LLM judges and LLMStructuredCompletionModel,
 // and a Model with runtime=<name> can be evaluated by /evaluate_model.

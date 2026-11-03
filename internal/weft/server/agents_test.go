@@ -141,7 +141,7 @@ func seedAgentData(t *testing.T, e *testEnv, base time.Time) {
 	}
 	var all []testSpan
 	all = append(append(append(append(all, turn1...), turn2...), vercel...), openinference...)
-	// The first batch goes to Weave's agents OTLP path.
+	// The first batch goes to the agents OTLP alias.
 	if code, out := e.raw("/agents/otel/v1/traces", otlpBody(base, all[:4]), map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("agents otel ingest: %d %s", code, out)
 	}
@@ -434,8 +434,8 @@ func TestAgentConversationFeedbackMarkers(t *testing.T) {
 	e := newEnv(t)
 	seedAgentData(t, e, time.Now().Add(-time.Hour))
 	ref := "weft:///" + pid + "/call/" + hexID("a1", 16)
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.reaction.1", "payload": map[string]any{"emoji": "👍"}})
-	e.post("/feedback/create", map[string]any{"project_id": pid, "weave_ref": ref, "feedback_type": "wandb.runnable.helpful", "payload": map[string]any{"output": 0.8}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
+	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.helpful", "payload": map[string]any{"output": 0.8}})
 	cs := e.post("/agents/conversations/spans", map[string]any{"project_id": pid, "conversation_ids": []any{"conv-1"}})
 	fb := cs["conversations"].([]any)[0].(map[string]any)["spans_feedback"].([]any)
 	if len(fb) != 2 {
@@ -446,8 +446,8 @@ func TestAgentConversationFeedbackMarkers(t *testing.T) {
 		m := f.(map[string]any)
 		types[m["feedback_type"].(string)] = m
 	}
-	if types["wandb.agent_user_feedback"]["tags"].([]any)[0] != "👍" || types["wandb.agent_monitor"]["ratings"].([]any)[0].(map[string]any)["value"].(float64) != 0.8 ||
-		types["wandb.agent_monitor"]["trace_id"] != hexID("t1", 32) {
+	if types["weft.user_feedback"]["tags"].([]any)[0] != "👍" || types["weft.signal"]["ratings"].([]any)[0].(map[string]any)["value"].(float64) != 0.8 ||
+		types["weft.signal"]["trace_id"] != hexID("t1", 32) {
 		t.Fatalf("feedback markers = %v", fb)
 	}
 	chat := e.post("/agents/conversations/chat", map[string]any{"project_id": pid, "conversation_id": "conv-1", "include_feedback": true})
@@ -516,12 +516,12 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 		return map[string]any{"mode": "end", "req": map[string]any{"end": en}}
 	}
 	e.post("/call/upsert_batch", map[string]any{"batch": []any{
-		start("t1-root", "", "support_bot", 0, map[string]any{"weft": map[string]any{"span_kind": "agent", "color": "purple"}, "weave": map[string]any{"kind": "agent"}, "gen_ai.agent.version": "1.2"}, map[string]any{"question": "Reset my password"}),
+		start("t1-root", "", "support_bot", 0, map[string]any{"weft": map[string]any{"span_kind": "agent", "color": "purple"}, "gen_ai.agent.version": "1.2"}, map[string]any{"question": "Reset my password"}),
 		start("t1-llm", "t1-root", "openai.chat.completions.create", 10, map[string]any{},
 			map[string]any{"model": "gpt-4o-mini", "messages": []any{map[string]any{"role": "user", "content": "Reset my password"}}}),
 		end("t1-llm", 300, map[string]any{"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "Use the reset link."}}}},
 			map[string]any{"gpt-4o-mini": map[string]any{"prompt_tokens": 20, "completion_tokens": 5, "requests": 1}}),
-		start("t1-tool", "t1-root", "lookup_user", 310, map[string]any{"weft": map[string]any{"span_kind": "tool"}, "weave": map[string]any{"kind": "tool"}}, map[string]any{"email": "a@b.c"}),
+		start("t1-tool", "t1-root", "lookup_user", 310, map[string]any{"weft": map[string]any{"span_kind": "tool"}}, map[string]any{"email": "a@b.c"}),
 		end("t1-tool", 320, map[string]any{"found": true}, nil),
 		end("t1-root", 400, "Use the reset link.", nil),
 	}})
@@ -556,9 +556,8 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 }
 
 // Spans emitted inside an op carry a link to it (weft.parent_call.id /
-// .trace_id from the Weft SDKs' TypeSafe integration, or weave.parent_call.*
-// stamped by Weave's OpLinkSpanProcessor); agent spans expose it as parent_call_id /
-// parent_call_trace_id, the columns Weave's server promotes it to.
+// .trace_id, as the Weft SDKs' TypeSafe integration stamps them); agent
+// spans expose it as parent_call_id / parent_call_trace_id.
 func TestAgentSpansParentCallLink(t *testing.T) {
 	e := newEnv(t)
 	base := time.Now().Add(-time.Minute)
@@ -566,23 +565,17 @@ func TestAgentSpansParentCallLink(t *testing.T) {
 	body := otlpBody(base, []testSpan{
 		{trace: tr, id: hexID("t1", 16), name: "invoke_agent typesafe SDK", durMS: 50, attrs: map[string]any{
 			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "typesafe SDK",
-			"weave.parent_call.trace_id": "op-trace-1", "weave.parent_call.id": "op-call-1"}},
+			"weft.parent_call.trace_id": "op-trace-1", "weft.parent_call.id": "op-call-1"}},
 		{trace: tr, id: hexID("c1", 16), parent: hexID("t1", 16), name: "chat jev-latest", startMS: 5, durMS: 40, attrs: map[string]any{
 			"gen_ai.operation.name": "chat", "gen_ai.provider.name": "typesafe", "gen_ai.request.model": "jev-latest",
-			"weave.parent_call.trace_id": "op-trace-1", "weave.parent_call.id": "op-call-1"}},
+			"weft.parent_call.trace_id": "op-trace-1", "weft.parent_call.id": "op-call-1"}},
 		{trace: hexID("other", 32), id: hexID("t2", 16), name: "invoke_agent other", durMS: 10, attrs: map[string]any{
 			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "other"}},
 	})
 	if code, out := e.raw("/otel/v1/traces", body, map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("otlp -> %d %s", code, out)
 	}
-	// An SDK-recorded span (nested attributes).
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "sdk-llm", "trace_id": "sdk-trace",
-		"op_name": "chat", "started_at": now, "inputs": map[string]any{},
-		"attributes": map[string]any{"gen_ai": map[string]any{"operation": map[string]any{"name": "chat"}, "provider": map[string]any{"name": "typesafe"}},
-			"weave": map[string]any{"kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-2", "id": "op-call-2"}}}}})
-	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "sdk-llm", "ended_at": now, "output": nil, "summary": map[string]any{}}})
 
 	query := func(field, v string) []any {
 		res := e.post("/agents/spans/query", map[string]any{"project_id": pid,
@@ -599,11 +592,7 @@ func TestAgentSpansParentCallLink(t *testing.T) {
 			t.Fatalf("span = %v", m)
 		}
 	}
-	if s := query("weave.parent_call.id", "op-call-2"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm" ||
-		s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-2" {
-		t.Fatalf("SDK span link = %v", s)
-	}
-	// Weft's own name (DESIGN.md §4), as the Weft SDKs send it.
+	// An SDK-recorded span (nested attributes), as the Weft SDKs send it.
 	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "sdk-llm-weft", "trace_id": "sdk-trace-3",
 		"op_name": "chat", "started_at": now, "inputs": map[string]any{},
 		"attributes": map[string]any{"weft": map[string]any{"span_kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-3", "id": "op-call-3"}}}}})

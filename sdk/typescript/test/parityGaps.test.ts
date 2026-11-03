@@ -1,6 +1,6 @@
 /**
  * Bedrock Agents, OpenAI Realtime, NER PII redaction, registry linking, call
- * records, W&B run linkage and the retry/queue/timeout/log-level environment
+ * records, run linkage and the retry/queue/timeout/log-level environment
  * variables, against fakes and the in-process fake Weft server.
  */
 import { createServer } from 'node:http';
@@ -290,21 +290,21 @@ describe('SDK extras', () => {
     }));
     const p1 = new weft.StringPrompt({ name: 'support', content: 'Answer {q} briefly.' });
     await weft.publish(p1);
-    const r = await weft.linkPromptToRegistry(p1, { targetPath: 'wandb-registry-prompts/support', aliases: ['production'] });
-    expect(r).toMatchObject({ versionIndex: 0, targetPath: 'ts-entity/wandb-registry-prompts/support' });
+    const r = await weft.linkPromptToRegistry(p1, { targetPath: 'prompts/support', aliases: ['production'] });
+    expect(r).toMatchObject({ versionIndex: 0, targetPath: 'ts-entity/prompts/support' });
     const req = fake.requests.find((q) => q.path === '/link_to_registry')!.body;
-    expect(req.target).toEqual({ portfolio_name: 'support', entity_name: 'ts-entity', project_name: 'wandb-registry-prompts' });
+    expect(req.target).toEqual({ portfolio_name: 'support', entity_name: 'ts-entity', project_name: 'prompts' });
     expect(req.ref).toBe(r.ref);
     const ds = new weft.Dataset({ name: 'golden', rows: [{ q: '1+1' }] });
     expect((await weft.linkToRegistry(ds, { targetPath: 'other/datasets/golden' })).versionIndex).toBe(0);
     const p2 = new weft.StringPrompt({ name: 'support', content: 'Answer {q} in one word.' });
     await weft.publish(p2);
-    expect((await weft.linkToRegistry('support:latest', { targetPath: 'wandb-registry-prompts/support', aliases: ['production'] })).versionIndex).toBe(1);
-    const [col] = await client.queryRegistry('wandb-registry-prompts', { collection: 'support' });
+    expect((await weft.linkToRegistry('support:latest', { targetPath: 'prompts/support', aliases: ['production'] })).versionIndex).toBe(1);
+    const [col] = await client.queryRegistry('prompts', { collection: 'support' });
     expect(col.versions.map((v) => v.version_index)).toEqual([1, 0]);
-    const prod = await client.getFromRegistry('wandb-registry-prompts/support', 'production');
+    const prod = await client.getFromRegistry('prompts/support', 'production');
     expect(prod.format({ q: 'x' })).toBe('Answer x in one word.');
-    expect((await client.getFromRegistry('wandb-registry-prompts/support', 'v0')).format({ q: 'x' })).toBe('Answer x briefly.');
+    expect((await client.getFromRegistry('prompts/support', 'v0')).format({ q: 'x' })).toBe('Answer x briefly.');
     await expect(weft.linkToRegistry(p1, { targetPath: 'nope' })).rejects.toThrow(/targetPath/);
   });
 
