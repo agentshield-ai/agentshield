@@ -14,9 +14,10 @@ span of provider ``typesafe``:
   ``invoke_agent`` turn named ``typesafe SDK``, the root of its own trace,
   also inside an ``@weft.op`` (the integration creates no op call of its
   own). When an op is running, both spans are linked to it by the
-  ``weave.parent_call.trace_id`` and ``weave.parent_call.id`` attributes
-  (the Weave-compatible link keys; the server exposes them as the agent span
-  fields ``parent_call_trace_id`` / ``parent_call_id``). The span is not made
+  ``weft.parent_call.trace_id`` and ``weft.parent_call.id`` attributes
+  (DESIGN.md §4; the server exposes them, like Weave's
+  ``weave.parent_call.*``, as the agent span fields ``parent_call_trace_id``
+  / ``parent_call_id``). The span is not made
   the current call, so nothing nests under it.
 * errors: ``error.type`` and ``http.response.status_code``, with the
   exception recorded as its type only: TypeSafe's API errors carry the
@@ -223,9 +224,16 @@ def _link_to_running_op() -> Dict[str, Any]:
         if getattr(call, "_conversation_span", False):
             continue
         if call.id and call.trace_id:
-            return {"weave": {"parent_call": {"trace_id": call.trace_id, "id": call.id}}}
+            return {"weft": {"parent_call": {"trace_id": call.trace_id, "id": call.id}}}
         break
     return {}
+
+
+def _with_link(attrs: Dict[str, Any], link: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(attrs)
+    if link:
+        out["weft"] = {**(out.get("weft") or {}), **link["weft"]}
+    return out
 
 
 def _integration_attrs() -> Dict[str, Any]:
@@ -287,13 +295,13 @@ class _SystemOneSpan:
             else:
                 # No running turn: a turn of our own, a new trace even inside an op.
                 turn = Turn(agent_name=OWN_TURN_AGENT)
-                turn.set_attributes({**_integration_attrs(), **link})
+                turn.set_attributes(_with_link(_integration_attrs(), link))
                 turn.start(set_current=False)
                 owns_turn = True
             llm = turn.start_llm(model=model, provider_name=PROVIDER)
             if message is not None:
                 llm.input_messages = [message]
-            attrs = {**_integration_attrs(), **link}
+            attrs = _with_link(_integration_attrs(), link)
             if questions_json is not None:
                 attrs["typesafe"] = {"questions": questions_json}
             llm.set_attributes(attrs)

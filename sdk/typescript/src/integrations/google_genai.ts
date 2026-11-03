@@ -3,13 +3,19 @@ import { addGeminiUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
 import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
 
-function textOf(cand: any): string {
-  return (cand?.content?.parts ?? []).filter((p: any) => p && !p.thought).map((p: any) => p.text ?? '').join('');
+function textOf(cand: any, thought = false): string {
+  return (cand?.content?.parts ?? []).filter((p: any) => p && !!p.thought === thought).map((p: any) => p.text ?? '').join('');
 }
 
+/**
+ * Rebuilds a response from streamed chunks. Thought parts (`thought: true`,
+ * the model's reasoning) are joined into one thought part per candidate.
+ */
 export class GenerateContentAccumulator implements Accumulator {
   private last: any = {};
   private texts = new Map<number, string>();
+  private thoughts = new Map<number, string>();
+  private signatures = new Map<number, unknown>();
   private usage: any = undefined;
 
   add(c: any): void {
@@ -19,13 +25,20 @@ export class GenerateContentAccumulator implements Accumulator {
     (c.candidates ?? []).forEach((cand: any, i: number) => {
       const idx = cand.index ?? i;
       this.texts.set(idx, (this.texts.get(idx) ?? '') + textOf(cand));
+      const th = textOf(cand, true);
+      if (th) this.thoughts.set(idx, (this.thoughts.get(idx) ?? '') + th);
+      for (const p of cand?.content?.parts ?? []) if (p?.thought && (p.thoughtSignature ?? p.thought_signature)) this.signatures.set(idx, p.thoughtSignature ?? p.thought_signature);
     });
   }
 
   result(): any {
-    const candidates = [...this.texts.keys()].sort((a, b) => a - b).map((idx) => {
+    const idxs = [...new Set([...this.texts.keys(), ...this.thoughts.keys()])].sort((a, b) => a - b);
+    const candidates = idxs.map((idx) => {
       const base = (this.last.candidates ?? []).find((c: any) => (c.index ?? 0) === idx) ?? {};
-      return { ...base, content: { role: 'model', parts: [{ text: this.texts.get(idx) }] } };
+      const parts: any[] = [];
+      if (this.thoughts.get(idx)) parts.push({ text: this.thoughts.get(idx), thought: true, ...(this.signatures.has(idx) ? { thoughtSignature: this.signatures.get(idx) } : {}) });
+      if (this.texts.get(idx)) parts.push({ text: this.texts.get(idx) });
+      return { ...base, content: { role: 'model', parts } };
     });
     return { ...this.last, candidates, ...(this.usage ? { usageMetadata: this.usage } : {}), text: this.texts.get(0) ?? '' };
   }

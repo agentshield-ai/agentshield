@@ -96,7 +96,11 @@ function outputBlock(p) {
     case 'message':
       return { type: 'text', text: textOf(p.content) };
     case 'reasoning': {
-      const t = (p.summary ?? []).map((s) => s?.text ?? '').filter(Boolean).join('\n') || textOf(p.content);
+      // A Responses reasoning item: its summary parts are reasoning summaries
+      // (kind=summary on the server), raw reasoning text is thinking.
+      const summary = (p.summary ?? []).map((s) => s?.text ?? '').filter(Boolean);
+      if (summary.length) return { type: 'reasoning', summary: summary.map((text) => ({ type: 'summary_text', text })) };
+      const t = textOf(p.content);
       return t ? { type: 'thinking', thinking: t } : null;
     }
     case 'function_call':

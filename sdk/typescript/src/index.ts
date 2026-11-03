@@ -20,7 +20,8 @@ export { logger, setLogLevel, getLogLevel, parseLogLevel, type LogLevel } from '
 export { getClient, requireClient } from './global.js';
 export { op, isOp, type Op, type OpOptions } from './op.js';
 export { Call, CallFeedback, type CallData, type ApplyScorerResult } from './call.js';
-export { attributes, withThread, getCurrentCall, withTracingDisabled } from './context.js';
+export { attributes, withThread, getCurrentCall, withTracingDisabled, withTeam, getCurrentTeam, type TeamInfo } from './context.js';
+export { scrubReasoning, hasReasoning, reasoningStep, normReasoningKind, reasoningDigest, type ReasoningKind, type ReasoningStep } from './reasoning.js';
 export { Content, Image, Audio, Video, PDF, Html, Markdown } from './content.js';
 export { Ref, isRefUri } from './refs.js';
 export { WeftObject, Dataset, Model, Prompt, StringPrompt, MessagesPrompt, LLMStructuredCompletionModel, safeFormat, type PromptMessage } from './objects.js';
@@ -87,6 +88,13 @@ export {
   logTurn,
   logConversation,
   withAgentNameOverride,
+  Handoff,
+  handoff,
+  startHandoff,
+  reasoning,
+  currentAgentName,
+  type HandoffOptions,
+  type TeamLike,
   type MessagePart,
   type Usage,
   type LogResult,

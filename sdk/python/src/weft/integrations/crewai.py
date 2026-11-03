@@ -1,10 +1,17 @@
 """CrewAI integration.
 
-Traced: ``Crew.kickoff``/``kickoff_async``/``kickoff_for_each`` (agent),
-``Agent.execute_task`` (agent, display name = the agent's role),
+Traced: ``Crew.kickoff``/``kickoff_async``/``kickoff_for_each`` (workflow;
+a crew with its own ``name`` is the team, ``weft.team.id``, and each crew
+instance is a session, ``gen_ai.conversation.id`` = ``crew.id``),
+``Agent.execute_task`` (agent, ``gen_ai.agent.name`` = the agent's role),
 ``Task.execute_sync``/``execute_async`` (chain, display name = the task's
 name or description), ``LLM.call`` (llm), tool runs (``BaseTool.run`` and
 subclasses) and ``Flow.kickoff``/``kickoff_async`` (workflow).
+
+Delegation (``allow_delegation=True``) runs the ``Delegate work to coworker``
+and ``Ask question to coworker`` tools, recorded with ``gen_ai.tool.name`` and
+their ``coworker`` argument, which the server reads as a hand-off to that
+agent (DESIGN.md §2.1).
 
 ``LLM.call`` goes through LiteLLM (or a provider SDK), which the matching
 integration traces with usage nested under it; the ``LLM.call`` span itself
@@ -15,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ._methods import Method, patch_methods
+from ._methods import Method, _merge_attrs, agent_attrs, patch_methods, self_arg, session_attrs, team_attrs, tool_attrs
 
 INTEGRATION = "crewai"
 
@@ -78,17 +85,38 @@ def _crew_output(res: Any) -> Any:
     return out
 
 
+def _crew_attrs(args: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    crew = self_arg(args)
+    out: Dict[str, Any] = {}
+    name = getattr(crew, "name", None)
+    if isinstance(name, str) and name and name != "crew":  # "crew" is CrewAI's default name
+        out = _merge_attrs(out, team_attrs(name, name))
+    cid = getattr(crew, "id", None)
+    if cid is not None:
+        out = _merge_attrs(out, session_attrs(str(cid)))
+    return out
+
+
+def _agent_attrs(args: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    role = getattr(self_arg(args), "role", None)
+    return agent_attrs(role.strip() if isinstance(role, str) else None)
+
+
+def _tool_attrs(args: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    return tool_attrs(getattr(self_arg(args), "name", None))
+
+
 def methods() -> list:
     return [
-        Method("Crew.kickoff", "crewai.Crew.kickoff", "agent", output=_crew_output),
-        Method("Crew.kickoff_async", "crewai.Crew.kickoff_async", "agent", output=_crew_output),
-        Method("Crew.kickoff_for_each", "crewai.Crew.kickoff_for_each", "agent"),
-        Method("Crew.kickoff_for_each_async", "crewai.Crew.kickoff_for_each_async", "agent"),
-        Method("Agent.execute_task", "crewai.Agent.execute_task", "agent", display=_agent_display),
+        Method("Crew.kickoff", "crewai.Crew.kickoff", "workflow", output=_crew_output, attrs=_crew_attrs),
+        Method("Crew.kickoff_async", "crewai.Crew.kickoff_async", "workflow", output=_crew_output, attrs=_crew_attrs),
+        Method("Crew.kickoff_for_each", "crewai.Crew.kickoff_for_each", "workflow", attrs=_crew_attrs),
+        Method("Crew.kickoff_for_each_async", "crewai.Crew.kickoff_for_each_async", "workflow", attrs=_crew_attrs),
+        Method("Agent.execute_task", "crewai.Agent.execute_task", "agent", display=_agent_display, attrs=_agent_attrs),
         Method("Task.execute_sync", "crewai.Task.execute_sync", "chain", display=_task_display, output=_task_output),
         Method("Task.execute_async", "crewai.Task.execute_async", "chain", display=_task_display),
         Method("LLM.call", "crewai.LLM.call", "llm", inputs=_llm_inputs),
-        Method("BaseTool.run", "crewai.Tool.run", "tool", module="crewai.tools", display=_tool_display, subclasses=True),
+        Method("BaseTool.run", "crewai.Tool.run", "tool", module="crewai.tools", display=_tool_display, subclasses=True, attrs=_tool_attrs),
         Method("Flow.kickoff", "crewai.Flow.kickoff", "workflow", module="crewai.flow.flow"),
         Method("Flow.kickoff_async", "crewai.Flow.kickoff_async", "workflow", module="crewai.flow.flow"),
     ]

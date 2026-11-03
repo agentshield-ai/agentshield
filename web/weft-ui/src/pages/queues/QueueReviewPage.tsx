@@ -119,7 +119,7 @@ export function QueueReviewPage() {
   return (
     <div className="page">
       <div className="breadcrumbs">
-        <Link to={queuesUrl(projectId)}>Annotation queues</Link>
+        <Link to={queuesUrl(projectId)}>Review queues</Link>
         <span>/</span>
         <span>{q.name}</span>
       </div>

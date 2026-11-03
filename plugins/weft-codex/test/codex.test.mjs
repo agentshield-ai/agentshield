@@ -56,7 +56,8 @@ test('a Stop hook sends one conversation with turn, LLM and tool calls', async (
   assert.equal(llms.length, 4);
   assert.deepEqual(llms[0].summary.usage['gpt-5-codex'], { requests: 1, prompt_tokens: 5000, completion_tokens: 120, total_tokens: 5120, cache_read_input_tokens: 4096, reasoning_tokens: 64 });
   const blocks = llms[0].output.choices[0].message.content;
-  assert.deepEqual(blocks.map((b) => b.type), ['thinking', 'tool_use']);
+  assert.deepEqual(blocks.map((b) => b.type), ['reasoning', 'tool_use']);
+  assert.deepEqual(blocks[0].summary, [{ type: 'summary_text', text: '**Running the tests** to see the failure' }], 'a reasoning summary (kind=summary)');
   assert.equal(blocks[1].name, 'shell');
   assert.equal(llms[0].started_at, '2026-11-02T11:00:01.010Z');
   assert.equal(llms[0].ended_at, '2026-11-02T11:00:03.200Z');

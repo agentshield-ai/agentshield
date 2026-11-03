@@ -45,6 +45,15 @@ class Call:
     # True for calls recorded by weft.conversation spans (Turn, LLM, Tool,
     # SubAgent), which Weave records as OTel spans rather than calls.
     _conversation_span: bool = field(default=False, repr=False, compare=False)
+    # The conversation span (Turn, LLM, Tool, SubAgent, Handoff) recording this call.
+    _weft_span: Any = field(default=None, repr=False, compare=False)
+    # Attributes changed after the start was sent: the start is sent again
+    # (an upsert) before the end.
+    _resend_start: bool = field(default=False, repr=False, compare=False)
+    # weft.reasoning() steps recorded while the call ran.
+    _weft_reasoning: Optional[List[Dict[str, Any]]] = field(default=None, repr=False, compare=False)
+    # An LLM call was recorded under this one (its reasoning is not repeated here).
+    _llm_descendant: bool = field(default=False, repr=False, compare=False)
 
     # ---- convenience -----------------------------------------------------
     _DICT_FIELDS = (

@@ -67,7 +67,7 @@ def test_framework_spans_kinds_and_usage(live, monkeypatch):
     assert Crew().kickoff(inputs={"topic": "weft"}) == "ok"
     live.flush()
     [crew] = _calls(live, "crewai.Crew.kickoff")
-    assert crew.attributes["weft"]["span_kind"] == "agent" and crew.attributes["weft"]["integration"] == "crewai"
+    assert crew.attributes["weft"]["span_kind"] == "workflow" and crew.attributes["weft"]["integration"] == "crewai"
     assert crew.attributes["team"] == "it"
     [agent] = _calls(live, "crewai.Agent.execute_task")
     assert agent.parent_id == crew.id and agent.display_name == "Agent: Researcher"

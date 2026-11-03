@@ -61,6 +61,14 @@ export class Call {
   /** @internal */ fetched = false;
   /** @internal True for calls recorded by conversation spans (turns, LLM, tool, subagent), which Weave records as OTel spans. */
   conversationSpan = false;
+  /** @internal The conversation span (Turn, LLM, Tool, SubAgent, Handoff) recording this call. */
+  span: unknown = null;
+  /** @internal Attributes changed after the start was sent: the start is sent again before the end. */
+  resendStart = false;
+  /** @internal `reasoning()` steps recorded while the call ran. */
+  reasoningSteps: Array<Record<string, unknown>> | null = null;
+  /** @internal An LLM call was recorded under this one (its reasoning is not repeated here). */
+  llmDescendant = false;
 
   constructor(
     data: CallData,

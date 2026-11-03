@@ -136,7 +136,7 @@ def test_typesafe_inside_op_is_a_linked_trace_live(live, monkeypatch):
     [llm] = live.get_calls(filter={"op_names": ["chat"]}).to_list()
     [turn] = live.get_calls(filter={"op_names": ["invoke_agent"]}).to_list()
     assert op.trace_id != llm.trace_id == turn.trace_id and turn.parent_id is None and llm.parent_id == turn.id
-    # The server exposes Weave's link as the agent span fields parent_call_id / parent_call_trace_id.
+    # The server exposes the weft.parent_call.* link as the agent span fields parent_call_id / parent_call_trace_id.
     res = live._http.post("/agents/spans/query", {
         "project_id": live.project_id,
         "query": {"$expr": {"$eq": [{"$getField": "parent_call_id"}, {"$literal": op.id}]}},

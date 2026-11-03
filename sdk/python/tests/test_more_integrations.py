@@ -421,9 +421,11 @@ def test_openai_agents_processor(client, fake, monkeypatch):
     p.on_trace_end(trace)
     client.flush()
     [root] = fake.calls_by_op("openai_agents.trace")
-    assert root["display_name"] == "Support flow" and root["attributes"]["weft"]["span_kind"] == "agent"
+    assert root["display_name"] == "Support flow" and root["attributes"]["weft"]["span_kind"] == "workflow"
+    assert root["attributes"]["gen_ai"]["conversation"]["id"] == "g"  # the group id is the session
     [a] = fake.calls_by_op("agent.Triage")
-    assert a["parent_id"] == root["id"]
+    assert a["parent_id"] == root["id"] and a["attributes"]["gen_ai"]["agent"]["name"] == "Triage"
+    assert a["attributes"]["gen_ai"]["operation"]["name"] == "invoke_agent"
     [g] = fake.calls_by_op("openai_agents.generation")
     assert g["parent_id"] == a["id"] and g["summary"]["usage"]["gpt-4o"]["total_tokens"] == 25
     assert g["attributes"]["weft"]["span_kind"] == "llm"

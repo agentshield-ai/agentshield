@@ -73,7 +73,7 @@ export function ThreadsPage() {
                 <tr>
                   <th>Thread</th>
                   {th('turn_count', 'Turns', true)}
-                  <th className="num">Calls</th>
+                  <th className="num">Spans</th>
                   {th('start_time', 'Started')}
                   {th('last_updated', 'Last updated')}
                   <th className="num">p50 turn</th>

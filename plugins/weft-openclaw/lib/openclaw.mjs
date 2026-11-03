@@ -8,8 +8,14 @@
 //   invoke_agent <agent>        one per agent run (a turn); conversation = the OpenClaw session id
 //   ├─ chat <model>             model calls (model_call_started/ended), with the llm_input /
 //   │                           llm_output content and usage when conversation access is allowed
-//   ├─ execute_tool <tool>      before_tool_call / after_tool_call
+//   ├─ execute_tool <tool>      before_tool_call / after_tool_call (gen_ai.tool.call.id = toolCallId)
 //   └─ invoke_agent <subagent>  subagent_spawned / subagent_ended; the child session's runs nest here
+//
+// Correlation with AgentShield (docs/weft/DESIGN.md §5.3): a run's conversation
+// is its own OpenClaw session id (ctx.sessionId, else the session key), the
+// value the AgentShield plugin sends as session_id, so a sub-agent's child
+// session is a Weft session of its own (nested in the parent's trace), and
+// each tool span carries the session id of the tool call's own context.
 
 import { callItems, chatOutput, iso, newId, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
 
@@ -40,6 +46,14 @@ export function resolveConfig(pluginConfig = {}, env = process.env) {
   };
   if (!cfg.project) cfg.enabled = false;
   return cfg;
+}
+
+/**
+ * The session id the AgentShield OpenClaw plugin sends for a hook context
+ * (plugins/openclaw/src/event-builder.ts sessionIdFor): the session id, else the session key.
+ */
+export function harnessSessionId(ctx = {}) {
+  return ctx.sessionId ?? ctx.sessionKey ?? undefined;
 }
 
 function lastAssistantText(messages) {
@@ -116,8 +130,9 @@ export class WeftOpenClawTracer {
       id,
       traceId: sub ? sub.traceId : id,
       parentId: sub ? sub.id : null,
-      conversationId: sub ? sub.conversationId : session.id,
-      turnId: sub ? sub.turnId : id,
+      // The harness session (a sub-agent's child session included): what AgentShield sends as session_id.
+      conversationId: session.id,
+      turnId: id,
       session,
       agentId: ctx.agentId ?? session.agentId,
       startedAt: this.now(),
@@ -187,7 +202,13 @@ export class WeftOpenClawTracer {
   onBeforeToolCall(event = {}, ctx = {}) {
     const run = this.runFor(event, ctx);
     run.lastSeen = this.now();
-    run.tools.push({ callId: event.toolCallId ?? ctx.toolCallId, name: event.toolName ?? ctx.toolName ?? 'tool', params: event.params, startedAt: this.now() });
+    run.tools.push({
+      callId: event.toolCallId ?? ctx.toolCallId,
+      name: event.toolName ?? ctx.toolName ?? 'tool',
+      params: event.params,
+      startedAt: this.now(),
+      sessionId: harnessSessionId(ctx),
+    });
     return undefined; // never block or modify the call
   }
 
@@ -372,9 +393,12 @@ export class WeftOpenClawTracer {
 
     run.tools.forEach((t, i) => {
       const params = t.params && typeof t.params === 'object' && !Array.isArray(t.params) ? t.params : { input: t.params };
+      // the session id AgentShield sent for this tool call (normally the run's)
+      const sid = t.sessionId ?? run.conversationId;
       items.push(
         ...callItems(cfg, {
           ...base,
+          threadId: sid,
           id: stableId('openclaw', 'tool', run.id, t.callId ?? i),
           parentId: run.id,
           opName: `openclaw.tool.${t.name}`,
@@ -385,7 +409,7 @@ export class WeftOpenClawTracer {
           inputs: params,
           output: t.result ?? null,
           exception: t.error ? errText(t.error) : t.endedAt ? undefined : 'tool did not finish before the run ended',
-          genai: { ...conv, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.callId },
+          genai: { ...conv, 'gen_ai.conversation.id': sid, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.callId },
         }),
       );
     });

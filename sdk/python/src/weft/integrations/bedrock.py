@@ -5,6 +5,11 @@ Bedrock Agents (``invoke_agent``, ``invoke_inline_agent`` on
 
 Patches ``botocore.client.BaseClient._make_api_call`` so every bedrock-runtime
 client is traced, whenever it was created.
+
+Converse reasoning (``reasoningContent``: ``reasoningText`` or
+``redactedContent``, streamed or not) is recorded as ``thinking`` /
+``redacted_thinking`` content blocks of the output, the shape the server
+reads reasoning steps from; redacted content is kept as a digest only.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from typing import Any, Dict, Optional
 
 from .._context import pop_call, push_call
 from .._usage import add_usage, anthropic_usage, bedrock_usage
+from .._reasoning import bedrock_block, bedrock_content
 from ._common import LLMSpec, _tracing, finish_call, patch_attr, start_call
 
 OPS = {
@@ -103,6 +109,8 @@ class _StreamProxy:
         self._done = False
         self.text = ""
         self.events = 0
+        # Converse reasoning blocks by content block index: text, signature, redacted bytes
+        self.reasoning: Dict[int, Dict[str, Any]] = {}
         self.usage: Optional[Dict[str, int]] = None
         self.stop_reason: Optional[str] = None
 
@@ -110,7 +118,17 @@ class _StreamProxy:
         self.events += 1
         if self._converse:
             if "contentBlockDelta" in ev:
-                self.text += ((ev["contentBlockDelta"].get("delta") or {}).get("text") or "")
+                cbd = ev["contentBlockDelta"]
+                delta = cbd.get("delta") or {}
+                self.text += delta.get("text") or ""
+                rc = delta.get("reasoningContent")
+                if isinstance(rc, dict):
+                    r = self.reasoning.setdefault(int(cbd.get("contentBlockIndex") or 0), {"text": ""})
+                    r["text"] += rc.get("text") or ""
+                    if rc.get("signature"):
+                        r["signature"] = rc["signature"]
+                    if rc.get("redactedContent") is not None:
+                        r["redacted"] = rc["redactedContent"]
             if "messageStop" in ev:
                 self.stop_reason = ev["messageStop"].get("stopReason")
             if "metadata" in ev:
@@ -133,7 +151,16 @@ class _StreamProxy:
         self._done = True
         if self.usage is not None:
             _add(self._call, self._model, self.usage)
-        out = {"text": self.text, "stop_reason": self.stop_reason, "events": self.events}
+        out: Dict[str, Any] = {"text": self.text, "stop_reason": self.stop_reason, "events": self.events}
+        if self.reasoning:
+            blocks = []
+            for i in sorted(self.reasoning):
+                r = self.reasoning[i]
+                if r.get("redacted") is not None:
+                    blocks.append(bedrock_block({"reasoningContent": {"redactedContent": r["redacted"]}}))
+                else:
+                    blocks.append(bedrock_block({"reasoningContent": {"reasoningText": {"text": r["text"], "signature": r.get("signature")}}}))
+            out["content"] = blocks + ([{"type": "text", "text": self.text}] if self.text else [])
         finish_call(self._client, self._call, out, exc)
 
     def __iter__(self) -> Any:
@@ -224,6 +251,10 @@ def _wrap(orig: Any) -> Any:
 def _handle(client: Any, call: Any, op: str, model: str, res: Dict[str, Any]) -> Any:
     out = {k: v for k, v in res.items() if k != "ResponseMetadata"}
     if op == "Converse":
+        msg = (out.get("output") or {}).get("message") if isinstance(out.get("output"), dict) else None
+        if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            # reasoningContent blocks as thinking / redacted_thinking blocks, the shape the server reads
+            out = {**out, "output": {**out["output"], "message": {**msg, "content": bedrock_content(msg["content"])}}}
         n = bedrock_usage(res.get("usage") or {})
         if n is not None:
             add_usage(call, model, **n)

@@ -192,7 +192,7 @@ const EMPTY_TEXT: Record<ObjectKind, string> = {
   models: 'No models yet. Create an LLM completion model the server can run, or publish a Model subclass from the SDK.',
   prompts: 'No prompts yet. Create a chat or string prompt template with {placeholders}.',
   scorers: 'No scorers yet. Create an LLM judge or a rule-based scorer to grade outputs.',
-  ops: 'No ops yet. Decorate a function with @weft.op and call it to record its code and calls.',
+  ops: 'No functions yet. Decorate a function with @weft.op and call it to record its code and every run.',
   all: 'No objects yet. Objects you publish from the SDK or the UI appear here.',
 }
 

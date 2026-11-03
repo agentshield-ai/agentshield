@@ -1059,8 +1059,9 @@ reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens,
 input_cost_usd, output_cost_usd, total_cost_usd, cache_read_cost_usd,
 cache_creation_cost_usd, wb_user_id, wb_run_id, parent_call_id,
 parent_call_trace_id` (the op a span was emitted from when it started its own
-trace inside one: the `weave.parent_call.id` / `weave.parent_call.trace_id`
-attributes Weave's `OpLinkSpanProcessor` stamps, from SDK or OTLP spans; so
+trace inside one: the `weft.parent_call.id` / `weft.parent_call.trace_id`
+attributes the Weft SDKs stamp, or the `weave.parent_call.*` ones Weave's
+`OpLinkSpanProcessor` stamps, from SDK or OTLP spans; so
 "which agent spans did this call produce" is
 `{"$eq": [{"$getField": "parent_call_id"}, {"$literal": "<call id>"}]}`), the
 booleans `is_turn, is_error, is_invocation, is_agent, is_llm, is_tool`, and

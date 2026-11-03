@@ -178,6 +178,33 @@ does. Weave's lower-level client methods are there too:
 `WEFT_DEBUG_HTTP` / `WEFT_DISABLE_WAL_SENDER` equivalents of Weave's
 variables.
 
+**Agent teams.** Both SDKs record what the Sessions, Teams and hand-off
+views are built from ([DESIGN.md](DESIGN.md) §2):
+
+- **Sessions:** `gen_ai.conversation.id`, from a conversation's id or the
+  session the integrations know (OpenAI Agents `group_id`, LangGraph
+  `thread_id`, Claude Agent SDK session id, Google ADK `session_id`, Bedrock
+  Agents `sessionId`).
+- **Teams:** `weft.team("trip-planners", "Trip planners")` (TypeScript:
+  `weft.withTeam({ id, name }, fn)`) or `team=` on a conversation stamps
+  `weft.team.id` / `weft.team.name`.
+- **Hand-offs:** `weft.handoff(to_agent, input=..., kind="handoff"|"delegate")`
+  records `weft.handoff.*`; `weft.start_handoff(...)` (`startHandoff`) covers
+  the receiving agent's run. Nested runs of another agent are delegations,
+  and the integrations record the frameworks' own hand-offs (OpenAI Agents
+  hand-off spans and agents-as-tools, LangGraph agent nodes, CrewAI
+  delegation tools, Google ADK `transfer_to_agent`, AutoGen Swarm transfers,
+  Claude Agent SDK sub-agents, Pydantic AI agents called from tools).
+- **Reasoning:** thinking blocks, reasoning items and summaries, reasoning
+  content and thought parts are kept from Anthropic, OpenAI (Responses and
+  OpenAI-compatible chat), Gemini, Bedrock Converse and the Claude Agent SDK,
+  and `weft.reasoning(text, kind=...)` adds a step. Redacted reasoning is
+  stored as redacted, without its payload. `capture_reasoning` /
+  `captureReasoning` (`WEFT_CAPTURE_REASONING=false`) turns capture off.
+
+Examples: [`examples/weft/python/agent_team.py`](../../examples/weft/python/agent_team.py)
+and [`examples/weft/typescript/agent_team.ts`](../../examples/weft/typescript/agent_team.ts).
+
 **Coding agents.** Agent harness plugins trace Claude Code
 ([`plugins/weft-claude-code`](../../plugins/weft-claude-code)), Codex
 ([`plugins/weft-codex`](../../plugins/weft-codex)), OpenClaw
@@ -185,7 +212,11 @@ variables.
 ([`plugins/weft-pi`](../../plugins/weft-pi)) sessions as agent
 conversations: a turn per prompt, LLM calls with token usage, tool calls and
 sub-agents. They are configured with `WEFT_SERVER_URL`, `WEFT_API_KEY` and
-`WEFT_PROJECT`, never block the agent, and send in the background.
+`WEFT_PROJECT`, never block the agent, and send in the background. Each
+records the harness's session id as `gen_ai.conversation.id` and the
+harness's tool-use id as `gen_ai.tool.call.id`, the same values the
+AgentShield plugins send as `session_id` and `tool_call_id`, so AgentShield
+verdicts attach to the exact tool call ([DESIGN.md](DESIGN.md) §5.3).
 
 Both SDKs also support guardrails (`call.apply_scorer` / `call.applyScorer`
 score a finished call and attach the result as feedback), loading published

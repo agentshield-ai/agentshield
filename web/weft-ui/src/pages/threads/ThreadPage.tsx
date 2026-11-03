@@ -135,7 +135,7 @@ export function ThreadPage() {
             <span className="faint">Turns</span> {fmtNumber(t.turn_count)}
           </span>
           <span>
-            <span className="faint">Calls</span> {fmtNumber(t.call_count)}
+            <span className="faint">Spans</span> {fmtNumber(t.call_count)}
           </span>
           <span title={fmtDate(t.start_time)}>
             <span className="faint">Started</span> {fmtDate(t.start_time)}

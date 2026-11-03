@@ -237,7 +237,7 @@ def test_crewai(client, fake, monkeypatch):
     Flow().kickoff()
     client.flush()
     [crew] = by_op(fake, "crewai.Crew.kickoff")
-    assert kind(crew) == "agent" and crew["inputs"]["inputs"] == {"topic": "weft"} and crew["output"]["raw"] == "final answer"
+    assert kind(crew) == "workflow" and crew["inputs"]["inputs"] == {"topic": "weft"} and crew["output"]["raw"] == "final answer"
     assert crew["inputs"]["self"] == "Crew"
     [task] = by_op(fake, "crewai.Task.execute_sync")
     assert task["parent_id"] == crew["id"] and task["display_name"] == "Task: Find weft docs" and task["output"]["raw"] == "final answer"
@@ -519,12 +519,12 @@ MODEL = "claude-sonnet-4-5"
 
 def _conversation():
     return [
-        SystemMessage("init", {"tools": ["Bash", "Read", "Task"]}),
+        SystemMessage("init", {"type": "system", "subtype": "init", "session_id": "sess-1", "tools": ["Bash", "Read", "Task"]}),
         AssistantMessage([ThinkingBlock("list files first"), TextBlock("Let me look."), ToolUseBlock("t1", "Bash", {"command": "ls -la"})], MODEL),
         UserMessage([ToolResultBlock("t1", "README.md\nsrc", False)]),
         AssistantMessage([ToolUseBlock("t2", "Read", {"file_path": "/nope"})], MODEL),
         UserMessage([ToolResultBlock("t2", "File does not exist", True)]),
-        AssistantMessage([ToolUseBlock("t3", "Task", {"description": "summarise", "prompt": "summarise src"})], MODEL),
+        AssistantMessage([ToolUseBlock("t3", "Task", {"description": "summarise", "prompt": "summarise src", "subagent_type": "explorer"})], MODEL),
         AssistantMessage([TextBlock("src has one module")], MODEL, parent_tool_use_id="t3"),
         UserMessage([ToolResultBlock("t3", "summary: one module", False)]),
         AssistantMessage([TextBlock("There is a README and src.")], MODEL),
@@ -550,7 +550,8 @@ def fake_claude_sdk(monkeypatch):
             self._pending = prompt
 
         async def receive_response(self):
-            for m in _conversation()[-2:]:
+            conv = _conversation()
+            for m in [conv[0]] + conv[-2:]:
                 yield m
 
     async def query(*, prompt, options=None, transport=None):
@@ -576,6 +577,10 @@ def test_claude_agent_sdk_query(client, fake, fake_claude_sdk):
     assert kind(root) == "agent" and root["inputs"]["prompt"] == "What is in this repo?" and root["inputs"]["options"] == {"model": MODEL, "max_turns": 5}
     assert root["output"]["result"] == "There is a README and src." and root["output"]["total_cost_usd"] == 0.0123
     assert root["output"]["session_id"] == "sess-1" and root["display_name"] == "What is in this repo?"
+    # the Claude session is the Weft session (learned from the init message; the start is re-sent)
+    assert root["thread_id"] == "sess-1" and root["turn_id"] == root["id"]
+    assert root["attributes"]["gen_ai"]["conversation"]["id"] == "sess-1"
+    assert root["attributes"]["gen_ai"]["agent"]["name"] == "claude-agent-sdk"
     u = usage(root)[MODEL]
     assert u["prompt_tokens"] == 1300 and u["completion_tokens"] == 40 and u["cache_read_input_tokens"] == 1000
     llms = by_op(fake, "claude_agent_sdk.llm")
@@ -585,10 +590,12 @@ def test_claude_agent_sdk_query(client, fake, fake_claude_sdk):
     [bash] = by_op(fake, "claude_agent_sdk.tool.Bash")
     assert kind(bash) == "tool" and bash["inputs"] == {"command": "ls -la"} and bash["display_name"] == "Bash: ls -la"
     assert bash["output"]["content"] == "README.md\nsrc" and not bash.get("exception") and bash["parent_id"] == root["id"]
+    assert bash["attributes"]["gen_ai"]["tool"] == {"name": "Bash", "call": {"id": "t1"}} and bash["thread_id"] == "sess-1"
     [read] = by_op(fake, "claude_agent_sdk.tool.Read")
     assert read["exception"].startswith("RuntimeError: File does not exist")
     [task] = by_op(fake, "claude_agent_sdk.tool.Task")
-    assert kind(task) == "agent"
+    assert kind(task) == "agent" and task["attributes"]["gen_ai"]["agent"]["name"] == "explorer"
+    assert task["attributes"]["gen_ai"]["operation"]["name"] == "invoke_agent" and task["attributes"]["gen_ai"]["tool"]["call"]["id"] == "t3"
     sub = [c for c in llms if c["parent_id"] == task["id"]]
     assert len(sub) == 1 and sub[0]["output"]["content"][0]["text"] == "src has one module"
 
@@ -607,7 +614,8 @@ def test_claude_agent_sdk_client_turns(client, fake, fake_claude_sdk):
     client.flush()
     turns = by_op(fake, "claude_agent_sdk.turn")
     assert [t["inputs"]["prompt"] for t in turns] == ["first question", "second question"]
-    assert turns[0]["thread_id"] and turns[0]["thread_id"] == turns[1]["thread_id"]
+    assert turns[0]["thread_id"] == "sess-1" and turns[0]["thread_id"] == turns[1]["thread_id"]
+    assert all(t["attributes"]["gen_ai"]["conversation"]["id"] == "sess-1" for t in turns)
     assert turns[0]["turn_id"] == turns[0]["id"] and kind(turns[0]) == "agent"
     assert usage(turns[1])[MODEL]["requests"] == 1
     llm = [c for c in by_op(fake, "claude_agent_sdk.llm") if c["parent_id"] == turns[0]["id"]]
@@ -741,7 +749,7 @@ def test_autogen(client, fake, monkeypatch):
     asyncio.run(team.run(task="write a haiku"))
     client.flush()
     [t] = by_op(fake, "autogen.Team.run")
-    assert kind(t) == "agent" and t["inputs"]["task"] == "write a haiku"
+    assert kind(t) == "workflow" and t["inputs"]["task"] == "write a haiku"
     runs = by_op(fake, "autogen.Agent.run")
     assert [r["display_name"] for r in runs] == ["Agent: writer", "Agent: critic"] and runs[0]["parent_id"] == t["id"]
     creates = by_op(fake, "autogen.ChatCompletionClient.create")
@@ -1096,8 +1104,12 @@ def test_langgraph_nodes(client, fake, monkeypatch):
     t.on_chain_end({"messages": ["hi"]}, run_id=g)
     client.flush()
     [graph] = by_op(fake, "langgraph.graph")
-    assert kind(graph) == "agent"
+    assert kind(graph) == "workflow"
     [agent] = by_op(fake, "langgraph.node.agent")
+    # the node ran a model: it is an agent invocation named after the node; "tools" did not
+    assert agent["attributes"]["gen_ai"]["agent"]["name"] == "agent" and agent["attributes"]["gen_ai"]["operation"]["name"] == "invoke_agent"
+    assert agent["attributes"]["gen_ai"]["conversation"]["id"] == "t-1"  # LangGraph's thread_id is the session
+    assert "agent" not in (by_op(fake, "langgraph.node.tools")[0]["attributes"].get("gen_ai") or {})
     assert agent["parent_id"] == graph["id"] and agent["display_name"] == "agent"
     assert agent["attributes"]["langgraph"] == {"node": "agent", "step": 1, "triggers": ["start:agent"], "thread_id": "t-1"}
     [m] = by_op(fake, "langchain.ChatModel.ChatOpenAI")

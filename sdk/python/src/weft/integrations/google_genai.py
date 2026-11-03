@@ -1,5 +1,9 @@
 """Google Gen AI SDK (``google.genai``): ``models.generate_content`` and
-``generate_content_stream``, sync and async (``client.aio.models``)."""
+``generate_content_stream``, sync and async (``client.aio.models``).
+
+Thought parts (``thought: true``, with ``include_thoughts``) are the model's
+reasoning; streamed thoughts are joined into one part, and
+``thoughts_token_count`` is kept as ``reasoning_tokens``."""
 
 from __future__ import annotations
 
@@ -10,15 +14,20 @@ from .._usage import add_usage, gemini_usage
 from ._common import Accumulator, LLMSpec, make_wrapper, patch_attr
 
 
-def _text_of(cand: Dict[str, Any]) -> str:
+def _text_of(cand: Dict[str, Any], thought: bool = False) -> str:
     parts = ((cand or {}).get("content") or {}).get("parts") or []
-    return "".join(p.get("text") or "" for p in parts if isinstance(p, dict) and not p.get("thought"))
+    return "".join(p.get("text") or "" for p in parts if isinstance(p, dict) and bool(p.get("thought")) == thought)
 
 
 class GenerateContentAccumulator(Accumulator):
+    """Rebuilds a response from streamed chunks; thought parts (``thought: true``,
+    the model's reasoning) are joined into one thought part per candidate."""
+
     def __init__(self) -> None:
         self.last: Dict[str, Any] = {}
         self.texts: Dict[int, str] = {}
+        self.thoughts: Dict[int, str] = {}
+        self.signatures: Dict[int, Any] = {}
         self.other_parts: Dict[int, List[Any]] = {}
         self.usage: Optional[Dict[str, Any]] = None
 
@@ -31,19 +40,33 @@ class GenerateContentAccumulator(Accumulator):
         for i, cand in enumerate(c.get("candidates") or []):
             idx = cand.get("index", i) or i
             self.texts[idx] = self.texts.get(idx, "") + _text_of(cand)
+            th = _text_of(cand, thought=True)
+            if th:
+                self.thoughts[idx] = self.thoughts.get(idx, "") + th
             for p in ((cand.get("content") or {}).get("parts") or []):
-                if isinstance(p, dict) and not p.get("text"):
+                if not isinstance(p, dict):
+                    continue
+                if p.get("thought"):
+                    if p.get("thought_signature"):
+                        self.signatures[idx] = p["thought_signature"]
+                elif not p.get("text"):
                     self.other_parts.setdefault(idx, []).append(p)
 
     def result(self) -> Dict[str, Any]:
         out = dict(self.last)
         cands = []
-        for idx in sorted(self.texts):
+        for idx in sorted(set(self.texts) | set(self.thoughts)):
             base = {}
             for cand in self.last.get("candidates") or []:
                 if (cand.get("index") or 0) == idx:
                     base = dict(cand)
-            parts = ([{"text": self.texts[idx]}] if self.texts[idx] else []) + self.other_parts.get(idx, [])
+            parts: List[Any] = []
+            if self.thoughts.get(idx):
+                tp: Dict[str, Any] = {"text": self.thoughts[idx], "thought": True}
+                if self.signatures.get(idx) is not None:
+                    tp["thought_signature"] = self.signatures[idx]
+                parts.append(tp)
+            parts += ([{"text": self.texts[idx]}] if self.texts.get(idx) else []) + self.other_parts.get(idx, [])
             base["content"] = {"role": "model", "parts": parts}
             cands.append(base)
         out["candidates"] = cands

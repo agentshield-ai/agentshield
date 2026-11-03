@@ -12,12 +12,41 @@
  * nests under the current op. LLM runs record token usage (from
  * `llmOutput.tokenUsage` or the message's `usage_metadata`) and the model;
  * tool runs carry `gen_ai.tool.name` and the tool call id. LangGraph runs
- * through the same callbacks.
+ * through the same callbacks: runs carry `langgraph.node` / `langgraph.step`,
+ * the session (`gen_ai.conversation.id`) is LangGraph's `thread_id` (or a
+ * `session_id` / `conversation_id` in the run metadata), and each node that
+ * ran a model becomes an agent invocation named after the node, so the server
+ * reads consecutive agent nodes as hand-offs.
  */
 import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
 import { RunTracker, type RunUsage } from './runs.js';
 
 const INTEGRATION = 'langchain';
+
+const SESSION_KEYS = ['thread_id', 'session_id', 'conversation_id'];
+
+/** LangGraph's node metadata of a run (`langgraph_node`, `langgraph_step`, ...), if any. */
+function langgraphInfo(md: any): Record<string, unknown> | null {
+  if (!md || typeof md !== 'object' || md.langgraph_node === undefined) return null;
+  const info: Record<string, unknown> = {
+    node: md.langgraph_node,
+    step: md.langgraph_step,
+    triggers: md.langgraph_triggers,
+    path: md.langgraph_path,
+    checkpoint_ns: md.langgraph_checkpoint_ns ?? md.checkpoint_ns,
+    thread_id: md.thread_id,
+  };
+  for (const k of Object.keys(info)) if (info[k] === undefined || info[k] === null) delete info[k];
+  return info;
+}
+
+/** A LangGraph node that ran a model is an agent: an `invoke_agent` of the node's name (known when it ends). */
+function agentNodeAttrs(call: any): Record<string, unknown> | null {
+  if (!call?.llmDescendant) return null;
+  const node = call.attributes?.langgraph?.node;
+  if (!node || !String(call.opName ?? '').includes('langgraph.node.')) return null;
+  return { gen_ai: { operation: { name: 'invoke_agent' }, agent: { name: String(node) } } };
+}
 
 function serializedName(s: any, fallback: string): string {
   if (!s || typeof s !== 'object') return fallback;
@@ -114,17 +143,24 @@ export class WeftCallbackHandler {
   // chains (also LangGraph nodes and runnables)
   handleChainStart(chain: any, inputs: any, runId: string, parentRunId?: string, tags?: string[], metadata?: Record<string, unknown>, runType?: string, runName?: string): void {
     const name = runName ?? serializedName(chain, 'Chain');
-    const kind = runType === 'agent' || /agent/i.test(name) ? 'agent' : 'chain';
+    let kind = runType === 'agent' || /agent/i.test(name) ? 'agent' : 'chain';
     const ins = inputs && typeof inputs === 'object' && !Array.isArray(inputs) ? { ...inputs } : { input: inputs };
-    this.tracker.start(runId, `langchain.Chain.${name}`, ins, { parentId: parentRunId, kind, displayName: name, attributes: this.attrs(tags, metadata) });
+    let op = `langchain.Chain.${name}`;
+    const lg = langgraphInfo(metadata);
+    if (lg && lg.node === name) op = `langgraph.node.${name}`;
+    else if (!lg && name === 'LangGraph' && !parentRunId) {
+      op = 'langgraph.graph';
+      kind = 'workflow'; // the graph run; its nodes that run a model are the agents
+    }
+    this.tracker.start(runId, op, ins, { parentId: parentRunId, kind, displayName: name, attributes: this.attrs(tags, metadata) });
   }
 
   handleChainEnd(outputs: any, runId: string): void {
-    this.tracker.end(runId, outputs);
+    this.tracker.end(runId, outputs, undefined, null, undefined, { attributes: agentNodeAttrs(this.tracker.get(runId)) });
   }
 
   handleChainError(err: unknown, runId: string): void {
-    this.tracker.end(runId, undefined, errOf(err));
+    this.tracker.end(runId, undefined, errOf(err), null, undefined, { attributes: agentNodeAttrs(this.tracker.get(runId)) });
   }
 
   // LLMs and chat models
@@ -218,6 +254,10 @@ export class WeftCallbackHandler {
     const md: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(metadata ?? {})) if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) md[k] = v;
     if (Object.keys(md).length) out.langchain = { ...(out.langchain as object), metadata: md };
+    const lg = langgraphInfo(metadata);
+    if (lg) out.langgraph = lg;
+    const session = SESSION_KEYS.map((k) => (metadata as any)?.[k]).find((v) => (typeof v === 'string' || typeof v === 'number') && v !== '');
+    if (session !== undefined) out['gen_ai.conversation.id'] = String(session);
     return out;
   }
 

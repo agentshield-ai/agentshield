@@ -35,6 +35,39 @@ class ThreadContext:
 _thread: contextvars.ContextVar[Optional[ThreadContext]] = contextvars.ContextVar("weft_thread", default=None)
 
 
+@dataclass(frozen=True)
+class TeamInfo:
+    """The agent team calls belong to (``weft.team.id`` / ``weft.team.name``)."""
+
+    id: str
+    name: str = ""
+
+    def attributes(self) -> Dict[str, Any]:
+        team: Dict[str, Any] = {"id": self.id}
+        if self.name:
+            team["name"] = self.name
+        return {"weft": {"team": team}}
+
+
+_team: contextvars.ContextVar[Optional[TeamInfo]] = contextvars.ContextVar("weft_team", default=None)
+
+
+def current_team() -> Optional[TeamInfo]:
+    """The team declared by the innermost ``weft.team(...)`` block, if any."""
+    return _team.get()
+
+
+def set_team(team: Optional[TeamInfo]) -> contextvars.Token:
+    return _team.set(team)
+
+
+def reset_team(token: contextvars.Token) -> None:
+    try:
+        _team.reset(token)
+    except ValueError:  # reset from another context
+        _team.set(None)
+
+
 def get_current_call() -> Optional["Call"]:
     """Return the innermost call being traced in this context, if any."""
     stack = _call_stack.get()

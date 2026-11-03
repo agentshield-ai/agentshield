@@ -50,11 +50,15 @@ test('a recorded session becomes a conversation with runs, model calls, tools an
   assert.equal(sub.attributes['gen_ai.agent.name'], 'researcher');
   assert.equal(sub.thread_id, sid);
   const child = runs.find((c) => c.parent_id === sub.id);
-  assert.ok(child, 'the child session run nests under the sub-agent');
-  assert.equal(child.thread_id, sid, 'and stays in the parent conversation');
-  assert.equal(child.turn_id, r1.id);
+  assert.ok(child, 'the child session run nests under the sub-agent (same trace)');
+  assert.equal(child.trace_id, r1.trace_id);
+  // the child session is its own Weft session: the id AgentShield sends as session_id for its tool calls
+  assert.equal(child.thread_id, 'oc-sess-child-01');
+  assert.equal(child.attributes['gen_ai.conversation.id'], 'oc-sess-child-01');
+  assert.equal(child.turn_id, child.id);
   const search = calls.find((c) => c.attributes['gen_ai.tool.call.id'] === 'tc-c1');
   assert.equal(search.parent_id, child.id);
+  assert.equal(search.attributes['gen_ai.conversation.id'], 'oc-sess-child-01');
   const childLLM = calls.find((c) => c.op_name === 'openclaw.llm' && c.parent_id === child.id);
   assert.equal(childLLM.summary.usage['claude-haiku-4-5'].prompt_tokens, 300);
 

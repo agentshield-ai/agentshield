@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
-import { tracesUrl } from '../../lib/urls'
+import { sessionsUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../../components/common'
 import { Logo } from '../../components/Layout'
 import { GettingStarted } from '../../components/traces/GettingStarted'
@@ -60,7 +60,7 @@ export function ProjectsPage() {
               <div className="card-body empty" style={{ padding: 28 }}>
                 <b>No projects yet.</b>
                 <div className="small" style={{ marginTop: 6 }}>
-                  Create one below or send your first trace — projects are created on first write.
+                  Open one below: its page shows how to connect your agents, or sends a test session in one click. Projects are created on first write.
                 </div>
               </div>
             </div>
@@ -69,7 +69,7 @@ export function ProjectsPage() {
           ) : (
             <div className="project-grid">
               {list.map((p) => (
-                <Link key={p.project_id} to={tracesUrl(p.project_id)} className="card project-card">
+                <Link key={p.project_id} to={sessionsUrl(p.project_id)} className="card project-card">
                   <div className="faint small">{p.entity}</div>
                   <div className="project-name">{p.project}</div>
                   <div className="project-stats">
@@ -77,7 +77,7 @@ export function ProjectsPage() {
                       <b>{fmtNumber(p.trace_count)}</b> traces
                     </span>
                     <span>
-                      <b>{fmtNumber(p.call_count)}</b> calls
+                      <b>{fmtNumber(p.call_count)}</b> spans
                     </span>
                     <span>
                       <b>{fmtNumber(p.object_count)}</b> objects
@@ -95,7 +95,7 @@ export function ProjectsPage() {
             className="card"
             onSubmit={(e) => {
               e.preventDefault()
-              if (parsed) navigate(tracesUrl(`${parsed.entity}/${parsed.project}`))
+              if (parsed) navigate(sessionsUrl(`${parsed.entity}/${parsed.project}`))
             }}
           >
             <div className="card-header">
@@ -118,7 +118,7 @@ export function ProjectsPage() {
               {name && !parsed && <span className="small" style={{ color: 'var(--error)' }}>Use letters, digits, “.”, “_” or “-”, as entity/project.</span>}
               {parsed && (
                 <span className="small faint">
-                  Opens <span className="mono">{parsed.entity}/{parsed.project}</span>. It is stored once the first call or object is written.
+                  Opens <span className="mono">{parsed.entity}/{parsed.project}</span>. It is stored once the first span or object is written; its page shows how to connect your agents.
                 </span>
               )}
             </div>

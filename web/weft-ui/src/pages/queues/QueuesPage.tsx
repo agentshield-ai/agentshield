@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { queuesApi, type AnnotationQueue } from '../../api/queues'
 import { parseRef } from '../../api/refs'
 import { Empty, ErrorBox, Loading, Modal } from '../../components/common'
-import { ConfirmButton } from '../../components/objects/bits'
+import { undoable } from '../../components/ui/Toasts'
 import { queueUrl } from '../../components/queues/AddToQueueModal'
 import { ExportQueueModal } from '../../components/queues/ExportQueueModal'
 import { SpecPicker } from '../../components/queues/SpecPicker'
@@ -19,6 +19,7 @@ export function QueuesPage() {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<AnnotationQueue | 'new' | null>(null)
   const [exporting, setExporting] = useState<AnnotationQueue | null>(null)
+  const [hiddenQueues, setHiddenQueues] = useState<Set<string>>(new Set())
   const queues = useQuery({ queryKey: ['annotation-queues', projectId], queryFn: () => queuesApi.query(projectId) })
   const ids = (queues.data ?? []).map((q) => q.id)
   const stats = useQuery({
@@ -26,15 +27,15 @@ export function QueuesPage() {
     queryFn: () => queuesApi.stats(projectId, ids).then((r) => new Map(r.stats.map((s) => [s.queue_id, s]))),
     enabled: ids.length > 0,
   })
-  const shown = (queues.data ?? []).filter((q) => !search || q.name.toLowerCase().includes(search.toLowerCase()))
+  const shown = (queues.data ?? []).filter((q) => !hiddenQueues.has(q.id)).filter((q) => !search || q.name.toLowerCase().includes(search.toLowerCase()))
   const totals = [...(stats.data?.values() ?? [])].reduce((a, s) => ({ items: a.items + s.total_items, done: a.done + s.completed_items }), { items: 0, done: 0 })
 
   return (
     <div className="page">
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
-          <h1>Annotation queues</h1>
-          <span className="muted small">Collect calls for human review, then work through them one at a time with structured annotation fields.</span>
+          <h1>Review queues</h1>
+          <span className="muted small">Collect agent steps and spans for human review, then work through them one at a time with structured annotation fields.</span>
         </div>
         <span className="spacer" />
         <button className="btn primary" onClick={() => setEditing('new')}>
@@ -49,8 +50,8 @@ export function QueuesPage() {
           <Empty>
             <div className="col" style={{ alignItems: 'center', gap: 10 }}>
               <div style={{ maxWidth: 520 }}>
-                No annotation queues yet. Create a queue, then add calls from the <Link to={tracesUrl(projectId)}>Traces</Link> page (select rows → Add to queue) or
-                from a call’s page.
+                No review queues yet. Create a queue, then add spans from the <Link to={tracesUrl(projectId)}>Traces</Link> page (select rows → Add to queue) or
+                from a span’s page.
               </div>
               <button className="btn primary" onClick={() => setEditing('new')}>
                 + New queue
@@ -145,17 +146,30 @@ export function QueuesPage() {
                           <button className="btn sm ghost" onClick={() => setEditing(q)} title="Edit queue">
                             Edit
                           </button>
-                          <ConfirmButton
+                          <button
+                            type="button"
                             className="btn ghost sm icon danger"
-                            title={`Delete queue ${q.name}?`}
-                            body="Annotations already given are kept as feedback on the calls."
-                            onConfirm={async () => {
-                              await queuesApi.remove(projectId, q.id)
-                              await qc.invalidateQueries({ queryKey: ['annotation-queues', projectId] })
-                            }}
+                            aria-label={`Delete queue ${q.name}`}
+                            title={`Delete queue ${q.name} (annotations already given are kept)`}
+                            onClick={() =>
+                              undoable({
+                                message: `Deleted queue “${q.name}”`,
+                                apply: () => setHiddenQueues((h) => new Set(h).add(q.id)),
+                                revert: () =>
+                                  setHiddenQueues((h) => {
+                                    const n = new Set(h)
+                                    n.delete(q.id)
+                                    return n
+                                  }),
+                                commit: async () => {
+                                  await queuesApi.remove(projectId, q.id)
+                                  await qc.invalidateQueries({ queryKey: ['annotation-queues', projectId] })
+                                },
+                              })
+                            }
                           >
                             ✕
-                          </ConfirmButton>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -213,7 +227,7 @@ function QueueEditor({
   })
   return (
     <Modal
-      title={initial ? `Edit queue ${initial.name}` : 'New annotation queue'}
+      title={initial ? `Edit queue ${initial.name}` : 'New review queue'}
       onClose={onClose}
       footer={
         <>

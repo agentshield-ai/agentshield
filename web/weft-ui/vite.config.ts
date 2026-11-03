@@ -9,7 +9,7 @@ const apiPrefixes = [
   '/cost/', '/completions/', '/llm/', '/secrets/', '/evaluate_model', '/evaluation_status',
   '/evaluations/', '/leaderboard/', '/threads/', '/project/', '/projects', '/server_info',
   '/health', '/auth/', '/otel/', '/agents/', '/image/',
-  '/annotation_queues', '/automations/', '/embeddings/',
+  '/annotation_queues', '/api/', '/automations/', '/embeddings/',
   '/api_keys/', '/users/', '/teams/', '/audit/', '/dataset_sources/', '/files/', '/reference_buckets/', '/trace/', '/v2/', '^/(tags|aliases)(\\?.*)?$',
 ]
 
@@ -24,5 +24,5 @@ export default defineConfig({
     port: 5173,
     proxy: Object.fromEntries(apiPrefixes.map((p) => [p, { target, changeOrigin: true }])),
   },
-  test: { environment: 'node' },
+  test: { environment: 'node', include: ['src/**/*.test.{ts,tsx}'] },
 })

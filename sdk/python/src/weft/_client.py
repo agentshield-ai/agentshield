@@ -19,6 +19,7 @@ from ._canonical import b64digest, digest, table_digest
 from ._http import HTTPClient, WeftHTTPError, env_flag
 from ._ids import uuid7
 from ._object import Object, Table, WeftObject, registered_class, resolve_ref_value, _is_obj_or_table_ref
+from . import _reasoning
 from ._op import BoundOp, Op
 from ._redact import Redactor
 from ._refs import CallRef, ObjectRef, OpRef, Ref, TableRef, is_ref_uri, parse_name_version, parse_uri, split_project
@@ -35,6 +36,20 @@ _global_lock = threading.Lock()
 _atexit_registered = False
 _UNSET: Any = object()
 _NAME_RE = re.compile(r"[^A-Za-z0-9_.\-]+")
+
+
+# Span kinds whose inputs and outputs may hold model reasoning.
+_REASONING_KINDS = ("llm", "agent")
+
+
+def _deep_merge(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for k, v in extra.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
 
 def now_iso() -> str:
@@ -226,6 +241,8 @@ class WeftClient:
             self.server_url, self.api_key, timeout=self.http_timeout, project_id=self.project_id, cache=cache, enabled=cache_on
         )
         self.capture_code = _setting_bool(st, "capture_code", "WEFT_CAPTURE_CODE", True)
+        # Model reasoning (thinking blocks, reasoning summaries, weft.reasoning()).
+        self.capture_reasoning = _setting_bool(st, "capture_reasoning", "WEFT_CAPTURE_REASONING", True)
         self.print_call_link = _setting_bool(st, "print_call_link", "WEFT_PRINT_CALL_LINK", True)
         self.global_attributes: Dict[str, Any] = dict(st.get("global_attributes") or {})
         wal_path = None
@@ -367,6 +384,8 @@ class WeftClient:
         ser_inputs: Dict[str, Any] = {}
         for k, v in raw_inputs.items():
             ser_inputs[k] = self._serialize_self(v) if k == "self" else to_json(v, self)
+        if getattr(op, "kind", None) in _REASONING_KINDS:
+            ser_inputs = self._scrub_reasoning(ser_inputs)
         if self._redact.active:
             self_val = ser_inputs.pop("self", _UNSET)
             ser_inputs = self._redact(ser_inputs)
@@ -378,7 +397,10 @@ class WeftClient:
         if attributes:
             attrs.update(attributes)
         attrs = to_json(attrs, self)
-        weft_attrs = {"client_version": __version__, "source": "python-sdk", "python_version": platform.python_version()}
+        weft_attrs: Dict[str, Any] = {"client_version": __version__, "source": "python-sdk", "python_version": platform.python_version()}
+        team = _context.current_team()
+        if team is not None:
+            weft_attrs.update(team.attributes()["weft"])
         if isinstance(attrs.get("weft"), dict):
             weft_attrs.update(attrs["weft"])
         kind, color = getattr(op, "kind", None), getattr(op, "color", None)
@@ -412,13 +434,28 @@ class WeftClient:
         call._raw_inputs = dict(inputs)
         if parent is not None:
             parent._child_count += 1
+        if kind == "llm":
+            # An LLM call nested in a framework's LLM call holds the reasoning;
+            # the framework call does not repeat it (see finish_call).
+            for anc in (parent,) + _context._call_stack.get():
+                if anc is not None:
+                    anc._llm_descendant = True
         if call.display_name is None and op.call_display_name is not None:
             try:
                 dn = op.call_display_name
                 call.display_name = dn(call) if callable(dn) else str(dn)
             except Exception as e:
                 logger.warning("weft: call_display_name failed for %s: %s", op.name, e)
-        start = {
+        wb = self._wb_run_now()
+        if wb is not None:
+            call.wb_run_id, call.wb_run_step = wb
+        self._sender.enqueue("call_start", self._start_payload(call))
+        if parent is None and self.print_call_link:
+            print(f"weft: {call.ui_url}", file=sys.stderr)
+        return call
+
+    def _start_payload(self, call: Call) -> Dict[str, Any]:
+        start: Dict[str, Any] = {
             "project_id": call.project_id,
             "id": call.id,
             "op_name": call.op_name,
@@ -431,16 +468,57 @@ class WeftClient:
         for k in ("display_name", "thread_id", "turn_id"):
             if getattr(call, k) is not None:
                 start[k] = getattr(call, k)
-        wb = self._wb_run_now()
-        if wb is not None:
-            call.wb_run_id, call.wb_run_step = wb
+        if call.wb_run_id is not None:
             start["wb_run_id"] = call.wb_run_id
             if call.wb_run_step is not None:
                 start["wb_run_step"] = call.wb_run_step
-        self._sender.enqueue("call_start", start)
-        if parent is None and self.print_call_link:
-            print(f"weft: {call.ui_url}", file=sys.stderr)
-        return call
+        return start
+
+    def _scrub_reasoning(self, value: Any) -> Any:
+        """Drop reasoning when capture_reasoning is off; digest opaque reasoning payloads otherwise."""
+        return _reasoning.scrub(value, capture=self.capture_reasoning)
+
+    def update_call(
+        self,
+        call: Call,
+        attributes: Optional[Dict[str, Any]] = None,
+        *,
+        thread_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Change a running call's attributes (deep-merged), thread or display name.
+
+        The call's start is sent again, with the new values, before its end
+        (the server upserts it), so this works after the start went out."""
+        if call._ended:
+            logger.debug("weft: update_call ignored: call %s already ended", call.id)
+            return
+        if attributes:
+            call.attributes = _deep_merge(dict(call.attributes or {}), to_json(attributes, self))
+        if thread_id is not None:
+            call.thread_id = thread_id
+        if turn_id is not None:
+            call.turn_id = turn_id
+        if display_name is not None:
+            call.display_name = display_name
+        call._resend_start = True
+
+    def add_reasoning(self, call: Call, steps: List[Dict[str, Any]]) -> None:
+        """Record reasoning steps (``weft.reasoning`` attribute entries) on a running call."""
+        if not self.capture_reasoning or call._ended or not steps:
+            return
+        if call._weft_reasoning is None:
+            call._weft_reasoning = []
+        call._weft_reasoning.extend(steps)
+
+    def _reasoning_attr(self, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = [dict(st) for st in steps]
+        if self._redact.active:
+            for st in out:
+                if st.get("text"):
+                    st["text"] = self._redact(st["text"])
+        return out
 
     def finish_call(
         self,
@@ -459,10 +537,26 @@ class WeftClient:
                 logger.warning("weft: postprocess_output failed for %s: %s", op.name, e)
         call.ended_at = now_iso()
         call._raw_output = output
+        kind = (call.attributes.get("weft") or {}).get("span_kind") if isinstance(call.attributes, dict) else None
         try:
-            call.output = self._redact(to_json(output, self))
+            ser = to_json(output, self)
+            if kind in _REASONING_KINDS:
+                if kind == "llm" and call._llm_descendant:
+                    ser = _reasoning.scrub(ser, capture=False)  # the nested LLM call has it
+                else:
+                    ser = self._scrub_reasoning(ser)
+            call.output = self._redact(ser)
         except Exception as e:  # pragma: no cover - to_json is defensive already
             call.output = repr(e)
+        if call._weft_reasoning:
+            w = dict(call.attributes.get("weft") or {})
+            w["reasoning"] = list(w.get("reasoning") or []) + self._reasoning_attr(call._weft_reasoning)
+            call.attributes = {**call.attributes, "weft": w}
+            call._weft_reasoning = None
+            call._resend_start = True
+        if call._resend_start:
+            call._resend_start = False
+            self._sender.enqueue("call_start", self._start_payload(call))
         end: Dict[str, Any] = {"project_id": call.project_id, "id": call.id, "ended_at": call.ended_at, "output": call.output}
         if exception is not None:
             call.exception = format_exception(exception)

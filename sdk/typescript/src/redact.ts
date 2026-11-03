@@ -248,6 +248,13 @@ export class Redactor {
           p.inputs = 'self' in (p.inputs as object) ? { self, ...red } : red;
         }
         if (it.kind === 'call_end' && p.output !== undefined) p.output = await this.applyAsync(p.output, 0, cache);
+        // reasoning steps recorded with weft.reasoning() (attributes.weft.reasoning[].text)
+        const w = it.kind === 'call_start' ? ((p.attributes as Record<string, any> | undefined)?.weft as Record<string, any> | undefined) : undefined;
+        if (w && Array.isArray(w.reasoning)) {
+          w.reasoning = await Promise.all(
+            w.reasoning.map(async (st: any) => (st && typeof st.text === 'string' && st.text ? { ...st, text: await this.applyAsync(st.text, 0, cache) } : st)),
+          );
+        }
       }),
     );
   }

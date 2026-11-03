@@ -13,9 +13,9 @@
  *   turn named `typesafe SDK` (in the current conversation, if any), the root
  *   of its own trace, also inside an op (the integration creates no op call of
  *   its own). When an op is running, the spans are linked to it by the
- *   `weave.parent_call.id` and `weave.parent_call.trace_id` attributes (the
- *   Weave-compatible link keys; the server exposes them as the agent span
- *   fields `parent_call_id` / `parent_call_trace_id`);
+ *   `weft.parent_call.id` and `weft.parent_call.trace_id` attributes
+ *   (DESIGN.md §4; the server exposes them, like Weave's `weave.parent_call.*`,
+ *   as the agent span fields `parent_call_id` / `parent_call_trace_id`);
  * - errors: `error.type` and `http.response.status_code`; the provider error
  *   text (it carries the response body) is not copied.
  *
@@ -116,7 +116,12 @@ function markFailed(span: LLM | Turn, error: any): void {
 function linkToRunningOp(): Record<string, unknown> {
   const calls = currentContext().stack.filter((c) => !c.conversationSpan);
   const op = calls[calls.length - 1];
-  return op?.id && op.traceId ? { weave: { parent_call: { id: op.id, trace_id: op.traceId } } } : {};
+  return op?.id && op.traceId ? { weft: { parent_call: { id: op.id, trace_id: op.traceId } } } : {};
+}
+
+function withLink(attrs: Record<string, unknown>, link: Record<string, unknown>): Record<string, unknown> {
+  if (!link.weft) return attrs;
+  return { ...attrs, weft: { ...((attrs.weft as Record<string, unknown>) ?? {}), ...(link.weft as Record<string, unknown>) } };
 }
 
 function integrationAttrs(): Record<string, unknown> {
@@ -156,12 +161,12 @@ class SystemOneSpan {
         turn = new Turn({ agentName: OWN_TURN_AGENT });
         const conversation = getCurrentConversation();
         if (conversation) turn.conv = conversation.info();
-        turn.setAttributes({ ...integrationAttrs(), ...link });
+        turn.setAttributes(withLink(integrationAttrs(), link));
         ownsTurn = true;
       }
       llm = turn.startLLM({ model: typeof requested === 'string' ? requested : '', providerName: PROVIDER });
       if (message) llm.inputMessages = [message];
-      llm.setAttributes({ ...integrationAttrs(), ...link, ...(questions === undefined ? {} : { typesafe: { questions } }) });
+      llm.setAttributes({ ...withLink(integrationAttrs(), link), ...(questions === undefined ? {} : { typesafe: { questions } }) });
       llm.start();
       return new SystemOneSpan(llm, turn, ownsTurn, capture);
     } catch {

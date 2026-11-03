@@ -1,0 +1,100 @@
+// Keyboard, URL-synced filters, saved views and undo (DESIGN.md §7.1 rules 5, 6, 10, 11).
+import { expect, test } from '@playwright/test'
+import { project, watchErrors } from './helpers'
+
+test('`/` focuses the filter, `?` lists shortcuts, filter syntax becomes chips in the URL', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${project()}/sessions`)
+  await expect(page.locator('.session-row').first()).toBeVisible()
+  await page.keyboard.press('?')
+  await expect(page.getByRole('dialog')).toContainText('Keyboard shortcuts')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('/')
+  await expect(page.locator('[data-filter-input]')).toBeFocused()
+  await page.keyboard.type('agent:coder has:approval')
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/agent=coder/)
+  await expect(page).toHaveURL(/has=approval/)
+  await expect(page.getByRole('button', { name: 'Remove filter Agent' })).toBeVisible()
+  await expect(page.locator('.session-row')).toHaveCount(1)
+  await expect(page.locator('.session-row')).toContainText('Find out why deploys fail on staging')
+  // Reload keeps the filters: they live in the URL.
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Edit filter Security: Needs approval' })).toBeVisible()
+  await page.getByRole('button', { name: 'Remove filter Agent' }).click()
+  await expect(page).not.toHaveURL(/agent=coder/)
+  expect(errors).toEqual([])
+})
+
+test('saved views can be saved, applied and deleted with undo', async ({ page }) => {
+  await page.goto(`/${project()}/sessions?status=error`)
+  await page.getByRole('button', { name: /Views/ }).click()
+  await page.getByRole('button', { name: 'Save current filters as a view…' }).click()
+  await page.getByRole('textbox', { name: 'View name' }).fill('Failures')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page).toHaveURL(/view=sessions-failures/)
+  await page.goto(`/${project()}/sessions`)
+  await page.getByRole('button', { name: /Views/ }).click()
+  await page.getByRole('button', { name: 'Failures', exact: true }).click()
+  await expect(page).toHaveURL(/status=error/)
+  await page.getByRole('button', { name: /Failures/ }).click()
+  await page.getByRole('button', { name: 'Delete view Failures' }).click()
+  const toast = page.locator('.toast').filter({ hasText: 'Deleted view “Failures”' })
+  await expect(toast).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Delete view Failures' })).toHaveCount(0)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByRole('button', { name: 'Delete view Failures' })).toBeVisible()
+})
+
+test('j/k move through the timeline and deep links survive reload', async ({ page }) => {
+  await page.goto(`/${project()}/sessions/code-lint-1`)
+  await expect(page.locator('.tl-step').first()).toBeVisible()
+  await page.keyboard.press('j')
+  await page.keyboard.press('j')
+  await page.keyboard.press('j')
+  const focused = page.locator('.tl-step[aria-current="step"]')
+  await expect(focused).toHaveCount(1)
+  const key = new URL(page.url()).searchParams.get('step')
+  expect(key).toBeTruthy()
+  await page.keyboard.press('k')
+  expect(new URL(page.url()).searchParams.get('step')).not.toBe(key)
+  await page.reload()
+  await expect(page.locator('.tl-step[aria-current="step"]')).toBeInViewport()
+})
+
+test('deleting a score can be undone', async ({ page }) => {
+  await page.goto(`/${project()}/sessions/trip-oslo?tab=scores`)
+  const del = page.getByRole('button', { name: 'Delete Goal Completion score' })
+  await expect(del).toHaveCount(1)
+  await del.click()
+  const toast = page.locator('.toast').filter({ hasText: 'Deleted Goal Completion score' })
+  await expect(toast).toBeVisible()
+  await expect(del).toHaveCount(0)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(del).toHaveCount(1)
+  // Nothing was deleted on the server.
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Delete Goal Completion score' })).toHaveCount(1)
+})
+
+test('the default range widens when the last 24 hours are empty, and explains why', async ({ page }) => {
+  await page.goto(`/${process.env.WEFT_E2E_OLDER}/sessions`)
+  await expect(page.getByRole('status').filter({ hasText: 'because nothing happened in the last 24 hours' })).toBeVisible()
+  await expect(page.locator('.session-row')).toHaveCount(1)
+})
+
+test('graph tab draws agents and offers the same data as a table', async ({ page }) => {
+  await page.goto(`/${project()}/sessions/code-lint-1?tab=graph`)
+  await expect(page.getByRole('group', { name: /Delegation graph: 2 agents/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Table' }).click()
+  await expect(page.locator('table').first()).toContainText('coder')
+  await expect(page.locator('table.handoff-table')).toContainText('reviewer')
+})
+
+test('replay with current rules shows a diff', async ({ page }) => {
+  const status = await (await page.request.get(`/api/v1/shield/status?project_id=${encodeURIComponent(project())}`)).json()
+  test.skip(!status.replay_enabled, 'server started without --shield-rules-dir')
+  await page.goto(`/${project()}/sessions/code-lint-1?tab=security`)
+  await page.getByRole('button', { name: /Replay with current rules/ }).click()
+  await expect(page.getByText(/Checked \d+ of \d+ tool calls/)).toBeVisible({ timeout: 20_000 })
+})

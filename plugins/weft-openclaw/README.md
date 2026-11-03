@@ -10,13 +10,16 @@ invoke_agent main               one per agent run (a turn); conversation = the O
 ├─ execute_tool web_fetch       each tool call with params, result, error and duration
 └─ invoke_agent researcher      sessions_spawn sub-agents (subagent_spawned → subagent_ended)
    └─ invoke_agent researcher   the child session's runs, with their own model and tool calls
+                                (conversation = the child session id: a session of its own)
 ```
 
 Runs appear under **Agents** (agent = the OpenClaw agent id, or `agentName`),
 in **Threads** and in **Traces**.
 
 This is separate from the AgentShield security plugin in
-[`plugins/openclaw`](../openclaw); both can be loaded.
+[`plugins/openclaw`](../openclaw); both can be loaded. Each tool span carries
+the session id and tool-call id that plugin sends to AgentShield (`ctx.sessionId`,
+else the session key, and `toolCallId`), so verdicts attach to the tool call.
 
 ## How it works
 

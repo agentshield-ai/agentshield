@@ -86,7 +86,11 @@ class RunTracker:
         output: Any = None,
         error: Optional[BaseException] = None,
         usage: Optional[Dict[str, Any]] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+        display_name: Optional[str] = None,
     ) -> Any:
+        """End a run. ``attributes`` (and a display name) known only now, such
+        as a hand-off's target, are merged into the call's (its start is sent again)."""
         with self._lock:
             call = self._runs.pop(run_id, None)
         token = self._tokens.pop(run_id, None)
@@ -94,8 +98,11 @@ class RunTracker:
             _context.pop_call(token)
         if call is None:
             return None
+        if (attributes or display_name) and call._client is not None:
+            call._client.update_call(call, attributes, display_name=display_name)
         if usage and call._child_count == 0 and (usage.get("prompt_tokens") or usage.get("completion_tokens")):
-            add_usage(call, usage.get("model"), usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, usage.get("total_tokens"))
+            extra = {k: usage[k] for k in ("reasoning_tokens",) if usage.get(k)}
+            add_usage(call, usage.get("model"), usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, usage.get("total_tokens"), **extra)
         if call._client is not None:
             call._client.finish_call(call, output=output, exception=error, op=getattr(call, "_weft_op", None))
         return call

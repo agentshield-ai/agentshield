@@ -19,6 +19,8 @@ import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/Expo
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 import '../../components/traces/columns.css'
+import { FilterBar } from '../../components/ui/FilterBar'
+import { parseFilters, timeWindow, type FilterState } from '../../lib/filters'
 import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
 
 // ---------------------------------------------------------------- URL state
@@ -78,7 +80,8 @@ function parseState(p: URLSearchParams): ViewState {
     roots: p.get('roots') !== '0',
     system: p.get('system') === '1',
     op: p.get('op') ?? '',
-    status: p.get('status') ?? '',
+    // The shared filter bar says ok/error/running; spans also have descendant_error.
+    status: p.get('status') === 'ok' ? 'success' : (p.get('status') ?? ''),
     q: p.get('q') ?? '',
     clauses: decodeClauses(p.get('f')),
     expr,
@@ -95,7 +98,29 @@ function parseState(p: URLSearchParams): ViewState {
   }
 }
 
-function buildRequest(s: ViewState): { filter: CallsFilter; query?: Query; search?: string } {
+/** A span attribute, whether it came over OTLP (flat dotted keys) or from an SDK (nested). */
+function attrEq(key: string, value: string): Operation {
+  return {
+    $or: [
+      { $eq: [{ $getField: `attributes.otel.attributes.[${key}]` }, { $literal: value }] },
+      { $eq: [{ $getField: `attributes.${key}` }, { $literal: value }] },
+    ],
+  }
+}
+
+/** The shared filter bar's chips as span filters (agent, model, tool, time). */
+export function sharedOps(f: FilterState): Operation[] {
+  const ops: Operation[] = []
+  if (f.agent) ops.push(attrEq('gen_ai.agent.name', f.agent))
+  if (f.model) ops.push(attrEq('gen_ai.request.model', f.model))
+  if (f.tool) ops.push(attrEq('gen_ai.tool.name', f.tool))
+  const w = timeWindow(f, 'all')
+  if (w.from) ops.push({ $gte: [{ $getField: 'started_at' }, { $literal: w.from }] })
+  if (w.to) ops.push({ $lt: [{ $getField: 'started_at' }, { $literal: w.to }] })
+  return ops
+}
+
+function buildRequest(s: ViewState, shared: FilterState = {}): { filter: CallsFilter; query?: Query; search?: string } {
   const filter: CallsFilter = {}
   if (s.roots) filter.trace_roots_only = true
   if (s.op) filter.op_names = [s.op]
@@ -104,6 +129,7 @@ function buildRequest(s: ViewState): { filter: CallsFilter; query?: Query; searc
   if (!s.system) ops.push({ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] })
   if (s.status) ops.push({ $eq: [{ $getField: 'summary.weave.status' }, { $literal: s.status }] })
   for (const c of s.clauses) if (clauseValid(c)) ops.push(clauseToOperation(c))
+  ops.push(...sharedOps(shared))
   if (s.expr) ops.push(s.expr)
   const query = ops.length ? { $expr: ops.length === 1 ? ops[0] : { $and: ops } } : undefined
   return { filter, query, search: s.q.trim() || undefined }
@@ -222,7 +248,8 @@ export function TracesPage() {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const s = useMemo(() => parseState(params), [params])
-  const req = useMemo(() => buildRequest(s), [s])
+  const shared = useMemo(() => parseFilters(params), [params])
+  const req = useMemo(() => buildRequest(s, shared), [s, shared])
 
   const update = useCallback(
     (patch: Record<string, string | null>, resetOffset = true) => {
@@ -242,14 +269,6 @@ export function TracesPage() {
     [setParams],
   )
 
-  // Search box is debounced into the URL.
-  const [searchText, setSearchText] = useState(s.q)
-  useEffect(() => setSearchText(s.q), [s.q])
-  useEffect(() => {
-    if (searchText === s.q) return
-    const t = setTimeout(() => update({ q: searchText || null }), 300)
-    return () => clearTimeout(t)
-  }, [searchText, s.q, update])
 
   const refetchInterval = s.live ? 5000 : false
   const sortBy: SortBy[] = [s.sort]
@@ -343,7 +362,6 @@ export function TracesPage() {
 
   // Keyboard navigation
   const [cursor, setCursor] = useState(-1)
-  const searchRef = useRef<HTMLInputElement>(null)
   const reqKey = JSON.stringify([req, s.sort, s.offset, s.limit])
   useEffect(() => setCursor(-1), [reqKey])
   useEffect(() => {
@@ -351,10 +369,7 @@ export function TracesPage() {
       const t = e.target as HTMLElement
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
       if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('.modal')) return
-      if (e.key === '/') {
-        e.preventDefault()
-        searchRef.current?.focus()
-      } else if (e.key === 'j' || e.key === 'ArrowDown') {
+      if (e.key === 'j' || e.key === 'ArrowDown') {
         e.preventDefault()
         setCursor((c) => Math.min(rows.length - 1, c + 1))
       } else if (e.key === 'k' || e.key === 'ArrowUp') {
@@ -445,7 +460,7 @@ export function TracesPage() {
     return { filter: req.filter, query: req.query, sort_by: sortBy, cols: s.cols, col_order: s.order.length ? s.order : undefined, pinned_cols: s.pin.length ? s.pin : undefined, search: req.search, ui_params: ui }
   }
   const activeView = traceViews.find((v) => v.object_id === s.view)
-  const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots)
+  const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots || shared.agent || shared.model || shared.tool || shared.time)
 
   const selCalls = [...selected.values()]
   const exportTargets = selCalls.length ? selCalls : rows
@@ -493,7 +508,7 @@ export function TracesPage() {
         </Dropdown>
         <span className="spacer" />
         <span className="small muted">
-          {total != null ? `${fmtNumber(total)} ${s.roots ? 'traces' : 'calls'}` : count.isLoading ? '' : ''}
+          {total != null ? `${fmtNumber(total)} ${s.roots ? 'traces' : 'spans'}` : count.isLoading ? '' : ''}
           {(calls.isFetching || count.isFetching) && <span style={{ marginLeft: 6 }}><Spinner /></span>}
         </span>
         <label className="checkbox small" title="Refresh every 5 seconds">
@@ -512,41 +527,16 @@ export function TracesPage() {
         )}
       </div>
 
+      <FilterBar page="traces" defaultTime="all" placeholder="Filter spans…  try agent:researcher or tool:Bash" />
+
       {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
 
       <div className="toolbar">
-        <input
-          ref={searchRef}
-          className="input"
-          style={{ width: 220 }}
-          placeholder="Search…  (/)"
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && (e.currentTarget.blur(), setSearchText(''))}
-          aria-label="Search calls"
-        />
-        <select className="input" value={s.op} onChange={(e) => update({ op: e.target.value || null })} aria-label="Op filter" style={{ maxWidth: 220 }}>
-          <option value="">All ops</option>
-          {opOptions.map(([name, n]) => (
-            <option key={name} value={name}>
-              {name} ({fmtNumber(n)})
-            </option>
-          ))}
-          {s.op && !opOptions.some(([name]) => name === s.op) && <option value={s.op}>{s.op}</option>}
-        </select>
-        <select className="input" value={s.status} onChange={(e) => update({ status: e.target.value || null })} aria-label="Status filter">
-          <option value="">Any status</option>
-          {STATUSES.map((st) => (
-            <option key={st} value={st}>
-              {st === 'descendant_error' ? 'child error' : st}
-            </option>
-          ))}
-        </select>
-        <label className="checkbox small" title="Only show root calls of each trace">
+        <label className="checkbox small" title="Only show the top-level span of each trace">
           <input type="checkbox" checked={s.roots} onChange={(e) => update({ roots: e.target.checked ? null : '0' })} /> Roots only
         </label>
-        <label className="checkbox small" title="Include scorer calls made by monitors and other internal server calls">
-          <input type="checkbox" checked={s.system} onChange={(e) => update({ system: e.target.checked ? '1' : null })} /> System calls
+        <label className="checkbox small" title="Include scorer spans made by monitors and other internal server spans">
+          <input type="checkbox" checked={s.system} onChange={(e) => update({ system: e.target.checked ? '1' : null })} /> System spans
         </label>
         <FilterBuilder clauses={s.clauses} fields={filterFields} onChange={(cs) => update({ f: encodeClauses(cs) || null })} />
         {s.expr && (
@@ -623,7 +613,7 @@ export function TracesPage() {
             Clear
           </button>
           <span className="grow" />
-          <button className="btn sm" disabled={selected.size < 2} title={selected.size < 2 ? 'Select at least two calls' : undefined} onClick={() => navigate(compareCallsUrl(projectId, [...selected.keys()]))}>
+          <button className="btn sm" disabled={selected.size < 2} title={selected.size < 2 ? 'Select at least two spans' : undefined} onClick={() => navigate(compareCallsUrl(projectId, [...selected.keys()]))}>
             Compare
           </button>
           <button className="btn sm" onClick={() => setModal('dataset')}>
@@ -656,13 +646,13 @@ export function TracesPage() {
       {calls.isLoading ? (
         <div className="table-wrap grow-table">
           <div className="empty">
-            <Spinner label="Loading calls…" />
+            <Spinner label="Loading spans…" />
           </div>
         </div>
       ) : rows.length === 0 ? (
         hasFilters ? (
           <Empty>
-            No calls match these filters.{' '}
+            No spans match these filters.{' '}
             <button className="btn sm" onClick={() => setParams(new URLSearchParams())}>
               Clear filters
             </button>
@@ -807,7 +797,7 @@ export function TracesPage() {
       {modal === 'delete' && (
         <ConfirmModal
           title={`Delete ${selected.size} call${selected.size === 1 ? '' : 's'}?`}
-          body={<>The selected calls and all of their descendants will be deleted. This cannot be undone from the UI.</>}
+          body={<>The selected spans and all of their descendants will be deleted. This cannot be undone from the UI.</>}
           confirmLabel="Delete"
           danger
           busy={del.isPending}
@@ -903,7 +893,7 @@ function CallRow({
                 </button>
               )}
               {childCounts && (childCounts.success ?? 0) + (childCounts.error ?? 0) > 0 && (
-                <span title="Descendant calls">
+                <span title="Descendant spans">
                   {plural((childCounts.success ?? 0) + (childCounts.error ?? 0), 'call')}
                   {childCounts.error ? <span style={{ color: 'var(--error)' }}> · {childCounts.error} err</span> : null}
                 </span>

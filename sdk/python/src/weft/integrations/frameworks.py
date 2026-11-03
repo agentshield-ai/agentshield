@@ -1,13 +1,17 @@
 """Smaller framework integrations built from method tables.
 
-* **Google ADK** (``google.adk``): ``Runner.run``/``run_async`` (agent),
-  ``BaseAgent.run_async`` and subclasses (agent, display name = the agent's
-  name), tools' ``run_async`` (tool) and ``BaseLlm.generate_content_async``
+* **Google ADK** (``google.adk``): ``Runner.run``/``run_async`` (workflow;
+  ``gen_ai.conversation.id`` = the ADK ``session_id``),
+  ``BaseAgent.run_async`` and subclasses (agent, ``gen_ai.agent.name`` = the
+  agent's name, so sub-agents nest as delegations), tools' ``run_async``
+  (tool, with the function call id; ``transfer_to_agent`` is read by the
+  server as a hand-off) and ``BaseLlm.generate_content_async``
   implementations (llm; the google-genai call underneath carries usage).
-* **Pydantic AI** (``pydantic_ai``): ``Agent.run`` (agent; ``run_sync`` runs
-  it), function tool calls (tool) and ``Model.request`` on every model
-  class (llm; usage from ``ModelResponse.usage`` when no provider SDK call
-  was traced underneath).
+* **Pydantic AI** (``pydantic_ai``): ``Agent.run`` (agent, ``gen_ai.agent.name``
+  = the agent's name; an agent run inside another agent's tool is a
+  delegation), function tool calls (tool, with the tool call id) and
+  ``Model.request`` on every model class (llm; usage from
+  ``ModelResponse.usage`` when no provider SDK call was traced underneath).
 * **Not Diamond** (``notdiamond``): ``model_select``/``amodel_select`` (chain).
 * **verifiers**: ``Environment.evaluate``/``generate``/``a_generate``
   (chain), ``MultiTurnEnv.rollout`` (agent), ``Rubric.score_rollouts`` (scorer).
@@ -21,7 +25,7 @@ from typing import Any, List
 
 from .._usage import add_usage
 from ._common import patch_attr
-from ._methods import Method, make_op, patch_methods
+from ._methods import Method, agent_attrs, make_op, patch_methods, self_arg, session_attrs, tool_attrs
 
 
 def _self(call: Any) -> Any:
@@ -50,14 +54,27 @@ def _arg_named(prefix: str, *keys: str) -> Any:
 
 
 # ---------------------------------------------------------------- Google ADK
+def _adk_runner_attrs(args: Any, kwargs: Any) -> Any:
+    return session_attrs(kwargs.get("session_id"))
+
+
+def _adk_agent_attrs(args: Any, kwargs: Any) -> Any:
+    return agent_attrs(getattr(self_arg(args), "name", None))
+
+
+def _adk_tool_attrs(args: Any, kwargs: Any) -> Any:
+    ctx = kwargs.get("tool_context")
+    return tool_attrs(getattr(self_arg(args), "name", None), getattr(ctx, "function_call_id", None))
+
+
 def patch_google_adk() -> bool:
     return patch_methods("google_adk", None, [
-        Method("Runner.run_async", "google_adk.Runner.run", "agent", module="google.adk.runners"),
-        Method("Runner.run", "google_adk.Runner.run", "agent", module="google.adk.runners"),
+        Method("Runner.run_async", "google_adk.Runner.run", "workflow", module="google.adk.runners", attrs=_adk_runner_attrs),
+        Method("Runner.run", "google_adk.Runner.run", "workflow", module="google.adk.runners", attrs=_adk_runner_attrs),
         Method("BaseAgent.run_async", "google_adk.Agent.run", "agent", module="google.adk.agents.base_agent",
-               display=_named("Agent"), subclasses=True),
+               display=_named("Agent"), subclasses=True, attrs=_adk_agent_attrs),
         Method("BaseTool.run_async", "google_adk.Tool.run", "tool", module="google.adk.tools.base_tool",
-               display=_named("Tool"), subclasses=True),
+               display=_named("Tool"), subclasses=True, attrs=_adk_tool_attrs),
         Method("BaseLlm.generate_content_async", "google_adk.LLM.generate_content", "llm", module="google.adk.models.base_llm",
                subclasses=True),
     ])
@@ -94,12 +111,30 @@ def _run_output(res: Any) -> Any:
     return d
 
 
+def _pai_agent_attrs(args: Any, kwargs: Any) -> Any:
+    return agent_attrs(getattr(self_arg(args), "name", None))
+
+
+def _pai_toolset_attrs(args: Any, kwargs: Any) -> Any:
+    name = kwargs.get("name", args[1] if len(args) > 1 else None)
+    ctx = kwargs.get("ctx", args[3] if len(args) > 3 else None)
+    return tool_attrs(name if isinstance(name, str) else None, getattr(ctx, "tool_call_id", None))
+
+
+def _pai_tool_attrs(args: Any, kwargs: Any) -> Any:
+    ctx = kwargs.get("ctx")
+    if ctx is None:
+        ctx = next((a for a in args[1:] if hasattr(a, "tool_call_id")), None)
+    return tool_attrs(getattr(self_arg(args), "name", None), getattr(ctx, "tool_call_id", None))
+
+
 def patch_pydantic_ai() -> bool:
     return patch_methods("pydantic_ai", None, [
-        Method("Agent.run", "pydantic_ai.Agent.run", "agent", module="pydantic_ai", display=_named("Agent"), output=_run_output),
+        Method("Agent.run", "pydantic_ai.Agent.run", "agent", module="pydantic_ai", display=_named("Agent"), output=_run_output,
+               attrs=_pai_agent_attrs),
         Method("FunctionToolset.call_tool", "pydantic_ai.Tool.call", "tool", module="pydantic_ai.toolsets.function",
-               display=_arg_named("Tool", "name")),
-        Method("Tool.run", "pydantic_ai.Tool.call", "tool", module="pydantic_ai.tools", display=_named("Tool")),
+               display=_arg_named("Tool", "name"), attrs=_pai_toolset_attrs),
+        Method("Tool.run", "pydantic_ai.Tool.call", "tool", module="pydantic_ai.tools", display=_named("Tool"), attrs=_pai_tool_attrs),
         Method("Model.request", "pydantic_ai.Model.request", "llm", module="pydantic_ai.models", subclasses=True, usage=pydantic_ai_usage),
     ])
 

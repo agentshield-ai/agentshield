@@ -154,29 +154,29 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
     under_op, under_turn, op_turn, off_env, off_setting = llms
     turns = {c["id"]: c for c in fake.calls_by_op("invoke_agent")}
     # Inside an op (as in Weave): its own "typesafe SDK" turn on a new trace,
-    # linked to the op by weave.parent_call.* on both spans, not nested.
+    # linked to the op by weft.parent_call.* on both spans, not nested.
     own = turns[under_op["parent_id"]]
     assert own["display_name"] == "invoke_agent typesafe SDK" and own["parent_id"] is None
     assert own["trace_id"] == under_op["trace_id"] != op_call["trace_id"]
     link = {"trace_id": op_call["trace_id"], "id": op_call["id"]}
-    assert own["attributes"]["weave"]["parent_call"] == link and under_op["attributes"]["weave"]["parent_call"] == link
+    assert own["attributes"]["weft"]["parent_call"] == link and under_op["attributes"]["weft"]["parent_call"] == link
     assert own["attributes"]["weft"]["integration"] == "typesafe"
     assert not [c for c in fake.calls.values() if c.get("parent_id") == op_call["id"]], "nothing nests under the op"
     # Inside a running turn: under the turn; no op running, so no link.
     assert under_turn["parent_id"] == turn.call_id and under_turn["attributes"]["gen_ai"]["conversation"]["id"] == "conv-ts"
-    assert "parent_call" not in under_turn["attributes"].get("weave", {})
-    assert "parent_call" not in turns[under_turn["parent_id"]]["attributes"].get("weave", {})
+    assert "parent_call" not in under_turn["attributes"].get("weft", {})
+    assert "parent_call" not in turns[under_turn["parent_id"]]["attributes"].get("weft", {})
     # A turn running inside an op: under the turn, linked to the op (the
     # innermost op, not the turn), as Weave's OpLinkSpanProcessor stamps it.
     assert op_turn["parent_id"] == helper_turn_id
-    assert op_turn["attributes"]["weave"]["parent_call"] == {"trace_id": handle_call["trace_id"], "id": handle_call["id"]}
+    assert op_turn["attributes"]["weft"]["parent_call"] == {"trace_id": handle_call["trace_id"], "id": handle_call["id"]}
     for c in (off_env, off_setting):
         assert not c["inputs"].get("messages") and "questions" not in json.dumps(c["attributes"]) and not c.get("output")
     assert "private" not in json.dumps(fake.calls)
     # the op's own turn, support, helper, and the two capture-off calls' own turns
     assert len(turns) == 5
     for c in (off_env, off_setting):
-        assert "parent_call" not in c["attributes"].get("weave", {})
+        assert "parent_call" not in c["attributes"].get("weft", {})
 
 
 # ---------------------------------------------------------------- require_current_call, urls

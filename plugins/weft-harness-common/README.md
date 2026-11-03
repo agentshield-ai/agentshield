@@ -8,6 +8,17 @@ agents index understands (`invoke_agent` turns, `chat` LLM calls,
 `execute_tool` tools, conversation = thread id), truncation and the
 `/call/upsert_batch` sender with a timeout.
 
+**Correlation with AgentShield** ([DESIGN.md](../../docs/weft/DESIGN.md) §5.3).
+Every plugin records the harness session id as `gen_ai.conversation.id` (and
+`thread_id`) and the harness tool-use id as `gen_ai.tool.call.id` on tool
+spans, exactly the values the AgentShield plugin of the same harness sends as
+`session_id` and `tool_call_id`: Claude Code's `session_id` / `tool_use_id`
+(sub-agent tools included: they share the session id), the Codex session id
+/ `call_id`, and OpenClaw's `ctx.sessionId` (else the session key) /
+`toolCallId`, a sub-agent's child session being a session of its own. Each
+plugin's `test/correlation.test.mjs` runs the AgentShield plugin on the same
+payloads and checks the ids match (Pi has no AgentShield plugin).
+
 Each plugin vendors a copy as `lib/weft.mjs` so it installs on its own. After
 editing this file run:
 

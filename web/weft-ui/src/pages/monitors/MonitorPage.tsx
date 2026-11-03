@@ -163,7 +163,7 @@ export function MonitorPage() {
           <Loading />
         ) : shown.length === 0 ? (
           <div className="faint">
-            {v.active ? 'No results yet. Matching calls are scored as they finish.' : 'This monitor is paused. Activate it to start scoring new calls.'}
+            {v.active ? 'No results yet. Matching spans are scored as they finish.' : 'This monitor is paused. Activate it to start scoring new spans.'}
           </div>
         ) : (
           <div className="table-wrap" style={{ maxHeight: 560 }}>
@@ -171,7 +171,7 @@ export function MonitorPage() {
               <thead>
                 <tr>
                   <th>Time</th>
-                  <th>Call</th>
+                  <th>Span</th>
                   <th>Scorer</th>
                   <th>Output</th>
                   <th>Scorer call</th>

@@ -2,7 +2,12 @@
 
 ``weft.init()`` registers it globally through LangChain's configure hook, so
 every chain, chat model, LLM, tool and retriever run is traced (set
-``WEFT_TRACE_LANGCHAIN=false`` to opt out). You can also pass it explicitly::
+``WEFT_TRACE_LANGCHAIN=false`` to opt out). The session
+(``gen_ai.conversation.id``) is LangGraph's ``thread_id`` (or a ``session_id``
+/ ``conversation_id`` in the run metadata). A LangGraph run is a workflow
+call; each node that ran a model becomes an agent invocation named after the
+node, so the server reads consecutive agent nodes as hand-offs. You can also
+pass it explicitly::
 
     from weft.integrations.langchain import WeftTracer
     chain.invoke(inputs, config={"callbacks": [WeftTracer()]})
@@ -47,6 +52,22 @@ def _langgraph_info(meta: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "thread_id": meta.get("thread_id"),
     }
     return {k: v for k, v in info.items() if v is not None}
+
+
+_SESSION_KEYS = ("thread_id", "session_id", "conversation_id")
+
+
+def _agent_node_attrs(call: Any) -> Optional[Dict[str, Any]]:
+    """A LangGraph node that ran a model is an agent: its run becomes an
+    ``invoke_agent`` of the node's name (known when it ends), so consecutive
+    agent nodes read as hand-offs between agents."""
+    if call is None or not call._llm_descendant:
+        return None
+    node = ((call.attributes or {}).get("langgraph") or {}).get("node")
+    op = getattr(getattr(call, "_weft_op", None), "name", "") or ""
+    if not node or not op.startswith("langgraph.node."):
+        return None
+    return {"gen_ai": {"operation": {"name": "invoke_agent"}, "agent": {"name": node}}}
 
 
 def _llm_usage(response: Any) -> Optional[Dict[str, Any]]:
@@ -96,15 +117,22 @@ def _build() -> Any:
             attrs: Dict[str, Any] = {"langchain": {"run_id": str(run_id), "tags": kwargs.get("tags") or [], "metadata": meta}}
             op_name = f"langchain.{prefix}.{name}"
             display = None
+            # The session: LangGraph's thread_id (config["configurable"]["thread_id"],
+            # copied into the run metadata), or a session/conversation id in the metadata.
+            session = next((meta.get(k) for k in _SESSION_KEYS if isinstance(meta.get(k), (str, int)) and meta.get(k) != ""), None)
+            if session is not None:
+                attrs["gen_ai"] = {"conversation": {"id": str(session)}}
             lg = _langgraph_info(meta)
             if lg is not None:
                 # LangGraph runs its graph, nodes and their LLM/tool calls through
-                # LangChain callbacks; tag node runs so the trace reads as the graph.
+                # LangChain callbacks; tag node runs so the trace reads as the graph
+                # (the server reads consecutive agent nodes as hand-offs).
                 attrs["langgraph"] = lg
                 if kind == "chain" and lg.get("node") == name:
                     op_name, display = f"langgraph.node.{name}", name
             elif kind == "chain" and name == "LangGraph" and parent_run_id is None:
-                op_name, kind = "langgraph.graph", "agent"
+                # The graph run is the workflow; its nodes that run a model are the agents.
+                op_name, kind = "langgraph.graph", "workflow"
             self.tracker.start(run_id, op_name, inputs if isinstance(inputs, dict) else {"input": inputs},
                                parent_id=parent_run_id, kind=kind, attributes=attrs, display_name=display)
 
@@ -113,10 +141,10 @@ def _build() -> Any:
             self._start("chain", "Chain", serialized, inputs, run_id, parent_run_id, kwargs)
 
         def on_chain_end(self, outputs: Any, *, run_id: Any, **kwargs: Any) -> None:
-            self.tracker.end(run_id, outputs)
+            self.tracker.end(run_id, outputs, attributes=_agent_node_attrs(self.tracker.get(run_id)))
 
         def on_chain_error(self, error: BaseException, *, run_id: Any, **kwargs: Any) -> None:
-            self.tracker.end(run_id, error=error)
+            self.tracker.end(run_id, error=error, attributes=_agent_node_attrs(self.tracker.get(run_id)))
 
         # models
         def on_chat_model_start(self, serialized: Any, messages: List[Any], *, run_id: Any, parent_run_id: Any = None, **kwargs: Any) -> None:

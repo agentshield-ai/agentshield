@@ -61,7 +61,9 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger("weft")
 
 __all__ = [
+    "Handoff",
     "LLM",
+    "Team",
     "BlobPart",
     "Conversation",
     "FilePart",
@@ -85,14 +87,19 @@ __all__ = [
     "end_turn",
     "get_current_conversation",
     "get_current_llm",
+    "get_current_team",
     "get_current_turn",
+    "handoff",
     "log_conversation",
     "log_turn",
+    "reasoning",
     "start_conversation",
+    "start_handoff",
     "start_llm",
     "start_subagent",
     "start_tool",
     "start_turn",
+    "team",
 ]
 
 
@@ -436,6 +443,74 @@ class _ConvInfo:
     conversation_name: str = ""
     include_content: bool = True
     attributes: Dict[str, Any] = field(default_factory=dict)
+    team: Optional[_context.TeamInfo] = None
+
+
+# ---------------------------------------------------------------------------
+# teams
+# ---------------------------------------------------------------------------
+
+
+class Team:
+    """An agent team: the spans recorded while it is active carry ``weft.team.id``
+    and ``weft.team.name``, so the server groups their sessions under it.
+
+    >>> with weft.team("trip-planners", "Trip planners"):
+    ...     run_orchestrator()
+
+    Pass it (or its id) as ``team=`` to ``start_conversation``/``log_turn``/
+    ``log_conversation`` to set it for one conversation.
+    """
+
+    def __init__(self, id: str, name: str = "") -> None:
+        if not isinstance(id, str) or not id.strip():
+            raise ValueError("a team needs a non-blank id")
+        self.id = id.strip()
+        self.name = (name or "").strip()
+        self._tokens: List[Token] = []
+
+    @property
+    def info(self) -> _context.TeamInfo:
+        return _context.TeamInfo(self.id, self.name)
+
+    def __enter__(self) -> "Team":
+        self._tokens.append(_context.set_team(self.info))
+        return self
+
+    def __exit__(self, *exc: Any) -> Literal[False]:
+        if self._tokens:
+            _context.reset_team(self._tokens.pop())
+        return False
+
+    def __repr__(self) -> str:
+        return f"Team(id={self.id!r}, name={self.name!r})"
+
+
+def team(id: str, name: str = "") -> Team:
+    """Declare the agent team for the calls made in a ``with`` block (``weft.team.id`` / ``.name``)."""
+    return Team(id, name)
+
+
+def get_current_team() -> Optional[_context.TeamInfo]:
+    """The team of the innermost ``weft.team(...)`` block or team conversation, if any."""
+    return _context.current_team()
+
+
+def _team_info(value: Any) -> Optional[_context.TeamInfo]:
+    """A team from a Team, a TeamInfo, an id string, a ``(id, name)`` pair or ``{"id", "name"}``."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, Team):
+        return value.info
+    if isinstance(value, _context.TeamInfo):
+        return value
+    if isinstance(value, str):
+        return _context.TeamInfo(value.strip()) if value.strip() else None
+    if isinstance(value, (tuple, list)) and value:
+        return _context.TeamInfo(str(value[0]), str(value[1]) if len(value) > 1 and value[1] else "")
+    if isinstance(value, dict) and value.get("id"):
+        return _context.TeamInfo(str(value["id"]), str(value.get("name") or ""))
+    raise TypeError(f"team must be a weft.Team, an id string, (id, name) or {{'id', 'name'}}, not {type(value).__name__}")
 
 
 _current_agent_name: ContextVar[Optional[str]] = ContextVar("weft_agent_name_override", default=None)
@@ -487,6 +562,8 @@ class _SpanBase(BaseModel):
     _started: bool = PrivateAttr(default=False)
     _ended: bool = PrivateAttr(default=False)
     _new_trace: bool = PrivateAttr(default=False)
+    _team: Optional[_context.TeamInfo] = PrivateAttr(default=None)
+    _reasoning: List[Dict[str, Any]] = PrivateAttr(default_factory=list)
 
     # ---- identity ------------------------------------------------------------
     @property
@@ -532,6 +609,7 @@ class _SpanBase(BaseModel):
             return
         self._client = client
         self._ctx_attrs = dict(_context.current_attributes())
+        self._team = (self._conv.team if self._conv is not None else None) or _context.current_team()
         eval_attrs = _eval_link_attributes()
         if eval_attrs:
             self._ctx_attrs = {**self._ctx_attrs, **{"__eval__": eval_attrs}}
@@ -569,6 +647,7 @@ class _SpanBase(BaseModel):
         )
         self._call._client = client
         self._call._conversation_span = True
+        self._call._weft_span = self
         if parent_call is not None:
             parent_call._child_count += 1
         if set_current:
@@ -658,6 +737,10 @@ class _SpanBase(BaseModel):
         flat: Dict[str, Any] = dict(gen_attrs)
         if conv.conversation_id:
             flat["gen_ai.conversation.id"] = conv.conversation_id
+        if self._team is not None:
+            flat["weft.team.id"] = self._team.id
+            if self._team.name:
+                flat["weft.team.name"] = self._team.name
         if self._error_type:
             flat["error.type"] = self._error_type
         flat.update(self._ctx_attrs.get("__eval__") or {})
@@ -671,13 +754,17 @@ class _SpanBase(BaseModel):
             weft_attrs.update(attrs["weft"])
         if self._events:
             weft_attrs["events"] = list(self._events)
+        if self._reasoning and client.capture_reasoning:
+            weft_attrs["reasoning"] = list(weft_attrs.get("reasoning") or []) + client._reasoning_attr(self._reasoning)
         attrs["weft"] = weft_attrs
         weave_attrs = dict(attrs.get("weave") or {}) if isinstance(attrs.get("weave"), dict) else {}
         weave_attrs["kind"] = self._kind
         attrs["weave"] = weave_attrs
         attrs = to_json(attrs, client)
-        ser_inputs = client._redact(to_json(inputs, client)) if client._redact.active else to_json(inputs, client)
-        ser_output = client._redact(to_json(output, client)) if client._redact.active else to_json(output, client)
+        ser_inputs = client._scrub_reasoning(to_json(inputs, client))
+        ser_output = client._scrub_reasoning(to_json(output, client))
+        if client._redact.active:
+            ser_inputs, ser_output = client._redact(ser_inputs), client._redact(ser_output)
         call.attributes = attrs
         call.inputs = ser_inputs
         call.output = ser_output
@@ -1043,6 +1130,12 @@ class SubAgent(_SpanBase):
         self._pin_parent(sub)
         return sub
 
+    def start_handoff(self, to_agent: str, input: Any = None, *, kind: str = "handoff") -> "Handoff":
+        """Start a hand-off from this sub-agent (use it as a context manager)."""
+        h = Handoff(to_agent=to_agent, from_agent=self.name, kind=kind, input=input)
+        self._pin_parent(h)
+        return h
+
     def llm(self, **kwargs: Any) -> LLM:
         """Deprecated alias of ``start_llm``."""
         warnings.warn("`llm` is deprecated; use `start_llm` instead.", DeprecationWarning, stacklevel=2)
@@ -1106,6 +1199,148 @@ class SubAgent(_SpanBase):
 
 
 # ---------------------------------------------------------------------------
+# Hand-offs
+# ---------------------------------------------------------------------------
+
+_HANDOFF_KINDS = ("handoff", "delegate", "return")
+
+
+def _agent_of_call(call: Call) -> str:
+    span = getattr(call, "_weft_span", None)
+    if isinstance(span, Turn):
+        return span.agent_name
+    if isinstance(span, SubAgent):
+        return span.name
+    attrs = call.attributes if isinstance(call.attributes, dict) else {}
+    agent = ((attrs.get("gen_ai") or {}).get("agent") or {}) if isinstance(attrs.get("gen_ai"), dict) else {}
+    name = agent.get("name") if isinstance(agent, dict) else None
+    if not name:
+        name = attrs.get("gen_ai.agent.name")
+    return name if isinstance(name, str) else ""
+
+
+def current_agent_name() -> str:
+    """The agent running now: the innermost agent span (turn, sub-agent, or a
+    call with ``gen_ai.agent.name``) on the call stack, else the current turn's."""
+    for call in reversed(_context._call_stack.get()):
+        name = _agent_of_call(call)
+        if name:
+            return name
+    t = get_current_turn()
+    return t.agent_name if t is not None and not t._ended else ""
+
+
+class Handoff(_SpanBase):
+    """Control passing from one agent to another (``weft.handoff.*``, DESIGN §2.1).
+
+    ``kind`` is ``"handoff"`` (the other agent takes over) or ``"delegate"``
+    (it works for the caller and returns). Agent runs started inside a
+    ``with weft.start_handoff(...)`` block are its children, so the server
+    links the hand-off to them; an instant ``weft.handoff(...)`` is linked to
+    the next run of ``to_agent`` in the same trace.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    to_agent: str
+    from_agent: str = ""
+    kind: str = "handoff"
+    input: Any = None
+    output: Any = None
+    started_at: Optional[datetime.datetime] = None
+    ended_at: Optional[datetime.datetime] = None
+
+    def model_post_init(self, context: Any, /) -> None:
+        self._op_name = "handoff"
+        self._kind = "handoff"
+        if not isinstance(self.to_agent, str) or not self.to_agent.strip():
+            raise ValueError("a hand-off needs the name of the agent it goes to")
+        k = (self.kind or "handoff").strip().lower()
+        if k not in _HANDOFF_KINDS:
+            raise ValueError(f"hand-off kind must be one of {', '.join(_HANDOFF_KINDS)}, not {self.kind!r}")
+        if k != self.kind:
+            self.kind = k
+
+    def _span_display_name(self) -> str:
+        return f"{'delegate' if self.kind == 'delegate' else 'handoff'} to {self.to_agent}"
+
+    def _start(self, *, set_current: bool = True) -> None:
+        if not self.from_agent:
+            self.from_agent = current_agent_name()
+        super()._start(set_current=set_current)
+
+    def _payload(self, conv: _ConvInfo, client: Optional["WeftClient"]) -> Tuple[Dict[str, Any], Any, Dict[str, Any], Dict[str, Any]]:
+        attrs: Dict[str, Any] = {"weft.handoff.to_agent": self.to_agent, "weft.handoff.kind": self.kind}
+        if self.from_agent and self.from_agent != self.to_agent:
+            attrs["weft.handoff.from_agent"] = self.from_agent
+        if not conv.include_content:
+            return {}, None, attrs, {}
+        inputs = {} if self.input is None else {"input": self.input}
+        return inputs, self.output, attrs, {}
+
+
+def start_handoff(to_agent: str, input: Any = None, *, kind: str = "handoff", from_agent: str = "") -> Handoff:
+    """A hand-off span to use as a context manager; agent runs inside it are its children.
+
+    >>> with weft.start_handoff("researcher", input=task, kind="delegate") as h:
+    ...     h.output = researcher.run(task)
+    """
+    h = Handoff(to_agent=to_agent, from_agent=from_agent, kind=kind, input=input)
+    h._fallback_parent = get_current_turn()
+    return h
+
+
+def handoff(to_agent: str, input: Any = None, *, kind: str = "handoff", from_agent: str = "", output: Any = None) -> Handoff:
+    """Record that control passed to ``to_agent`` now (an instant hand-off span).
+
+    ``from_agent`` defaults to the agent running now. Use ``start_handoff`` as a
+    context manager to cover the other agent's run."""
+    h = start_handoff(to_agent, input, kind=kind, from_agent=from_agent)
+    h.output = output
+    h._start(set_current=False)
+    h.end()
+    return h
+
+
+# ---------------------------------------------------------------------------
+# Reasoning
+# ---------------------------------------------------------------------------
+
+
+def reasoning(text: str = "", kind: str = "thinking", *, tokens: Optional[int] = None) -> None:
+    """Record a reasoning step of the agent or model running now (``weft.reasoning``).
+
+    ``kind`` is ``"thinking"``, ``"summary"`` or ``"redacted"`` (no text is kept).
+    The step goes on the innermost running span or op call and is linked by
+    the server to the tool call or hand-off that follows it. Nothing is
+    recorded when ``capture_reasoning`` is off or tracing is not initialised.
+    """
+    from ._client import tracing_client
+    from ._reasoning import step
+
+    client = tracing_client()
+    if client is None or _context.tracing_suppressed() or not client.capture_reasoning:
+        return
+    st = step(text, kind, tokens)
+    if st["kind"] != "redacted" and not st["text"].strip():
+        return
+    call = _context.get_current_call()
+    span = getattr(call, "_weft_span", None) if call is not None else None
+    if call is None:
+        span = get_current_llm() or get_current_turn()
+    if span is not None:
+        if span._ended:
+            logger.warning("weft: reasoning() ignored: the current span already ended")
+            return
+        span._reasoning.append(st)
+        return
+    if call is not None and not call._ended:
+        client.add_reasoning(call, [st])
+    else:
+        logger.debug("weft: reasoning() outside any span or op; nothing recorded")
+
+
+# ---------------------------------------------------------------------------
 # Turn and Conversation
 # ---------------------------------------------------------------------------
 
@@ -1125,12 +1360,13 @@ class Turn(_SpanBase):
     system_instructions: List[str] = Field(default_factory=list)
     messages: List[Message] = Field(default_factory=list)
     output_messages: List[Message] = Field(default_factory=list)
-    spans: List[Union[LLM, Tool, SubAgent]] = Field(default_factory=list)
+    spans: List[Union[LLM, Tool, SubAgent, Handoff]] = Field(default_factory=list)
     continue_parent_trace: bool = False
     started_at: Optional[datetime.datetime] = None
     ended_at: Optional[datetime.datetime] = None
 
     _token: Optional[Token] = PrivateAttr(default=None)
+    _batch: bool = PrivateAttr(default=False)
 
     def model_post_init(self, context: Any, /) -> None:
         self._op_name = "invoke_agent"
@@ -1144,7 +1380,11 @@ class Turn(_SpanBase):
         return _span_name("invoke_agent", self.agent_name)
 
     def _start(self, *, set_current: bool = True) -> None:
-        self._new_trace = not self.continue_parent_trace
+        # A turn of another agent started while an agent is running is that
+        # agent delegating: it nests (same trace) so the hand-off is recorded.
+        running = current_agent_name() if self._explicit_parent is None and not self._batch else ""
+        nested = bool(running) and running != self.agent_name and _context.get_current_call() is not None
+        self._new_trace = not (self.continue_parent_trace or nested)
         super()._start(set_current=set_current)
 
     def user(self, content: str) -> "Turn":
@@ -1170,6 +1410,20 @@ class Turn(_SpanBase):
         sub = SubAgent(name=name, model=model or self.model, system_instructions=system_instructions or [])
         self._pin_parent(sub)
         return sub
+
+    def start_handoff(self, to_agent: str, input: Any = None, *, kind: str = "handoff") -> "Handoff":
+        """Start a hand-off from this turn's agent (use it as a context manager)."""
+        h = Handoff(to_agent=to_agent, from_agent=self.agent_name, kind=kind, input=input)
+        self._pin_parent(h)
+        return h
+
+    def handoff(self, to_agent: str, input: Any = None, *, kind: str = "handoff", output: Any = None) -> "Handoff":
+        """Record an instant hand-off from this turn's agent."""
+        h = self.start_handoff(to_agent, input, kind=kind)
+        h.output = output
+        h._start(set_current=False)
+        h.end()
+        return h
 
     def llm(self, **kwargs: Any) -> LLM:
         """Deprecated alias of ``start_llm``."""
@@ -1259,17 +1513,26 @@ class Conversation(BaseModel):
     include_content: bool = True
     continue_parent_trace: bool = False
     attributes: Dict[str, Any] = Field(default_factory=dict)
+    #: The agent team (``weft.Team``, an id, ``(id, name)`` or ``{"id", "name"}``).
+    team: Any = None
 
     _ended: bool = PrivateAttr(default=False)
     _token: Optional[Token] = PrivateAttr(default=None)
+    _team_token: Optional[Token] = PrivateAttr(default=None)
     _current_turn: Optional[Turn] = PrivateAttr(default=None)
+    _turns: List[Turn] = PrivateAttr(default_factory=list)
 
     def model_post_init(self, context: Any, /) -> None:
         if not self.conversation_id:
             self.conversation_id = str(uuid.uuid4())
+        self.team = _team_info(self.team)
 
     def _info(self) -> _ConvInfo:
-        return _ConvInfo(self.conversation_id, self.conversation_name, self.include_content, dict(self.attributes))
+        return _ConvInfo(self.conversation_id, self.conversation_name, self.include_content, dict(self.attributes), self.team)
+
+    def _activate_team(self) -> None:
+        if self.team is not None and self._team_token is None:
+            self._team_token = _context.set_team(self.team)
 
     def start_turn(
         self,
@@ -1282,9 +1545,16 @@ class Conversation(BaseModel):
         agent_version: str = "",
         system_instructions: Optional[List[str]] = None,
     ) -> Turn:
-        """Create a turn (ending the previous one if still open); it becomes ``get_current_turn()``."""
-        if self._current_turn is not None and not self._current_turn._ended:
-            self._current_turn.end()
+        """Create a turn (ending the previous one if still open); it becomes ``get_current_turn()``.
+
+        Started from inside a running turn of another agent, the new turn is
+        that agent delegating: the running turn stays open and the new one
+        nests under it."""
+        cur = self._current_turn
+        if cur is not None and not cur._ended:
+            inside = cur._call is not None and any(c is cur._call for c in _context._call_stack.get())
+            if not (inside and (agent_name or self.agent_name) != cur.agent_name):
+                cur.end()
         turn = Turn(
             agent_name=agent_name or self.agent_name,
             model=model or self.model,
@@ -1299,24 +1569,30 @@ class Conversation(BaseModel):
             turn.messages.append(Message(role="user", content=user_message))
         turn._token = _current_turn.set(turn)
         self._current_turn = turn
+        self._turns = [t for t in self._turns if not t._ended] + [turn]
         return turn
 
     def end(self) -> None:
         if self._ended:
             return
         self._ended = True
-        if self._current_turn is not None and not self._current_turn._ended:
-            self._current_turn.end()
+        for t in reversed(self._turns):
+            if not t._ended:
+                t.end()
         if self._token is not None:
             try:
                 _current_conversation.reset(self._token)
             except ValueError:
                 pass
             self._token = None
+        if self._team_token is not None:
+            _context.reset_team(self._team_token)
+            self._team_token = None
 
     def __enter__(self) -> "Conversation":
         if self._token is None:
             self._token = _current_conversation.set(self)
+        self._activate_team()
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Literal[False]:
@@ -1342,8 +1618,14 @@ def start_conversation(
     include_content: bool = True,
     continue_parent_trace: bool = False,
     attributes: Optional[Dict[str, Any]] = None,
+    team: Any = None,
 ) -> Conversation:
-    """Create and activate a conversation (usable as a context manager)."""
+    """Create and activate a conversation (usable as a context manager).
+
+    ``team`` (a ``weft.Team``, an id, ``(id, name)`` or ``{"id", "name"}``)
+    declares the agent team; every span of the conversation, and every call
+    made while it is active, carries ``weft.team.id`` / ``weft.team.name``.
+    """
     conversation = Conversation(
         agent_name=agent_name,
         model=model,
@@ -1352,8 +1634,10 @@ def start_conversation(
         include_content=include_content,
         continue_parent_trace=continue_parent_trace,
         attributes=dict(attributes or {}),
+        team=team,
     )
     conversation._token = _current_conversation.set(conversation)
+    conversation._activate_team()
     return conversation
 
 
@@ -1441,14 +1725,17 @@ def _emit_turn(turn: Turn, info: _ConvInfo, attributes: Optional[Dict[str, Any]]
         return LogResult(conversation_id=info.conversation_id)
     turn.started_at, turn.ended_at = _resolve_turn_timestamps(turn.started_at, turn.ended_at, turn.spans)
     if attributes:
-        info = _ConvInfo(info.conversation_id, info.conversation_name, info.include_content, {**info.attributes, **attributes})
+        info = _ConvInfo(info.conversation_id, info.conversation_name, info.include_content, {**info.attributes, **attributes}, info.team)
     turn._conv = info
     turn._client = client
+    turn._batch = True
     turn._start(set_current=False)
     for child in turn.spans:
         child._conv = info
         child._client = client
         child._explicit_parent = turn
+        if isinstance(child, Handoff) and not child.from_agent:
+            child.from_agent = turn.agent_name
         if child.started_at is None:
             child.started_at = turn.started_at
         if child.ended_at is None:
@@ -1478,12 +1765,13 @@ def log_turn(
     messages: Optional[List[Message]] = None,
     output_messages: Optional[List[Message]] = None,
     system_instructions: Optional[List[str]] = None,
-    spans: Optional[List[Union[LLM, Tool, SubAgent]]] = None,
+    spans: Optional[List[Union[LLM, Tool, SubAgent, Handoff]]] = None,
     started_at: Optional[datetime.datetime] = None,
     ended_at: Optional[datetime.datetime] = None,
     include_content: bool = True,
     continue_parent_trace: bool = False,
     attributes: Optional[Dict[str, Any]] = None,
+    team: Any = None,
 ) -> LogResult:
     """Record one finished turn and its child spans (no context managers needed).
 
@@ -1506,7 +1794,7 @@ def log_turn(
         ended_at=e,
         continue_parent_trace=continue_parent_trace,
     )
-    return _emit_turn(turn, _ConvInfo(conversation_id, conversation_name, include_content), attributes)
+    return _emit_turn(turn, _ConvInfo(conversation_id, conversation_name, include_content, team=_team_info(team) or _context.current_team()), attributes)
 
 
 def log_conversation(
@@ -1522,6 +1810,7 @@ def log_conversation(
     include_content: bool = True,
     continue_parent_trace: bool = False,
     attributes: Optional[Dict[str, Any]] = None,
+    team: Any = None,
 ) -> LogResult:
     """Record a complete conversation; each Turn's ``spans`` are its children.
 
@@ -1529,7 +1818,7 @@ def log_conversation(
     leaves empty. ``conversation_id`` is generated when empty.
     """
     sid = conversation_id or str(uuid.uuid4())
-    info = _ConvInfo(sid, conversation_name, include_content)
+    info = _ConvInfo(sid, conversation_name, include_content, team=_team_info(team) or _context.current_team())
     result = LogResult(conversation_id=sid)
     for turn in turns:
         t = turn.model_copy(

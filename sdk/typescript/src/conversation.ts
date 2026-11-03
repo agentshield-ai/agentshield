@@ -34,7 +34,8 @@ import { logger } from './log.js';
 import { randomUUID } from 'node:crypto';
 import { Call, type CallData } from './call.js';
 import { formatError, syntheticOp, type WeftClient } from './client.js';
-import { currentContext, getCurrentCall, runWith, type WeftContext } from './context.js';
+import { currentContext, getCurrentCall, runWith, toTeam, type TeamInfo, type WeftContext } from './context.js';
+import { reasoningStep } from './reasoning.js';
 import { tracingClient } from './global.js';
 import { VERSION } from './http.js';
 import { uuid7 } from './ids.js';
@@ -95,7 +96,11 @@ interface ConvInfo {
   conversationName: string;
   includeContent: boolean;
   attributes: Record<string, unknown>;
+  team?: TeamInfo | null;
 }
+
+/** A team for the `team` options: `{id, name?}`, an id, or `[id, name]`. */
+export type TeamLike = TeamInfo | string | [string, string?];
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -317,6 +322,8 @@ export abstract class SpanBase {
   protected evalAttrs: Record<string, unknown> = {};
   protected exception: string | null = null;
   protected errType: string | null = null;
+  /** @internal */ team: TeamInfo | null = null;
+  /** @internal `reasoning()` steps recorded on this span. */ reasoningSteps: Array<Record<string, unknown>> = [];
   protected abstract readonly opName: string;
   protected abstract readonly kind: string;
 
@@ -353,6 +360,7 @@ export abstract class SpanBase {
     if (!client) return this;
     this.client = client;
     this.ctxAttrs = { ...currentContext().attributes };
+    this.team = this.conv.team ?? currentContext().team ?? null;
     this.evalAttrs = evalLinkAttributes();
     let parent: Call | null = null;
     if (this.explicitParent) {
@@ -379,6 +387,7 @@ export abstract class SpanBase {
     };
     this.call = new Call(data, client);
     this.call.conversationSpan = true;
+    this.call.span = this;
     this.call.threadId = threadId;
     this.call.turnId = turnId;
     return this;
@@ -454,6 +463,10 @@ export abstract class SpanBase {
     }
     const flat: Record<string, unknown> = { ...gen };
     if (conv.conversationId) flat['gen_ai.conversation.id'] = conv.conversationId;
+    if (this.team) {
+      flat['weft.team.id'] = this.team.id;
+      if (this.team.name) flat['weft.team.name'] = this.team.name;
+    }
     if (this.errType) flat['error.type'] = this.errType;
     Object.assign(flat, this.evalAttrs);
     let attrs: Record<string, any> = { ...client.globalAttributes };
@@ -463,11 +476,14 @@ export abstract class SpanBase {
     attrs = deepMerge(attrs, this.extraAttrs);
     const weftAttrs: Record<string, unknown> = { client_version: VERSION, source: 'typescript-sdk', node_version: process.version, span_kind: this.kind };
     if (attrs.weft && typeof attrs.weft === 'object') Object.assign(weftAttrs, attrs.weft);
+    if (this.reasoningSteps.length && client.captureReasoning) {
+      weftAttrs.reasoning = [...((weftAttrs.reasoning as unknown[]) ?? []), ...client.reasoningAttr(this.reasoningSteps)];
+    }
     attrs.weft = weftAttrs;
     attrs.weave = { ...(attrs.weave && typeof attrs.weave === 'object' ? attrs.weave : {}), kind: this.kind };
     const serAttrs = toJson(attrs, client) as Record<string, unknown>;
-    const serInputs = client.redactor.apply(toJson(inputs, client)) as Record<string, unknown>;
-    const serOutput = client.redactor.apply(toJson(output, client));
+    const serInputs = client.redactor.apply(client.scrubReasoning(toJson(inputs, client))) as Record<string, unknown>;
+    const serOutput = client.redactor.apply(client.scrubReasoning(toJson(output, client)));
     call.attributes = serAttrs;
     call.inputs = serInputs;
     call.output = serOutput;
@@ -818,6 +834,11 @@ export class SubAgent extends SpanBase {
     return this.pin(new SubAgent({ ...opts, model: opts.model || this.model }));
   }
 
+  /** Start a hand-off from this sub-agent (use `.run(fn)`). */
+  startHandoff(toAgent: string, opts: HandoffOptions = {}): Handoff {
+    return this.pin(new Handoff({ ...opts, toAgent, fromAgent: opts.fromAgent || this.name }));
+  }
+
   /** Set several fields at once (only the ones given). */
   record(fields: Partial<Pick<SubAgent, 'name' | 'model' | 'systemInstructions' | 'inputMessages' | 'outputMessages' | 'toolName' | 'toolCallId' | 'toolCallArguments' | 'toolCallResult' | 'agentId' | 'agentDescription' | 'agentVersion'>>): this {
     for (const [k, v] of Object.entries(fields)) if (v !== undefined) (this as any)[k] = v;
@@ -840,6 +861,137 @@ export class SubAgent extends SpanBase {
 }
 
 // ---------------------------------------------------------------------------
+// Hand-offs
+
+const HANDOFF_KINDS = new Set(['handoff', 'delegate', 'return']);
+
+function agentOfCall(call: Call): string {
+  const span = call.span;
+  if (span instanceof Turn) return span.agentName;
+  if (span instanceof SubAgent) return span.name;
+  const a = (call.attributes ?? {}) as Record<string, any>;
+  const name = a.gen_ai?.agent?.name ?? a['gen_ai.agent.name'];
+  return typeof name === 'string' ? name : '';
+}
+
+/**
+ * The agent running now: the innermost agent span (turn, sub-agent, or a call
+ * with `gen_ai.agent.name`) on the call stack, else the current turn's.
+ */
+export function currentAgentName(): string {
+  const stack = currentContext().stack;
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const n = agentOfCall(stack[i]);
+    if (n) return n;
+  }
+  const t = getCurrentTurn();
+  return t && !t.ended ? t.agentName : '';
+}
+
+export interface HandoffOptions {
+  /** What the receiving agent is given. */
+  input?: unknown;
+  /** `handoff` (the other agent takes over, default) or `delegate` (it works for the caller and returns). */
+  kind?: 'handoff' | 'delegate' | 'return' | string;
+  /** Defaults to the agent running now. */
+  fromAgent?: string;
+  startedAt?: Date;
+  endedAt?: Date;
+}
+
+/**
+ * Control passing from one agent to another (`weft.handoff.*`, DESIGN §2.1).
+ * Agent runs started inside `startHandoff(...).run(fn)` are its children, so
+ * the server links the hand-off to them; an instant `handoff(...)` is linked
+ * to the next run of `toAgent` in the same trace.
+ */
+export class Handoff extends SpanBase {
+  protected readonly opName = 'handoff';
+  protected readonly kind = 'handoff';
+  toAgent: string;
+  fromAgent: string;
+  handoffKind: string;
+  input: unknown;
+  output: unknown = null;
+
+  constructor(opts: HandoffOptions & { toAgent: string }) {
+    super();
+    if (!opts.toAgent || !String(opts.toAgent).trim()) throw new Error('a hand-off needs the name of the agent it goes to');
+    const k = String(opts.kind ?? 'handoff').trim().toLowerCase();
+    if (!HANDOFF_KINDS.has(k)) throw new Error(`hand-off kind must be one of handoff, delegate, return, not ${JSON.stringify(opts.kind)}`);
+    this.toAgent = opts.toAgent;
+    this.fromAgent = opts.fromAgent ?? '';
+    this.handoffKind = k;
+    this.input = opts.input ?? null;
+    this.startedAt = opts.startedAt ?? null;
+    this.endedAt = opts.endedAt ?? null;
+  }
+
+  protected displayName(): string {
+    return `${this.handoffKind === 'delegate' ? 'delegate' : 'handoff'} to ${this.toAgent}`;
+  }
+
+  start(): this {
+    if (!this.started && !this.fromAgent) this.fromAgent = currentAgentName();
+    return super.start();
+  }
+
+  protected payload(conv: ConvInfo): Payload {
+    const attrs: Record<string, unknown> = { 'weft.handoff.to_agent': this.toAgent, 'weft.handoff.kind': this.handoffKind };
+    if (this.fromAgent && this.fromAgent !== this.toAgent) attrs['weft.handoff.from_agent'] = this.fromAgent;
+    if (!conv.includeContent) return [{}, null, attrs, {}];
+    return [this.input === null || this.input === undefined ? {} : { input: this.input }, this.output ?? null, attrs, {}];
+  }
+}
+
+/** A hand-off span; run the other agent inside `.run(fn)` so its run is the hand-off's child. */
+export function startHandoff(toAgent: string, opts: HandoffOptions = {}): Handoff {
+  const h = new Handoff({ ...opts, toAgent });
+  h.fallbackParent = getCurrentTurn();
+  return h;
+}
+
+/** Record that control passed to `toAgent` now (an instant hand-off span; `fromAgent` defaults to the running agent). */
+export function handoff(toAgent: string, opts: HandoffOptions & { output?: unknown } = {}): Handoff {
+  const h = startHandoff(toAgent, opts);
+  h.output = opts.output ?? null;
+  h.start();
+  h.end();
+  return h;
+}
+
+// ---------------------------------------------------------------------------
+// Reasoning
+
+/**
+ * Record a reasoning step of the agent or model running now (`weft.reasoning`).
+ * `kind` is `thinking` (default), `summary` or `redacted` (no text is kept).
+ * The step goes on the innermost running span or op call; the server links it
+ * to the tool call or hand-off that follows. Nothing is recorded when
+ * `captureReasoning` is off or tracing is not initialised.
+ */
+export function reasoning(text: string, opts: { kind?: string; tokens?: number } | string = {}): void {
+  const o = typeof opts === 'string' ? { kind: opts } : opts;
+  const client = activeTracingClient();
+  if (!client || currentContext().suppressed || !client.captureReasoning) return;
+  const step = reasoningStep(text, o.kind, o.tokens);
+  if (step.kind !== 'redacted' && !step.text.trim()) return;
+  const call = getCurrentCall();
+  let span = (call?.span as SpanBase | null | undefined) ?? null;
+  if (!call) span = getCurrentLLM() ?? getCurrentTurn();
+  if (span) {
+    if (span.ended) {
+      logger.warn('weft: reasoning() ignored: the current span already ended');
+      return;
+    }
+    span.reasoningSteps.push({ ...step });
+    return;
+  }
+  if (call && !call.ended) client.addReasoning(call, [{ ...step }]);
+  else logger.debug('weft: reasoning() outside any span or op; nothing recorded');
+}
+
+// ---------------------------------------------------------------------------
 // Turn and Conversation
 
 export interface TurnOptions {
@@ -852,7 +1004,7 @@ export interface TurnOptions {
   messages?: Message[];
   outputMessages?: Message[];
   /** Child spans for batch logging (`logTurn` / `logConversation`). */
-  spans?: Array<LLM | Tool | SubAgent>;
+  spans?: Array<LLM | Tool | SubAgent | Handoff>;
   continueParentTrace?: boolean;
   startedAt?: Date;
   endedAt?: Date;
@@ -870,8 +1022,9 @@ export class Turn extends SpanBase {
   systemInstructions: string[];
   messages: Message[];
   outputMessages: Message[];
-  spans: Array<LLM | Tool | SubAgent>;
+  spans: Array<LLM | Tool | SubAgent | Handoff>;
   continueParentTrace: boolean;
+  /** @internal Recorded by logTurn/logConversation (never nested automatically). */ batch = false;
 
   constructor(opts: TurnOptions = {}) {
     super();
@@ -894,7 +1047,12 @@ export class Turn extends SpanBase {
   }
 
   start(): this {
-    this.newTrace = !this.continueParentTrace;
+    if (this.started) return this;
+    // A turn of another agent started while an agent is running is that agent
+    // delegating: it nests (same trace) so the hand-off is recorded.
+    const running = !this.explicitParent && !this.batch ? currentAgentName() : '';
+    const nested = !!running && running !== this.agentName && getCurrentCall() !== null;
+    this.newTrace = !(this.continueParentTrace || nested);
     return super.start();
   }
 
@@ -916,6 +1074,20 @@ export class Turn extends SpanBase {
 
   startSubagent(opts: { name: string; model?: string; systemInstructions?: string[] }): SubAgent {
     return this.pin(new SubAgent({ ...opts, model: opts.model || this.model }));
+  }
+
+  /** Start a hand-off from this turn's agent (use `.run(fn)`; agent runs inside it are its children). */
+  startHandoff(toAgent: string, opts: HandoffOptions = {}): Handoff {
+    return this.pin(new Handoff({ ...opts, toAgent, fromAgent: opts.fromAgent || this.agentName }));
+  }
+
+  /** Record an instant hand-off from this turn's agent. */
+  handoff(toAgent: string, opts: HandoffOptions & { output?: unknown } = {}): Handoff {
+    const h = this.startHandoff(toAgent, opts);
+    h.output = opts.output ?? null;
+    h.start();
+    h.end();
+    return h;
   }
 
   /** Set several fields at once (only the ones given; `messages` replaces the input). */
@@ -956,6 +1128,12 @@ export interface ConversationOptions {
   continueParentTrace?: boolean;
   /** Attributes added to every span of the conversation. */
   attributes?: Record<string, unknown>;
+  /**
+   * The agent team (`{id, name}`, an id or `[id, name]`): every span of the
+   * conversation carries `weft.team.id` / `weft.team.name`, and calls made
+   * inside `conv.run(fn)` do too.
+   */
+  team?: TeamLike;
 }
 
 /** A conversation: groups turns by `conversationId` (recorded as the calls' `thread_id`). */
@@ -970,8 +1148,10 @@ export class Conversation {
   includeContent: boolean;
   continueParentTrace: boolean;
   attributes: Record<string, unknown>;
+  team: TeamInfo | null;
   /** @internal */ ended = false;
   private currentTurn: Turn | null = null;
+  private turns: Turn[] = [];
 
   constructor(opts: ConversationOptions = {}) {
     this.conversationId = opts.conversationId || randomUUID();
@@ -984,16 +1164,26 @@ export class Conversation {
     this.includeContent = opts.includeContent ?? true;
     this.continueParentTrace = !!opts.continueParentTrace;
     this.attributes = { ...(opts.attributes ?? {}) };
+    this.team = toTeam(opts.team);
   }
 
   /** @internal */
   info(): ConvInfo {
-    return { conversationId: this.conversationId, conversationName: this.conversationName, includeContent: this.includeContent, attributes: { ...this.attributes } };
+    return { conversationId: this.conversationId, conversationName: this.conversationName, includeContent: this.includeContent, attributes: { ...this.attributes }, team: this.team };
   }
 
-  /** Create a turn (ending the previous one if still open); it becomes the current turn. */
+  /**
+   * Create a turn (ending the previous one if still open); it becomes the
+   * current turn. Started from inside a running turn of another agent, the
+   * new turn is that agent delegating: the running turn stays open and the
+   * new one nests under it.
+   */
   startTurn(opts: { userMessage?: string; model?: string; agentName?: string; agentId?: string; agentDescription?: string; agentVersion?: string; systemInstructions?: string[] } = {}): Turn {
-    if (this.currentTurn && !this.currentTurn.ended) this.currentTurn.end();
+    const cur = this.currentTurn;
+    if (cur && !cur.ended) {
+      const inside = !!cur.call && currentContext().stack.includes(cur.call);
+      if (!(inside && (opts.agentName || this.agentName) !== cur.agentName)) cur.end();
+    }
     const turn = new Turn({
       agentName: opts.agentName || this.agentName,
       model: opts.model || this.model,
@@ -1006,14 +1196,15 @@ export class Conversation {
     turn.conv = this.info();
     if (opts.userMessage) turn.messages.push({ role: 'user', content: opts.userMessage });
     this.currentTurn = turn;
+    this.turns = [...this.turns.filter((t) => !t.ended), turn];
     activeTurn = turn;
     return turn;
   }
 
-  /** Run `fn` with this conversation current, then end it. */
+  /** Run `fn` with this conversation (and its team) current, then end it. */
   async run<T>(fn: (conv: this) => T | Promise<T>): Promise<T> {
     try {
-      return await runWith({ conversation: this }, () => fn(this));
+      return await runWith({ conversation: this, ...(this.team ? { team: this.team } : {}) }, () => fn(this));
     } finally {
       this.end();
     }
@@ -1022,7 +1213,7 @@ export class Conversation {
   end(): void {
     if (this.ended) return;
     this.ended = true;
-    if (this.currentTurn && !this.currentTurn.ended) this.currentTurn.end();
+    for (const t of [...this.turns].reverse()) if (!t.ended) t.end();
     if (activeConversation === this) activeConversation = null;
   }
 }
@@ -1097,11 +1288,13 @@ function emitTurn(turn: Turn, info: ConvInfo, attributes?: Record<string, unknow
   const conv: ConvInfo = attributes ? { ...info, attributes: { ...info.attributes, ...attributes } } : info;
   turn.conv = conv;
   turn.client = client;
+  turn.batch = true;
   turn.start();
   for (const child of turn.spans) {
     child.conv = conv;
     child.client = client;
     child.explicitParent = turn;
+    if (child instanceof Handoff && !child.fromAgent) child.fromAgent = turn.agentName;
     child.startedAt ??= turn.startedAt;
     child.endedAt ??= child.startedAt;
     child.start();
@@ -1124,6 +1317,8 @@ export interface LogTurnOptions extends TurnOptions {
   includeContent?: boolean;
   /** Attributes added to every recorded span. */
   attributes?: Record<string, unknown>;
+  /** The agent team (`{id, name}`, an id or `[id, name]`). */
+  team?: TeamLike;
 }
 
 /** Record one finished turn and its child spans (`spans`, each with startedAt/endedAt). */
@@ -1131,7 +1326,8 @@ export function logTurn(opts: LogTurnOptions): LogResult {
   const spans = opts.spans ?? [];
   const [s, e] = resolveTimes(opts.startedAt, opts.endedAt, spans);
   const turn = new Turn({ ...opts, spans, startedAt: s, endedAt: e });
-  return emitTurn(turn, { conversationId: opts.conversationId, conversationName: opts.conversationName ?? '', includeContent: opts.includeContent ?? true, attributes: {} }, opts.attributes);
+  const team = toTeam(opts.team) ?? currentContext().team ?? null;
+  return emitTurn(turn, { conversationId: opts.conversationId, conversationName: opts.conversationName ?? '', includeContent: opts.includeContent ?? true, attributes: {}, team }, opts.attributes);
 }
 
 export interface LogConversationOptions extends Omit<ConversationOptions, 'conversationId'> {
@@ -1142,7 +1338,7 @@ export interface LogConversationOptions extends Omit<ConversationOptions, 'conve
 /** Record a complete conversation; each Turn's `spans` are its children. Turn values win over conversation defaults. */
 export function logConversation(opts: LogConversationOptions): LogResult {
   const sid = opts.conversationId || randomUUID();
-  const info: ConvInfo = { conversationId: sid, conversationName: opts.conversationName ?? '', includeContent: opts.includeContent ?? true, attributes: {} };
+  const info: ConvInfo = { conversationId: sid, conversationName: opts.conversationName ?? '', includeContent: opts.includeContent ?? true, attributes: {}, team: toTeam(opts.team) ?? currentContext().team ?? null };
   const result: LogResult = { conversationId: sid, traceIds: [], rootSpanIds: [], spanCount: 0 };
   for (const t of opts.turns) {
     const copy = new Turn({
@@ -1154,7 +1350,7 @@ export function logConversation(opts: LogConversationOptions): LogResult {
       systemInstructions: t.systemInstructions,
       messages: t.messages,
       outputMessages: t.outputMessages,
-      spans: t.spans.map((s) => Object.assign(Object.create(Object.getPrototypeOf(s)), s) as LLM | Tool | SubAgent),
+      spans: t.spans.map((s) => Object.assign(Object.create(Object.getPrototypeOf(s)), s) as LLM | Tool | SubAgent | Handoff),
       continueParentTrace: !!opts.continueParentTrace,
       startedAt: t.startedAt ?? undefined,
       endedAt: t.endedAt ?? undefined,

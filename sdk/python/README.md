@@ -55,6 +55,7 @@ explicitly).
 | Attributes on every call | `settings={"global_attributes": {...}}` | | none |
 | Print a link per root call | `settings={"print_call_link": False}` | `WEFT_PRINT_CALL_LINK` | on |
 | Store op source code | `settings={"capture_code": False}` | `WEFT_CAPTURE_CODE` | on |
+| Record model reasoning (thinking, reasoning summaries, `weft.reasoning()`) | `settings={"capture_reasoning": False}` | `WEFT_CAPTURE_REASONING` | on |
 | On-disk write-ahead log | `settings={"enable_disk_fallback": True, "wal_dir": ...}` | `WEFT_ENABLE_WAL`, `WEFT_WAL_DIR` | off (`~/.weft/wal`) |
 | Write the WAL, send nothing (needs the WAL on) | `settings={"disable_wal_sender": True}` | `WEFT_DISABLE_WAL_SENDER` | off |
 | Print every HTTP request and response to stderr | | `WEFT_DEBUG_HTTP=1` | off |
@@ -302,6 +303,98 @@ res = weft.log_conversation(turns=[weft.Turn(messages=[...], spans=[weft.Tool(na
 res.conversation_id, res.root_span_ids, res.trace_ids
 ```
 
+## Agent teams, hand-offs, reasoning and sessions
+
+The server derives sessions, teams, the hand-offs between agents and each
+model's reasoning from what the SDK records ([DESIGN.md](../../docs/weft/DESIGN.md)
+§2), and shows them under **Sessions**, **Teams** and the native API
+(`/api/v1/sessions/{id}`, `/graph`, `/reasoning`, `/api/v1/teams`).
+
+**Sessions.** A session is `gen_ai.conversation.id`: the conversation id of
+`weft.start_conversation(conversation_id=...)` (the calls' `thread_id`), or
+the session/thread/group id an integration records (OpenAI Agents
+`group_id`, LangGraph `thread_id`, Claude Agent SDK session id, Google ADK
+`session_id`, Bedrock Agents `sessionId`; see the integration table). Calls
+without one belong to no session; their children inherit it.
+
+**Teams.** Declare the team of an agent run; every call and span recorded
+inside carries `weft.team.id` / `weft.team.name`:
+
+```python
+with weft.team("trip-planners", "Trip planners"):
+    run_orchestrator()
+
+# or for one conversation (also for log_turn / log_conversation)
+with weft.start_conversation(agent_name="orchestrator", team=weft.Team("trip-planners", "Trip planners")) as conv:
+    ...
+```
+
+`team=` takes a `weft.Team`, an id, `(id, name)` or `{"id": ..., "name": ...}`;
+`weft.get_current_team()` returns the active one. Without a team the server
+derives one from the agents that took part (`auto:a+b`).
+
+**Hand-offs.** Two shapes, both recorded as a span with
+`weft.handoff.to_agent`, `weft.handoff.from_agent` (default: the agent
+running now) and `weft.handoff.kind` (`handoff`: the other agent takes over;
+`delegate`: it works for the caller and returns):
+
+```python
+# control passes to billing now; linked to billing's next run in the trace
+weft.handoff("billing", input="refund order 7")
+
+# a delegation: the researcher's run happens inside, as a child of the hand-off
+with weft.start_handoff("researcher", input=task, kind="delegate") as h:
+    with conv.start_turn(agent_name="researcher", user_message=task) as rt:
+        ...
+    h.output = facts
+```
+
+`turn.handoff(...)`, `turn.start_handoff(...)` and `subagent.start_handoff(...)`
+do the same from a given span. Nested runs of a *different* agent are
+delegations even without an explicit hand-off: `turn.start_subagent(...)`,
+an `@weft.op(kind="agent")` called by another agent, or a turn of another
+agent started while one is running (the running turn stays open and the new
+one nests under it, in the same trace). The server records the `delegate`
+edge and, when the delegate finishes, the `return`.
+
+**Reasoning.** Model reasoning is recorded automatically by the integrations,
+in the shapes the server reads reasoning steps from:
+
+| Source | Recorded as |
+|---|---|
+| Anthropic `thinking` / `redacted_thinking` blocks (also streamed, also `messages.stream()`) | the response content blocks (`kind: thinking` / `redacted`) |
+| OpenAI Responses `reasoning` items, `reasoning_tokens` | the output items (summaries: `kind: summary`) and `summary.usage` |
+| OpenAI-compatible chat `reasoning_content` (DeepSeek, vLLM) / `reasoning` (OpenRouter), streamed too | the message field |
+| Gemini parts with `thought: true` (streamed thoughts are joined), `thoughts_token_count` | the thought part, `reasoning_tokens` |
+| Bedrock Converse `reasoningContent` (also `converse_stream`) | `thinking` / `redacted_thinking` blocks of the output |
+| Claude Agent SDK thinking blocks | the LLM call's content blocks |
+| OpenAI Agents SDK response spans | the response's reasoning items |
+
+Redacted thinking (Anthropic `redacted_thinking`, Bedrock `redactedContent`,
+Responses items with only `encrypted_content`) is kept as redacted, with its
+encrypted payload replaced by a digest (`sha256:...`), never as text. When a
+framework's LLM call wraps a traced provider call, the reasoning stays on the
+provider call only, so it is not counted twice.
+
+Record a step yourself with `weft.reasoning(text, kind="thinking")` (`kind`
+is `thinking`, `summary` or `redacted`; `tokens=` is optional). It goes on
+the innermost running span or op and is linked by the server to the tool
+call or hand-off that follows it; `llm.think(text)` adds a thinking part to
+an LLM call's output.
+
+```python
+with conv.start_turn(agent_name="researcher", user_message=task) as rt:
+    weft.reasoning("Search the web first, then pick three facts.")
+    facts = web_search("Oslo facts")      # the step's next_span_id
+```
+
+`settings={"capture_reasoning": False}` (or `WEFT_CAPTURE_REASONING=false`)
+removes reasoning from everything recorded (thinking blocks, reasoning items,
+`reasoning_content`, thought parts, `weft.reasoning()`); token counts are
+kept. PII redaction (`redact_pii`) applies to reasoning text like any other
+text. A runnable two-agent example is
+[`examples/weft/python/agent_team.py`](../../examples/weft/python/agent_team.py).
+
 ## Integrations (auto-patched by `weft.init`)
 
 `weft.init()` patches every supported library that is installed. Patching is
@@ -330,22 +423,22 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 
 | Settings key | Library | Traced (span kind) | Op name(s) |
 |---|---|---|---|
-| `langchain` | langchain-core, LangGraph | every chain, chat model/LLM, tool and retriever run; LangGraph graphs (agent) and nodes, with `attributes.langgraph` (node, step, triggers) | `langchain.<Type>.<name>`, `langgraph.graph`, `langgraph.node.<node>` |
+| `langchain` | langchain-core, LangGraph | every chain, chat model/LLM, tool and retriever run; LangGraph graphs (workflow; session = `thread_id`) and nodes, with `attributes.langgraph` (node, step, triggers); a node that ran a model is an agent named after it | `langchain.<Type>.<name>`, `langgraph.graph`, `langgraph.node.<node>` |
 | `llamaindex` | llama-index-core | every instrumented span (query engines, retrievers, LLMs, embeddings, agents, workflows, tools) via `WeftSpanHandler` | `llama_index.<Class>.<method>` |
-| `openai_agents` | openai-agents | traces and agent/function/generation/response/handoff/guardrail spans | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, ... |
+| `openai_agents` | openai-agents | traces (workflow; session = `group_id`, else the trace id) and agent (`gen_ai.agent.name`)/function/generation/response/handoff (`weft.handoff.*`)/guardrail spans | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, ... |
 | `dspy` | dspy | modules, LM calls, tools | `dspy.<Module>`, `dspy.LM`, `dspy.Tool.<name>` |
-| `crewai` | crewai | `Crew.kickoff*` (agent), `Agent.execute_task` (agent), `Task.execute_*` (chain), `LLM.call` (llm), tools, `Flow.kickoff*` (workflow) | `crewai.Crew.kickoff`, `crewai.Agent.execute_task`, ... |
+| `crewai` | crewai | `Crew.kickoff*` (workflow; a named crew is the team, the crew id the session), `Agent.execute_task` (agent, `gen_ai.agent.name` = role), `Task.execute_*` (chain), `LLM.call` (llm), tools (`gen_ai.tool.name`; the delegation tools are hand-offs), `Flow.kickoff*` (workflow) | `crewai.Crew.kickoff`, `crewai.Agent.execute_task`, ... |
 | `smolagents` | smolagents | agent `run` (agent) and `step`, every `Model.generate` (llm), `Tool.__call__` (tool) | `smolagents.Agent.run`, `smolagents.<Model>.generate`, `smolagents.Tool` |
 | `instructor` | instructor | `create`, `create_with_completion`, `create_partial`, `create_iterable` (sync/async; llm) | `instructor.Instructor.create`, ... |
 | `mcp` | mcp, fastmcp | client `call_tool` (tool), `read_resource`, `get_prompt`, `list_*`; server (`FastMCP`) `call_tool`, `read_resource`, `get_prompt` | `mcp.ClientSession.call_tool`, `mcp.FastMCP.call_tool`, `fastmcp.Client.call_tool`, ... |
-| `claude_agent_sdk` | claude-agent-sdk | `query()` (agent) and `ClaudeSDKClient` turns (agent, one thread per client), each assistant message (llm), each tool use (tool; `Task` sub-agents nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
+| `claude_agent_sdk` | claude-agent-sdk | `query()` (agent `claude-agent-sdk`) and `ClaudeSDKClient` turns (agent), session = the Claude session id; each assistant message (llm, with its thinking blocks), each tool use (tool, `gen_ai.tool.call.id` = the tool-use id; `Task` sub-agents are agents named by `subagent_type` and nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
 | `haystack` | haystack-ai | pipelines (chain) and components (`llm`, `retriever`, `embedding`, `reranker`, `tool`, `agent`) via `WeftHaystackTracer` | `haystack.pipeline.run`, `haystack.<ComponentType>` |
 | `verdict` | verdict | `Pipeline` runs (workflow) and units such as `JudgeUnit` (scorer), via Verdict's tracer interface | `verdict.<pipeline name>`, `verdict.<Unit>` |
-| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn is running; inside an op that turn is a separate trace linked by `weave.parent_call.*`) | `chat` |
-| `autogen` | autogen-agentchat / -core / -ext | agents and teams `run`/`run_stream`/`on_messages` (agent), model clients `create`/`create_stream` (llm), tools, memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
+| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn is running; inside an op that turn is a separate trace linked by `weft.parent_call.*`) | `chat` |
+| `autogen` | autogen-agentchat / -core / -ext | agents `run`/`run_stream`/`on_messages` (agent, `gen_ai.agent.name`), teams (workflow; a team with its own `name` is the Weft team), model clients `create`/`create_stream` (llm), tools (Swarm `transfer_to_<agent>` tools are hand-offs), memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
 | `agno` | agno | `Agent`/`Team` `run`/`arun` (agent), `Workflow` (workflow), `Model.response` (llm), tool calls | `agno.Agent.run`, `agno.Model.response`, ... |
-| `google_adk` | google-adk | `Runner.run(_async)`, agents, tools, LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
-| `pydantic_ai` | pydantic-ai | `Agent.run` (agent), tool calls, `Model.request` (llm) | `pydantic_ai.Agent.run`, ... |
+| `google_adk` | google-adk | `Runner.run(_async)` (workflow; session = `session_id`), agents (`gen_ai.agent.name`), tools (with the function call id; `transfer_to_agent` is a hand-off), LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
+| `pydantic_ai` | pydantic-ai | `Agent.run` (agent, `gen_ai.agent.name`; an agent run inside another agent's tool is a delegation), tool calls (with the tool call id), `Model.request` (llm) | `pydantic_ai.Agent.run`, ... |
 | `notdiamond`, `verifiers`, `gepa` | | model routing, RL environments/rubrics, `gepa.optimize` | see `weft/integrations/frameworks.py` |
 
 Each LLM request becomes a call (`kind="llm"`):
@@ -501,10 +594,11 @@ answers are the assistant message (`gen_ai.output.type` `json`), with the
 response model, token usage and request id. It nests under the running turn,
 else in its own `typesafe SDK` turn. As in Weave, where this integration
 creates no call, that turn starts its own trace even inside an `@weft.op`;
-when an op is running, the turn and the LLM call carry Weave's link to it,
-`attributes.weave.parent_call.trace_id` and `.id` (what Weave's
-`OpLinkSpanProcessor` stamps), which the server exposes as the agent span
-fields `parent_call_trace_id` / `parent_call_id` (so
+when an op is running, the turn and the LLM call carry a link to it,
+`attributes.weft.parent_call.trace_id` and `.id` (Weave's
+`OpLinkSpanProcessor` stamps the same link as `weave.parent_call.*`; the
+server reads both), which the server exposes as the agent span fields
+`parent_call_trace_id` / `parent_call_id` (so
 `{"$eq": [{"$getField": "parent_call_id"}, {"$literal": call.id}]}` on
 `/agents/spans/query` finds the spans an op produced). A failed call records the error
 type and HTTP status, not TypeSafe's error message (it carries the response

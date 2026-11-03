@@ -87,6 +87,7 @@ await weft.init('my-project', {
     globalAttributes: { app: 'support-bot' },   // added to every call
     printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root call (WEFT_PRINT_CALL_LINK)
     captureCode: true,                           // store op source (WEFT_CAPTURE_CODE)
+    captureReasoning: true,                      // model reasoning: thinking, summaries, weft.reasoning() (WEFT_CAPTURE_REASONING)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
     disableWalSender: false,                     // with the WAL on: write everything to it, send nothing (WEFT_DISABLE_WAL_SENDER)
     maxQueueSize: 10_000, batchSize: 100,      // WEFT_MAX_CALLS_QUEUE_SIZE (0 = unbounded)
@@ -254,8 +255,9 @@ of provider `typesafe`: the state as the user message, the questions as the
 `typesafe.questions` attribute, the answers, response model, usage and request
 id, inside the running turn or its own `typesafe SDK` turn. As in Weave, that
 turn is a trace of its own even inside an op; when an op is running, the turn
-and the LLM call carry Weave's link to it, `attributes.weave.parent_call.id`
-and `.trace_id` (the server's agent span fields `parent_call_id` /
+and the LLM call carry a link to it, `attributes.weft.parent_call.id` and
+`.trace_id` (Weave stamps the same link as `weave.parent_call.*`; the server
+reads both and exposes them as the agent span fields `parent_call_id` /
 `parent_call_trace_id`). Errors keep their
 type and HTTP status but not TypeSafe's message (it holds the response body).
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
@@ -291,12 +293,12 @@ weft.instrumentOpenAIAgents(await import('@openai/agents'));   // or addTracePro
 
 | Integration | Calls |
 |---|---|
-| LangChain.js | `langchain.Chain.<name>` (chain/agent), `langchain.ChatModel.<name>` / `langchain.Llm.<name>` (llm, usage from `tokenUsage` or `usage_metadata`), `langchain.Tool.<name>` (tool, `gen_ai.tool.call.id`), `langchain.Retriever.<name>`; nested by run id |
+| LangChain.js | `langchain.Chain.<name>` (chain/agent), `langchain.ChatModel.<name>` / `langchain.Llm.<name>` (llm, usage from `tokenUsage` or `usage_metadata`), `langchain.Tool.<name>` (tool, `gen_ai.tool.call.id`), `langchain.Retriever.<name>`; nested by run id. LangGraph: `langgraph.graph` (workflow; session = `thread_id`), `langgraph.node.<node>` with `langgraph.node` / `.step`; a node that ran a model is an agent named after it (consecutive agent nodes are hand-offs) |
 | LlamaIndex.TS | `llamaindex.query`, `llamaindex.retrieve` (nodes), `llamaindex.llm.chat` (usage from the raw response), `llamaindex.tool.<name>`, `llamaindex.agent` |
 | Vercel AI SDK | `vercel_ai.generateText` / `streamText` / `generateObject` / `streamObject` (chain), `vercel_ai.generate` / `vercel_ai.stream` (llm: text, reasoning, tool calls, usage incl. reasoning and cached tokens), `vercel_ai.tool.<name>` (tool) |
 | MCP | `mcp.client.call_tool` (`MCP tool: <name>`), `mcp.client.read_resource`, `mcp.client.get_prompt`, `mcp.client.list_*`; `mcp.server.call_tool` etc. with ops called by the tool nested inside. `WEFT_MCP_TRACE_LIST_OPERATIONS=false` skips list calls |
-| Claude Agent SDK | `claude_agent_sdk.query` (an agent turn; conversation = the SDK session id), `claude_agent_sdk.llm` per assistant message (usage once per message id, cache tokens included), `claude_agent_sdk.tool.<name>` ending at its result; sub-agent messages nest under their `Task`/`Agent` call |
-| OpenAI Agents JS | `openai_agents.trace`, `agent.<name>`, `tool.<name>`, `openai_agents.generation` / `.response` (usage), `openai_agents.handoff`, `guardrail.<name>`, with the SDK's start and end times |
+| Claude Agent SDK | `claude_agent_sdk.query` (an agent turn; conversation = the SDK session id), `claude_agent_sdk.llm` per assistant message (usage once per message id, cache tokens included, thinking blocks), `claude_agent_sdk.tool.<name>` ending at its result (`gen_ai.tool.call.id`); `Task`/`Agent` calls are sub-agents named by `subagent_type`, with their messages nested |
+| OpenAI Agents JS | `openai_agents.trace` (workflow; session = `groupId`, else the trace id), `agent.<name>` (`gen_ai.agent.name`), `tool.<name>`, `openai_agents.generation` / `.response` (usage, reasoning items and tokens), `openai_agents.handoff` (`weft.handoff.*`, the target set when it ends), `guardrail.<name>`, with the SDK's start and end times |
 
 Every integration's calls carry `gen_ai.*` attributes (operation, model,
 provider, tool name and call id, agent name), so they also appear in
@@ -460,6 +462,70 @@ weft.logTurn({ conversationId: 'c-1', agentName: 'support', messages: [weft.Mess
 const res = weft.logConversation({ agentName: 'support', turns: [new weft.Turn({ messages, spans })] });
 res.conversationId; res.rootSpanIds;
 ```
+
+## Agent teams, hand-offs, reasoning and sessions
+
+The server derives sessions, teams, hand-offs and reasoning steps from what
+the SDK records ([DESIGN.md](../../docs/weft/DESIGN.md) §2) and shows them
+under **Sessions** and **Teams** and in the native API (`/api/v1/sessions/{id}`,
+`/graph`, `/reasoning`, `/api/v1/teams`). The names match the Python SDK in
+camelCase.
+
+**Sessions** are `gen_ai.conversation.id`: a conversation's `conversationId`
+(its calls' `thread_id`), or the session the integrations record (OpenAI
+Agents `groupId`, else the trace id; LangGraph `thread_id`; the Claude Agent
+SDK session id; Bedrock Agents `sessionId`).
+
+**Teams.** `weft.withTeam({ id, name }, fn)` (or an id, or `[id, name]`)
+stamps `weft.team.id` / `weft.team.name` on every call and span started in
+`fn`; `startConversation({ team })`, `logTurn({ team })` and
+`logConversation({ team })` set it for one conversation (inside
+`conv.run(fn)`, ops get it too). `weft.getCurrentTeam()` returns the active
+team.
+
+```ts
+await weft.withTeam({ id: 'trip-planners', name: 'Trip planners' }, () => runOrchestrator());
+const conv = weft.startConversation({ agentName: 'orchestrator', team: { id: 'trip-planners', name: 'Trip planners' } });
+```
+
+**Hand-offs.** `weft.handoff(toAgent, { input, kind, fromAgent, output })`
+records an instant hand-off (`weft.handoff.to_agent`, `.from_agent` (default:
+the agent running now), `.kind`: `handoff` or `delegate`), linked by the server
+to the next run of `toAgent` in the trace. `weft.startHandoff(toAgent, opts).run(fn)`
+covers the other agent's run, which becomes its child; `turn.handoff()`,
+`turn.startHandoff()` and `subagent.startHandoff()` start from a given span.
+Nested runs of another agent are delegations without an explicit hand-off:
+`turn.startSubagent()`, or a turn of another agent started inside a running
+one (`conv.startTurn({ agentName })` keeps the running turn open and nests the
+new one under it).
+
+```ts
+await weft.startHandoff('researcher', { input: task, kind: 'delegate' }).run(async (h) => {
+  await conv.startTurn({ agentName: 'researcher', userMessage: task }).run(async () => { /* ... */ });
+  h.output = facts;
+});
+weft.handoff('writer', { input: 'Summarise the facts' });
+```
+
+**Reasoning.** The integrations keep reasoning in the shapes the server reads
+steps from: Anthropic `thinking` / `redacted_thinking` blocks (streamed too),
+OpenAI Responses `reasoning` items and `reasoning_tokens`, chat
+`reasoning_content` / `reasoning` deltas (DeepSeek, vLLM, OpenRouter), Gemini
+`thought: true` parts (streamed thoughts joined, `thoughtsTokenCount`),
+Bedrock Converse `reasoningContent` (as `thinking` / `redacted_thinking`
+blocks, also streamed), Claude Agent SDK thinking blocks and OpenAI Agents
+response spans. Redacted reasoning is stored as redacted with its encrypted
+payload replaced by a `sha256:` digest. When a framework's LLM call wraps a
+traced provider call, the reasoning stays on the provider call only.
+`weft.reasoning(text, { kind, tokens })` (or `weft.reasoning(text, 'summary')`)
+records a step on the innermost running span or op; the server links it to
+the tool call or hand-off that follows.
+
+`settings: { captureReasoning: false }` (or `WEFT_CAPTURE_REASONING=false`)
+removes reasoning from everything recorded; token counts are kept. PII
+redaction applies to reasoning text. `weft.scrubReasoning(value, capture)` is
+the transform the SDK applies. Example:
+[`examples/weft/typescript/agent_team.ts`](../../examples/weft/typescript/agent_team.ts).
 
 ## Evaluations
 

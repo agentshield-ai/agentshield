@@ -35,20 +35,25 @@ type agentSpan struct {
 	CacheReadCost, CacheWCost                   float64
 	HasCost                                     bool
 	WBUserID, WBRunID                           string
-	ParentCallID, ParentCallTraceID             string // weave.parent_call.*: the op this span was emitted from
+	ParentCallID, ParentCallTraceID             string // weft.parent_call.* (or weave.parent_call.*): the op this span was emitted from
 	IsInvocation                                bool
 	attrsJSON                                   string
 	custom                                      map[string]any
 }
 
-// parentCallCol reads weave.parent_call.<field> (the link Weave's
-// OpLinkSpanProcessor stamps on spans started inside an op, which Weave's
-// server promotes to the parent_call_id / parent_call_trace_id columns) from
-// SDK attributes (nested) or OTLP span attributes (flat keys).
+// parentCallCol reads weft.parent_call.<field> (DESIGN.md §4), or Weave's
+// weave.parent_call.<field> (the link its OpLinkSpanProcessor stamps on spans
+// started inside an op, which Weave's server promotes to the parent_call_id /
+// parent_call_trace_id columns), from SDK attributes (nested) or OTLP span
+// attributes (flat keys).
 func parentCallCol(field string) string {
-	return `COALESCE(json_extract(c.attributes, '$.weave.parent_call.` + field + `'), ` +
-		`json_extract(c.attributes, '$.otel.attributes."weave.parent_call.` + field + `"'), ` +
-		`json_extract(c.attributes, '$."weave.parent_call.` + field + `"'), '')`
+	var parts []string
+	for _, ns := range []string{"weft", "weave"} {
+		parts = append(parts, `json_extract(c.attributes, '$.`+ns+`.parent_call.`+field+`')`,
+			`json_extract(c.attributes, '$.otel.attributes."`+ns+`.parent_call.`+field+`"')`,
+			`json_extract(c.attributes, '$."`+ns+`.parent_call.`+field+`"')`)
+	}
+	return `COALESCE(` + strings.Join(parts, ", ") + `, '')`
 }
 
 type agentSpanFilter struct {
@@ -232,6 +237,7 @@ func (sp *agentSpan) displayName() string {
 // agentFieldAliases maps semantic names onto span columns.
 var agentFieldAliases = map[string]string{
 	"id": "span_id", "parent_id": "parent_span_id", "weave.parent_call.id": "parent_call_id", "weave.parent_call.trace_id": "parent_call_trace_id",
+	"weft.parent_call.id": "parent_call_id", "weft.parent_call.trace_id": "parent_call_trace_id",
 	"gen_ai.operation.name": "operation_name", "operation.name": "operation_name", "op": "operation_name", "name": "span_name",
 	"agent.name": "agent_name", "gen_ai.agent.name": "agent_name", "agent.id": "agent_id", "gen_ai.agent.id": "agent_id",
 	"agent.version": "agent_version", "gen_ai.agent.version": "agent_version", "agent.description": "agent_description",

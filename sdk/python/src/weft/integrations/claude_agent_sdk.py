@@ -1,15 +1,22 @@
 """Claude Agent SDK (``claude_agent_sdk``) integration.
 
-* ``query(prompt=...)`` becomes an agent call ``claude_agent_sdk.query``.
+* ``query(prompt=...)`` becomes an agent call ``claude_agent_sdk.query``
+  (``invoke_agent``, agent ``claude-agent-sdk``).
 * ``ClaudeSDKClient``: each ``query()`` + ``receive_response()`` exchange
-  becomes an agent call ``claude_agent_sdk.turn``; the turns of one client
-  share a weft thread, so the session reads as a conversation.
+  becomes an agent call ``claude_agent_sdk.turn``.
+* The session is the Claude session id (from the ``init`` system message,
+  the result message, or ``options.resume``): it is the calls'
+  ``gen_ai.conversation.id`` and thread, so a session and its resumptions
+  read as one Weft session.
 * Under them, every assistant message is an LLM call
-  (``claude_agent_sdk.llm``, output = its text/thinking/tool-use blocks), and
-  every tool use is a tool call (``claude_agent_sdk.tool.<name>``) that ends
-  when its result arrives (an error result marks the call failed). Messages
-  from a sub-agent (``parent_tool_use_id``) nest under the ``Task`` tool call
-  that started it.
+  (``claude_agent_sdk.llm``, output = its text/thinking/tool-use blocks;
+  thinking blocks are the model's reasoning steps), and every tool use is a
+  tool call (``claude_agent_sdk.tool.<name>``, ``gen_ai.tool.call.id`` = the
+  tool-use id) that ends when its result arrives (an error result marks the
+  call failed). ``Task``/``Agent`` tool uses are sub-agent invocations
+  (``gen_ai.agent.name`` = ``subagent_type``), so the server records a
+  delegation, and the sub-agent's messages (``parent_tool_use_id``) nest
+  under them.
 * Usage and cost come from the final ``ResultMessage`` and are recorded once,
   on the query/turn call, under the model name (input tokens include cache
   reads and writes, which are also kept as separate counters).
@@ -29,6 +36,8 @@ from . import _settings
 from ._common import _tracing, finish_call, patch_attr, to_dict
 
 INTEGRATION = "claude_agent_sdk"
+AGENT_NAME = "claude-agent-sdk"
+AGENT_TOOLS = ("Task", "Agent")
 
 
 def _cls(obj: Any) -> str:
@@ -69,12 +78,35 @@ def _usage_record(call: Any, model: Optional[str], usage: Any) -> None:
               cache_read_input_tokens=cache_read, cache_creation_input_tokens=cache_write)
 
 
+def _session_of(msg: Any) -> Optional[str]:
+    sid = getattr(msg, "session_id", None)
+    if not sid and _cls(msg) == "SystemMessage":
+        data = getattr(msg, "data", None)
+        sid = data.get("session_id") if isinstance(data, dict) else None
+    return sid if isinstance(sid, str) and sid else None
+
+
+def _attrs(flat: Dict[str, Any]) -> Dict[str, Any]:
+    out = _settings.integration_attributes(INTEGRATION)
+    for k, v in flat.items():
+        if v in (None, ""):
+            continue
+        cur = out
+        parts = k.split(".")
+        for p in parts[:-1]:
+            cur = cur.setdefault(p, {})
+        cur[parts[-1]] = v
+    return out
+
+
 class _Stream:
     """Turns the streamed messages of one query/turn into child calls."""
 
-    def __init__(self, client: Any, root: Any):
+    def __init__(self, client: Any, root: Any, session_id: Optional[str] = None, owner: Any = None):
         self.client = client
         self.root = root
+        self.session_id = session_id
+        self.owner = owner  # the ClaudeSDKClient, which remembers the session for later turns
         self.model: Optional[str] = None
         self.tools: Dict[str, Any] = {}
         self.messages: list = []
@@ -83,11 +115,27 @@ class _Stream:
     def _op(self, name: str, kind: Optional[str]) -> Any:
         return _settings.integration_op(INTEGRATION, name, kind)
 
-    def _start(self, name: str, kind: Optional[str], inputs: Dict[str, Any], parent: Any, display: Optional[str]) -> Any:
+    def _start(self, name: str, kind: Optional[str], inputs: Dict[str, Any], parent: Any, display: Optional[str],
+               flat: Optional[Dict[str, Any]] = None) -> Any:
         op = self._op(name, kind)
-        call = self.client.create_call(op, inputs, parent=parent, display_name=display, attributes=_settings.integration_attributes(INTEGRATION))
+        call = self.client.create_call(op, inputs, parent=parent, display_name=display, attributes=_attrs(flat or {}))
         call._weft_op = op
         return call
+
+    def _learn_session(self, sid: Optional[str]) -> None:
+        if not sid or self.session_id == sid:
+            return
+        first = self.session_id is None
+        self.session_id = sid
+        if self.owner is not None:
+            try:
+                self.owner._weft_session_id = sid
+            except Exception:  # pragma: no cover
+                pass
+        if first and not self.root._ended:
+            own_thread = self.root.thread_id is None or self.root.thread_id == self.root.id
+            self.client.update_call(self.root, {"gen_ai": {"conversation": {"id": sid}}},
+                                    thread_id=sid if own_thread else None, turn_id=self.root.id if own_thread else None)
 
     def _parent(self, msg: Any) -> Any:
         pid = getattr(msg, "parent_tool_use_id", None)
@@ -95,6 +143,7 @@ class _Stream:
 
     def on_message(self, msg: Any) -> None:
         kind = _cls(msg)
+        self._learn_session(_session_of(msg))
         if kind == "ResultMessage":
             self.result = msg
             return
@@ -108,16 +157,23 @@ class _Stream:
             texts = [getattr(b, "text", "") for b in blocks if _cls(b) == "TextBlock"]
             uses = [b for b in blocks if _cls(b) == "ToolUseBlock"]
             display = _short(texts[0]) if texts and texts[0] else (f"→ {uses[0].name}" if uses else None)
-            llm = self._start("claude_agent_sdk.llm", "llm", {"model": model, "history_length": len(self.messages) - 1}, parent, display)
+            llm = self._start("claude_agent_sdk.llm", "llm", {"model": model, "history_length": len(self.messages) - 1}, parent, display,
+                              {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "anthropic", "gen_ai.request.model": model})
             out: Dict[str, Any] = {"role": "assistant", "content": content, "model": model}
             err = getattr(msg, "error", None)
             finish_call(self.client, llm, out, RuntimeError(str(err)) if err else None)
             for b in uses:
                 name = getattr(b, "name", "tool")
                 inp = getattr(b, "input", None)
-                tkind = "agent" if name in ("Task", "Agent") else "tool"
-                self.tools[getattr(b, "id", str(uuid.uuid4()))] = self._start(
-                    f"claude_agent_sdk.tool.{name}", tkind, inp if isinstance(inp, dict) else {"input": inp}, parent, tool_display(name, inp)
+                tid = getattr(b, "id", None) or str(uuid.uuid4())
+                flat: Dict[str, Any] = {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name, "gen_ai.tool.call.id": getattr(b, "id", None)}
+                tkind = "tool"
+                if name in AGENT_TOOLS:
+                    tkind = "agent"
+                    sub = inp.get("subagent_type") if isinstance(inp, dict) else None
+                    flat.update({"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": sub if isinstance(sub, str) and sub else name})
+                self.tools[tid] = self._start(
+                    f"claude_agent_sdk.tool.{name}", tkind, inp if isinstance(inp, dict) else {"input": inp}, parent, tool_display(name, inp), flat
                 )
         elif kind == "UserMessage":
             content = getattr(msg, "content", None)
@@ -165,18 +221,28 @@ def _options(options: Any) -> Any:
     return {k: d.get(k) for k in keep if d.get(k) not in (None, [], {})}
 
 
-def _root(client: Any, name: str, prompt: Any, options: Any, thread_id: Optional[str] = None) -> Any:
+def _option(options: Any, *names: str) -> Any:
+    for n in names:
+        v = options.get(n) if isinstance(options, dict) else getattr(options, n, None)
+        if v:
+            return v
+    return None
+
+
+def _root(client: Any, name: str, prompt: Any, options: Any, session_id: Optional[str] = None) -> Any:
     op = _settings.integration_op(INTEGRATION, name, "agent")
     inputs: Dict[str, Any] = {"prompt": prompt if isinstance(prompt, str) else "<message stream>"}
     o = _options(options)
     if o:
         inputs["options"] = o
     display = _short(prompt) if isinstance(prompt, str) else None
-    if thread_id is not None and _context.current_thread_context() is None:
-        with _context.thread(thread_id):
-            call = client.create_call(op, inputs, display_name=display, attributes=_settings.integration_attributes(INTEGRATION))
+    attrs = _attrs({"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": AGENT_NAME, "gen_ai.provider.name": "anthropic",
+                    "gen_ai.request.model": _option(options, "model"), "gen_ai.conversation.id": session_id})
+    if session_id is not None and _context.current_thread_context() is None:
+        with _context.thread(session_id):
+            call = client.create_call(op, inputs, display_name=display, attributes=attrs)
     else:
-        call = client.create_call(op, inputs, display_name=display, attributes=_settings.integration_attributes(INTEGRATION))
+        call = client.create_call(op, inputs, display_name=display, attributes=attrs)
     call._weft_op = op
     return call
 
@@ -191,7 +257,8 @@ def _wrap_process_query(orig: Any) -> Any:
             return
         prompt = kwargs.get("prompt", args[0] if args else None)
         options = kwargs.get("options", args[1] if len(args) > 1 else None)
-        st = _Stream(client, _root(client, "claude_agent_sdk.query", prompt, options))
+        sid = _option(options, "resume", "session_id")
+        st = _Stream(client, _root(client, "claude_agent_sdk.query", prompt, options, sid), sid)
         err: Optional[BaseException] = None
         try:
             async for m in orig(self, *args, **kwargs):
@@ -229,15 +296,10 @@ def _wrap_receive_response(orig: Any) -> Any:
             async for m in orig(self, *args, **kwargs):
                 yield m
             return
-        tid = getattr(self, "_weft_thread_id", None)
-        if tid is None:
-            tid = f"claude-session-{uuid.uuid4().hex[:12]}"
-            try:
-                self._weft_thread_id = tid
-            except Exception:  # pragma: no cover
-                pass
+        options = getattr(self, "options", None)
+        sid = getattr(self, "_weft_session_id", None) or _option(options, "resume", "session_id")
         prompt = getattr(self, "_weft_prompt", None)
-        st = _Stream(client, _root(client, "claude_agent_sdk.turn", prompt, getattr(self, "options", None), thread_id=tid))
+        st = _Stream(client, _root(client, "claude_agent_sdk.turn", prompt, options, sid), sid, owner=self)
         err: Optional[BaseException] = None
         try:
             async for m in orig(self, *args, **kwargs):

@@ -70,6 +70,8 @@ from . import conversation
 from .conversation import (
     LLM,
     Conversation,
+    Handoff,
+    Team,
     LogResult,
     MediaAttachment,
     Message,
@@ -82,14 +84,19 @@ from .conversation import (
     end_turn,
     get_current_conversation,
     get_current_llm,
+    get_current_team,
     get_current_turn,
+    handoff,
     log_conversation,
     log_turn,
+    reasoning,
     start_conversation,
+    start_handoff,
     start_llm,
     start_subagent,
     start_tool,
     start_turn,
+    team,
 )
 
 __all__ = [
@@ -192,4 +199,12 @@ __all__ = [
     "start_subagent",
     "start_tool",
     "start_turn",
+    # agent teams, hand-offs and reasoning
+    "Team",
+    "team",
+    "get_current_team",
+    "Handoff",
+    "handoff",
+    "start_handoff",
+    "reasoning",
 ]

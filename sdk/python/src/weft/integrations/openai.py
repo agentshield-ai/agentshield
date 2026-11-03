@@ -1,4 +1,10 @@
-"""OpenAI integration: chat.completions.create and responses.create (sync/async, streaming)."""
+"""OpenAI integration: chat.completions.create and responses.create (sync/async, streaming).
+
+Reasoning is kept where the API returns it: Responses ``reasoning`` output
+items (summaries, and ``reasoning_tokens`` in the usage), and
+``reasoning_content`` (DeepSeek, vLLM) or ``reasoning`` (OpenRouter) on chat
+messages, streamed deltas included.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +44,10 @@ class ChatCompletionAccumulator(Accumulator):
                 msg["role"] = d["role"]
             if d.get("content") is not None:
                 msg["content"] = (msg["content"] or "") + d["content"]
+            # reasoning text streamed by DeepSeek / vLLM (reasoning_content) and OpenRouter (reasoning)
+            for rk in ("reasoning_content", "reasoning"):
+                if isinstance(d.get(rk), str) and d[rk]:
+                    msg[rk] = (msg.get(rk) or "") + d[rk]
             if d.get("refusal"):
                 msg["refusal"] = (msg.get("refusal") or "") + d["refusal"]
             for tc in d.get("tool_calls") or []:

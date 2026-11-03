@@ -555,9 +555,9 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 	}
 }
 
-// Spans emitted inside an op carry Weave's link to it (weave.parent_call.id /
-// .trace_id, stamped by Weave's OpLinkSpanProcessor and by the Weft SDKs'
-// TypeSafe integration); agent spans expose it as parent_call_id /
+// Spans emitted inside an op carry a link to it (weft.parent_call.id /
+// .trace_id from the Weft SDKs' TypeSafe integration, or weave.parent_call.*
+// stamped by Weave's OpLinkSpanProcessor); agent spans expose it as parent_call_id /
 // parent_call_trace_id, the columns Weave's server promotes it to.
 func TestAgentSpansParentCallLink(t *testing.T) {
 	e := newEnv(t)
@@ -602,6 +602,14 @@ func TestAgentSpansParentCallLink(t *testing.T) {
 	if s := query("weave.parent_call.id", "op-call-2"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm" ||
 		s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-2" {
 		t.Fatalf("SDK span link = %v", s)
+	}
+	// Weft's own name (DESIGN.md §4), as the Weft SDKs send it.
+	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "sdk-llm-weft", "trace_id": "sdk-trace-3",
+		"op_name": "chat", "started_at": now, "inputs": map[string]any{},
+		"attributes": map[string]any{"weft": map[string]any{"span_kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-3", "id": "op-call-3"}}}}})
+	if s := query("weft.parent_call.id", "op-call-3"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm-weft" ||
+		s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-3" {
+		t.Fatalf("weft.parent_call link = %v", s)
 	}
 	// Unlinked spans have null link fields.
 	res := e.post("/agents/spans/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{

@@ -200,7 +200,7 @@ function TableView({ res, panel, height }: { res: MetricsRes; panel: DashboardPa
         <thead>
           <tr>
             <th>{res.group_by ? res.group_by.replace(/_/g, ' ') : 'Group'}</th>
-            {!hasCount && <th className="num">Calls</th>}
+            {!hasCount && <th className="num">Spans</th>}
             {metrics.map((m) => (
               <th key={metricName(m)} className="num">
                 {metricLabel(m)}

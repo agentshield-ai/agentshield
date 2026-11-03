@@ -32,7 +32,7 @@ export const KIND_META: Record<ObjectKind, { title: string; singular: string; fi
     filter: { base_object_classes: ['Scorer', 'LLMAsAJudgeScorer'] },
     blurb: 'Functions and LLM judges that grade model outputs.',
   },
-  ops: { title: 'Ops', singular: 'op', filter: { is_op: true }, blurb: 'Traced functions, versioned by their source code.' },
+  ops: { title: 'Functions', singular: 'function', filter: { is_op: true }, blurb: 'Traced functions (ops), versioned by their source code.' },
   all: { title: 'All objects', singular: 'object', filter: { is_op: false }, blurb: 'Every versioned object in this project.' },
 }
 

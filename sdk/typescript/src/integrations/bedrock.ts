@@ -22,6 +22,7 @@ import { addUsage } from '../usage.js';
 import { agentCommandName, handleAgentResponse, startAgentCall, type AgentTraceProcessor } from './bedrock_agents.js';
 import { decodeBody, patchWith, proxyStream, withCall, type Accumulator } from './common.js';
 import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { bedrockContent, bedrockReasoningBlock } from '../reasoning.js';
 
 const INTEGRATION = 'bedrock';
 
@@ -92,12 +93,23 @@ class ConverseStreamAccumulator implements Accumulator {
   usage: BUsage | null = null;
   toolUses: any[] = [];
   events = 0;
+  /** Reasoning blocks by content block index: text, signature, redacted bytes. */
+  reasoning = new Map<number, { text: string; signature?: string; redacted?: unknown }>();
 
   add(ev: any): void {
     this.events++;
     if (ev?.contentBlockStart?.start?.toolUse) this.toolUses.push({ ...ev.contentBlockStart.start.toolUse, input: '' });
     const d = ev?.contentBlockDelta?.delta;
     if (d?.text) this.text += d.text;
+    const rc = d?.reasoningContent;
+    if (rc && typeof rc === 'object') {
+      const i = Number(ev.contentBlockDelta.contentBlockIndex ?? 0);
+      const r = this.reasoning.get(i) ?? { text: '' };
+      r.text += rc.text ?? '';
+      if (rc.signature) r.signature = rc.signature;
+      if (rc.redactedContent !== undefined && rc.redactedContent !== null) r.redacted = rc.redactedContent;
+      this.reasoning.set(i, r);
+    }
     if (d?.toolUse?.input && this.toolUses.length) this.toolUses[this.toolUses.length - 1].input += d.toolUse.input;
     if (ev?.messageStop) this.stopReason = ev.messageStop.stopReason ?? null;
     const u = ev?.metadata?.usage;
@@ -105,7 +117,16 @@ class ConverseStreamAccumulator implements Accumulator {
   }
 
   result(): any {
-    const content: any[] = this.text ? [{ text: this.text }] : [];
+    const content: any[] = [];
+    for (const i of [...this.reasoning.keys()].sort((a, b) => a - b)) {
+      const r = this.reasoning.get(i)!;
+      content.push(
+        r.redacted !== undefined
+          ? bedrockReasoningBlock({ reasoningContent: { redactedContent: r.redacted } })
+          : bedrockReasoningBlock({ reasoningContent: { reasoningText: { text: r.text, signature: r.signature } } }),
+      );
+    }
+    if (this.text) content.push({ text: this.text });
     for (const t of this.toolUses) {
       let input: unknown = t.input;
       try {
@@ -145,6 +166,11 @@ class InvokeStreamAccumulator implements Accumulator {
 function strip(res: any): any {
   if (!res || typeof res !== 'object') return res;
   const { $metadata: _m, ...rest } = res;
+  // Converse reasoningContent blocks as thinking / redacted_thinking blocks, the shape the server reads
+  const msg = rest.output?.message;
+  if (msg && Array.isArray(msg.content) && msg.content.some((b: any) => b && typeof b === 'object' && 'reasoningContent' in b)) {
+    return { ...rest, output: { ...rest.output, message: { ...msg, content: bedrockContent(msg.content) } } };
+  }
   return rest;
 }
 

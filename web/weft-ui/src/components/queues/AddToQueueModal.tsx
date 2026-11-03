@@ -5,10 +5,10 @@ import { queuesApi } from '../../api/queues'
 import { ErrorBox, Modal, Spinner } from '../common'
 import { SpecPicker } from './SpecPicker'
 
-export const queueUrl = (projectId: string, queueId: string) => `/${projectId}/queues/${encodeURIComponent(queueId)}`
-export const queuesUrl = (projectId: string) => `/${projectId}/queues`
+export const queueUrl = (projectId: string, queueId: string) => `/${projectId}/review-queues/${encodeURIComponent(queueId)}`
+export const queuesUrl = (projectId: string) => `/${projectId}/review-queues`
 
-/** Adds calls to an existing annotation queue or a new one. */
+/** Adds spans to an existing review queue or a new one. */
 export function AddToQueueModal({ projectId, callIds, onClose }: { projectId: string; callIds: string[]; onClose: () => void }) {
   const qc = useQueryClient()
   const queues = useQuery({ queryKey: ['annotation-queues', projectId], queryFn: () => queuesApi.query(projectId) })
@@ -39,7 +39,7 @@ export function AddToQueueModal({ projectId, callIds, onClose }: { projectId: st
   const n = callIds.length
   return (
     <Modal
-      title={`Add ${n} call${n === 1 ? '' : 's'} to an annotation queue`}
+      title={`Add ${n} span${n === 1 ? '' : 's'} to a review queue`}
       onClose={onClose}
       footer={
         done ? (

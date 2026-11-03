@@ -16,7 +16,7 @@ export function CodeSnippet({ code, lang }: { code: string; lang?: string }) {
       <div className="snippet-copy">
         <CopyButton text={code} />
       </div>
-      <pre className="code-block" data-lang={lang}>
+      <pre className="code-block" data-lang={lang} tabIndex={0}>
         <code>{code}</code>
       </pre>
     </div>

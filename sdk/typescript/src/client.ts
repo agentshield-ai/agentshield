@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Call, type CallData } from './call.js';
 import { b64digest, digest, tableDigest } from './canonical.js';
-import { currentContext, getCurrentCall } from './context.js';
+import { currentContext, getCurrentCall, teamAttributes } from './context.js';
+import { scrubReasoning } from './reasoning.js';
 import { getClient, setGlobalClient } from './global.js';
 import { HttpClient, VERSION, WeftHTTPError } from './http.js';
 import { uuid7 } from './ids.js';
@@ -60,6 +61,12 @@ export interface ClientSettings extends RedactSettings {
   printCallLink?: boolean;
   /** Store op source code (default true; env WEFT_CAPTURE_CODE). */
   captureCode?: boolean;
+  /**
+   * Record model reasoning: thinking blocks, reasoning summaries and
+   * `weft.reasoning()` steps (default true; env WEFT_CAPTURE_REASONING).
+   * Redacted thinking is always kept as redacted, without its payload.
+   */
+  captureReasoning?: boolean;
   /** Keep unsent data in an on-disk write-ahead log, replayed on the next start (env WEFT_ENABLE_WAL). */
   enableDiskFallback?: boolean;
   /** WAL directory (default ~/.weft/wal; env WEFT_WAL_DIR). */
@@ -228,6 +235,18 @@ export function syntheticOp(name: string, kind?: string): OpMeta {
   return m;
 }
 
+/** Span kinds whose inputs and outputs may hold model reasoning. */
+const REASONING_KINDS = new Set(['llm', 'agent']);
+
+function deepMergeAttrs(base: Record<string, any>, extra: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = { ...base };
+  for (const [k, v] of Object.entries(extra)) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) out[k] = deepMergeAttrs(out[k], v);
+    else out[k] = v;
+  }
+  return out;
+}
+
 export class WeftClient {
   readonly entity: string;
   readonly project: string;
@@ -240,6 +259,7 @@ export class WeftClient {
 
   readonly settings: ClientSettings;
   readonly captureCode: boolean;
+  readonly captureReasoning: boolean;
   readonly printCallLink: boolean;
   readonly globalAttributes: Record<string, unknown>;
   private wbRun: { runId: string; step?: number | (() => number | undefined) } | null = null;
@@ -256,6 +276,7 @@ export class WeftClient {
     const timeoutMs = st.httpTimeoutMs ?? envNumber('WEFT_HTTP_TIMEOUT', 1000) ?? 30_000;
     this.http = new HttpClient(this.serverUrl, opts.apiKey ?? process.env.WEFT_API_KEY, timeoutMs);
     this.captureCode = settingBool(st.captureCode, 'WEFT_CAPTURE_CODE', true);
+    this.captureReasoning = settingBool(st.captureReasoning, 'WEFT_CAPTURE_REASONING', true);
     this.printCallLink = settingBool(st.printCallLink, 'WEFT_PRINT_CALL_LINK', true);
     this.globalAttributes = { ...(st.globalAttributes ?? {}) };
     let walPath: string | undefined;
@@ -355,12 +376,14 @@ export class WeftClient {
         logger.warn(`weft: postprocessInputs failed for ${meta.name}: ${(e as Error).message}`);
       }
     }
-    const ser: Record<string, unknown> = {};
+    let ser: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(raw)) if (k !== 'self') ser[k] = toJson(v, this);
+    if (REASONING_KINDS.has(meta.options.kind ?? '')) ser = this.scrubReasoning(ser);
     const redacted = this.redactor.apply(ser) as Record<string, unknown>;
     const finalInputs: Record<string, unknown> = 'self' in raw ? { self: this.serializeSelf(raw.self), ...redacted } : redacted;
     const attributes = toJson({ ...this.globalAttributes, ...ctx.attributes, ...(opts.attributes ?? {}) }, this) as Record<string, unknown>;
     const weftAttrs: Record<string, unknown> = { client_version: VERSION, source: 'typescript-sdk', node_version: process.version };
+    if (ctx.team) Object.assign(weftAttrs, (teamAttributes(ctx.team) as any).weft);
     if (attributes.weft && typeof attributes.weft === 'object') Object.assign(weftAttrs, attributes.weft);
     const { kind, color } = meta.options;
     if (kind) weftAttrs.span_kind = kind;
@@ -384,6 +407,12 @@ export class WeftClient {
     call.rawInputs = { ...inputs };
     call.threadId = threadId;
     call.turnId = turnId;
+    if (kind === 'llm') {
+      // An LLM call nested in a framework's LLM call holds the reasoning; the
+      // framework call does not repeat it (see finishCall).
+      if (parent) parent.llmDescendant = true;
+      for (const anc of ctx.stack) anc.llmDescendant = true;
+    }
     let dn = opts.displayName ?? null;
     if (!dn && meta.options.callDisplayName) {
       try {
@@ -394,18 +423,69 @@ export class WeftClient {
       }
     }
     call.displayName = dn;
-    const start: Record<string, unknown> = { ...data };
-    if (dn) start.display_name = dn;
-    if (threadId) start.thread_id = threadId;
-    if (turnId) start.turn_id = turnId;
     const wb = this.wbRunNow();
     if (wb) {
-      call.wbRunId = start.wb_run_id = wb.runId;
-      if (wb.step !== undefined) call.wbRunStep = start.wb_run_step = wb.step;
+      call.wbRunId = wb.runId;
+      if (wb.step !== undefined) call.wbRunStep = wb.step;
     }
-    this.sender.enqueue({ kind: 'call_start', payload: start });
+    this.sender.enqueue({ kind: 'call_start', payload: this.startPayload(call) });
     if (!parent && this.printCallLink) process.stderr.write(`weft: ${this.callUrl(call)}\n`);
     return call;
+  }
+
+  /** @internal The start record of a call (sent again when its attributes change). */
+  startPayload(call: Call): Record<string, unknown> {
+    const start: Record<string, unknown> = {
+      id: call.id,
+      project_id: call.projectId,
+      op_name: call.opName,
+      trace_id: call.traceId,
+      parent_id: call.parentId,
+      started_at: call.startedAt,
+      attributes: call.attributes,
+      inputs: call.inputs,
+    };
+    if (call.displayName) start.display_name = call.displayName;
+    if (call.threadId) start.thread_id = call.threadId;
+    if (call.turnId) start.turn_id = call.turnId;
+    if (call.wbRunId) {
+      start.wb_run_id = call.wbRunId;
+      if (call.wbRunStep !== null && call.wbRunStep !== undefined) start.wb_run_step = call.wbRunStep;
+    }
+    return start;
+  }
+
+  /** @internal Drop reasoning when `captureReasoning` is off; digest opaque reasoning payloads otherwise. */
+  scrubReasoning<T>(value: T): T {
+    return scrubReasoning(value, this.captureReasoning);
+  }
+
+  /**
+   * Change a running call's attributes (deep-merged), thread or display name.
+   * The start is sent again with the new values before the end (the server
+   * upserts it), so this works after the start went out.
+   */
+  updateCall(call: Call, attributes?: Record<string, unknown> | null, opts: { threadId?: string; turnId?: string; displayName?: string } = {}): void {
+    if (call.ended) {
+      logger.debug(`weft: updateCall ignored: call ${call.id} already ended`);
+      return;
+    }
+    if (attributes && Object.keys(attributes).length) call.attributes = deepMergeAttrs(call.attributes ?? {}, toJson(attributes, this) as Record<string, unknown>);
+    if (opts.threadId !== undefined) call.threadId = opts.threadId;
+    if (opts.turnId !== undefined) call.turnId = opts.turnId;
+    if (opts.displayName !== undefined) call.displayName = opts.displayName;
+    call.resendStart = true;
+  }
+
+  /** Record reasoning steps (`weft.reasoning` attribute entries) on a running call. */
+  addReasoning(call: Call, steps: Array<Record<string, unknown>>): void {
+    if (!this.captureReasoning || call.ended || !steps.length) return;
+    (call.reasoningSteps ??= []).push(...steps);
+  }
+
+  /** @internal Reasoning steps as stored: PII redaction applies to their text. */
+  reasoningAttr(steps: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+    return steps.map((st) => (typeof st.text === 'string' && st.text ? { ...st, text: this.redactor.apply(st.text) } : { ...st }));
   }
 
   finishCall(call: Call, output?: unknown, error?: unknown, meta?: OpMeta, endedAt?: string | Date): void {
@@ -421,7 +501,21 @@ export class WeftClient {
     }
     call.endedAt = endedAt ? toIso(endedAt) : nowIso();
     call.rawOutput = out;
-    call.output = this.redactor.apply(toJson(out, this));
+    const kind = String(((call.attributes?.weft as Record<string, unknown> | undefined) ?? {}).span_kind ?? '');
+    let ser = toJson(out, this);
+    if (REASONING_KINDS.has(kind)) ser = kind === 'llm' && call.llmDescendant ? scrubReasoning(ser, false) : this.scrubReasoning(ser);
+    call.output = this.redactor.apply(ser);
+    if (call.reasoningSteps?.length) {
+      const w = { ...((call.attributes.weft as Record<string, unknown>) ?? {}) };
+      w.reasoning = [...((w.reasoning as unknown[]) ?? []), ...this.reasoningAttr(call.reasoningSteps)];
+      call.attributes = { ...call.attributes, weft: w };
+      call.reasoningSteps = null;
+      call.resendStart = true;
+    }
+    if (call.resendStart) {
+      call.resendStart = false;
+      this.sender.enqueue({ kind: 'call_start', payload: this.startPayload(call) });
+    }
     const end: Record<string, unknown> = { project_id: call.projectId, id: call.id, ended_at: call.endedAt, output: call.output };
     if (error !== undefined) {
       call.exception = formatError(error);

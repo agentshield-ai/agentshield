@@ -78,6 +78,9 @@ class Method:
     #: The method is a plain function that returns an iterator: ``"sync"`` or
     #: ``"async"``. The call then stays open until the iterator is exhausted.
     returns_iter: Optional[str] = None
+    #: ``callable(args, kwargs) -> dict`` extra attributes of each call (agent
+    #: and tool names, session and team ids ...), computed before it starts.
+    attrs: Optional[Callable[[Tuple[Any, ...], Dict[str, Any]], Optional[Dict[str, Any]]]] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -139,10 +142,21 @@ def make_op(integration: str, orig: Any, m: Method) -> Any:
         postprocess_output=m.output,
         accumulator=m.accumulator,
     )
+    def call_attrs(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        attrs = _settings.integration_attributes(integration)
+        if m.attrs is not None:
+            try:
+                extra = m.attrs(args, kwargs) or {}
+            except Exception as e:  # pragma: no cover - never break the framework
+                logger.debug("weft: attributes failed for %s: %s", m.op_name, e)
+                extra = {}
+            attrs = _merge_attrs(attrs, extra)
+        return attrs
+
     def run(*args: Any, **kwargs: Any) -> Any:
         if not _settings.is_enabled(integration):
             return orig(*args, **kwargs)
-        with _context_attrs(_settings.integration_attributes(integration)):
+        with _context_attrs(call_attrs(args, kwargs)):
             return op(*args, **kwargs)
 
     if is_async:
@@ -151,7 +165,7 @@ def make_op(integration: str, orig: Any, m: Method) -> Any:
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             if not _settings.is_enabled(integration):
                 return await orig(*args, **kwargs)
-            with _context_attrs(_settings.integration_attributes(integration)):
+            with _context_attrs(call_attrs(args, kwargs)):
                 return await op(*args, **kwargs)
 
     else:
@@ -162,6 +176,55 @@ def make_op(integration: str, orig: Any, m: Method) -> Any:
 
     wrapper.__weft_op__ = op  # type: ignore[attr-defined]
     return wrapper
+
+
+def _merge_attrs(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for k, v in extra.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge_attrs(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def agent_attrs(name: Any, *, session_id: Any = None) -> Dict[str, Any]:
+    """``gen_ai`` attributes of an agent invocation (and its session, when known)."""
+    out: Dict[str, Any] = {}
+    if isinstance(name, str) and name:
+        out["gen_ai"] = {"operation": {"name": "invoke_agent"}, "agent": {"name": name}}
+    if isinstance(session_id, str) and session_id:
+        out.setdefault("gen_ai", {})["conversation"] = {"id": session_id}
+    return out
+
+
+def tool_attrs(name: Any, call_id: Any = None) -> Dict[str, Any]:
+    """``gen_ai.tool.*`` attributes of a tool call."""
+    tool: Dict[str, Any] = {}
+    if isinstance(name, str) and name:
+        tool["name"] = name
+    if isinstance(call_id, str) and call_id:
+        tool["call"] = {"id": call_id}
+    return {"gen_ai": {"tool": tool}} if tool else {}
+
+
+def session_attrs(session_id: Any) -> Dict[str, Any]:
+    """``gen_ai.conversation.id`` (the session) unless empty."""
+    return {"gen_ai": {"conversation": {"id": str(session_id)}}} if session_id not in (None, "") else {}
+
+
+def team_attrs(team_id: Any, name: Any = None) -> Dict[str, Any]:
+    """``weft.team.id`` / ``weft.team.name`` unless the id is empty or a team is already declared."""
+    if team_id in (None, "") or _context.current_team() is not None:
+        return {}
+    team: Dict[str, Any] = {"id": str(team_id)}
+    if name:
+        team["name"] = str(name)
+    return {"weft": {"team": team}}
+
+
+def self_arg(args: Tuple[Any, ...]) -> Any:
+    return args[0] if args else None
 
 
 def _iter_body(orig: Any, is_async: bool) -> Any:

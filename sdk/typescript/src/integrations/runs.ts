@@ -11,6 +11,7 @@ export interface RunUsage {
   promptTokens?: number | null;
   completionTokens?: number | null;
   totalTokens?: number | null;
+  reasoningTokens?: number | null;
 }
 
 interface Run {
@@ -75,15 +76,29 @@ export class RunTracker {
     if (r) r.children++;
   }
 
-  end(runId: unknown, output?: unknown, error?: unknown, usage?: RunUsage | null, endedAt?: string | Date): Call | null {
+  /**
+   * End a run. `late` attributes (and a display name) known only now, such as
+   * a hand-off's target, are merged into the call's (its start is sent again).
+   */
+  end(
+    runId: unknown,
+    output?: unknown,
+    error?: unknown,
+    usage?: RunUsage | null,
+    endedAt?: string | Date,
+    late?: { attributes?: Record<string, unknown> | null; displayName?: string },
+  ): Call | null {
     const r = this.runs.get(runId);
     if (!r) return null;
     this.runs.delete(runId);
     try {
+      const client = getClient();
+      if (late && (late.attributes || late.displayName)) client?.updateCall(r.call, late.attributes ?? null, late.displayName ? { displayName: late.displayName } : {});
       if (usage && r.children === 0 && (usage.promptTokens || usage.completionTokens)) {
         addUsage(r.call, usage.model ?? undefined, usage.promptTokens ?? 0, usage.completionTokens ?? 0, usage.totalTokens ?? undefined);
+        const e = (r.call.summary.usage as any)?.[usage.model || 'unknown'];
+        if (e && usage.reasoningTokens) e.reasoning_tokens = (e.reasoning_tokens ?? 0) + usage.reasoningTokens;
       }
-      const client = getClient();
       client?.finishCall(r.call, output, error ?? undefined, r.meta, endedAt);
     } catch (e) {
       logger.warn(`weft: could not finish run: ${(e as Error).message}`);

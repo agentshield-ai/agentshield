@@ -1,2 +1,3 @@
 node_modules/
 *.tsbuildinfo
+e2e-results/

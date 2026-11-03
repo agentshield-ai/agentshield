@@ -7,10 +7,20 @@
  * // or: weft.instrumentOpenAIAgents(await import('@openai/agents'))
  * ```
  *
- * Traces become root calls (agent kind); agent, function (tool),
+ * Traces become root calls (workflow kind); agent, function (tool),
  * generation/response (LLM, with usage), handoff, guardrail, MCP list-tools
  * and custom spans become nested calls with the matching span kind and
  * `gen_ai.*` attributes, keeping the SDK's start and end times.
+ *
+ * - The session (`gen_ai.conversation.id`) is the run's `groupId`, else the
+ *   trace id.
+ * - Agent spans are `invoke_agent` calls with `gen_ai.agent.name`, so an agent
+ *   run inside another agent's tool (`agent.asTool()`) is a delegation.
+ * - Hand-off spans carry `weft.handoff.from_agent` / `to_agent` (the target
+ *   is known when the span ends), read by the server as a hand-off.
+ * - Response spans keep the Responses output (reasoning items, and
+ *   `reasoning_tokens`); when a wrapped OpenAI client traced the request
+ *   underneath, the reasoning stays on that call only.
  */
 import { asError, RunTracker } from './runs.js';
 import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
@@ -56,7 +66,7 @@ function spanInfo(d: any): { op: string; kind: string; inputs: Record<string, un
     case 'response':
       return { op: 'openai_agents.response', kind: 'llm', inputs: { input: d._input }, attrs: { 'gen_ai.operation.name': 'chat', 'gen_ai.provider.name': 'openai' } };
     case 'handoff':
-      return { op: 'openai_agents.handoff', kind: 'agent', inputs: { from_agent: d.from_agent, to_agent: d.to_agent }, attrs: {}, display: `handoff → ${d.to_agent ?? '?'}` };
+      return { op: 'openai_agents.handoff', kind: 'handoff', inputs: { from_agent: d.from_agent, to_agent: d.to_agent }, attrs: handoffAttrs(d), display: d.to_agent ? `handoff to ${d.to_agent}` : undefined };
     case 'guardrail':
       return { op: `guardrail.${name || 'guardrail'}`, kind: 'guardrail', inputs: {}, attrs: {} };
     case 'mcp_tools':
@@ -68,6 +78,13 @@ function spanInfo(d: any): { op: string; kind: string; inputs: Record<string, un
     default:
       return { op: `openai_agents.${name || t}`, kind: t, inputs: { data: d?.data }, attrs: {} };
   }
+}
+
+function handoffAttrs(d: any): Record<string, unknown> {
+  const h: Record<string, unknown> = { kind: 'handoff' };
+  if (d?.from_agent) h.from_agent = d.from_agent;
+  if (d?.to_agent) h.to_agent = d.to_agent;
+  return { weft: { handoff: h } };
 }
 
 function spanOutput(d: any): { out: unknown; usage: any } {
@@ -82,7 +99,15 @@ function spanOutput(d: any): { out: unknown; usage: any } {
     const u = r?.usage;
     return {
       out: r ?? { response_id: d.response_id },
-      usage: u ? { model: r?.model, promptTokens: u.input_tokens, completionTokens: u.output_tokens, totalTokens: u.total_tokens } : null,
+      usage: u
+        ? {
+            model: r?.model,
+            promptTokens: u.input_tokens ?? u.inputTokens,
+            completionTokens: u.output_tokens ?? u.outputTokens,
+            totalTokens: u.total_tokens ?? u.totalTokens,
+            reasoningTokens: u.output_tokens_details?.reasoning_tokens ?? u.outputTokensDetails?.reasoningTokens,
+          }
+        : null,
     };
   }
   if (t === 'guardrail') return { out: { triggered: d.triggered }, usage: null };
@@ -106,9 +131,10 @@ export class WeftTracingProcessor {
     try {
       const name = trace?.name || 'agent_run';
       const attrs: Record<string, unknown> = { openai_agents: { trace_id: trace?.traceId, group_id: trace?.groupId ?? null } };
-      if (trace?.groupId) attrs['gen_ai.conversation.id'] = trace.groupId;
+      const session = trace?.groupId || trace?.traceId;
+      if (session) attrs['gen_ai.conversation.id'] = String(session);
       if (trace?.metadata && typeof trace.metadata === 'object') (attrs.openai_agents as any).metadata = trace.metadata;
-      this.tracker.start(`trace:${trace?.traceId}`, 'openai_agents.trace', { name }, { kind: 'agent', displayName: name, attributes: attrs });
+      this.tracker.start(`trace:${trace?.traceId}`, 'openai_agents.trace', { name }, { kind: 'workflow', displayName: name, attributes: attrs });
     } catch {
       /* never break the agent */
     }
@@ -137,8 +163,10 @@ export class WeftTracingProcessor {
 
   async onSpanEnd(span: any): Promise<void> {
     try {
-      const { out, usage } = spanOutput(span?.spanData);
-      this.tracker.end(`span:${span?.spanId}`, out, asError(span?.error), usage, span?.endedAt ?? undefined);
+      const d = span?.spanData;
+      const { out, usage } = spanOutput(d);
+      const late = d?.type === 'handoff' ? { attributes: handoffAttrs(d), displayName: d.to_agent ? `handoff to ${d.to_agent}` : undefined } : undefined;
+      this.tracker.end(`span:${span?.spanId}`, out, asError(span?.error), usage, span?.endedAt ?? undefined, late);
     } catch {
       /* never break the agent */
     }

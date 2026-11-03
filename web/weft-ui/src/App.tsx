@@ -38,6 +38,14 @@ const AutomationsPage = lazyNamed(() => import('./pages/automations/AutomationsP
 const AgentsPage = lazyNamed(() => import('./pages/agents/AgentsPage'), 'AgentsPage')
 const AgentPage = lazyNamed(() => import('./pages/agents/AgentPage'), 'AgentPage')
 const ConversationPage = lazyNamed(() => import('./pages/agents/ConversationPage'), 'ConversationPage')
+const SessionsPage = lazyNamed(() => import('./pages/sessions/SessionsPage'), 'SessionsPage')
+const SessionPage = lazyNamed(() => import('./pages/sessions/SessionPage'), 'SessionPage')
+const AgentsListPage = lazyNamed(() => import('./pages/agents/AgentsListPage'), 'AgentsListPage')
+const AgentDetailPage = lazyNamed(() => import('./pages/agents/AgentDetailPage'), 'AgentDetailPage')
+const TeamsPage = lazyNamed(() => import('./pages/teams/TeamsPage'), 'TeamsPage')
+const TeamPage = lazyNamed(() => import('./pages/teams/TeamPage'), 'TeamPage')
+const SecurityPage = lazyNamed(() => import('./pages/security/SecurityPage'), 'SecurityPage')
+const ScoresPage = lazyNamed(() => import('./pages/scores/ScoresPage'), 'ScoresPage')
 const DashboardsPage = lazyNamed(() => import('./pages/dashboards/DashboardsPage'), 'DashboardsPage')
 const DashboardPage = lazyNamed(() => import('./pages/dashboards/DashboardPage'), 'DashboardPage')
 
@@ -53,6 +61,13 @@ function WeaveLinkRedirect() {
 function WeaveCallRedirect() {
   const { entity, project, callId } = useParams()
   return <Navigate to={`/${entity}/${project}/calls/${callId}`} replace />
+}
+
+/** Renamed paths keep working: /queues → /review-queues, /ops → /functions. */
+function Renamed({ to }: { to: string }) {
+  const { entity, project, queueId } = useParams()
+  const loc = useLocation()
+  return <Navigate to={`/${entity}/${project}/${to}${queueId ? `/${encodeURIComponent(queueId)}` : ''}${loc.search}`} replace />
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
@@ -97,7 +112,13 @@ export function App() {
             <Route path="/admin" element={<AdminPage />} />
           </Route>
           <Route path="/:entity/:project" element={<ProjectLayout />}>
-            <Route index element={<Navigate to="traces" replace />} />
+            <Route index element={<Navigate to="sessions" replace />} />
+            <Route path="sessions" element={<SessionsPage />} />
+            <Route path="sessions/:sessionId" element={<SessionPage />} />
+            <Route path="teams" element={<TeamsPage />} />
+            <Route path="teams/:teamId" element={<TeamPage />} />
+            <Route path="security" element={<SecurityPage />} />
+            <Route path="scores" element={<ScoresPage />} />
             <Route path="traces" element={<TracesPage />} />
             <Route path="calls/:callId" element={<CallPage />} />
             <Route path="compare-calls" element={<CompareCallsPage />} />
@@ -111,7 +132,8 @@ export function App() {
             <Route path="models" element={<ObjectsPage kind="models" />} />
             <Route path="prompts" element={<ObjectsPage kind="prompts" />} />
             <Route path="scorers" element={<ObjectsPage kind="scorers" />} />
-            <Route path="ops" element={<ObjectsPage kind="ops" />} />
+            <Route path="functions" element={<ObjectsPage kind="ops" />} />
+            <Route path="ops" element={<Renamed to="functions" />} />
             <Route path="objects" element={<ObjectsPage kind="all" />} />
             <Route path="objects/:objectId" element={<ObjectVersionsPage />} />
             <Route path="objects/:objectId/versions/:digest" element={<ObjectVersionPage />} />
@@ -121,11 +143,15 @@ export function App() {
             <Route path="monitors" element={<MonitorsPage />} />
             <Route path="monitors/:objectId" element={<MonitorPage />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="queues" element={<QueuesPage />} />
-            <Route path="queues/:queueId" element={<QueueReviewPage />} />
+            <Route path="review-queues" element={<QueuesPage />} />
+            <Route path="review-queues/:queueId" element={<QueueReviewPage />} />
+            <Route path="queues" element={<Renamed to="review-queues" />} />
+            <Route path="queues/:queueId" element={<Renamed to="review-queues" />} />
             <Route path="automations" element={<AutomationsPage />} />
-            <Route path="agents" element={<AgentsPage />} />
-            <Route path="agents/:agentName" element={<AgentPage />} />
+            <Route path="agents" element={<AgentsListPage />} />
+            <Route path="agents/:agentName" element={<AgentDetailPage />} />
+            <Route path="agents/:agentName/analytics" element={<AgentPage />} />
+            <Route path="agent-analytics" element={<AgentsPage />} />
             <Route path="conversations/:conversationId" element={<ConversationPage />} />
             <Route path="dashboards" element={<DashboardsPage />} />
             <Route path="dashboards/:objectId" element={<DashboardPage />} />
@@ -134,7 +160,15 @@ export function App() {
             <Route path="weave/*" element={<WeaveLinkRedirect />} />
             <Route path="r/call/:callId" element={<WeaveCallRedirect />} />
           </Route>
-          <Route path="*" element={<div className="empty">Page not found</div>} />
+          <Route
+            path="*"
+            element={
+              <div className="empty">
+                <p>This page does not exist.</p>
+                <a href="/">Go to your projects</a>
+              </div>
+            }
+          />
         </Routes>
       </Suspense>
     </AuthGate>

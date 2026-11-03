@@ -1,10 +1,13 @@
 """AutoGen (``autogen-agentchat`` / ``autogen-core`` / ``autogen-ext``, v0.4+).
 
 Traced: agent ``run``/``run_stream``/``on_messages``/``on_messages_stream``
-(agent), team (group chat) ``run``/``run_stream`` (agent), model client
+(agent, ``gen_ai.agent.name`` = the agent's name), team (group chat)
+``run``/``run_stream`` (workflow; a team given its own ``name`` is the Weft
+team, ``weft.team.id``), model client
 ``create``/``create_stream`` on every ``ChatCompletionClient`` implementation
 (llm; usage from ``CreateResult.usage``), tools ``BaseTool.run_json``/``run``
-(tool; display name = the tool's name), memory ``query``/``update_context``
+(tool; display name = the tool's name; a Swarm hand-off tool
+``transfer_to_<agent>`` also records ``weft.handoff.to_agent``), memory ``query``/``update_context``
 (retriever) and code executors' ``execute_code_blocks`` (tool).
 
 Model clients that wrap a traced SDK (``OpenAIChatCompletionClient`` uses
@@ -19,7 +22,7 @@ from typing import Any, Dict, List
 
 from .._usage import add_usage
 from ._common import to_dict
-from ._methods import Method, patch_methods
+from ._methods import Method, _merge_attrs, agent_attrs, patch_methods, self_arg, team_attrs, tool_attrs
 
 INTEGRATION = "autogen"
 
@@ -76,21 +79,56 @@ def _result(res: Any) -> Any:
     return d if d is not None else res
 
 
+def _agent_name(obj: Any) -> Any:
+    name = getattr(obj, "name", None) or getattr(obj, "_name", None)
+    return name if isinstance(name, str) and name else None
+
+
+def _agent_attrs(args: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    return agent_attrs(_agent_name(self_arg(args)))
+
+
+def _team_attrs(args: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    team = self_arg(args)
+    name = _agent_name(team)
+    if name and name != type(team).__name__:  # a name of its own, not the class default
+        return team_attrs(name, name)
+    return {}
+
+
+_HANDOFF_PREFIX = "transfer_to_"
+
+
+def _tool_attrs(args: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    name = _agent_name(self_arg(args))
+    out = tool_attrs(name, kwargs.get("call_id"))
+    if name and name.startswith(_HANDOFF_PREFIX) and len(name) > len(_HANDOFF_PREFIX):
+        out = _merge_attrs(out, {"weft": {"handoff": {"to_agent": name[len(_HANDOFF_PREFIX):], "kind": "handoff"}}})
+    return out
+
+
 def methods() -> List[Method]:
     agents = "autogen_agentchat.agents"
     teams = "autogen_agentchat.teams"
     return [
-        Method("BaseChatAgent.run", "autogen.Agent.run", "agent", module=agents, display=_named("Agent"), subclasses=True, output=_result),
-        Method("BaseChatAgent.run_stream", "autogen.Agent.run_stream", "agent", module=agents, display=_named("Agent"), subclasses=True),
-        Method("BaseChatAgent.on_messages", "autogen.Agent.on_messages", "agent", module=agents, display=_named("Agent"), subclasses=True, output=_result),
-        Method("BaseChatAgent.on_messages_stream", "autogen.Agent.on_messages_stream", "agent", module=agents, display=_named("Agent"), subclasses=True),
-        Method("BaseGroupChat.run", "autogen.Team.run", "agent", module=teams, display=_named("Team"), subclasses=True, output=_result),
-        Method("BaseGroupChat.run_stream", "autogen.Team.run_stream", "agent", module=teams, display=_named("Team"), subclasses=True),
+        Method("BaseChatAgent.run", "autogen.Agent.run", "agent", module=agents, display=_named("Agent"), subclasses=True, output=_result,
+               attrs=_agent_attrs),
+        Method("BaseChatAgent.run_stream", "autogen.Agent.run_stream", "agent", module=agents, display=_named("Agent"), subclasses=True,
+               attrs=_agent_attrs),
+        Method("BaseChatAgent.on_messages", "autogen.Agent.on_messages", "agent", module=agents, display=_named("Agent"), subclasses=True,
+               output=_result, attrs=_agent_attrs),
+        Method("BaseChatAgent.on_messages_stream", "autogen.Agent.on_messages_stream", "agent", module=agents, display=_named("Agent"),
+               subclasses=True, attrs=_agent_attrs),
+        Method("BaseGroupChat.run", "autogen.Team.run", "workflow", module=teams, display=_named("Team"), subclasses=True, output=_result,
+               attrs=_team_attrs),
+        Method("BaseGroupChat.run_stream", "autogen.Team.run_stream", "workflow", module=teams, display=_named("Team"), subclasses=True,
+               attrs=_team_attrs),
         Method("ChatCompletionClient.create", "autogen.ChatCompletionClient.create", "llm", module="autogen_core.models",
                subclasses=True, usage=create_usage, inputs=_client_inputs, output=_result),
         Method("ChatCompletionClient.create_stream", "autogen.ChatCompletionClient.create_stream", "llm", module="autogen_core.models",
                subclasses=True, inputs=_client_inputs),
-        Method("BaseTool.run_json", "autogen.Tool.run_json", "tool", module="autogen_core.tools", display=_named("Tool"), subclasses=True),
+        Method("BaseTool.run_json", "autogen.Tool.run_json", "tool", module="autogen_core.tools", display=_named("Tool"), subclasses=True,
+               attrs=_tool_attrs),
         Method("Memory.query", "autogen.Memory.query", "retriever", module="autogen_core.memory", subclasses=True, output=_result),
         Method("Memory.update_context", "autogen.Memory.update_context", "retriever", module="autogen_core.memory", subclasses=True),
         Method("CodeExecutor.execute_code_blocks", "autogen.CodeExecutor.execute_code_blocks", "tool", module="autogen_core.code_executor",

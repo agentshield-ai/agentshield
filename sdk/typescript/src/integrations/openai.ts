@@ -20,6 +20,8 @@ export class ChatCompletionAccumulator implements Accumulator {
       const d = ch.delta ?? {};
       if (d.role) st.message.role = d.role;
       if (d.content != null) st.message.content = (st.message.content ?? '') + d.content;
+      // reasoning text streamed by DeepSeek / vLLM (reasoning_content) and OpenRouter (reasoning)
+      for (const rk of ['reasoning_content', 'reasoning']) if (typeof d[rk] === 'string' && d[rk]) st.message[rk] = (st.message[rk] ?? '') + d[rk];
       if (d.refusal) st.message.refusal = (st.message.refusal ?? '') + d.refusal;
       for (const tc of d.tool_calls ?? []) {
         const tcs = (st.message.tool_calls ??= []);
