@@ -170,3 +170,19 @@ func TestEnforceActionAndMaxSeverity(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateSpan_ReplayAttribute(t *testing.T) {
+	ev := NewEvaluator(&mockEngine{}, config.ModeShadow, "", nil, nil)
+	_, spans := evalWithExporter(t, ev, &models.EvaluationRequest{EventID: "weft-replay-j-0", SessionID: "weft-replay:j:s", Tool: "Bash",
+		Fields: map[string]string{"tool": "Bash"}, Replay: true})
+	if len(spans) != 1 {
+		t.Fatalf("spans = %d", len(spans))
+	}
+	if v, ok := attrMap(spans[0].Attributes)[AttrReplay]; !ok || !v.AsBool() {
+		t.Fatalf("%s missing on a replay evaluation: %v", AttrReplay, spans[0].Attributes)
+	}
+	_, spans = evalWithExporter(t, ev, &models.EvaluationRequest{EventID: "live-1", SessionID: "s", Tool: "Bash", Fields: map[string]string{"tool": "Bash"}})
+	if _, ok := attrMap(spans[0].Attributes)[AttrReplay]; ok {
+		t.Fatalf("%s set on a live evaluation", AttrReplay)
+	}
+}

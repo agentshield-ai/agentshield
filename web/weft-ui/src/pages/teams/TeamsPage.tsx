@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type TeamSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
+import { useSessionScope } from '../../hooks/useSessionScope'
 import { timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
 import { fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentUrl, teamUrl } from '../../lib/urls'
@@ -16,13 +17,9 @@ import { usePageHelp } from '../../components/ui/PageHelp'
 
 const DEFAULT_TIME: TimeRange = '24h'
 
+/** The chip Teams applies to a team itself; agent, text and time go to the server, the rest through sessions (useSessionScope). */
 export function teamMatches(t: TeamSummary, s: FilterState): boolean {
   if (s.team && t.team_id !== s.team) return false
-  if (s.status === 'error' && !(t.error_session_count > 0)) return false
-  if (s.status === 'ok' && t.error_session_count > 0) return false
-  if (s.has === 'block' && !((t.detection_count?.block ?? 0) > 0)) return false
-  if (s.has === 'approval' && !((t.detection_count?.require_approval ?? 0) > 0)) return false
-  if (s.has === 'any' && !Object.values(t.detection_count ?? {}).some((v) => (v ?? 0) > 0)) return false
   return true
 }
 
@@ -41,7 +38,7 @@ export function TeamsPage() {
       A <strong>team</strong> is a set of agents that work together in sessions. Name one by putting <span className="mono">weft.team.id</span> on a span; otherwise Weft groups the
       agents that took part in each session. Open a team to see how work flows between its agents and which hand-offs fail.
     </>,
-    'API.md#teams',
+    'teams.md',
   )
   const base = { q: state.q, agent: state.agent }
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.teams(pid, { ...base, ...timeWindow({ time: r }, r), limit: 1 })).total_count, [pid, 'teams', base])
@@ -53,8 +50,9 @@ export function TeamsPage() {
     placeholderData: keepPreviousData,
   })
   const any = useQuery({ queryKey: ['v1', pid, 'teams', 'any'], queryFn: () => v1.teams(pid, { limit: 1 }) })
+  const scope = useSessionScope(pid, 'teams', state, time, widen.ready)
   const all = q.data?.items ?? []
-  const rows = all.filter((t) => teamMatches(t, state)).sort((a, b) => Number(a.auto) - Number(b.auto))
+  const rows = all.filter((t) => teamMatches(t, state) && (!scope.active || scope.teams.has(t.team_id))).sort((a, b) => Number(a.auto) - Number(b.auto))
   return (
     <div className="page wide">
       <header className="page-head">
@@ -80,7 +78,8 @@ export function TeamsPage() {
           />
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <ErrorBox error={q.error} />
-          {q.isLoading ? (
+          <ErrorBox error={scope.error} />
+          {q.isLoading || !scope.ready ? (
             <Loading />
           ) : rows.length === 0 ? (
             <div className="empty-inline">

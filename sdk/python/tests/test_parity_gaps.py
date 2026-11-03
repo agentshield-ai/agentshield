@@ -503,7 +503,7 @@ def test_calls_to_records_and_to_pandas(client, fake, monkeypatch):
     f(2)
     recs = client.get_calls(filter={"op_names": ["f"]}).to_records()
     assert sorted(r["output"] for r in recs) == [2, 3]
-    assert set(recs[0]) >= {"id", "op_name", "inputs", "output", "status", "trace_id", "wb_run_step"}
+    assert set(recs[0]) >= {"id", "op_name", "inputs", "output", "status", "trace_id", "run_step"}
     assert recs[0]["status"] == "success"
 
     monkeypatch.setitem(sys.modules, "pandas", None)
@@ -561,7 +561,7 @@ def test_link_prompt_and_any_object_to_registry(client, fake):
 
 
 # ---------------------------------------------------------------- run linkage
-def test_wb_run_id_and_steps_are_sent(client, fake, monkeypatch):
+def test_run_id_and_steps_are_sent(client, fake, monkeypatch):
     step = {"n": 3}
 
     @weft.op
@@ -569,18 +569,18 @@ def test_wb_run_id_and_steps_are_sent(client, fake, monkeypatch):
         step["n"] += 1
         return step["n"]
 
-    weft.set_wb_run("run-abc", step=lambda: step["n"])
+    weft.set_run("run-abc", step=lambda: step["n"])
     train_step()
-    weft.set_wb_run(None)
+    weft.set_run(None)
     train_step()
-    weft.set_wb_run("acme/train/run-2", step=7)
+    weft.set_run("acme/train/run-2", step=7)
     train_step()
     client.flush()
     c1, c2, c3 = fake.calls_by_op("train_step")
-    assert c1["wb_run_id"] == "test-entity/test-proj/run-abc" and c1["wb_run_step"] == 3 and c1["wb_run_step_end"] == 4
-    assert "wb_run_id" not in c2
-    assert c3["wb_run_id"] == "acme/train/run-2" and c3["wb_run_step"] == 7
-    assert weft.Call.from_server({"id": "x", "wb_run_step": 2, "wb_username": "ann"}, None).to_dict()["wb_username"] == "ann"
+    assert c1["run_id"] == "test-entity/test-proj/run-abc" and c1["run_step"] == 3 and c1["run_step_end"] == 4
+    assert "run_id" not in c2
+    assert c3["run_id"] == "acme/train/run-2" and c3["run_step"] == 7
+    assert weft.Call.from_server({"id": "x", "run_step": 2, "username": "ann"}, None).to_dict()["username"] == "ann"
 
 
 # ---------------------------------------------------------------- environment variables

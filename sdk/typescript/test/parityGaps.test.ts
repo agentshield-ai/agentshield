@@ -316,30 +316,30 @@ describe('SDK extras', () => {
     await f(2);
     const recs = await client.getCallsRecords({ filter: { op_names: ['f'] }, includeUsernames: true, includeStorageSize: true });
     expect(recs.map((r) => r.output).sort()).toEqual([2, 3]);
-    expect(recs[0]).toMatchObject({ status: 'success', op_name: expect.stringContaining('/op/f:'), wb_run_id: null });
+    expect(recs[0]).toMatchObject({ status: 'success', op_name: expect.stringContaining('/op/f:'), run_id: null });
     const q = fake.requests.filter((r) => r.path === '/calls/stream_query').pop()!.body;
     expect(q.include_usernames).toBe(true);
     expect(q.include_storage_size).toBe(true);
-    expect(new weft.Call({ id: 'x', project_id: 'a/b', op_name: 'o', trace_id: 't', wb_username: 'ann', wb_run_step: 2 }, null).toRecord()).toMatchObject({ wb_username: 'ann', wb_run_step: 2 });
+    expect(new weft.Call({ id: 'x', project_id: 'a/b', op_name: 'o', trace_id: 't', username: 'ann', run_step: 2 }, null).toRecord()).toMatchObject({ username: 'ann', run_step: 2 });
   });
 
-  it('sends wb_run_id / wb_run_step / wb_run_step_end', async () => {
+  it('sends run_id / run_step / run_step_end', async () => {
     let step = 3;
     const trainStep = weft.op(function trainStep() {
       step += 1;
       return step;
     });
-    weft.setWbRun('run-abc', () => step);
+    weft.setRun('run-abc', () => step);
     await trainStep();
-    weft.setWbRun(null);
+    weft.setRun(null);
     await trainStep();
-    client.setWbRun('ent/proj/run-x', 9);
+    client.setRun('ent/proj/run-x', 9);
     await trainStep();
     await settle();
     const [a, b, c] = fake.callsByOp('trainStep');
-    expect(a).toMatchObject({ wb_run_id: 'ts-entity/gaps/run-abc', wb_run_step: 3, wb_run_step_end: 4 });
-    expect(b.wb_run_id).toBeUndefined();
-    expect(c).toMatchObject({ wb_run_id: 'ent/proj/run-x', wb_run_step: 9, wb_run_step_end: 9 });
+    expect(a).toMatchObject({ run_id: 'ts-entity/gaps/run-abc', run_step: 3, run_step_end: 4 });
+    expect(b.run_id).toBeUndefined();
+    expect(c).toMatchObject({ run_id: 'ent/proj/run-x', run_step: 9, run_step_end: 9 });
   });
 
   it('reads retry, queue, timeout and log-level settings from the environment', async () => {

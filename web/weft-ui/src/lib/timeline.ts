@@ -291,3 +291,10 @@ export function moveFocus(steps: Step[], current: string | null, dir: 1 | -1): s
   const j = Math.min(steps.length - 1, Math.max(0, i + dir))
   return steps[j].key
 }
+
+/** The step keyboard moves start from: the one last requested while the URL
+ * (and so the focused step) catches up, for up to a second; otherwise the
+ * focused step. Moving from a stale focus would drop fast j/k presses. */
+export function currentFocus(pending: { key: string | null; at: number } | null, focus: string | null, now = Date.now()): string | null {
+  return pending && now - pending.at < 1000 ? pending.key : focus
+}

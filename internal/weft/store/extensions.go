@@ -1,6 +1,10 @@
 package store
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+	"time"
+)
 
 // Feature modules register extra schema and migrations from their own files
 // (in init functions) so they don't need to edit store.go.
@@ -56,3 +60,27 @@ func (s *Store) DB() *sql.DB { return s.w }
 
 // ReadDB exposes the read handle.
 func (s *Store) ReadDB() *sql.DB { return s.r }
+
+// runOnce runs a one-time data migration in a transaction and records it in
+// weft_migrations, so it never runs again on the same database.
+func runOnce(db *sql.DB, name string, fn func(tx *sql.Tx) error) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS weft_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
+		return err
+	}
+	var done int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM weft_migrations WHERE name = ?`, name).Scan(&done); err != nil || done > 0 {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return fmt.Errorf("migration %s: %w", name, err)
+	}
+	if _, err := tx.Exec(`INSERT INTO weft_migrations(name, applied_at) VALUES(?, ?)`, name, time.Now().UnixMicro()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

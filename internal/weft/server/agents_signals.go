@@ -48,12 +48,12 @@ func (s *Server) agentFeedbackBatchCreate(ctx context.Context, r *http.Request, 
 		if _, err := project(it.ProjectID); err != nil {
 			return nil, err
 		}
-		it.WBUserID = userFrom(r, it.WBUserID)
+		it.UserID = userFrom(r, it.UserID)
 		f, err := s.store.CreateAgentFeedback(ctx, it)
 		if err != nil {
 			return nil, err
 		}
-		res = append(res, map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload})
+		res = append(res, map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload})
 	}
 	return map[string]any{"res": res}, nil
 }

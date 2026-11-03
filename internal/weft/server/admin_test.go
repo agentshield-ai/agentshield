@@ -104,8 +104,8 @@ func TestAPIKeysScopes(t *testing.T) {
 	// Scoped key: writes to its project and sets the user.
 	e.admJSON("POST", "/call/upsert_batch", scoped, map[string]any{"batch": startEnd(pid, "c1", "c1", nil, time.Now(), map[string]any{}, 1)})
 	c := e.admJSON("POST", "/call/read", scoped, map[string]any{"project_id": pid, "id": "c1"})["call"].(map[string]any)
-	if c["wb_user_id"] != "ci-bot" {
-		t.Fatalf("user not set from key: %v", c["wb_user_id"])
+	if c["user_id"] != "ci-bot" {
+		t.Fatalf("user not set from key: %v", c["user_id"])
 	}
 	forbidden := []struct {
 		method, path string

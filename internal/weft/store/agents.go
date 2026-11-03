@@ -278,6 +278,12 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 	}
 	d.ConversationName = a.str("gen_ai.conversation.name", "weft.conversation.name")
 	d.IsTurn = (turnID != nil && *turnID == id) || a.truthy("weft.is_turn")
+	if isReplaySpan(a) && isVerdictSpan(attributes) {
+		// A replayed evaluation belongs to no session and no agent
+		// (detections_otel.go); it stays visible in the raw span views.
+		d.ConversationID, d.ConversationName, d.IsTurn = "", "", false
+		d.AgentName, d.AgentID, d.AgentVersion, d.AgentDescription, d.OwnAgent = "", "", "", "", false
+	}
 
 	// Tool.
 	d.ToolName = a.str("gen_ai.tool.name", "tool.name", "ai.toolCall.name", "gcp.vertex.agent.tool_name")

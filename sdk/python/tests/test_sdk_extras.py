@@ -175,7 +175,7 @@ def test_saved_view_ui_params_dropped_and_evaluations_view(client, fake):
     assert "ui_params" not in v.definition and v.definition["search"] == "foo"
     with pytest.raises(ValueError):
         v.add_sort("x", "up")
-    v.set_filter(trace_roots_only=True, wb_user_ids=["u"])
+    v.set_filter(trace_roots_only=True, user_ids=["u"])
     assert v.to_calls_query()["filter"]["trace_roots_only"] is True
     with pytest.raises(ValueError):
         v.set_filter(bogus=1)

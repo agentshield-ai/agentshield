@@ -42,7 +42,7 @@ type callsExportReq struct {
 // exportBaseColumns come first, in this order, in CSV and flattened output.
 var exportBaseColumns = []string{
 	"id", "trace_id", "parent_id", "op_name", "display_name", "status", "started_at", "ended_at", "latency_ms",
-	"prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "exception", "thread_id", "turn_id", "wb_user_id", "wb_run_id",
+	"prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "exception", "thread_id", "turn_id", "user_id", "run_id",
 }
 
 func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
@@ -314,7 +314,7 @@ func exportRow(c *store.Call, withFeedback bool) map[string]any {
 		"id": c.ID, "project_id": c.ProjectID, "trace_id": c.TraceID, "parent_id": c.ParentID, "op_name": c.OpName,
 		"display_name": c.DisplayName, "status": c.Status(), "started_at": c.StartedAt, "ended_at": c.EndedAt,
 		"latency_ms": c.LatencyMS(), "exception": c.Exception, "thread_id": c.ThreadID, "turn_id": c.TurnID,
-		"wb_user_id": c.WBUserID, "wb_run_id": c.WBRunID, "cost_usd": cost,
+		"user_id": c.UserID, "run_id": c.RunID, "cost_usd": cost,
 		"inputs": c.Inputs, "output": c.Output, "attributes": c.Attributes, "summary": c.Summary,
 	}
 	if len(u.Usage) > 0 {

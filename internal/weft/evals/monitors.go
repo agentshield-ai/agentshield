@@ -2,7 +2,6 @@ package evals
 
 import (
 	"context"
-	"math/rand/v2"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -115,21 +114,29 @@ func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
 				continue
 			}
 		}
-		rate := 1.0
-		if r, ok := store.ToFloat(val["sampling_rate"]); ok {
-			rate = r
+		var perCall []monitorScorer
+		queue := false
+		for _, ms := range e.monitorScorers(ctx, m) {
+			if ms.call {
+				perCall = append(perCall, ms)
+			}
+			if len(ms.scopes) > 0 {
+				queue = true
+			}
 		}
-		if rate <= 0 || (rate < 1 && rand.Float64() >= rate) {
+		if queue {
+			// Scope scorers run on the call's session once it is complete
+			// (monitors_scope.go).
+			if sid, err := e.Store.ConversationOf(ctx, ended.ProjectID, call.ID); err == nil && sid != "" {
+				e.queueSession(ended.ProjectID, sid)
+			}
+		}
+		if len(perCall) == 0 || !sampled(monitorRate(val)) {
 			continue
 		}
-		scorers, _ := val["scorers"].([]any)
-		for _, s := range scorers {
-			sr, ok := s.(string)
-			if !ok {
-				continue
-			}
-			if err := e.scoreForMonitor(ctx, m, sr, call); err != nil {
-				e.Log.Warn("monitor scorer failed", "monitor", m.ObjectID, "scorer", sr, "err", err)
+		for _, ms := range perCall {
+			if err := e.scoreForMonitor(ctx, m, ms.scorer, call); err != nil {
+				e.Log.Warn("monitor scorer failed", "monitor", m.ObjectID, "scorer", ms.ref, "err", err)
 			}
 		}
 	}
@@ -203,7 +210,7 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 			callRef := refs.CallRef(projectID, rec.id)
 			fb, err := e.Store.CreateFeedback(ctx, store.FeedbackCreate{
 				ProjectID: projectID, Ref: refs.CallRef(projectID, id), FeedbackType: "weft.scorer." + sc.Name,
-				Payload: map[string]any{"output": res.Output}, WBUserID: user, RunnableRef: &sc.Ref, CallRef: &callRef,
+				Payload: map[string]any{"output": res.Output}, UserID: user, RunnableRef: &sc.Ref, CallRef: &callRef,
 			})
 			if err != nil {
 				return nil, err
@@ -215,11 +222,7 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 	return out, nil
 }
 
-func (e *Engine) scoreForMonitor(ctx context.Context, monitor *store.Obj, scorerRef string, call *store.Call) error {
-	sc, err := e.loadScorer(ctx, scorerRef)
-	if err != nil {
-		return err
-	}
+func (e *Engine) scoreForMonitor(ctx context.Context, monitor *store.Obj, sc *Scorer, call *store.Call) error {
 	example := map[string]any{}
 	for k, v := range call.Inputs {
 		example[k] = v

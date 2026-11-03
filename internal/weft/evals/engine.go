@@ -34,9 +34,13 @@ type Engine struct {
 	monitorCh    chan store.EndedCall
 	monMu        sync.Mutex
 	monitorCache map[string]monitorCacheEntry
-	wg           sync.WaitGroup
-	stopOnce     sync.Once
-	stop         chan struct{}
+	// Sessions waiting to complete for scope monitors (monitors_scope.go),
+	// with the time their latest call ended.
+	pendMu   sync.Mutex
+	pending  map[pendingKey]time.Time
+	wg       sync.WaitGroup
+	stopOnce sync.Once
+	stop     chan struct{}
 }
 
 // Status is the progress of a server-side evaluation.
@@ -56,12 +60,14 @@ func New(s *store.Store, client *llm.Client, log *slog.Logger) *Engine {
 		Store: s, LLM: client, Log: log,
 		opRefs: map[string]string{}, status: map[string]*Status{},
 		monitorCh: make(chan store.EndedCall, 10000), monitorCache: map[string]monitorCacheEntry{},
-		stop: make(chan struct{}),
+		pending: map[pendingKey]time.Time{}, stop: make(chan struct{}),
 	}
 	for i := 0; i < 4; i++ {
 		e.wg.Add(1)
 		go e.monitorWorker()
 	}
+	e.wg.Add(1)
+	go e.scopeWorker()
 	return e
 }
 

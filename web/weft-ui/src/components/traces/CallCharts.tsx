@@ -24,7 +24,7 @@ function tickFormatter(bucketSeconds: number) {
 
 function fmtCostTick(v: number) {
   if (v === 0) return '0'
-  if (v < 0.01) return `$${Number(v.toPrecision(1))}`
+  if (v < 1000) return fmtCost(v)
   return `$${compact(v)}`
 }
 

@@ -154,7 +154,7 @@ type UserUpdate struct {
 	Disabled *bool   `json:"disabled"`
 }
 
-// UserIDRe is the shape of user ids (also the default wb_user_id).
+// UserIDRe is the shape of user ids (also the default user_id).
 var UserIDRe = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,64}$`)
 
 // TeamNameRe is the shape of team (entity) names.

@@ -194,9 +194,9 @@ export function linkPromptToRegistry(prompt: unknown, opts: { targetPath: string
   return requireClient().linkPromptToRegistry(prompt, opts);
 }
 
-/** Link calls of the global client to a run (`wb_run_id`, `wb_run_step`); `null` clears it. */
-export function setWbRun(runId: string | null, step?: number | (() => number | undefined)): void {
-  requireClient().setWbRun(runId, step);
+/** Link calls of the global client to a run (`run_id`, `run_step`); `null` clears it. */
+export function setRun(runId: string | null, step?: number | (() => number | undefined)): void {
+  requireClient().setRun(runId, step);
 }
 
 /** Parse a `weft:///` URI into a Ref. */

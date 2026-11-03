@@ -22,7 +22,7 @@ export function AgentDetailPage() {
       One agent across every session: how often it runs and fails, who delegates to it and whom it delegates to, which tools it calls, how often AgentShield flags them, and how its
       work scores.
     </>,
-    'API.md#agents-1',
+    'agents.md#look-at-one-agent',
   )
   const a = useQuery({ queryKey: ['v1', pid, 'agent', agentName], queryFn: () => v1.agent(pid, agentName) })
   const sessions = useQuery({ queryKey: ['v1', pid, 'sessions', { agent: agentName }], queryFn: () => v1.sessions(pid, { agent: agentName, limit: 10 }) })

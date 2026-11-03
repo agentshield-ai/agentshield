@@ -160,8 +160,8 @@ func groupSQL(groupBy string) (string, []any, error) {
 		return statusSQL, nil, nil
 	case "thread", "thread_id":
 		return "c.thread_id", nil, nil
-	case "user", "wb_user_id":
-		return "c.wb_user_id", nil, nil
+	case "user", "user_id":
+		return "c.user_id", nil, nil
 	case "model":
 		return "", nil, nil
 	}

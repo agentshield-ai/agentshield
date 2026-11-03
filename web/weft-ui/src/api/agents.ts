@@ -276,7 +276,7 @@ export interface TraceChat {
   span_count: number
   llm_call_count: number
   tool_call_count: number
-  wb_user_id: string | null
+  user_id: string | null
   feedback: ChatFeedback[] | null
   messages: ChatMessage[]
 }

@@ -37,7 +37,7 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
   `X-Weft-CSRF` on non-GET requests. `GET /auth/check` returns 200 or 401.
   Access is role-checked; see [Users, teams and roles](#users-teams-and-roles).
   Keys may be configured as `name=key`; requests with that key act as user
-  `name`, which becomes the default `wb_user_id` of calls, objects and
+  `name`, which becomes the default `user_id` of calls, objects and
   feedback. Otherwise the `X-Weft-User` header is used, and feedback without
   a user is stored as `"anonymous"`.
 
@@ -82,12 +82,12 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
                 "effective_date":"...","provider_id":"openai","pricing_level":"default|project"}}
     }
   },
-  "wb_user_id": null, "wb_run_id": null, "deleted_at": null,
+  "user_id": null, "run_id": null, "deleted_at": null,
   "feedback": [ /* Feedback, only with include_feedback */ ],
   "storage_size_bytes": 123,         // only with include_storage_size
   "total_storage_size_bytes": 456,   // trace roots, only with include_total_storage_size
-  "wb_username": "alice",            // only with include_usernames
-  "wb_run_step": 5, "wb_run_step_end": 9,
+  "username": "alice",            // only with include_usernames
+  "run_step": 5, "run_step_end": 9,
   "expire_at": null                  // started_at + project retention_days, null without a TTL
 }
 ```
@@ -108,14 +108,14 @@ summaries are stored as sent instead of being rolled up again.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/call/start` | `{"start": {project_id, id?, op_name, display_name?, trace_id?, parent_id?, thread_id?, turn_id?, started_at, attributes?, inputs?, wb_user_id?, wb_run_id?}}` | `{"id","trace_id"}` (generated when absent) |
+| `/call/start` | `{"start": {project_id, id?, op_name, display_name?, trace_id?, parent_id?, thread_id?, turn_id?, started_at, attributes?, inputs?, user_id?, run_id?}}` | `{"id","trace_id"}` (generated when absent) |
 | `/call/end` | `{"end": {project_id, id, ended_at, exception?, output?, summary?}}` | `{}` |
 | `/call/upsert_batch` | `{"batch": [{"mode":"start","req":{"start":{...}}}, {"mode":"end","req":{"end":{...}}}]}` | `{"res": [...]}` |
 | `/call/read` | `{project_id, id, include_costs?, include_feedback?, include_storage_size?}` | `{"call": Call\|null}` |
 | `/calls/stream_query` | CallsQuery | `application/jsonl`, one Call per line |
 | `/calls/query` | CallsQuery | `{"calls": [Call]}` |
 | `/calls/query_stats` | `{project_id, filter?, query?, search?}` | `{"count", "total_storage_size_bytes"}` |
-| `/calls/delete` | `{project_id, call_ids, wb_user_id?}` | `{}` (soft delete, cascades to descendants) |
+| `/calls/delete` | `{project_id, call_ids, user_id?}` | `{}` (soft delete, cascades to descendants) |
 | `/call/update` | `{project_id, call_id, display_name}` | `{}` |
 | `/calls/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | see below |
 | `/calls/score` | `{project_id, call_ids, scorer_refs}` (server-runnable scorers) | `{"results": [{"call_id","scorer","output","scorer_call_id","feedback_id","error"?}]}`; each result is also stored as `weft.scorer.<scorer>` feedback on the call |
@@ -129,7 +129,7 @@ summaries are stored as sent instead of being rolled up again.
   "filter": {
     "op_names": ["weft:///e/p/op/f:*", "f", "openai.chat"],  // ref, ref with :* wildcard, or base name
     "input_refs": [], "output_refs": [], "parent_ids": [], "trace_ids": [],
-    "call_ids": [], "trace_roots_only": false, "wb_user_ids": [], "wb_run_ids": [],
+    "call_ids": [], "trace_roots_only": false, "user_ids": [], "run_ids": [],
     "thread_ids": [], "turn_ids": []
   },
   "query": {"$expr": Operation},
@@ -151,7 +151,7 @@ summaries are stored as sent instead of being rolled up again.
 - Operands: `{"$literal": v}`, `{"$getField": "inputs.question"}`,
   `{"$convert": {"input": a, "to": "double|int|string|bool|exists"}}`, or a nested operation.
 
-Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, wb_user_id, wb_run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
+Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, user_id, run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
 Sort fields use the same paths.
 
 **`/calls/stats` response**
@@ -181,7 +181,7 @@ ObjSchema:
 ```jsonc
 {"project_id","object_id","created_at","deleted_at":null,"digest","version_index":0,"is_latest":true,
  "kind":"object|op","base_object_class":"Dataset|null","leaf_object_class":"Dataset|null",
- "val": {...}, "wb_user_id":null, "aliases": ["latest","prod"], "size_bytes": 123,
+ "val": {...}, "user_id":null, "aliases": ["latest","prod"], "size_bytes": 123,
  "version_count": 3   // only on latest_only queries
 }
 ```
@@ -196,7 +196,7 @@ general class for base (e.g. `StringPrompt` has base `Prompt`, leaf
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/obj/create` | `{"obj": {project_id, object_id, val, builtin_object_class?, wb_user_id?}}` | `{"digest","object_id","version_index"}` (re-publishing an identical val returns the existing version) |
+| `/obj/create` | `{"obj": {project_id, object_id, val, builtin_object_class?, user_id?}}` | `{"digest","object_id","version_index"}` (re-publishing an identical val returns the existing version) |
 | `/obj/read` | `{project_id, object_id, digest}` — digest may be a digest, `latest`, `v<N>`, or an alias | `{"obj": ObjSchema}` |
 | `/objs/query` | `{project_id, filter?: {base_object_classes?, leaf_object_classes?, object_ids?, is_op?, latest_only?}, limit?, offset?, sort_by?: [{field: "created_at\|object_id", direction}], metadata_only?, include_deleted?}` | `{"objs": [ObjSchema]}` |
 | `/obj/delete` | `{project_id, object_id, digests?}` (all versions when absent) | `{"num_deleted"}` |
@@ -285,7 +285,7 @@ Media values: `{"_type":"Image","file_digest":"<d>","mime_type":"image/png"}`,
 ## Feedback
 
 Feedback schema:
-`{"id","project_id","ref","feedback_type","payload","creator","created_at","wb_user_id","annotation_ref","runnable_ref","call_ref","trigger_ref"}`
+`{"id","project_id","ref","feedback_type","payload","creator","created_at","user_id","annotation_ref","runnable_ref","call_ref","trigger_ref"}`
 
 Feedback types Weft gives meaning to (the `weft.` prefix is reserved for them):
 - `weft.reaction` payload `{"emoji": "👍"}`
@@ -306,12 +306,12 @@ working.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/feedback/create` | `{project_id, ref, feedback_type, payload, creator?, wb_user_id?, annotation_ref?, runnable_ref?, call_ref?, trigger_ref?}` | `{"id","created_at","wb_user_id","payload"}` |
+| `/feedback/create` | `{project_id, ref, feedback_type, payload, creator?, user_id?, annotation_ref?, runnable_ref?, call_ref?, trigger_ref?}` | `{"id","created_at","user_id","payload"}` |
 | `/feedback/query` | `{project_id, query?, sort_by?, limit?, offset?}` | `{"result": [Feedback]}` |
 | `/feedback/replace` | create body plus `feedback_id` | same as create (new id) |
 | `/feedback/purge` | `{project_id, query}` (typically `$eq id`) | `{}` |
 
-Feedback query fields: `id, ref, feedback_type, created_at, creator, wb_user_id, annotation_ref, runnable_ref, call_ref, trigger_ref, payload.<path>`.
+Feedback query fields: `id, ref, feedback_type, created_at, creator, user_id, annotation_ref, runnable_ref, call_ref, trigger_ref, payload.<path>`.
 
 ## Costs
 
@@ -427,7 +427,7 @@ The SDKs run evaluations client side and record calls with these op names
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `/evaluate_model` | `{project_id, evaluation_ref, model_ref, wb_user_id?}` | `{"call_id"}` — runs server side in the background; the model must be an `LLMStructuredCompletionModel`, have a `predict_url`, or be bound to a runtime (see [Server-side evaluation of any model](#server-side-evaluation-of-any-model)); scorers must be server-runnable |
+| `/evaluate_model` | `{project_id, evaluation_ref, model_ref, user_id?}` | `{"call_id"}` — runs server side in the background; the model must be an `LLMStructuredCompletionModel`, have a `predict_url`, or be bound to a runtime (see [Server-side evaluation of any model](#server-side-evaluation-of-any-model)); scorers must be server-runnable |
 | `/evaluation_status` | `{project_id, call_id}` | `{"status": {"code": "running\|complete\|failed\|unknown", "completed_rows", "total_rows", "error"?}}` |
 | `/evaluations/compare` | `{project_id, evaluation_call_ids}` | see below |
 | `/leaderboard/compute` | `{project_id, object_id, digest?}` | see below |
@@ -464,6 +464,28 @@ asynchronously by each server-runnable scorer. The result is stored as
 ref, and the scorer's own call is recorded with `op_name = "<scorer name>.score"`.
 Scorer calls and completions are never themselves monitored.
 
+**Scope scorers.** A scorer whose class scores a scope (`GoalCompletionJudge`,
+`ReasoningConsistencyJudge`, `HandoffQualityJudge`, `ToolSafetyScorer`) does
+not score the call that ended. The call's session is queued instead, and once
+the session is complete the scorer runs at its scope over the session's
+targets, exactly as [`POST /api/v1/scores/run`](#scores) would: the session,
+each agent in it, or each hand-off. The results are scope scores
+(`weft.score.<scorer>`, visible in `GET /api/v1/scores` and in session and
+agent summaries) with `creator` `monitor:<monitor id>` and `trigger_ref` the
+monitor ref. Monitor fields for this (all optional):
+
+| Field | Meaning |
+|---|---|
+| `scopes` | where the scorers run: `session`, `agent`, `handoff`, and `call` for the per-call path above. Default: a scope scorer runs at the first of `session`, `handoff`, `agent` it supports, any other scorer per call |
+| `session_idle_seconds` | a session is complete when no span of it has arrived for this many seconds (server time) and none of its root spans is still running; default 60, at most 86400. A session whose root spans never end counts as complete after ten times this |
+| `sampling_rate` | applied once per target; a target sampled out is not considered again |
+
+Each monitor scores each target (a session; a session and agent; a
+hand-off) at most once per scorer; a session that resumes is checked again
+and only its new targets are scored. Sessions waiting to complete are held in
+memory: one that was waiting when the server stopped is scored after its next
+span arrives.
+
 ## OpenTelemetry ingest
 
 `POST /otel/v1/traces` accepts OTLP/HTTP `ExportTraceServiceRequest` as
@@ -484,7 +506,7 @@ Span → call mapping:
 | `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata`; also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
 | `exception` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
 | `thread_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
-| `wb_user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
+| `user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
 | `attributes` | `weft.attributes.*` (prefix stripped), plus `otel: {span_name, kind, status, resource, scope, attributes, events, links}` |
 
 The response is an OTLP `ExportTraceServiceResponse` in the request's encoding.
@@ -572,7 +594,7 @@ background loop. Slack receives `{"text": message}`. Webhooks receive:
 {"automation": {"name","object_id","ref"}, "project_id", "trigger": {...}, "message", "fired_at", "test": false,
  "event": {"type":"score_threshold","feedback_id","feedback_type","ref","call_id","value","path","operator","threshold","monitor_ref"}
        // error_rate: {"type","total_calls","error_calls","error_rate","threshold","window_minutes","op_names"}
-       // feedback_created: {"type","feedback_id","feedback_type","ref","call_id","payload","creator","wb_user_id","queue_id"}
+       // feedback_created: {"type","feedback_id","feedback_type","ref","call_id","payload","creator","user_id","queue_id"}
 }
 ```
 
@@ -729,8 +751,8 @@ excluded so paging stays stable.
   (with costs) like `/calls/stream_query`; `json` is one array.
 - CSV starts with `id, trace_id, parent_id, op_name, display_name, status,
   started_at, ended_at, latency_ms, prompt_tokens, completion_tokens,
-  total_tokens, cost_usd, exception, thread_id, turn_id, wb_user_id,
-  wb_run_id`. With `flatten` the server reads the result twice: once to collect
+  total_tokens, cost_usd, exception, thread_id, turn_id, user_id,
+  run_id`. With `flatten` the server reads the result twice: once to collect
   every dotted `inputs.*`, `output.*` and `attributes.*` leaf (up to 1000
   columns; lists are JSON), then to write the rows. Without `flatten`, `inputs`,
   `output` and `attributes` are JSON columns.
@@ -774,7 +796,7 @@ secret is returned once, at creation. Authentication is required as soon as
 static keys are configured **or** at least one managed key is active, so on an
 open server the first key must be an admin key (creating it turns auth on).
 
-A managed key has a `user_id` (the default `wb_user_id` of what it writes), a
+A managed key has a `user_id` (the default author, `user_id`, of what it writes), a
 scope (all projects, or a list of `entity/project`), and an access level:
 read-write, `read_only`, or `admin` (all projects; manages keys, secrets and
 the project settings below). Static keys count as admin.
@@ -935,10 +957,10 @@ Evaluation runs, predictions and scores are calls, so they show up in
 | `POST /evaluation_runs/{id}/finish` `{summary?}` | ends the call; without a summary, one is computed from the finished predictions like the SDKs do → `{success}` |
 | `DELETE /evaluation_runs?evaluation_run_ids=` | soft-deletes the runs and their descendants → `{num_deleted}` |
 | `POST /predictions` `{model, inputs, output, evaluation_run_id?, genai_span_ref?}` | in a run: an `Evaluation.predict_and_score` child of the run (inputs `self`, `model`, `example` = inputs) with a finished `<model>.predict` child holding the output; outside a run: one finished `<model>.predict` call → `{prediction_id}` |
-| `GET /predictions/{id}`, `GET /predictions?evaluation_run_id` | `{prediction_id, model, inputs, output, evaluation_run_id, wb_user_id}` (list is JSONL) |
+| `GET /predictions/{id}`, `GET /predictions?evaluation_run_id` | `{prediction_id, model, inputs, output, evaluation_run_id, user_id}` (list is JSONL) |
 | `POST /predictions/{id}/finish` | ends the `predict_and_score` call with `{output, scores: {<scorer>: value}, model_latency}` from its score children → `{success}` |
 | `POST /scores` `{prediction_id, scorer, value, evaluation_run_id?}` | a finished `<scorer>.score` child of the prediction (inputs `self` = scorer, `output`, the prediction inputs) plus `weft.scorer.<scorer>` feedback on the prediction → `{score_id}`; `scorer` may be a ref or a plain name |
-| `GET /scores/{id}`, `GET /scores?evaluation_run_id` | `{score_id, scorer, value, evaluation_run_id, wb_user_id}` |
+| `GET /scores/{id}`, `GET /scores?evaluation_run_id` | `{score_id, scorer, value, evaluation_run_id, user_id}` |
 | `DELETE /predictions?prediction_ids=`, `DELETE /scores?score_ids=` | soft delete → `{num_deleted}` |
 | `POST /eval_results/query` | `{evaluation_call_ids \| evaluation_run_ids, include_rows?, include_summary?, include_raw_data_rows?, include_predict_and_score_children?, require_intersection?, sort_by?: [{field: "scores.<name>" \| "inputs.<path>" \| "outputs.<path>", direction, evaluation_call_id?}], limit?, offset?}` → `{rows: [{row_digest, raw_data_row, evaluations: [{evaluation_call_id, trials: [{predict_and_score_call_id, predict_call_id, scorer_call_ids, model_output, model_latency_seconds, scores, total_tokens}]}]}], summary: {row_count, evaluations: [{evaluation_call_id, display_name, evaluation_ref, model_ref, started_at, trial_count, predict_total_tokens, scorer_stats: [{scorer_key, path, value_type: binary\|continuous\|text, trial_count, pass_true_count, pass_known_count, pass_rate, pass_signal_coverage, numeric_count, numeric_mean}]}]}, total_rows, warnings}`. `include_*` default to true. `filters` are not supported and produce a warning; costs are not computed. |
 
@@ -998,7 +1020,7 @@ OpenInference `metadata` JSON flattens under `metadata.`.
 | *Weft*: `/agents/signals/presets` (GET or POST) | — | `{"presets": [{"id","name","kind": "tag"\|"rating","description"}]}` |
 | *Weft*: `/agents/signals/run` | `{project_id, model, signals: [{preset} \| {id, name?, kind, description}] (1–12), agent_name?, conversation_id?, trace_ids?, started_after?, started_before?, limit? (20 most recent turns, max 200), rescore?}` | `{"turns","scored","skipped","failed","results": [{"span_id","trace_id","signal","kind","score"?,"matched"?,"confidence"?,"reason"?,"feedback_id"?,"error"?}]}` |
 | *Weft*: `/agents/signals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, signal?, kind?, tag?, min_score?, max_score?, matched_only? (true), started_after?, started_before?, limit? (100), offset?}` | `{"results": [SignalResult], "summary": [{"signal","signal_name","kind","count","matched","avg","tag_counts"}], "total_count"}` |
-| *Weft*: `/agents/feedback/batch/create` (same as `/feedback/batch/create`) | `{batch: [{project_id, ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","wb_user_id","payload"}]}` |
+| *Weft*: `/agents/feedback/batch/create` (same as `/feedback/batch/create`) | `{batch: [{project_id, ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","user_id","payload"}]}` |
 
 **Signals.** A signal scores one *turn* (a conversation turn, or an agent
 invocation at the top of its trace outside conversations) with an LLM judge
@@ -1063,7 +1085,7 @@ provider_name, status_code` (`OK|ERROR|UNSET`), `status_message, error_type,
 started_at, ended_at, duration_ms, input_tokens, output_tokens, total_tokens,
 reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens,
 input_cost_usd, output_cost_usd, total_cost_usd, cache_read_cost_usd,
-cache_creation_cost_usd, wb_user_id, wb_run_id, parent_call_id,
+cache_creation_cost_usd, user_id, run_id, parent_call_id,
 parent_call_trace_id` (the op a span was emitted from when it started its own
 trace inside one: the `weft.parent_call.id` / `weft.parent_call.trace_id`
 attributes the Weft SDKs stamp, from SDK or OTLP spans; so
@@ -1319,7 +1341,7 @@ move to the version they are last given to; `latest` (newest version) and
 `v<N>` are implicit and cannot be assigned. With auth, the key needs write access to
 both the ref's project and the registry project.
 *Weft*: `POST /registry/query` `{project_id (registry project), portfolio_name?, alias?, version_index?}`
-→ `{"collections": [{"name", "versions": [{"version_index", "version", "ref", "source_project_id", "object_id", "digest", "base_object_class", "aliases", "created_at", "wb_user_id"}]}]}`
+→ `{"collections": [{"name", "versions": [{"version_index", "version", "ref", "source_project_id", "object_id", "digest", "base_object_class", "aliases", "created_at", "user_id"}]}]}`
 (newest first); `alias`/`version_index` need `portfolio_name` and give 404 when
 nothing matches.
 
@@ -1394,7 +1416,7 @@ Weft has users, teams and three roles:
 | `/project/members/remove` | `{project_id, user_id}` | `{}` | project admin |
 
 User: `{"id","name","email","admin","sso","created_at","disabled_at","last_login_at"}`.
-User ids match `[A-Za-z0-9_.@-]{1,64}` and become the default `wb_user_id`.
+User ids match `[A-Za-z0-9_.@-]{1,64}` and become the default `user_id`.
 Team: `{"name","display_name","created_at","members": [{"user_id","role","source": "manual"|"sso"}]}`.
 
 ### Single sign-on (OIDC) and sessions
@@ -1768,11 +1790,11 @@ returns (`/call/read`, `/calls/query`, `/calls/stream_query`):
 
 | Field | Written by | Returned |
 |---|---|---|
-| `wb_run_step` | `/call/start` (`start.wb_run_step`), `/call/upsert_batch` | always (null when not sent) |
-| `wb_run_step_end` | `/call/end` (`end.wb_run_step_end`), `/call/upsert_batch` | always (null when not sent) |
+| `run_step` | `/call/start` (`start.run_step`), `/call/upsert_batch` | always (null when not sent) |
+| `run_step_end` | `/call/end` (`end.run_step_end`), `/call/upsert_batch` | always (null when not sent) |
 | `expire_at` | derived: `started_at` + the project's `retention_days` (`/project/ttl_settings/update`) | always; null when the project keeps calls forever. It moves with the TTL, matching the purge, which deletes calls by `started_at` |
 | `total_storage_size_bytes` | derived: sum of `storage_size_bytes` over the trace | on trace roots, with `include_total_storage_size: true` (`/call/read`, `/calls/query`, `/calls/stream_query`) |
-| `wb_username` | derived from `wb_user_id` | with `include_usernames: true`: the Weft user id (handle) when `wb_user_id` names a user, the `wb_user_id` itself when it is a valid handle without a user row (static `user=key` names), otherwise omitted |
+| `username` | derived from `user_id` | with `include_usernames: true`: the Weft user id (handle) when `user_id` names a user, the `user_id` itself when it is a valid handle without a user row (static `user=key` names), otherwise omitted |
 
 `/calls/query_stats` already returns `total_storage_size_bytes` for the
 matching calls. The run steps are stored in two new `calls` columns, added by
@@ -1800,7 +1822,7 @@ for example Koog's Langfuse exporter):
 | `langfuse.trace.name` | `display_name` of a root span |
 | `langfuse.trace.input` / `langfuse.trace.output` | inputs / output when the span has nothing more specific |
 | `langfuse.session.id`, `session.id` | `thread_id` |
-| `langfuse.user.id`, `user.id` | `wb_user_id` |
+| `langfuse.user.id`, `user.id` | `user_id` |
 
 **OpenLit** emits the GenAI conventions (`gen_ai.input.messages` /
 `gen_ai.output.messages` with parts, `gen_ai.usage.*`, request parameters),
@@ -1808,7 +1830,7 @@ which were already mapped. The OpenLit fixture test found and fixed: the
 system prompt appeared twice (OpenLit puts it both in
 `gen_ai.system_instructions` and in the input messages; it is now prepended
 only when the messages do not start with one), `gen_ai.session.id` /
-`gen_ai.user.id` are now `thread_id` / `wb_user_id`, and tool spans'
+`gen_ai.user.id` are now `thread_id` / `user_id`, and tool spans'
 `gen_ai.tool.input` / `gen_ai.tool.output` are now inputs / output.
 `gen_ai.usage.cost` and `gen_ai.client.token.usage` stay in
 `attributes.otel`; Weft computes costs from its price book.
@@ -1918,8 +1940,13 @@ existed are indexed once, the first time the server starts.
 | `has_detection` | `any`, or an action (`block`, `require_approval`, …) with at least one detection |
 | `min_score`, `max_score` | `scorer:value` against the mean of the session's session-scope scores by that scorer |
 | `model`, `tool` | a model or tool was used |
-| `q` | text in the session id, name, title, agents or team |
+| `q` | text (case-insensitive, at most 200 characters) in the session id, name, title, agents or team, in its reasoning steps, in its messages (user and assistant messages of model calls, input and output of agent and turn spans) or in its tool calls (tool name and arguments, executed or requested by a model). Message and tool text is indexed at ingest, up to 8000 characters per span |
 | `from`, `to` | sessions with activity in `[from, to)` |
+
+A session's `started_at`, `last_activity` and `duration_ms` come from its own
+spans. AgentShield verdicts (which may arrive well after the tool call they
+concern) and detections do not move them; only a session known solely through
+verdicts takes its times from them.
 
 `sort_by`: `last_activity` (default, desc), `started_at`, `duration_ms`,
 `span_count`, `turn_count`, `tool_call_count`, `handoff_count`,
@@ -2006,7 +2033,9 @@ timeline: fetch them with `/api/v1/detections?session_id=` and merge by
 
 `GET /api/v1/sessions/{id}/reasoning` returns reasoning steps in order.
 Filters: `agent`, `kind` (`thinking`, `summary`, `redacted`),
-`include_duplicates=true`. `index` is the step's position among the
+`include_duplicates=true`, `q` (steps whose text contains it,
+case-insensitive). To find sessions by their reasoning across a project, use
+`GET /api/v1/sessions?q=`. `index` is the step's position among the
 session's non-duplicate steps (`-1` for duplicates); `span_index` its
 position within its span.
 
@@ -2026,8 +2055,9 @@ position within its span.
 `total_input_tokens`, `total_output_tokens`, `total_cost_usd`, latencies,
 `models`, …) plus `reasoning_tokens`, `reasoning_step_count`,
 `handoffs_in`, `handoffs_out` (excluding returns), `session_count`, `tools`,
-`teams`, `detection_counts` (by action), `detection_rate` (detections per
-tool call) and `scores` (agent-scope scores, mean and count per scorer).
+`teams`, `detection_counts` (by action), `detection_rate` and
+`flagged_tool_calls` (see [Detection rate](#detection-rate)) and `scores`
+(agent-scope scores, mean and count per scorer).
 Agents that only appear as hand-off endpoints (for example LangGraph nodes)
 are listed too. Filters: `q` (name contains), `team_id`, `from`, `to`.
 `sort_by`: `last_seen` (default, desc), any agent statistic, or
@@ -2241,10 +2271,27 @@ timeline merges these by `span_id` (or `tool_call_id`).
 
 Same filters. Returns `{total, by_action, by_severity, by_source, overridden,
 linked, by_rule: [{rule_id, title, level, count, by_action}], by_agent:
-[{agent, count, by_action, tool_calls, detection_rate}], by_day: [{day, count,
-by_action, by_severity}]}`. `detection_rate` is the share of the agent's
-recorded tool calls that drew a non-`allow` engine verdict (null without
-spans). Pass `source=engine` to leave replays out of the counts.
+[{agent, count, by_action, tool_calls, flagged_tool_calls, detection_rate}],
+by_day: [{day, count, by_action, by_severity}]}`. Pass `source=engine` to
+leave replays out of the counts.
+
+#### Detection rate
+
+The agents API and these stats use one definition:
+
+    detection_rate = flagged_tool_calls / tool_calls
+
+- `tool_calls`: the agent's recorded tool calls (`execute_tool` spans) that
+  started in the time range (and session, when one is given).
+- `flagged_tool_calls`: those of them with at least one engine verdict (not a
+  replay) other than `allow` linked to them (the detection's `span_id`) that
+  matches the request's other filters (`action`, `rule_id`, ...).
+
+A tool call with several detections counts once, and detections that are not
+linked to a recorded tool call (no matching span, or a session Weft has no
+spans for) are left out of the rate, so it is always between 0 and 1. They
+still count in `count` and `by_action`. The rate is null when the agent has
+no recorded tool calls, and 0 when none was flagged.
 
 ### `POST /api/v1/shield/ingest`
 
@@ -2267,8 +2314,9 @@ required; `action`, `mode`, `severity` and rule levels from the lists above;
 characters. Re-sending an `event_id` updates the same detection (idempotent);
 `overridden` never reverts. An override without `event_id` marks the session's
 latest `block` / `require_approval`; one whose detection has not arrived yet
-is kept and applied when it does. Detections whose `event_id` starts with
-`weft-replay-` (remote replay traffic) are ignored. Response:
+is kept and applied when it does. Remote replay traffic is ignored:
+detections and overrides whose `event_id` starts with `weft-replay-` or whose
+`session_id` starts with `weft-replay:`. Response:
 
 ```json
 {"accepted": 1, "created": 1, "duplicates": 0, "ignored": 0,
@@ -2282,7 +2330,10 @@ Over OTLP, spans of instrumentation scope `agentshield` (or with
 `agentshield.rule.matched` events; engines that predate them (`verdict.action`,
 `rule.matched` events with `rule.name` / `rule.severity`) are understood too.
 The event id is the span's `event.id` attribute, so a verdict sent both ways
-is stored once.
+is stored once. Evaluate spans of remote replay requests (attribute
+`agentshield.replay = true`, or an `event.id` starting `weft-replay-`, or a
+session starting `weft-replay:`) stay ordinary spans in the raw Traces
+view but never become detections, sessions or agent activity.
 
 ### `POST /api/v1/shield/replay`
 
@@ -2304,7 +2355,13 @@ the call's inputs) is turned into the request a shipped plugin would send
 (`internal/replay` field mapping) and evaluated in shadow mode with a fresh
 behavioural session per recorded session. Calls with a matched rule are
 stored as `source=replay` detections under the label (a re-run with the same
-label replaces them).
+label replaces them). Replay never creates sessions. With `--shield-url`, each
+request to the engine carries `"replay": true`, an `event_id` starting
+`weft-replay-<job>-` and a `session_id` `weft-replay:<job>:<session>`: the
+engine still evaluates it, tags its evaluate span `agentshield.replay`, does
+not push the verdict to Weft and keeps the session out of live sessions'
+cross-session fields, and Weft ignores whatever comes back over OTLP or the
+push.
 
 ### `GET /api/v1/shield/replay/{job_id}`
 

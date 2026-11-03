@@ -5,8 +5,9 @@
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { v1, type Detection, type DetectionAction } from '../../api/v1'
+import { v1, type Detection, type DetectionAction, type DetectionStats } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
+import { useSessionScope, type SessionScope } from '../../hooks/useSessionScope'
 import { timeWindow, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
 import { fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentUrl, sessionUrl } from '../../lib/urls'
@@ -22,17 +23,53 @@ import { ReplayResult } from '../sessions/SessionPage'
 
 const DEFAULT_TIME: TimeRange = '24h'
 
-export function detectionParams(s: FilterState, time: TimeRange): Record<string, string> {
-  const p: Record<string, string> = { source: 'engine' }
+/** /api/v1/detections parameters; `sessionIds` applies the chips that go through sessions (team, status, score, …). */
+export function detectionParams(s: FilterState, time: TimeRange, sessionIds?: string[]): Record<string, string | string[]> {
+  const p: Record<string, string | string[]> = { source: 'engine' }
   if (s.agent) p.agent = s.agent
   if (s.tool) p.tool_name = s.tool
   if (s.has === 'block') p.action = 'block'
   else if (s.has === 'approval') p.action = 'require_approval'
+  else if (s.has === 'flagged') p.action = 'block,require_approval'
   else if (s.has === 'any') p.action = 'block,require_approval,log'
+  if (sessionIds) p.session_ids = sessionIds
   const w = timeWindow(s, time)
   if (w.from) p.from = w.from
   if (w.to) p.to = w.to
   return p
+}
+
+/**
+ * Figures for the detections in hand, for when the page narrows them in the
+ * browser (text filter): the server's tool-call counts give the per-agent rate.
+ */
+export function statsFromDetections(dets: Detection[], server?: DetectionStats): DetectionStats {
+  const out: DetectionStats = { total: dets.length, by_action: {}, by_severity: {}, by_source: {}, overridden: 0, linked: 0, by_rule: [], by_agent: [], by_day: [] }
+  const rules = new Map<string, DetectionStats['by_rule'][number]>()
+  const agents = new Map<string, number>()
+  for (const d of dets) {
+    out.by_action[d.action] = (out.by_action[d.action] ?? 0) + 1
+    const sev = (d.severity || 'none').toLowerCase()
+    out.by_severity[sev] = (out.by_severity[sev] ?? 0) + 1
+    out.by_source[d.source] = (out.by_source[d.source] ?? 0) + 1
+    if (d.overridden) out.overridden++
+    if (d.span_id) out.linked++
+    for (const r of d.rules) {
+      const x = rules.get(r.id) ?? { rule_id: r.id, title: r.title, level: r.level, count: 0, by_action: {} }
+      x.count++
+      x.by_action[d.action] = (x.by_action[d.action] ?? 0) + 1
+      rules.set(r.id, x)
+    }
+    if (d.agent_name) agents.set(d.agent_name, (agents.get(d.agent_name) ?? 0) + 1)
+  }
+  out.by_rule = [...rules.values()].sort((a, b) => b.count - a.count)
+  out.by_agent = [...agents.entries()]
+    .map(([agent, count]) => {
+      const calls = server?.by_agent.find((a) => a.agent === agent)?.tool_calls ?? 0
+      return { agent, count, by_action: {}, tool_calls: calls, detection_rate: calls ? Math.min(1, count / calls) : null }
+    })
+    .sort((a, b) => b.count - a.count)
+  return out
 }
 
 export function detectionMatchesText(d: Detection, q?: string): boolean {
@@ -66,19 +103,23 @@ export function SecurityPage() {
       <strong>block</strong>. Weft stores those verdicts as <strong>detections</strong> on the exact tool call. This page shows trends, the rules that fire most, agents that trip
       them, signs of approval fatigue, and lets you replay recorded tool calls when the rules change.
     </>,
-    'README.md#agentshield-integration',
+    'security.md',
   )
   const status = useQuery({ queryKey: ['v1', pid, 'shield-status'], queryFn: () => v1.shieldStatus(pid), staleTime: 60_000 })
   const ever = useQuery({ queryKey: ['v1', pid, 'detections', 'ever'], queryFn: () => v1.detectionStats(pid, { source: 'engine' }) })
   const noTime = detectionParams({ ...state, time: 'all' }, 'all')
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.detectionStats(pid, detectionParams({ ...state, time: r }, r))).total, [pid, 'detections', noTime])
   const time = widen.time
-  const dp = detectionParams(state, time)
-  const stats = useQuery({ queryKey: ['v1', pid, 'detections', 'stats', dp], queryFn: () => v1.detectionStats(pid, dp), enabled: widen.ready, placeholderData: keepPreviousData })
+  // Team, status, score, model and cost belong to sessions: keep detections in matching sessions.
+  const scope = useSessionScope(pid, 'security', state, time, widen.ready)
+  const noMatch = scope.active && scope.ready && scope.ids.size === 0
+  const dp = detectionParams(state, time, scope.active ? [...scope.ids].sort() : undefined)
+  const ready = widen.ready && scope.ready && !noMatch
+  const serverStats = useQuery({ queryKey: ['v1', pid, 'detections', 'stats', dp], queryFn: () => v1.detectionStats(pid, dp), enabled: ready, placeholderData: keepPreviousData })
   const list = useQuery({
     queryKey: ['v1', pid, 'detections', 'list', dp],
     queryFn: () => v1.detections(pid, { ...dp, limit: 1000 }),
-    enabled: widen.ready,
+    enabled: ready,
     placeholderData: keepPreviousData,
   })
   const w = timeWindow(state, time)
@@ -89,7 +130,12 @@ export function SecurityPage() {
     placeholderData: keepPreviousData,
   })
   const [by, setBy] = useState<'action' | 'severity'>('action')
-  const dets = (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q))
+  const dets = noMatch ? [] : (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q))
+  // The text filter runs here, so the figures are counted from the matching detections.
+  const stats = {
+    data: noMatch ? statsFromDetections([]) : state.q && list.data ? statsFromDetections(dets, serverStats.data) : serverStats.data,
+    error: serverStats.error,
+  }
   const buckets = useMemo(() => {
     const now = Date.now()
     const from = w.from ? new Date(w.from).getTime() : Math.min(now - 86400e3, ...dets.map((d) => new Date(d.created_at).getTime()))
@@ -131,7 +177,7 @@ export function SecurityPage() {
             placeholder="Filter by rule, tool, agent or session…"
           />
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
-          <ErrorBox error={stats.error ?? list.error} />
+          <ErrorBox error={stats.error ?? list.error ?? scope.error} />
           <div className="metrics">
             <Metric
               label="Verdicts"
@@ -261,7 +307,7 @@ export function SecurityPage() {
                 </table>
               )}
             </Panel>
-            <FatiguePanels pid={pid} insights={insights.data} />
+            <FatiguePanels pid={pid} insights={insights.data} keep={(s) => (!scope.active || scope.ids.has(s.session_id)) && (!state.agent || s.agents.includes(state.agent))} />
           </div>
           <RecentDetections
             pid={pid}
@@ -273,7 +319,7 @@ export function SecurityPage() {
               setParams(n, { replace: true })
             }}
           />
-          <ReplayPanel pid={pid} enabled={status.data?.replay_enabled ?? false} state={state} time={time} />
+          <ReplayPanel pid={pid} enabled={status.data?.replay_enabled ?? false} state={state} time={time} scope={scope} />
         </>
       )}
     </div>
@@ -293,11 +339,20 @@ function SessionLink({ pid, id, title, step }: { pid: string; id: string; title?
   )
 }
 
-function FatiguePanels({ pid, insights }: { pid: string; insights?: Awaited<ReturnType<typeof v1.insights>> }) {
+function FatiguePanels({
+  pid,
+  insights,
+  keep,
+}: {
+  pid: string
+  insights?: Awaited<ReturnType<typeof v1.insights>>
+  /** The filters, as far as they apply to a session. */
+  keep: (s: { session_id: string; agents: string[] }) => boolean
+}) {
   const fatigue = insights?.approval_fatigue
   const esc = insights?.override_escalation
-  const tired = (fatigue?.by_session ?? []).filter((s) => s.fatigued || s.require_approval >= 3)
-  const escalating = (esc?.by_session ?? []).filter((s) => s.escalating || s.overrides > 0)
+  const tired = (fatigue?.by_session ?? []).filter((s) => (s.fatigued || s.require_approval >= 3) && keep(s))
+  const escalating = (esc?.by_session ?? []).filter((s) => (s.escalating || s.overrides > 0) && keep(s))
   return (
     <div className="col" style={{ gap: 16 }}>
       <Panel
@@ -419,7 +474,7 @@ function RecentDetections({ pid, dets, ruleFilter, onClearRule }: { pid: string;
   )
 }
 
-function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: boolean; state: FilterState; time: TimeRange }) {
+function ReplayPanel({ pid, enabled, state, time, scope }: { pid: string; enabled: boolean; state: FilterState; time: TimeRange; scope: SessionScope }) {
   const qc = useQueryClient()
   const jobs = useQuery({
     queryKey: ['v1', pid, 'replay-jobs'],
@@ -439,7 +494,10 @@ function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: bool
       const w = timeWindow(state, time)
       const filter: Record<string, unknown> = { ...w }
       if (state.agent) filter.agent = state.agent
-      return v1.replayStart({ project_id: pid, filter, label: `ui-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}` })
+      const label = `ui-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}`
+      // With session filters on, replay exactly the matching sessions.
+      if (scope.active) return v1.replayStart({ project_id: pid, session_ids: [...scope.ids], filter: state.agent ? { agent: state.agent } : undefined, label })
+      return v1.replayStart({ project_id: pid, filter, label })
     },
     onSuccess: async (r) => {
       setSel(r.job_id)
@@ -452,8 +510,9 @@ function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: bool
       title="Rules changed? Replay recorded tool calls"
       tip="Re-runs the recorded tool calls through the current rules in shadow mode and compares with the verdicts recorded at the time. Your agents are not affected."
       actions={
-        <button className="btn sm primary" disabled={!enabled || start.isPending} onClick={() => start.mutate()}>
-          <Icon name="replay" size={13} /> Replay the {TIME_LABEL[time].toLowerCase()}
+        <button className="btn sm primary" disabled={!enabled || start.isPending || (scope.active && !scope.ids.size)} onClick={() => start.mutate()}>
+          <Icon name="replay" size={13} />{' '}
+          {scope.active ? `Replay ${scope.ids.size} matching session${scope.ids.size === 1 ? '' : 's'}` : `Replay the ${TIME_LABEL[time].toLowerCase()}`}
           {state.agent ? ` for ${state.agent}` : ''}
         </button>
       }
@@ -462,7 +521,7 @@ function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: bool
         <Callout tone="info" title="Replay is not configured on this server">
           Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or <span className="mono">--shield-url</span>{' '}
           to use a running engine.{' '}
-          <Link to={docsUrl('README.md#agentshield-integration')}>How replay works</Link>
+          <Link to={docsUrl('security.md#replay-recorded-tool-calls-after-a-rule-change')}>How replay works</Link>
         </Callout>
       )}
       {jobs.data && jobs.data.items.length > 0 && (
@@ -525,7 +584,7 @@ function SetupGuide({ pid, replay }: { pid: string; replay: boolean }) {
       </ol>
       <p className="small muted">
         Replay of recorded tool calls is {replay ? <strong>available on this server</strong> : 'off on this server (start Weft with --shield-rules-dir to turn it on)'}.{' '}
-        <Link to={docsUrl('README.md#agentshield-integration')}>Full guide</Link>
+        <Link to={docsUrl('security.md#connect-agentshield')}>Full guide</Link>
       </p>
     </section>
   )

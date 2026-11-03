@@ -165,6 +165,9 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 
 	// Inject session-derived and cross-session fields in a single lock acquisition
 	if e.sessionRegistry != nil && req.SessionID != "" {
+		if req.Replay {
+			e.sessionRegistry.Isolate(req.SessionID)
+		}
 		allFields := e.sessionRegistry.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
 		for k, v := range allFields {
 			req.Fields[k] = v

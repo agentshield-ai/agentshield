@@ -97,22 +97,22 @@ def test_verdict_pipeline_live(live, monkeypatch):
     assert all(u.attributes["weft"]["span_kind"] == "scorer" for u in units)
 
 
-def test_to_pandas_registry_and_wb_run_live(live):
+def test_to_pandas_registry_and_run_live(live):
     pd = pytest.importorskip("pandas")
 
     @weft.op
     def step_fn(x: int) -> int:
         return x * 2
 
-    weft.set_wb_run("run-live", step=5)
+    weft.set_run("run-live", step=5)
     for i in range(3):
         step_fn(i)
-    weft.set_wb_run(None)
+    weft.set_run(None)
     live.flush()
     df = live.get_calls(filter={"op_names": ["step_fn"]}, sort_by=[{"field": "started_at", "direction": "asc"}]).to_pandas()
     assert isinstance(df, pd.DataFrame) and len(df) == 3
     assert list(df["output"]) == [0, 2, 4] and set(df["status"]) == {"success"}
-    assert set(df["wb_run_id"]) == {f"{live.project_id}/run-live"}
+    assert set(df["run_id"]) == {f"{live.project_id}/run-live"}
     flat = live.get_calls(filter={"op_names": ["step_fn"]}).to_pandas(flatten=True)
     assert "inputs.x" in flat.columns
 

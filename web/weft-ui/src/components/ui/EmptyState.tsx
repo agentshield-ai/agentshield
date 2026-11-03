@@ -166,7 +166,7 @@ export function GuidedEmpty({
   projectId,
   title,
   children,
-  doc = 'README.md#send-data',
+  doc = 'setup.md#send-your-agents-data',
   only,
   initial,
   showTest = true,

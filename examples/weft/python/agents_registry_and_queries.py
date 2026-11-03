@@ -82,7 +82,7 @@ def main():
     answer = "".join(e["chunk"]["bytes"].decode() for e in res["completion"] if "chunk" in e)
     print("agent:", answer)
 
-    # --- Run linkage: calls carry wb_run_id / wb_run_step -----------------------
+    # --- Run linkage: calls carry run_id / run_step -----------------------
     step = {"n": 0}
 
     @weft.op
@@ -90,10 +90,10 @@ def main():
         step["n"] += 1
         return 1.0 / (batch + 1)
 
-    weft.set_wb_run("demo-run", step=lambda: step["n"])
+    weft.set_run("demo-run", step=lambda: step["n"])
     for b in range(3):
         train_step(b)
-    weft.set_wb_run(None)
+    weft.set_run(None)
 
     # --- Registry: link a prompt version and a dataset --------------------------
     prompt = weft.StringPrompt("You are a concise weather assistant. Question: {q}")
@@ -109,10 +109,10 @@ def main():
     client.flush()
     calls = client.get_calls(filter={"op_names": ["train_step"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
     for r in calls.to_records():
-        print(r["op_name"].rsplit("/", 1)[-1].split(":")[0], r["output"], r["wb_run_id"], r["wb_run_step"])
+        print(r["op_name"].rsplit("/", 1)[-1].split(":")[0], r["output"], r["run_id"], r["run_step"])
     try:
         df = calls.to_pandas(flatten=True)
-        print(df[["inputs.batch", "output", "wb_run_step"]])
+        print(df[["inputs.batch", "output", "run_step"]])
     except ImportError as e:
         print(e)
 

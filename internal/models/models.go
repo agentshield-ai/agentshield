@@ -19,6 +19,12 @@ type EvaluationRequest struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	// AgentName names the agent that made the call (gen_ai.agent.name).
 	AgentName string `json:"agent_name,omitempty"`
+	// Replay marks a re-evaluation of a recorded tool call (Weft's replay,
+	// docs/weft/DESIGN.md §5.4) rather than live agent traffic. The verdict
+	// is computed as usual; the evaluate span is tagged agentshield.replay,
+	// the verdict is not pushed to Weft, and the session is kept out of
+	// other sessions' cross-session fields.
+	Replay bool `json:"replay,omitempty"`
 }
 
 // Action represents the action to take based on evaluation

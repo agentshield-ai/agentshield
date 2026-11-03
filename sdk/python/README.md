@@ -64,7 +64,7 @@ explicitly).
 | First / longest retry delay (s) | `settings={"retry_backoff": 0.25, "retry_max_backoff": 4.0}` | `WEFT_RETRY_BACKOFF`, `WEFT_RETRY_MAX_INTERVAL` | 0.25, 4 |
 | HTTP timeout (s) | `settings={"http_timeout": 30}` or `WeftClient(timeout=)` | `WEFT_HTTP_TIMEOUT` | 30 |
 | Log level of the `weft` logger | `settings={"log_level": "DEBUG"}` | `WEFT_LOG_LEVEL` | unchanged (Python's default) |
-| Run linkage | `settings={"wb_run_id": ..., "wb_run_step": ...}`, `weft.set_wb_run()` | | none |
+| Run linkage | `settings={"run_id": ..., "run_step": ...}`, `weft.set_run()` | | none |
 | Cache of immutable server reads | `settings={"use_server_cache": False, "server_cache_dir": ..., "server_cache_size_limit": 10**9}` | `WEFT_USE_SERVER_CACHE`, `WEFT_SERVER_CACHE_DIR`, `WEFT_SERVER_CACHE_SIZE_LIMIT` | on, `~/.cache/weft`, 1 GB |
 
 Explicit settings and arguments win over the environment variables. Invalid
@@ -87,11 +87,11 @@ over 64 KB are cut and file uploads are summarised. It is read on every
 request.
 
 **Run linkage.** Calls can be linked to a training or experiment run: after
-`weft.set_wb_run("run-abc", step=lambda: trainer.global_step)` (an int or a
-callable; `weft.set_wb_run(None)` clears it) calls carry `wb_run_id`
-(`<entity>/<project>/<run id>`) and `wb_run_step`, and `wb_run_step_end` when
+`weft.set_run("run-abc", step=lambda: trainer.global_step)` (an int or a
+callable; `weft.set_run(None)` clears it) calls carry `run_id`
+(`<entity>/<project>/<run id>`) and `run_step`, and `run_step_end` when
 they finish. Fetched calls expose
-`wb_user_id`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`, and `wb_username`
+`user_id`, `run_id`, `run_step`, `run_step_end`, and `username`
 when queried with `include_usernames=True` (whether these come back depends on
 the server version).
 

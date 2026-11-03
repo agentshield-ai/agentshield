@@ -138,6 +138,15 @@ func shieldDetectionQuery(r *http.Request) (store.DetectionQuery, error) {
 		Source: q.Get("source"), Ruleset: q.Get("ruleset"), SpanID: q.Get("span_id"), ToolCallID: q.Get("tool_call_id"),
 		ToolName: q.Get("tool_name"), Actions: shieldQueryList(r, "action"), SortBy: q.Get("sort_by"),
 	}
+	// session_ids (repeated, not comma-split: ids may hold commas) narrows to
+	// detections in any of these sessions; the UI uses it to apply session
+	// filters (team, status, score, …) on the Security page.
+	if ids := q["session_ids"]; len(ids) > 0 {
+		if len(ids) > maxDetectionSessionIDs {
+			return dq, store.Invalidf("at most %d session_ids", maxDetectionSessionIDs)
+		}
+		dq.SessionIDs = ids
+	}
 	if dq.Source != "" && dq.Source != store.DetectionSourceEngine && dq.Source != store.DetectionSourceReplay {
 		return dq, store.Invalidf("source must be engine or replay")
 	}
@@ -265,8 +274,8 @@ type ingestReq struct {
 // maxIngestItems bounds detections and overrides per ingest request.
 const maxIngestItems = 1000
 
-// replayEventPrefix marks evaluations Weft's remote replay sent to an engine.
-const replayEventPrefix = "weft-replay-"
+// maxDetectionSessionIDs caps session_ids on a detections query (the UI sends at most one page of 1000 sessions).
+const maxDetectionSessionIDs = 1000
 
 func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestReq) (any, error) {
 	pid, err := project(req.ProjectID)
@@ -289,7 +298,7 @@ func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestR
 		if eventID == "" {
 			eventID = d.ID
 		}
-		if strings.HasPrefix(eventID, replayEventPrefix) {
+		if store.IsReplayEvaluation(eventID, d.SessionID) { // our own remote replay, reported back
 			ignored++
 			continue
 		}
@@ -320,7 +329,7 @@ func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestR
 	}
 	ovs := make([]store.DetectionOverride, 0, len(req.Overrides))
 	for i, o := range req.Overrides {
-		if strings.HasPrefix(o.EventID, replayEventPrefix) {
+		if store.IsReplayEvaluation(o.EventID, o.SessionID) {
 			ignored++
 			continue
 		}

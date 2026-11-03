@@ -362,11 +362,15 @@ export interface ShieldStatus {
   correlation_window_ms: number
 }
 
-type Params = Record<string, string | number | boolean | null | undefined>
+type Params = Record<string, string | number | boolean | string[] | null | undefined>
 
+/** Query string; an array becomes a repeated parameter (session_ids=a&session_ids=b). */
 function qs(projectId: string, params: Params = {}): string {
   const u = new URLSearchParams({ project_id: projectId })
-  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') u.set(k, String(v))
+  for (const [k, v] of Object.entries(params)) {
+    if (Array.isArray(v)) v.forEach((x) => u.append(k, x))
+    else if (v != null && v !== '') u.set(k, String(v))
+  }
   return u.toString()
 }
 

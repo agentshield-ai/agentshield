@@ -83,8 +83,18 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
         )}
         {!hasSecurity && <DetectionBadges counts={det} />}
         {s.status === 'error' && (
-          <Link className="flag-link small" to={sessionUrl(projectId, s.session_id, { step: 'problem' })}>
+          <Link className="flag-link small" to={sessionUrl(projectId, s.session_id, { step: 'error' })}>
             Go to the failure <Icon name="chevron" size={12} />
+          </Link>
+        )}
+        {s.status !== 'error' && s.error_count > 0 && (
+          <Link
+            className="flag-link pill warn step-failed"
+            to={sessionUrl(projectId, s.session_id, { step: 'error' })}
+            title="A tool call, model call or hand-off failed, but the session went on. Click to see the failed step."
+          >
+            <Icon name="error" size={12} /> {s.error_count} failed step{s.error_count === 1 ? '' : 's'}
+            <span className="sr-only">: go to the failed step in {sessionTitle(s)}</span>
           </Link>
         )}
         {scores.map(([name, v]) => (

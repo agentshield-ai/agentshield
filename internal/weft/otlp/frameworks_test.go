@@ -121,7 +121,7 @@ func TestVercelAISDK(t *testing.T) {
 		"ai.prompt": `{"system":"You are a poet.","prompt":"A haiku"}`, "ai.response.text": "Sea",
 		"ai.telemetry.metadata.sessionId": "s-1", "ai.telemetry.metadata.userId": "u-9"})
 	rm := msgsOf(t, root.Start.Inputs["messages"])
-	if len(rm) != 2 || rm[0]["role"] != "system" || rm[1]["content"] != "A haiku" || *root.Start.ThreadID != "s-1" || *root.Start.WBUserID != "u-9" {
+	if len(rm) != 2 || rm[0]["role"] != "system" || rm[1]["content"] != "A haiku" || *root.Start.ThreadID != "s-1" || *root.Start.UserID != "u-9" {
 		t.Fatalf("root = %+v", root.Start)
 	}
 	tool := oneCall(t, "ai.toolCall", map[string]any{"ai.operationId": "ai.toolCall", "ai.toolCall.name": "rhyme",

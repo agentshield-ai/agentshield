@@ -311,7 +311,7 @@ type AgentFeedbackItem struct {
 	QueueID       *string        `json:"queue_id"`
 	RunnableRef   *string        `json:"runnable_ref"`
 	TriggerRef    *string        `json:"trigger_ref"`
-	WBUserID      *string        `json:"wb_user_id"`
+	UserID        *string        `json:"user_id"`
 	SignalScores
 	ScorerTraceID      string `json:"scorer_trace_id"`
 	SpanAgentName      string `json:"span_agent_name"`
@@ -383,7 +383,7 @@ func (s *Store) CreateAgentFeedback(ctx context.Context, it AgentFeedbackItem) (
 		id = *it.ID
 	}
 	return s.CreateFeedback(ctx, FeedbackCreate{ID: id, ProjectID: pid, Ref: it.Ref, FeedbackType: it.FeedbackType, Payload: payload,
-		Creator: it.Creator, WBUserID: it.WBUserID, AnnotationRef: it.AnnotationRef, RunnableRef: it.RunnableRef, CallRef: it.CallRef,
+		Creator: it.Creator, UserID: it.UserID, AnnotationRef: it.AnnotationRef, RunnableRef: it.RunnableRef, CallRef: it.CallRef,
 		TriggerRef: it.TriggerRef, QueueID: it.QueueID})
 }
 
@@ -622,7 +622,7 @@ type turnFeedback struct {
 	FeedbackID, FeedbackType      string
 	Payload                       map[string]any
 	CreatedUS                     int64
-	Creator, WBUserID             *string
+	Creator, UserID               *string
 	SpanID, TraceID, ConvID       string
 	ConvName, Agent, AgentVersion string
 	StartedUS                     int64
@@ -661,7 +661,7 @@ func (s *Store) loadTurnFeedback(ctx context.Context, pid string, f turnFeedback
 		where = append(where, q)
 		args = append(args, a...)
 	}
-	rows, err := s.r.QueryContext(ctx, `SELECT f.id, f.feedback_type, f.payload, f.created_at, f.creator, f.wb_user_id,
+	rows, err := s.r.QueryContext(ctx, `SELECT f.id, f.feedback_type, f.payload, f.created_at, f.creator, f.user_id,
 		s.id, s.trace_id, s.conversation_id, s.conversation_name, s.agent_name, s.agent_version, c.started_at, c.exception IS NOT NULL, c.ended_at IS NOT NULL
 		FROM feedback f JOIN agent_spans s ON s.project_id = f.project_id AND s.id = substr(f.ref, ?)
 		JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
@@ -685,7 +685,7 @@ func (s *Store) loadTurnFeedback(ctx context.Context, pid string, f turnFeedback
 		if t.Payload == nil {
 			t.Payload = map[string]any{}
 		}
-		t.Creator, t.WBUserID = strPtr(creator), strPtr(user)
+		t.Creator, t.UserID = strPtr(creator), strPtr(user)
 		t.StartedUS = started.Int64
 		t.Status = "UNSET"
 		if failed {

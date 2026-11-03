@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Detection, TimelineItem } from '../api/v1'
-import { buildTimeline, findStep, moveFocus, reasoningFor, stepKey, stepTitle } from './timeline'
+import { buildTimeline, currentFocus, findStep, moveFocus, reasoningFor, stepKey, stepTitle } from './timeline'
 
 const at = (ms: number) => new Date(Date.UTC(2026, 10, 3, 9, 16, 0) + ms).toISOString()
 const item = (type: TimelineItem['type'], span: string, agent: string, start: number, end: number | null, payload: Record<string, unknown>): TimelineItem => ({
@@ -140,6 +140,20 @@ describe('deep links and navigation', () => {
     expect(moveFocus(tl.steps, tl.steps[1].key, 1)).toBe(tl.steps[2].key)
     const last = tl.steps[tl.steps.length - 1].key
     expect(moveFocus(tl.steps, last, 1)).toBe(last)
+  })
+
+  it('does not drop fast j presses while the URL still holds the old step', () => {
+    // Three presses before the focused step (from the URL) updates once.
+    let pending: { key: string | null; at: number } | null = null
+    const stale = null
+    for (let i = 0; i < 3; i++) {
+      const next = moveFocus(tl.steps, currentFocus(pending, stale, 1000), 1)
+      pending = { key: next, at: 1000 }
+    }
+    expect(pending!.key).toBe(tl.steps[2].key)
+    // A pending move older than a second gives way to the focused step.
+    expect(currentFocus({ key: tl.steps[2].key, at: 0 }, tl.steps[5].key, 1500)).toBe(tl.steps[5].key)
+    expect(currentFocus(null, tl.steps[1].key)).toBe(tl.steps[1].key)
   })
 
   it('summarises steps in plain words', () => {

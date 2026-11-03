@@ -9,7 +9,7 @@ import { CodeBlock, ConfirmButton, Stat } from '../../components/objects/bits'
 import { NameField, usePublish } from '../../components/objects/ObjectForms'
 import { classVal, errMsg, refOf, useObjects } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtBytes, fmtNumber, fmtRelative } from '../../lib/format'
+import { fmtBytes, fmtCost, fmtNumber, fmtRelative } from '../../lib/format'
 import { objectUrl } from '../../lib/urls'
 import { ApiKeysTab, DeleteProjectTab, RetentionTab, SamplingTab, SensitiveDataTab } from './AdminTabs'
 import { AuditLogTab, MembersTab } from './IamTabs'
@@ -119,7 +119,7 @@ function GeneralTab({ projectId }: { projectId: string }) {
 const PER_M = 1_000_000
 const fmtPerM = (perToken: number) => {
   const v = perToken * PER_M
-  return v === 0 ? '$0' : v < 0.01 ? `$${v.toFixed(4)}` : `$${v.toFixed(v < 10 ? 3 : 2)}`
+  return fmtCost(v)
 }
 
 function CostsTab({ projectId }: { projectId: string }) {

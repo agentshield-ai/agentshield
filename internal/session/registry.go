@@ -44,6 +44,9 @@ type Registry struct {
 type sessionState struct {
 	events   []Event
 	lastSeen time.Time
+	// isolated sessions (replays of recorded sessions) keep their own window
+	// but are left out of other sessions' cross-session fields.
+	isolated bool
 }
 
 // NewRegistry creates a Registry with the given max events per session and TTL.
@@ -123,6 +126,30 @@ func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []e
 
 	// Invalidate cross-session cache on any write
 	r.crossCache = nil
+}
+
+// Isolate keeps sessionID out of every other session's cross-session fields
+// (session.cross_session_*). Its own window and derived fields work as usual.
+// Weft's replay marks its re-evaluations this way so that replaying recorded
+// sessions against a live engine cannot change live verdicts.
+func (r *Registry) Isolate(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state, ok := r.sessions[sessionID]
+	if !ok {
+		if len(r.sessions) >= r.maxSessions {
+			r.evictOldest()
+		}
+		state = &sessionState{events: make([]Event, 0, r.maxEvents), lastSeen: time.Now()}
+		r.sessions[sessionID] = state
+	}
+	if !state.isolated {
+		state.isolated = true
+		r.crossCache = nil
+	}
 }
 
 // evictOldest removes the session with the oldest lastSeen timestamp.
@@ -316,7 +343,7 @@ func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlation
 	totalAlerts := r.crossCacheTotalAlerts
 	sessionCount := r.crossCacheTotalSessions
 	if excludeSessionID != "" {
-		if state, ok := r.sessions[excludeSessionID]; ok {
+		if state, ok := r.sessions[excludeSessionID]; ok && !state.isolated {
 			cutoff := now.Add(-correlationWindow)
 			hasRecent := false
 			for _, ev := range state.events {
@@ -346,6 +373,9 @@ func (r *Registry) rebuildCrossCache(correlationWindow time.Duration, now time.T
 	sessionCount := 0
 
 	for _, state := range r.sessions {
+		if state.isolated {
+			continue
+		}
 		sessionHasRecent := false
 		for _, ev := range state.events {
 			if ev.Timestamp.Before(cutoff) {
@@ -390,7 +420,7 @@ func (r *Registry) computeToolOverlap(excludeSessionID string, correlationWindow
 
 	otherTools := make(map[string]struct{})
 	for id, s := range r.sessions {
-		if id == excludeSessionID {
+		if id == excludeSessionID || s.isolated {
 			continue
 		}
 		for _, ev := range s.events {

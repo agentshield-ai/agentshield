@@ -150,7 +150,7 @@ func (s *Server) v1SessionReasoning(w http.ResponseWriter, r *http.Request) {
 	v1(func(ctx context.Context, r *http.Request, v *v1Req) (any, error) {
 		id := pathParam(r, "id")
 		steps, total, err := s.store.SessionReasoning(ctx, store.SessionReasoningQuery{ProjectID: v.pid, SessionID: id, Agent: v.q.Get("agent"),
-			Kind: v.q.Get("kind"), IncludeDuplicates: boolParam(v.q, "include_duplicates"), Limit: v.limit, Offset: v.offset})
+			Kind: v.q.Get("kind"), Q: v.q.Get("q"), IncludeDuplicates: boolParam(v.q, "include_duplicates"), Limit: v.limit, Offset: v.offset})
 		if err != nil {
 			return nil, err
 		}

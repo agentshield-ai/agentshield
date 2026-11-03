@@ -13,7 +13,7 @@ const fb = (callId: string, type: string, value: unknown, at: string, user = 'al
   payload: { value },
   creator: null,
   created_at: at,
-  wb_user_id: user,
+  user_id: user,
 })
 
 describe('queue navigation', () => {

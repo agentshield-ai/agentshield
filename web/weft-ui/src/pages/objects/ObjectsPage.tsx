@@ -82,9 +82,14 @@ export function ObjectsPage({ kind }: { kind: ObjectKind }) {
           <span className="muted small">{meta.blurb}</span>
         </div>
         <span className="spacer" />
-        <input className="input" style={{ width: 220, maxWidth: '100%' }} placeholder={`Search ${meta.title.toLowerCase()}…`} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input
+          className="input"
+          style={{ width: 220, maxWidth: '100%' }}
+          aria-label={`Search ${meta.title.toLowerCase()}`}
+          placeholder={`Search ${meta.title.toLowerCase()}…`}
+          value={search} onChange={(e) => setSearch(e.target.value)} />
         {(kind === 'all' || classes.length > 1) && (
-          <select className="input" value={cls} onChange={(e) => setCls(e.target.value)}>
+          <select className="input" aria-label="Show only objects of this class" title="Object class" value={cls} onChange={(e) => setCls(e.target.value)}>
             <option value="">All classes</option>
             {classes.map((c) => (
               <option key={c}>{c}</option>

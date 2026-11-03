@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS registry_versions (
 	digest TEXT NOT NULL,
 	base_object_class TEXT,
 	created_at INTEGER NOT NULL,
-	wb_user_id TEXT,
+	user_id TEXT,
 	PRIMARY KEY (project_id, collection, version_index)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS registry_versions_ref ON registry_versions(project_id, collection, ref);
@@ -54,7 +54,7 @@ type RegistryVersion struct {
 	BaseObjectClass *string  `json:"base_object_class"`
 	Aliases         []string `json:"aliases"`
 	CreatedAt       string   `json:"created_at"`
-	WBUserID        *string  `json:"wb_user_id"`
+	UserID          *string  `json:"user_id"`
 }
 
 // RegistryCollection is one collection with its versions (newest first).
@@ -116,7 +116,7 @@ func (s *Store) LinkToRegistry(ctx context.Context, ref, registryPID, collection
 				return err
 			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO registry_versions(project_id, collection, version_index, ref, source_project_id, object_id, digest,
-				base_object_class, created_at, wb_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+				base_object_class, created_at, user_id) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 				rpid, collection, version, canon, o.ProjectID, o.ObjectID, o.Digest, nullStr(o.BaseObjectClass), nowMicros(), nullStr(userID))
 		}
 		if err != nil {
@@ -176,7 +176,7 @@ func (s *Store) QueryRegistry(ctx context.Context, q RegistryQuery) ([]RegistryC
 		aliases[c][v] = append(aliases[c][v], a)
 	}
 	arows.Close()
-	rows, err := s.r.QueryContext(ctx, `SELECT collection, version_index, ref, source_project_id, object_id, digest, base_object_class, created_at, wb_user_id
+	rows, err := s.r.QueryContext(ctx, `SELECT collection, version_index, ref, source_project_id, object_id, digest, base_object_class, created_at, user_id
 		FROM registry_versions WHERE `+where+` ORDER BY collection, version_index DESC`, args...)
 	if err != nil {
 		return nil, err
@@ -192,7 +192,7 @@ func (s *Store) QueryRegistry(ctx context.Context, q RegistryQuery) ([]RegistryC
 		if err := rows.Scan(&c, &v.VersionIndex, &v.Ref, &v.SourceProjectID, &v.ObjectID, &v.Digest, &base, &created, &user); err != nil {
 			return nil, err
 		}
-		v.BaseObjectClass, v.WBUserID = strPtr(base), strPtr(user)
+		v.BaseObjectClass, v.UserID = strPtr(base), strPtr(user)
 		v.CreatedAt = FormatMicros(created)
 		v.Version = fmt.Sprintf("v%d", v.VersionIndex)
 		v.Aliases = append([]string{}, aliases[c][v.VersionIndex]...)

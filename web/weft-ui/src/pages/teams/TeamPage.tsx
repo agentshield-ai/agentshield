@@ -25,7 +25,7 @@ export function TeamPage() {
       How work flows through this team across all its sessions. The graph shows each agent and the hand-offs between them; the hand-off table is sorted with the most failing route
       first, so problems between agents stand out.
     </>,
-    'API.md#teams',
+    'teams.md#find-the-hand-off-that-fails-most',
   )
   const t = useQuery({ queryKey: ['v1', pid, 'team', teamId], queryFn: () => v1.team(pid, teamId) })
   if (t.isLoading) return <Loading />

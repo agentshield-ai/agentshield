@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import type { Detection } from '../../api/v1'
 import { agentColor } from '../../lib/agentColor'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber } from '../../lib/format'
-import { moveFocus, oneLine, reasoningFor, STEP_LABEL, stepTitle, type BuiltTimeline, type Step, type StepType } from '../../lib/timeline'
+import { currentFocus, moveFocus, oneLine, reasoningFor, STEP_LABEL, stepTitle, type BuiltTimeline, type Step, type StepType } from '../../lib/timeline'
 import { agentUrl, callUrl, securityUrl } from '../../lib/urls'
 import { isTyping } from '../ui/Shortcuts'
 import { ActionBadge, AgentChip, CopyId, SeverityText, StatusPill } from '../ui/bits'
@@ -87,6 +87,13 @@ export function TimelineView({
     el.focus({ preventScroll: true })
   }, [focus, visible])
 
+  // The step j/k last moved to. Keys can arrive faster than the URL (and so
+  // `focus`) updates; moving from a stale `focus` would drop presses.
+  const pending = useRef<{ key: string | null; at: number } | null>(null)
+  useEffect(() => {
+    if (pending.current && pending.current.key === focus) pending.current = null
+  }, [focus])
+
   // j / k / Enter
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -94,7 +101,9 @@ export function TimelineView({
       if (e.key === 'j' || e.key === 'k') {
         e.preventDefault()
         lastScrolled.current = null
-        onFocus(moveFocus(visible, focus, e.key === 'j' ? 1 : -1), true)
+        const next = moveFocus(visible, currentFocus(pending.current, focus), e.key === 'j' ? 1 : -1)
+        pending.current = { key: next, at: Date.now() }
+        onFocus(next, true)
       } else if (e.key === 'Enter' && focus && (e.target as HTMLElement)?.closest?.('.tl-step')) {
         e.preventDefault()
         toggle(focus)
@@ -233,7 +242,7 @@ function StepRow({
 
   if (s.type === 'turn') {
     return (
-      <li className="tl-turn" id={domId(s.key)} tabIndex={-1} aria-current={focused ? 'step' : undefined}>
+      <li className={`tl-step tl-turn type-turn ${focused ? 'focused' : ''}`} id={domId(s.key)} tabIndex={-1} aria-current={focused ? 'step' : undefined}>
         <span className="tl-turn-label">Turn {s.turn}</span>
         <span className="grow tl-turn-text">{p.input_preview ? oneLine(String(p.input_preview), 160) : ''}</span>
         <span className="faint small">{fmtDuration(p.duration_ms)}</span>

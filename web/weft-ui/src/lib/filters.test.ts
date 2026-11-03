@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   chipsOf,
+  FILTER_KEYS,
+  FILTER_SUPPORT,
+  isFlagged,
+  needsClientFilter,
+  sessionScope,
+  sessionScopeNote,
+  type FilterPage,
   filterQueryString,
   isEmptyFilter,
   parseFilters,
@@ -120,5 +127,46 @@ describe('per-page parameters', () => {
     expect(scoreBelowMatches(s, { scorer: 'A', value: 0.5 })).toBe(false)
     expect(sessionMatchesClientFilters(s, { costMin: 1 })).toBe(false)
     expect(sessionMatchesClientFilters({ scores: {}, cost_usd: null }, { scoreBelow: { value: 0.5 } })).toBe(false)
+  })
+})
+
+describe('one chip set on every page', () => {
+  const pages: FilterPage[] = ['sessions', 'agents', 'teams', 'security', 'traces']
+
+  it('every page applies every chip, on its rows or through sessions', () => {
+    for (const p of pages) for (const k of FILTER_KEYS) expect(['page', 'sessions'], `${p} ${k}`).toContain(FILTER_SUPPORT[p][k])
+  })
+
+  it('sends the chips a page cannot read off its rows through sessions', () => {
+    const all = parseFilters(new URLSearchParams('agent=coder&team=code-crew&status=error&has=block&score_below=0.5&model=m&tool=Bash&cost_min=0.1&q=x&time=7d'))
+    expect(sessionScope('sessions', all)).toEqual({})
+    expect(sessionScope('agents', all)).toEqual({ costMin: 0.1 })
+    expect(sessionScope('teams', all)).toEqual({ status: 'error', has: 'block', scoreBelow: { value: 0.5 }, model: 'm', tool: 'Bash', costMin: 0.1 })
+    expect(sessionScope('security', all)).toEqual({ team: 'code-crew', status: 'error', scoreBelow: { value: 0.5 }, model: 'm', costMin: 0.1 })
+    expect(sessionScope('traces', all)).toEqual({ team: 'code-crew', has: 'block', scoreBelow: { value: 0.5 }, costMin: 0.1 })
+    // Session-only values go through sessions even where the chip is otherwise the page's own.
+    expect(sessionScope('traces', { status: 'failed_step' })).toEqual({ status: 'failed_step' })
+    expect(sessionScope('security', { has: 'flagged' })).toEqual({ has: 'flagged' })
+    expect(sessionScope('agents', { status: 'running' })).toEqual({ status: 'running' })
+    expect(sessionScope('agents', { has: 'flagged' })).toEqual({})
+  })
+
+  it('says how session chips apply, so none looks ignored', () => {
+    expect(sessionScopeNote('teams', { tool: 'Bash' })).toBe('Tool: showing teams with a session that matches this filter.')
+    expect(sessionScopeNote('traces', { team: 't', costMin: 1 })).toBe('Team, Cost at least: showing traces that belong to a session that matches these filters.')
+    expect(sessionScopeNote('sessions', { team: 't' })).toBeNull()
+  })
+
+  it('knows blocked-or-approval-heavy and went-on-after-a-failed-step', () => {
+    expect(parseFilterText('has:flagged status:failed_step')).toEqual({ has: 'flagged', status: 'failed_step' })
+    expect(sessionsParams({ has: 'flagged', status: 'failed_step' }, 'all')).toEqual({ has_detection: 'any' })
+    expect(needsClientFilter({ has: 'flagged' })).toBe(true)
+    expect(needsClientFilter({ has: 'block', scoreBelow: { scorer: 'A', value: 1 } })).toBe(false)
+    expect(isFlagged({ require_approval: 3 })).toBe(true)
+    expect(isFlagged({ require_approval: 2, allow: 9 })).toBe(false)
+    const base = { scores: {}, cost_usd: null }
+    expect(sessionMatchesClientFilters({ ...base, status: 'ok', error_count: 1 }, { status: 'failed_step' })).toBe(true)
+    expect(sessionMatchesClientFilters({ ...base, status: 'error', error_count: 1 }, { status: 'failed_step' })).toBe(false)
+    expect(chipsOf({ costMin: 0.0048 })[0].value).toBe('$0.0048')
   })
 })

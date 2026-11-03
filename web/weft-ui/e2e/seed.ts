@@ -1,7 +1,8 @@
 // Seeds a Weft server with agent sessions over OTLP/JSON and the AgentShield
 // ingest route: successful and failing two-agent sessions (one team with a
 // hand-off that fails half the time), a blocked tool call, an
-// approval-heavy session, scores, and a project with only old sessions.
+// approval-heavy session, a session that went on after a failed tool call,
+// scores, and a project with only old sessions.
 import { createHash } from 'node:crypto'
 
 const H = 3600_000
@@ -173,10 +174,22 @@ async function coderApprovals(base: string, project: string, sid: string, ago: n
   await post(base, '/api/v1/shield/ingest', { project_id: project, detections: dets, overrides: [0, 1, 2].map((i) => ({ event_id: `${project}-${sid}-${i}`, session_id: sid })) })
 }
 
+// A session that went on after a failed tool call: the tests fail, the agent
+// reads why, and the second run passes. The session itself succeeds.
+async function coderRetry(base: string, project: string, sid: string, ago: number) {
+  const s = new Session(base, project, sid, ago, ['code-crew', 'Code crew'])
+  s.agent('O', null, 'coder', 0, 6000, { user: 'Run the test suite and fix what breaks', root: true, output: 'All 42 tests pass.' })
+  s.thinkThenCall('C1', 'O', 50, 600, 'Start by running the whole test suite to see what breaks.', ['toolu_test_1', 'Bash', { command: 'npm test' }])
+  s.tool('X1', 'O', 700, 1800, 'Bash', 'toolu_test_1', { command: 'npm test' }, undefined, 'exit status 1: 3 tests failed (DATABASE_URL is not set)')
+  s.thinkThenCall('C2', 'O', 2600, 500, 'The failures come from a missing DATABASE_URL; rerun with the test database.', ['toolu_test_2', 'Bash', { command: 'DATABASE_URL=sqlite::memory: npm test' }])
+  s.tool('X2', 'O', 3200, 2400, 'Bash', 'toolu_test_2', { command: 'DATABASE_URL=sqlite::memory: npm test' }, '42 passed')
+  await s.send()
+}
+
 async function score(base: string, project: string, s: Session, scorer: string, value: number, reason: string) {
   await post(base, '/feedback/create', {
     project_id: project,
-    weave_ref: `weft:///${project}/call/${s.id('O')}`,
+    ref: `weft:///${project}/call/${s.id('O')}`,
     feedback_type: `weft.score.${scorer}`,
     payload: { scope: 'session', session_id: s.sid, scorer, value, reason },
   })
@@ -194,6 +207,7 @@ export async function seed(base: string, stamp: string) {
   await trip(base, project, 'trip-bergen', 14 * H, 'Find the ferry times from Bergen to Flam', { fail: true })
   const c = await coderBlocked(base, project, 'code-lint-1', 50 * 60_000)
   await coderApprovals(base, project, 'code-deploy-1', 3 * H)
+  await coderRetry(base, project, 'code-test-1', 5 * H)
   await score(base, project, a, 'GoalCompletionJudge', 0.9, 'All three facts were found and summarised.')
   await score(base, project, b, 'GoalCompletionJudge', 0.1, 'No plan: the search failed.')
   await score(base, project, c, 'GoalCompletionJudge', 0.6, 'Linter installed; lint errors not fixed.')

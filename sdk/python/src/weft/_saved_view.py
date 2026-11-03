@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
 KNOWN_COLUMNS = [
     "id", "display_name", "op_name", "inputs", "output", "attributes", "summary", "started_at", "ended_at",
     "exception", "func_name", "parent_id", "project_id", "trace_id", "thread_id", "turn_id", "ui_url",
-    "wb_user_id", "wb_run_id", "feedback",
+    "user_id", "run_id", "feedback",
 ]
 
 COLUMN_ALIASES = {"Status": "summary.weft.status"}
@@ -65,7 +65,7 @@ FIELDS_NO_FLOAT_CONVERT = {"summary.weft.latency_ms", "started_at", "ended_at"}
 DEFAULT_PIN = {"left": ["CustomCheckbox", "op_name"], "right": []}
 CALLS_FILTER_KEYS = {
     "op_names", "input_refs", "output_refs", "parent_ids", "trace_ids", "call_ids", "trace_roots_only",
-    "wb_user_ids", "wb_run_ids", "thread_ids", "turn_ids",
+    "user_ids", "run_ids", "thread_ids", "turn_ids",
 }
 
 
@@ -368,7 +368,7 @@ class SavedView(Object):
         return self
 
     def set_filter(self, **calls_filter: Any) -> "SavedView":
-        """Set CallsFilter fields (``trace_roots_only``, ``thread_ids``, ``wb_user_ids``, ...)."""
+        """Set CallsFilter fields (``trace_roots_only``, ``thread_ids``, ``user_ids``, ...)."""
         unknown = set(calls_filter) - CALLS_FILTER_KEYS
         if unknown:
             raise ValueError(f"unknown call filter fields: {sorted(unknown)}")

@@ -28,12 +28,14 @@ type completeCall struct {
 	Output      any            `json:"output"`
 	Summary     map[string]any `json:"summary"`
 	Exception   *string        `json:"exception"`
-	WBUserID    *string        `json:"wb_user_id"`
-	WBRunID     *string        `json:"wb_run_id"`
+	// The client sends wb_user_id, wb_run_id, wb_run_step and
+	// wb_run_step_end; the middleware has renamed them by now.
+	UserID *string `json:"user_id"`
+	RunID  *string `json:"run_id"`
 
 	// Run steps (store/callfields.go).
-	WBRunStep    *int64 `json:"wb_run_step"`
-	WBRunStepEnd *int64 `json:"wb_run_step_end"`
+	RunStep    *int64 `json:"run_step"`
+	RunStepEnd *int64 `json:"run_step_end"`
 }
 
 // callsComplete ingests finished calls in one request (the client's
@@ -56,9 +58,9 @@ func (a *Adapter) callsComplete(w http.ResponseWriter, r *http.Request) {
 		}
 		st := store.CallStart{ProjectID: pid, ID: c.ID, OpName: c.OpName, DisplayName: c.DisplayName, TraceID: c.TraceID,
 			ParentID: c.ParentID, ThreadID: c.ThreadID, TurnID: c.TurnID, StartedAt: c.StartedAt, Attributes: c.Attributes,
-			Inputs: c.Inputs, WBUserID: a.host.User(r, c.WBUserID), WBRunID: c.WBRunID, WBRunStep: c.WBRunStep}
+			Inputs: c.Inputs, UserID: a.host.User(r, c.UserID), RunID: c.RunID, RunStep: c.RunStep}
 		en := &store.CallEnd{ProjectID: pid, ID: c.ID, EndedAt: c.EndedAt, Exception: c.Exception, Output: c.Output,
-			Summary: c.Summary, Cumulative: true, WBRunStepEnd: c.WBRunStepEnd}
+			Summary: c.Summary, Cumulative: true, RunStepEnd: c.RunStepEnd}
 		calls = append(calls, store.CompleteCall{Start: st, End: en})
 	}
 	ended, err := a.host.Store().UpsertComplete(r.Context(), calls)

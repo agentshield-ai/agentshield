@@ -8,14 +8,27 @@ import (
 func TestHelpGuides(t *testing.T) {
 	e := newEnv(t)
 	list := e.doJSON("GET", "/api/v1/help", nil, "")["items"].([]any)
-	if len(list) < 3 || list[0].(map[string]any)["name"] != "README.md" {
+	// User guides first, then the reference documents.
+	if len(list) < 3 || list[0].(map[string]any)["name"] != "setup.md" || list[0].(map[string]any)["kind"] != "guide" {
 		t.Fatalf("guides = %v", list)
+	}
+	kinds := ""
+	for _, x := range list {
+		if k := x.(map[string]any)["kind"].(string); !strings.HasSuffix(kinds, k) {
+			kinds += " " + k
+		}
+	}
+	if kinds != " guide reference" {
+		t.Fatalf("guide kinds in order = %q", kinds)
+	}
+	if g := e.doJSON("GET", "/api/v1/help/sessions.md", nil, ""); g["title"] != "Sessions" || !strings.Contains(g["markdown"].(string), "Failed steps") {
+		t.Fatalf("sessions.md = %.200v", g)
 	}
 	g := e.doJSON("GET", "/api/v1/help/API.md", nil, "")
 	if !strings.Contains(g["markdown"].(string), "/call/start") || g["title"] == "" {
 		t.Fatalf("API.md = %.200v", g)
 	}
-	for _, bad := range []string{"PROVENANCE.md", "..%2Fgo.mod", "nope.md"} {
+	for _, bad := range []string{"PROVENANCE.md", "..%2Fgo.mod", "nope.md", "guides%2Fsessions.md"} {
 		if code, _ := e.do("GET", "/api/v1/help/"+bad, nil, ""); code != 404 {
 			t.Fatalf("%s -> %d", bad, code)
 		}

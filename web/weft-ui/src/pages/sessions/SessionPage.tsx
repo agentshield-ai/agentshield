@@ -48,7 +48,7 @@ export function SessionPage() {
       Everything one session did, in order. The <strong>Timeline</strong> shows each agent's reasoning right before the tool call or hand-off it led to, and AgentShield's verdict
       on that tool call. Indentation shows which agent was in control. Click a step to see its details; use <kbd className="kbd">j</kbd> and <kbd className="kbd">k</kbd> to move.
     </>,
-    'DESIGN.md#7-ui',
+    'sessions.md#read-a-session',
   )
 
   const summary = useQuery({ queryKey: ['v1', pid, 'session', sessionId], queryFn: () => v1.session(pid, sessionId), refetchInterval: 15_000 })
@@ -59,10 +59,12 @@ export function SessionPage() {
   const engineDets = useMemo(() => (detections.data?.items ?? []).filter((d) => d.source === 'engine'), [detections.data])
   const tl = useMemo(() => buildTimeline(timeline.data?.items ?? [], engineDets), [timeline.data, engineDets])
 
-  // ?step=problem focuses the most important problem; ?step=<span id> the matching step.
+  // ?step=problem focuses the most important problem, ?step=error the most
+  // important failed step; ?step=<key or span id> the matching step.
   const focusKey = useMemo(() => {
     if (!stepParam) return null
     if (stepParam === 'problem') return tl.problems[0]?.key ?? null
+    if (stepParam === 'error') return (tl.problems.find((p) => p.problem === 'error') ?? tl.problems[0])?.key ?? null
     return findStep(tl, stepParam)?.key ?? null
   }, [stepParam, tl])
 

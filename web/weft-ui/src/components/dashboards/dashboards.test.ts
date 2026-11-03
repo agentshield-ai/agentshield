@@ -68,7 +68,7 @@ describe('chart data', () => {
     expect(fmtValue(0.123, 'percent')).toBe('12.3%')
     expect(fmtValue(0, 'percent')).toBe('0%')
     expect(fmtValue(1500, 'duration')).toBe('1.50s')
-    expect(fmtValue(0.004, 'cost')).toBe('$0.0040')
+    expect(fmtValue(0.004, 'cost')).toBe('$0.004')
     expect(fmtValue(null, 'number')).toBe('—')
     expect(valueKind({ agg: 'sum', field: 'cost' })).toBe('cost')
     expect(metricLabel({ agg: 'p95', field: 'latency_ms' })).toBe('p95 latency (ms)')

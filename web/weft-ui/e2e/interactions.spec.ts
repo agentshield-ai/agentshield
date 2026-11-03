@@ -48,17 +48,34 @@ test('saved views can be saved, applied and deleted with undo', async ({ page })
 
 test('j/k move through the timeline and deep links survive reload', async ({ page }) => {
   await page.goto(`/${project()}/sessions/code-lint-1`)
-  await expect(page.locator('.tl-step').first()).toBeVisible()
+  const steps = page.locator('.tl-list > li.tl-step')
+  await expect(steps.first()).toBeVisible()
+  // Three quick presses, without waiting for the URL in between, move three steps.
   await page.keyboard.press('j')
   await page.keyboard.press('j')
   await page.keyboard.press('j')
   const focused = page.locator('.tl-step[aria-current="step"]')
   await expect(focused).toHaveCount(1)
+  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step')
   const key = new URL(page.url()).searchParams.get('step')
   expect(key).toBeTruthy()
-  await page.keyboard.press('k')
-  expect(new URL(page.url()).searchParams.get('step')).not.toBe(key)
+  // Four quick presses back stop at the first step (a turn).
+  for (let i = 0; i < 4; i++) await page.keyboard.press('k')
+  await expect(steps.first()).toHaveAttribute('aria-current', 'step')
+  await expect(steps.first()).toHaveClass(/tl-turn/)
+  const turnKey = new URL(page.url()).searchParams.get('step')
+  expect(turnKey).toMatch(/^turn:/)
+  expect(turnKey).not.toBe(key)
+  // A deep link to a turn is restored as the current step after a reload.
   await page.reload()
+  await expect(page.locator('.tl-step[aria-current="step"]')).toHaveCount(1)
+  await expect(steps.first()).toHaveAttribute('aria-current', 'step')
+  // So is a deep link to a later step.
+  await page.goto(`/${project()}/sessions/code-lint-1?step=${encodeURIComponent(key!)}`)
+  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step')
+  await expect(page.locator('.tl-step[aria-current="step"]')).toBeInViewport()
+  await page.reload()
+  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step')
   await expect(page.locator('.tl-step[aria-current="step"]')).toBeInViewport()
 })
 
@@ -97,4 +114,68 @@ test('replay with current rules shows a diff', async ({ page }) => {
   await page.goto(`/${project()}/sessions/code-lint-1?tab=security`)
   await page.getByRole('button', { name: /Replay with current rules/ }).click()
   await expect(page.getByText(/Checked \d+ of \d+ tool calls/)).toBeVisible({ timeout: 20_000 })
+})
+
+test('every attention card opens exactly the sessions it counts, with money shown plainly', async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${project()}/sessions`)
+  await expect(page.locator('.session-row').first()).toBeVisible()
+  // No floating-point noise in any amount.
+  await expect(page.locator('main, .main').first()).not.toContainText(/\$\d*\.\d{5,}/)
+  const cards = page.locator('a.attn-link')
+  const n = await cards.count()
+  expect(n).toBeGreaterThanOrEqual(3)
+  for (let i = 0; i < n; i++) {
+    await page.goto(`/${project()}/sessions`)
+    const card = page.locator('a.attn-link').nth(i)
+    const title = await card.locator('xpath=..').locator('.attn-title').innerText()
+    const count = Number(await card.locator('.attn-count').innerText())
+    await card.click()
+    await expect(page.locator('.session-row'), title).toHaveCount(count)
+  }
+  expect(errors).toEqual([])
+})
+
+test('every page applies every filter, and says when it goes through sessions', async ({ page }) => {
+  const errors = watchErrors(page)
+  // Traces by team: only the code crew's traces (3 sessions, one trace each).
+  await page.goto(`/${project()}/traces?team=code-crew`)
+  await expect(page.getByRole('button', { name: 'Remove filter Team' })).toBeVisible()
+  await expect(page.getByRole('note')).toContainText('showing traces that belong to a session that matches')
+  await expect(page.locator('.traces-table tbody tr')).toHaveCount(3)
+  // Traces by agent: traces where any span is the researcher's, though no root span is.
+  await page.goto(`/${project()}/traces?agent=researcher`)
+  await expect(page.locator('.traces-table tbody tr')).toHaveCount(5)
+  // Teams by tool: the trip planners never ran Bash.
+  await page.goto(`/${project()}/teams?tool=Bash`)
+  await expect(page.getByRole('list', { name: 'Teams' }).getByRole('link', { name: /Code crew/ })).toBeVisible()
+  await expect(page.getByRole('list', { name: 'Teams' }).getByRole('link', { name: /Trip planners/ })).toHaveCount(0)
+  await expect(page.getByRole('note')).toContainText('showing teams with a session that matches')
+  // Agents by a session status: the agents of sessions that went on after a failed step.
+  await page.goto(`/${project()}/agents?status=failed_step`)
+  await expect(page.locator('table.agents-table tbody tr')).toHaveCount(2)
+  // Security by team: the trip planners have no detections.
+  await page.goto(`/${project()}/security?team=trip-planners`)
+  await expect(page.getByRole('button', { name: 'Remove filter Team' })).toBeVisible()
+  await expect(page.getByText('Nothing matches these filters.')).toBeVisible()
+  await page.goto(`/${project()}/security?team=code-crew&has=block`)
+  await expect(page.locator('.det-row')).toHaveCount(1)
+  expect(errors).toEqual([])
+})
+
+test('Traces defaults to the last 24 hours, widens when empty, and saves views', async ({ page }) => {
+  await page.goto(`/${process.env.WEFT_E2E_OLDER}/traces`)
+  await expect(page.getByRole('status').filter({ hasText: 'because nothing happened in the last 24 hours' })).toBeVisible()
+  await expect(page.locator('.traces-table tbody tr')).toHaveCount(1)
+  await page.goto(`/${project()}/traces?status=error&cols=output`)
+  await page.getByRole('button', { name: /Views/ }).click()
+  await page.getByRole('button', { name: 'Save current filters as a view…' }).click()
+  await page.getByRole('textbox', { name: 'View name' }).fill('Failed traces')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page).toHaveURL(/view=traces-failed-traces/)
+  await page.goto(`/${project()}/traces`)
+  await page.getByRole('button', { name: /Views/ }).click()
+  await page.getByRole('button', { name: 'Failed traces', exact: true }).click()
+  await expect(page).toHaveURL(/status=error/)
+  await expect(page).toHaveURL(/cols=output/)
 })

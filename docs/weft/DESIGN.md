@@ -35,7 +35,7 @@ All rows are scoped by `project_id` (`entity/project`).
 | Object | Source | Key fields |
 |---|---|---|
 | **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`) |
-| **Agent** | `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.agent.version` on `invoke_agent` spans | name, versions, models, tools, sessions, handoffs in and out, detection rate, scores |
+| **Agent** | `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.agent.version` on `invoke_agent` spans | name, versions, models, tools, sessions, handoffs in and out, detection rate (flagged tool calls / tool calls, API.md), scores |
 | **Team** | `weft.team.id` / `weft.team.name` on any span of a session; otherwise derived as the set of agents that took part in a session (`team_id` = `auto:` + sorted agent names joined by `+`) | `team_id`, `name`, `agents[]`, `session_count`, aggregated graph |
 | **Turn** | the existing turn detection (`is_turn`) | unchanged |
 | **Hand-off** | an edge between two agents (§2.1) | `id`, `session_id`, `trace_id`, `from_span_id`, `to_span_id`, `from_agent`, `to_agent`, `kind` (`delegate` / `handoff` / `return`), `started_at`, `ended_at`, `status`, `input_preview`, `output_preview` |
@@ -175,7 +175,13 @@ compared the same way). `ToolSafetyScorer` (§6) turns this into evaluation
 scores (`blocked`, `approvals_required`, `max_severity`) at session and agent
 scope, so rule changes can be evaluated against recorded agent behaviour.
 `--shield-url` is operator configuration and is not subject to the egress
-guard.
+guard. Remote replay marks its requests with `replay: true` (an optional
+field on `EvaluationRequest`), a `weft-replay-` event id and a
+`weft-replay:<job>:` session id. The engine still evaluates them, but tags
+the `evaluate` span `agentshield.replay`, does not push the verdict and keeps
+the session out of live sessions' cross-session fields. Weft never turns a
+replay evaluation that comes back over OTLP or the push into an engine
+detection, a session or agent activity. Replay never creates sessions.
 
 ## 6. Scoped evaluation
 
@@ -198,7 +204,11 @@ The built-in scorers are the existing ones, plus:
 - `ToolSafetyScorer`: the AgentShield replay, as a scorer.
 - `GoalCompletionJudge`: did the session achieve the user's goal?
 
-Monitors can run any of these on new sessions automatically.
+Monitors can run any of these on new sessions automatically: a scope scorer
+in a monitor runs at its scope (session, agent or hand-off) once the session
+is complete (no new spans for `session_idle_seconds`, default 60, and no root
+span still running), honours `sampling_rate`, and scores each target once
+(API.md, *Monitors*).
 
 ## 7. UI
 
@@ -310,7 +320,9 @@ for clients of another tracing product:
 With the adapter off, those routes return 404, other ref schemes are plain
 strings, and Weft's own SDKs, UI and plugins still work fully. Databases
 written with the old names are migrated once when the server opens them,
-whether or not the adapter is on. The adapter is documented in one page,
+whether or not the adapter is on; saved queries (content-addressed objects)
+get a new version with Weft's names rather than being edited in place, so no
+code outside the adapter and that migration reads the old names. The adapter is documented in one page,
 [COMPATIBILITY.md](COMPATIBILITY.md), and CI runs the official-client check
 with the flag on and everything else with it off.
 

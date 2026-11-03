@@ -344,7 +344,7 @@ function AnnotationPane({
           queue_id: queueId,
           replace_id: s.unique && mine ? mine.id : undefined,
         })
-        rememberUserId(r.wb_user_id)
+        rememberUserId(r.user_id)
       }
       await qc.invalidateQueries({ queryKey: ['feedback', projectId, ref] })
       await onSubmitted()
@@ -417,7 +417,7 @@ function AnnotationPane({
                 <AnnotationInput schema={s.schema} value={drafts[s.name] ?? null} onChange={(v) => setDraft(s.name, v)} />
                 {others.length > 0 && (
                   <div className="faint small">
-                    Others: {others.map((o) => `${JSON.stringify(o.payload?.value)} (${o.creator ?? o.wb_user_id ?? 'anonymous'})`).join(', ')}
+                    Others: {others.map((o) => `${JSON.stringify(o.payload?.value)} (${o.creator ?? o.user_id ?? 'anonymous'})`).join(', ')}
                   </div>
                 )}
               </div>

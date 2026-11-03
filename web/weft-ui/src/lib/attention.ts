@@ -1,10 +1,14 @@
 // Attention cards on the Sessions home (DESIGN.md §7.1 rule 1): failed
-// sessions, blocked or approval-heavy sessions, low scores and cost spikes,
-// each with the filter that opens the matching list.
+// sessions, sessions that went on after a failed step, blocked or
+// approval-heavy sessions, low scores and cost spikes, each with the filter
+// that opens exactly the sessions it counts.
 import type { SessionSummary } from '../api/v1'
-import type { FilterState } from './filters'
+import { APPROVAL_HEAVY, isFlagged, wentOnAfterFailedStep, type FilterState } from './filters'
+import { fmtCost } from './format'
 
-export type AttentionId = 'failed' | 'security' | 'low_score' | 'cost'
+export { APPROVAL_HEAVY }
+
+export type AttentionId = 'failed' | 'failed_step' | 'security' | 'low_score' | 'cost'
 
 export interface AttentionCard {
   id: AttentionId
@@ -18,7 +22,6 @@ export interface AttentionCard {
 }
 
 export const LOW_SCORE = 0.5
-export const APPROVAL_HEAVY = 3
 export const COST_SPIKE_FACTOR = 3
 
 export function median(xs: number[]): number | null {
@@ -36,10 +39,13 @@ export function costSpikeThreshold(sessions: Pick<SessionSummary, 'cost_usd'>[])
   return roundUp(m * COST_SPIKE_FACTOR)
 }
 
-function roundUp(x: number): number {
+/** Rounds up to two significant digits, without floating-point noise (0.0048, not 0.0048000000000000004). */
+export function roundUp(x: number): number {
   if (x <= 0) return 0
-  const p = Math.pow(10, Math.floor(Math.log10(x)) - 1)
-  return Math.ceil(x / p) * p
+  const e = Math.floor(Math.log10(x)) - 1
+  const p = Math.pow(10, e)
+  const n = Math.ceil(Number((x / p).toPrecision(12)))
+  return Number((e < 0 ? n / Math.pow(10, -e) : n * p).toPrecision(12))
 }
 
 export function lowestScore(s: Pick<SessionSummary, 'scores'>): number | null {
@@ -49,9 +55,10 @@ export function lowestScore(s: Pick<SessionSummary, 'scores'>): number | null {
 
 export function computeAttention(sessions: SessionSummary[]): AttentionCard[] {
   const failed = sessions.filter((s) => s.status === 'error')
+  const wentOn = sessions.filter(wentOnAfterFailedStep)
   const blocked = sessions.filter((s) => (s.detection_count?.block ?? 0) > 0)
   const approvalHeavy = sessions.filter((s) => (s.detection_count?.require_approval ?? 0) >= APPROVAL_HEAVY)
-  const security = new Set([...blocked, ...approvalHeavy].map((s) => s.session_id))
+  const security = sessions.filter((s) => isFlagged(s.detection_count))
   const low = sessions.filter((s) => {
     const m = lowestScore(s)
     return m != null && m < LOW_SCORE
@@ -65,19 +72,31 @@ export function computeAttention(sessions: SessionSummary[]): AttentionCard[] {
       title: 'Failed sessions',
       count: failed.length,
       detail: failed.length ? `Most recent: ${failed[0].title || failed[0].session_id}` : 'No session failed.',
-      explain: 'Sessions where the top-level run or an agent invocation ended with an error. A failed tool call that an agent recovered from does not count.',
+      explain: 'Sessions where the top-level run or an agent invocation ended with an error. Sessions that went on after a failed tool or model call are counted under “Failed steps”.',
       filter: { status: 'error' },
       tone: 'error',
     },
     {
+      id: 'failed_step',
+      title: 'Failed steps',
+      count: wentOn.length,
+      detail: wentOn.length
+        ? `${plural(wentOn.length, 'session')} went on after a tool or model call failed`
+        : 'No session had a failed step it went on from.',
+      explain:
+        'Sessions that did not fail as a whole, but where at least one tool call, model call or hand-off ended with an error. The agent may have retried, worked around it, or given a weaker answer.',
+      filter: { status: 'failed_step' },
+      tone: 'warn',
+    },
+    {
       id: 'security',
       title: 'Blocked or needing approval',
-      count: security.size,
-      detail: security.size
+      count: security.length,
+      detail: security.length
         ? `${plural(blocked.length, 'session')} with a blocked tool call, ${approvalHeavy.length} with ${APPROVAL_HEAVY}+ approval requests`
         : 'AgentShield blocked nothing.',
-      explain: `Sessions where AgentShield blocked a tool call, or asked for approval ${APPROVAL_HEAVY} or more times (a sign of approval fatigue). Replays are not counted.`,
-      filter: { has: blocked.length || !approvalHeavy.length ? 'block' : 'approval' },
+      explain: `Sessions where AgentShield blocked a tool call, or asked for approval ${APPROVAL_HEAVY} or more times (a sign of approval fatigue). A session with both counts once. Replays are not counted.`,
+      filter: { has: 'flagged' },
       tone: 'warn',
     },
     {
@@ -93,7 +112,8 @@ export function computeAttention(sessions: SessionSummary[]): AttentionCard[] {
       id: 'cost',
       title: 'Cost spikes',
       count: spikes.length,
-      detail: threshold == null ? 'Needs at least four sessions with a known cost.' : spikes.length ? `At or above $${threshold} each` : `None at or above $${threshold}.`,
+      detail:
+        threshold == null ? 'Needs at least four sessions with a known cost.' : spikes.length ? `At or above ${fmtCost(threshold)} each` : `None at or above ${fmtCost(threshold)}.`,
       explain: `Sessions costing at least ${COST_SPIKE_FACTOR}× the median session cost in this range. Cost is input, output and cached tokens priced per model; sessions on models without a price are left out.`,
       filter: threshold == null ? {} : { costMin: threshold },
       tone: 'info',

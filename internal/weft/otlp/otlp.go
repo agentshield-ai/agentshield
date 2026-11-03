@@ -246,7 +246,7 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 	if st.TurnID == nil && isTrue(attrs["weft.is_turn"]) {
 		st.TurnID = &id
 	}
-	st.WBUserID = optString(attrs, "user.id", "enduser.id", "ai.telemetry.metadata.userId")
+	st.UserID = optString(attrs, "user.id", "enduser.id", "ai.telemetry.metadata.userId")
 
 	user := map[string]any{}
 	for k, v := range attrs {

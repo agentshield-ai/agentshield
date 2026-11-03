@@ -181,6 +181,23 @@ func TestReplayInProcessDiffAndRuleChanges(t *testing.T) {
 	if _, total, _ = st.QueryDetections(context.Background(), store.DetectionQuery{ProjectID: proj, Source: "replay", Ruleset: "candidate"}); total != 2 {
 		t.Errorf("replay detections after re-run = %d, want 2 (replaced, not duplicated)", total)
 	}
+	assertOnlySessions(t, st, "sess-1")
+}
+
+// assertOnlySessions checks that replay created no sessions of its own.
+func assertOnlySessions(t *testing.T, st *store.Store, want ...string) {
+	t.Helper()
+	l, _, err := st.QuerySessions(context.Background(), store.SessionsQuery{ProjectID: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, s := range l {
+		got = append(got, s.SessionID)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("sessions after replay = %v, want %v", got, want)
+	}
 }
 
 func TestReplayWithRepositoryRules(t *testing.T) {
@@ -261,7 +278,7 @@ func TestReplayRemoteEngine(t *testing.T) {
 		}
 		var req models.EvaluationRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if !strings.HasPrefix(req.SessionID, "weft-replay:") || !strings.HasPrefix(req.EventID, "weft-replay-") || req.ToolCallID == "" {
+		if !req.Replay || !strings.HasPrefix(req.SessionID, "weft-replay:") || !strings.HasPrefix(req.EventID, "weft-replay-") || req.ToolCallID == "" {
 			http.Error(w, "replay requests must be namespaced", http.StatusBadRequest)
 			return
 		}
@@ -296,6 +313,7 @@ func TestReplayRemoteEngine(t *testing.T) {
 	if _, err := svc.CreateJob(context.Background(), ReplayRequest{ProjectID: proj, SessionIDs: []string{"sess-x"}, RulesDir: "/tmp"}, nil); err == nil {
 		t.Error("rules_dir with a remote engine should be refused")
 	}
+	assertOnlySessions(t, st, "sess-x")
 }
 
 func TestReplayStartRunsInBackground(t *testing.T) {

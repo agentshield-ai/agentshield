@@ -252,10 +252,10 @@ class WeftClient:
             n = self._sender.replay_wal()
             if n:
                 logger.info("weft: replaying %d unsent items from %s", n, wal_path)
-        # Run linkage (wb_run_id / wb_run_step); see set_wb_run().
-        self._wb_run: Optional[Any] = None
-        if st.get("wb_run_id"):
-            self.set_wb_run(st["wb_run_id"], st.get("wb_run_step"))
+        # Run linkage (run_id / run_step); see set_run().
+        self._run_link: Optional[Any] = None
+        if st.get("run_id"):
+            self.set_run(st["run_id"], st.get("run_step"))
         self._redact = Redactor(
             keys=self.settings.get("redact_keys"),
             pii=self.settings.get("redact_pii"),
@@ -264,26 +264,26 @@ class WeftClient:
         )
 
     # ------------------------------------------------------------------ run linkage
-    def set_wb_run(self, run_id: Optional[str], step: Any = None) -> None:
+    def set_run(self, run_id: Optional[str], step: Any = None) -> None:
         """Link calls started from now on to a training or experiment run
-        (``wb_run_id``, ``wb_run_step``).
+        (``run_id``, ``run_step``).
 
         ``run_id`` is a run id (sent as ``<entity>/<project>/<run_id>``) or a
         full ``entity/project/run_id``. ``step`` is an int or a callable
-        returning the current step; it is read at call start (``wb_run_step``)
-        and end (``wb_run_step_end``). ``None`` clears it.
+        returning the current step; it is read at call start (``run_step``)
+        and end (``run_step_end``). ``None`` clears it.
         """
         if not run_id:
-            self._wb_run = None
+            self._run_link = None
             return
         rid = str(run_id)
         if rid.count("/") < 2:
             rid = f"{self.entity}/{self.project}/{rid}"
-        self._wb_run = (rid, step)
+        self._run_link = (rid, step)
 
-    def _wb_run_now(self) -> "Optional[tuple[str, Optional[int]]]":
-        if self._wb_run is not None:
-            rid, step = self._wb_run
+    def _run_now(self) -> "Optional[tuple[str, Optional[int]]]":
+        if self._run_link is not None:
+            rid, step = self._run_link
             if callable(step):
                 try:
                     step = step()
@@ -419,9 +419,9 @@ class WeftClient:
                 call.display_name = dn(call) if callable(dn) else str(dn)
             except Exception as e:
                 logger.warning("weft: call_display_name failed for %s: %s", op.name, e)
-        wb = self._wb_run_now()
-        if wb is not None:
-            call.wb_run_id, call.wb_run_step = wb
+        link = self._run_now()
+        if link is not None:
+            call.run_id, call.run_step = link
         self._sender.enqueue("call_start", self._start_payload(call))
         if parent is None and self.print_call_link:
             print(f"weft: {call.ui_url}", file=sys.stderr)
@@ -441,10 +441,10 @@ class WeftClient:
         for k in ("display_name", "thread_id", "turn_id"):
             if getattr(call, k) is not None:
                 start[k] = getattr(call, k)
-        if call.wb_run_id is not None:
-            start["wb_run_id"] = call.wb_run_id
-            if call.wb_run_step is not None:
-                start["wb_run_step"] = call.wb_run_step
+        if call.run_id is not None:
+            start["run_id"] = call.run_id
+            if call.run_step is not None:
+                start["run_step"] = call.run_step
         return start
 
     def _scrub_reasoning(self, value: Any) -> Any:
@@ -536,11 +536,11 @@ class WeftClient:
             end["exception"] = call.exception
         if call.summary:
             end["summary"] = to_json(call.summary, self)
-        if call.wb_run_id is not None:
-            wb = self._wb_run_now()
-            if wb is not None and wb[1] is not None:
-                call.wb_run_step_end = wb[1]
-                end["wb_run_step_end"] = wb[1]
+        if call.run_id is not None:
+            link = self._run_now()
+            if link is not None and link[1] is not None:
+                call.run_step_end = link[1]
+                end["run_step_end"] = link[1]
         self._sender.enqueue("call_end", end)
 
     def _serialize_self(self, v: Any) -> Any:
@@ -1327,8 +1327,8 @@ def init(
     ``WEFT_RETRY_BACKOFF``), ``retry_max_backoff`` (default 4, env
     ``WEFT_RETRY_MAX_INTERVAL``), ``http_timeout`` (seconds, default 30, env
     ``WEFT_HTTP_TIMEOUT``), ``log_level`` (``DEBUG`` ... ``CRITICAL`` for the
-    ``weft`` logger, env ``WEFT_LOG_LEVEL``), ``wb_run_id``/``wb_run_step``
-    (see ``set_wb_run``), ``redact_keys``, ``redact_pii``, and the cache of immutable server
+    ``weft`` logger, env ``WEFT_LOG_LEVEL``), ``run_id``/``run_step``
+    (see ``set_run``), ``redact_keys``, ``redact_pii``, and the cache of immutable server
     responses: ``use_server_cache`` (default True, env
     ``WEFT_USE_SERVER_CACHE``), ``server_cache_dir`` (default
     ``~/.cache/weft``, env ``WEFT_SERVER_CACHE_DIR``) and
@@ -1449,7 +1449,7 @@ def list_aliases() -> List[str]:
     return require_client().list_aliases()
 
 
-def set_wb_run(run_id: Optional[str], step: Any = None) -> None:
-    """Link calls of the global client to a run; see ``WeftClient.set_wb_run``."""
-    require_client().set_wb_run(run_id, step)
+def set_run(run_id: Optional[str], step: Any = None) -> None:
+    """Link calls of the global client to a run; see ``WeftClient.set_run``."""
+    require_client().set_run(run_id, step)
 

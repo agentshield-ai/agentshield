@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -27,16 +26,16 @@ type Call struct {
 	Inputs           map[string]any `json:"inputs"`
 	Output           any            `json:"output"`
 	Summary          map[string]any `json:"summary"`
-	WBUserID         *string        `json:"wb_user_id"`
-	WBRunID          *string        `json:"wb_run_id"`
+	UserID           *string        `json:"user_id"`
+	RunID            *string        `json:"run_id"`
 	DeletedAt        *string        `json:"deleted_at"`
 	Feedback         []Feedback     `json:"feedback,omitempty"`
 	StorageSizeBytes *int64         `json:"storage_size_bytes,omitempty"`
 	// Optional call fields (callfields.go).
 	TotalStorageSizeBytes *int64  `json:"total_storage_size_bytes,omitempty"`
-	WBUsername            *string `json:"wb_username,omitempty"`
-	WBRunStep             *int64  `json:"wb_run_step"`
-	WBRunStepEnd          *int64  `json:"wb_run_step_end"`
+	Username              *string `json:"username,omitempty"`
+	RunStep               *int64  `json:"run_step"`
+	RunStepEnd            *int64  `json:"run_step_end"`
 	ExpireAt              *string `json:"expire_at"`
 
 	// internal
@@ -98,8 +97,8 @@ type CallsFilter struct {
 	TraceIDs       []string `json:"trace_ids"`
 	CallIDs        []string `json:"call_ids"`
 	TraceRootsOnly bool     `json:"trace_roots_only"`
-	WBUserIDs      []string `json:"wb_user_ids"`
-	WBRunIDs       []string `json:"wb_run_ids"`
+	UserIDs        []string `json:"user_ids"`
+	RunIDs         []string `json:"run_ids"`
 	ThreadIDs      []string `json:"thread_ids"`
 	TurnIDs        []string `json:"turn_ids"`
 }
@@ -127,7 +126,7 @@ type CallsQuery struct {
 	IncludeDeleted     bool         `json:"include_deleted"`
 	// IncludeTotalStorageSize adds total_storage_size_bytes to trace roots.
 	IncludeTotalStorageSize bool `json:"include_total_storage_size"`
-	// IncludeUsernames resolves wb_user_id to wb_username.
+	// IncludeUsernames resolves user_id to username.
 	IncludeUsernames bool `json:"include_usernames"`
 }
 
@@ -137,12 +136,11 @@ const latencySQL = `(CASE WHEN c.ended_at IS NULL THEN NULL ELSE (c.ended_at - c
 var callColumns = map[string]string{
 	"id": "c.id", "op_name": "c.op_name", "op_base_name": "c.op_base_name", "display_name": "c.display_name",
 	"trace_id": "c.trace_id", "parent_id": "c.parent_id", "thread_id": "c.thread_id", "turn_id": "c.turn_id",
-	"exception": "c.exception", "wb_user_id": "c.wb_user_id", "wb_run_id": "c.wb_run_id", "project_id": "c.project_id",
+	"exception": "c.exception", "user_id": "c.user_id", "run_id": "c.run_id", "project_id": "c.project_id",
 }
 
 // callField resolves a field path on the calls table (alias c).
 func callField(path string) (string, []any, bool, error) {
-	path = legacy.QueryField(path) // queries saved before the rename
 	if col, ok := callColumns[path]; ok {
 		return col, nil, false, nil
 	}
@@ -264,7 +262,7 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 			vals []string
 		}{
 			{"c.parent_id", f.ParentIDs}, {"c.trace_id", f.TraceIDs}, {"c.id", f.CallIDs},
-			{"c.wb_user_id", f.WBUserIDs}, {"c.wb_run_id", f.WBRunIDs}, {"c.thread_id", f.ThreadIDs}, {"c.turn_id", f.TurnIDs},
+			{"c.user_id", f.UserIDs}, {"c.run_id", f.RunIDs}, {"c.thread_id", f.ThreadIDs}, {"c.turn_id", f.TurnIDs},
 		} {
 			if len(x.vals) > 0 {
 				s, a := inList(x.col, x.vals)
@@ -334,8 +332,8 @@ func orderCalls(sorts []SortBy) (string, []any, error) {
 }
 
 const callSelect = `SELECT c.project_id, c.id, c.op_name, c.op_base_name, c.display_name, c.trace_id, c.parent_id, c.thread_id, c.turn_id,
-	c.started_at, c.ended_at, c.exception, c.attributes, c.inputs, c.output, c.summary, c.rollup, c.wb_user_id, c.wb_run_id,
-	c.deleted_at, c.storage_size, c.cumulative, c.wb_run_step, c.wb_run_step_end FROM calls c`
+	c.started_at, c.ended_at, c.exception, c.attributes, c.inputs, c.output, c.summary, c.rollup, c.user_id, c.run_id,
+	c.deleted_at, c.storage_size, c.cumulative, c.run_step, c.run_step_end FROM calls c`
 
 func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 	var c Call
@@ -349,9 +347,9 @@ func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 		&step, &stepEnd); err != nil {
 		return nil, err
 	}
-	c.WBRunStep, c.WBRunStepEnd = int64Ptr(step), int64Ptr(stepEnd)
+	c.RunStep, c.RunStepEnd = int64Ptr(step), int64Ptr(stepEnd)
 	c.DisplayName, c.ParentID, c.ThreadID, c.TurnID = strPtr(display), strPtr(parent), strPtr(thread), strPtr(turn)
-	c.Exception, c.WBUserID, c.WBRunID = strPtr(exc), strPtr(user), strPtr(run)
+	c.Exception, c.UserID, c.RunID = strPtr(exc), strPtr(user), strPtr(run)
 	c.startedUS = started.Int64
 	if !started.Valid && ended.Valid {
 		c.startedUS = ended.Int64

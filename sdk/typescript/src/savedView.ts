@@ -23,7 +23,7 @@ import { Ref, isRefUri } from './refs.js';
 export const KNOWN_COLUMNS = [
   'id', 'display_name', 'op_name', 'inputs', 'output', 'attributes', 'summary', 'started_at', 'ended_at',
   'exception', 'func_name', 'parent_id', 'project_id', 'trace_id', 'thread_id', 'turn_id', 'ui_url',
-  'wb_user_id', 'wb_run_id', 'feedback',
+  'user_id', 'run_id', 'feedback',
 ];
 const COLUMN_ALIASES: Record<string, string> = { Status: 'summary.weft.status' };
 
@@ -54,7 +54,7 @@ const NO_FLOAT_CONVERT = new Set(['summary.weft.latency_ms', 'started_at', 'ende
 const DEFAULT_PIN = { left: ['CustomCheckbox', 'op_name'], right: [] as string[] };
 export const CALLS_FILTER_KEYS = new Set([
   'op_names', 'input_refs', 'output_refs', 'parent_ids', 'trace_ids', 'call_ids', 'trace_roots_only',
-  'wb_user_ids', 'wb_run_ids', 'thread_ids', 'turn_ids',
+  'user_ids', 'run_ids', 'thread_ids', 'turn_ids',
 ]);
 
 export interface ViewFilter {
@@ -319,7 +319,7 @@ export class SavedView extends WeftObject {
     return this.touch();
   }
 
-  /** Set CallsFilter fields (`trace_roots_only`, `thread_ids`, `wb_user_ids`, ...); null removes one. */
+  /** Set CallsFilter fields (`trace_roots_only`, `thread_ids`, `user_ids`, ...); null removes one. */
   setFilter(fields: Record<string, unknown>): this {
     const bad = Object.keys(fields).filter((k) => !CALLS_FILTER_KEYS.has(k));
     if (bad.length) throw new Error(`unknown call filter fields: ${bad.join(', ')}`);

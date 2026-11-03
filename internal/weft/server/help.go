@@ -8,9 +8,10 @@ import (
 )
 
 // The guides in docs/weft are embedded in the binary and served to the UI's
-// help pages: GET /api/v1/help lists them, GET /api/v1/help/{name} returns
-// one as Markdown. The compatibility guide is listed and served only when
-// the compatibility adapter is on.
+// help pages: GET /api/v1/help lists them (user guides from docs/weft/guides
+// first, kind "guide", then the reference documents, kind "reference"), GET
+// /api/v1/help/{name} returns one as Markdown. The compatibility guide is
+// listed and served only when the compatibility adapter is on.
 
 const compatGuide = "COMPATIBILITY.md"
 

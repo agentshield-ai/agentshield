@@ -234,7 +234,7 @@ function CreateKeyModal({
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="CI ingestion" autoFocus />
         </label>
         <label className="field" hidden={selfOnly}>
-          User (recorded as wb_user_id)
+          User (recorded as user_id)
           <input className="input mono" value={user} onChange={(e) => setUser(e.target.value.replace(/[^\w.@-]/g, ''))} placeholder="default" />
         </label>
         <label className="field">

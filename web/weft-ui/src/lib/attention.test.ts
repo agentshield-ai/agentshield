@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionSummary } from '../api/v1'
-import { APPROVAL_HEAVY, computeAttention, costSpikeThreshold, lowestScore, median } from './attention'
+import { APPROVAL_HEAVY, computeAttention, costSpikeThreshold, lowestScore, median, roundUp } from './attention'
+import { sessionMatchesClientFilters, sessionsParams, type FilterState } from './filters'
 
 let n = 0
 const s = (over: Partial<SessionSummary>): SessionSummary =>
@@ -55,9 +56,41 @@ describe('attention cards', () => {
 
   it('counts blocked and approval-heavy sessions once each', () => {
     expect(cards.security.count).toBe(2)
-    expect(cards.security.filter).toEqual({ has: 'block' })
-    const onlyApprovals = computeAttention([s({ detection_count: { require_approval: 9 } })]).find((c) => c.id === 'security')!
-    expect(onlyApprovals.filter).toEqual({ has: 'approval' })
+    expect(cards.security.filter).toEqual({ has: 'flagged' })
+    const both = computeAttention([s({ detection_count: { block: 1, require_approval: 9 } })]).find((c) => c.id === 'security')!
+    expect(both.count).toBe(1)
+  })
+
+  it('counts sessions that went on after a failed step, apart from failed sessions', () => {
+    const cs = computeAttention([s({ error_count: 1 }), s({ status: 'error', error_count: 2 }), s({})])
+    const step = cs.find((c) => c.id === 'failed_step')!
+    expect(step.count).toBe(1)
+    expect(step.filter).toEqual({ status: 'failed_step' })
+    expect(cs.find((c) => c.id === 'failed')!.count).toBe(1)
+  })
+
+  // What /api/v1/sessions does with the parameters sessionsParams sends.
+  const server = (x: SessionSummary, p: Record<string, string>) =>
+    (!p.status || x.status === p.status) &&
+    (!p.has_detection ||
+      (p.has_detection === 'any' ? Object.values(x.detection_count).some((v) => (v ?? 0) > 0) : (x.detection_count as Record<string, number>)[p.has_detection] > 0))
+  const list = (pool: SessionSummary[], f: FilterState) => pool.filter((x) => server(x, sessionsParams(f, 'all')) && sessionMatchesClientFilters(x, f))
+
+  it('each card opens a list with exactly the sessions it counts', () => {
+    const pool = [
+      ...sessions,
+      s({ error_count: 1 }),
+      s({ detection_count: { block: 2, require_approval: 4 } }),
+      s({ detection_count: { allow: 3 } }),
+      s({ cost_usd: 0.0016 }),
+      s({ cost_usd: 0.0016 }),
+      s({ cost_usd: 0.0016 }),
+      s({ cost_usd: 0.0048 }),
+    ]
+    for (const c of computeAttention(pool)) {
+      if (!Object.keys(c.filter).length) continue
+      expect(list(pool, c.filter).length, c.id).toBe(c.count)
+    }
   })
 
   it('flags any session-level score below 0.5', () => {
@@ -73,6 +106,14 @@ describe('attention cards', () => {
     expect(costSpikeThreshold(sessions)).toBe(0.03)
     expect(cards.cost.count).toBe(1)
     expect(cards.cost.filter).toEqual({ costMin: 0.03 })
+  })
+
+  it('states thresholds as money without floating-point noise', () => {
+    expect(roundUp(0.0016 * 3)).toBe(0.0048)
+    expect(roundUp(0.0123)).toBe(0.013)
+    expect(roundUp(250)).toBe(250)
+    const cs = computeAttention([0.0016, 0.0016, 0.0016, 0.0016, 0.0016].map((c) => s({ cost_usd: c })))
+    expect(cs.find((c) => c.id === 'cost')!.detail).toBe('None at or above $0.0048.')
   })
 
   it('needs enough priced sessions before calling anything a spike', () => {

@@ -7,20 +7,21 @@ import type { Any, Call, CallsFilter, Operation, Query, SortBy } from '../../api
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
 import { callUrl, compareCallsUrl, threadsUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Modal, Pager, Spinner, StatusDot } from '../../components/common'
+import { Empty, ErrorBox, Pager, Spinner, StatusDot } from '../../components/common'
 import { CallCharts } from '../../components/traces/CallCharts'
 import { extractChat, messageText, normaliseMessage } from '../../components/traces/ChatView'
 import { BASE_FILTER_FIELDS, FilterBuilder, clauseToOperation, clauseValid, decodeClauses, encodeClauses, type FilterClause } from '../../components/traces/FilterBuilder'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal, Dropdown, MenuItem } from '../../components/traces/Menu'
 import { GettingStarted } from '../../components/traces/GettingStarted'
-import { callLabel, discoverFeedbackFields, discoverFields, exportCalls, getDotted, reactionCounts, slugify } from '../../components/traces/callUtils'
+import { callLabel, discoverFeedbackFields, discoverFields, exportCalls, getDotted, reactionCounts } from '../../components/traces/callUtils'
 import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/ExportModal'
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 import '../../components/traces/columns.css'
-import { FilterBar } from '../../components/ui/FilterBar'
-import { parseFilters, timeWindow, type FilterState } from '../../lib/filters'
+import { FilterBar, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
+import { FILTER_PARAMS, parseFilters, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
+import { useTraceScope } from '../../hooks/useTraceScope'
 import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
 
 // ---------------------------------------------------------------- URL state
@@ -46,6 +47,9 @@ const SORT_FIELD: Partial<Record<BaseCol, string>> = {
 }
 const PAGE_SIZES = [25, 50, 100, 200]
 const STATUSES = ['success', 'error', 'running', 'descendant_error'] as const
+const DEFAULT_TIME: TimeRange = '24h'
+/** URL parameters a saved Traces view keeps besides the shared filters. */
+const VIEW_KEYS = ['roots', 'system', 'op', 'f', 'expr', 'sort', 'cols', 'order', 'pin', 'hide', 'limit', 'charts']
 
 interface ViewState {
   roots: boolean
@@ -81,7 +85,8 @@ function parseState(p: URLSearchParams): ViewState {
     system: p.get('system') === '1',
     op: p.get('op') ?? '',
     // The shared filter bar says ok/error/running; spans also have descendant_error.
-    status: p.get('status') === 'ok' ? 'success' : (p.get('status') ?? ''),
+    // "Went on after a failed step" is a session status, applied through sessions.
+    status: p.get('status') === 'ok' ? 'success' : (STATUSES as readonly string[]).includes(p.get('status') ?? '') ? p.get('status')! : '',
     q: p.get('q') ?? '',
     clauses: decodeClauses(p.get('f')),
     expr,
@@ -108,28 +113,41 @@ function attrEq(key: string, value: string): Operation {
   }
 }
 
-/** The shared filter bar's chips as span filters (agent, model, tool, time). */
-export function sharedOps(f: FilterState): Operation[] {
+/**
+ * The shared filter bar's chips as span filters: agent, model and tool on
+ * each span (when listing spans; a trace matches them through any of its
+ * spans, see useTraceScope) and the time range.
+ */
+export function sharedOps(f: FilterState, time: TimeRange = 'all', perSpan = true): Operation[] {
   const ops: Operation[] = []
-  if (f.agent) ops.push(attrEq('gen_ai.agent.name', f.agent))
-  if (f.model) ops.push(attrEq('gen_ai.request.model', f.model))
-  if (f.tool) ops.push(attrEq('gen_ai.tool.name', f.tool))
-  const w = timeWindow(f, 'all')
+  if (perSpan && f.agent) ops.push(attrEq('gen_ai.agent.name', f.agent))
+  if (perSpan && f.model) ops.push(attrEq('gen_ai.request.model', f.model))
+  if (perSpan && f.tool) ops.push(attrEq('gen_ai.tool.name', f.tool))
+  const w = timeWindow(f, time)
   if (w.from) ops.push({ $gte: [{ $getField: 'started_at' }, { $literal: w.from }] })
   if (w.to) ops.push({ $lt: [{ $getField: 'started_at' }, { $literal: w.to }] })
   return ops
 }
 
-function buildRequest(s: ViewState, shared: FilterState = {}): { filter: CallsFilter; query?: Query; search?: string } {
+/** Never matches a trace id; stands for "no trace matched the session filters". */
+const NO_TRACE = 'no-matching-trace'
+
+function buildRequest(
+  s: ViewState,
+  shared: FilterState = {},
+  time: TimeRange = 'all',
+  traceIds: string[] | null = null,
+): { filter: CallsFilter; query?: Query; search?: string } {
   const filter: CallsFilter = {}
   if (s.roots) filter.trace_roots_only = true
+  if (traceIds) filter.trace_ids = traceIds.length ? traceIds : [NO_TRACE]
   if (s.op) filter.op_names = [s.op]
   const ops: Operation[] = []
   // Monitor scorers and server-side LLM calls are tagged internal; hide them unless asked.
   if (!s.system) ops.push({ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] })
   if (s.status) ops.push({ $eq: [{ $getField: 'summary.weft.status' }, { $literal: s.status }] })
   for (const c of s.clauses) if (clauseValid(c)) ops.push(clauseToOperation(c))
-  ops.push(...sharedOps(shared))
+  ops.push(...sharedOps(shared, time, !s.roots))
   if (s.expr) ops.push(s.expr)
   const query = ops.length ? { $expr: ops.length === 1 ? ops[0] : { $and: ops } } : undefined
   return { filter, query, search: s.q.trim() || undefined }
@@ -188,56 +206,24 @@ interface SavedViewDef {
   ui_params?: Record<string, string>
 }
 
-function SaveViewModal({ projectId, def, onClose, onSaved }: { projectId: string; def: SavedViewDef; onClose: () => void; onSaved: (id: string) => void }) {
-  const [label, setLabel] = useState('')
-  const qc = useQueryClient()
-  const save = useMutation({
-    mutationFn: async () => {
-      const id = slugify(label)
-      if (!id) throw new Error('Enter a name')
-      await api.objCreate(
-        projectId,
-        id,
-        { _class_name: 'SavedView', _bases: ['Object', 'BaseModel'], name: id, view_type: 'traces', label: label.trim(), definition: def },
-        'SavedView',
-      )
-      return id
-    },
-    onSuccess: (id) => {
-      void qc.invalidateQueries({ queryKey: ['objs', projectId, 'SavedView'] })
-      onSaved(id)
-    },
-  })
-  return (
-    <Modal
-      title="Save view"
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={!label.trim() || save.isPending} onClick={() => save.mutate()}>
-            Save
-          </button>
-        </>
-      }
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (label.trim()) save.mutate()
-        }}
-      >
-        <label className="field">
-          Name
-          <input className="input" autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Slow errors" />
-        </label>
-      </form>
-      <div className="small muted">Saves the current filters, search, sort and columns. Saving with an existing name creates a new version of that view.</div>
-      <ErrorBox error={save.error} />
-    </Modal>
-  )
+/** URL parameters of a Traces view saved before views moved into the filter bar. */
+export function legacyTraceView(o: Any): Record<string, string> | null {
+  const t = o.val?.view_type
+  if (t !== undefined && t !== 'traces') return null
+  const def: SavedViewDef = o.val?.definition ?? {}
+  // Views saved before Traces had a time range showed all time.
+  if (def.ui_params) return def.ui_params.time || def.ui_params.from || def.ui_params.to ? def.ui_params : { ...def.ui_params, time: 'all' }
+  const p: Record<string, string> = {}
+  if (def.filter?.trace_roots_only === false) p.roots = '0'
+  if (def.filter?.op_names?.[0]) p.op = def.filter.op_names[0]
+  if (def.sort_by?.[0]) p.sort = `${def.sort_by[0].field}:${def.sort_by[0].direction}`
+  if (def.cols?.length) p.cols = def.cols.join(',')
+  if (def.col_order?.length) p.order = encodeIds(def.col_order)
+  if (def.pinned_cols?.length) p.pin = encodeIds(def.pinned_cols)
+  if (def.search) p.q = def.search
+  if (def.query?.$expr) p.expr = JSON.stringify(def.query.$expr)
+  p.time = 'all'
+  return p
 }
 
 // ---------------------------------------------------------------- page
@@ -249,7 +235,17 @@ export function TracesPage() {
   const [params, setParams] = useSearchParams()
   const s = useMemo(() => parseState(params), [params])
   const shared = useMemo(() => parseFilters(params), [params])
-  const req = useMemo(() => buildRequest(s, shared), [s, shared])
+  // Last 24 hours by default, widening when that is empty (DESIGN.md §7.1 rule 6).
+  const widen = useWidenedTime(shared, DEFAULT_TIME, async (r) => (await api.callsQueryStats({ project_id: projectId, ...buildRequest(s, { ...shared, time: r }, r) })).count, [
+    projectId,
+    'traces',
+    JSON.stringify(buildRequest(s, { ...shared, time: 'all' }, 'all')),
+  ])
+  const time = widen.time
+  // Team, security, score and cost through sessions; agent, model and tool through any span of the trace.
+  const scope = useTraceScope(projectId, shared, time, s.roots, widen.ready)
+  const req = useMemo(() => buildRequest(s, shared, time, scope.traceIds), [s, shared, time, scope.traceIds])
+  const ready = widen.ready && scope.ready
 
   const update = useCallback(
     (patch: Record<string, string | null>, resetOffset = true) => {
@@ -284,12 +280,14 @@ export function TracesPage() {
         include_costs: true,
         include_feedback: true,
       }),
+    enabled: ready,
     placeholderData: keepPreviousData,
     refetchInterval,
   })
   const count = useQuery({
     queryKey: ['calls', projectId, 'count', req],
     queryFn: () => api.callsQueryStats({ project_id: projectId, ...req }),
+    enabled: ready,
     placeholderData: keepPreviousData,
     refetchInterval,
   })
@@ -300,11 +298,6 @@ export function TracesPage() {
     for (const o of opCounts.data?.ops ?? []) m.set(o.op_base_name, (m.get(o.op_base_name) ?? 0) + o.count)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [opCounts.data])
-  const views = useQuery({
-    queryKey: ['objs', projectId, 'SavedView', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['SavedView'], latest_only: true }, limit: 200 }),
-  })
-  const traceViews = (views.data?.objs ?? []).filter((o) => !o.deleted_at && (o.val?.view_type ?? 'traces') === 'traces')
 
   const rows = calls.data?.calls ?? []
   const total = count.data?.count ?? null
@@ -346,7 +339,7 @@ export function TracesPage() {
       return n
     })
 
-  const [modal, setModal] = useState<null | 'delete' | 'dataset' | 'saveView'>(null)
+  const [modal, setModal] = useState<null | 'delete' | 'dataset'>(null)
   // Server export, copy-as-code and add-to-dashboard modals.
   const [extraModal, setExtraModal] = useState<null | 'serverExport' | 'code' | 'chart'>(null)
   const serverInfo = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo, staleTime: 60_000 })
@@ -435,32 +428,9 @@ export function TracesPage() {
   }
   const sortArrow = (field: string) => (s.sort.field === field ? (s.sort.direction === 'desc' ? ' ↓' : ' ↑') : '')
 
-  const loadView = (o: Any) => {
-    const def: SavedViewDef = o.val?.definition ?? {}
-    if (def.ui_params) {
-      setParams(new URLSearchParams({ ...def.ui_params, view: o.object_id }), { replace: false })
-      return
-    }
-    const p: Record<string, string> = { view: o.object_id }
-    if (def.filter?.trace_roots_only === false) p.roots = '0'
-    if (def.filter?.op_names?.[0]) p.op = def.filter.op_names[0]
-    if (def.sort_by?.[0]) p.sort = `${def.sort_by[0].field}:${def.sort_by[0].direction}`
-    if (def.cols?.length) p.cols = def.cols.join(',')
-    if (def.col_order?.length) p.order = encodeIds(def.col_order)
-    if (def.pinned_cols?.length) p.pin = encodeIds(def.pinned_cols)
-    if (def.search) p.q = def.search
-    if (def.query?.$expr) p.expr = JSON.stringify(def.query.$expr)
-    setParams(new URLSearchParams(p))
-  }
-  const currentDef = (): SavedViewDef => {
-    const ui: Record<string, string> = {}
-    params.forEach((v, k) => {
-      if (k !== 'view' && k !== 'offset') ui[k] = v
-    })
-    return { filter: req.filter, query: req.query, sort_by: sortBy, cols: s.cols, col_order: s.order.length ? s.order : undefined, pinned_cols: s.pin.length ? s.pin : undefined, search: req.search, ui_params: ui }
-  }
-  const activeView = traceViews.find((v) => v.object_id === s.view)
-  const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots || shared.agent || shared.model || shared.tool || shared.time)
+  // Saved views also store the span query, for readers of the API.
+  const viewDefinition = () => ({ filter: req.filter, query: req.query, sort_by: sortBy, cols: s.cols, search: req.search })
+  const hasFilters = !!(s.op || s.status || s.q || s.clauses.length || s.expr || !s.roots || FILTER_PARAMS.some((k) => params.get(k)))
 
   const selCalls = [...selected.values()]
   const exportTargets = selCalls.length ? selCalls : rows
@@ -472,43 +442,11 @@ export function TracesPage() {
         <Link className="btn sm ghost" to={threadsUrl(projectId)} title="Spans grouped by thread id">
           Threads
         </Link>
-        <Dropdown label={<>{activeView ? (activeView.val?.label ?? activeView.object_id) : 'Saved views'} ▾</>} className="btn sm">
-          {(close) => (
-            <>
-              {traceViews.length === 0 && <div className="dd-note">No saved views yet.</div>}
-              {traceViews.map((v) => (
-                <MenuItem
-                  key={v.object_id}
-                  onClick={() => {
-                    loadView(v)
-                    close()
-                  }}
-                >
-                  <span className="grow">{v.val?.label ?? v.object_id}</span>
-                  {v.object_id === s.view && <span className="faint">✓</span>}
-                </MenuItem>
-              ))}
-              <div className="dd-sep" />
-              <MenuItem
-                onClick={() => {
-                  setModal('saveView')
-                  close()
-                }}
-              >
-                Save current view…
-              </MenuItem>
-              <MenuItem
-                disabled={!hasFilters && !s.view && !s.cols.length}
-                onClick={() => {
-                  setParams(new URLSearchParams())
-                  close()
-                }}
-              >
-                Reset to default
-              </MenuItem>
-            </>
-          )}
-        </Dropdown>
+        {(hasFilters || s.view || s.cols.length > 0) && (
+          <button className="btn sm ghost" onClick={() => setParams(new URLSearchParams())} title="Clear filters, columns and sort">
+            Reset view
+          </button>
+        )}
         <span className="spacer" />
         <span className="small muted">
           {total != null ? `${fmtNumber(total)} ${s.roots ? 'traces' : 'spans'}` : count.isLoading ? '' : ''}
@@ -530,7 +468,17 @@ export function TracesPage() {
         )}
       </div>
 
-      <FilterBar page="traces" defaultTime="all" showViews={false} placeholder="Filter spans…  try agent:researcher or tool:Bash" />
+      <FilterBar
+        page="traces"
+        defaultTime={DEFAULT_TIME}
+        effectiveTime={time}
+        viewKeys={VIEW_KEYS}
+        viewDefinition={viewDefinition}
+        legacyView={legacyTraceView}
+        placeholder="Filter traces…  try agent:researcher or tool:Bash"
+      />
+      {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => update({ time: DEFAULT_TIME })} />}
+      <ErrorBox error={scope.error} />
 
       {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
 
@@ -818,17 +766,6 @@ export function TracesPage() {
       )}
       {extraModal === 'chart' && (
         <AddToDashboardModal projectId={projectId} filter={req.filter} query={req.query} search={req.search} onClose={() => setExtraModal(null)} />
-      )}
-      {modal === 'saveView' && (
-        <SaveViewModal
-          projectId={projectId}
-          def={currentDef()}
-          onClose={() => setModal(null)}
-          onSaved={(id) => {
-            setModal(null)
-            update({ view: id }, false)
-          }}
-        />
       )}
     </div>
   )

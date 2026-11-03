@@ -16,12 +16,20 @@ function textOf(children: ReactNode): string {
   return ''
 }
 
+/** The guide /help opens with. */
+export const FIRST_GUIDE = 'setup.md'
+
 export function HelpPage() {
-  const { doc = 'README.md' } = useParams()
+  const { doc = FIRST_GUIDE } = useParams()
   const loc = useLocation()
   const navigate = useNavigate()
   const list = useQuery({ queryKey: ['help'], queryFn: helpApi.list, staleTime: Infinity })
   const page = useQuery({ queryKey: ['help', doc], queryFn: () => helpApi.read(doc), staleTime: Infinity })
+  const items = list.data?.items ?? []
+  const groups: [string, typeof items][] = [
+    ['Guides', items.filter((g) => g.kind !== 'reference')],
+    ['Reference', items.filter((g) => g.kind === 'reference')],
+  ]
 
   useEffect(() => {
     if (!page.data) return
@@ -72,16 +80,22 @@ export function HelpPage() {
         <button type="button" className="btn ghost sm" onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}>
           ← Back
         </button>
-        <h2 className="small muted">Guides</h2>
-        <ul>
-          {(list.data?.items ?? []).map((g) => (
-            <li key={g.name}>
-              <Link to={`/help/${g.name}`} aria-current={g.name === doc ? 'page' : undefined} className={g.name === doc ? 'active' : undefined}>
-                {g.title}
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {groups.map(([label, gs]) =>
+          gs.length ? (
+            <section key={label} aria-label={label}>
+              <h2 className="small muted">{label}</h2>
+              <ul>
+                {gs.map((g) => (
+                  <li key={g.name}>
+                    <Link to={`/help/${g.name}`} aria-current={g.name === doc ? 'page' : undefined} className={g.name === doc ? 'active' : undefined}>
+                      {g.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null,
+        )}
       </nav>
       <article className="help-doc markdown">
         {page.isLoading ? <Loading /> : page.error ? <ErrorBox error={page.error} /> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{page.data?.markdown ?? ''}</ReactMarkdown>}

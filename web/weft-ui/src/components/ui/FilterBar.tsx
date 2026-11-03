@@ -1,7 +1,9 @@
 // The one filter bar (DESIGN.md §7.1 rule 5) used on Sessions, Agents, Teams,
 // Security and Traces: the same chips, the same `key:value` syntax in the
 // text box, filters in the URL, and named views saved as SavedView objects
-// (falling back to this browser when the project is read-only).
+// (falling back to this browser when the project is read-only). Every page
+// applies every chip, on its own rows or through the sessions that match
+// (lib/filters.ts FILTER_SUPPORT), and says so under the chips.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -11,17 +13,19 @@ import { useProjectId } from '../../hooks/useProject'
 import {
   chipsOf,
   FILTER_KEY_LABEL,
+  FILTER_KEYS,
   FILTER_PARAMS,
   HAS_LABEL,
-  PAGE_FILTERS,
   parseFilters,
   parseFilterText,
   removeKey,
+  sessionScopeNote,
   STATUS_LABEL,
   TIME_LABEL,
   TIME_OPTIONS,
   writeFilters,
   type FilterKey,
+  type FilterPage,
   type FilterState,
   type HasFilter,
   type StatusFilter,
@@ -30,7 +34,7 @@ import {
 import { Icon } from './Icons'
 import { undoable, notify } from './Toasts'
 
-export type FilterPage = keyof typeof PAGE_FILTERS
+export type { FilterPage }
 
 export interface FilterOptions {
   agents?: string[]
@@ -93,7 +97,8 @@ function slug(s: string) {
   )
 }
 
-function useSavedViews(pid: string, page: FilterPage) {
+/** Saved views of a page; `legacy` turns views stored in an older shape into URL parameters. */
+function useSavedViews(pid: string, page: FilterPage, legacy?: (o: Any) => Record<string, string> | null) {
   const qc = useQueryClient()
   const viewType = `filters.${page}`
   const remote = useQuery({
@@ -104,19 +109,23 @@ function useSavedViews(pid: string, page: FilterPage) {
   const [local, setLocal] = useState<SavedView[]>(() => readLocalViews(pid, page))
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const views: SavedView[] = [
-    ...(remote.data?.objs ?? [])
-      .filter((o: Any) => !o.deleted_at && o.val?.view_type === viewType)
-      .map((o: Any) => ({ id: o.object_id as string, label: (o.val?.label as string) ?? o.object_id, params: (o.val?.definition?.ui_params ?? {}) as Record<string, string> })),
+    ...(remote.data?.objs ?? []).flatMap((o: Any): SavedView[] => {
+      if (o.deleted_at) return []
+      const label = (o.val?.label as string) ?? o.object_id
+      if (o.val?.view_type === viewType) return [{ id: o.object_id as string, label, params: (o.val?.definition?.ui_params ?? {}) as Record<string, string> }]
+      const params = legacy?.(o)
+      return params ? [{ id: o.object_id as string, label, params }] : []
+    }),
     ...local,
   ].filter((v) => !hidden.has(v.id))
 
-  const save = async (label: string, params: Record<string, string>) => {
+  const save = async (label: string, params: Record<string, string>, extra: Record<string, unknown> = {}) => {
     const id = `${page}-${slug(label)}`
     try {
       await api.objCreate(
         pid,
         id,
-        { _class_name: 'SavedView', _bases: ['Object', 'BaseModel'], name: id, view_type: viewType, label, definition: { ui_params: params } },
+        { _class_name: 'SavedView', _bases: ['Object', 'BaseModel'], name: id, view_type: viewType, label, definition: { ...extra, ui_params: params } },
         'SavedView',
       )
       await qc.invalidateQueries({ queryKey: ['objs', pid, 'SavedView'] })
@@ -161,11 +170,17 @@ export function FilterBar({
   options = {},
   placeholder,
   extra,
-  showViews = true,
+  viewKeys = [],
+  viewDefinition,
+  legacyView,
 }: {
   page: FilterPage
-  /** False where the page has its own saved views (Traces saves columns too). */
-  showViews?: boolean
+  /** Other URL parameters a saved view keeps on this page (Traces: columns, sort, …). */
+  viewKeys?: string[]
+  /** Extra fields stored in a saved view's definition, for API readers. */
+  viewDefinition?: () => Record<string, unknown>
+  /** Reads views saved in an older shape. */
+  legacyView?: (o: Any) => Record<string, string> | null
   defaultTime?: TimeRange
   /** The range actually shown after auto-widening (displayed in the time picker). */
   effectiveTime?: TimeRange
@@ -176,13 +191,14 @@ export function FilterBar({
   const pid = useProjectId()
   const [state, setState, params] = useFilters()
   const [, setParams] = useSearchParams()
-  const keys = PAGE_FILTERS[page]
+  const keys = FILTER_KEYS
   // Time has its own picker and text its own box, so neither repeats as a chip.
-  const chips = chipsOf(state, { defaultTime }).filter((c) => c.key !== 'time' && c.key !== 'q' && keys.includes(c.key))
+  const chips = chipsOf(state, { defaultTime }).filter((c) => c.key !== 'time' && c.key !== 'q')
+  const scopeNote = sessionScopeNote(page, state)
   const [editing, setEditing] = useState<FilterKey | null>(null)
   const [text, setText] = useState(state.q ?? '')
   useEffect(() => setText(state.q ?? ''), [state.q])
-  const { views, save, remove } = useSavedViews(pid, page)
+  const { views, save, remove } = useSavedViews(pid, page, legacyView)
   const [viewsOpen, setViewsOpen] = useState(false)
   const [naming, setNaming] = useState<string | null>(null)
   const currentView = params.get('view')
@@ -203,7 +219,7 @@ export function FilterBar({
   const timeValue: TimeRange = state.time ?? effectiveTime ?? defaultTime
   const filterParams = () => {
     const out: Record<string, string> = {}
-    for (const k of FILTER_PARAMS) {
+    for (const k of [...FILTER_PARAMS, ...viewKeys]) {
       const v = params.get(k)
       if (v) out[k] = v
     }
@@ -264,65 +280,67 @@ export function FilterBar({
             <Icon name="plus" size={13} /> Add filter
           </button>
         </div>
-        {showViews && (
-          <div className="dd">
-            <button type="button" className="btn sm ghost" aria-expanded={viewsOpen} aria-haspopup="true" onClick={() => setViewsOpen((o) => !o)}>
-              <Icon name="bookmark" size={13} /> {views.find((v) => v.id === currentView)?.label ?? 'Views'}
-            </button>
-            {viewsOpen && (
-              <div className="dd-menu right views-menu">
-                {views.length === 0 && <div className="dd-note">No saved views yet. Set some filters, then save them here.</div>}
-                {views.map((v) => (
-                  <div key={v.id} className="view-item">
-                    <button
-                      type="button"
-                      className="dd-item grow"
-                      onClick={() => {
-                        const next = writeFilters(parseFilters(new URLSearchParams(v.params)), params)
-                        next.set('view', v.id)
-                        next.delete('offset')
-                        setParams(next)
-                        setViewsOpen(false)
-                      }}
-                    >
-                      {v.label}
-                      {v.local && <span className="faint small"> (this browser)</span>}
-                    </button>
-                    <button type="button" className="icon-btn" aria-label={`Delete view ${v.label}`} onClick={() => remove(v)}>
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </div>
-                ))}
-                <div className="dd-sep" />
-                {naming == null ? (
-                  <button type="button" className="dd-item" disabled={!Object.keys(filterParams()).length} onClick={() => setNaming('')}>
-                    Save current filters as a view…
-                  </button>
-                ) : (
-                  <form
-                    className="row"
-                    style={{ padding: '4px 8px' }}
-                    onSubmit={async (e) => {
-                      e.preventDefault()
-                      if (!naming.trim()) return
-                      const id = await save(naming.trim(), filterParams())
-                      setNaming(null)
+        <div className="dd">
+          <button type="button" className="btn sm ghost" aria-expanded={viewsOpen} aria-haspopup="true" onClick={() => setViewsOpen((o) => !o)}>
+            <Icon name="bookmark" size={13} /> {views.find((v) => v.id === currentView)?.label ?? 'Views'}
+          </button>
+          {viewsOpen && (
+            <div className="dd-menu right views-menu">
+              {views.length === 0 && <div className="dd-note">No saved views yet. Set some filters, then save them here.</div>}
+              {views.map((v) => (
+                <div key={v.id} className="view-item">
+                  <button
+                    type="button"
+                    className="dd-item grow"
+                    onClick={() => {
+                      const next = writeFilters(parseFilters(new URLSearchParams(v.params)), params)
+                      for (const k of viewKeys) {
+                        if (v.params[k]) next.set(k, v.params[k])
+                        else next.delete(k)
+                      }
+                      next.set('view', v.id)
+                      next.delete('offset')
+                      setParams(next)
                       setViewsOpen(false)
-                      const next = new URLSearchParams(params)
-                      next.set('view', id)
-                      setParams(next, { replace: true })
                     }}
                   >
-                    <input className="input grow" autoFocus aria-label="View name" placeholder="View name" value={naming} onChange={(e) => setNaming(e.target.value)} />
-                    <button className="btn sm primary" type="submit" disabled={!naming.trim()}>
-                      Save
-                    </button>
-                  </form>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+                    {v.label}
+                    {v.local && <span className="faint small"> (this browser)</span>}
+                  </button>
+                  <button type="button" className="icon-btn" aria-label={`Delete view ${v.label}`} onClick={() => remove(v)}>
+                    <Icon name="trash" size={13} />
+                  </button>
+                </div>
+              ))}
+              <div className="dd-sep" />
+              {naming == null ? (
+                <button type="button" className="dd-item" disabled={!Object.keys(filterParams()).length} onClick={() => setNaming('')}>
+                  Save current filters as a view…
+                </button>
+              ) : (
+                <form
+                  className="row"
+                  style={{ padding: '4px 8px' }}
+                  onSubmit={async (e) => {
+                    e.preventDefault()
+                    if (!naming.trim()) return
+                    const id = await save(naming.trim(), filterParams(), viewDefinition?.())
+                    setNaming(null)
+                    setViewsOpen(false)
+                    const next = new URLSearchParams(params)
+                    next.set('view', id)
+                    setParams(next, { replace: true })
+                  }}
+                >
+                  <input className="input grow" autoFocus aria-label="View name" placeholder="View name" value={naming} onChange={(e) => setNaming(e.target.value)} />
+                  <button className="btn sm primary" type="submit" disabled={!naming.trim()}>
+                    Save
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+        </div>
         {extra}
       </div>
       {(chips.length > 0 || state.time === 'custom') && (
@@ -358,6 +376,11 @@ export function FilterBar({
           )}
         </ul>
       )}
+      {scopeNote && (
+        <p className="filter-scope-note small muted" role="note">
+          <Icon name="info" size={13} /> {scopeNote}
+        </p>
+      )}
       {editing && (
         <FilterEditor
           keys={[...addable, ...(keys.includes('q') ? (['q'] as FilterKey[]) : []), ...(editing === 'time' ? (['time'] as FilterKey[]) : [])]}
@@ -372,8 +395,8 @@ export function FilterBar({
         />
       )}
       <p id="filter-syntax-help" className="sr-only">
-        Type text to search. You can also type filters such as agent:name, team:id, status:failed, has:block, has:approval, score&lt;0.5, model:name, tool:name, time:7d and press
-        Enter.
+        Type text to search. You can also type filters such as agent:name, team:id, status:failed, status:failed_step, has:block, has:approval, has:flagged, score&lt;0.5,
+        model:name, tool:name, cost&gt;0.1, time:7d and press Enter.
       </p>
     </div>
   )

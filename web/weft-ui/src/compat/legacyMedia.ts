@@ -1,19 +1,26 @@
-// Media values in the encoding of the official weave client, which only
-// reaches Weft through the compatibility adapter (docs/weft/COMPATIBILITY.md).
-// Values it stored keep that encoding, so the UI renders them:
+// COMPATIBILITY ONLY: media in the encoding of the other product's client
+// (docs/weft/DESIGN.md §8). That client writes to Weft only through the
+// compatibility adapter (--weave-compat, docs/weft/COMPATIBILITY.md), and the
+// values it stored keep their encoding, so the UI still has to render them.
+// Nothing in Weft writes this encoding: the Weft SDKs use {_type: "Image" |
+// "Audio" | "Content" | …} (components/media/mediaUtils.ts). mediaUtils calls
+// in here only for a value tagged with LEGACY_MEDIA_TYPE.
 //
-//   {_type: "CustomWeaveType", weave_type: {type}, files: {...}, val?}
+//   {_type: LEGACY_MEDIA_TYPE, weave_type: {type}, files: {...}, val?}
 //   PIL.Image.Image → image.<ext>, wave.Wave_read / Audio → audio.<ext>, VideoFileClip → video.<ext>,
 //   *.Content → content + metadata.json, rich Markdown → val.markup | markup.md
-import { kindFromMime, mimeFromFilename, type MediaKind, type MediaSpec } from './mediaUtils'
+import { kindFromMime, mimeFromFilename, type MediaKind, type MediaSpec } from '../components/media/mediaUtils'
 
-/** The client's custom-type tag. */
-export const CLIENT_CUSTOM_TYPE = 'CustomWeaveType'
+/** The tag of that encoding; a value without it never reaches this module. */
+export const LEGACY_MEDIA_TYPE = 'CustomWeaveType'
 
-/** A media spec for a client custom type, null for one that is not media,
- * undefined for any other value. */
-export function detectClientType(o: Record<string, unknown>): MediaSpec | null | undefined {
-  if (o._type !== CLIENT_CUSTOM_TYPE) return undefined
+/** True when `o` is a media value in the legacy client encoding. */
+export function isLegacyMedia(o: Record<string, unknown>): boolean {
+  return o._type === LEGACY_MEDIA_TYPE
+}
+
+/** The media spec of a legacy-encoded value, or null when it is not media (an op, a model, …). */
+export function decodeLegacyMedia(o: Record<string, unknown>): MediaSpec | null {
   return detectCustomType(o)
 }
 

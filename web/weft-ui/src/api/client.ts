@@ -207,7 +207,7 @@ export const api = {
     runnable_ref?: string
     call_ref?: string
     trigger_ref?: string
-  }) => post<{ id: string; created_at: string; wb_user_id: string; payload: Any }>('/feedback/create', req),
+  }) => post<{ id: string; created_at: string; user_id: string; payload: Any }>('/feedback/create', req),
   feedbackQuery: (req: { project_id: string; query?: Query; sort_by?: SortBy[]; limit?: number; offset?: number }) =>
     post<{ result: Feedback[] }>('/feedback/query', req),
   feedbackPurge: (project_id: string, id: string) =>

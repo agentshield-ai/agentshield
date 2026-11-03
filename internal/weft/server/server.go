@@ -465,7 +465,7 @@ func (s *Server) prepareStart(ctx context.Context, r *http.Request, st *store.Ca
 	if st.StartedAt == "" {
 		st.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	st.WBUserID = userFrom(r, st.WBUserID)
+	st.UserID = userFrom(r, st.UserID)
 	if st.TraceID == "" && st.ParentID != nil && *st.ParentID != "" {
 		if pid, err := project(st.ProjectID); err == nil {
 			if p, err := s.store.GetCall(ctx, pid, *st.ParentID, false, false, false); err == nil {
@@ -693,7 +693,7 @@ type callsScoreReq struct {
 	ProjectID  string   `json:"project_id"`
 	CallIDs    []string `json:"call_ids"`
 	ScorerRefs []string `json:"scorer_refs"`
-	WBUserID   *string  `json:"wb_user_id"`
+	UserID     *string  `json:"user_id"`
 }
 
 func (s *Server) callsScore(ctx context.Context, r *http.Request, req *callsScoreReq) (any, error) {
@@ -701,7 +701,7 @@ func (s *Server) callsScore(ctx context.Context, r *http.Request, req *callsScor
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.engine.ScoreCalls(ctx, pid, req.CallIDs, req.ScorerRefs, userFrom(r, req.WBUserID))
+	res, err := s.engine.ScoreCalls(ctx, pid, req.CallIDs, req.ScorerRefs, userFrom(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}
@@ -737,7 +737,7 @@ type objCreateReq struct {
 		ObjectID           string          `json:"object_id"`
 		Val                json.RawMessage `json:"val"`
 		BuiltinObjectClass string          `json:"builtin_object_class"`
-		WBUserID           *string         `json:"wb_user_id"`
+		UserID             *string         `json:"user_id"`
 	} `json:"obj"`
 }
 
@@ -750,7 +750,7 @@ func (s *Server) objCreate(ctx context.Context, r *http.Request, req *objCreateR
 	if len(o.Val) == 0 || string(o.Val) == "null" {
 		return nil, store.Invalidf("val is required")
 	}
-	d, v, err := s.store.CreateObjectRaw(ctx, pid, o.ObjectID, nil, o.Val, o.BuiltinObjectClass, userFrom(r, o.WBUserID))
+	d, v, err := s.store.CreateObjectRaw(ctx, pid, o.ObjectID, nil, o.Val, o.BuiltinObjectClass, userFrom(r, o.UserID))
 	if err != nil {
 		return nil, err
 	}
@@ -932,12 +932,12 @@ func (s *Server) fileContent(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- feedback
 
 func (s *Server) feedbackCreate(ctx context.Context, r *http.Request, req *store.FeedbackCreate) (any, error) {
-	req.WBUserID = userFrom(r, req.WBUserID)
+	req.UserID = userFrom(r, req.UserID)
 	f, err := s.store.CreateFeedback(ctx, *req)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload}, nil
+	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload}, nil
 }
 
 // feedbackBatchReq is the body of /feedback/batch/create. The scorer_* and
@@ -952,12 +952,12 @@ func (s *Server) feedbackBatchCreate(ctx context.Context, r *http.Request, req *
 	}
 	res := make([]any, 0, len(req.Batch))
 	for _, b := range req.Batch {
-		b.WBUserID = userFrom(r, b.WBUserID)
+		b.UserID = userFrom(r, b.UserID)
 		f, err := s.store.CreateAgentFeedback(ctx, b)
 		if err != nil {
 			return nil, err
 		}
-		res = append(res, map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload})
+		res = append(res, map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload})
 	}
 	return map[string]any{"res": res}, nil
 }
@@ -997,12 +997,12 @@ type feedbackReplaceReq struct {
 }
 
 func (s *Server) feedbackReplace(ctx context.Context, r *http.Request, req *feedbackReplaceReq) (any, error) {
-	req.WBUserID = userFrom(r, req.WBUserID)
+	req.UserID = userFrom(r, req.UserID)
 	f, err := s.store.ReplaceFeedback(ctx, req.FeedbackID, req.FeedbackCreate)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "wb_user_id": f.WBUserID, "payload": f.Payload}, nil
+	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload}, nil
 }
 
 // ---------------------------------------------------------------- costs
@@ -1220,11 +1220,11 @@ type evaluateReq struct {
 	ProjectID     string  `json:"project_id"`
 	EvaluationRef string  `json:"evaluation_ref"`
 	ModelRef      string  `json:"model_ref"`
-	WBUserID      *string `json:"wb_user_id"`
+	UserID        *string `json:"user_id"`
 }
 
 func (s *Server) evaluateModel(ctx context.Context, r *http.Request, req *evaluateReq) (any, error) {
-	id, err := s.engine.EvaluateModel(ctx, req.ProjectID, req.EvaluationRef, req.ModelRef, userFrom(r, req.WBUserID))
+	id, err := s.engine.EvaluateModel(ctx, req.ProjectID, req.EvaluationRef, req.ModelRef, userFrom(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}

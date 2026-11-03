@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// API endpoints live at the server root (Weave-style trace server paths).
+// The API lives at the server root (/call/, /calls/, /api/v1/, /otel/, ...).
 // In dev, proxy them to a locally running `weft` server.
 const target = process.env.WEFT_SERVER_URL ?? 'http://localhost:6345'
 const apiPrefixes = [

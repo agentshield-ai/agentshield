@@ -6,7 +6,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type SessionSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { computeAttention, type AttentionCard } from '../../lib/attention'
-import { filterQueryString, isEmptyFilter, sessionMatchesClientFilters, sessionsParams, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
+import { filterQueryString, isEmptyFilter, needsClientFilter, sessionMatchesClientFilters, sessionsParams, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
 import { sessionsUrl } from '../../lib/urls'
 import { ErrorBox } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
@@ -40,7 +40,7 @@ export function SessionsPage() {
       A <strong>session</strong> is one conversation with your agents, from the user's first request to the final answer, including every hand-off between agents, their reasoning
       and their tool calls. The cards at the top count the sessions that need a look; click one to list them. Open a session to see exactly what happened, step by step.
     </>,
-    'DESIGN.md#7-ui',
+    'sessions.md',
   )
 
   const serverNoTime = sessionsParams({ ...state, time: 'all', from: undefined, to: undefined }, 'all')
@@ -51,9 +51,11 @@ export function SessionsPage() {
   ])
   const time = widen.time
   const server = sessionsParams(state, time)
+  // Filters the server cannot apply are applied here, so fetch every match (up to 1000) and page locally.
+  const clientFiltered = needsClientFilter(state)
   const list = useQuery({
-    queryKey: ['v1', pid, 'sessions', server, sort.field, limit],
-    queryFn: () => v1.sessions(pid, { ...server, sort_by: sort.field, limit }),
+    queryKey: ['v1', pid, 'sessions', server, sort.field, clientFiltered ? 'all' : limit],
+    queryFn: () => v1.sessions(pid, { ...server, sort_by: sort.field, limit: clientFiltered ? 1000 : limit }),
     enabled: widen.ready,
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
@@ -74,9 +76,10 @@ export function SessionsPage() {
   const filterOptions = useMemo(() => optionsFrom(pool.data?.items ?? []), [pool.data])
   const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000 })
 
-  const rows = (list.data?.items ?? []).filter((s) => sessionMatchesClientFilters(s, state))
-  const clientFiltered = !!state.scoreBelow && !state.scoreBelow.scorer
-  const cards = computeAttention(pool.data?.items ?? [])
+  const matching = (list.data?.items ?? []).filter((s) => sessionMatchesClientFilters(s, state))
+  const total = clientFiltered ? matching.length : (list.data?.total_count ?? 0)
+  const rows = matching.slice(0, limit)
+  const cards = computeAttention((pool.data?.items ?? []).filter((s) => sessionMatchesClientFilters(s, state)))
   const projectEmpty = anyData.data?.total_count === 0
   const filtered = !isEmptyFilter(state, DEFAULT_TIME)
 
@@ -119,9 +122,7 @@ export function SessionsPage() {
             <div className="row wrap" style={{ justifyContent: 'space-between' }}>
               <h2 id="list-h" className="section-title">
                 {filtered ? 'Matching sessions' : 'Recent sessions'}{' '}
-                <span className="faint small">
-                  {list.data ? `${clientFiltered ? rows.length : list.data.total_count} session${(clientFiltered ? rows.length : list.data.total_count) === 1 ? '' : 's'}` : ''}
-                </span>
+                <span className="faint small">{list.data ? `${total} session${total === 1 ? '' : 's'}` : ''}</span>
               </h2>
               <label className="row small muted">
                 Sort
@@ -160,9 +161,9 @@ export function SessionsPage() {
             ) : (
               <>
                 <SessionList projectId={pid} sessions={rows} />
-                {list.data && list.data.total_count > limit && (
+                {total > limit && (
                   <button className="btn" onClick={() => setLimit((l) => l + PAGE)} style={{ alignSelf: 'center' }}>
-                    Show more ({list.data.total_count - limit} more)
+                    Show more ({total - limit} more)
                   </button>
                 )}
               </>

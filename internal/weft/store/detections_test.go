@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -527,5 +528,165 @@ func TestCorrelationSubAgentToolCall(t *testing.T) {
 	mustUpsert(t, s, det("evt-near", "s1", "Task", "", "block", 2*time.Second))
 	if d := getDet(t, s, "evt-near"); d.SpanID != nil && (spanOf(d) == "root" || spanOf(d) == "task-1") {
 		t.Fatalf("time link to an agent span: %q", spanOf(d))
+	}
+}
+
+// replayEngineSpan is an engine evaluate span as an engine exports it for
+// one of Weft's remote replay requests.
+func replayEngineSpan(id, eventID, session string, replayAttr bool) CompleteCall {
+	attrs := map[string]any{"event.id": eventID, "gen_ai.conversation.id": session, "session.id": session,
+		"gen_ai.tool.name": "Bash", "gen_ai.agent.name": "coder", "agentshield.verdict.action": "block",
+		"agentshield.verdict.mode": "shadow", "agentshield.rule_ids": []any{"r-pipe"}}
+	if replayAttr {
+		attrs["agentshield.replay"] = true
+	}
+	return CompleteCall{Start: CallStart{ProjectID: proj, ID: id, TraceID: "rt-" + id, OpName: "evaluate", StartedAt: detTS(2 * time.Second),
+		Attributes: map[string]any{"otel": map[string]any{"scope": map[string]any{"name": "agentshield"}, "attributes": attrs}}},
+		End: &CallEnd{EndedAt: detTS(2*time.Second + time.Millisecond), Summary: map[string]any{}}}
+}
+
+// Remote replay sends re-evaluations to an engine that exports its spans to
+// Weft. They must not become live detections, sessions or agents.
+func TestReplayEvaluationSpansAreNotLiveData(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	putSpans(t, s, agentRoot("root", "t1", "s1", "coder", 0), toolSpan("tool-1", "t1", "root", "", "Bash", "", "", time.Second))
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{
+		replayEngineSpan("rp-1", "weft-replay-job1-0", "weft-replay:job1:s1", true),
+		replayEngineSpan("rp-2", "weft-replay-job1-1", "weft-replay:job1:s1", false), // engine without the flag
+		replayEngineSpan("rp-3", "evt-x", "weft-replay:job1:s1", false),
+		replayEngineSpan("rp-4", "evt-y", "s1", true), // flagged, ids not namespaced
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if items, total, err := s.QueryDetections(ctx, DetectionQuery{ProjectID: proj, Limit: 100}); err != nil || total != 0 {
+		t.Fatalf("replay evaluations stored as detections: %d %+v %v", total, items, err)
+	}
+	sessions, total, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || sessions[0].SessionID != "s1" {
+		t.Fatalf("sessions = %d %+v", total, sessions)
+	}
+	if sessions[0].SpanCount != 2 {
+		t.Errorf("replay spans counted in the live session: %+v", sessions[0])
+	}
+	if _, err := s.GetAgentSession(ctx, proj, "weft-replay:job1:s1"); err != ErrNotFound {
+		t.Errorf("phantom replay session: %v", err)
+	}
+	// The spans themselves are still stored (raw Traces view).
+	if _, err := s.GetCall(ctx, proj, "rp-1", false, false, false); err != nil {
+		t.Errorf("replay span not stored: %v", err)
+	}
+	if IsReplayEvaluation("evt-1", "s1") || !IsReplayEvaluation("weft-replay-j-1", "") || !IsReplayEvaluation("", "weft-replay:j:s") {
+		t.Error("IsReplayEvaluation")
+	}
+}
+
+// verdictSpan is an engine evaluate span for session at offset.
+func verdictSpan(id, eventID, session, toolCallID string, at time.Duration) CompleteCall {
+	return CompleteCall{Start: CallStart{ProjectID: proj, ID: id, TraceID: "vt-" + id, OpName: "evaluate", StartedAt: detTS(at),
+		Attributes: map[string]any{"otel": map[string]any{"scope": map[string]any{"name": "agentshield"}, "attributes": map[string]any{
+			"event.id": eventID, "gen_ai.conversation.id": session, "gen_ai.tool.name": "Bash", "gen_ai.tool.call.id": toolCallID,
+			"agentshield.verdict.action": "block", "agentshield.verdict.mode": "enforce"}}}},
+		End: &CallEnd{EndedAt: detTS(at + time.Millisecond), Summary: map[string]any{}}}
+}
+
+// A verdict that arrives long after the session's spans must not stretch
+// the session: started_at, last_activity and duration come from its spans.
+func TestSessionTimesIgnoreVerdicts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	putSpans(t, s, agentRoot("root", "t1", "s1", "coder", 0), toolSpan("tool-1", "t1", "root", "", "Bash", "toolu_1", "", 0))
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{
+		verdictSpan("v-early", "evt-0", "s1", "toolu_1", -10*time.Second),
+		verdictSpan("v-late", "evt-1", "s1", "toolu_1", 35*time.Second),
+		verdictSpan("v-only", "evt-2", "s-verdicts-only", "", 40*time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mustUpsert(t, s, det("evt-push", "s1", "Bash", "toolu_1", "block", 50*time.Second))
+	ss, err := s.GetAgentSession(ctx, proj, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(d time.Duration) string { return *microsPtr(Micros(detBase.Add(d))) }
+	if ss.DurationMS != 1000 || *ss.StartedAt != at(0) || *ss.LastActivity != at(time.Second) {
+		t.Fatalf("session times include verdicts: started %v last %v duration %d", *ss.StartedAt, *ss.LastActivity, ss.DurationMS)
+	}
+	l, _, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, SortBy: "session_id"})
+	if err != nil || len(l) != 2 || l[0].SessionID != "s-verdicts-only" || l[1].DurationMS != 1000 {
+		t.Fatalf("list = %+v %v", l, err)
+	}
+	// A session seen only through verdicts still has times.
+	if l[0].StartedAt == nil || *l[0].StartedAt != at(40*time.Second) {
+		t.Errorf("verdict-only session started_at = %v", l[0].StartedAt)
+	}
+	// Time filters use the session's own activity.
+	l, _, err = s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, From: detTS(30 * time.Second)})
+	if err != nil || len(l) != 1 || l[0].SessionID != "s-verdicts-only" {
+		t.Fatalf("from filter matched a session by its verdict time: %+v %v", l, err)
+	}
+}
+
+// The detection rate is flagged tool calls / tool calls, the same in the
+// agents API and the Security stats, and never above 1: verdicts in a
+// session Weft has no spans for, several verdicts on one tool call and
+// allow verdicts do not inflate it.
+func TestDetectionRateIsFlaggedToolCallsOverToolCalls(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	putSpans(t, s, agentRoot("root", "t1", "s1", "installer", 0),
+		toolSpan("a", "t1", "root", "", "Bash", "tc1", "", 0), toolSpan("b", "t1", "root", "", "Bash", "tc2", "", time.Second),
+		toolSpan("c", "t1", "root", "", "Read", "tc3", "", 2*time.Second))
+	var in []DetectionInput
+	for i := 0; i < 6; i++ { // a session without recorded spans
+		d := det(fmt.Sprintf("orphan-%d", i), "appr-sess", "Bash", "", "require_approval", time.Duration(i)*time.Second)
+		d.AgentName = "installer"
+		in = append(in, d)
+	}
+	for _, d := range []DetectionInput{
+		det("x1", "s1", "Bash", "tc1", "block", 0, critRule),
+		det("x2", "s1", "Bash", "tc1", "require_approval", 10*time.Millisecond), // same tool call again
+		det("x3", "s1", "Read", "tc3", "allow", 2*time.Second),                  // allow is not flagged
+		det("x4", "s1", "Bash", "tc2", "log", time.Second),
+	} {
+		d.AgentName = "installer"
+		in = append(in, d)
+	}
+	mustUpsert(t, s, in...)
+
+	a, err := s.GetAgentV1(ctx, proj, "installer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.DetectionRate == nil || *a.DetectionRate != 0.6667 || a.FlaggedToolCalls != 2 || a.ToolCallCount != 3 {
+		t.Fatalf("agent detection rate = %v (flagged %d of %d)", a.DetectionRate, a.FlaggedToolCalls, a.ToolCallCount)
+	}
+	st, err := s.DetectionStatsFor(ctx, DetectionQuery{ProjectID: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row *AgentCount
+	for i := range st.ByAgent {
+		if st.ByAgent[i].Agent == "installer" {
+			row = &st.ByAgent[i]
+		}
+	}
+	if row == nil || row.Rate == nil || *row.Rate != *a.DetectionRate || row.FlaggedToolCalls != 2 || row.ToolCalls != 3 || row.Count != 10 {
+		t.Fatalf("security stats row = %+v", row)
+	}
+	// Filters on the verdicts narrow the flagged calls, not the tool calls.
+	st, _ = s.DetectionStatsFor(ctx, DetectionQuery{ProjectID: proj, Actions: []string{"block"}})
+	for _, r := range st.ByAgent {
+		if r.Agent == "installer" && (r.FlaggedToolCalls != 1 || r.ToolCalls != 3) {
+			t.Errorf("block-only row = %+v", r)
+		}
+	}
+	// An agent with tool calls and no verdicts has a rate of 0.
+	putSpans(t, s, agentRoot("root2", "t2", "s2", "quiet", 0), toolSpan("q", "t2", "root2", "", "Bash", "tq", "", 0))
+	if q, err := s.GetAgentV1(ctx, proj, "quiet"); err != nil || q.DetectionRate == nil || *q.DetectionRate != 0 {
+		t.Errorf("quiet agent rate = %v %v", q.DetectionRate, err)
 	}
 }

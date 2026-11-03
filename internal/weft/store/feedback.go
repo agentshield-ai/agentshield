@@ -18,7 +18,7 @@ type Feedback struct {
 	Payload       any     `json:"payload"`
 	Creator       *string `json:"creator"`
 	CreatedAt     string  `json:"created_at"`
-	WBUserID      *string `json:"wb_user_id"`
+	UserID        *string `json:"user_id"`
 	AnnotationRef *string `json:"annotation_ref"`
 	RunnableRef   *string `json:"runnable_ref"`
 	CallRef       *string `json:"call_ref"`
@@ -36,7 +36,7 @@ type FeedbackCreate struct {
 	FeedbackType  string  `json:"feedback_type"`
 	Payload       any     `json:"payload"`
 	Creator       *string `json:"creator"`
-	WBUserID      *string `json:"wb_user_id"`
+	UserID        *string `json:"user_id"`
 	AnnotationRef *string `json:"annotation_ref"`
 	RunnableRef   *string `json:"runnable_ref"`
 	CallRef       *string `json:"call_ref"`
@@ -88,14 +88,14 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 	if len(payload) > 1<<20 {
 		return nil, Invalidf("payload too large")
 	}
-	user := f.WBUserID
+	user := f.UserID
 	if user == nil {
 		u := "anonymous"
 		user = &u
 	}
 	fb := &Feedback{
 		ID: feedbackID(f.ID), ProjectID: pid, Ref: f.Ref, FeedbackType: f.FeedbackType,
-		Payload: decodeJSON(payload), Creator: f.Creator, WBUserID: user,
+		Payload: decodeJSON(payload), Creator: f.Creator, UserID: user,
 		AnnotationRef: normRefPtr(f.AnnotationRef), RunnableRef: normRefPtr(f.RunnableRef),
 		CallRef: normRefPtr(f.CallRef), TriggerRef: normRefPtr(f.TriggerRef),
 	}
@@ -111,9 +111,9 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 		if err := s.touchProject(ctx, tx, pid); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO feedback(id, project_id, ref, feedback_type, payload, creator, created_at, wb_user_id,
+		_, err := tx.ExecContext(ctx, `INSERT INTO feedback(id, project_id, ref, feedback_type, payload, creator, created_at, user_id,
 			annotation_ref, runnable_ref, call_ref, trigger_ref, queue_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			fb.ID, pid, fb.Ref, fb.FeedbackType, payload, nullStr(fb.Creator), now, nullStr(fb.WBUserID),
+			fb.ID, pid, fb.Ref, fb.FeedbackType, payload, nullStr(fb.Creator), now, nullStr(fb.UserID),
 			nullStr(fb.AnnotationRef), nullStr(fb.RunnableRef), nullStr(fb.CallRef), nullStr(fb.TriggerRef), nullStr(fb.QueueID))
 		return err
 	})
@@ -125,7 +125,7 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 }
 
 var feedbackColumns = map[string]bool{
-	"id": true, "ref": true, "feedback_type": true, "creator": true, "wb_user_id": true,
+	"id": true, "ref": true, "feedback_type": true, "creator": true, "user_id": true,
 	"annotation_ref": true, "runnable_ref": true, "call_ref": true, "trigger_ref": true, "project_id": true, "queue_id": true,
 }
 
@@ -147,7 +147,7 @@ func feedbackFieldResolver(path string) (string, []any, bool, error) {
 	return "", nil, false, unknownField(path)
 }
 
-const feedbackSelect = `SELECT f.id, f.project_id, f.ref, f.feedback_type, f.payload, f.creator, f.created_at, f.wb_user_id,
+const feedbackSelect = `SELECT f.id, f.project_id, f.ref, f.feedback_type, f.payload, f.creator, f.created_at, f.user_id,
 	f.annotation_ref, f.runnable_ref, f.call_ref, f.trigger_ref, f.queue_id FROM feedback f`
 
 func scanFeedback(rows *sql.Rows) (Feedback, error) {
@@ -160,7 +160,7 @@ func scanFeedback(rows *sql.Rows) (Feedback, error) {
 	}
 	f.Payload = decodeJSON(payload)
 	f.CreatedAt = FormatMicros(created)
-	f.Creator, f.WBUserID, f.AnnotationRef, f.RunnableRef, f.CallRef, f.TriggerRef =
+	f.Creator, f.UserID, f.AnnotationRef, f.RunnableRef, f.CallRef, f.TriggerRef =
 		strPtr(creator), strPtr(user), strPtr(ann), strPtr(run), strPtr(call), strPtr(trig)
 	f.QueueID = strPtr(queue)
 	return f, nil

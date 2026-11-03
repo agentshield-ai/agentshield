@@ -34,7 +34,7 @@ type agentSpan struct {
 	InCost, OutCost                             float64 // InCost includes the cache costs below
 	CacheReadCost, CacheWCost                   float64
 	HasCost                                     bool
-	WBUserID, WBRunID                           string
+	UserID, RunID                               string
 	ParentCallID, ParentCallTraceID             string // weft.parent_call.*: the op this span was emitted from
 	IsInvocation                                bool
 	attrsJSON                                   string
@@ -73,7 +73,7 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 	cols := `s.id, s.trace_id, COALESCE(s.parent_id, ''), s.operation_name, s.span_name, s.own_agent, s.agent_name, s.agent_id,
 		s.agent_version, s.agent_description, s.conversation_id, s.conversation_name, s.is_turn, s.tool_name, s.tool_call_id,
 		s.request_model, s.response_model, s.provider_name, c.op_name, COALESCE(c.display_name, ''), c.started_at, c.ended_at,
-		c.exception, c.summary, c.rollup, c.cumulative, COALESCE(c.wb_user_id, ''), COALESCE(c.wb_run_id, ''),
+		c.exception, c.summary, c.rollup, c.cumulative, COALESCE(c.user_id, ''), COALESCE(c.run_id, ''),
 		` + parentCallCol("id") + `, ` + parentCallCol("trace_id")
 	if f.WithAttrs {
 		cols += ", c.attributes"
@@ -127,7 +127,7 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 		dest := []any{&sp.ID, &sp.TraceID, &sp.ParentID, &sp.Op, &sp.SpanName, &sp.OwnAgent, &sp.AgentName, &sp.AgentID,
 			&sp.AgentVersion, &sp.AgentDesc, &sp.ConvID, &sp.ConvName, &sp.IsTurn, &sp.ToolName, &sp.ToolCallID,
 			&sp.RequestModel, &sp.ResponseModel, &sp.Provider, &sp.OpName, &sp.DisplayName, &started, &ended,
-			&exc, &summary, &rollup, &cum, &sp.WBUserID, &sp.WBRunID, &sp.ParentCallID, &sp.ParentCallTraceID}
+			&exc, &summary, &rollup, &cum, &sp.UserID, &sp.RunID, &sp.ParentCallID, &sp.ParentCallTraceID}
 		if f.WithAttrs {
 			dest = append(dest, &sp.attrsJSON)
 		}
@@ -254,7 +254,7 @@ var agentStringFields = map[string]bool{"span_id": true, "trace_id": true, "pare
 	"span_name": true, "display_name": true, "agent_name": true, "agent_id": true, "agent_version": true, "agent_description": true,
 	"conversation_id": true, "conversation_name": true, "tool_name": true, "tool_call_id": true, "request_model": true,
 	"response_model": true, "provider_name": true, "status_code": true, "status_message": true, "error_type": true,
-	"wb_user_id": true, "wb_run_id": true, "started_at": true, "ended_at": true, "parent_call_id": true, "parent_call_trace_id": true}
+	"user_id": true, "run_id": true, "started_at": true, "ended_at": true, "parent_call_id": true, "parent_call_trace_id": true}
 
 var agentBoolFields = map[string]bool{"is_turn": true, "is_error": true, "is_invocation": true, "is_agent": true, "is_llm": true, "is_tool": true}
 
@@ -387,10 +387,10 @@ func (sp *agentSpan) field(key string) any {
 		return sp.Op == OpChat
 	case "is_tool":
 		return sp.Op == OpExecuteTool
-	case "wb_user_id":
-		return optStr(sp.WBUserID)
-	case "wb_run_id":
-		return optStr(sp.WBRunID)
+	case "user_id":
+		return optStr(sp.UserID)
+	case "run_id":
+		return optStr(sp.RunID)
 	}
 	for _, src := range []string{"custom_attrs_string", "custom_attrs_int", "custom_attrs_float", "custom_attrs_bool"} {
 		if strings.HasPrefix(key, src+".") {
@@ -1365,8 +1365,8 @@ type AgentSpan struct {
 	ToolType                 *string            `json:"tool_type"`
 	TotalCostUSD             *float64           `json:"total_cost_usd"`
 	TraceID                  string             `json:"trace_id"`
-	WBRunID                  *string            `json:"wb_run_id"`
-	WBUserID                 *string            `json:"wb_user_id"`
+	RunID                    *string            `json:"run_id"`
+	UserID                   *string            `json:"user_id"`
 	// Weft extensions.
 	DurationMS  *float64 `json:"duration_ms"`
 	IsTurn      bool     `json:"is_turn"`
@@ -1901,7 +1901,7 @@ func (sp *agentSpan) toAPI(pid string, call *Call, includeCosts bool, cols []Age
 		RequestModel: ptrIf(sp.RequestModel), ResponseModel: ptrIf(sp.ResponseModel), SpanID: sp.ID, SpanName: ptrIf(sp.SpanName),
 		StartedAt: microsPtr(sp.StartedUS), StatusCode: sp.statusCode(), StatusMessage: sp.Exception,
 		ToolCallID: ptrIf(sp.ToolCallID), ToolName: ptrIf(sp.ToolName), TraceID: sp.TraceID,
-		WBRunID: ptrIf(sp.WBRunID), WBUserID: ptrIf(sp.WBUserID), IsTurn: sp.IsTurn, DisplayName: sp.displayName(),
+		RunID: ptrIf(sp.RunID), UserID: ptrIf(sp.UserID), IsTurn: sp.IsTurn, DisplayName: sp.displayName(),
 	}
 	if sp.Ended {
 		out.EndedAt = microsPtr(sp.EndedUS)

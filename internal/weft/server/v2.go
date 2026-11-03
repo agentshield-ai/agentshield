@@ -448,7 +448,7 @@ func (s *Server) v2RunCreate(w http.ResponseWriter, r *http.Request) {
 		id := uuid.Must(uuid.NewV7()).String()
 		display := refBaseName(modelRef) + " · " + refBaseName(evalRef)
 		st := store.CallStart{ProjectID: pid, ID: id, TraceID: id, OpName: opEvaluate, StartedAt: now(), DisplayName: &display,
-			Inputs: map[string]any{"self": evalRef, "model": modelRef}, Attributes: map[string]any{"weft": weft}, WBUserID: userFrom(r, nil)}
+			Inputs: map[string]any{"self": evalRef, "model": modelRef}, Attributes: map[string]any{"weft": weft}, UserID: userFrom(r, nil)}
 		if err := s.store.StartCall(ctx, st); err != nil {
 			return nil, err
 		}
@@ -614,7 +614,7 @@ func (s *Server) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			_, err := s.store.UpsertComplete(ctx, []store.CompleteCall{{
 				Start: store.CallStart{ProjectID: pid, ID: id, TraceID: id, OpName: predictOp, StartedAt: ts, Inputs: predictInputs,
-					Attributes: map[string]any{"weft": weft}, WBUserID: user},
+					Attributes: map[string]any{"weft": weft}, UserID: user},
 				End: &store.CallEnd{EndedAt: ts, Output: req.Output}}})
 			if err != nil {
 				return nil, err
@@ -639,13 +639,13 @@ func (s *Server) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
 		parent := run.ID
 		pas := store.CallStart{ProjectID: pid, ID: pasID, TraceID: run.TraceID, ParentID: &parent, OpName: opPredictAndScore, StartedAt: ts,
 			Inputs:     map[string]any{"self": run.Inputs["self"], "model": model, "example": req.Inputs},
-			Attributes: map[string]any{"weft": weft}, WBUserID: user}
+			Attributes: map[string]any{"weft": weft}, UserID: user}
 		if err := s.store.StartCall(ctx, pas); err != nil {
 			return nil, err
 		}
 		_, err = s.store.UpsertComplete(ctx, []store.CompleteCall{{
 			Start: store.CallStart{ProjectID: pid, ID: predID, TraceID: run.TraceID, ParentID: &pasID, OpName: predictOp, StartedAt: ts,
-				Inputs: predictInputs, Attributes: map[string]any{"weft": map[string]any{"v2": "predict"}}, WBUserID: user},
+				Inputs: predictInputs, Attributes: map[string]any{"weft": map[string]any{"v2": "predict"}}, UserID: user},
 			End: &store.CallEnd{EndedAt: ts, Output: req.Output}}})
 		if err != nil {
 			return nil, err
@@ -691,7 +691,7 @@ func (s *Server) predictionView(ctx context.Context, pid string, c *store.Call) 
 		in = map[string]any{}
 	}
 	return map[string]any{"prediction_id": c.ID, "model": model, "inputs": in, "output": out,
-		"evaluation_run_id": v2Attr(c, "evaluation_run_id"), "wb_user_id": c.WBUserID}, nil
+		"evaluation_run_id": v2Attr(c, "evaluation_run_id"), "user_id": c.UserID}, nil
 }
 
 func (s *Server) v2PredictionRead(w http.ResponseWriter, r *http.Request) {
@@ -823,13 +823,13 @@ func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 		user := userFrom(r, nil)
 		_, err = s.store.UpsertComplete(ctx, []store.CompleteCall{{
 			Start: store.CallStart{ProjectID: pid, ID: id, TraceID: pred.TraceID, ParentID: &parent, OpName: name + ".score", StartedAt: ts,
-				Inputs: inputs, Attributes: map[string]any{"weft": weft}, WBUserID: user},
+				Inputs: inputs, Attributes: map[string]any{"weft": weft}, UserID: user},
 			End: &store.CallEnd{EndedAt: ts, Output: req.Value}}})
 		if err != nil {
 			return nil, err
 		}
 		fb := store.FeedbackCreate{ProjectID: pid, Ref: refs.CallRef(pid, pred.ID), FeedbackType: "weft.scorer." + name,
-			Payload: map[string]any{"output": req.Value}, WBUserID: user}
+			Payload: map[string]any{"output": req.Value}, UserID: user}
 		callRef := refs.CallRef(pid, id)
 		fb.CallRef = &callRef
 		if refs.IsRef(scorer) {
@@ -844,7 +844,7 @@ func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 
 func scoreView(c *store.Call) map[string]any {
 	return map[string]any{"score_id": c.ID, "scorer": c.Inputs["self"], "value": c.Output,
-		"evaluation_run_id": v2Attr(c, "evaluation_run_id"), "wb_user_id": c.WBUserID}
+		"evaluation_run_id": v2Attr(c, "evaluation_run_id"), "user_id": c.UserID}
 }
 
 func (s *Server) v2ScoreRead(w http.ResponseWriter, r *http.Request) {

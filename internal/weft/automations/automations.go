@@ -26,7 +26,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
@@ -284,9 +283,6 @@ func feedbackCallID(f store.Feedback) string {
 // ScorerFeedbackType maps a trigger's scorer field to the feedback type it watches.
 func ScorerFeedbackType(scorer string) string {
 	scorer = strings.TrimSpace(scorer)
-	if legacy.IsLegacyFeedbackType(scorer) { // saved before the rename
-		return legacy.FeedbackType(scorer)
-	}
 	if strings.HasPrefix(scorer, "weft.") {
 		return scorer
 	}
@@ -332,7 +328,7 @@ func typeMatches(patterns []string, t string) bool {
 		return true
 	}
 	for _, p := range patterns {
-		p = legacy.FeedbackTypePattern(strings.TrimSpace(p)) // patterns saved before the rename
+		p = strings.TrimSpace(p)
 		if p == t || (strings.HasSuffix(p, "*") && strings.HasPrefix(t, strings.TrimSuffix(p, "*"))) {
 			return true
 		}
@@ -374,7 +370,7 @@ func (r *Runner) HandleFeedback(ctx context.Context, f store.Feedback) []*store.
 				continue
 			}
 			event = map[string]any{"type": "feedback_created", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "ref": f.Ref,
-				"call_id": feedbackCallID(f), "payload": f.Payload, "creator": f.Creator, "wb_user_id": f.WBUserID, "queue_id": f.QueueID}
+				"call_id": feedbackCallID(f), "payload": f.Payload, "creator": f.Creator, "user_id": f.UserID, "queue_id": f.QueueID}
 		default:
 			continue
 		}

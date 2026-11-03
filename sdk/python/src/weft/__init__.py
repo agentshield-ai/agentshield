@@ -31,7 +31,7 @@ from ._client import (
     remove_aliases,
     remove_tags,
     set_aliases,
-    set_wb_run,
+    set_run,
 )
 from ._content import PDF, Audio, Content, Html, Image, Markdown, Video
 from ._context import (
@@ -128,7 +128,7 @@ __all__ = [
     "get",
     "link_to_registry",
     "link_prompt_to_registry",
-    "set_wb_run",
+    "set_run",
     # tags and aliases of object versions
     "add_tags",
     "remove_tags",

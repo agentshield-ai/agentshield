@@ -1,12 +1,12 @@
-import { detectClientType } from './clientTypes'
+import { decodeLegacyMedia, isLegacyMedia } from '../../compat/legacyMedia'
 // Detects media values in call inputs/outputs and object values (unit tested).
 //
 // Recognised shapes:
 // - data: URLs (image, audio, video, pdf, html, markdown, text)
 // - {_type: Image|Audio|Video|Pdf|Html|Markdown|File, file_digest, mime_type|mimetype}
 // - {_type: "Content", mimetype, file_digest | data (base64), filename}  (Weft SDKs)
-// - custom types stored by another product's client through the compatibility adapter
-//   (clientTypes.ts)
+// - media stored by another product's client through the compatibility adapter, decoded
+//   only by compat/legacyMedia.ts
 // - a plain string that is exactly an s3:// or gs:// object URI (reference buckets, "bring your
 //   own bucket"): the whole value must be the URI, so prose mentioning one stays text.
 //   The kind comes from the file extension; other extensions render as a download link.
@@ -25,7 +25,7 @@ export interface MediaSpec {
   digest?: string
   dataUrl?: string
   text?: string
-  /** For client Content (clientTypes.ts): the metadata.json digest, read to learn the mimetype. */
+  /** For legacy Content (compat/legacyMedia.ts): the metadata.json digest, read to learn the mimetype. */
   metaDigest?: string
   /** External storage (s3://, gs://, https://) resolved through /files/resolve_url. */
   uri?: string
@@ -159,8 +159,7 @@ export function detectMedia(v: unknown): MediaSpec | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null
   const o = v as Record<string, unknown>
   const type = str(o._type)
-  const client = detectClientType(o)
-  if (client !== undefined) return client
+  if (isLegacyMedia(o)) return decodeLegacyMedia(o)
   if (!type) return detectPart(o)
   const mime = str(o.mimetype) ?? str(o.mime_type) ?? str(o.content_type)
   const filename = str(o.filename) ?? str(o.name)
@@ -238,7 +237,7 @@ function detectPart(o: Record<string, unknown>): MediaSpec | null {
   return null
 }
 
-/** Resolve a client Content spec (clientTypes.ts) once its metadata.json has been read. */
+/** Resolve a legacy Content spec (compat/legacyMedia.ts) once its metadata.json has been read. */
 export function resolveContent(spec: MediaSpec, metadata: unknown): MediaSpec {
   const m = (metadata && typeof metadata === 'object' ? metadata : {}) as Record<string, unknown>
   const mt = str(m.mimetype) ?? mimeFromFilename(str(m.filename)) ?? 'application/octet-stream'

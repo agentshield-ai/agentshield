@@ -28,11 +28,11 @@ class Call:
     exception: Optional[str] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
     summary: Dict[str, Any] = field(default_factory=dict)
-    wb_user_id: Optional[str] = None
-    wb_run_id: Optional[str] = None
-    wb_run_step: Optional[int] = None
-    wb_run_step_end: Optional[int] = None
-    wb_username: Optional[str] = None
+    user_id: Optional[str] = None
+    run_id: Optional[str] = None
+    run_step: Optional[int] = None
+    run_step_end: Optional[int] = None
+    username: Optional[str] = None
     deleted_at: Optional[str] = None
     storage_size_bytes: Optional[int] = None
     raw_feedback: Optional[List[Dict[str, Any]]] = None
@@ -59,7 +59,7 @@ class Call:
     _DICT_FIELDS = (
         "id", "project_id", "op_name", "display_name", "trace_id", "parent_id", "thread_id", "turn_id",
         "started_at", "ended_at", "inputs", "output", "exception", "attributes", "summary",
-        "wb_user_id", "wb_username", "wb_run_id", "wb_run_step", "wb_run_step_end", "deleted_at",
+        "user_id", "username", "run_id", "run_step", "run_step_end", "deleted_at",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -234,11 +234,11 @@ class Call:
             exception=d.get("exception"),
             attributes=d.get("attributes") or {},
             summary=d.get("summary") or {},
-            wb_user_id=d.get("wb_user_id"),
-            wb_run_id=d.get("wb_run_id"),
-            wb_run_step=d.get("wb_run_step"),
-            wb_run_step_end=d.get("wb_run_step_end"),
-            wb_username=d.get("wb_username"),
+            user_id=d.get("user_id"),
+            run_id=d.get("run_id"),
+            run_step=d.get("run_step"),
+            run_step_end=d.get("run_step_end"),
+            username=d.get("username"),
             deleted_at=d.get("deleted_at"),
             storage_size_bytes=d.get("storage_size_bytes"),
             raw_feedback=d.get("feedback"),

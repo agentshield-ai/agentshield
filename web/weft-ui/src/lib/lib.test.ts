@@ -38,6 +38,13 @@ describe('format', () => {
     expect(fmtCost(0)).toBe('$0')
     expect(fmtCost(0.00001)).toBe('<$0.0001')
     expect(fmtCost(2.5)).toBe('$2.50')
+    expect(fmtCost(0.0048000000000000004)).toBe('$0.0048')
+    expect(fmtCost(0.0016 * 3)).toBe('$0.0048')
+    expect(fmtCost(0.5)).toBe('$0.50')
+    expect(fmtCost(0.123456)).toBe('$0.12')
+    expect(fmtCost(0.0004)).toBe('$0.0004')
+    expect(fmtCost(1234.5)).toBe('$1,234.50')
+    expect(fmtCost(null)).toBe('—')
   })
   it('sums tokens and costs across models', () => {
     const call = {

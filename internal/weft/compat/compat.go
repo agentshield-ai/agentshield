@@ -9,11 +9,15 @@
 //     .../call/start, .../call/end) and /service/projects_info;
 //   - accepts weave:/// refs and weave-file:// URIs in requests, the legacy
 //     feedback names (weave_ref, wandb.reaction.1, wandb.runnable.<scorer>,
-//     ...) and the Wandb-Api-Key header;
+//     ...), the client's user and run field names (wb_user_id, wb_run_id,
+//     wb_run_step, wb_run_step_end, wb_user_ids, wb_run_ids), its query
+//     fields (summary.weave.*, feedback.wandb.*) and the Wandb-Api-Key
+//     header;
 //   - renames legacy attribute keys (weave.eval.*, weave.parent_call.*,
 //     wandb.thread_id, ...) on ingest, over JSON and OTLP;
 //   - answers responses to the weave client (detected by its user agent) with
-//     weave:/// refs and legacy feedback names;
+//     weave:/// refs, legacy feedback names and its field names (wb_user_id,
+//     wb_username, wb_run_id, wb_run_step, wb_run_step_end);
 //   - redirects /{entity}/{project}/weave/... and /{entity}/{project}/r/call/{id}
 //     links to the matching UI pages;
 //   - reports the client's version fields in /server_info;
@@ -233,8 +237,16 @@ type readCloser struct {
 // It works on the bytes so that the publisher's key order is kept (stored
 // objects keep it).
 func RewriteRequest(path string, body []byte) []byte {
-	if !bytes.Contains(body, []byte("weave")) && !bytes.Contains(body, []byte("wandb.")) {
+	if !bytes.Contains(body, []byte("weave")) && !bytes.Contains(body, []byte("wandb.")) && !bytes.Contains(body, []byte("wb_")) {
 		return body
+	}
+	if bytes.Contains(body, []byte("wb_")) || bytes.Contains(body, []byte(".weave.")) || bytes.Contains(body, []byte("feedback.wandb.")) {
+		// Field names and query fields, outside user data. An object being
+		// published may be a saved view, whose query is in its value.
+		objCreate := path == "/obj/create"
+		body = legacy.JSONRewrite{Key: legacy.QueryFieldName, Value: legacy.QueryFieldName, Skip: func(k string) bool {
+			return dataKeys[k] && !(objCreate && k == "val")
+		}}.Apply(body)
 	}
 	body = bytes.ReplaceAll(body, []byte(`"`+legacy.RefScheme), []byte(`"weft:///`))
 	body = bytes.ReplaceAll(body, []byte(`"`+legacy.FileScheme), []byte(`"weft-file://`))
@@ -291,9 +303,26 @@ func rewriteFeedbackTypes(body []byte, mapType func(string) string) []byte {
 	return out.Bytes()
 }
 
+// dataKeys hold user data, whose keys and values are never renamed.
+var dataKeys = map[string]bool{"inputs": true, "output": true, "attributes": true, "summary": true, "payload": true, "val": true,
+	"rows": true, "row": true, "rollup": true}
+
+// recordPath reports responses that carry calls, feedback or objects.
+func recordPath(p string) bool {
+	for _, pre := range []string{"/call/", "/calls/", "/feedback/", "/obj/", "/objs/", "/threads/", "/evaluations/"} {
+		if strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	return false
+}
+
 // rewriteResponse translates a JSON response to the weave client.
 func rewriteResponse(path string, body []byte) []byte {
 	body = bytes.ReplaceAll(body, []byte("weft:///"), []byte(legacy.RefScheme))
+	if recordPath(path) {
+		body = legacy.JSONRewrite{Key: legacy.FieldNameOut, Skip: func(k string) bool { return dataKeys[k] }}.Apply(body)
+	}
 	if strings.HasPrefix(path, "/completions/") || path == "/image/create" {
 		body = bytes.ReplaceAll(body, []byte(`"call_id":`), []byte(`"weave_call_id":`))
 	}

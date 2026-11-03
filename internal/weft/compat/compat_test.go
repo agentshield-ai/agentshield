@@ -192,8 +192,24 @@ func TestCallsCompleteCumulativeSummaries(t *testing.T) {
 		t.Fatalf("descendant status counts = %v", sc)
 	}
 	k := e.post("/call/read", map[string]any{"project_id": pid, "id": "k"}, nil)["call"].(map[string]any)
-	if k["wb_run_step"] != float64(11) || k["wb_run_step_end"] != float64(12) {
-		t.Fatalf("calls/complete steps = %v %v", k["wb_run_step"], k["wb_run_step_end"])
+	if k["run_step"] != float64(11) || k["run_step_end"] != float64(12) || k["run_id"] != "run-1" || k["wb_run_id"] != nil {
+		t.Fatalf("calls/complete steps = %v %v", k["run_step"], k["run_step_end"])
+	}
+	// The weave client sees its own field names, outside user data.
+	_, body, _ = e.raw(http.MethodPost, "/call/read", map[string]any{"project_id": pid, "id": "k"}, weaveUA)
+	var wk map[string]any
+	_ = json.Unmarshal(body, &wk)
+	wc := wk["call"].(map[string]any)
+	if wc["wb_run_step"] != float64(11) || wc["wb_run_step_end"] != float64(12) || wc["wb_run_id"] != "run-1" || wc["run_id"] != nil {
+		t.Fatalf("weave client call fields = %s", body)
+	}
+	// Its filters and query fields use the old names too.
+	_, body, _ = e.raw(http.MethodPost, "/calls/stream_query", map[string]any{"project_id": pid,
+		"filter":  map[string]any{"wb_run_ids": []any{"run-1"}},
+		"query":   map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "wb_run_id"}, map[string]any{"$literal": "run-1"}}}},
+		"sort_by": []any{map[string]any{"field": "wb_user_id", "direction": "asc"}}}, weaveUA)
+	if lines := strings.Split(strings.TrimSpace(string(body)), "\n"); len(lines) != 1 || !strings.Contains(lines[0], `"wb_run_step":11`) {
+		t.Fatalf("weave client calls query = %s", body)
 	}
 	_, info, _ := e.raw(http.MethodPost, "/service/projects_info", map[string]any{"project_ids": []any{pid}}, nil)
 	if !strings.Contains(string(info), `"internal_project_id":"`+pid+`"`) {

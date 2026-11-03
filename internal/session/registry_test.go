@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/engine"
 	"github.com/agentshield-ai/agentshield/internal/models"
 )
 
@@ -309,5 +310,28 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 	stats := r.Stats()
 	if stats < 1 || stats > 10 {
 		t.Errorf("expected 1-10 sessions, got %d", stats)
+	}
+}
+
+// Replayed sessions (Isolate) must not change live sessions' cross-session fields.
+func TestRegistry_IsolatedSessionsExcludedFromCrossSession(t *testing.T) {
+	r := NewRegistry(50, time.Minute)
+	alert := []engine.RuleResult{{RuleID: "r", Matched: true}}
+	r.Record("live-1", "Bash", alert)
+	r.Isolate("weft-replay:j:s")
+	r.Record("weft-replay:j:s", "Bash", alert)
+	r.Record("weft-replay:j:s", "Read", alert)
+	f := r.DeriveAllFields("live-2", time.Minute)
+	if f["session.cross_session_alert_count"] != "1" || f["session.cross_session_count"] != "1" {
+		t.Fatalf("replay leaked into cross-session fields: %v", f)
+	}
+	r.Record("live-2", "Read", nil)
+	if got := r.DeriveAllFields("live-2", time.Minute)["session.cross_session_tool_overlap"]; got != "0.00" {
+		t.Fatalf("tool overlap counts the replay session: %s", got)
+	}
+	// The replayed session still has its own window, and sees live sessions.
+	own := r.DeriveAllFields("weft-replay:j:s", time.Minute)
+	if own["session.tool_count"] != "2" || own["session.cross_session_alert_count"] != "1" {
+		t.Fatalf("isolated session fields = %v", own)
 	}
 }

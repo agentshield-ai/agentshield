@@ -315,9 +315,9 @@ function CallDetail({
           {call.parent_id && <Link to={callUrl(projectId, call.parent_id)}>↑ Parent</Link>}
           {root && root.id !== call.id && <Link to={callUrl(projectId, root.id)}>⤒ Trace root</Link>}
           {call.thread_id && <Link to={threadUrl(projectId, call.thread_id)}>Thread {call.thread_id.slice(0, 12)}</Link>}
-          {call.wb_user_id && (
+          {call.user_id && (
             <span>
-              <span className="faint">User</span> {call.wb_user_id}
+              <span className="faint">User</span> {call.user_id}
             </span>
           )}
         </div>

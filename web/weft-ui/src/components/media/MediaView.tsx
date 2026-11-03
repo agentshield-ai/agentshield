@@ -128,7 +128,7 @@ function Rendered({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   }
 }
 
-/** Client Content (clientTypes.ts): read metadata.json for the mimetype, then render. */
+/** Legacy Content (compat/legacyMedia.ts): read metadata.json for the mimetype, then render. */
 function ClientContent({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   const meta = useQuery({
     queryKey: ['file-text', projectId, spec.metaDigest],

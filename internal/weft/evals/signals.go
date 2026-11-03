@@ -285,7 +285,7 @@ func (e *Engine) ScoreTurnSignal(ctx context.Context, projectID string, turn sto
 		payload["reason"] = parsed.Reason
 	}
 	f, err := e.Store.CreateAgentFeedback(ctx, store.AgentFeedbackItem{ProjectID: projectID, Ref: refs.CallRef(projectID, turn.SpanID),
-		FeedbackType: "weft.signal", Payload: payload, Creator: creator, WBUserID: user, SignalScores: sc,
+		FeedbackType: "weft.signal", Payload: payload, Creator: creator, UserID: user, SignalScores: sc,
 		ScorerTraceID: callID, SpanTraceID: turn.TraceID, SpanConversationID: turn.ConversationID,
 		SpanAgentName: turn.AgentName, SpanAgentVersion: turn.AgentVersion, SpanStatusCode: turn.Status})
 	if err != nil {

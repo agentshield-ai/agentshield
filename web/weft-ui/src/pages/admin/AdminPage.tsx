@@ -69,7 +69,7 @@ function UsersTab({ admin, myId }: { admin: boolean; myId?: string }) {
     >
       <div className="col" style={{ gap: 10 }}>
         <div className="hint">
-          Users own API keys and browser sessions. A user's id is recorded as the <span className="mono">wb_user_id</span> of what they write. Users who sign in
+          Users own API keys and browser sessions. A user's id is recorded as the <span className="mono">user_id</span> of what they write. Users who sign in
           with SSO are created automatically; an account you add here with the same email is linked on first sign-in. Server admins can do everything.
         </div>
         <ErrorBox error={users.error ?? err} />

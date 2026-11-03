@@ -218,7 +218,7 @@ func requestBaseURL(r *http.Request) string {
 type imageCreateReq struct {
 	ProjectID    string         `json:"project_id"`
 	Inputs       map[string]any `json:"inputs"`
-	WBUserID     *string        `json:"wb_user_id"`
+	UserID       *string        `json:"user_id"`
 	TrackLLMCall *bool          `json:"track_llm_call"`
 }
 

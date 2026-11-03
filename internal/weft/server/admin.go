@@ -560,7 +560,7 @@ func (s *Server) apiKeyRevoke(ctx context.Context, r *http.Request, req *apiKeyR
 type ttlUpdateReq struct {
 	ProjectID     string  `json:"project_id"`
 	RetentionDays *int    `json:"retention_days"`
-	WBUserID      *string `json:"wb_user_id"`
+	UserID        *string `json:"user_id"`
 }
 
 func (s *Server) ttlRead(ctx context.Context, _ *http.Request, req *projectReq) (any, error) {
@@ -579,7 +579,7 @@ func (s *Server) ttlUpdate(ctx context.Context, r *http.Request, req *ttlUpdateR
 		}
 		val = store.TTLSettings{RetentionDays: req.RetentionDays}
 	}
-	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingTTL, val, userFrom(r, req.WBUserID)); err != nil {
+	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingTTL, val, userFrom(r, req.UserID)); err != nil {
 		return nil, err
 	}
 	return map[string]any{"retention_days": req.RetentionDays}, nil
@@ -613,7 +613,7 @@ type samplingUpdateReq struct {
 	ProjectID  string   `json:"project_id"`
 	SampleRate *float64 `json:"sample_rate"`
 	DryRun     bool     `json:"dry_run"`
-	WBUserID   *string  `json:"wb_user_id"`
+	UserID     *string  `json:"user_id"`
 }
 
 func (s *Server) samplingUpdate(ctx context.Context, r *http.Request, req *samplingUpdateReq) (any, error) {
@@ -628,7 +628,7 @@ func (s *Server) samplingUpdate(ctx context.Context, r *http.Request, req *sampl
 	if ss.SampleRate >= 1 && !ss.DryRun {
 		val = nil // the default: keep everything
 	}
-	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingIngestSample, val, userFrom(r, req.WBUserID)); err != nil {
+	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingIngestSample, val, userFrom(r, req.UserID)); err != nil {
 		return nil, err
 	}
 	return ss, nil
@@ -694,7 +694,7 @@ func (s *Server) sensitiveReadPost(ctx context.Context, _ *http.Request, req *pr
 type sensitiveUpdateReq struct {
 	ProjectID string `json:"project_id"`
 	store.SensitiveDataSettings
-	WBUserID *string `json:"wb_user_id"`
+	UserID *string `json:"user_id"`
 }
 
 func (s *Server) sensitiveUpdate(ctx context.Context, r *http.Request, req *sensitiveUpdateReq) (any, error) {
@@ -713,7 +713,7 @@ func (s *Server) sensitiveUpdate(ctx context.Context, r *http.Request, req *sens
 	if sd.Policy == "off" && len(sd.Entities) == 0 && len(sd.CustomPatterns) == 0 && sd.NER == nil {
 		val = nil
 	}
-	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingSensitiveData, val, userFrom(r, req.WBUserID)); err != nil {
+	if err := s.store.SetProjectSetting(ctx, req.ProjectID, store.SettingSensitiveData, val, userFrom(r, req.UserID)); err != nil {
 		return nil, err
 	}
 	return s.sensitiveSettings(ctx, req.ProjectID)

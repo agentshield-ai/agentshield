@@ -92,8 +92,8 @@ CREATE TABLE IF NOT EXISTS calls (
 	total_tokens INTEGER NOT NULL DEFAULT 0,
 	input_refs TEXT NOT NULL DEFAULT '[]',
 	output_refs TEXT NOT NULL DEFAULT '[]',
-	wb_user_id TEXT,
-	wb_run_id TEXT,
+	user_id TEXT,
+	run_id TEXT,
 	deleted_at INTEGER,
 	storage_size INTEGER NOT NULL DEFAULT 0,
 	has_start INTEGER NOT NULL DEFAULT 0,
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS objects (
 	val TEXT NOT NULL,
 	created_at INTEGER NOT NULL,
 	deleted_at INTEGER,
-	wb_user_id TEXT,
+	user_id TEXT,
 	size_bytes INTEGER NOT NULL,
 	PRIMARY KEY (project_id, object_id, digest)
 );
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 	payload TEXT NOT NULL,
 	creator TEXT,
 	created_at INTEGER NOT NULL,
-	wb_user_id TEXT,
+	user_id TEXT,
 	annotation_ref TEXT,
 	runnable_ref TEXT,
 	call_ref TEXT,

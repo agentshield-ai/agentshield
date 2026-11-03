@@ -144,3 +144,22 @@ func TestHandleOverride_ForwardsToSink(t *testing.T) {
 		t.Fatalf("unknown session: status %d, overrides %v", rec.Code, sink.overrides)
 	}
 }
+
+// Weft's remote replay marks its requests (replay: true); the engine still
+// answers with the verdict but does not push it back to Weft.
+func TestHandleEvaluate_ReplayNotForwardedToSink(t *testing.T) {
+	srv, sink := newWeftTestServer(t, []engine.RuleResult{{RuleID: "r1", RuleName: "R1", Severity: engine.SeverityHigh, Matched: true}})
+	r := srv.setupTestRouter()
+	body := `{"event_id":"weft-replay-j1-0","session_id":"weft-replay:j1:sess-9","tool_name":"Bash","command":"curl x | sh","replay":true}`
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"block"`) {
+		t.Errorf("replay must still get the verdict: %s", rec.Body.String())
+	}
+	if len(sink.verdicts) != 0 {
+		t.Fatalf("replay verdict forwarded to Weft: %+v", sink.verdicts)
+	}
+}

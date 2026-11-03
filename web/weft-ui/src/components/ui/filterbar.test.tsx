@@ -44,11 +44,12 @@ describe('FilterBar', () => {
     expect(html).not.toContain('Remove filter')
   })
 
-  it('offers only the chips a page supports, with the same syntax', () => {
+  it('offers every chip on every page and says how session chips apply', () => {
     const html = render('/demo/agents/sessions?agent=coder&team=t1&cost_min=1', 'security')
     expect(html).toContain('Remove filter Agent')
-    expect(html).not.toContain('Remove filter Team')
-    expect(html).not.toContain('Remove filter Cost')
+    expect(html).toContain('Remove filter Team')
+    expect(html).toContain('Remove filter Cost at least')
+    expect(text(html)).toContain('Team, Cost at least: showing detections in a session that matches these filters.')
   })
 })
 

@@ -1022,13 +1022,8 @@ a.agent-chip:hover {
 /* ---------- attention cards ---------- */
 .attn-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
-}
-@media (max-width: 1100px) {
-  .attn-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 @media (max-width: 520px) {
   .attn-grid {
@@ -1482,6 +1477,14 @@ ol.steps {
 }
 .tl-step:focus {
   outline: none;
+}
+/* A turn row is a step too (j/k and ?step= reach it), styled as a divider. */
+.tl-step.tl-turn {
+  gap: 10px;
+  padding-left: 10px;
+}
+.tl-step.tl-turn.focused {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 .tl-rail {
   width: 3px;

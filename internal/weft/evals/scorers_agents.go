@@ -229,13 +229,19 @@ func (e *Engine) RunScopeScorers(ctx context.Context, req ScopeRunReq, user *str
 	out := []ScopeRunResult{}
 	for _, t := range targets {
 		for _, sc := range scorers {
-			out = append(out, e.scoreTarget(ctx, pid, t, sc, user))
+			out = append(out, e.scoreTarget(ctx, pid, t, sc, scoreBy{user: user}))
 		}
 	}
 	return out, nil
 }
 
-func (e *Engine) scoreTarget(ctx context.Context, pid string, t store.ScopeTarget, sc *Scorer, user *string) ScopeRunResult {
+// scoreBy says who asked for a scope score: a user, or a monitor.
+type scoreBy struct {
+	user                *string
+	creator, triggerRef *string
+}
+
+func (e *Engine) scoreTarget(ctx context.Context, pid string, t store.ScopeTarget, sc *Scorer, by scoreBy) ScopeRunResult {
 	res := ScopeRunResult{Scope: t.Scope, SessionID: t.SessionID, Agent: t.Agent, HandoffID: t.HandoffID, Scorer: sc.Name}
 	example := map[string]any{"input": t.Input, "session_id": t.SessionID}
 	if t.Agent != "" {
@@ -270,8 +276,8 @@ func (e *Engine) scoreTarget(ctx context.Context, pid string, t store.ScopeTarge
 		callRef = &r
 	}
 	fb, err := e.Store.CreateScopeScore(ctx, store.ScopeScoreCreate{ProjectID: pid, Scope: t.Scope, SessionID: t.SessionID, Agent: t.Agent,
-		HandoffID: t.HandoffID, Scorer: sc.Name, Value: res.Value, Reason: res.Reason, Output: res.Output, Model: model, WBUserID: user,
-		RunnableRef: runnable, CallRef: callRef})
+		HandoffID: t.HandoffID, Scorer: sc.Name, Value: res.Value, Reason: res.Reason, Output: res.Output, Model: model, UserID: by.user,
+		RunnableRef: runnable, CallRef: callRef, Creator: by.creator, TriggerRef: by.triggerRef})
 	if err != nil {
 		res.Error = err.Error()
 		return res

@@ -5,10 +5,10 @@
 //
 // Two places use it:
 //
-//   - the store's one-time migration, which renames stored values, and its
-//     query compiler, which reads queries saved before the rename (saved
-//     views, dashboards and monitors are content-addressed objects, so their
-//     stored text is not rewritten);
+//   - the store's one-time migrations, which rename stored columns, feedback
+//     types and attribute keys, and publish new versions of saved queries
+//     (saved views, dashboards, monitors, leaderboards, automations) that
+//     used the old names;
 //   - the compatibility adapter (package compat), which translates what the
 //     official weave client sends and receives when --weave-compat is on.
 //
@@ -20,6 +20,54 @@ import "strings"
 // FeedbackRefColumn is the name the feedback table's ref column had before
 // it was renamed to "ref", and the JSON field name the weave client uses.
 const FeedbackRefColumn = "weave_ref"
+
+// ColumnRename is a column that had another name in databases written by
+// earlier Weft versions (and the JSON field name the weave client uses).
+type ColumnRename struct{ Table, Old, New string }
+
+// ColumnRenames lists the renamed columns; the store migration renames them
+// once, and the adapter maps the JSON field names.
+func ColumnRenames() []ColumnRename {
+	return []ColumnRename{
+		{"feedback", FeedbackRefColumn, "ref"},
+		{"calls", "wb_user_id", "user_id"},
+		{"calls", "wb_run_id", "run_id"},
+		{"calls", "wb_run_step", "run_step"},
+		{"calls", "wb_run_step_end", "run_step_end"},
+		{"feedback", "wb_user_id", "user_id"},
+		{"objects", "wb_user_id", "user_id"},
+		{"registry_versions", "wb_user_id", "user_id"},
+	}
+}
+
+// fieldNames maps the weave client's user and run field names (call,
+// feedback and object fields, calls filter keys, query fields) to Weft's.
+var fieldNames = map[string]string{
+	"wb_user_id":      "user_id",
+	"wb_run_id":       "run_id",
+	"wb_run_step":     "run_step",
+	"wb_run_step_end": "run_step_end",
+	"wb_username":     "username",
+	"wb_user_ids":     "user_ids",
+	"wb_run_ids":      "run_ids",
+}
+
+// FieldName maps a legacy field name to Weft's; ok is false for other names.
+func FieldName(name string) (string, bool) {
+	n, ok := fieldNames[name]
+	return n, ok
+}
+
+// FieldNameOut maps a Weft field name back to the weave client's; ok is
+// false for other names.
+func FieldNameOut(name string) (string, bool) {
+	for k, v := range fieldNames {
+		if v == name {
+			return k, true
+		}
+	}
+	return name, false
+}
 
 // RefScheme and FileScheme are the URI prefixes the weave client writes for
 // object refs and file digests; Weft's own are "weft:///" and "weft-file://".
@@ -229,8 +277,12 @@ func AttributeFilterSQL(col string) string {
 }
 
 // QueryField maps a legacy call query field path (summary.weave.*,
-// feedback.wandb.*) to Weft's; other paths are returned unchanged.
+// feedback.wandb.*, wb_user_id, ...) to Weft's; other paths are returned
+// unchanged.
 func QueryField(path string) string {
+	if n, ok := FieldName(path); ok {
+		return n
+	}
 	if rest, ok := strings.CutPrefix(path, "summary.weave."); ok {
 		return "summary.weft." + rest
 	}
@@ -248,7 +300,115 @@ func QueryField(path string) string {
 	return path
 }
 
+// QueryFieldName maps a legacy query field; ok is false for other paths.
+func QueryFieldName(path string) (string, bool) {
+	if IsLegacyQueryField(path) {
+		return QueryField(path), true
+	}
+	return path, false
+}
+
 // IsLegacyQueryField reports whether path uses a legacy prefix.
 func IsLegacyQueryField(path string) bool {
-	return strings.HasPrefix(path, "summary.weave.") || strings.HasPrefix(path, "feedback.wandb.")
+	_, field := FieldName(path)
+	return field || strings.HasPrefix(path, "summary.weave.") || strings.HasPrefix(path, "feedback.wandb.")
+}
+
+// JSONRewrite rewrites the string literals of a JSON document, or of JSON
+// lines, in place: the rest of the bytes (key order, spacing, numbers) is
+// kept, so stored values keep their publisher's key order.
+type JSONRewrite struct {
+	// Key maps object keys; Value maps string values. Either may be nil.
+	Key   func(string) (string, bool)
+	Value func(string) (string, bool)
+	// Skip reports keys whose value is user data and is left untouched.
+	Skip func(key string) bool
+}
+
+// Apply returns b with the mapped literals replaced. Literals containing
+// escapes are left as they are (no legacy name needs one).
+func (rw JSONRewrite) Apply(b []byte) []byte {
+	out := make([]byte, 0, len(b))
+	depth, skipAt := 0, -1
+	pendingSkip := false
+	for i := 0; i < len(b); {
+		c := b[i]
+		switch c {
+		case '"':
+			j := i + 1
+			for j < len(b) && b[j] != '"' {
+				if b[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			if j >= len(b) {
+				return append(out, b[i:]...)
+			}
+			lit := b[i : j+1]
+			k := j + 1
+			for k < len(b) && (b[k] == ' ' || b[k] == '\t' || b[k] == '\n' || b[k] == '\r') {
+				k++
+			}
+			isKey := k < len(b) && b[k] == ':'
+			mapped := false
+			if skipAt < 0 {
+				s := string(lit[1 : len(lit)-1])
+				plain := !strings.ContainsRune(s, '\\')
+				var fn func(string) (string, bool)
+				if isKey {
+					fn = rw.Key
+					pendingSkip = rw.Skip != nil && rw.Skip(s)
+				} else {
+					fn = rw.Value
+					pendingSkip = false
+				}
+				if fn != nil && plain {
+					if n, ok := fn(s); ok {
+						out = append(out, '"')
+						out = append(out, n...)
+						out = append(out, '"')
+						mapped = true
+					}
+				}
+			}
+			if !mapped {
+				out = append(out, lit...)
+			}
+			i = j + 1
+			continue
+		case '{', '[':
+			depth++
+			if pendingSkip && skipAt < 0 {
+				skipAt = depth
+			}
+			pendingSkip = false
+		case '}', ']':
+			if skipAt == depth {
+				skipAt = -1
+			}
+			depth--
+		case ':', ' ', '\t', '\n', '\r', ',':
+		default:
+			pendingSkip = false // a scalar value
+		}
+		out = append(out, c)
+		i++
+	}
+	return out
+}
+
+// SavedQueryName maps a name stored in a saved query (a saved view,
+// dashboard, monitor, leaderboard or automation): legacy query fields and
+// field names, and legacy feedback types (patterns too, for automations).
+func SavedQueryName(s string) (string, bool) {
+	if IsLegacyQueryField(s) {
+		return QueryField(s), true
+	}
+	if IsLegacyFeedbackType(s) {
+		if n := FeedbackTypePattern(s); n != s {
+			return n, true
+		}
+	}
+	return s, false
 }

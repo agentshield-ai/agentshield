@@ -5,7 +5,8 @@ import { Link } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type AgentSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
-import { scoreBelowMatches, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
+import { useSessionScope } from '../../hooks/useSessionScope'
+import { isFlagged, scoreBelowMatches, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
 import { fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentAnalyticsUrl, agentUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
@@ -16,12 +17,14 @@ import { usePageHelp } from '../../components/ui/PageHelp'
 
 const DEFAULT_TIME: TimeRange = '24h'
 
+/** The chips Agents applies to an agent's own figures; the rest go through sessions (useSessionScope). */
 export function agentMatches(a: AgentSummary, s: FilterState): boolean {
   if (s.agent && a.agent_name !== s.agent) return false
   if (s.status === 'error' && !(a.error_count > 0)) return false
   if (s.status === 'ok' && a.error_count > 0) return false
   if (s.has === 'block' && !((a.detection_counts?.block ?? 0) > 0)) return false
   if (s.has === 'approval' && !((a.detection_counts?.require_approval ?? 0) > 0)) return false
+  if (s.has === 'flagged' && !isFlagged(a.detection_counts)) return false
   if (s.has === 'any' && !Object.values(a.detection_counts ?? {}).some((v) => (v ?? 0) > 0)) return false
   if (s.model && !(a.models ?? []).includes(s.model)) return false
   if (s.tool && !(a.tools ?? []).includes(s.tool)) return false
@@ -39,7 +42,7 @@ export function AgentsListPage() {
       Each <strong>agent</strong> that took part in a session: how often it ran, who handed work to it and whom it handed work to, how much it reasoned, how often AgentShield
       flagged its tool calls, and its scores. Click an agent for its tools and recent sessions.
     </>,
-    'API.md#agents-1',
+    'agents.md',
   )
   const base = { q: state.q, team_id: state.team }
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.agents(pid, { ...base, ...timeWindow({ time: r }, r), limit: 1 })).total_count, [pid, 'agents', base])
@@ -52,8 +55,9 @@ export function AgentsListPage() {
   })
   const any = useQuery({ queryKey: ['v1', pid, 'agents', 'any'], queryFn: () => v1.agents(pid, { limit: 1 }) })
   const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000 })
+  const scope = useSessionScope(pid, 'agents', state, time, widen.ready)
   const all = q.data?.items ?? []
-  const rows = all.filter((a) => agentMatches(a, state))
+  const rows = all.filter((a) => agentMatches(a, state) && (!scope.active || scope.agents.has(a.agent_name)))
   const options = useMemo(
     () => ({
       agents: all.map((a) => a.agent_name),
@@ -87,7 +91,8 @@ export function AgentsListPage() {
           <FilterBar page="agents" defaultTime={DEFAULT_TIME} effectiveTime={time} options={options} placeholder="Filter agents…  try has:block or tool:web_search" />
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <ErrorBox error={q.error} />
-          {q.isLoading ? (
+          <ErrorBox error={scope.error} />
+          {q.isLoading || !scope.ready ? (
             <Loading />
           ) : rows.length === 0 ? (
             <div className="empty-inline">

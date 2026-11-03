@@ -47,12 +47,12 @@ export class Call {
   exception: string | null;
   attributes: Record<string, unknown>;
   summary: Record<string, any>;
-  /** User and run linkage (`wb_user_id`, `wb_username` with `includeUsernames`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`). */
-  wbUserId: string | null;
-  wbUsername: string | null;
-  wbRunId: string | null;
-  wbRunStep: number | null;
-  wbRunStepEnd: number | null;
+  /** User and run linkage (`user_id`, `username` with `includeUsernames`, `run_id`, `run_step`, `run_step_end`). */
+  userId: string | null;
+  username: string | null;
+  runId: string | null;
+  runStep: number | null;
+  runStepEnd: number | null;
   raw: CallData;
   /** Unserialised inputs/output of calls traced in this process. */
   rawInputs?: Record<string, unknown>;
@@ -90,11 +90,11 @@ export class Call {
     this.exception = data.exception ?? null;
     this.attributes = data.attributes ?? {};
     this.summary = data.summary ?? {};
-    this.wbUserId = (data.wb_user_id as string | undefined) ?? null;
-    this.wbUsername = (data.wb_username as string | undefined) ?? null;
-    this.wbRunId = (data.wb_run_id as string | undefined) ?? null;
-    this.wbRunStep = (data.wb_run_step as number | undefined) ?? null;
-    this.wbRunStepEnd = (data.wb_run_step_end as number | undefined) ?? null;
+    this.userId = (data.user_id as string | undefined) ?? null;
+    this.username = (data.username as string | undefined) ?? null;
+    this.runId = (data.run_id as string | undefined) ?? null;
+    this.runStep = (data.run_step as number | undefined) ?? null;
+    this.runStepEnd = (data.run_step_end as number | undefined) ?? null;
   }
 
   /** The call as a plain record with the server's field names (one row of a table / DataFrame). */
@@ -116,11 +116,11 @@ export class Call {
       attributes: this.attributes,
       summary: this.summary,
       status: this.status,
-      wb_user_id: this.wbUserId,
-      wb_username: this.wbUsername,
-      wb_run_id: this.wbRunId,
-      wb_run_step: this.wbRunStep,
-      wb_run_step_end: this.wbRunStepEnd,
+      user_id: this.userId,
+      username: this.username,
+      run_id: this.runId,
+      run_step: this.runStep,
+      run_step_end: this.runStepEnd,
     };
     for (const k of ['deleted_at', 'storage_size_bytes', 'feedback']) if (this.raw[k] !== undefined) r[k] = this.raw[k];
     return r;

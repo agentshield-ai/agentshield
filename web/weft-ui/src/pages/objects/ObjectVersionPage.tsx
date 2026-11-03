@@ -146,9 +146,9 @@ export function ObjectVersionPage() {
             <span className="muted">
               Size <b>{fmtBytes(o.size_bytes)}</b>
             </span>
-            {o.wb_user_id && (
+            {o.user_id && (
               <span className="muted">
-                By <b>{o.wb_user_id}</b>
+                By <b>{o.user_id}</b>
               </span>
             )}
             <span className="muted">

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -201,16 +202,15 @@ type RuleCount struct {
 	ByAction ActionCounts `json:"by_action"`
 }
 
-// AgentCount is a per-agent row of DetectionStats. Rate is the share of the
-// agent's tool calls (execute_tool spans) that drew a non-allow engine
-// verdict (replays are not counted), when Weft has the agent's spans; nil
-// otherwise.
+// AgentCount is a per-agent row of DetectionStats. Rate is the agent's
+// detection rate (ToolCallFlags), nil when Weft has none of its tool calls.
 type AgentCount struct {
-	Agent     string       `json:"agent"`
-	Count     int          `json:"count"`
-	ByAction  ActionCounts `json:"by_action"`
-	ToolCalls int          `json:"tool_calls"`
-	Rate      *float64     `json:"detection_rate"`
+	Agent            string       `json:"agent"`
+	Count            int          `json:"count"`
+	ByAction         ActionCounts `json:"by_action"`
+	ToolCalls        int          `json:"tool_calls"`
+	FlaggedToolCalls int          `json:"flagged_tool_calls"`
+	Rate             *float64     `json:"detection_rate"`
 }
 
 // DayCount is a per-day (UTC) row of DetectionStats.
@@ -246,7 +246,6 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 		return nil, err
 	}
 	agents := map[string]*AgentCount{}
-	flagged := map[string]int{} // engine verdicts other than allow, per agent
 	days := map[string]*DayCount{}
 	for rows.Next() {
 		var action, sev, source, agent, day string
@@ -273,9 +272,6 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 		}
 		a.Count += n
 		a.ByAction[action] += n
-		if source == DetectionSourceEngine && action != DetectionAllow {
-			flagged[agent] += n
-		}
 		dc := days[day]
 		if dc == nil {
 			dc = &DayCount{Day: day, ByAction: ActionCounts{}, BySeverity: ActionCounts{}}
@@ -324,18 +320,13 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 		}
 		return st.ByRule[i].RuleID < st.ByRule[j].RuleID
 	})
-	toolCalls, err := s.toolCallCounts(ctx, q)
+	flags, err := s.ToolCallFlags(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	for _, a := range agents {
-		if tc, ok := toolCalls[a.Agent]; ok && tc > 0 && a.Agent != "" {
-			a.ToolCalls = tc
-			r := float64(flagged[a.Agent]) / float64(tc)
-			if r > 1 {
-				r = 1
-			}
-			a.Rate = &r
+		if f, ok := flags[a.Agent]; ok && a.Agent != "" {
+			a.ToolCalls, a.FlaggedToolCalls, a.Rate = f.ToolCalls, f.Flagged, f.Rate()
 		}
 		st.ByAgent = append(st.ByAgent, *a)
 	}
@@ -352,9 +343,36 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 	return st, nil
 }
 
-// toolCallCounts counts execute_tool spans per agent over the stats window
-// (and session, when one is given), for the per-agent detection rate.
-func (s *Store) toolCallCounts(ctx context.Context, q DetectionQuery) (map[string]int, error) {
+// ToolCallFlag is the basis of an agent's detection rate.
+type ToolCallFlag struct {
+	ToolCalls int // recorded tool calls (execute_tool spans)
+	Flagged   int // of those, the ones with a non-allow engine verdict
+}
+
+// Rate is Flagged / ToolCalls rounded to 4 places, or nil without tool calls.
+func (f ToolCallFlag) Rate() *float64 {
+	if f.ToolCalls <= 0 {
+		return nil
+	}
+	r := math.Round(float64(f.Flagged)/float64(f.ToolCalls)*1e4) / 1e4
+	return &r
+}
+
+// ToolCallFlags returns, per agent, the detection-rate basis over q's window
+// (and session and agent, when given). This is the one definition of the
+// detection rate (docs/weft/API.md, "Detection rate"), used by the agents
+// API and the Security stats alike:
+//
+//	detection_rate = flagged tool calls / tool calls
+//
+// A tool call is a recorded execute_tool span of the agent that started in
+// the window. It is flagged when at least one engine verdict (not a replay)
+// other than allow is linked to it (detections.span_id) and matches q's
+// other filters (action, rule, ...). A tool call with several detections
+// counts once, and detections that are not linked to a recorded tool call
+// (no span, or a session Weft has no spans for) are not part of the rate,
+// so it is always between 0 and 1.
+func (s *Store) ToolCallFlags(ctx context.Context, q DetectionQuery) (map[string]ToolCallFlag, error) {
 	conds := []string{"a.project_id = ?", "a.operation_name = 'execute_tool'", "a.agent_name <> ''", "c.deleted_at IS NULL"}
 	args := []any{q.ProjectID}
 	if q.SessionID != "" {
@@ -373,20 +391,27 @@ func (s *Store) toolCallCounts(ctx context.Context, q DetectionQuery) (map[strin
 		conds = append(conds, "c.started_at < ?")
 		args = append(args, q.To)
 	}
-	rows, err := s.r.QueryContext(ctx, `SELECT a.agent_name, COUNT(*) FROM agent_spans a JOIN calls c ON c.project_id = a.project_id AND c.id = a.id
-		WHERE `+strings.Join(conds, " AND ")+` GROUP BY a.agent_name`, args...)
+	// The verdict filter: q's detection filters, except agent and time,
+	// which apply to the tool call.
+	dq := q
+	dq.Agent, dq.From, dq.To = "", 0, 0
+	dwhere, dargs := dq.where()
+	rows, err := s.r.QueryContext(ctx, `SELECT a.agent_name, COUNT(*), COALESCE(SUM(EXISTS (SELECT 1 FROM detections d
+			WHERE d.span_id = a.id AND d.source = 'engine' AND d.action <> 'allow' AND `+dwhere+`)), 0)
+		FROM agent_spans a JOIN calls c ON c.project_id = a.project_id AND c.id = a.id
+		WHERE `+strings.Join(conds, " AND ")+` GROUP BY a.agent_name`, append(dargs, args...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]int{}
+	out := map[string]ToolCallFlag{}
 	for rows.Next() {
 		var a string
-		var n int
-		if err := rows.Scan(&a, &n); err != nil {
+		var f ToolCallFlag
+		if err := rows.Scan(&a, &f.ToolCalls, &f.Flagged); err != nil {
 			return nil, err
 		}
-		out[a] = n
+		out[a] = f
 	}
 	return out, rows.Err()
 }

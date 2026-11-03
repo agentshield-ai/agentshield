@@ -101,8 +101,17 @@ def main():
     check(summary["exact"]["true_fraction"] == 0.5, "evaluation summary")
     got = client.get_call(call.id)
     check(got.output == 8, "client.get_call reads the call back")
+    # The client's user and run field names (wb_user_ids filter, wb_user_id
+    # sort and query field) are translated; Weft's own API says user_id.
+    mine = list(client.get_calls(filter={"call_ids": [call.id], "wb_user_ids": [], "wb_run_ids": []},
+                                 sort_by=[{"field": "wb_user_id", "direction": "asc"}],
+                                 query={"$expr": {"$eq": [{"$getField": "wb_run_id"}, {"$literal": "no-such-run"}]}}))
+    check(mine == [], "the client's wb_* filter, sort and query fields are understood")
+    check(len(list(client.get_calls(filter={"call_ids": [call.id]}, sort_by=[{"field": "wb_user_id", "direction": "asc"}]))) == 1,
+          "the client can sort by wb_user_id")
 
     root = weft("/call/read", {"project_id": PROJECT, "id": call.id, "include_feedback": True})["call"]
+    check("user_id" in root and "run_id" in root and "wb_user_id" not in root, "Weft's API names the user and run fields its own way")
     usage = root["summary"]["usage"]["gpt-4o-mini"]
     check(usage["prompt_tokens"] == 20 and usage["requests"] == 2, f"usage rolled up once, not double counted ({usage})")
     check({f["feedback_type"] for f in root["feedback"]} >= {"weft.reaction", "weft.note"}, "feedback stored under Weft's names")

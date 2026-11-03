@@ -160,10 +160,11 @@ func TestShieldIngestValidationAndIdempotency(t *testing.T) {
 	}
 	e.key = "k1"
 
-	body := shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "weft-replay-job-1", "action": "block"})
+	body := shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "weft-replay-job-1", "action": "block"},
+		map[string]any{"event_id": "evt-r2", "session_id": "weft-replay:job:s1", "action": "block"})
 	body["overrides"] = []any{map[string]any{"event_id": "evt-later", "session_id": "s1"}}
 	code, out := e.do(http.MethodPost, "/api/v1/shield/ingest", body, "")
-	if code != http.StatusOK || out["accepted"].(float64) != 1 || out["created"].(float64) != 1 || out["ignored"].(float64) != 1 || out["overrides_pending"].(float64) != 1 {
+	if code != http.StatusOK || out["accepted"].(float64) != 1 || out["created"].(float64) != 1 || out["ignored"].(float64) != 2 || out["overrides_pending"].(float64) != 1 {
 		t.Fatalf("ingest: %d %v", code, out)
 	}
 	firstID := out["ids"].([]any)[0].(map[string]any)["id"]

@@ -306,8 +306,8 @@ func TestNamedKeysAndWhoami(t *testing.T) {
 	}
 	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/x",
 		"feedback_type": "weft.note", "payload": map[string]any{"note": "hi"}})
-	if fb["wb_user_id"] != "alice" {
-		t.Fatalf("feedback user = %v", fb["wb_user_id"])
+	if fb["user_id"] != "alice" {
+		t.Fatalf("feedback user = %v", fb["user_id"])
 	}
 	e.key = "plainkey"
 	_, out = e.raw("/auth/whoami", nil, nil)

@@ -67,7 +67,7 @@ func TestCallsExportCSVFlatten(t *testing.T) {
 			t.Errorf("missing column %q in %v", col, rows)
 		}
 	}
-	if idx["id"] != 0 || idx["inputs.n"] < idx["wb_run_id"] {
+	if idx["id"] != 0 || idx["inputs.n"] < idx["run_id"] {
 		t.Errorf("base columns should come first: %v", idx)
 	}
 	first, last := rows[0], rows[4]

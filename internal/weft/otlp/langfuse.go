@@ -225,8 +225,8 @@ func applySpanMeta(attrs map[string]any, st *store.CallStart, user map[string]an
 	if st.ThreadID == nil {
 		st.ThreadID = optString(attrs, "langfuse.session.id", "gen_ai.session.id")
 	}
-	if st.WBUserID == nil {
-		st.WBUserID = optString(attrs, "langfuse.user.id", "gen_ai.user.id")
+	if st.UserID == nil {
+		st.UserID = optString(attrs, "langfuse.user.id", "gen_ai.user.id")
 	}
 	if st.DisplayName == nil && st.ParentID == nil {
 		st.DisplayName = optString(attrs, "langfuse.trace.name")

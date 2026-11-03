@@ -7,21 +7,41 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { outDir, project, watchErrors } from './helpers'
 
+const blank = () => `${process.env.WEFT_E2E_EMPTY}-blank`
+
 const PAGES: [string, () => string][] = [
   ['projects', () => '/'],
   ['sessions', () => `/${project()}/sessions`],
   ['session-timeline', () => `/${project()}/sessions/code-lint-1?step=problem`],
   ['session-graph', () => `/${project()}/sessions/trip-oslo?tab=graph`],
+  ['session-reasoning', () => `/${project()}/sessions/trip-oslo?tab=reasoning`],
   ['session-security', () => `/${project()}/sessions/code-lint-1?tab=security`],
   ['session-scores', () => `/${project()}/sessions/trip-oslo?tab=scores`],
+  ['session-raw', () => `/${project()}/sessions/trip-oslo?tab=raw`],
   ['agents', () => `/${project()}/agents`],
   ['agent', () => `/${project()}/agents/coder`],
   ['teams', () => `/${project()}/teams`],
   ['team', () => `/${project()}/teams/trip-planners`],
   ['security', () => `/${project()}/security`],
-  ['scores', () => `/${project()}/scores`],
   ['traces', () => `/${project()}/traces`],
-  ['empty-project', () => `/${process.env.WEFT_E2E_EMPTY}-blank/sessions`],
+  ['dashboards', () => `/${project()}/dashboards`],
+  ['monitors', () => `/${project()}/monitors`],
+  ['evaluations', () => `/${project()}/evaluations`],
+  ['scores', () => `/${project()}/scores`],
+  ['leaderboards', () => `/${project()}/leaderboards`],
+  ['review-queues', () => `/${project()}/review-queues`],
+  ['datasets', () => `/${project()}/datasets`],
+  ['objects', () => `/${project()}/objects`],
+  ['automations', () => `/${project()}/automations`],
+  ['settings', () => `/${project()}/settings`],
+  ['help', () => '/help'],
+  ['help-reference', () => '/help/API.md'],
+  ['empty-project', () => `/${blank()}/sessions`],
+  ['empty-agents', () => `/${blank()}/agents`],
+  ['empty-teams', () => `/${blank()}/teams`],
+  ['empty-security', () => `/${blank()}/security`],
+  ['empty-traces', () => `/${blank()}/traces`],
+  ['empty-review-queues', () => `/${blank()}/review-queues`],
 ]
 
 const CONFIGS = [

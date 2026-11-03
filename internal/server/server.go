@@ -660,8 +660,9 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		s.storeMatchedAlerts(response, &req)
 	}
 
-	// Forward to Weft (non-blocking; never changes the verdict)
-	if s.verdictSink != nil {
+	// Forward to Weft (non-blocking; never changes the verdict). Replays come
+	// from Weft itself and are not sent back.
+	if s.verdictSink != nil && !req.Replay {
 		s.verdictSink.Verdict(&req, response)
 	}
 

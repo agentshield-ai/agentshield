@@ -66,6 +66,64 @@ jobs:
         # The Go binary embeds internal/weft/webui/static; rebuild with `make weft-ui` and commit.
         run: git diff --exit-code -- ../../internal/weft/webui/static
 
+  ui-browser:
+    # The DESIGN.md §7.1 browser checks: every main page in light and dark at
+    # 1440 and 390 px (axe WCAG 2.1 AA, no serious or critical violations; no
+    # horizontal overflow; no console errors), the task tests with their click
+    # counts, and keyboard, filter, view and undo behaviour. Runs against the
+    # server's embedded UI, built from this commit; no Vite server.
+    name: Web UI in a browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/weft-ui/package-lock.json
+      - name: Install UI dependencies
+        working-directory: web/weft-ui
+        run: npm ci --no-audit --no-fund
+      - name: Build the UI into the server
+        working-directory: web/weft-ui
+        run: |
+          npx vite build
+          node ../../scripts/weft_ui_licenses.mjs
+      - name: Start the server (compatibility adapter off, AgentShield rules for replay)
+        run: |
+          go build -o bin/weft ./cmd/weft
+          ./bin/weft --addr 127.0.0.1:6345 --db "$RUNNER_TEMP/e2e.db" --shield-rules-dir rules/rules > "$RUNNER_TEMP/weft.log" 2>&1 &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:6345/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:6345/ | grep -q '<div id="root">'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345/graphql)" = 404
+      - name: Install Chromium
+        # The browser build matches the @playwright/test version pinned in package.json.
+        working-directory: web/weft-ui
+        run: npx playwright install --with-deps chromium
+      - name: Browser tests
+        working-directory: web/weft-ui
+        env:
+          WEFT_E2E_URL: http://127.0.0.1:6345
+          WEFT_E2E_OUT: ${{ runner.temp }}/e2e
+        run: npx playwright test
+      - name: Click counts of the task tests
+        if: always()
+        run: cat "$RUNNER_TEMP/e2e/task-clicks.json" || true
+      - name: Keep screenshots, accessibility results and the server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weft-ui-browser
+          path: |
+            ${{ runner.temp }}/e2e
+            ${{ runner.temp }}/weft.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   sdks:
     name: Server and SDKs
     runs-on: ubuntu-latest

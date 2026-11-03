@@ -22,9 +22,9 @@ type CallStart struct {
 	StartedAt   string         `json:"started_at"`
 	Attributes  map[string]any `json:"attributes"`
 	Inputs      map[string]any `json:"inputs"`
-	WBUserID    *string        `json:"wb_user_id"`
-	WBRunID     *string        `json:"wb_run_id"`
-	WBRunStep   *int64         `json:"wb_run_step"`
+	UserID      *string        `json:"user_id"`
+	RunID       *string        `json:"run_id"`
+	RunStep     *int64         `json:"run_step"`
 }
 
 // CallEnd is the end half of a call.
@@ -35,8 +35,8 @@ type CallEnd struct {
 	Exception *string        `json:"exception"`
 	Output    any            `json:"output"`
 	Summary   map[string]any `json:"summary"`
-	// WBRunStepEnd is the linked run's step when the call ended.
-	WBRunStepEnd *int64 `json:"wb_run_step_end"`
+	// RunStepEnd is the linked run's step when the call ended.
+	RunStepEnd *int64 `json:"run_step_end"`
 	// Cumulative marks a summary that already includes descendants' usage.
 	Cumulative bool `json:"-"`
 }
@@ -113,7 +113,7 @@ func (st *CallStart) normalize() error {
 	if len(st.OpName) > 2048 {
 		return Invalidf("op_name too long")
 	}
-	for _, p := range []**string{&st.ThreadID, &st.TurnID, &st.DisplayName, &st.WBUserID, &st.WBRunID} {
+	for _, p := range []**string{&st.ThreadID, &st.TurnID, &st.DisplayName, &st.UserID, &st.RunID} {
 		if *p != nil && **p == "" {
 			*p = nil
 		}
@@ -310,7 +310,7 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 	attrs := mustJSON(st.Attributes)
 	inRefs := mustJSON(nonNil(refs.CollectRefs(st.Inputs)))
 	_, err = tx.ExecContext(ctx, `INSERT INTO calls(project_id, id, op_name, op_base_name, display_name, trace_id, parent_id,
-			thread_id, turn_id, started_at, attributes, inputs, input_refs, wb_user_id, wb_run_id, has_start, storage_size)
+			thread_id, turn_id, started_at, attributes, inputs, input_refs, user_id, run_id, has_start, storage_size)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
 		ON CONFLICT(project_id, id) DO UPDATE SET
 			op_name = excluded.op_name, op_base_name = excluded.op_base_name,
@@ -318,15 +318,15 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 			trace_id = excluded.trace_id, parent_id = excluded.parent_id,
 			thread_id = excluded.thread_id, turn_id = excluded.turn_id, started_at = excluded.started_at,
 			attributes = excluded.attributes, inputs = excluded.inputs, input_refs = excluded.input_refs,
-			wb_user_id = excluded.wb_user_id, wb_run_id = excluded.wb_run_id, has_start = 1,
+			user_id = excluded.user_id, run_id = excluded.run_id, has_start = 1,
 			storage_size = calls.storage_size - (CASE WHEN calls.has_start = 1 THEN length(calls.inputs) + length(calls.attributes) ELSE 0 END) + excluded.storage_size`,
 		st.ProjectID, st.ID, st.OpName, OpBaseName(st.OpName), nullStr(st.DisplayName), st.TraceID, nullStr(st.ParentID),
-		nullStr(st.ThreadID), nullStr(st.TurnID), started, attrs, inputs, inRefs, nullStr(st.WBUserID), nullStr(st.WBRunID),
+		nullStr(st.ThreadID), nullStr(st.TurnID), started, attrs, inputs, inRefs, nullStr(st.UserID), nullStr(st.RunID),
 		len(inputs)+len(attrs))
 	if err != nil {
 		return err
 	}
-	if err := setRunStep(ctx, tx, st.ProjectID, st.ID, "wb_run_step", st.WBRunStep); err != nil { // callfields.go
+	if err := setRunStep(ctx, tx, st.ProjectID, st.ID, "run_step", st.RunStep); err != nil { // callfields.go
 		return err
 	}
 	if err := s.absorbChildren(ctx, tx, st.ProjectID, st.ID); err != nil {
@@ -364,7 +364,7 @@ func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
 	if err != nil {
 		return err
 	}
-	if err := setRunStep(ctx, tx, en.ProjectID, en.ID, "wb_run_step_end", en.WBRunStepEnd); err != nil { // callfields.go
+	if err := setRunStep(ctx, tx, en.ProjectID, en.ID, "run_step_end", en.RunStepEnd); err != nil { // callfields.go
 		return err
 	}
 	if err := s.refreshTotalTokens(ctx, tx, en.ProjectID, en.ID); err != nil {

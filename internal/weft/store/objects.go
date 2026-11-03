@@ -26,7 +26,7 @@ type Obj struct {
 	BaseObjectClass *string  `json:"base_object_class"`
 	LeafObjectClass *string  `json:"leaf_object_class"`
 	Val             any      `json:"val"`
-	WBUserID        *string  `json:"wb_user_id"`
+	UserID          *string  `json:"user_id"`
 	Aliases         []string `json:"aliases"`
 	Tags            []string `json:"tags"`
 	SizeBytes       int64    `json:"size_bytes"`
@@ -238,7 +238,7 @@ func (s *Store) CreateObjectRaw(ctx context.Context, projectID, objectID string,
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO objects(project_id, object_id, digest, version_index, kind, base_object_class, leaf_object_class,
-			val, created_at, wb_user_id, size_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			val, created_at, user_id, size_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 			pid, objectID, digest, version, kind, nullStr(base), nullStr(leaf), canon, nowMicros(), nullStr(userID), len(canon))
 		return err
 	})
@@ -246,7 +246,7 @@ func (s *Store) CreateObjectRaw(ctx context.Context, projectID, objectID string,
 }
 
 const objSelect = `SELECT o.project_id, o.object_id, o.digest, o.version_index, o.kind, o.base_object_class, o.leaf_object_class,
-	o.val, o.created_at, o.deleted_at, o.wb_user_id, o.size_bytes,
+	o.val, o.created_at, o.deleted_at, o.user_id, o.size_bytes,
 	(o.version_index = (SELECT MAX(o2.version_index) FROM objects o2 WHERE o2.project_id = o.project_id AND o2.object_id = o.object_id AND o2.deleted_at IS NULL)) AS is_latest
 	FROM objects o`
 
@@ -260,7 +260,7 @@ func scanObj(rows interface{ Scan(...any) error }, withVal bool) (*Obj, error) {
 	if err := rows.Scan(&o.ProjectID, &o.ObjectID, &o.Digest, &o.VersionIndex, &o.Kind, &base, &leaf, &val, &created, &deleted, &user, &o.SizeBytes, &latest); err != nil {
 		return nil, err
 	}
-	o.BaseObjectClass, o.LeafObjectClass, o.WBUserID = strPtr(base), strPtr(leaf), strPtr(user)
+	o.BaseObjectClass, o.LeafObjectClass, o.UserID = strPtr(base), strPtr(leaf), strPtr(user)
 	o.CreatedAt = FormatMicros(created)
 	o.DeletedAt = fmtNullMicros(deleted)
 	o.IsLatest = latest.Valid && latest.Bool

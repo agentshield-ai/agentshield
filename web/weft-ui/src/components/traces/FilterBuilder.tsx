@@ -35,7 +35,7 @@ export const BASE_FILTER_FIELDS = [
   'thread_id',
   'turn_id',
   'exception',
-  'wb_user_id',
+  'user_id',
   'started_at',
   'ended_at',
   'summary.weft.status',

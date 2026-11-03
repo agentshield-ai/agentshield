@@ -95,7 +95,7 @@ await weft.init('my-project', {
     retryBackoffMs: 250, retryMaxBackoffMs: 4000,   // WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL (seconds)
     httpTimeoutMs: 30_000,                     // WEFT_HTTP_TIMEOUT (seconds)
     logLevel: 'warning',                       // debug, info, warning, error, critical (WEFT_LOG_LEVEL)
-    wbRunId: 'run-abc', wbRunStep: () => step, // run linkage (also client.setWbRun / weft.setWbRun)
+    runId: 'run-abc', runStep: () => step, // run linkage (also client.setRun / weft.setRun)
   },
 });
 ```
@@ -103,9 +103,9 @@ await weft.init('my-project', {
 The environment variables are the Python SDK's (`WEFT_*`, seconds); explicit
 settings and `sender` options win over them.
 `weft.setLogLevel()` changes the level later; the SDK's messages go through
-`weft.logger` (to `console`). With `wbRunId`/`setWbRun(runId, step)` calls
-carry `wb_run_id` (`<entity>/<project>/<run id>`), `wb_run_step` and
-`wb_run_step_end`, linking them to a training or experiment run.
+`weft.logger` (to `console`). With `runId`/`setRun(runId, step)` calls
+carry `run_id` (`<entity>/<project>/<run id>`), `run_step` and
+`run_step_end`, linking them to a training or experiment run.
 
 With `enableDiskFallback`, anything that cannot be sent goes to a JSONL file
 instead of being dropped. That covers batches that still fail after retries,
@@ -667,7 +667,7 @@ await weft.get('qa:latest'); weft.parseUri('weft:///e/p/object/qa:<digest>');
 
 // calls as plain records (the TS counterpart of Python's CallsIter.to_pandas()/to_records())
 const rows = await client.getCallsRecords({ filter: { op_names: ['answer'] }, includeUsernames: true });
-calls[0].toRecord();   // { id, op_name, inputs, output, status, summary, wb_run_id, ... }
+calls[0].toRecord();   // { id, op_name, inputs, output, status, summary, run_id, ... }
 
 // registry (prompt versions, and any object)
 await weft.linkPromptToRegistry(prompt, { targetPath: 'prompts/support-bot', aliases: ['production'] });

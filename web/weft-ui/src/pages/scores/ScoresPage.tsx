@@ -37,7 +37,7 @@ export function ScoresPage() {
       Scores say how well something went, from 0 (bad) to 1 (good). They are given to a whole <strong>session</strong>, one <strong>agent</strong> in a session, or one{' '}
       <strong>hand-off</strong>, by LLM judges, the tool-safety replay, monitors, or your own code. Run scorers from a session's Scores tab.
     </>,
-    'API.md#scores',
+    'evaluations.md#scores',
   )
   const q = useQuery({
     queryKey: ['v1', pid, 'scores', 'all', scope, scorer],
@@ -73,7 +73,7 @@ export function ScoresPage() {
       </header>
       {help.panel}
       {all.data?.total_count === 0 ? (
-        <GuidedEmpty projectId={pid} title="No scores yet" doc="API.md#scores" showTest>
+        <GuidedEmpty projectId={pid} title="No scores yet" doc="evaluations.md#scores" showTest>
           Open a session and use its <strong>Scores</strong> tab to run the goal-completion, reasoning-consistency or hand-off-quality judges, or create a monitor that scores new
           sessions automatically.
         </GuidedEmpty>

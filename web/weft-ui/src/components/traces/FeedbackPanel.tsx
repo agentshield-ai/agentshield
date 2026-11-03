@@ -33,9 +33,9 @@ export function isMine(f: Feedback): boolean {
   // The UI never sets `creator`; rows with a creator were written by someone else (SDK, scripts).
   if (f.creator) return false
   const me = myUserId()
-  if (me) return f.wb_user_id === me
+  if (me) return f.user_id === me
   // Before our first write we do not know our id; unauthenticated servers record "anonymous".
-  return !f.wb_user_id || f.wb_user_id === 'anonymous'
+  return !f.user_id || f.user_id === 'anonymous'
 }
 
 export function useCallFeedback(projectId: string, callId: string) {
@@ -62,7 +62,7 @@ function useFeedbackMutations(projectId: string, callId: string) {
   const create = useMutation({
     mutationFn: (req: { feedback_type: string; payload: Any; annotation_ref?: string }) => api.feedbackCreate({ project_id: projectId, ref: targetRef, ...req }),
     onSuccess: (r) => {
-      rememberUserId(r.wb_user_id)
+      rememberUserId(r.user_id)
       invalidate()
     },
   })
@@ -93,7 +93,7 @@ export function Reactions({ projectId, callId, feedback }: { projectId: string; 
             className={`reaction ${mine ? 'active' : ''}`}
             disabled={busy}
             aria-pressed={!!mine}
-            title={rs.length ? rs.map((r) => r.creator ?? r.wb_user_id ?? 'anonymous').join(', ') : `React with ${e}`}
+            title={rs.length ? rs.map((r) => r.creator ?? r.user_id ?? 'anonymous').join(', ') : `React with ${e}`}
             onClick={() => (mine ? purge.mutate(mine.id) : create.mutate({ feedback_type: 'weft.reaction', payload: { emoji: e } }))}
           >
             <span>{e}</span>
@@ -122,7 +122,7 @@ function Notes({ projectId, callId, feedback }: { projectId: string; callId: str
       {notes.map((n) => (
         <div key={n.id} className="note">
           <div className="row small faint">
-            <span>{n.creator ?? n.wb_user_id ?? 'anonymous'}</span>
+            <span>{n.creator ?? n.user_id ?? 'anonymous'}</span>
             <span title={fmtDate(n.created_at)}>{fmtRelative(n.created_at)}</span>
             <span className="grow" />
             <button className="btn ghost sm" onClick={() => purge.mutate(n.id)} disabled={purge.isPending} aria-label="Delete note">
@@ -299,7 +299,7 @@ function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: strin
           <span className="faint">Others:</span>
           {others.map((o) => (
             <span key={o.id} className="badge" title={fmtDate(o.created_at)}>
-              {fmtScore(o.payload?.value)} · {o.creator ?? o.wb_user_id ?? 'anonymous'}
+              {fmtScore(o.payload?.value)} · {o.creator ?? o.user_id ?? 'anonymous'}
             </span>
           ))}
         </div>
@@ -382,7 +382,7 @@ function FeedbackTable({ projectId, rows }: { projectId: string; rows: Feedback[
               <td>
                 <ValueView value={f.payload} projectId={projectId} />
               </td>
-              <td>{f.creator ?? f.wb_user_id ?? '—'}</td>
+              <td>{f.creator ?? f.user_id ?? '—'}</td>
               <td title={fmtDate(f.created_at)}>{fmtRelative(f.created_at)}</td>
             </tr>
           ))}

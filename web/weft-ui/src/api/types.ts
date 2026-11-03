@@ -63,7 +63,7 @@ export interface Feedback {
   payload: Any
   creator: string | null
   created_at: string
-  wb_user_id: string | null
+  user_id: string | null
   annotation_ref?: string | null
   runnable_ref?: string | null
   call_ref?: string | null
@@ -88,8 +88,8 @@ export interface Call {
   inputs: Record<string, Any>
   output: Any
   summary: CallSummary
-  wb_user_id: string | null
-  wb_run_id: string | null
+  user_id: string | null
+  run_id: string | null
   deleted_at: string | null
   feedback?: Feedback[]
   storage_size_bytes?: number
@@ -130,8 +130,8 @@ export interface CallsFilter {
   trace_ids?: string[]
   call_ids?: string[]
   trace_roots_only?: boolean
-  wb_user_ids?: string[]
-  wb_run_ids?: string[]
+  user_ids?: string[]
+  run_ids?: string[]
   thread_ids?: string[]
   turn_ids?: string[]
 }
@@ -233,7 +233,7 @@ export interface ObjSchema {
   base_object_class: string | null
   leaf_object_class: string | null
   val: Any
-  wb_user_id: string | null
+  user_id: string | null
   aliases: string[]
   /** Version tags (/objs/{id}/versions/{digest}/tags). */
   tags?: string[]

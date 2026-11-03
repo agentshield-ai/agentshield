@@ -27,7 +27,7 @@ type AgentChatFeedback struct {
 	ScorerTagReasons        map[string]string  `json:"scorer_tag_reasons"`
 	ScorerTags              []string           `json:"scorer_tags"`
 	TriggerRef              *string            `json:"trigger_ref"`
-	WBUserID                *string            `json:"wb_user_id"`
+	UserID                  *string            `json:"user_id"`
 	Ref                     string             `json:"ref"`
 }
 
@@ -36,7 +36,7 @@ func chatFeedback(fs []Feedback) []AgentChatFeedback {
 	for _, f := range fs {
 		created := f.CreatedAt
 		cf := AgentChatFeedback{ID: f.ID, AnnotationRef: f.AnnotationRef, CallRef: f.CallRef, CreatedAt: &created, Creator: f.Creator,
-			FeedbackType: f.FeedbackType, Payload: asMap(f.Payload), RunnableRef: f.RunnableRef, TriggerRef: f.TriggerRef, WBUserID: f.WBUserID,
+			FeedbackType: f.FeedbackType, Payload: asMap(f.Payload), RunnableRef: f.RunnableRef, TriggerRef: f.TriggerRef, UserID: f.UserID,
 			Ref: f.Ref, ScorerRatingConfidences: map[string]float64{}, ScorerRatingReasons: map[string]string{},
 			ScorerRatings: map[string]float64{}, ScorerTagConfidences: map[string]float64{}, ScorerTagReasons: map[string]string{}, ScorerTags: []string{}}
 		if cf.Payload == nil {
@@ -155,7 +155,7 @@ type AgentTraceChat struct {
 	TotalOutputTokens             int64               `json:"total_output_tokens"`
 	TotalReasoningTokens          int64               `json:"total_reasoning_tokens"`
 	TraceID                       string              `json:"trace_id"`
-	WBUserID                      *string             `json:"wb_user_id"`
+	UserID                        *string             `json:"user_id"`
 	// Weft extensions.
 	RootSpanID string `json:"root_span_id"`
 	SpanCount  int    `json:"span_count"`
@@ -470,7 +470,7 @@ func buildTraceChat(traceID string, roots []*agentSpan, spans []*agentSpan, call
 			d := (endUS - r.StartedUS + 500) / 1000
 			res.TotalDurationMS = &d
 		}
-		res.WBUserID = ptrIf(r.WBUserID)
+		res.UserID = ptrIf(r.UserID)
 		if feedback {
 			res.Feedback = []AgentChatFeedback{}
 			if c := calls[r.ID]; c != nil {

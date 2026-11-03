@@ -109,6 +109,15 @@ a {
 a:hover {
   text-decoration: underline;
 }
+/* Links inside running text are underlined, so they do not rely on colour
+   alone (WCAG 2.1 1.4.1; axe link-in-text-block). Links that stand on their
+   own (navigation, buttons, chips, table cells) keep the plain style. */
+:is(p, .muted, .faint, .empty, .callout-body) a:not([class]),
+:is(.markdown, .help-body, .in-text) a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
 code,
 pre,
 .mono {

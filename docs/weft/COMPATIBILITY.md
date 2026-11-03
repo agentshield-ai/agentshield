@@ -49,6 +49,7 @@ With the adapter on, the server additionally:
 | Auth | The `Wandb-Api-Key` header is read as Weft's `X-Weft-Api-Key`. |
 | Refs | `weave:///` refs and `weave-file://` URIs in request bodies and query strings are read as `weft:///` and `weft-file://`. Responses to the weave client carry `weave:///` refs. |
 | Feedback | The client's field and type names are translated on the way in and, for the client, on the way out (table below). |
+| Fields | The client's user and run fields (`wb_user_id`, `wb_run_id`, `wb_run_step`, `wb_run_step_end`, `wb_username`, and the calls filter's `wb_user_ids` / `wb_run_ids`) and its query fields are translated on the way in; responses to the client name them its way (table below). |
 | Attributes | Legacy attribute keys are renamed to Weft's on ingest, over JSON and OTLP (table below), so evaluation links, parent-call links, span kinds and turns work. An OTLP resource with `wandb.entity` / `wandb.project` (and no `weft.project`) is routed to that project. |
 | Ops | Ops the client serialises (`_type: "CustomWeaveType"`, `weave_type.type: "Op"`) are stored as ops. |
 | Summaries | The client's call summaries already include their descendants; the adapter marks its requests `X-Weft-Summary: cumulative` so usage and status counts are not counted twice. |
@@ -73,6 +74,9 @@ rewritten; requests are translated for every caller while the adapter is on.
 | `wandb.agent_monitor` | `weft.signal` |
 | `wandb.agent_user_feedback` | `weft.user_feedback` |
 | call query fields `summary.weave.*`, `feedback.wandb.<type>.<path>` | `summary.weft.*`, `feedback.<weft type>.<path>` |
+| `wb_user_id`, `wb_username` (calls, feedback, objects; query and sort fields) | `user_id`, `username` |
+| `wb_run_id`, `wb_run_step`, `wb_run_step_end` | `run_id`, `run_step`, `run_step_end` |
+| calls filter `wb_user_ids`, `wb_run_ids` | `user_ids`, `run_ids` |
 | attributes `weave.eval.*`, `weave.parent_call.*` | `weft.eval.*`, `weft.parent_call.*` |
 | `weave.op_name`, `weave.display_name`, `wandb.display_name` | `weft.op_name`, `weft.display_name` |
 | `wandb.thread_id`, `wandb.turn_id`, `wandb.is_turn` / `weave.is_turn`, `wandb.thread_name` | `weft.thread_id`, `weft.turn_id`, `weft.is_turn`, `weft.conversation.name` |
@@ -96,17 +100,39 @@ Databases from earlier Weft versions used the names in the left column of the
 table above. When the server opens such a database it migrates it once,
 whether or not the adapter is on:
 
-- the feedback table's `weave_ref` column becomes `ref`;
+- columns get Weft's names: the feedback table's `weave_ref` becomes `ref`,
+  and `wb_user_id`, `wb_run_id`, `wb_run_step`, `wb_run_step_end` of calls,
+  feedback, objects and registry versions become `user_id`, `run_id`,
+  `run_step`, `run_step_end`;
 - stored feedback types get their Weft names;
 - legacy attribute keys of stored calls are renamed (eval links, parent-call
-  links, span kinds, turn markers).
+  links, span kinds, turn markers);
+- saved queries get Weft's names (below).
 
-Saved views, dashboards, monitors and automations are content-addressed
-objects, so their stored text is not rewritten (that would change their
-digests). Queries and feedback-type patterns saved in them with the earlier
-names keep working: the query compiler reads `summary.weave.*` and
-`feedback.wandb.*` paths, and automation triggers read `wandb.*` types and
-patterns. Re-saving them from the UI stores Weft's names.
+### Decision: saved queries are migrated, not translated at run time
+
+Saved views, dashboards, monitors, leaderboards and automations hold call
+queries, field names and feedback types. Earlier versions read the old names
+in them at run time (the query compiler mapped `summary.weave.*` and
+`feedback.wandb.*` paths, and automations mapped `wandb.*` types and
+patterns), which put legacy names in Weft's core. Now the migration does it
+once instead: these objects are content-addressed, so they are not edited in
+place. For each one whose latest version uses an old name (a legacy query
+field, `wb_*` field or filter key, or a `wandb.*` feedback type or pattern),
+the migration publishes a new version with Weft's names (same class and
+author, the publisher's key order kept), and moves the aliases of the old
+version to it, so `latest` and every alias resolve to the new version. The
+old version is kept and can still be read by its digest. Older versions are
+not rewritten; reading one returns what was saved.
+
+After the migration nothing outside the adapter reads the old names: the
+query compiler and the automation runner know only Weft's. A saved query
+that names an old field directly by digest gets an unknown-field error (or,
+for a `feedback.wandb.*` path, matches no feedback). An automation that
+filters on a monitor by its full ref (`trigger.monitor_ref` with a digest)
+and whose monitor was migrated needs that ref updated, as after any edit of
+the monitor. With the adapter on, queries and saved views the weave client
+sends with the old names are translated on the way in.
 
 ## Limits
 
@@ -127,6 +153,13 @@ patterns. Re-saving them from the UI stores Weft's names.
   `weave:///` refs in every JSON response). A user value that happens to
   equal a Weft feedback type name in those responses is shown to the client
   under the legacy name.
+- User and run field names are renamed in responses of `/call/*`,
+  `/calls/*`, `/feedback/*`, `/obj/*`, `/objs/*`, `/threads/*` and
+  `/evaluations/*` to the client, as object keys outside user data (`inputs`,
+  `output`, `attributes`, `summary`, `payload`, `val`, rows). In requests the
+  old names are translated as keys and as string values (query and sort
+  fields) outside user data, and inside `val` on `/obj/create` (a saved view's
+  query).
 - `/completions/*` and `/image/create` return `call_id`; for the client the
   adapter renames it to `weave_call_id`.
 - The adapter answers only the GraphQL operations listed above; W&B features

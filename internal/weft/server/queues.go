@@ -43,7 +43,7 @@ type queueCreateReq struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	ScorerRefs  []string `json:"scorer_refs"`
-	WBUserID    *string  `json:"wb_user_id"`
+	UserID      *string  `json:"user_id"`
 }
 
 func (s *Server) queueCreate(ctx context.Context, r *http.Request, req *queueCreateReq) (any, error) {
@@ -51,7 +51,7 @@ func (s *Server) queueCreate(ctx context.Context, r *http.Request, req *queueCre
 	if err != nil {
 		return nil, err
 	}
-	q, err := s.store.CreateAnnotationQueue(ctx, pid, req.Name, req.Description, req.ScorerRefs, userFrom(r, req.WBUserID))
+	q, err := s.store.CreateAnnotationQueue(ctx, pid, req.Name, req.Description, req.ScorerRefs, userFrom(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ type queueItemsAddReq struct {
 	ProjectID     string   `json:"project_id"`
 	CallIDs       []string `json:"call_ids"`
 	DisplayFields []string `json:"display_fields"`
-	WBUserID      *string  `json:"wb_user_id"`
+	UserID        *string  `json:"user_id"`
 }
 
 func (s *Server) queueItemsAdd(ctx context.Context, r *http.Request, req *queueItemsAddReq) (any, error) {
@@ -176,7 +176,7 @@ func (s *Server) queueItemsAdd(ctx context.Context, r *http.Request, req *queueI
 	if err != nil {
 		return nil, err
 	}
-	added, dups, err := s.store.AddAnnotationQueueItems(ctx, pid, chi.URLParam(r, "queue_id"), req.CallIDs, req.DisplayFields, userFrom(r, req.WBUserID))
+	added, dups, err := s.store.AddAnnotationQueueItems(ctx, pid, chi.URLParam(r, "queue_id"), req.CallIDs, req.DisplayFields, userFrom(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}

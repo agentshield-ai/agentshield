@@ -24,7 +24,7 @@ function writeDismissed(id: string, v: boolean) {
   }
 }
 
-/** The in-app path of a guide, e.g. docsUrl('API.md#objects') → /help/API.md#objects. */
+/** The in-app path of a guide, e.g. docsUrl('sessions.md#keyboard') → /help/sessions.md#keyboard. */
 export function docsUrl(doc: string): string {
   return '/help/' + doc
 }

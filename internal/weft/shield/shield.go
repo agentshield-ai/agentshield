@@ -402,11 +402,14 @@ type remoteEvaluator struct {
 }
 
 func (r *remoteEvaluator) evaluate(ctx context.Context, sessionKey string, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
-	// Replay requests are marked so they are not mistaken for live traffic:
-	// the session id is namespaced per job, and Weft's ingest ignores engine
-	// verdicts whose event id starts with "weft-replay-" (an engine that
-	// pushes to this Weft would otherwise report them back).
-	req.SessionID = "weft-replay:" + r.jobID + ":" + sessionKey
+	// Replay requests are marked so they are not mistaken for live traffic
+	// (store.IsReplayEvaluation): replay is set, so the engine tags its
+	// evaluate span agentshield.replay, does not push the verdict and keeps
+	// the session out of live cross-session fields; the session id is
+	// namespaced per job and the event id starts with "weft-replay-" for
+	// engines that predate the flag. Weft's OTLP and push ingest drop them.
+	req.Replay = true
+	req.SessionID = store.ReplaySessionPrefix + r.jobID + ":" + sessionKey
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -533,7 +536,7 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 		if source == "" {
 			source = "weft"
 		}
-		er := BuildRequest(t, fmt.Sprintf("weft-replay-%s-%d", jobID, i), source)
+		er := BuildRequest(t, fmt.Sprintf("%s%s-%d", store.ReplayEventPrefix, jobID, i), source)
 		alerts, err := ev.evaluate(ctx, t.SessionID, er)
 		if err != nil {
 			res.Summary.Errors++

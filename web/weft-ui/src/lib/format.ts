@@ -33,12 +33,24 @@ export function fmtNumber(n: number | null | undefined, digits = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits })
 }
 
+/** Money in US dollars, the one format used everywhere: two significant
+ * digits below $1 ($0.0048, $0.12), cents from $1 ($1,234.50). Floating-point
+ * noise never shows (0.0048000000000000004 gives $0.0048). */
 export function fmtCost(usd: number | null | undefined): string {
-  if (usd == null || Number.isNaN(usd)) return '—'
+  if (usd == null || !Number.isFinite(usd)) return '—'
   if (usd === 0) return '$0'
-  if (usd < 0.0001) return '<$0.0001'
-  if (usd < 1) return `$${usd.toFixed(4)}`
-  return `$${usd.toFixed(2)}`
+  const sign = usd < 0 ? '−' : ''
+  const a = Math.abs(usd)
+  if (a < 0.0001) return `${sign}<$0.0001`
+  if (a < 1) {
+    // Two significant digits; trailing zeros past the cents go (0.0040 → 0.004).
+    const s = a.toFixed(Math.max(2, 1 - Math.floor(Math.log10(a))))
+    const [i, f] = s.split('.')
+    let frac = f
+    while (frac.length > 2 && frac.endsWith('0')) frac = frac.slice(0, -1)
+    return `${sign}$${i}.${frac}`
+  }
+  return `${sign}$${a.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function fmtBytes(n: number | null | undefined): string {

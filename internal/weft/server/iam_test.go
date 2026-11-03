@@ -412,8 +412,8 @@ func TestSessionsAndCSRF(t *testing.T) {
 	}
 	// The call is attributed to the session's user.
 	c := e.admJSON("POST", "/call/read", "root", map[string]any{"project_id": "acme/app", "id": "s1"})["call"].(map[string]any)
-	if c["wb_user_id"] != "bob" {
-		t.Fatalf("wb_user_id = %v", c["wb_user_id"])
+	if c["user_id"] != "bob" {
+		t.Fatalf("user_id = %v", c["user_id"])
 	}
 	// Tampered cookie.
 	bad := *sess

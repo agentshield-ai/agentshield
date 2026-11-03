@@ -615,10 +615,12 @@ func (s *Store) loadReasoning(ctx context.Context, pid string, f reasoningFilter
 
 // SessionReasoningQuery is /api/v1/sessions/{id}/reasoning.
 type SessionReasoningQuery struct {
-	ProjectID         string
-	SessionID         string
-	Agent             string
-	Kind              string
+	ProjectID string
+	SessionID string
+	Agent     string
+	Kind      string
+	// Q keeps the steps whose text contains it (case-insensitive).
+	Q                 string
 	IncludeDuplicates bool
 	Limit, Offset     int
 }
@@ -637,8 +639,12 @@ func (s *Store) SessionReasoning(ctx context.Context, q SessionReasoningQuery) (
 		return nil, 0, err
 	}
 	out := []*ReasoningStep{}
+	qq := strings.ToLower(normSearchQuery(q.Q))
 	for _, st := range all[q.SessionID] {
 		if (st.Duplicate && !q.IncludeDuplicates) || (q.Agent != "" && st.AgentName != q.Agent) || (q.Kind != "" && st.Kind != q.Kind) {
+			continue
+		}
+		if qq != "" && !strings.Contains(strings.ToLower(st.Text), qq) {
 			continue
 		}
 		out = append(out, st)
@@ -892,16 +898,22 @@ func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]
 	sids := make([]string, 0, len(by))
 	for id, l := range by {
 		ss := summarizeSession(id, l)
-		for _, v := range vby[id] {
-			if ss.firstUS == 0 || v.StartedUS < ss.firstUS {
-				ss.firstUS = v.StartedUS
+		// started_at, last_activity and duration come from the session's
+		// own spans: a verdict can arrive long after the tool call it
+		// concerns. Only a session seen through verdicts alone takes its
+		// times from them.
+		if len(l) == 0 {
+			for _, v := range vby[id] {
+				if ss.firstUS == 0 || v.StartedUS < ss.firstUS {
+					ss.firstUS = v.StartedUS
+				}
+				if v.StartedUS > ss.lastUS {
+					ss.lastUS = v.StartedUS
+				}
 			}
-			if v.StartedUS > ss.lastUS {
-				ss.lastUS = v.StartedUS
-			}
+			ss.StartedAt, ss.LastActivity = microsPtr(ss.firstUS), microsPtr(ss.lastUS)
+			ss.DurationMS = (ss.lastUS - ss.firstUS) / 1000
 		}
-		ss.StartedAt, ss.LastActivity = microsPtr(ss.firstUS), microsPtr(ss.lastUS)
-		ss.DurationMS = (ss.lastUS - ss.firstUS) / 1000
 		out = append(out, ss)
 		sids = append(sids, id)
 	}
@@ -1140,9 +1152,25 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 	if err != nil {
 		return nil, 0, err
 	}
-	qq := strings.ToLower(strings.TrimSpace(q.Q))
+	if after > 0 || before > 0 {
+		// sessionsWithin also matches on verdict spans; keep the sessions
+		// whose own activity overlaps the range.
+		kept := sessions[:0]
+		for _, ss := range sessions {
+			if (after > 0 && ss.lastUS < after) || (before > 0 && ss.firstUS >= before) {
+				continue
+			}
+			kept = append(kept, ss)
+		}
+		sessions = kept
+	}
+	qq := strings.ToLower(normSearchQuery(q.Q))
+	var textHits map[string]bool
 	if qq != "" {
 		if err := s.fillTitles(ctx, pid, sessions); err != nil {
+			return nil, 0, err
+		}
+		if textHits, err = s.sessionsMatchingText(ctx, pid, qq); err != nil { // agents_search.go
 			return nil, 0, err
 		}
 	}
@@ -1186,7 +1214,7 @@ func (s *Store) QuerySessions(ctx context.Context, q SessionsQuery) ([]*SessionS
 		}
 		if qq != "" {
 			hay := strings.ToLower(strings.Join(append([]string{ss.SessionID, ss.Name, ss.Title, ss.TeamID, ss.TeamName}, ss.Agents...), "\n"))
-			if !strings.Contains(hay, qq) {
+			if !strings.Contains(hay, qq) && !textHits[ss.SessionID] {
 				continue
 			}
 		}
@@ -1640,16 +1668,18 @@ func (s *Store) SessionTimeline(ctx context.Context, q SessionTimelineQuery) ([]
 // plus hand-offs, reasoning, detections and scores.
 type AgentSummary struct {
 	*AgentStats
-	ReasoningTokens    int64               `json:"reasoning_tokens"`
-	ReasoningStepCount int                 `json:"reasoning_step_count"`
-	HandoffsIn         int                 `json:"handoffs_in"`
-	HandoffsOut        int                 `json:"handoffs_out"`
-	SessionCount       int                 `json:"session_count"`
-	Tools              []string            `json:"tools"`
-	Teams              []string            `json:"teams"`
-	DetectionCounts    map[string]int      `json:"detection_counts"`
-	DetectionRate      *float64            `json:"detection_rate"`
-	Scores             map[string]ScoreAgg `json:"scores"`
+	ReasoningTokens    int64          `json:"reasoning_tokens"`
+	ReasoningStepCount int            `json:"reasoning_step_count"`
+	HandoffsIn         int            `json:"handoffs_in"`
+	HandoffsOut        int            `json:"handoffs_out"`
+	SessionCount       int            `json:"session_count"`
+	Tools              []string       `json:"tools"`
+	Teams              []string       `json:"teams"`
+	DetectionCounts    map[string]int `json:"detection_counts"`
+	// DetectionRate is flagged tool calls / tool calls (ToolCallFlags).
+	DetectionRate    *float64            `json:"detection_rate"`
+	FlaggedToolCalls int                 `json:"flagged_tool_calls"`
+	Scores           map[string]ScoreAgg `json:"scores"`
 }
 
 // AgentsV1Query filters /api/v1/agents.
@@ -1714,6 +1744,10 @@ func (s *Store) agentSummaries(ctx context.Context, pid string, after, before in
 	if err != nil {
 		return nil, err
 	}
+	flags, err := s.ToolCallFlags(ctx, DetectionQuery{ProjectID: pid, Agent: only, From: after, To: before})
+	if err != nil {
+		return nil, err
+	}
 	teams, err := s.sessionTeams(ctx, pid, nil)
 	if err != nil {
 		return nil, err
@@ -1768,9 +1802,9 @@ func (s *Store) agentSummaries(ctx context.Context, pid string, after, before in
 		}
 		if d := dets[n]; d != nil {
 			a.DetectionCounts = d
-			if a.ToolCallCount > 0 {
-				a.DetectionRate = fptr(math.Round(float64(sumCounts(d))/float64(a.ToolCallCount)*1e4) / 1e4)
-			}
+		}
+		if f, ok := flags[n]; ok {
+			a.FlaggedToolCalls, a.DetectionRate = f.Flagged, f.Rate()
 		}
 		if sc := agg[n]; sc != nil {
 			a.Scores = sc

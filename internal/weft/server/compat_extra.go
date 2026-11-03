@@ -822,11 +822,11 @@ type rescoreReq struct {
 	ProjectID             string   `json:"project_id"`
 	ScorerRefs            []string `json:"scorer_refs"`
 	SourceEvaluationRunID string   `json:"source_evaluation_run_id"`
-	WBUserID              *string  `json:"wb_user_id"`
+	UserID                *string  `json:"user_id"`
 }
 
 func (s *Server) evaluationsRescore(ctx context.Context, r *http.Request, req *rescoreReq) (any, error) {
-	id, err := s.engine.Rescore(ctx, req.ProjectID, req.SourceEvaluationRunID, req.ScorerRefs, userFrom(r, req.WBUserID))
+	id, err := s.engine.Rescore(ctx, req.ProjectID, req.SourceEvaluationRunID, req.ScorerRefs, userFrom(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}
@@ -841,7 +841,7 @@ type datasetSourcesLinkReq struct {
 	DatasetDigest        string                         `json:"dataset_digest"`
 	Links                []store.DatasetSourceLinkInput `json:"links"`
 	IncludeCreatedStatus bool                           `json:"include_created_status"`
-	WBUserID             *string                        `json:"wb_user_id"`
+	UserID               *string                        `json:"user_id"`
 }
 
 func (s *Server) datasetSourcesLink(ctx context.Context, r *http.Request, req *datasetSourcesLinkReq) (any, error) {
@@ -853,7 +853,7 @@ func (s *Server) datasetSourcesLink(ctx context.Context, r *http.Request, req *d
 	if err != nil {
 		return nil, err
 	}
-	entries, err := s.store.LinkDatasetSources(ctx, req.ProjectID, o.ObjectID, o.Digest, req.Links, userFrom(r, req.WBUserID), req.IncludeCreatedStatus)
+	entries, err := s.store.LinkDatasetSources(ctx, req.ProjectID, o.ObjectID, o.Digest, req.Links, userFrom(r, req.UserID), req.IncludeCreatedStatus)
 	if err != nil {
 		return nil, err
 	}

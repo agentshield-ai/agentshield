@@ -2,9 +2,14 @@
 // Sessions, Agents, Teams, Security and Traces. Filters live in the URL; the
 // filter box also accepts `key:value` tokens (e.g. `agent:coder has:block`).
 
+import { fmtCost } from './format'
+
 export type TimeRange = '1h' | '24h' | '7d' | '30d' | 'all' | 'custom'
-export type HasFilter = 'block' | 'approval' | 'any'
-export type StatusFilter = 'ok' | 'error' | 'running'
+export type HasFilter = 'block' | 'approval' | 'flagged' | 'any'
+export type StatusFilter = 'ok' | 'error' | 'failed_step' | 'running'
+
+/** A session asking for approval this many times is approval-heavy (approval fatigue). */
+export const APPROVAL_HEAVY = 3
 
 export interface FilterState {
   agent?: string
@@ -48,8 +53,18 @@ const TIME_MS: Partial<Record<TimeRange, number>> = { '1h': 3600e3, '24h': 86400
 /** The ranges tried, in order, when the default range is empty. */
 export const WIDEN_SEQUENCE: TimeRange[] = ['24h', '7d', '30d', 'all']
 
-export const STATUS_LABEL: Record<StatusFilter, string> = { ok: 'Succeeded', error: 'Failed', running: 'Running' }
-export const HAS_LABEL: Record<HasFilter, string> = { block: 'Has a block', approval: 'Needs approval', any: 'Any detection' }
+export const STATUS_LABEL: Record<StatusFilter, string> = {
+  ok: 'Succeeded',
+  error: 'Failed',
+  failed_step: 'Went on after a failed step',
+  running: 'Running',
+}
+export const HAS_LABEL: Record<HasFilter, string> = {
+  block: 'Has a block',
+  approval: 'Needs approval',
+  flagged: `Blocked or ${APPROVAL_HEAVY}+ approvals`,
+  any: 'Any detection',
+}
 
 export const FILTER_KEY_LABEL: Record<FilterKey, string> = {
   agent: 'Agent',
@@ -65,8 +80,8 @@ export const FILTER_KEY_LABEL: Record<FilterKey, string> = {
 }
 
 const isTime = (v: string | null): v is TimeRange => !!v && ['1h', '24h', '7d', '30d', 'all', 'custom'].includes(v)
-const isStatus = (v: string | null): v is StatusFilter => v === 'ok' || v === 'error' || v === 'running'
-const isHas = (v: string | null): v is HasFilter => v === 'block' || v === 'approval' || v === 'any'
+const isStatus = (v: string | null): v is StatusFilter => v === 'ok' || v === 'error' || v === 'failed_step' || v === 'running'
+const isHas = (v: string | null): v is HasFilter => v === 'block' || v === 'approval' || v === 'flagged' || v === 'any'
 
 export function parseScoreBelow(raw: string | null | undefined): FilterState['scoreBelow'] {
   if (!raw) return undefined
@@ -169,7 +184,7 @@ export function chipsOf(state: FilterState, opts: { defaultTime?: TimeRange } = 
   if (state.scoreBelow) out.push({ key: 'score', label: 'Score below', value: `${state.scoreBelow.value}${state.scoreBelow.scorer ? ` (${state.scoreBelow.scorer})` : ''}` })
   if (state.model) out.push({ key: 'model', label: 'Model', value: state.model })
   if (state.tool) out.push({ key: 'tool', label: 'Tool', value: state.tool })
-  if (state.costMin != null) out.push({ key: 'cost', label: 'Cost at least', value: `$${state.costMin}` })
+  if (state.costMin != null) out.push({ key: 'cost', label: 'Cost at least', value: fmtCost(state.costMin) })
   if (state.q) out.push({ key: 'q', label: 'Text', value: `“${state.q}”` })
   return out
 }
@@ -224,11 +239,13 @@ export function parseFilterText(text: string, base: FilterState = {}): FilterSta
         if (['error', 'failed', 'fail', 'errors'].includes(low)) s.status = 'error'
         else if (['ok', 'success', 'succeeded', 'done'].includes(low)) s.status = 'ok'
         else if (low === 'running') s.status = 'running'
+        else if (['failed_step', 'step_failed', 'failed-step', 'step'].includes(low)) s.status = 'failed_step'
         else return ` ${rawKey}:${rawVal}`
         break
       case 'has':
         if (low === 'block' || low === 'blocked') s.has = 'block'
         else if (low.startsWith('approval') || low === 'require_approval') s.has = 'approval'
+        else if (low === 'flagged' || low === 'attention') s.has = 'flagged'
         else if (low === 'any' || low === 'detection') s.has = 'any'
         else return ` ${rawKey}:${rawVal}`
         break
@@ -262,13 +279,15 @@ export function parseFilterText(text: string, base: FilterState = {}): FilterSta
 
 // ---------------------------------------------------------------- per page
 
-/** /api/v1/sessions parameters for a filter state. Score-below without a scorer and cost are applied client-side. */
+/** /api/v1/sessions parameters for a filter state. Score below without a scorer,
+ * cost, "went on after a failed step" and "blocked or approval-heavy" are
+ * applied client-side (sessionMatchesClientFilters); the server narrows them. */
 export function sessionsParams(state: FilterState, fallback: TimeRange, now = stableNow()): Record<string, string> {
   const p: Record<string, string> = {}
   if (state.agent) p.agent = state.agent
   if (state.team) p.team_id = state.team
-  if (state.status) p.status = state.status
-  if (state.has) p.has_detection = state.has === 'approval' ? 'require_approval' : state.has
+  if (state.status && state.status !== 'failed_step') p.status = state.status
+  if (state.has) p.has_detection = state.has === 'approval' ? 'require_approval' : state.has === 'flagged' ? 'any' : state.has
   if (state.scoreBelow?.scorer) p.max_score = `${state.scoreBelow.scorer}:${state.scoreBelow.value}`
   if (state.model) p.model = state.model
   if (state.tool) p.tool = state.tool
@@ -290,17 +309,103 @@ export function scoreBelowMatches(x: Scored, sb: FilterState['scoreBelow']): boo
   return entries.some(([name, v]) => (!sb.scorer || name === sb.scorer) && v.mean < sb.value)
 }
 
-export function sessionMatchesClientFilters(s: Scored & { cost_usd: number | null }, state: FilterState): boolean {
+type Counts = Partial<Record<string, number>> | null | undefined
+
+/** Blocked at least once, or asked for approval APPROVAL_HEAVY or more times. */
+export function isFlagged(counts: Counts): boolean {
+  return (counts?.block ?? 0) > 0 || (counts?.require_approval ?? 0) >= APPROVAL_HEAVY
+}
+
+/** A tool or model call failed, but the session itself did not. */
+export function wentOnAfterFailedStep(s: { status: string; error_count: number }): boolean {
+  return s.status !== 'error' && (s.error_count ?? 0) > 0
+}
+
+type ClientSession = Scored & { cost_usd: number | null; status?: string; error_count?: number; detection_count?: Counts }
+
+export function sessionMatchesClientFilters(s: ClientSession, state: FilterState): boolean {
   if (state.scoreBelow && !scoreBelowMatches(s, state.scoreBelow)) return false
   if (state.costMin != null && (s.cost_usd ?? 0) < state.costMin) return false
+  if (state.status === 'failed_step' && !wentOnAfterFailedStep({ status: s.status ?? '', error_count: s.error_count ?? 0 })) return false
+  if (state.has === 'flagged' && !isFlagged(s.detection_count)) return false
   return true
 }
 
-/** Which chips each page offers; the syntax is the same everywhere. */
-export const PAGE_FILTERS: Record<'sessions' | 'agents' | 'teams' | 'security' | 'traces', FilterKey[]> = {
-  sessions: ['agent', 'team', 'status', 'time', 'has', 'score', 'model', 'tool', 'cost', 'q'],
-  agents: ['agent', 'team', 'status', 'time', 'has', 'score', 'model', 'tool', 'q'],
-  teams: ['agent', 'team', 'status', 'time', 'has', 'q'],
-  security: ['agent', 'time', 'has', 'tool', 'q'],
-  traces: ['agent', 'status', 'time', 'model', 'tool', 'q'],
+/** True when the sessions list must be filtered in the browser (so it is fetched whole, up to 1000). */
+export function needsClientFilter(state: FilterState): boolean {
+  return (!!state.scoreBelow && !state.scoreBelow.scorer) || state.costMin != null || state.status === 'failed_step' || state.has === 'flagged'
+}
+
+// ---------------------------------------------------------------- one chip set, five pages
+
+export type FilterPage = 'sessions' | 'agents' | 'teams' | 'security' | 'traces'
+
+/** Every page offers the same chips in this order. */
+export const FILTER_KEYS: FilterKey[] = ['agent', 'team', 'status', 'time', 'has', 'score', 'model', 'tool', 'cost', 'q']
+
+/**
+ * How each page applies each chip. `page`: on the page's own rows. `sessions`:
+ * through the sessions that match it (an agent, team, detection or trace is
+ * kept when it belongs to a matching session). No chip is ever ignored.
+ */
+export type FilterSupport = 'page' | 'sessions'
+
+export const FILTER_SUPPORT: Record<FilterPage, Record<FilterKey, FilterSupport>> = {
+  sessions: { agent: 'page', team: 'page', status: 'page', time: 'page', has: 'page', score: 'page', model: 'page', tool: 'page', cost: 'page', q: 'page' },
+  // Agents carry their own errors, verdicts, scores, models and tools.
+  agents: { agent: 'page', team: 'page', status: 'page', time: 'page', has: 'page', score: 'page', model: 'page', tool: 'page', cost: 'sessions', q: 'page' },
+  // A team matches when one of its sessions does.
+  teams: { agent: 'page', team: 'page', status: 'sessions', time: 'page', has: 'sessions', score: 'sessions', model: 'sessions', tool: 'sessions', cost: 'sessions', q: 'page' },
+  // Detections carry agent, tool, action and time; the rest belongs to their session.
+  security: { agent: 'page', team: 'sessions', status: 'sessions', time: 'page', has: 'page', score: 'sessions', model: 'sessions', tool: 'page', cost: 'sessions', q: 'page' },
+  // Spans carry agent, model, tool, status and time; a trace matches team,
+  // security, score and cost through its session.
+  traces: { agent: 'page', team: 'sessions', status: 'page', time: 'page', has: 'sessions', score: 'sessions', model: 'page', tool: 'page', cost: 'sessions', q: 'page' },
+}
+
+/** Values a page cannot read off its own rows, even for a chip it applies itself. */
+function pageNeedsSessions(page: FilterPage, key: FilterKey, s: FilterState): boolean {
+  if (key === 'status' && s.status === 'failed_step') return page !== 'sessions'
+  // An agent is not "running"; a session it takes part in is.
+  if (key === 'status' && s.status === 'running') return page === 'agents'
+  if (key === 'has' && s.has === 'flagged') return page === 'security' || page === 'traces'
+  return false
+}
+
+/** The part of `s` a page applies through matching sessions (time excluded: the page's range is used). */
+export function sessionScope(page: FilterPage, s: FilterState): FilterState {
+  const out: FilterState = {}
+  for (const c of chipsOf(s)) {
+    if (c.key === 'time' || c.key === 'q') continue
+    if (FILTER_SUPPORT[page][c.key] !== 'sessions' && !pageNeedsSessions(page, c.key, s)) continue
+    switch (c.key) {
+      case 'score':
+        out.scoreBelow = s.scoreBelow
+        break
+      case 'cost':
+        out.costMin = s.costMin
+        break
+      default:
+        ;(out as Record<string, unknown>)[c.key] = s[c.key as keyof FilterState]
+    }
+  }
+  return out
+}
+
+const ROWS: Record<FilterPage, string> = {
+  sessions: 'sessions',
+  agents: 'agents that took part in',
+  teams: 'teams with',
+  security: 'detections in',
+  traces: 'traces that belong to',
+}
+
+/** One line saying how chips applied through sessions work on this page, or null. */
+export function sessionScopeNote(page: FilterPage, s: FilterState): string | null {
+  const keys = Object.keys(sessionScope(page, s))
+  if (!keys.length) return null
+  const labels = chipsOf(s)
+    .filter((c) => keys.includes(c.key === 'score' ? 'scoreBelow' : c.key === 'cost' ? 'costMin' : c.key))
+    .map((c) => c.label)
+  return `${labels.join(', ')}: showing ${ROWS[page]} a session that matches ${labels.length === 1 ? 'this filter' : 'these filters'}.`
 }

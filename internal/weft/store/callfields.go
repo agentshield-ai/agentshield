@@ -9,7 +9,7 @@ import (
 
 // Optional call fields:
 //
-//   - wb_run_step / wb_run_step_end: the step of the linked run (wb_run_id)
+//   - run_step / run_step_end: the step of the linked run (run_id)
 //     when the call started and ended, accepted on /call/start, /call/end and
 //     /call/upsert_batch, stored in their own columns.
 //   - expire_at: started_at plus the project's retention_days
@@ -19,13 +19,13 @@ import (
 //     retention are deleted).
 //   - total_storage_size_bytes (include_total_storage_size): the summed
 //     storage_size_bytes of every call in the trace, on trace roots only.
-//   - wb_username (include_usernames): the Weft user id (handle) wb_user_id
-//     names. A wb_user_id with no user row is returned as is when it is a
+//   - username (include_usernames): the Weft user id (handle) user_id
+//     names. A user_id with no user row is returned as is when it is a
 //     valid handle (static-key "user=key" names), otherwise null.
 
 func init() {
 	registerMigration(func(db *sql.DB) error {
-		for _, col := range []string{"wb_run_step", "wb_run_step_end"} {
+		for _, col := range []string{"run_step", "run_step_end"} {
 			ok, err := HasColumn(db, "calls", col)
 			if err != nil {
 				return err
@@ -53,14 +53,14 @@ func setRunStep(ctx context.Context, tx *sql.Tx, projectID, id, col string, v *i
 	if v == nil {
 		return nil
 	}
-	if col != "wb_run_step" && col != "wb_run_step_end" {
+	if col != "run_step" && col != "run_step_end" {
 		return Invalidf("bad run step column")
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE calls SET `+col+` = ? WHERE project_id = ? AND id = ?`, *v, projectID, id)
 	return err
 }
 
-// enrichCallFields fills expire_at, total_storage_size_bytes and wb_username.
+// enrichCallFields fills expire_at, total_storage_size_bytes and username.
 func (s *Store) enrichCallFields(ctx context.Context, projectID string, calls []*Call, q CallsQuery) error {
 	if len(calls) == 0 {
 		return nil
@@ -120,16 +120,16 @@ func (s *Store) enrichCallFields(ctx context.Context, projectID string, calls []
 	if q.IncludeUsernames {
 		names := map[string]*string{}
 		for _, c := range calls {
-			if c.WBUserID == nil {
+			if c.UserID == nil {
 				continue
 			}
-			id := *c.WBUserID
+			id := *c.UserID
 			name, ok := names[id]
 			if !ok {
 				name = s.resolveUsername(ctx, id)
 				names[id] = name
 			}
-			c.WBUsername = name
+			c.Username = name
 		}
 	}
 	return nil

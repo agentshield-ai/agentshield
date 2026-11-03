@@ -1,7 +1,7 @@
 // Pure helpers for dashboards and custom charts (unit tested in dashboards.test.ts).
 import type { Call, CallsFilter, Operation, Query } from '../../api/types'
 import { opDisplayName } from '../../api/refs'
-import { callCost, callLatencyMs, callStatus, callTokens, getPath } from '../../lib/format'
+import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, getPath } from '../../lib/format'
 import type { ChartType, DashboardPanel, DashboardVal, MetricAgg, MetricSpec, MetricsReq, MetricsRes } from '../../api/dashboards'
 
 export const TIME_RANGES: { id: string; label: string; seconds: number | null }[] = [
@@ -166,9 +166,7 @@ export function fmtValue(v: number | null | undefined, kind: ValueKind): string 
       if (v < 60_000) return `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)}s`
       return `${Math.floor(v / 60_000)}m ${Math.round((v % 60_000) / 1000)}s`
     case 'cost':
-      if (v === 0) return '$0'
-      if (Math.abs(v) < 0.01) return `$${v.toPrecision(2)}`
-      return `$${v.toFixed(2)}`
+      return fmtCost(v)
     default:
       if (Number.isInteger(v)) return v.toLocaleString()
       if (Math.abs(v) >= 100) return Math.round(v).toLocaleString()
@@ -324,7 +322,7 @@ export function callGroupValue(c: Call, groupBy: string | undefined): string {
     case 'thread':
       return c.thread_id ?? '(none)'
     case 'user':
-      return c.wb_user_id ?? '(none)'
+      return c.user_id ?? '(none)'
   }
   const v = getPath(c, groupBy!)
   return v == null ? '(none)' : String(v)

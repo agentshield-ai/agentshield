@@ -95,7 +95,7 @@ export const queuesApi = {
   annotate: (req: { project_id: string; ref: string; feedback_type: string; payload: unknown; annotation_ref?: string; queue_id: string; replace_id?: string }) => {
     const { replace_id, ...body } = req
     return replace_id
-      ? post<{ id: string; wb_user_id?: string }>('/feedback/replace', { ...body, feedback_id: replace_id })
-      : post<{ id: string; wb_user_id?: string }>('/feedback/create', body)
+      ? post<{ id: string; user_id?: string }>('/feedback/replace', { ...body, feedback_id: replace_id })
+      : post<{ id: string; user_id?: string }>('/feedback/create', body)
   },
 }

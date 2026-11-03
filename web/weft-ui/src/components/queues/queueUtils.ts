@@ -81,7 +81,7 @@ export function buildExportRows(
         .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))[0]
       row[name] = latest ? (latest.payload?.value ?? null) : null
     }
-    for (const f of fbs) users.add(f.creator ?? f.wb_user_id ?? 'anonymous')
+    for (const f of fbs) users.add(f.creator ?? f.user_id ?? 'anonymous')
     row.annotators = [...users].sort()
     row.call_id = call.id
     rows.push(row)

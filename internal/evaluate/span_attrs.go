@@ -21,7 +21,10 @@ const (
 	AttrVerdictMode     = "agentshield.verdict.mode"
 	AttrVerdictSeverity = "agentshield.verdict.severity"
 	AttrRuleIDs         = "agentshield.rule_ids"
-	EventRuleMatched    = "agentshield.rule.matched"
+	// AttrReplay marks the evaluation of a replayed tool call; Weft does not
+	// turn such spans into detections or sessions.
+	AttrReplay       = "agentshield.replay"
+	EventRuleMatched = "agentshield.rule.matched"
 )
 
 // evaluateSpanAttributes are the attributes known before evaluation runs. The
@@ -45,6 +48,9 @@ func evaluateSpanAttributes(req *models.EvaluationRequest) []attribute.KeyValue 
 	}
 	if req.AgentName != "" {
 		attrs = append(attrs, attribute.String(AttrAgentName, req.AgentName))
+	}
+	if req.Replay {
+		attrs = append(attrs, attribute.Bool(AttrReplay, true))
 	}
 	return attrs
 }

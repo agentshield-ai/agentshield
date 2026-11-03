@@ -41,8 +41,8 @@ func TestLangfuseAttributes(t *testing.T) {
 	if num(u["prompt_tokens"]) != 12 || num(u["completion_tokens"]) != 3 || num(u["total_tokens"]) != 15 || num(u["cache_read_input_tokens"]) != 4 {
 		t.Fatalf("usage = %v", usageOf(gen))
 	}
-	if *gen.Start.ThreadID != "sess-42" || *gen.Start.WBUserID != "u-7" || *gen.Start.DisplayName != "geo-qa" {
-		t.Fatalf("ids = %v %v %v", *gen.Start.ThreadID, *gen.Start.WBUserID, *gen.Start.DisplayName)
+	if *gen.Start.ThreadID != "sess-42" || *gen.Start.UserID != "u-7" || *gen.Start.DisplayName != "geo-qa" {
+		t.Fatalf("ids = %v %v %v", *gen.Start.ThreadID, *gen.Start.UserID, *gen.Start.DisplayName)
 	}
 	if op := store.DeriveSpan(gen.Start.OpName, "", nil, nil, "x", gen.Start.Attributes, gen.Start.Inputs, nil).Operation; op != store.OpChat {
 		t.Fatalf("agents index operation = %q", op)
@@ -105,8 +105,8 @@ func TestOpenLitFixture(t *testing.T) {
 	if num(u["prompt_tokens"]) != 9 || num(u["completion_tokens"]) != 3 || num(u["total_tokens"]) != 12 {
 		t.Fatalf("usage = %v", usageOf(c))
 	}
-	if *c.Start.ThreadID != "chat-9" || *c.Start.WBUserID != "eve" {
-		t.Fatalf("session/user = %v %v", *c.Start.ThreadID, *c.Start.WBUserID)
+	if *c.Start.ThreadID != "chat-9" || *c.Start.UserID != "eve" {
+		t.Fatalf("session/user = %v %v", *c.Start.ThreadID, *c.Start.UserID)
 	}
 	tool := oneCall(t, "execute_tool get_weather", map[string]any{"gen_ai.operation.name": "execute_tool",
 		"gen_ai.tool.name": "get_weather", "gen_ai.tool.input": `{"city":"Oslo"}`, "gen_ai.tool.output": `{"temp":3}`})

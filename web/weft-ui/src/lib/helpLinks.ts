@@ -19,12 +19,14 @@ export function slugger(): (text: string) => string {
 export type GuideLink = { kind: 'guide'; to: string } | { kind: 'anchor'; hash: string } | { kind: 'external'; href: string } | { kind: 'text' }
 
 /** Where a link inside a guide goes: another guide, an anchor on this page,
- * an external URL, or nowhere (repository files, which are not served). */
+ * an external URL, or nowhere (repository files, which are not served).
+ * User guides live in docs/weft/guides and are served by base name, so
+ * `../API.md`, `guides/sessions.md` and `sessions.md` all resolve. */
 export function guideLink(href: string | undefined): GuideLink {
   if (!href) return { kind: 'text' }
   if (href.startsWith('#')) return { kind: 'anchor', hash: href.slice(1) }
   if (/^(https?:|mailto:)/i.test(href)) return { kind: 'external', href }
-  const m = /^(?:\.\/)?([A-Za-z0-9_-]+\.md)(#.*)?$/.exec(href)
+  const m = /^(?:\.\.?\/)?(?:guides\/)?([A-Za-z0-9_-]+\.md)(#.*)?$/.exec(href)
   if (m) return { kind: 'guide', to: `/help/${m[1]}${m[2] ?? ''}` }
   return { kind: 'text' }
 }

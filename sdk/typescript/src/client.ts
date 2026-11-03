@@ -88,9 +88,9 @@ export interface ClientSettings extends RedactSettings {
   httpTimeoutMs?: number;
   /** SDK log level: debug, info, warning (default), error, critical (env WEFT_LOG_LEVEL). */
   logLevel?: LogLevel | string;
-  /** Link calls to a run (`wb_run_id`, `wb_run_step`); see `WeftClient.setWbRun`. */
-  wbRunId?: string;
-  wbRunStep?: number | (() => number | undefined);
+  /** Link calls to a run (`run_id`, `run_step`); see `WeftClient.setRun`. */
+  runId?: string;
+  runStep?: number | (() => number | undefined);
 }
 
 function envNumber(name: string, scale = 1): number | undefined {
@@ -171,7 +171,7 @@ export interface GetCallsOptions {
   columns?: string[];
   /** Resolve refs at these paths (e.g. "inputs.example"). */
   expandColumns?: string[];
-  /** Ask the server for `wb_username` (`include_usernames`). */
+  /** Ask the server for `username` (`include_usernames`). */
   includeUsernames?: boolean;
   /** Ask the server for `storage_size_bytes`. */
   includeStorageSize?: boolean;
@@ -188,7 +188,7 @@ export interface RegistryVersion {
   base_object_class?: string | null;
   aliases: string[];
   created_at?: string;
-  wb_user_id?: string | null;
+  user_id?: string | null;
 }
 
 export interface RegistryCollection {
@@ -261,7 +261,7 @@ export class WeftClient {
   readonly captureReasoning: boolean;
   readonly printCallLink: boolean;
   readonly globalAttributes: Record<string, unknown>;
-  private wbRun: { runId: string; step?: number | (() => number | undefined) } | null = null;
+  private runLink: { runId: string; step?: number | (() => number | undefined) } | null = null;
 
   constructor(project: string, opts: InitOptions = {}) {
     [this.entity, this.project] = splitProject(project);
@@ -297,28 +297,28 @@ export class WeftClient {
     this.disabled = !!opts.disabled;
     this.redactor = new Redactor(st);
     if (this.redactor.ner) this.sender.prepare = (items) => this.redactor.redactItems(items);
-    if (st.wbRunId) this.setWbRun(st.wbRunId, st.wbRunStep);
+    if (st.runId) this.setRun(st.runId, st.runStep);
     if (walPath && !this.disabled) this.sender.replayWal();
   }
 
   /**
-   * Link calls started from now on to a training or experiment run: `wb_run_id` (sent as
-   * `<entity>/<project>/<runId>` unless already qualified) and `wb_run_step`
-   * / `wb_run_step_end` (an int, or a function read at call start and end).
+   * Link calls started from now on to a training or experiment run: `run_id` (sent as
+   * `<entity>/<project>/<runId>` unless already qualified) and `run_step`
+   * / `run_step_end` (an int, or a function read at call start and end).
    * `null` clears it.
    */
-  setWbRun(runId: string | null, step?: number | (() => number | undefined)): void {
+  setRun(runId: string | null, step?: number | (() => number | undefined)): void {
     if (!runId) {
-      this.wbRun = null;
+      this.runLink = null;
       return;
     }
     const id = runId.split('/').length >= 3 ? runId : `${this.projectId}/${runId}`;
-    this.wbRun = { runId: id, step };
+    this.runLink = { runId: id, step };
   }
 
-  private wbRunNow(): { runId: string; step?: number } | null {
-    if (!this.wbRun) return null;
-    let step: unknown = this.wbRun.step;
+  private runNow(): { runId: string; step?: number } | null {
+    if (!this.runLink) return null;
+    let step: unknown = this.runLink.step;
     if (typeof step === 'function') {
       try {
         step = (step as () => unknown)();
@@ -327,7 +327,7 @@ export class WeftClient {
       }
     }
     const n = Number(step);
-    return { runId: this.wbRun.runId, step: step === undefined || step === null || !Number.isFinite(n) ? undefined : Math.trunc(n) };
+    return { runId: this.runLink.runId, step: step === undefined || step === null || !Number.isFinite(n) ? undefined : Math.trunc(n) };
   }
 
   /** UI link for a call. */
@@ -418,10 +418,10 @@ export class WeftClient {
       }
     }
     call.displayName = dn;
-    const wb = this.wbRunNow();
-    if (wb) {
-      call.wbRunId = wb.runId;
-      if (wb.step !== undefined) call.wbRunStep = wb.step;
+    const link = this.runNow();
+    if (link) {
+      call.runId = link.runId;
+      if (link.step !== undefined) call.runStep = link.step;
     }
     this.sender.enqueue({ kind: 'call_start', payload: this.startPayload(call) });
     if (!parent && this.printCallLink) process.stderr.write(`weft: ${this.callUrl(call)}\n`);
@@ -443,9 +443,9 @@ export class WeftClient {
     if (call.displayName) start.display_name = call.displayName;
     if (call.threadId) start.thread_id = call.threadId;
     if (call.turnId) start.turn_id = call.turnId;
-    if (call.wbRunId) {
-      start.wb_run_id = call.wbRunId;
-      if (call.wbRunStep !== null && call.wbRunStep !== undefined) start.wb_run_step = call.wbRunStep;
+    if (call.runId) {
+      start.run_id = call.runId;
+      if (call.runStep !== null && call.runStep !== undefined) start.run_step = call.runStep;
     }
     return start;
   }
@@ -517,9 +517,9 @@ export class WeftClient {
       end.exception = call.exception;
     }
     if (Object.keys(call.summary).length) end.summary = toJson(call.summary, this);
-    if (call.wbRunId) {
-      const wb = this.wbRunNow();
-      if (wb?.step !== undefined) call.wbRunStepEnd = end.wb_run_step_end = wb.step;
+    if (call.runId) {
+      const link = this.runNow();
+      if (link?.step !== undefined) call.runStepEnd = end.run_step_end = link.step;
     }
     this.sender.enqueue({ kind: 'call_end', payload: end });
   }

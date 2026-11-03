@@ -307,9 +307,11 @@ type ScopeScoreCreate struct {
 	Output      any
 	Model       string
 	Creator     *string
-	WBUserID    *string
+	UserID      *string
 	RunnableRef *string
 	CallRef     *string
+	// TriggerRef is the monitor that produced the score, if any.
+	TriggerRef *string
 }
 
 // scoreAnchor is the span a scope score is attached to (its ref).
@@ -382,5 +384,5 @@ func (s *Store) CreateScopeScore(ctx context.Context, c ScopeScoreCreate) (*Feed
 		payload["output"] = c.Output
 	}
 	return s.CreateFeedback(ctx, FeedbackCreate{ProjectID: pid, Ref: ref, FeedbackType: "weft.score." + c.Scorer, Payload: payload,
-		Creator: c.Creator, WBUserID: c.WBUserID, RunnableRef: c.RunnableRef, CallRef: c.CallRef})
+		Creator: c.Creator, UserID: c.UserID, RunnableRef: c.RunnableRef, CallRef: c.CallRef, TriggerRef: c.TriggerRef})
 }

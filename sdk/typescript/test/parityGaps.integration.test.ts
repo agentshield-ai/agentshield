@@ -120,12 +120,12 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
     const stepFn = weft.op(function stepFn(x: number) {
       return x * 2;
     });
-    weft.setWbRun('run-live', 5);
+    weft.setRun('run-live', 5);
     await stepFn(1);
     await stepFn(2);
-    weft.setWbRun(null);
+    weft.setRun(null);
     const recs = await client.getCallsRecords({ filter: { op_names: ['stepFn'] }, sortBy: [{ field: 'started_at', direction: 'asc' }] });
     expect(recs.map((r) => r.output)).toEqual([2, 4]);
-    expect(recs.every((r) => r.wb_run_id === `${client.projectId}/run-live` && r.status === 'success')).toBe(true);
+    expect(recs.every((r) => r.run_id === `${client.projectId}/run-live` && r.status === 'success')).toBe(true);
   });
 });
