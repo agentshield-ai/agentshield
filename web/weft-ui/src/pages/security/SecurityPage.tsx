@@ -75,7 +75,12 @@ export function SecurityPage() {
   const time = widen.time
   const dp = detectionParams(state, time)
   const stats = useQuery({ queryKey: ['v1', pid, 'detections', 'stats', dp], queryFn: () => v1.detectionStats(pid, dp), enabled: widen.ready, placeholderData: keepPreviousData })
-  const list = useQuery({ queryKey: ['v1', pid, 'detections', 'list', dp], queryFn: () => v1.detections(pid, { ...dp, limit: 1000 }), enabled: widen.ready, placeholderData: keepPreviousData })
+  const list = useQuery({
+    queryKey: ['v1', pid, 'detections', 'list', dp],
+    queryFn: () => v1.detections(pid, { ...dp, limit: 1000 }),
+    enabled: widen.ready,
+    placeholderData: keepPreviousData,
+  })
   const w = timeWindow(state, time)
   const insights = useQuery({
     queryKey: ['v1', pid, 'insights', w],
@@ -118,15 +123,39 @@ export function SecurityPage() {
         <SetupGuide pid={pid} replay={status.data?.replay_enabled ?? false} />
       ) : (
         <>
-          <FilterBar page="security" defaultTime={DEFAULT_TIME} effectiveTime={time} options={{ agents: st?.by_agent.map((a) => a.agent) }} placeholder="Filter by rule, tool, agent or session…" />
+          <FilterBar
+            page="security"
+            defaultTime={DEFAULT_TIME}
+            effectiveTime={time}
+            options={{ agents: st?.by_agent.map((a) => a.agent) }}
+            placeholder="Filter by rule, tool, agent or session…"
+          />
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <ErrorBox error={stats.error ?? list.error} />
           <div className="metrics">
-            <Metric label="Verdicts" value={fmtNumber(st?.total)} tip={`AgentShield verdicts other than allow in the ${TIME_LABEL[time].toLowerCase()}. Replays are not counted.`} />
-            <Metric label="Blocked" value={fmtNumber(st?.by_action.block ?? 0)} tone={(st?.by_action.block ?? 0) > 0 ? 'error' : undefined} tip="Tool calls AgentShield stopped (enforce mode)." />
-            <Metric label="Needs approval" value={fmtNumber(st?.by_action.require_approval ?? 0)} tone={(st?.by_action.require_approval ?? 0) > 0 ? 'warn' : undefined} tip="Tool calls a person had to approve." />
+            <Metric
+              label="Verdicts"
+              value={fmtNumber(st?.total)}
+              tip={`AgentShield verdicts other than allow in the ${TIME_LABEL[time].toLowerCase()}. Replays are not counted.`}
+            />
+            <Metric
+              label="Blocked"
+              value={fmtNumber(st?.by_action.block ?? 0)}
+              tone={(st?.by_action.block ?? 0) > 0 ? 'error' : undefined}
+              tip="Tool calls AgentShield stopped (enforce mode)."
+            />
+            <Metric
+              label="Needs approval"
+              value={fmtNumber(st?.by_action.require_approval ?? 0)}
+              tone={(st?.by_action.require_approval ?? 0) > 0 ? 'warn' : undefined}
+              tip="Tool calls a person had to approve."
+            />
             <Metric label="Logged" value={fmtNumber(st?.by_action.log ?? 0)} tip="Alerts recorded while the call ran (audit mode, or low severity)." />
-            <Metric label="Overridden" value={fmtNumber(st?.overridden ?? 0)} tip="Verdicts a user overrode (approved, or ran anyway). Repeated overrides are a sign of escalation." />
+            <Metric
+              label="Overridden"
+              value={fmtNumber(st?.overridden ?? 0)}
+              tip="Verdicts a user overrode (approved, or ran anyway). Repeated overrides are a sign of escalation."
+            />
             <Metric
               label="Linked to a step"
               value={st && st.total ? `${Math.round((st.linked / st.total) * 100)}%` : '—'}
@@ -234,11 +263,16 @@ export function SecurityPage() {
             </Panel>
             <FatiguePanels pid={pid} insights={insights.data} />
           </div>
-          <RecentDetections pid={pid} dets={ruleFilter ? dets.filter((d) => d.rules.some((r) => r.id === ruleFilter)) : dets} ruleFilter={ruleFilter} onClearRule={() => {
-            const n = new URLSearchParams(params)
-            n.delete('rule')
-            setParams(n, { replace: true })
-          }} />
+          <RecentDetections
+            pid={pid}
+            dets={ruleFilter ? dets.filter((d) => d.rules.some((r) => r.id === ruleFilter)) : dets}
+            ruleFilter={ruleFilter}
+            onClearRule={() => {
+              const n = new URLSearchParams(params)
+              n.delete('rule')
+              setParams(n, { replace: true })
+            }}
+          />
           <ReplayPanel pid={pid} enabled={status.data?.replay_enabled ?? false} state={state} time={time} />
         </>
       )}
@@ -380,7 +414,11 @@ function RecentDetections({ pid, dets, ruleFilter, onClearRule }: { pid: string;
 
 function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: boolean; state: FilterState; time: TimeRange }) {
   const qc = useQueryClient()
-  const jobs = useQuery({ queryKey: ['v1', pid, 'replay-jobs'], queryFn: () => v1.replayJobs(pid, { limit: 20 }), refetchInterval: (q) => (q.state.data?.items.some((j) => j.status === 'running' || j.status === 'queued') ? 1000 : false) })
+  const jobs = useQuery({
+    queryKey: ['v1', pid, 'replay-jobs'],
+    queryFn: () => v1.replayJobs(pid, { limit: 20 }),
+    refetchInterval: (q) => (q.state.data?.items.some((j) => j.status === 'running' || j.status === 'queued') ? 1000 : false),
+  })
   const [sel, setSel] = useState<string | null>(null)
   const selected = sel ?? jobs.data?.items[0]?.job_id ?? null
   const job = useQuery({
@@ -415,8 +453,8 @@ function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: bool
     >
       {!enabled && (
         <Callout tone="info" title="Replay is not configured on this server">
-          Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or <span className="mono">--shield-url</span> to use a running
-          engine.{' '}
+          Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or <span className="mono">--shield-url</span>{' '}
+          to use a running engine.{' '}
           <a href={docsUrl('README.md#agentshield-integration')} target="_blank" rel="noreferrer">
             How replay works
           </a>
@@ -444,7 +482,9 @@ function ReplayPanel({ pid, enabled, state, time }: { pid: string; enabled: bool
           <div className="grow">{job.data ? <ReplayResult pid={pid} job={job.data} /> : job.isLoading ? <Loading /> : null}</div>
         </div>
       )}
-      {enabled && jobs.data?.items.length === 0 && <p className="muted small">No replays yet. Replaying shows what your current rules would block in the sessions you already recorded.</p>}
+      {enabled && jobs.data?.items.length === 0 && (
+        <p className="muted small">No replays yet. Replaying shows what your current rules would block in the sessions you already recorded.</p>
+      )}
     </Panel>
   )
 }

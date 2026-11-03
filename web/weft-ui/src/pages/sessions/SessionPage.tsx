@@ -12,7 +12,21 @@ import { buildTimeline, findStep, oneLine, STEP_LABEL, stepTitle, type BuiltTime
 import { agentUrl, callUrl, sessionsUrl, sessionUrl, teamUrl, traceSpansUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { AgentGraphView } from '../../components/ui/AgentGraphView'
-import { ActionBadge, AgentChip, Callout, CopyId, Crumbs, DetectionBadges, humanScorer, Metric, Panel, ScorePill, SeverityText, StatusPill, type Crumb } from '../../components/ui/bits'
+import {
+  ActionBadge,
+  AgentChip,
+  Callout,
+  CopyId,
+  Crumbs,
+  DetectionBadges,
+  humanScorer,
+  Metric,
+  Panel,
+  ScorePill,
+  SeverityText,
+  StatusPill,
+  type Crumb,
+} from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
 import { usePageHelp } from '../../components/ui/PageHelp'
 import { notify, undoable } from '../../components/ui/Toasts'
@@ -31,8 +45,8 @@ export function SessionPage() {
     'session',
     'Session',
     <>
-      Everything one session did, in order. The <strong>Timeline</strong> shows each agent's reasoning right before the tool call or hand-off it led to, and AgentShield's verdict on
-      that tool call. Indentation shows which agent was in control. Click a step to see its details; use <kbd className="kbd">j</kbd> and <kbd className="kbd">k</kbd> to move.
+      Everything one session did, in order. The <strong>Timeline</strong> shows each agent's reasoning right before the tool call or hand-off it led to, and AgentShield's verdict
+      on that tool call. Indentation shows which agent was in control. Click a step to see its details; use <kbd className="kbd">j</kbd> and <kbd className="kbd">k</kbd> to move.
     </>,
     'DESIGN.md#7-ui',
   )
@@ -151,7 +165,12 @@ export function SessionPage() {
           value={fmtCost(s.cost_usd)}
           tip="Each model call's tokens times the model's price: input, output, and cached reads and writes at their own prices. Calls to models without a known price are left out; “—” means no price was known."
         />
-        <Metric label="Errors" value={fmtNumber(s.error_count)} tone={s.error_count ? 'error' : undefined} tip="Spans that ended with an error status, including tool calls the agents recovered from." />
+        <Metric
+          label="Errors"
+          value={fmtNumber(s.error_count)}
+          tone={s.error_count ? 'error' : undefined}
+          tip="Spans that ended with an error status, including tool calls the agents recovered from."
+        />
         {sessionScores.length > 0 && (
           <Metric
             label="Scores"
@@ -185,8 +204,7 @@ export function SessionPage() {
         ))}
       </div>
       <div role="tabpanel" aria-label={tab}>
-        {tab === 'timeline' &&
-          (timeline.isLoading ? <Loading /> : <TimelineView pid={pid} tl={tl} focus={focusKey} onFocus={setFocus} sessionStart={sessionStart} />)}
+        {tab === 'timeline' && (timeline.isLoading ? <Loading /> : <TimelineView pid={pid} tl={tl} focus={focusKey} onFocus={setFocus} sessionStart={sessionStart} />)}
         {tab === 'graph' && <GraphTab pid={pid} sessionId={s.session_id} />}
         {tab === 'reasoning' && <ReasoningTab pid={pid} sessionId={s.session_id} tl={tl} />}
         {tab === 'security' && <SecurityTab pid={pid} sessionId={s.session_id} dets={detections.data?.items ?? []} tl={tl} />}
@@ -213,7 +231,8 @@ function ProblemsCallout({ tl, focus, onGo }: { tl: BuiltTimeline; focus: string
           return (
             <li key={p.key}>
               <span className="problem-what">
-                {d ? <ActionBadge action={d.action} /> : <StatusPill status="error" />} <AgentChip name={p.agent} size="sm" /> <span className="mono small">{oneLine(stepTitle(p), 70)}</span>
+                {d ? <ActionBadge action={d.action} /> : <StatusPill status="error" />} <AgentChip name={p.agent} size="sm" />{' '}
+                <span className="mono small">{oneLine(stepTitle(p), 70)}</span>
                 {d?.rules[0] && (
                   <span className="small">
                     {' '}
@@ -280,7 +299,12 @@ function ReasoningTab({ pid, sessionId, tl }: { pid: string; sessionId: string; 
             {target ? (
               <Link className="led-to inline" to={sessionUrl(pid, sessionId, { step: target.key })}>
                 <Icon name="chevron" size={12} /> led to <strong>{stepTitle(target)}</strong>
-                {target.problem && <span className={`text-${target.problem === 'approval' ? 'warn' : 'error'}`}> ({target.problem === 'block' ? 'blocked' : target.problem === 'approval' ? 'needed approval' : 'failed'})</span>}
+                {target.problem && (
+                  <span className={`text-${target.problem === 'approval' ? 'warn' : 'error'}`}>
+                    {' '}
+                    ({target.problem === 'block' ? 'blocked' : target.problem === 'approval' ? 'needed approval' : 'failed'})
+                  </span>
+                )}
               </Link>
             ) : (
               <span className="small faint">did not lead to a tool call or hand-off</span>
@@ -341,7 +365,10 @@ function SecurityTab({ pid, sessionId, dets, tl }: { pid: string; sessionId: str
         )}
       </Panel>
       {replay.length > 0 && (
-        <Panel title={`Replay verdicts (${replay.length})`} tip="Verdicts produced by re-running the rules on the recorded tool calls (shadow mode). They never affected the agents.">
+        <Panel
+          title={`Replay verdicts (${replay.length})`}
+          tip="Verdicts produced by re-running the rules on the recorded tool calls (shadow mode). They never affected the agents."
+        >
           <DetectionTable pid={pid} sessionId={sessionId} dets={replay} stepFor={stepFor} />
         </Panel>
       )}
@@ -399,7 +426,8 @@ export function ReplayResult({ pid, job }: { pid: string; job: ReplayJob }) {
       {sm && (
         <p className="small">
           Checked <strong>{sm.evaluated}</strong> of {sm.tool_calls} tool calls with <span className="mono">{job.ruleset}</span> ({job.rules_loaded ?? '?'} rules):{' '}
-          <strong>{sm.newly_blocked}</strong> newly blocked, <strong>{sm.no_longer_blocked}</strong> no longer blocked, <strong>{sm.changed}</strong> changed, {sm.unchanged} unchanged.
+          <strong>{sm.newly_blocked}</strong> newly blocked, <strong>{sm.no_longer_blocked}</strong> no longer blocked, <strong>{sm.changed}</strong> changed, {sm.unchanged}{' '}
+          unchanged.
         </p>
       )}
       {groups.map(([title, help, xs]) =>
@@ -413,7 +441,8 @@ export function ReplayResult({ pid, job }: { pid: string; job: ReplayJob }) {
                 <li key={c.span_id}>
                   <AgentChip name={c.agent_name} size="sm" /> <span className="mono small">{c.tool_name}</span>{' '}
                   <span className="small">
-                    {c.before ? <ActionBadge action={c.before.action} /> : <span className="faint">no verdict</span>} → {c.after ? <ActionBadge action={c.after.action} /> : <span className="faint">allowed</span>}
+                    {c.before ? <ActionBadge action={c.before.action} /> : <span className="faint">no verdict</span>} →{' '}
+                    {c.after ? <ActionBadge action={c.after.action} /> : <span className="faint">allowed</span>}
                   </span>{' '}
                   <Link className="small" to={sessionUrl(pid, c.session_id, { step: `tool:${c.span_id}` })}>
                     Show step
@@ -438,10 +467,21 @@ function ScoresTab({ pid, sessionId, scores, agents }: { pid: string; sessionId:
   const [agent, setAgent] = useState('')
   const run = useMutation({
     mutationFn: () =>
-      v1.runScores({ project_id: pid, scope, scorers: [...picked].filter((n) => SCORERS_BY_SCOPE[scope].some((x) => x.name === n)), session_ids: [sessionId], model, agent: scope === 'agent' && agent ? agent : undefined }),
+      v1.runScores({
+        project_id: pid,
+        scope,
+        scorers: [...picked].filter((n) => SCORERS_BY_SCOPE[scope].some((x) => x.name === n)),
+        session_ids: [sessionId],
+        model,
+        agent: scope === 'agent' && agent ? agent : undefined,
+      }),
     onSuccess: async (r) => {
       const errs = r.items.filter((x) => x.error)
-      notify(errs.length ? `${r.items.length - errs.length} scored, ${errs.length} failed: ${errs[0].error}` : `Scored ${r.items.length} target${r.items.length === 1 ? '' : 's'}.`, errs.length ? 'error' : 'ok', 7000)
+      notify(
+        errs.length ? `${r.items.length - errs.length} scored, ${errs.length} failed: ${errs[0].error}` : `Scored ${r.items.length} target${r.items.length === 1 ? '' : 's'}.`,
+        errs.length ? 'error' : 'ok',
+        7000,
+      )
       await qc.invalidateQueries({ queryKey: ['v1', pid] })
     },
     onError: (e) => notify(`Scoring failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 8000),
@@ -465,7 +505,10 @@ function ScoresTab({ pid, sessionId, scores, agents }: { pid: string; sessionId:
   const scorerOptions = SCORERS_BY_SCOPE[scope]
   return (
     <div className="col" style={{ gap: 16 }}>
-      <Panel title="Run scorers" tip="Scores the session, each agent, or each hand-off with LLM judges or the tool-safety replay. Results are stored and shown below with the judge's reason.">
+      <Panel
+        title="Run scorers"
+        tip="Scores the session, each agent, or each hand-off with LLM judges or the tool-safety replay. Results are stored and shown below with the judge's reason."
+      >
         <form
           className="col"
           style={{ gap: 10 }}

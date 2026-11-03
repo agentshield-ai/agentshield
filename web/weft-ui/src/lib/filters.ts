@@ -160,11 +160,13 @@ export function chipsOf(state: FilterState, opts: { defaultTime?: TimeRange } = 
     out.push({
       key: 'time',
       label: 'Time',
-      value: state.time === 'custom' ? `${state.from ? state.from.slice(0, 16).replace('T', ' ') : '…'} → ${state.to ? state.to.slice(0, 16).replace('T', ' ') : 'now'}` : TIME_LABEL[state.time],
+      value:
+        state.time === 'custom'
+          ? `${state.from ? state.from.slice(0, 16).replace('T', ' ') : '…'} → ${state.to ? state.to.slice(0, 16).replace('T', ' ') : 'now'}`
+          : TIME_LABEL[state.time],
     })
   if (state.has) out.push({ key: 'has', label: 'Security', value: HAS_LABEL[state.has] })
-  if (state.scoreBelow)
-    out.push({ key: 'score', label: 'Score below', value: `${state.scoreBelow.value}${state.scoreBelow.scorer ? ` (${state.scoreBelow.scorer})` : ''}` })
+  if (state.scoreBelow) out.push({ key: 'score', label: 'Score below', value: `${state.scoreBelow.value}${state.scoreBelow.scorer ? ` (${state.scoreBelow.scorer})` : ''}` })
   if (state.model) out.push({ key: 'model', label: 'Model', value: state.model })
   if (state.tool) out.push({ key: 'tool', label: 'Tool', value: state.tool })
   if (state.costMin != null) out.push({ key: 'cost', label: 'Cost at least', value: `$${state.costMin}` })

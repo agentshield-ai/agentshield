@@ -18,7 +18,12 @@ function render(url: string, page: 'sessions' | 'security' = 'sessions') {
   )
 }
 
-const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/\s+/g, ' ')
+const text = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, ' ')
 
 describe('FilterBar', () => {
   it('shows one chip per filter in the URL, each removable', () => {

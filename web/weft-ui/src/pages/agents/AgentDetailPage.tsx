@@ -19,8 +19,8 @@ export function AgentDetailPage() {
     'agent',
     'Agent',
     <>
-      One agent across every session: how often it runs and fails, who delegates to it and whom it delegates to, which tools it calls, how often AgentShield flags them, and how
-      its work scores.
+      One agent across every session: how often it runs and fails, who delegates to it and whom it delegates to, which tools it calls, how often AgentShield flags them, and how its
+      work scores.
     </>,
     'API.md#agents-1',
   )
@@ -63,7 +63,12 @@ export function AgentDetailPage() {
       {help.panel}
       <div className="metrics">
         <Metric label="Sessions" value={fmtNumber(d.session_count)} tip="Sessions in which this agent ran at least once." />
-        <Metric label="Runs" value={fmtNumber(d.invocation_count)} sub={`median ${fmtDuration(d.latency_ms_p50)}`} tip="Invocations of the agent; the median is the typical time one run takes." />
+        <Metric
+          label="Runs"
+          value={fmtNumber(d.invocation_count)}
+          sub={`median ${fmtDuration(d.latency_ms_p50)}`}
+          tip="Invocations of the agent; the median is the typical time one run takes."
+        />
         <Metric
           label="Failed runs"
           value={`${(errRate * 100).toFixed(0)}%`}
@@ -73,7 +78,12 @@ export function AgentDetailPage() {
         />
         <Metric label="Handed to it" value={fmtNumber(d.handoffs_in)} tip="Hand-offs where another agent passed work to this one (returns excluded)." />
         <Metric label="Handed on" value={fmtNumber(d.handoffs_out)} tip="Hand-offs where this agent passed work to another agent (returns excluded)." />
-        <Metric label="Reasoning" value={fmtNumber(d.reasoning_step_count)} sub={`${fmtNumber(d.reasoning_tokens)} tokens`} tip="Reasoning steps this agent's models produced, and the reasoning tokens the providers reported." />
+        <Metric
+          label="Reasoning"
+          value={fmtNumber(d.reasoning_step_count)}
+          sub={`${fmtNumber(d.reasoning_tokens)} tokens`}
+          tip="Reasoning steps this agent's models produced, and the reasoning tokens the providers reported."
+        />
         <Metric
           label="Flagged tool calls"
           value={d.detection_rate == null ? '—' : `${(d.detection_rate * 100).toFixed(0)}%`}
@@ -157,7 +167,10 @@ export function AgentDetailPage() {
             <ul className="plain flow-list">
               {Object.entries(d.scores).map(([k, v]) => (
                 <li key={k}>
-                  <ScorePill value={v.mean} scorer={k} count={v.count} /> <span className="small muted">{humanScorer(k)}, mean of {v.count}</span>
+                  <ScorePill value={v.mean} scorer={k} count={v.count} />{' '}
+                  <span className="small muted">
+                    {humanScorer(k)}, mean of {v.count}
+                  </span>
                 </li>
               ))}
             </ul>

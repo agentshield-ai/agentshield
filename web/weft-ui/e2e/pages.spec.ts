@@ -68,7 +68,15 @@ for (const cfg of CONFIGS) {
           other: axe.violations.filter((v) => !bad.includes(v)).map((v) => `${v.id} (${v.impact})`),
           passes: axe.passes.length,
         })
-        expect(bad.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`)).toEqual([])
+        expect(
+          bad.map(
+            (v) =>
+              `${v.id}: ${v.nodes
+                .map((n) => n.target.join(' '))
+                .slice(0, 3)
+                .join(', ')}`,
+          ),
+        ).toEqual([])
 
         // Let the page grow to its full height for the screenshot.
         await page.addStyleTag({ content: 'html,body,#root,.app{height:auto!important} .main{overflow:visible!important} .topbar{position:static!important}' })

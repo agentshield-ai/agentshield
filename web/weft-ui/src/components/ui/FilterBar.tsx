@@ -113,7 +113,12 @@ function useSavedViews(pid: string, page: FilterPage) {
   const save = async (label: string, params: Record<string, string>) => {
     const id = `${page}-${slug(label)}`
     try {
-      await api.objCreate(pid, id, { _class_name: 'SavedView', _bases: ['Object', 'BaseModel'], name: id, view_type: viewType, label, definition: { ui_params: params } }, 'SavedView')
+      await api.objCreate(
+        pid,
+        id,
+        { _class_name: 'SavedView', _bases: ['Object', 'BaseModel'], name: id, view_type: viewType, label, definition: { ui_params: params } },
+        'SavedView',
+      )
       await qc.invalidateQueries({ queryKey: ['objs', pid, 'SavedView'] })
       notify(`Saved view “${label}”`, 'ok')
     } catch {
@@ -156,8 +161,11 @@ export function FilterBar({
   options = {},
   placeholder,
   extra,
+  showViews = true,
 }: {
   page: FilterPage
+  /** False where the page has its own saved views (Traces saves columns too). */
+  showViews?: boolean
   defaultTime?: TimeRange
   /** The range actually shown after auto-widening (displayed in the time picker). */
   effectiveTime?: TimeRange
@@ -256,63 +264,65 @@ export function FilterBar({
             <Icon name="plus" size={13} /> Add filter
           </button>
         </div>
-        <div className="dd">
-          <button type="button" className="btn sm ghost" aria-expanded={viewsOpen} aria-haspopup="true" onClick={() => setViewsOpen((o) => !o)}>
-            <Icon name="bookmark" size={13} /> {views.find((v) => v.id === currentView)?.label ?? 'Views'}
-          </button>
-          {viewsOpen && (
-            <div className="dd-menu right views-menu">
-              {views.length === 0 && <div className="dd-note">No saved views yet. Set some filters, then save them here.</div>}
-              {views.map((v) => (
-                <div key={v.id} className="view-item">
-                  <button
-                    type="button"
-                    className="dd-item grow"
-                    onClick={() => {
-                      const next = writeFilters(parseFilters(new URLSearchParams(v.params)), params)
-                      next.set('view', v.id)
-                      next.delete('offset')
-                      setParams(next)
+        {showViews && (
+          <div className="dd">
+            <button type="button" className="btn sm ghost" aria-expanded={viewsOpen} aria-haspopup="true" onClick={() => setViewsOpen((o) => !o)}>
+              <Icon name="bookmark" size={13} /> {views.find((v) => v.id === currentView)?.label ?? 'Views'}
+            </button>
+            {viewsOpen && (
+              <div className="dd-menu right views-menu">
+                {views.length === 0 && <div className="dd-note">No saved views yet. Set some filters, then save them here.</div>}
+                {views.map((v) => (
+                  <div key={v.id} className="view-item">
+                    <button
+                      type="button"
+                      className="dd-item grow"
+                      onClick={() => {
+                        const next = writeFilters(parseFilters(new URLSearchParams(v.params)), params)
+                        next.set('view', v.id)
+                        next.delete('offset')
+                        setParams(next)
+                        setViewsOpen(false)
+                      }}
+                    >
+                      {v.label}
+                      {v.local && <span className="faint small"> (this browser)</span>}
+                    </button>
+                    <button type="button" className="icon-btn" aria-label={`Delete view ${v.label}`} onClick={() => remove(v)}>
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
+                ))}
+                <div className="dd-sep" />
+                {naming == null ? (
+                  <button type="button" className="dd-item" disabled={!Object.keys(filterParams()).length} onClick={() => setNaming('')}>
+                    Save current filters as a view…
+                  </button>
+                ) : (
+                  <form
+                    className="row"
+                    style={{ padding: '4px 8px' }}
+                    onSubmit={async (e) => {
+                      e.preventDefault()
+                      if (!naming.trim()) return
+                      const id = await save(naming.trim(), filterParams())
+                      setNaming(null)
                       setViewsOpen(false)
+                      const next = new URLSearchParams(params)
+                      next.set('view', id)
+                      setParams(next, { replace: true })
                     }}
                   >
-                    {v.label}
-                    {v.local && <span className="faint small"> (this browser)</span>}
-                  </button>
-                  <button type="button" className="icon-btn" aria-label={`Delete view ${v.label}`} onClick={() => remove(v)}>
-                    <Icon name="trash" size={13} />
-                  </button>
-                </div>
-              ))}
-              <div className="dd-sep" />
-              {naming == null ? (
-                <button type="button" className="dd-item" disabled={!Object.keys(filterParams()).length} onClick={() => setNaming('')}>
-                  Save current filters as a view…
-                </button>
-              ) : (
-                <form
-                  className="row"
-                  style={{ padding: '4px 8px' }}
-                  onSubmit={async (e) => {
-                    e.preventDefault()
-                    if (!naming.trim()) return
-                    const id = await save(naming.trim(), filterParams())
-                    setNaming(null)
-                    setViewsOpen(false)
-                    const next = new URLSearchParams(params)
-                    next.set('view', id)
-                    setParams(next, { replace: true })
-                  }}
-                >
-                  <input className="input grow" autoFocus aria-label="View name" placeholder="View name" value={naming} onChange={(e) => setNaming(e.target.value)} />
-                  <button className="btn sm primary" type="submit" disabled={!naming.trim()}>
-                    Save
-                  </button>
-                </form>
-              )}
-            </div>
-          )}
-        </div>
+                    <input className="input grow" autoFocus aria-label="View name" placeholder="View name" value={naming} onChange={(e) => setNaming(e.target.value)} />
+                    <button className="btn sm primary" type="submit" disabled={!naming.trim()}>
+                      Save
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {extra}
       </div>
       {(chips.length > 0 || state.time === 'custom') && (
@@ -362,8 +372,8 @@ export function FilterBar({
         />
       )}
       <p id="filter-syntax-help" className="sr-only">
-        Type text to search. You can also type filters such as agent:name, team:id, status:failed, has:block, has:approval, score&lt;0.5, model:name, tool:name, time:7d and
-        press Enter.
+        Type text to search. You can also type filters such as agent:name, team:id, status:failed, has:block, has:approval, score&lt;0.5, model:name, tool:name, time:7d and press
+        Enter.
       </p>
     </div>
   )
@@ -561,7 +571,12 @@ function FilterEditor({
           </label>
           <label className="field">
             To (empty: now)
-            <input className="input" type="datetime-local" value={toLocalInput(draft.to)} onChange={(e) => setDraft({ ...draft, time: 'custom', to: fromLocalInput(e.target.value) })} />
+            <input
+              className="input"
+              type="datetime-local"
+              value={toLocalInput(draft.to)}
+              onChange={(e) => setDraft({ ...draft, time: 'custom', to: fromLocalInput(e.target.value) })}
+            />
           </label>
         </div>
       )

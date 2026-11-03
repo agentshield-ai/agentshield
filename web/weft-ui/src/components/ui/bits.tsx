@@ -204,7 +204,21 @@ export function Callout({ tone = 'info', title, children, actions }: { tone?: 'i
   )
 }
 
-export function Panel({ title, tip, actions, children, className, id }: { title: ReactNode; tip?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; id?: string }) {
+export function Panel({
+  title,
+  tip,
+  actions,
+  children,
+  className,
+  id,
+}: {
+  title: ReactNode
+  tip?: ReactNode
+  actions?: ReactNode
+  children: ReactNode
+  className?: string
+  id?: string
+}) {
   return (
     <section className={`panel ${className ?? ''}`} aria-labelledby={id ? `${id}-h` : undefined}>
       <header className="panel-head">

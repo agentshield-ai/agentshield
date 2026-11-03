@@ -214,4 +214,3 @@ export function HandoffTable({ edges, agentUrl, caption = 'Hand-offs' }: { edges
     </div>
   )
 }
-

@@ -73,7 +73,9 @@ export function computeAttention(sessions: SessionSummary[]): AttentionCard[] {
       id: 'security',
       title: 'Blocked or needing approval',
       count: security.size,
-      detail: security.size ? `${plural(blocked.length, 'session')} with a blocked tool call, ${approvalHeavy.length} with ${APPROVAL_HEAVY}+ approval requests` : 'AgentShield blocked nothing.',
+      detail: security.size
+        ? `${plural(blocked.length, 'session')} with a blocked tool call, ${approvalHeavy.length} with ${APPROVAL_HEAVY}+ approval requests`
+        : 'AgentShield blocked nothing.',
       explain: `Sessions where AgentShield blocked a tool call, or asked for approval ${APPROVAL_HEAVY} or more times (a sign of approval fatigue). Replays are not counted.`,
       filter: { has: blocked.length || !approvalHeavy.length ? 'block' : 'approval' },
       tone: 'warn',

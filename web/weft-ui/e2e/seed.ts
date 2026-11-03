@@ -100,13 +100,19 @@ async function trip(base: string, project: string, sid: string, ago: number, use
   const delegate = o.delegate ?? 'researcher'
   const scale = o.scale ?? 1
   s.agent('O', null, 'orchestrator', 0, 4000, { user, root: true, output: o.fail ? undefined : 'Here is what I found.' })
-  s.thinkThenCall('C1', 'O', 50, 800, `The ${delegate} agent should handle this part.`, [`toolu_${sid}_d`, `delegate_${delegate}`, { task: user }], undefined, [200 * scale, 120 * scale])
+  s.thinkThenCall('C1', 'O', 50, 800, `The ${delegate} agent should handle this part.`, [`toolu_${sid}_d`, `delegate_${delegate}`, { task: user }], undefined, [
+    200 * scale,
+    120 * scale,
+  ])
   s.tool('X1', 'O', 900, 1500, `delegate_${delegate}`, `toolu_${sid}_d`, { task: user }, undefined, o.fail ? `${delegate} did not return a result` : undefined)
   s.agent('R', 'X1', delegate, 1000, 1300, { user, output: o.fail ? undefined : 'three facts', error: o.fail ? 'tool web_search failed: upstream timeout' : undefined })
   s.thinkThenCall('C2', 'R', 1100, 300, 'I should call web_search to answer this question.', [`call_${sid}_t`, 'web_search', { q: user }], undefined, [80 * scale, 70 * scale])
   if (o.fail) s.tool('X2', 'R', 1450, 400, 'web_search', `call_${sid}_t`, { q: user }, undefined, 'upstream timeout after 400 ms (HTTP 504)')
   else s.tool('X2', 'R', 1450, 400, 'web_search', `call_${sid}_t`, { q: user }, 'three facts')
-  s.thinkThenCall('C4', 'O', 2500, 1000, 'Summarise the result for the user.', undefined, o.fail ? 'Sorry, the search timed out.' : 'Here is what I found.', [400 * scale, 90 * scale])
+  s.thinkThenCall('C4', 'O', 2500, 1000, 'Summarise the result for the user.', undefined, o.fail ? 'Sorry, the search timed out.' : 'Here is what I found.', [
+    400 * scale,
+    90 * scale,
+  ])
   await s.send()
   return s
 }

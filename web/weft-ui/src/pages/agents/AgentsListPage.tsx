@@ -36,8 +36,8 @@ export function AgentsListPage() {
     'agents',
     'Agents',
     <>
-      Each <strong>agent</strong> that took part in a session: how often it ran, who handed work to it and whom it handed work to, how much it reasoned, how often AgentShield flagged its
-      tool calls, and its scores. Click an agent for its tools and recent sessions.
+      Each <strong>agent</strong> that took part in a session: how often it ran, who handed work to it and whom it handed work to, how much it reasoned, how often AgentShield
+      flagged its tool calls, and its scores. Click an agent for its tools and recent sessions.
     </>,
     'API.md#agents-1',
   )
@@ -79,8 +79,8 @@ export function AgentsListPage() {
       {help.panel}
       {any.data?.total_count === 0 ? (
         <GuidedEmpty projectId={pid} title="No agents yet">
-          Agents appear when spans carry an agent name (<span className="mono">gen_ai.agent.name</span> on <span className="mono">invoke_agent</span> spans, or the SDKs' conversation
-          API). Hand-offs between them are detected automatically.
+          Agents appear when spans carry an agent name (<span className="mono">gen_ai.agent.name</span> on <span className="mono">invoke_agent</span> spans, or the SDKs'
+          conversation API). Hand-offs between them are detected automatically.
         </GuidedEmpty>
       ) : (
         <>

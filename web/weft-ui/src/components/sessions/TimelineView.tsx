@@ -275,7 +275,9 @@ function StepRow({
               <Icon name={TYPE_ICON[s.type]} size={14} />
             </span>
             <span className="tl-kind">{STEP_LABEL[s.type]}</span>
-            <span className="tl-title">{s.type === 'reasoning' ? (reasoningOpen ? (p.kind === 'summary' ? 'Reasoning summary' : 'What the model was thinking') : reasoningPreview(p)) : stepTitle(s)}</span>
+            <span className="tl-title">
+              {s.type === 'reasoning' ? (reasoningOpen ? (p.kind === 'summary' ? 'Reasoning summary' : 'What the model was thinking') : reasoningPreview(p)) : stepTitle(s)}
+            </span>
             <span className="tl-right">
               {s.detections
                 .filter((d) => d.source === 'engine' && d.action !== 'allow')
@@ -302,7 +304,8 @@ function StepRow({
           )}
           {s.ledFrom.length > 0 && s.type !== 'reasoning' && (
             <button type="button" className="because" onClick={() => onJump(s.ledFrom[0])}>
-              <Icon name="reasoning" size={12} /> because: <span className="because-text">{oneLine(String(tl.byKey.get(s.ledFrom[0])?.item.payload?.text ?? 'reasoning'), 140)}</span>
+              <Icon name="reasoning" size={12} /> because:{' '}
+              <span className="because-text">{oneLine(String(tl.byKey.get(s.ledFrom[0])?.item.payload?.text ?? 'reasoning'), 140)}</span>
             </button>
           )}
           {s.errorText && !expanded && (
@@ -328,7 +331,11 @@ function ReasoningBody({ s, tl, onJump }: { s: Step; tl: BuiltTimeline; onJump: 
   const target = s.ledTo ? tl.byKey.get(s.ledTo) : undefined
   return (
     <div className="tl-body reasoning-body">
-      {p.kind === 'redacted' ? <p className="muted">The model's reasoning was redacted by the provider; only the fact that it reasoned is recorded.</p> : <LongText text={String(p.text ?? '')} />}
+      {p.kind === 'redacted' ? (
+        <p className="muted">The model's reasoning was redacted by the provider; only the fact that it reasoned is recorded.</p>
+      ) : (
+        <LongText text={String(p.text ?? '')} />
+      )}
       <div className="row wrap small muted" style={{ gap: 12 }}>
         <span>{p.kind === 'summary' ? 'Reasoning summary' : 'Thinking'}</span>
         {p.tokens != null && <span>{fmtNumber(p.tokens)} reasoning tokens</span>}
@@ -386,7 +393,9 @@ function StepBody({ pid, s }: { pid: string; s: Step }) {
             <Field label="Arguments">
               <LongText text={String(p.arguments ?? '')} />
             </Field>
-            <Field label="Result">{p.result ? <LongText text={String(p.result)} /> : <span className="faint">{String(p.status).toUpperCase() === 'ERROR' ? 'none (failed)' : 'none recorded'}</span>}</Field>
+            <Field label="Result">
+              {p.result ? <LongText text={String(p.result)} /> : <span className="faint">{String(p.status).toUpperCase() === 'ERROR' ? 'none (failed)' : 'none recorded'}</span>}
+            </Field>
             <Field label="Status">
               <StatusPill status={String(p.status).toUpperCase() === 'ERROR' ? 'error' : 'ok'} />
             </Field>

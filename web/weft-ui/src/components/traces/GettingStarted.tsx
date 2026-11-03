@@ -45,8 +45,8 @@ answer("What is the meaning of life?")`
 export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="${otel}"
 export OTEL_EXPORTER_OTLP_TRACES_HEADERS="project_id=${projectId}${auth ? ',Authorization=Bearer%20<api key>' : ''}"
 
-# gen_ai.* (OpenTelemetry GenAI), OpenInference and OpenLLMetry
-# attributes are mapped to inputs, outputs and token usage.`
+# gen_ai.* (OpenTelemetry GenAI) and other common span conventions
+# are mapped to inputs, outputs and token usage.`
   const curl = `curl -X POST ${origin}/call/start \\
   -H 'Content-Type: application/json'${auth ? " \\\n  -H 'Authorization: Bearer <api key>'" : ''} \\
   -d '{"start": {"project_id": "${projectId}", "op_name": "hello",

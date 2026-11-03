@@ -22,8 +22,8 @@ export function TeamPage() {
     'team',
     'Team',
     <>
-      How work flows through this team across all its sessions. The graph shows each agent and the hand-offs between them; the hand-off table is sorted with the most failing
-      route first, so problems between agents stand out.
+      How work flows through this team across all its sessions. The graph shows each agent and the hand-offs between them; the hand-off table is sorted with the most failing route
+      first, so problems between agents stand out.
     </>,
     'API.md#teams',
   )
@@ -87,7 +87,8 @@ export function TeamPage() {
             </Link>
           }
         >
-          {(worst.error_rate * 100).toFixed(0)}% of {worst.count} hand-offs failed ({worst.errors} failures), typically after {worst.p50_ms != null ? `${(worst.p50_ms / 1000).toFixed(1)} s` : 'an unknown time'}.
+          {(worst.error_rate * 100).toFixed(0)}% of {worst.count} hand-offs failed ({worst.errors} failures), typically after{' '}
+          {worst.p50_ms != null ? `${(worst.p50_ms / 1000).toFixed(1)} s` : 'an unknown time'}.
         </Callout>
       )}
       <Panel
@@ -96,7 +97,10 @@ export function TeamPage() {
       >
         <AgentGraphView graph={d.graph} agentUrl={(a) => agentUrl(pid, a)} title={`Delegation graph of ${teamName(d)}`} />
       </Panel>
-      <Panel title="Hand-offs" tip="Each route between two agents, most failing first. Error rate: share of hand-offs whose receiving agent ended with an error. Median time: from hand-off to the delegate finishing. Mean score: hand-off quality scores, when scored.">
+      <Panel
+        title="Hand-offs"
+        tip="Each route between two agents, most failing first. Error rate: share of hand-offs whose receiving agent ended with an error. Median time: from hand-off to the delegate finishing. Mean score: hand-off quality scores, when scored."
+      >
         <HandoffTable edges={d.handoff_stats} agentUrl={(a) => agentUrl(pid, a)} />
       </Panel>
       <Panel title="Agents" tip="Per agent, over this team's sessions.">

@@ -6,7 +6,7 @@ import { opDisplayName } from '../../api/refs'
 import type { Any, Call, CallsFilter, Operation, Query, SortBy } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
-import { callUrl, compareCallsUrl } from '../../lib/urls'
+import { callUrl, compareCallsUrl, threadsUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Modal, Pager, Spinner, StatusDot } from '../../components/common'
 import { CallCharts } from '../../components/traces/CallCharts'
 import { extractChat, messageText, normaliseMessage } from '../../components/traces/ChatView'
@@ -469,6 +469,9 @@ export function TracesPage() {
     <div className="page page-fill">
       <div className="page-header">
         <h1>Traces</h1>
+        <Link className="btn sm ghost" to={threadsUrl(projectId)} title="Spans grouped by thread id">
+          Threads
+        </Link>
         <Dropdown label={<>{activeView ? (activeView.val?.label ?? activeView.object_id) : 'Saved views'} ▾</>} className="btn sm">
           {(close) => (
             <>
@@ -527,7 +530,7 @@ export function TracesPage() {
         )}
       </div>
 
-      <FilterBar page="traces" defaultTime="all" placeholder="Filter spans…  try agent:researcher or tool:Bash" />
+      <FilterBar page="traces" defaultTime="all" showViews={false} placeholder="Filter spans…  try agent:researcher or tool:Bash" />
 
       {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
 

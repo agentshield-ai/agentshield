@@ -23,9 +23,7 @@ export function StackedBars({ buckets, series, caption, height = 140 }: { bucket
           return (
             <div key={b.title} className="sbars-col" title={`${b.title}: ${series.map((s) => `${s.label} ${b.values[s.id] ?? 0}`).join(', ')}`}>
               <div className="sbars-stack" style={{ height: `${(total / max) * 100}%` }}>
-                {series.map((s) =>
-                  b.values[s.id] ? <div key={s.id} className={`sbars-seg ${s.cls}`} style={{ flexGrow: b.values[s.id] }} /> : null,
-                )}
+                {series.map((s) => (b.values[s.id] ? <div key={s.id} className={`sbars-seg ${s.cls}`} style={{ flexGrow: b.values[s.id] }} /> : null))}
               </div>
               <div className="sbars-x">{i % labelEvery === 0 ? b.label : ''}</div>
             </div>

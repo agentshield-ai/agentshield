@@ -37,19 +37,18 @@ export function SessionsPage() {
     'sessions',
     'Sessions',
     <>
-      A <strong>session</strong> is one conversation with your agents, from the user's first request to the final answer, including every hand-off between agents, their reasoning and
-      their tool calls. The cards at the top count the sessions that need a look; click one to list them. Open a session to see exactly what happened, step by step.
+      A <strong>session</strong> is one conversation with your agents, from the user's first request to the final answer, including every hand-off between agents, their reasoning
+      and their tool calls. The cards at the top count the sessions that need a look; click one to list them. Open a session to see exactly what happened, step by step.
     </>,
     'DESIGN.md#7-ui',
   )
 
   const serverNoTime = sessionsParams({ ...state, time: 'all', from: undefined, to: undefined }, 'all')
-  const widen = useWidenedTime(
-    state,
-    DEFAULT_TIME,
-    async (r) => (await v1.sessions(pid, { ...sessionsParams({ ...state, time: r }, r), limit: 1 })).total_count,
-    [pid, 'sessions', serverNoTime],
-  )
+  const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.sessions(pid, { ...sessionsParams({ ...state, time: r }, r), limit: 1 })).total_count, [
+    pid,
+    'sessions',
+    serverNoTime,
+  ])
   const time = widen.time
   const server = sessionsParams(state, time)
   const list = useQuery({
@@ -93,8 +92,8 @@ export function SessionsPage() {
       {help.panel}
       {projectEmpty ? (
         <GuidedEmpty projectId={pid} title="No sessions yet">
-          Sessions appear here as soon as your agents send traces to <span className="mono">{pid}</span>: each conversation, with its agents, hand-offs, reasoning, tool calls and security
-          verdicts.
+          Sessions appear here as soon as your agents send traces to <span className="mono">{pid}</span>: each conversation, with its agents, hand-offs, reasoning, tool calls and
+          security verdicts.
         </GuidedEmpty>
       ) : (
         <>

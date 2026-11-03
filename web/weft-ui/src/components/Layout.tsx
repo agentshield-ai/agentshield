@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Link, Outlet, useLocation, useParams } from 'react-router-dom'
 import { UserMenu } from './UserMenu'
 import { Icon, type IconName } from './ui/Icons'
+import { RouteHelp } from './ui/RouteHelp'
 import { ShortcutsHost } from './ui/Shortcuts'
 import { ToastHost } from './ui/Toasts'
 
@@ -112,7 +113,14 @@ export function ProjectLayout() {
         Skip to content
       </a>
       <header className="topbar">
-        <button type="button" className="icon-btn" aria-label={open ? 'Close navigation' : 'Open navigation'} aria-expanded={open} aria-controls="sidebar" onClick={() => setOpen((o) => !o)}>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label={open ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={open}
+          aria-controls="sidebar"
+          onClick={() => setOpen((o) => !o)}
+        >
           <Icon name={open ? 'close' : 'menu'} size={18} />
         </button>
         <Link to={`/${entity}/${project}/sessions`} className="brand">
@@ -154,6 +162,7 @@ export function ProjectLayout() {
         <UserMenu />
       </nav>
       <main className="main" id="main" tabIndex={-1}>
+        <RouteHelp />
         <Outlet />
       </main>
       <ShortcutsHost />

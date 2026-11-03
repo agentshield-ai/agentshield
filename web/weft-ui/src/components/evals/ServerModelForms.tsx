@@ -139,7 +139,7 @@ export function RuntimeModelModal({ projectId, onClose, onCreated }: { projectId
           <Spinner label="Loading runtimes…" />
         ) : list.length === 0 ? (
           <div className="info-box small">
-            No runtimes in this project yet. Register one with <span className="mono">PUT /v2/&lt;entity&gt;/&lt;project&gt;/runtimes/&lt;name&gt;</span> (Weave's{' '}
+            No runtimes in this project yet. Register one with <span className="mono">PUT /v2/&lt;entity&gt;/&lt;project&gt;/runtimes/&lt;name&gt;</span> (the SDKs'{' '}
             <span className="mono">register_custom_runtime</span>).
           </div>
         ) : null}

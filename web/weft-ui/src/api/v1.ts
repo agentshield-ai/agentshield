@@ -371,8 +371,7 @@ const seg = (s: string) => encodeURIComponent(s)
 export const v1 = {
   sessions: (pid: string, p: Params = {}) => get<List<SessionSummary>>(`/api/v1/sessions?${qs(pid, p)}`),
   session: (pid: string, id: string) => get<SessionSummary>(`/api/v1/sessions/${seg(id)}?${qs(pid)}`),
-  timeline: (pid: string, id: string, p: Params = {}) =>
-    get<List<TimelineItem> & { session_id: string }>(`/api/v1/sessions/${seg(id)}/timeline?${qs(pid, { limit: 1000, ...p })}`),
+  timeline: (pid: string, id: string, p: Params = {}) => get<List<TimelineItem> & { session_id: string }>(`/api/v1/sessions/${seg(id)}/timeline?${qs(pid, { limit: 1000, ...p })}`),
   graph: (pid: string, id: string) => get<Graph>(`/api/v1/sessions/${seg(id)}/graph?${qs(pid)}`),
   reasoning: (pid: string, id: string, p: Params = {}) => get<List<ReasoningStep>>(`/api/v1/sessions/${seg(id)}/reasoning?${qs(pid, p)}`),
   agents: (pid: string, p: Params = {}) => get<List<AgentSummary>>(`/api/v1/agents?${qs(pid, p)}`),
@@ -381,8 +380,15 @@ export const v1 = {
   team: (pid: string, id: string) => get<TeamDetail>(`/api/v1/teams/${seg(id)}?${qs(pid)}`),
   handoffs: (pid: string, p: Params = {}) => get<List<Handoff>>(`/api/v1/handoffs?${qs(pid, p)}`),
   scores: (pid: string, p: Params = {}) => get<List<Score>>(`/api/v1/scores?${qs(pid, p)}`),
-  runScores: (body: { project_id: string; scope: 'session' | 'agent' | 'handoff'; scorers: string[]; session_ids?: string[]; agent?: string; handoff_ids?: string[]; model?: string }) =>
-    post<List<ScoreRunResult>>('/api/v1/scores/run', body),
+  runScores: (body: {
+    project_id: string
+    scope: 'session' | 'agent' | 'handoff'
+    scorers: string[]
+    session_ids?: string[]
+    agent?: string
+    handoff_ids?: string[]
+    model?: string
+  }) => post<List<ScoreRunResult>>('/api/v1/scores/run', body),
   detections: (pid: string, p: Params = {}) => get<List<Detection>>(`/api/v1/detections?${qs(pid, p)}`),
   detectionStats: (pid: string, p: Params = {}) => get<DetectionStats>(`/api/v1/detections/stats?${qs(pid, p)}`),
   insights: (pid: string, p: Params = {}) => get<ShieldInsights>(`/api/v1/shield/insights?${qs(pid, p)}`),

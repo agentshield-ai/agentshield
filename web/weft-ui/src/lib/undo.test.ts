@@ -16,10 +16,11 @@ function fakeClock() {
   }
   const advance = async (ms: number) => {
     now += ms
-    for (const [id, t] of [...timers]) if (t.at <= now) {
-      timers.delete(id)
-      t.fn()
-    }
+    for (const [id, t] of [...timers])
+      if (t.at <= now) {
+        timers.delete(id)
+        t.fn()
+      }
     await Promise.resolve()
     await Promise.resolve()
   }

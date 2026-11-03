@@ -59,7 +59,12 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
           <dt>Steps</dt>
           <dd title={`${s.llm_call_count} model calls, ${s.tool_call_count} tool calls, ${s.handoff_count} hand-offs`}>
             {steps}
-            {s.handoff_count ? <span className="faint"> · {s.handoff_count} hand-off{s.handoff_count === 1 ? '' : 's'}</span> : null}
+            {s.handoff_count ? (
+              <span className="faint">
+                {' '}
+                · {s.handoff_count} hand-off{s.handoff_count === 1 ? '' : 's'}
+              </span>
+            ) : null}
           </dd>
         </div>
         <div>
@@ -71,7 +76,9 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
         {hasSecurity && (
           <Link className="flag-link" to={sessionUrl(projectId, s.session_id, { step: 'problem' })} title={`Go to the ${det.block ? 'blocked' : 'flagged'} step`}>
             <DetectionBadges counts={det} />
-            <span className="sr-only">: go to the {det.block ? 'blocked' : 'flagged'} step in {sessionTitle(s)}</span>
+            <span className="sr-only">
+              : go to the {det.block ? 'blocked' : 'flagged'} step in {sessionTitle(s)}
+            </span>
           </Link>
         )}
         {!hasSecurity && <DetectionBadges counts={det} />}

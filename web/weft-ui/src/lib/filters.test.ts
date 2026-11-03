@@ -89,7 +89,11 @@ describe('filter text syntax', () => {
 describe('per-page parameters', () => {
   it('maps the chips to /api/v1/sessions parameters', () => {
     const now = Date.parse('2026-11-03T10:00:30Z')
-    const p = sessionsParams({ agent: 'a', team: 't', status: 'ok', has: 'approval', scoreBelow: { scorer: 'S', value: 0.2 }, model: 'm', tool: 'x', q: 'hi' }, '24h', stableNow(now))
+    const p = sessionsParams(
+      { agent: 'a', team: 't', status: 'ok', has: 'approval', scoreBelow: { scorer: 'S', value: 0.2 }, model: 'm', tool: 'x', q: 'hi' },
+      '24h',
+      stableNow(now),
+    )
     expect(p).toEqual({
       agent: 'a',
       team_id: 't',

@@ -2138,3 +2138,18 @@ table.table tr.selected td {
     padding-left: 12px;
   }
 }
+
+.route-help {
+  padding: 16px 24px 0;
+}
+.route-help.collapsed {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 0;
+  margin-bottom: -12px;
+}
+@media (max-width: 640px) {
+  .route-help {
+    padding: 12px 12px 0;
+  }
+}
