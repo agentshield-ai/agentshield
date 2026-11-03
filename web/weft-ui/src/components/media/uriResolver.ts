@@ -2,10 +2,12 @@
 // through POST /files/resolve_url, with batching, caching and expiry.
 //
 // - URIs of one bucket requested in the same tick (per project) go out as one
-//   request. The server fails a whole batch when any URI is unresolvable (for
-//   example a bucket that is not registered); batching per bucket keeps one
-//   unregistered bucket from failing the others, and a failed batch is
-//   retried one URI at a time to tell the good ones from the bad.
+//   request, with `per_uri_errors` so the server reports each unresolvable URI
+//   (for example in a bucket that is not registered) instead of failing the
+//   batch. A server without per-URI errors fails the whole batch with a 400:
+//   "not registered" then fails every URI of the batch (one bucket) at once;
+//   any other 400 is retried one URI at a time to tell the good from the bad.
+//   Other failures (401, 403, 5xx, network) fail the batch without retries.
 // - A presigned URL is cached until shortly before `expires_at`; after that
 //   the next lookup resolves it again. http(s) URLs resolve to themselves
 //   without a request.
@@ -13,7 +15,10 @@
 //   unregistered bucket does not hammer the server; invalidate() clears the
 //   cache (the Buckets settings tab calls it after a change).
 
-export type ResolveFn = (projectId: string, uris: string[]) => Promise<{ download_urls: string[]; expires_at: string | null }>
+export type ResolveFn = (
+  projectId: string,
+  uris: string[],
+) => Promise<{ download_urls: string[]; expires_at: string | null; errors?: ({ code: string; message: string } | null)[] }>
 
 export type Resolved =
   | { ok: true; url: string; expiresAt: number | null }
@@ -56,6 +61,22 @@ export function shortReason(e: unknown): { reason: string; status?: number } {
   if (/Failed to fetch|NetworkError|network/i.test(msg)) return { reason: 'server unreachable', status }
   const first = msg.split('\n')[0].trim()
   return { reason: first.length > 120 ? first.slice(0, 117) + '…' : first || 'could not resolve', status }
+}
+
+/** A short reason for one per-URI error from /files/resolve_url. */
+export function uriErrorReason(e: { code: string; message: string }): string {
+  switch (e.code) {
+    case 'bucket_not_registered':
+    case 'no_files_backend':
+      return 'bucket not registered for this project'
+    case 'not_project_file':
+      return 'outside this project’s files'
+    case 'file_not_found':
+      return 'file not found'
+    case 'invalid_uri':
+      return 'not a valid object URI'
+  }
+  return shortReason(new Error(e.message)).reason
 }
 
 /** scheme://bucket of a URI, the batching unit. */
@@ -173,21 +194,29 @@ export class UriResolver {
 
   private async fetchChunk(projectId: string, uris: string[]): Promise<Resolved[]> {
     const gen = this.generation
+    const keep = (u: string, r: Resolved) => {
+      this.store(projectId, u, r, gen)
+      return r
+    }
     try {
       this.requests++
       const res = await this.fetchUrls(projectId, uris)
       const exp = res.expires_at ? Date.parse(res.expires_at) : NaN
       return uris.map((u, i) => {
         const url = res.download_urls[i]
-        const r: Resolved = url ? { ok: true, url, expiresAt: Number.isFinite(exp) ? exp : null } : { ok: false, reason: 'could not resolve' }
-        this.store(projectId, u, r, gen)
-        return r
+        const err = res.errors?.[i]
+        if (url) return keep(u, { ok: true, url, expiresAt: Number.isFinite(exp) ? exp : null })
+        return keep(u, { ok: false, reason: err ? uriErrorReason(err) : 'could not resolve', ...(err ? { status: 400 } : {}) })
       })
     } catch (e) {
-      if (uris.length > 1) return Promise.all(uris.map((u) => this.fetchChunk(projectId, [u]).then((r) => r[0])))
       const r: Resolved = { ok: false, ...shortReason(e) }
-      this.store(projectId, uris[0], r, gen)
-      return [r]
+      const msg = e instanceof Error ? e.message : ''
+      // Only a server without per-URI errors fails a batch for one bad URI
+      // (400). A batch is one bucket, so "not registered" holds for all of it.
+      if (uris.length > 1 && r.status === 400 && !/not registered as a reference bucket/i.test(msg)) {
+        return Promise.all(uris.map((u) => this.fetchChunk(projectId, [u]).then((x) => x[0])))
+      }
+      return uris.map((u) => keep(u, r))
     }
   }
 }

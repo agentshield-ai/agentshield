@@ -378,6 +378,7 @@ export abstract class SpanBase {
       started_at: iso(this.startedAt),
     };
     this.call = new Call(data, client);
+    this.call.conversationSpan = true;
     this.call.threadId = threadId;
     this.call.turnId = turnId;
     return this;

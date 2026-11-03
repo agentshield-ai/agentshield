@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { bucketRequest, bucketsApi, bucketUri, draftProblem, emptyDraft, type ReferenceBucket } from '../../api/buckets'
-import { BucketsTable, retestRequest } from './BucketsTab'
+import { BucketsTable, retestRequest, TestResult } from './BucketsTab'
 
 const bucket: ReferenceBucket = {
   id: 'rb1',
@@ -125,5 +125,30 @@ describe('BucketsTable', () => {
     const html = renderToStaticMarkup(<BucketsTable {...props} canManage tests={{ rb1: { busy: false, ok: false, error: 'reading the test object failed: 403' }, rb2: { busy: true } }} />)
     expect(html).toContain('reading the test object failed: 403')
     expect(html).toContain('testing…')
+  })
+  it('shows the read and CORS results of a test', () => {
+    const tests = {
+      rb1: {
+        busy: false as const,
+        ok: false,
+        error: 'CORS: the bucket refused a preflight from https://weft.example.com: 403 CORSResponse: CORS is not enabled for this bucket.',
+        read: { ok: true, error: null },
+        cors: {
+          ok: false,
+          origin: 'https://weft.example.com',
+          error: 'CORS: the bucket refused a preflight from https://weft.example.com: 403 CORSResponse: CORS is not enabled for this bucket.',
+        },
+      },
+      rb2: { busy: false as const, ok: true, error: null, read: { ok: true, error: null }, cors: { ok: true, error: null, origin: 'https://weft.example.com' } },
+    }
+    const html = renderToStaticMarkup(<BucketsTable {...props} canManage tests={tests} />)
+    expect(html).toContain('Read: passed')
+    expect(html).toContain('CORS for https://weft.example.com: the bucket refused a preflight')
+    expect(html).not.toContain('https://weft.example.com: CORS:')
+    expect(html).toContain('test passed')
+    expect(html).toContain('read and CORS for https://weft.example.com passed')
+    // A test that could not start shows its error.
+    const failed = renderToStaticMarkup(<TestResult r={{ ok: false, error: 'secret "X" does not exist (Settings → Secrets)', read: null, cors: null }} />)
+    expect(failed).toContain('secret &quot;X&quot; does not exist')
   })
 })

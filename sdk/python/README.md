@@ -341,7 +341,7 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 | `claude_agent_sdk` | claude-agent-sdk | `query()` (agent) and `ClaudeSDKClient` turns (agent, one thread per client), each assistant message (llm), each tool use (tool; `Task` sub-agents nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
 | `haystack` | haystack-ai | pipelines (chain) and components (`llm`, `retriever`, `embedding`, `reranker`, `tool`, `agent`) via `WeftHaystackTracer` | `haystack.pipeline.run`, `haystack.<ComponentType>` |
 | `verdict` | verdict | `Pipeline` runs (workflow) and units such as `JudgeUnit` (scorer), via Verdict's tracer interface | `verdict.<pipeline name>`, `verdict.<Unit>` |
-| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn or op is running) | `chat` |
+| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn is running; inside an op that turn is a separate trace linked by `weave.parent_call.*`) | `chat` |
 | `autogen` | autogen-agentchat / -core / -ext | agents and teams `run`/`run_stream`/`on_messages` (agent), model clients `create`/`create_stream` (llm), tools, memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
 | `agno` | agno | `Agent`/`Team` `run`/`arun` (agent), `Workflow` (workflow), `Model.response` (llm), tool calls | `agno.Agent.run`, `agno.Model.response`, ... |
 | `google_adk` | google-adk | `Runner.run(_async)`, agents, tools, LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
@@ -498,8 +498,15 @@ finished `a` as its parent, so `b` nests under `a`, as under Weave.
 without a docs page) becomes one LLM call of provider `typesafe`: the state is
 the user message, the questions are the `typesafe.questions` attribute, the
 answers are the assistant message (`gen_ai.output.type` `json`), with the
-response model, token usage and request id. It nests under the running turn
-or op, else in its own `typesafe SDK` turn. A failed call records the error
+response model, token usage and request id. It nests under the running turn,
+else in its own `typesafe SDK` turn. As in Weave, where this integration
+creates no call, that turn starts its own trace even inside an `@weft.op`;
+when an op is running, the turn and the LLM call carry Weave's link to it,
+`attributes.weave.parent_call.trace_id` and `.id` (what Weave's
+`OpLinkSpanProcessor` stamps), which the server exposes as the agent span
+fields `parent_call_trace_id` / `parent_call_id` (so
+`{"$eq": [{"$getField": "parent_call_id"}, {"$literal": call.id}]}` on
+`/agents/spans/query` finds the spans an op produced). A failed call records the error
 type and HTTP status, not TypeSafe's error message (it carries the response
 body). `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
 `patch_typesafe(capture_content=False)` or a conversation with
@@ -815,6 +822,12 @@ client.delete_object_version(ref)              # or "qa:v0"
 client.delete_object_versions("qa", ["v1", "<digest>"])
 client.delete_all_object_versions("qa")
 ```
+
+As in `weave`, the tag and alias functions also exist at module level on the
+global client: `weft.add_tags`, `weft.remove_tags`, `weft.get_tags`,
+`weft.set_aliases`, `weft.remove_aliases`, `weft.get_aliases`,
+`weft.get_tags_and_aliases`, `weft.list_tags` and `weft.list_aliases` (they
+raise `RuntimeError` before `weft.init`).
 
 `obj_ref` arguments accept a ref, a URI, `"name:v1"`, `"name:latest"` or a
 published object. Aliases use Weave's `/objs/{id}/aliases` routes and fall

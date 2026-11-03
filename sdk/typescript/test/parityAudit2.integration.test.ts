@@ -74,5 +74,22 @@ describe.skipIf(!URL)('real server: parity audit 2', () => {
     const [llm] = await client.getCalls({ filter: { op_names: ['chat'] } });
     expect((llm.attributes as any).gen_ai.response.id).toBe('req_live');
     expect((llm.summary as any).usage['jev-2'].prompt_tokens).toBe(3);
+    // Inside an op: its own trace, which the server links back to the op.
+    const classify = weft.op(async function classify(msg: string) {
+      return (await ts.systemOne({ state: msg, questions: ['q'] })).answers;
+    });
+    await classify('refund');
+    await client.flush();
+    const [op] = await client.getCalls({ filter: { op_names: ['classify'] } });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.WEFT_TEST_API_KEY) headers.Authorization = `Bearer ${process.env.WEFT_TEST_API_KEY}`;
+    const res = await fetch(`${URL}/agents/spans/query`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ project_id: client.projectId, query: { $expr: { $eq: [{ $getField: 'parent_call_id' }, { $literal: op.id }] } } }),
+    });
+    const spans: any[] = (await res.json()).spans;
+    expect(spans.map((s) => s.operation_name).sort()).toEqual(['chat', 'invoke_agent']);
+    expect(spans.every((s) => s.parent_call_trace_id === op.traceId && s.trace_id !== op.traceId)).toBe(true);
   });
 });

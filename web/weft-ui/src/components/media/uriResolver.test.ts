@@ -77,28 +77,84 @@ describe('UriResolver', () => {
     expect(r.staleAt('e/p', 's3://b/a.png')).toBe(now + 6_000)
   })
 
-  it('retries a failed batch one URI at a time and remembers failures briefly', async () => {
-    const { r, calls } = setup(async (_p, uris) => {
-      if (uris.some((u) => u.includes('unreg'))) throw new HttpError(400, `cannot resolve "${uris[0]}": the bucket is not registered as a reference bucket for e/p`)
-      return { download_urls: uris.map((u) => 'https://ok/' + u.slice(5)), expires_at: null }
-    })
+  it('uses per-URI errors: one request per bucket, no retries, failures remembered briefly', async () => {
+    const { r, calls } = setup(async (_p, uris) => ({
+      download_urls: uris.map((u) => (u.includes('unreg') ? '' : 'https://ok/' + u.slice(5))),
+      expires_at: null,
+      errors: uris.map((u) =>
+        u.includes('unreg') ? { code: 'bucket_not_registered', message: `cannot resolve "${u}": the bucket is not registered as a reference bucket for e/p` } : null,
+      ),
+    }))
     const good = r.resolve('e/p', 's3://reg/a.png')
-    const bad = r.resolve('e/p', 's3://reg/unreg-prefix/b.png') // same bucket, refused (outside the prefix, say)
-    const bad2 = r.resolve('e/p', 's3://unreg/c.png')
+    const bad = r.resolve('e/p', 's3://reg/unreg-prefix/b.png') // same bucket, outside the registered prefix
+    const many = Array.from({ length: 40 }, (_, i) => r.resolve('e/p', `s3://unreg/${i}.png`))
     await vi.advanceTimersByTimeAsync(10)
     expect(await good).toEqual({ ok: true, url: 'https://ok/reg/a.png', expiresAt: null })
     expect(await bad).toEqual({ ok: false, reason: 'bucket not registered for this project', status: 400 })
-    expect((await bad2).ok).toBe(false)
-    // One batch per bucket; the failed two-URI batch is retried per URI.
-    expect(calls.map((c) => c.uris.join(' ')).sort()).toEqual(
-      ['s3://reg/a.png s3://reg/unreg-prefix/b.png', 's3://unreg/c.png', 's3://reg/a.png', 's3://reg/unreg-prefix/b.png'].sort(),
-    )
+    for (const p of many) expect(await p).toEqual({ ok: false, reason: 'bucket not registered for this project', status: 400 })
+    // 42 URIs in two buckets: two requests.
+    expect(calls).toHaveLength(2)
+    expect(r.requests).toBe(2)
     // The failure is cached for errorTtlMs, the success (no expiry) for good.
     await r.resolve('e/p', 's3://reg/unreg-prefix/b.png')
-    expect(calls).toHaveLength(4)
+    await r.resolve('e/p', 's3://unreg/7.png')
+    expect(calls).toHaveLength(2)
     now += 61_000
     expect(r.peek('e/p', 's3://reg/a.png')?.ok).toBe(true)
     expect(r.peek('e/p', 's3://reg/unreg-prefix/b.png')).toBeUndefined()
+  })
+
+  it('maps per-URI error codes to short reasons', async () => {
+    const codes = ['not_project_file', 'file_not_found', 'invalid_uri', 'bucket_error']
+    const { r } = setup(async (_p, uris) => ({
+      download_urls: uris.map(() => ''),
+      expires_at: null,
+      errors: uris.map((_u, i) => ({ code: codes[i], message: i === 3 ? 'reference bucket s3://k: secret "S" does not exist (Settings → Secrets)' : 'x' })),
+    }))
+    const ps = codes.map((c) => r.resolve('e/p', `s3://k/${c}.png`))
+    await vi.advanceTimersByTimeAsync(10)
+    expect((await Promise.all(ps)).map((x) => !x.ok && x.reason)).toEqual([
+      'outside this project’s files',
+      'file not found',
+      'not a valid object URI',
+      'bucket credentials secret is missing',
+    ])
+  })
+
+  it('without per-URI errors, fails a whole unregistered bucket at once', async () => {
+    const { r, calls } = setup(async (_p, uris) => {
+      if (uris.some((u) => u.startsWith('s3://unreg/'))) throw new HttpError(400, `cannot resolve "${uris[0]}": the bucket is not registered as a reference bucket for e/p`)
+      return { download_urls: uris.map((u) => 'https://ok/' + u.slice(5)), expires_at: null }
+    })
+    const many = Array.from({ length: 40 }, (_, i) => r.resolve('e/p', `s3://unreg/${i}.png`))
+    const good = r.resolve('e/p', 's3://reg/a.png')
+    await vi.advanceTimersByTimeAsync(10)
+    for (const p of many) expect(await p).toEqual({ ok: false, reason: 'bucket not registered for this project', status: 400 })
+    expect((await good).ok).toBe(true)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('without per-URI errors, retries another 400 one URI at a time', async () => {
+    const { r, calls } = setup(async (_p, uris) => {
+      if (uris.some((u) => u.includes('bad'))) throw new HttpError(400, `uri "${uris[0]}" is not a file of project e/p in the configured bucket`)
+      return { download_urls: uris.map((u) => 'https://ok/' + u.slice(5)), expires_at: null }
+    })
+    const good = r.resolve('e/p', 's3://files/a.png')
+    const bad = r.resolve('e/p', 's3://files/bad.png')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await good).toEqual({ ok: true, url: 'https://ok/files/a.png', expiresAt: null })
+    expect(await bad).toEqual({ ok: false, reason: 'outside this project’s files', status: 400 })
+    expect(calls.map((c) => c.uris.join(' '))).toEqual(['s3://files/a.png s3://files/bad.png', 's3://files/a.png', 's3://files/bad.png'])
+  })
+
+  it('does not retry per URI when the whole request is refused', async () => {
+    const { r, calls } = setup(async () => {
+      throw new HttpError(403, 'no access to project e/p')
+    })
+    const ps = ['a', 'b', 'c'].map((k) => r.resolve('e/p', `s3://b/${k}.png`))
+    await vi.advanceTimersByTimeAsync(10)
+    for (const p of ps) expect(await p).toEqual({ ok: false, reason: 'no access to this project', status: 403 })
+    expect(calls).toHaveLength(1)
   })
 
   it('resolves http(s) URLs without a request and forgets on invalidate', async () => {
@@ -154,5 +210,18 @@ describe('shortReason', () => {
     expect(shortReason(new HttpError(403, 'no access to project e/p'))).toEqual({ reason: 'no access to this project', status: 403 })
     expect(shortReason(new TypeError('Failed to fetch')).reason).toBe('server unreachable')
     expect(shortReason(new Error('x'.repeat(200))).reason).toHaveLength(118)
+  })
+})
+
+describe('mediaApi.resolveUrls', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('asks for per-URI errors', async () => {
+    const body = { download_urls: ['', 'https://x'], expires_at: null, errors: [{ code: 'bucket_not_registered', message: 'm' }, null] }
+    const fn = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fn)
+    const { mediaApi } = await import('../../api/media')
+    expect(await mediaApi.resolveUrls('e/p', ['s3://u/a.png', 'https://x'])).toEqual(body)
+    expect(fn.mock.calls[0][0]).toBe('/files/resolve_url')
+    expect(JSON.parse(String(fn.mock.calls[0][1]?.body))).toEqual({ project_id: 'e/p', uris: ['s3://u/a.png', 'https://x'], per_uri_errors: true })
   })
 })

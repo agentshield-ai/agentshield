@@ -35,9 +35,20 @@ type agentSpan struct {
 	CacheReadCost, CacheWCost                   float64
 	HasCost                                     bool
 	WBUserID, WBRunID                           string
+	ParentCallID, ParentCallTraceID             string // weave.parent_call.*: the op this span was emitted from
 	IsInvocation                                bool
 	attrsJSON                                   string
 	custom                                      map[string]any
+}
+
+// parentCallCol reads weave.parent_call.<field> (the link Weave's
+// OpLinkSpanProcessor stamps on spans started inside an op, which Weave's
+// server promotes to the parent_call_id / parent_call_trace_id columns) from
+// SDK attributes (nested) or OTLP span attributes (flat keys).
+func parentCallCol(field string) string {
+	return `COALESCE(json_extract(c.attributes, '$.weave.parent_call.` + field + `'), ` +
+		`json_extract(c.attributes, '$.otel.attributes."weave.parent_call.` + field + `"'), ` +
+		`json_extract(c.attributes, '$."weave.parent_call.` + field + `"'), '')`
 }
 
 type agentSpanFilter struct {
@@ -61,7 +72,8 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 	cols := `s.id, s.trace_id, COALESCE(s.parent_id, ''), s.operation_name, s.span_name, s.own_agent, s.agent_name, s.agent_id,
 		s.agent_version, s.agent_description, s.conversation_id, s.conversation_name, s.is_turn, s.tool_name, s.tool_call_id,
 		s.request_model, s.response_model, s.provider_name, c.op_name, COALESCE(c.display_name, ''), c.started_at, c.ended_at,
-		c.exception, c.summary, c.rollup, c.cumulative, COALESCE(c.wb_user_id, ''), COALESCE(c.wb_run_id, '')`
+		c.exception, c.summary, c.rollup, c.cumulative, COALESCE(c.wb_user_id, ''), COALESCE(c.wb_run_id, ''),
+		` + parentCallCol("id") + `, ` + parentCallCol("trace_id")
 	if f.WithAttrs {
 		cols += ", c.attributes"
 	}
@@ -114,7 +126,7 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 		dest := []any{&sp.ID, &sp.TraceID, &sp.ParentID, &sp.Op, &sp.SpanName, &sp.OwnAgent, &sp.AgentName, &sp.AgentID,
 			&sp.AgentVersion, &sp.AgentDesc, &sp.ConvID, &sp.ConvName, &sp.IsTurn, &sp.ToolName, &sp.ToolCallID,
 			&sp.RequestModel, &sp.ResponseModel, &sp.Provider, &sp.OpName, &sp.DisplayName, &started, &ended,
-			&exc, &summary, &rollup, &cum, &sp.WBUserID, &sp.WBRunID}
+			&exc, &summary, &rollup, &cum, &sp.WBUserID, &sp.WBRunID, &sp.ParentCallID, &sp.ParentCallTraceID}
 		if f.WithAttrs {
 			dest = append(dest, &sp.attrsJSON)
 		}
@@ -219,7 +231,7 @@ func (sp *agentSpan) displayName() string {
 
 // agentFieldAliases maps semantic names onto span columns.
 var agentFieldAliases = map[string]string{
-	"id": "span_id", "parent_id": "parent_span_id", "parent_call_id": "parent_span_id",
+	"id": "span_id", "parent_id": "parent_span_id", "weave.parent_call.id": "parent_call_id", "weave.parent_call.trace_id": "parent_call_trace_id",
 	"gen_ai.operation.name": "operation_name", "operation.name": "operation_name", "op": "operation_name", "name": "span_name",
 	"agent.name": "agent_name", "gen_ai.agent.name": "agent_name", "agent.id": "agent_id", "gen_ai.agent.id": "agent_id",
 	"agent.version": "agent_version", "gen_ai.agent.version": "agent_version", "agent.description": "agent_description",
@@ -241,7 +253,7 @@ var agentStringFields = map[string]bool{"span_id": true, "trace_id": true, "pare
 	"span_name": true, "display_name": true, "agent_name": true, "agent_id": true, "agent_version": true, "agent_description": true,
 	"conversation_id": true, "conversation_name": true, "tool_name": true, "tool_call_id": true, "request_model": true,
 	"response_model": true, "provider_name": true, "status_code": true, "status_message": true, "error_type": true,
-	"wb_user_id": true, "wb_run_id": true, "started_at": true, "ended_at": true}
+	"wb_user_id": true, "wb_run_id": true, "started_at": true, "ended_at": true, "parent_call_id": true, "parent_call_trace_id": true}
 
 var agentBoolFields = map[string]bool{"is_turn": true, "is_error": true, "is_invocation": true, "is_agent": true, "is_llm": true, "is_tool": true}
 
@@ -282,6 +294,10 @@ func (sp *agentSpan) field(key string) any {
 		return sp.TraceID
 	case "parent_span_id":
 		return optStr(sp.ParentID)
+	case "parent_call_id":
+		return optStr(sp.ParentCallID)
+	case "parent_call_trace_id":
+		return optStr(sp.ParentCallTraceID)
 	case "operation_name":
 		return optStr(sp.Op)
 	case "span_name":
@@ -1320,6 +1336,8 @@ type AgentSpan struct {
 	OutputCostUSD            *float64           `json:"output_cost_usd"`
 	OutputMessages           []SpanMessage      `json:"output_messages"`
 	OutputTokens             *int64             `json:"output_tokens"`
+	ParentCallID             *string            `json:"parent_call_id"`
+	ParentCallTraceID        *string            `json:"parent_call_trace_id"`
 	ParentSpanID             *string            `json:"parent_span_id"`
 	ProjectID                string             `json:"project_id"`
 	ProviderName             *string            `json:"provider_name"`
@@ -1878,7 +1896,7 @@ func (sp *agentSpan) toAPI(pid string, call *Call, includeCosts bool, cols []Age
 		ArtifactRefs: []string{}, ContentRefs: []string{}, ObjectRefs: []string{}, FinishReasons: []string{},
 		ConversationID: ptrIf(sp.ConvID), ConversationName: ptrIf(sp.ConvName), ErrorType: ptrIf(sp.errorType()),
 		InputMessages: []SpanMessage{}, OutputMessages: []SpanMessage{}, RequestStopSequences: []string{}, SystemInstructions: []string{},
-		OperationName: op, ParentSpanID: ptrIf(sp.ParentID), ProjectID: pid, ProviderName: ptrIf(sp.Provider),
+		OperationName: op, ParentSpanID: ptrIf(sp.ParentID), ParentCallID: ptrIf(sp.ParentCallID), ParentCallTraceID: ptrIf(sp.ParentCallTraceID), ProjectID: pid, ProviderName: ptrIf(sp.Provider),
 		RequestModel: ptrIf(sp.RequestModel), ResponseModel: ptrIf(sp.ResponseModel), SpanID: sp.ID, SpanName: ptrIf(sp.SpanName),
 		StartedAt: microsPtr(sp.StartedUS), StatusCode: sp.statusCode(), StatusMessage: sp.Exception,
 		ToolCallID: ptrIf(sp.ToolCallID), ToolName: ptrIf(sp.ToolName), TraceID: sp.TraceID,

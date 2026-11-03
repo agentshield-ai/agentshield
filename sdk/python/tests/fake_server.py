@@ -70,6 +70,8 @@ class FakeWeft:
                     fake.requests.append({"method": "GET", "path": self.path, "body": None, "headers": dict(self.headers)})
                 if self.path.startswith("/tags?"):
                     return self._send(200, {"tags": sorted({t for ts in fake.tags.values() for t in ts})})
+                if self.path.startswith("/aliases?"):
+                    return self._send(200, {"aliases": sorted({a for (_, a) in fake.aliases})})
                 if self.path == "/server_info":
                     return self._send(200, {"version": "fake", "auth_required": False, "otel_endpoint": "/otel/v1/traces"})
                 if self.path == "/auth/whoami":

@@ -31,6 +31,77 @@ type Fake struct {
 	mu      sync.Mutex
 	Objects map[string][]byte // "/bucket/object" -> content
 	Rejects int
+	// CORS holds each bucket's CORS configuration (gcloud storage buckets
+	// update --cors-file), keyed by bucket name; SetCORS sets it.
+	CORS map[string][]CORSEntry
+}
+
+// CORSEntry is one entry of a GCS bucket CORS configuration.
+type CORSEntry struct {
+	Origin         []string `json:"origin"` // exact origins or "*"
+	Method         []string `json:"method"`
+	ResponseHeader []string `json:"responseHeader"`
+	MaxAgeSeconds  int      `json:"maxAgeSeconds"`
+}
+
+// SetCORS replaces bucket's CORS configuration; no entries deletes it.
+func (f *Fake) SetCORS(bucket string, entries ...CORSEntry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.CORS == nil {
+		f.CORS = map[string][]CORSEntry{}
+	}
+	if len(entries) == 0 {
+		delete(f.CORS, bucket)
+		return
+	}
+	f.CORS[bucket] = entries
+}
+
+// corsMatch returns the first entry of bucket allowing origin and method.
+func (f *Fake) corsMatch(path, origin, method string) *CORSEntry {
+	bucket, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.CORS[bucket] {
+		e := &f.CORS[bucket][i]
+		okOrigin, okMethod := false, false
+		for _, o := range e.Origin {
+			okOrigin = okOrigin || o == "*" || o == origin
+		}
+		for _, m := range e.Method {
+			okMethod = okMethod || m == "*" || strings.EqualFold(m, method)
+		}
+		if okOrigin && okMethod {
+			return e
+		}
+	}
+	return nil
+}
+
+// corsHeaders sets the CORS response headers GCS sends for a matched entry.
+func corsHeaders(w http.ResponseWriter, e *CORSEntry, origin string, preflight bool) {
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", origin)
+	for _, o := range e.Origin {
+		if o == "*" {
+			h.Set("Access-Control-Allow-Origin", "*")
+		}
+	}
+	h.Add("Vary", "Origin")
+	if len(e.ResponseHeader) > 0 {
+		if preflight {
+			h.Set("Access-Control-Allow-Headers", strings.Join(e.ResponseHeader, ","))
+		} else {
+			h.Set("Access-Control-Expose-Headers", strings.Join(e.ResponseHeader, ","))
+		}
+	}
+	if preflight {
+		h.Set("Access-Control-Allow-Methods", strings.Join(e.Method, ","))
+		if e.MaxAgeSeconds > 0 {
+			h.Set("Access-Control-Max-Age", strconv.Itoa(e.MaxAgeSeconds))
+		}
+	}
 }
 
 // NewFake starts a fake GCS with a fresh service-account key. It is closed
@@ -115,6 +186,22 @@ func (f *Fake) Verify(r *http.Request) string {
 }
 
 func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if r.Method == http.MethodOptions {
+		// Preflights are answered without authentication from the bucket's
+		// CORS configuration; when nothing matches, GCS answers 200 without
+		// CORS headers, which the browser treats as a refusal.
+		if e := f.corsMatch(r.URL.Path, origin, r.Header.Get("Access-Control-Request-Method")); e != nil && origin != "" {
+			corsHeaders(w, e, origin, true)
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if origin != "" {
+		if e := f.corsMatch(r.URL.Path, origin, r.Method); e != nil {
+			corsHeaders(w, e, origin, false)
+		}
+	}
 	if msg := f.Verify(r); msg != "" {
 		f.mu.Lock()
 		f.Rejects++

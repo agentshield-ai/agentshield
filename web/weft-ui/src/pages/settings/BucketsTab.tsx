@@ -6,14 +6,37 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import { bucketRequest, bucketsApi, bucketUri, draftProblem, emptyDraft, type BucketDraft, type ReferenceBucket } from '../../api/buckets'
+import { bucketRequest, bucketsApi, bucketUri, draftProblem, emptyDraft, type BucketDraft, type BucketTestResult, type ReferenceBucket } from '../../api/buckets'
 import { iamApi } from '../../api/iam'
 import { ErrorBox, Loading, Modal, Section } from '../../components/common'
 import { ConfirmButton } from '../../components/objects/bits'
 import { uriResolver } from '../../components/media/useResolvedUri'
 import { fmtRelative } from '../../lib/format'
 
-type TestState = { busy: true } | { busy: false; ok: boolean; error: string | null }
+type TestState = { busy: true } | ({ busy: false } & BucketTestResult)
+
+/** The read and CORS parts of a test result, as short lines. */
+export function TestResult({ r }: { r: BucketTestResult }) {
+  const parts: { label: string; ok: boolean; error: string | null }[] = []
+  if (r.read) parts.push({ label: 'Read', ok: r.read.ok, error: r.read.error })
+  if (r.cors) parts.push({ label: `CORS for ${r.cors.origin ?? 'this origin'}`, ok: r.cors.ok, error: r.cors.error?.replace(/^CORS: /, '') ?? null })
+  if (!parts.length) return <span style={{ color: 'var(--error)' }}>{r.error ?? 'test failed'}</span>
+  return (
+    <div className="col" style={{ gap: 2 }}>
+      {parts.map((p) =>
+        p.ok ? (
+          <span key={p.label}>
+            <span className="badge success">{p.label}: passed</span>
+          </span>
+        ) : (
+          <span key={p.label} style={{ color: 'var(--error)' }}>
+            {p.label}: {p.error ?? 'failed'}
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
 
 /** The request that re-tests a saved registration. */
 export function retestRequest(b: ReferenceBucket) {
@@ -92,9 +115,11 @@ export function BucketsTable({
                     <span className="faint">testing…</span>
                   ) : t ? (
                     t.ok ? (
-                      <span className="badge success">test passed</span>
+                      <span className="badge success" title={t.cors?.origin ? `read and CORS for ${t.cors.origin} passed` : undefined}>
+                        test passed
+                      </span>
                     ) : (
-                      <span style={{ color: 'var(--error)' }}>{t.error ?? 'test failed'}</span>
+                      <TestResult r={t} />
                     )
                   ) : b.verified_at ? (
                     <span className="badge success" title={b.verified_at}>
@@ -107,7 +132,7 @@ export function BucketsTable({
                 {canManage && (
                   <td>
                     <div className="row" style={{ justifyContent: 'flex-end' }}>
-                      <button className="btn sm" disabled={t?.busy} onClick={() => onTest(b)} title={`Read ${b.test_object_key} through a presigned URL`}>
+                      <button className="btn sm" disabled={t?.busy} onClick={() => onTest(b)} title={`Read ${b.test_object_key} through a presigned URL and check the bucket's CORS rules for this origin`}>
                         Test
                       </button>
                       <ConfirmButton
@@ -148,7 +173,7 @@ export function BucketsTab({ projectId }: { projectId: string }) {
     setTests((t) => ({ ...t, [b.id]: { busy: true } }))
     try {
       const r = await bucketsApi.test(retestRequest(b))
-      setTests((t) => ({ ...t, [b.id]: { busy: false, ok: r.ok, error: r.error } }))
+      setTests((t) => ({ ...t, [b.id]: { busy: false, ...r } }))
     } catch (e) {
       setTests((t) => ({ ...t, [b.id]: { busy: false, ok: false, error: e instanceof Error ? e.message : String(e) } }))
     }
@@ -173,10 +198,10 @@ export function BucketsTab({ projectId }: { projectId: string }) {
             video, audio and PDFs render inline through short-lived presigned URLs; other files show as a download link. The bytes never pass through
             Weft. Until then the URIs show as text.
           </div>
-          <div className="hint" style={{ color: 'var(--warn)' }}>
+          <div className="hint">
             The bucket's CORS rules must allow <span className="mono">GET</span> and <span className="mono">HEAD</span> from this Weft origin (
-            <span className="mono">{origin}</span>): PDFs are fetched by the page and fail without it. The connection test runs on the server and does not
-            check CORS.
+            <span className="mono">{origin}</span>). Registering and <b>Test</b> read the test object and check those rules (a preflight from this origin
+            and the object's <span className="mono">Access-Control-Allow-Origin</span>), as Weave does.
           </div>
           {!admin && me.data && <div className="hint">Registering, testing and removing buckets needs a server admin.</div>}
           <ErrorBox error={list.error} />
@@ -216,7 +241,7 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
   const [d, setD] = useState<BucketDraft>(emptyDraft)
   const [busy, setBusy] = useState<'test' | 'save' | null>(null)
   const [err, setErr] = useState<unknown>(null)
-  const [result, setResult] = useState<{ ok: boolean; error: string | null } | null>(null)
+  const [result, setResult] = useState<BucketTestResult | null>(null)
   const [skipTest, setSkipTest] = useState(false)
   const secrets = useQuery({ queryKey: ['secrets'], queryFn: () => api.secretsList().then((r) => r.secrets), retry: false })
   const set = (p: Partial<BucketDraft>) => {
@@ -341,16 +366,19 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
       </div>
       <div className="hint" style={{ marginTop: 8 }}>
         Media will render for URIs under <span className="mono">{bucketUri({ provider: d.provider, bucket: d.bucket.trim() || 'bucket', prefix: d.prefix.trim() })}</span>.
-        Also allow this origin in the bucket's CORS rules (GET, HEAD); the test does not check CORS.
+        The test reads the test object and checks that the bucket's CORS rules allow GET from this origin (
+        <span className="mono">{typeof window !== 'undefined' ? window.location.origin : ''}</span>); allow GET and HEAD.
       </div>
       {problem && (d.bucket || d.testObjectKey) && <div className="hint" style={{ color: 'var(--warn)' }}>{problem}</div>}
       {result &&
         (result.ok ? (
           <div className="hint" style={{ color: 'var(--success)' }}>
-            Connection test passed.
+            Connection test passed: the test object was read{result.cors?.origin ? ` and CORS allows ${result.cors.origin}` : ''}.
           </div>
         ) : (
-          <div className="error-box">Connection test failed: {result.error}</div>
+          <div className="error-box">
+            Connection test failed: <TestResult r={result} />
+          </div>
         ))}
       <ErrorBox error={err} />
     </Modal>

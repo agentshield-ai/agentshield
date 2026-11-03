@@ -11,7 +11,12 @@
  *   the response `model`, `usage` and the request id (`x-typesafe-request-id`
  *   when the client returns a Stainless `APIPromise`);
  * - parent: the current turn when one is running; else a new `invoke_agent`
- *   turn named `typesafe SDK` (in the current conversation, if any);
+ *   turn named `typesafe SDK` (in the current conversation, if any), the root
+ *   of its own trace, also inside an op (as in Weave, where the integration
+ *   creates no call). When an op is running, the spans carry Weave's link to
+ *   it, `weave.parent_call.id` and `weave.parent_call.trace_id` (what Weave's
+ *   `OpLinkSpanProcessor` stamps; the server exposes them as the agent span
+ *   fields `parent_call_id` / `parent_call_trace_id`);
  * - errors: `error.type` and `http.response.status_code`; the provider error
  *   text (it carries the response body) is not copied.
  *
@@ -25,6 +30,7 @@
  * // or every client: weft.patchTypeSafeModule(await import('@typesafe-ai/sdk'))
  * ```
  */
+import { currentContext } from '../context.js';
 import { LLM, Turn, getCurrentConversation, getCurrentTurn, type Message } from '../conversation.js';
 import { integrationAttributes, integrationClient } from './settings.js';
 
@@ -106,6 +112,17 @@ function provenance(): Record<string, unknown> {
   return integrationAttributes(INTEGRATION, { weft: { integration_operation: OPERATION } });
 }
 
+/** Weave's link to the innermost running op (conversation spans are not ops), or {} outside one. */
+function opLink(): Record<string, unknown> {
+  const stack = currentContext().stack;
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const call = stack[i];
+    if (call.conversationSpan) continue;
+    return call.id && call.traceId ? { weave: { parent_call: { id: call.id, trace_id: call.traceId } } } : {};
+  }
+  return {};
+}
+
 interface Trace {
   llm: LLM;
   turn: Turn | null;
@@ -125,20 +142,22 @@ function openTrace(client: any, request: any): Trace | null {
     const model = typeof requested === 'string' ? requested : '';
     const state = capture ? stateMessage(request?.state) : undefined;
     const questions = capture ? questionsJson(request?.questions) : undefined;
+    const link = opLink();
     const current = getCurrentTurn();
     if (current && !current.ended) {
       turn = current;
     } else {
-      // Its own turn, in the current conversation (without making it the conversation's current turn).
+      // Its own turn, in the current conversation (without making it the
+      // conversation's current turn): a new trace, also inside an op.
       const conv = getCurrentConversation();
       turn = new Turn({ agentName: AGENT_NAME });
       if (conv) turn.conv = conv.info();
-      turn.setAttributes(provenance());
+      turn.setAttributes({ ...provenance(), ...link });
       ownsTurn = true;
     }
     llm = turn.startLLM({ model, providerName: PROVIDER_NAME });
     if (state) llm.inputMessages = [state];
-    llm.setAttributes({ ...provenance(), ...(questions !== undefined ? { typesafe: { questions } } : {}) });
+    llm.setAttributes({ ...provenance(), ...link, ...(questions !== undefined ? { typesafe: { questions } } : {}) });
     llm.start();
     return { llm, turn, ownsTurn, capture, closed: false };
   } catch {

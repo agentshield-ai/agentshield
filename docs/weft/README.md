@@ -65,7 +65,7 @@ work offline.
 
 Weft refuses to send user-configured requests (remote scorers, `predict_url`
 models, webhooks, OAuth token URLs, LLM provider base URLs, reference-bucket
-tests) to loopback, private, link-local, CGNAT, cloud-metadata and other
+tests, including their CORS preflight) to loopback, private, link-local, CGNAT, cloud-metadata and other
 internal addresses, checking the address each connection dials so DNS
 rebinding and redirects are covered. The caller sees `destination not
 allowed`; the server logs the host, address and reason at warn level. Local
@@ -158,11 +158,15 @@ Cerebras, AWS Bedrock and Vertex AI, with per-integration settings
 Both SDKs trace OpenAI Realtime sessions with their audio saved as WAV files:
 the `openai` package's realtime connections, and the OpenAI Agents SDK
 (`RealtimeRunner` in Python, which uses `websockets`; `RealtimeSession` in
-TypeScript via `weft.patchRealtimeSession()`). The Python SDK also patches raw
+TypeScript via `weft.patchRealtimeSession()`, which finds
+`@openai/agents-realtime` from the application's directory as well as the
+SDK's and patches both its ESM and CommonJS builds). The Python SDK also patches raw
 `websockets`, `websocket-client` and `aiohttp` Realtime clients, as Weave
 does. Weave's lower-level client methods are there too:
 `register_custom_runtime` / `registerCustomRuntime`, `threads_query`,
-`require_current_call` and `weft.urls.agent_conversation_path` (TypeScript:
+`require_current_call`, the module-level tag and alias functions
+(`weft.add_tags`, `weft.list_aliases`, `weft.get_tags_and_aliases`, … as in
+`weave`), `weft.urls.agent_conversation_path` (TypeScript:
 `agentConversationPath`, `client.conversationUrl`), and the
 `WEFT_DEBUG_HTTP` / `WEFT_DISABLE_WAL_SENDER` equivalents of Weave's
 variables.

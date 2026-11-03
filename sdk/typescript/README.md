@@ -232,7 +232,13 @@ route Weave documents for TypeScript) is traced by Weave's
 `patchRealtimeSession()`: it imports the package (or takes it:
 `patchRealtimeSession(await import('@openai/agents-realtime'))`) and patches
 `RealtimeSession.prototype.connect`, so every session, including ones created
-earlier, is traced from its `connect()`. The session's `transport_event`s
+earlier, is traced from its `connect()`. Without an argument it looks for the
+package from the SDK's own location and from the application's (the working
+directory and the entry script's directory, walking up `node_modules` and
+following the package's `exports`), so it also works when the SDK is linked or
+installed elsewhere, and it patches both the ESM build (what `import` loads)
+and the CommonJS build (what `require` loads). It resolves to `false` only
+when no copy is found. The session's `transport_event`s
 (every raw server event) and its transport's `sendEvent` (which `sendAudio`,
 `sendMessage` and tool outputs go through) feed the same tracer, so a session
 records the same calls and audio as above. A disconnect or `close()` ends the
@@ -246,7 +252,11 @@ websocket client, feed a `new weft.RealtimeTracer()` with `onClientEvent(e)`,
 record each `systemOne({ state, questions, model? })` as an LLM (`chat`) call
 of provider `typesafe`: the state as the user message, the questions as the
 `typesafe.questions` attribute, the answers, response model, usage and request
-id, inside the running turn or its own `typesafe SDK` turn. Errors keep their
+id, inside the running turn or its own `typesafe SDK` turn. As in Weave, that
+turn is a trace of its own even inside an op; when an op is running, the turn
+and the LLM call carry Weave's link to it, `attributes.weave.parent_call.id`
+and `.trace_id` (the server's agent span fields `parent_call_id` /
+`parent_call_trace_id`). Errors keep their
 type and HTTP status but not TypeSafe's message (it holds the response body).
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
 `captureContent: false` or a conversation with `includeContent: false` drops

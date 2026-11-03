@@ -37,11 +37,31 @@ export interface ReferenceBucketReq {
   skip_test?: boolean
 }
 
+/** One part of a bucket test; `origin` is the browser origin the CORS check used. */
+export interface BucketCheck {
+  ok: boolean
+  error: string | null
+  origin?: string
+}
+
+/**
+ * /reference_buckets/test result: ok when the test object could be read
+ * (`read`) and the bucket's CORS rules let the Weft origin GET it (`cors`: a
+ * preflight plus the GET's Access-Control-Allow-Origin). `read` is null when
+ * the test could not start, `cors` when the bucket could not be reached.
+ */
+export interface BucketTestResult {
+  ok: boolean
+  error: string | null
+  read?: BucketCheck | null
+  cors?: BucketCheck | null
+}
+
 export const bucketsApi = {
   /** The buckets a project may use: its own and its team's. */
   list: (project_id: string) => get<{ buckets: ReferenceBucket[] }>(`/reference_buckets/list?project_id=${encodeURIComponent(project_id)}`),
   create: (req: ReferenceBucketReq) => post<{ bucket: ReferenceBucket }>('/reference_buckets/create', req),
-  test: (req: ReferenceBucketReq) => post<{ ok: boolean; error: string | null }>('/reference_buckets/test', req),
+  test: (req: ReferenceBucketReq) => post<BucketTestResult>('/reference_buckets/test', req),
   delete: (id: string) => post<object>('/reference_buckets/delete', { id }),
 }
 

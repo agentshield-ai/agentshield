@@ -554,3 +554,59 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 		t.Fatalf("deleted agent still listed: %v", res)
 	}
 }
+
+// Spans emitted inside an op carry Weave's link to it (weave.parent_call.id /
+// .trace_id, stamped by Weave's OpLinkSpanProcessor and by the Weft SDKs'
+// TypeSafe integration); agent spans expose it as parent_call_id /
+// parent_call_trace_id, the columns Weave's server promotes it to.
+func TestAgentSpansParentCallLink(t *testing.T) {
+	e := newEnv(t)
+	base := time.Now().Add(-time.Minute)
+	tr := hexID("lnk", 32)
+	body := otlpBody(base, []testSpan{
+		{trace: tr, id: hexID("t1", 16), name: "invoke_agent typesafe SDK", durMS: 50, attrs: map[string]any{
+			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "typesafe SDK",
+			"weave.parent_call.trace_id": "op-trace-1", "weave.parent_call.id": "op-call-1"}},
+		{trace: tr, id: hexID("c1", 16), parent: hexID("t1", 16), name: "chat jev-latest", startMS: 5, durMS: 40, attrs: map[string]any{
+			"gen_ai.operation.name": "chat", "gen_ai.provider.name": "typesafe", "gen_ai.request.model": "jev-latest",
+			"weave.parent_call.trace_id": "op-trace-1", "weave.parent_call.id": "op-call-1"}},
+		{trace: hexID("other", 32), id: hexID("t2", 16), name: "invoke_agent other", durMS: 10, attrs: map[string]any{
+			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "other"}},
+	})
+	if code, out := e.raw("/otel/v1/traces", body, map[string]string{"project_id": pid}); code != 200 {
+		t.Fatalf("otlp -> %d %s", code, out)
+	}
+	// An SDK-recorded span (nested attributes).
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "sdk-llm", "trace_id": "sdk-trace",
+		"op_name": "chat", "started_at": now, "inputs": map[string]any{},
+		"attributes": map[string]any{"gen_ai": map[string]any{"operation": map[string]any{"name": "chat"}, "provider": map[string]any{"name": "typesafe"}},
+			"weave": map[string]any{"kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-2", "id": "op-call-2"}}}}})
+	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "sdk-llm", "ended_at": now, "output": nil, "summary": map[string]any{}}})
+
+	query := func(field, v string) []any {
+		res := e.post("/agents/spans/query", map[string]any{"project_id": pid,
+			"query": map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": field}, map[string]any{"$literal": v}}}}})
+		return res["spans"].([]any)
+	}
+	spans := query("parent_call_id", "op-call-1")
+	if len(spans) != 2 {
+		t.Fatalf("spans of op-call-1 = %v", spans)
+	}
+	for _, s := range spans {
+		m := s.(map[string]any)
+		if m["parent_call_trace_id"] != "op-trace-1" || m["trace_id"] == "op-trace-1" {
+			t.Fatalf("span = %v", m)
+		}
+	}
+	if s := query("weave.parent_call.id", "op-call-2"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm" ||
+		s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-2" {
+		t.Fatalf("SDK span link = %v", s)
+	}
+	// Unlinked spans have null link fields.
+	res := e.post("/agents/spans/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{
+		"$eq": []any{map[string]any{"$getField": "agent_name"}, map[string]any{"$literal": "other"}}}}})
+	if s := res["spans"].([]any); len(s) != 1 || s[0].(map[string]any)["parent_call_id"] != nil {
+		t.Fatalf("unlinked = %v", s)
+	}
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,9 +35,38 @@ type filesResolveReq struct {
 	URIs      []string `json:"uris"`
 	// ExpiresIn (seconds) is a Weft extension for presigned URL lifetime.
 	ExpiresIn *int64 `json:"expires_in"`
+	// PerURIErrors (Weft extension) reports unresolvable URIs per URI
+	// instead of failing the whole request with a 400: their download_urls
+	// entry is "" and "errors" (aligned with uris) says why.
+	PerURIErrors bool `json:"per_uri_errors"`
 }
 
 var fileDigestRe = regexp.MustCompile(`^[A-Za-z0-9]{20,64}$`)
+
+// Codes of per-URI resolve errors (per_uri_errors).
+const (
+	resolveBucketNotRegistered = "bucket_not_registered"
+	resolveNoFilesBackend      = "no_files_backend"
+	resolveNotProjectFile      = "not_project_file"
+	resolveFileNotFound        = "file_not_found"
+	resolveInvalidURI          = "invalid_uri"
+	resolveBucketError         = "bucket_error"
+)
+
+// resolveError is why one URI could not be resolved. cause, when set, is
+// returned as is without per_uri_errors (credential and signing failures of
+// a registered bucket), otherwise the message is a 400.
+type resolveError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	cause   error
+}
+
+func (e *resolveError) Error() string { return e.Message }
+
+func resolveErrf(code, format string, a ...any) *resolveError {
+	return &resolveError{Code: code, Message: fmt.Sprintf(format, a...)}
+}
 
 // filesResolveURL resolves each uri to a download URL:
 //   - a file digest (as returned by /file/create; "weft-file://<digest>" and
@@ -47,7 +77,9 @@ var fileDigestRe = regexp.MustCompile(`^[A-Za-z0-9]{20,64}$`)
 //     or its team (refbuckets.go): a presigned (S3) or V4 signed (GCS) URL;
 //   - http(s) URLs: returned unchanged.
 //
-// expires_at is the earliest expiry of the presigned URLs, or null.
+// expires_at is the earliest expiry of the presigned URLs, or null. As in
+// Weave, one unresolvable uri fails the request (400) unless per_uri_errors
+// asks for per-URI results.
 func (s *Server) filesResolveURL(ctx context.Context, r *http.Request, req *filesResolveReq) (any, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {
@@ -66,88 +98,108 @@ func (s *Server) filesResolveURL(ctx context.Context, r *http.Request, req *file
 	backend := s.store.FileBackend()
 	presigner, _ := backend.(store.FilePresigner)
 	var earliest *time.Time
+	expires := func(exp time.Time) {
+		if earliest == nil || exp.Before(*earliest) {
+			earliest = &exp
+		}
+	}
 	presign := func(key string) (string, error) {
 		u, exp, err := presigner.PresignGet(key, ttl)
 		if err != nil {
 			return "", err
 		}
-		if earliest == nil || exp.Before(*earliest) {
-			earliest = &exp
-		}
+		expires(exp)
 		return u, nil
 	}
 	base := requestBaseURL(r)
-	out := make([]string, 0, len(req.URIs))
-	for _, raw := range req.URIs {
+	resolve := func(raw string) (string, error) {
 		uri := strings.TrimSpace(raw)
 		switch {
 		case strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://"):
-			out = append(out, uri)
-			continue
+			return uri, nil
 		case strings.HasPrefix(uri, "gs://") || (strings.HasPrefix(uri, "s3://") && !s.inFilesBackend(uri)):
 			// Registered reference buckets (refbuckets.go).
 			signed, exp, ok, err := s.presignReference(ctx, pid, uri, ttl)
-			if err != nil {
-				return nil, err
+			var inv *store.InvalidError
+			switch {
+			case errors.As(err, &inv) && strings.HasPrefix(inv.Msg, "invalid "):
+				return "", resolveErrf(resolveInvalidURI, "%s", inv.Msg)
+			case err != nil:
+				return "", &resolveError{Code: resolveBucketError, Message: err.Error(), cause: err}
+			case !ok:
+				return "", resolveErrf(resolveBucketNotRegistered, "cannot resolve %q: the bucket is not registered as a reference bucket for %s", uri, pid)
 			}
-			if !ok {
-				return nil, store.Invalidf("cannot resolve %q: the bucket is not registered as a reference bucket for %s", uri, pid)
-			}
-			if earliest == nil || exp.Before(*earliest) {
-				earliest = &exp
-			}
-			out = append(out, signed)
-			continue
+			expires(exp)
+			return signed, nil
 		case strings.HasPrefix(uri, "s3://"):
 			if backend == nil || presigner == nil {
-				return nil, store.Invalidf("cannot resolve %q: no S3 files backend is configured", uri)
+				return "", resolveErrf(resolveNoFilesBackend, "cannot resolve %q: no S3 files backend is configured", uri)
 			}
 			u, err := url.Parse(uri)
 			if err != nil || u.Host == "" {
-				return nil, store.Invalidf("invalid uri %q", uri)
+				return "", resolveErrf(resolveInvalidURI, "invalid uri %q", uri)
 			}
 			key := strings.TrimPrefix(u.Path, "/")
 			if backend.URI(key) != "s3://"+u.Host+"/"+key || !strings.HasPrefix(key, backend.Key(pid+"/")) || strings.Contains(key, "..") {
-				return nil, store.Invalidf("uri %q is not a file of project %s in the configured bucket", uri, pid)
+				return "", resolveErrf(resolveNotProjectFile, "uri %q is not a file of project %s in the configured bucket", uri, pid)
 			}
-			signed, err := presign(key)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, signed)
-			continue
+			return presign(key)
 		}
 		digest := uri
 		for _, p := range []string{"weft-file://", "weave-file://"} {
 			digest = strings.TrimPrefix(digest, p)
 		}
 		if !fileDigestRe.MatchString(digest) {
-			return nil, store.Invalidf("cannot resolve %q: expected a file digest, an s3:// uri or an http(s) URL", uri)
+			return "", resolveErrf(resolveInvalidURI, "cannot resolve %q: expected a file digest, an s3:// uri or an http(s) URL", uri)
 		}
 		fi, err := s.store.StatFile(ctx, pid, digest)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return nil, store.Invalidf("file %q not found in %s", digest, pid)
+				return "", resolveErrf(resolveFileNotFound, "file %q not found in %s", digest, pid)
 			}
-			return nil, err
+			return "", err
 		}
 		if fi.Location != "" && presigner != nil {
-			signed, err := presign(fi.Location)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, signed)
-			continue
+			return presign(fi.Location)
 		}
 		q := url.Values{"project_id": {pid}, "digest": {digest}}
-		out = append(out, base+"/file/content?"+q.Encode())
+		return base + "/file/content?" + q.Encode(), nil
+	}
+	out := make([]string, 0, len(req.URIs))
+	var perURI []*resolveError
+	if req.PerURIErrors {
+		perURI = make([]*resolveError, 0, len(req.URIs))
+	}
+	for _, raw := range req.URIs {
+		u, err := resolve(raw)
+		var re *resolveError
+		switch {
+		case err == nil:
+			out = append(out, u)
+			if perURI != nil {
+				perURI = append(perURI, nil)
+			}
+		case errors.As(err, &re) && req.PerURIErrors:
+			out = append(out, "")
+			perURI = append(perURI, re)
+		case errors.As(err, &re) && re.cause != nil:
+			return nil, re.cause
+		case errors.As(err, &re):
+			return nil, store.Invalidf("%s", re.Message)
+		default:
+			return nil, err
+		}
 	}
 	var exp *string
 	if earliest != nil {
 		v := earliest.UTC().Format(time.RFC3339)
 		exp = &v
 	}
-	return map[string]any{"download_urls": out, "expires_at": exp}, nil
+	res := map[string]any{"download_urls": out, "expires_at": exp}
+	if req.PerURIErrors {
+		res["errors"] = perURI
+	}
+	return res, nil
 }
 
 // requestBaseURL is the externally visible scheme://host of the request.

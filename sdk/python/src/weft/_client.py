@@ -1336,6 +1336,53 @@ def link_prompt_to_registry(prompt: Any, *, target_path: str, aliases: Optional[
     return require_client().link_prompt_to_registry(prompt, target_path=target_path, aliases=aliases)
 
 
+# Tags and aliases of object versions (Weave's weave.add_tags & co., module
+# level in weave/trace/api.py), on the global client.
+def add_tags(obj_ref: Any, tags: List[str]) -> None:
+    """Add tags to an object version (an ObjectRef or a weave:/// / weft:/// URI)."""
+    require_client().add_tags(obj_ref, tags)
+
+
+def remove_tags(obj_ref: Any, tags: List[str]) -> None:
+    """Remove tags from an object version."""
+    require_client().remove_tags(obj_ref, tags)
+
+
+def get_tags(obj_ref: Any) -> List[str]:
+    """Tags of an object version."""
+    return require_client().get_tags(obj_ref)
+
+
+def set_aliases(obj_ref: Any, alias: Union[str, List[str]]) -> None:
+    """Point one or more aliases (e.g. ``"production"``) at an object version."""
+    require_client().set_aliases(obj_ref, alias)
+
+
+def remove_aliases(obj_ref: Any, alias: Union[str, List[str]]) -> None:
+    """Remove one or more aliases from an object."""
+    require_client().remove_aliases(obj_ref, alias)
+
+
+def get_aliases(obj_ref: Any) -> List[str]:
+    """Aliases of an object version."""
+    return require_client().get_aliases(obj_ref)
+
+
+def get_tags_and_aliases(obj_ref: Any) -> "tuple[List[str], List[str]]":
+    """``(tags, aliases)`` of an object version in one call."""
+    return require_client().get_tags_and_aliases(obj_ref)
+
+
+def list_tags() -> List[str]:
+    """All distinct tags in the project, sorted."""
+    return require_client().list_tags()
+
+
+def list_aliases() -> List[str]:
+    """All distinct aliases in the project, sorted."""
+    return require_client().list_aliases()
+
+
 def set_wb_run(run_id: Optional[str], step: Any = None) -> None:
     """Link calls of the global client to a W&B run; see ``WeftClient.set_wb_run``."""
     require_client().set_wb_run(run_id, step)

@@ -40,6 +40,10 @@
  * events to a `RealtimeTracer` yourself (`onClientEvent`, `onServerEvent`,
  * `close`).
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Call } from '../call.js';
 import type { WeftClient } from '../client.js';
 import type { OpMeta } from '../op.js';
@@ -664,24 +668,120 @@ export function instrumentRealtimeSession(RealtimeSession: any): boolean {
   return a || b;
 }
 
+const REALTIME_PACKAGE = '@openai/agents-realtime';
+
+/** Directories the application resolves packages from: the working directory and the entry script's. */
+function appBases(): string[] {
+  const out: string[] = [];
+  const add = (d: string | undefined) => {
+    if (d && !out.includes(d)) out.push(d);
+  };
+  add(process.cwd());
+  if (process.argv[1]) add(dirname(resolvePath(process.argv[1])));
+  return out;
+}
+
+/** The target of a package.json "exports" entry under `conditions` (Node's order: the first matching key wins). */
+function exportTarget(entry: unknown, conditions: string[]): string | undefined {
+  if (typeof entry === 'string') return entry;
+  if (Array.isArray(entry)) {
+    for (const e of entry) {
+      const t = exportTarget(e, conditions);
+      if (t) return t;
+    }
+    return undefined;
+  }
+  if (!entry || typeof entry !== 'object') return undefined;
+  const obj = entry as Record<string, unknown>;
+  if ('.' in obj) return exportTarget(obj['.'], conditions);
+  for (const [k, v] of Object.entries(obj)) {
+    if (conditions.includes(k)) {
+      const t = exportTarget(v, conditions);
+      if (t) return t;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The ESM entry file of `name` as an `import` from `base` would resolve it:
+ * the nearest node_modules/<name> up from base, then its "exports" ("import"
+ * condition), "module" or "main".
+ */
+export function resolveEsmEntry(name: string, base: string): string | undefined {
+  for (let dir = resolvePath(base); ; ) {
+    const pkgDir = join(dir, 'node_modules', ...name.split('/'));
+    const pkgFile = join(pkgDir, 'package.json');
+    if (existsSync(pkgFile)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
+        const rel =
+          pkg.exports !== undefined
+            ? exportTarget(pkg.exports, ['node', 'import', 'default'])
+            : (pkg.module ?? pkg.main ?? 'index.js');
+        if (typeof rel === 'string') {
+          const file = join(pkgDir, rel);
+          if (existsSync(file)) return file;
+        }
+      } catch {
+        /* unreadable package.json: keep looking */
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * Every copy of the realtime package the application may use: the one this
+ * SDK resolves, and, from the application's directories, its ESM build (what
+ * `import` loads) and its CommonJS build (what `require` loads; dual packages
+ * have one class per build).
+ */
+async function loadRealtimeModules(): Promise<any[]> {
+  const mods: any[] = [];
+  const name = REALTIME_PACKAGE;
+  try {
+    mods.push(await import(name));
+  } catch {
+    /* not resolvable from the SDK's own location (linked or global install) */
+  }
+  const files = new Set<string>();
+  for (const base of appBases()) {
+    const esm = resolveEsmEntry(name, base);
+    if (esm) files.add(esm);
+    try {
+      files.add(createRequire(join(base, 'noop.js')).resolve(name));
+    } catch {
+      /* not installed for the application, or ESM-only */
+    }
+  }
+  for (const f of files) {
+    try {
+      mods.push(await import(pathToFileURL(f).href));
+    } catch {
+      /* skip a copy that does not load */
+    }
+  }
+  return mods;
+}
+
 /**
  * Weave's `patchRealtimeSession()`: trace every `RealtimeSession` from
  * `@openai/agents-realtime`. Pass the module (`await import('@openai/agents-realtime')`)
- * or let Weft import it. Idempotent; resolves to `false` when the package
- * cannot be loaded.
+ * or let Weft find it: from the SDK's own location, and from the application's
+ * (the working directory and the entry script's directory), both its ESM and
+ * CommonJS builds. Idempotent; resolves to `false` when the package cannot be
+ * loaded.
  */
 export async function patchRealtimeSession(mod?: { RealtimeSession?: any }): Promise<boolean> {
-  let m: any = mod;
-  if (!m) {
-    const name = '@openai/agents-realtime';
-    try {
-      m = await import(name);
-    } catch {
-      return false;
-    }
+  const mods: any[] = mod ? [mod] : await loadRealtimeModules();
+  const classes = new Set<any>();
+  for (const m of mods) {
+    const cls = m?.RealtimeSession ?? m?.default?.RealtimeSession;
+    if (cls?.prototype) classes.add(cls);
   }
-  const cls = m?.RealtimeSession ?? m?.default?.RealtimeSession;
-  if (!cls?.prototype) return false;
-  instrumentRealtimeSession(cls);
-  return true;
+  for (const cls of classes) instrumentRealtimeSession(cls);
+  return classes.size > 0;
 }

@@ -122,6 +122,30 @@ def test_typesafe_live(live, monkeypatch):
     assert llm.attributes["gen_ai"]["provider"]["name"] == "typesafe" and llm.summary["usage"]["jev-2"]["prompt_tokens"] == 42
 
 
+def test_typesafe_inside_op_is_a_linked_trace_live(live, monkeypatch):
+    mod = _install_typesafe(monkeypatch)
+    assert patch_typesafe()
+
+    @weft.op
+    def classify(msg):
+        return mod.TypeSafeClient().system_one(msg, ["refund?"]).answers
+
+    classify("refund please")
+    live.flush()
+    [op] = live.get_calls(filter={"op_names": ["classify"]}).to_list()
+    [llm] = live.get_calls(filter={"op_names": ["chat"]}).to_list()
+    [turn] = live.get_calls(filter={"op_names": ["invoke_agent"]}).to_list()
+    assert op.trace_id != llm.trace_id == turn.trace_id and turn.parent_id is None and llm.parent_id == turn.id
+    # The server exposes Weave's link as the agent span fields parent_call_id / parent_call_trace_id.
+    res = live._http.post("/agents/spans/query", {
+        "project_id": live.project_id,
+        "query": {"$expr": {"$eq": [{"$getField": "parent_call_id"}, {"$literal": op.id}]}},
+    })
+    spans = {s["span_id"]: s for s in res["spans"]}
+    assert set(spans) == {turn.id, llm.id}
+    assert all(s["parent_call_trace_id"] == op.trace_id for s in spans.values())
+
+
 def test_list_aliases_and_get_tags_and_aliases(live):
     ref = weft.publish({"rows": [1, 2]}, name="alias-check")
     live.set_aliases(ref, ["production", "staging"])
@@ -130,3 +154,8 @@ def test_list_aliases_and_get_tags_and_aliases(live):
     assert tags == ["reviewed"]
     assert {"production", "staging"} <= set(aliases)
     assert {"production", "staging"} <= set(live.list_aliases())
+    # The module-level functions (weave.list_aliases & co.) use the global client.
+    assert weft.get_tags_and_aliases(ref) == live.get_tags_and_aliases(ref)
+    assert weft.list_aliases() == live.list_aliases() and weft.list_tags() == live.list_tags()
+    weft.remove_aliases(ref, "staging")
+    assert "staging" not in weft.get_aliases(ref)

@@ -42,6 +42,9 @@ class Call:
     _raw_inputs: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
     _raw_output: Any = field(default=None, repr=False, compare=False)
     _child_count: int = field(default=0, repr=False, compare=False)
+    # True for calls recorded by weft.conversation spans (Turn, LLM, Tool,
+    # SubAgent), which Weave records as OTel spans rather than calls.
+    _conversation_span: bool = field(default=False, repr=False, compare=False)
 
     # ---- convenience -----------------------------------------------------
     _DICT_FIELDS = (

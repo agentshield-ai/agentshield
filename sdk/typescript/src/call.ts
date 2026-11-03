@@ -59,6 +59,8 @@ export class Call {
   rawOutput?: unknown;
   /** @internal */ ended = false;
   /** @internal */ fetched = false;
+  /** @internal True for calls recorded by conversation spans (turns, LLM, tool, subagent), which Weave records as OTel spans. */
+  conversationSpan = false;
 
   constructor(
     data: CallData,

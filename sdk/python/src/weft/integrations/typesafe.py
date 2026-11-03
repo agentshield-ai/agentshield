@@ -11,9 +11,14 @@ page). Each ``system_one(state, questions, ...)`` call becomes one LLM
 * output: the ``answers`` as an assistant message (JSON), ``output_type``
   ``json``, the response ``model``, ``usage`` (input/output tokens) and the
   request id (``gen_ai.response.id``);
-* parent: the current ``Turn`` when one is running; else the current call
-  (``@weft.op``); else a new ``invoke_agent`` turn named ``typesafe SDK``.
-  The span is not made the current call, so it nests nothing (as in Weave).
+* parent: the current ``Turn`` when one is running; else a new
+  ``invoke_agent`` turn named ``typesafe SDK``, the root of its own trace,
+  also inside an ``@weft.op`` (as in Weave, where the integration creates no
+  call). When an op is running, both spans carry Weave's link to it:
+  ``weave.parent_call.trace_id`` and ``weave.parent_call.id`` (what Weave's
+  ``OpLinkSpanProcessor`` stamps; the server exposes them as the agent span
+  fields ``parent_call_trace_id`` / ``parent_call_id``). The span is not made
+  the current call, so it nests nothing (as in Weave).
 * errors: ``error.type`` and ``http.response.status_code``, with the
   exception recorded as its type only: TypeSafe's API errors carry the
   response body in their message, which is not copied.
@@ -187,6 +192,20 @@ def _stamp_error(span: Any, exc: BaseException) -> None:
     span._error_type = et
 
 
+def _enclosing_op_call() -> Any:
+    """The innermost running op call, skipping conversation spans (which
+    Weave records as OTel spans, not calls); None outside an op."""
+    for call in reversed(_context._call_stack.get()):
+        if not getattr(call, "_conversation_span", False):
+            return call if call.id and call.trace_id else None
+    return None
+
+
+def _op_link(call: Any) -> Dict[str, Any]:
+    """Weave's span-to-op link (``weave.parent_call.trace_id`` / ``.id``)."""
+    return {"weave": {"parent_call": {"trace_id": call.trace_id, "id": call.id}}}
+
+
 def _provenance() -> Dict[str, Any]:
     attrs = _settings.integration_attributes(INTEGRATION)
     attrs.setdefault("weft", {})["integration_operation"] = _OPERATION
@@ -203,7 +222,7 @@ class _Trace:
 
 
 def _open_trace(client: Any, state: Any, questions: Any, kwargs: Mapping[str, Any]) -> Optional[_Trace]:
-    from ..conversation import LLM, Turn, get_current_turn
+    from ..conversation import Turn, get_current_turn
 
     if not _settings.is_enabled(INTEGRATION) or _context.tracing_suppressed():
         return None
@@ -229,21 +248,23 @@ def _open_trace(client: Any, state: Any, questions: Any, kwargs: Mapping[str, An
         questions_json = _questions_json(body.get("questions")) if capture else None
         if questions_json is not None and weft_client._redact.pii:
             questions_json = weft_client._redact.redact_text(questions_json)
+        op_call = _enclosing_op_call()
+        link = _op_link(op_call) if op_call is not None else {}
         cur = get_current_turn()
         if cur is not None and not cur._ended:
             turn = cur
             llm = turn.start_llm(model=model, provider_name=_PROVIDER_NAME)
-        elif _context.get_current_call() is not None:
-            llm = LLM(model=model, provider_name=_PROVIDER_NAME)  # nests under the current call
         else:
+            # Weave: no running turn (and no ambient OTel span) -> its own turn,
+            # a new trace even inside an op, linked to the op by attributes.
             turn = Turn(agent_name=_AGENT_NAME)
-            turn.set_attributes(_provenance())
+            turn.set_attributes({**_provenance(), **link})
             turn.start(set_current=False)
             owns_turn = True
             llm = turn.start_llm(model=model, provider_name=_PROVIDER_NAME)
         if state_message is not None:
             llm.input_messages = [state_message]
-        attrs = _provenance()
+        attrs = {**_provenance(), **link}
         if questions_json is not None:
             attrs["typesafe"] = {"questions": questions_json}  # the typesafe.questions attribute
         llm.set_attributes(attrs)

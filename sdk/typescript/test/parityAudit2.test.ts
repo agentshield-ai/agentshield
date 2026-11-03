@@ -109,6 +109,45 @@ describe('TypeSafe', () => {
     expect(llms[0].parent_id).toBe(turn.callId);
     expect(llms[0].attributes.gen_ai.conversation.id).toBe('conv-ts');
     expect(JSON.stringify(fake.callsByOp('chat'))).not.toMatch(/private|not traced/);
+    expect(llms.every((c) => !c.attributes.weave?.parent_call)).toBe(true);
+  });
+
+  it('inside an op starts its own trace linked to the op by weave.parent_call.*, as Weave does', async () => {
+    const ts = weft.wrapTypeSafe(new TypeSafeClient());
+    const classify = weft.op(async function classify(msg: string) {
+      return (await ts.systemOne({ state: msg, questions: ['refund?'] })).answers;
+    });
+    await classify('refund please');
+    let helperTurn = '';
+    const handle = weft.op(async function handle(msg: string) {
+      const conv = weft.startConversation({ conversationId: 'conv-op' });
+      const turn = conv.startTurn({ agentName: 'helper' });
+      await turn.run(async () => {
+        await ts.systemOne({ state: msg, questions: ['q'] });
+      });
+      helperTurn = turn.callId!;
+      conv.end();
+    });
+    await handle('turn inside an op');
+    await settle();
+    const [op] = fake.callsByOp('classify');
+    const [handleCall] = fake.callsByOp('handle');
+    const llms = fake.callsByOp('chat').sort((a, b) => a.started_at.localeCompare(b.started_at));
+    expect(llms).toHaveLength(2);
+    const [underOp, underTurn] = llms;
+    const turns = new Map(fake.callsByOp('invoke_agent').map((t) => [t.id, t]));
+    const own = turns.get(underOp.parent_id)!;
+    expect(own.display_name).toBe('invoke_agent typesafe SDK');
+    expect(own.parent_id).toBeNull();
+    expect(own.trace_id).toBe(underOp.trace_id);
+    expect(own.trace_id).not.toBe(op.trace_id);
+    const link = { id: op.id, trace_id: op.trace_id };
+    expect(own.attributes.weave.parent_call).toEqual(link);
+    expect(underOp.attributes.weave.parent_call).toEqual(link);
+    expect([...fake.calls.values()].filter((c: any) => c.parent_id === op.id)).toHaveLength(0);
+    // In a running turn inside an op: under the turn, linked to the op (not the turn).
+    expect(underTurn.parent_id).toBe(helperTurn);
+    expect(underTurn.attributes.weave.parent_call).toEqual({ id: handleCall.id, trace_id: handleCall.trace_id });
   });
 });
 

@@ -272,7 +272,7 @@ Media values: `{"_type":"Image","file_digest":"<d>","mime_type":"image/png"}`,
 | `/file/create` | multipart form: `project_id`, `file` | `{"digest"}` |
 | `/file/content` | `{project_id, digest}` | raw bytes |
 | `GET /file/content?project_id=..&digest=..` | | raw bytes with sniffed content type (for `<img src>`) |
-| `/files/resolve_url` | `{project_id, uris, expires_in?}` | `{"download_urls", "expires_at"}`; see [Files and media](#files-and-media) |
+| `/files/resolve_url` | `{project_id, uris, expires_in?, per_uri_errors?}` | `{"download_urls", "expires_at"}` (`errors` too with `per_uri_errors`); see [Files and media](#files-and-media) |
 
 ## Feedback
 
@@ -1057,7 +1057,12 @@ provider_name, status_code` (`OK|ERROR|UNSET`), `status_message, error_type,
 started_at, ended_at, duration_ms, input_tokens, output_tokens, total_tokens,
 reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens,
 input_cost_usd, output_cost_usd, total_cost_usd, cache_read_cost_usd,
-cache_creation_cost_usd, wb_user_id, wb_run_id`, the
+cache_creation_cost_usd, wb_user_id, wb_run_id, parent_call_id,
+parent_call_trace_id` (the op a span was emitted from when it started its own
+trace inside one: the `weave.parent_call.id` / `weave.parent_call.trace_id`
+attributes Weave's `OpLinkSpanProcessor` stamps, from SDK or OTLP spans; so
+"which agent spans did this call produce" is
+`{"$eq": [{"$getField": "parent_call_id"}, {"$literal": "<call id>"}]}`), the
 booleans `is_turn, is_error, is_invocation, is_agent, is_llm, is_tool`, and
 custom attributes as `custom_attrs_string|int|float|bool.<key>` (or source
 `custom_attrs_*` with the bare key). Dotted aliases such as `agent.name`,
@@ -1221,9 +1226,25 @@ Predict protocol:
   a presigned URL; other buckets, projects and `..` are refused;
 - `http(s)://…`: returned unchanged.
 
+- `s3://` / `gs://` URIs in a registered reference bucket (see
+  [Reference buckets](#reference-buckets-bring-your-own-bucket)): a presigned
+  (S3) or V4 signed (GCS) URL.
+
 `expires_at` is the earliest expiry of the presigned URLs (default lifetime 1 h;
-*Weft*: `expires_in` seconds, 1 s to 7 days). Unknown digests and other
-schemes are a 400.
+*Weft*: `expires_in` seconds, 1 s to 7 days). As in Weave, one unresolvable
+uri (unknown digest, unregistered bucket, other scheme) fails the request with
+a 400 naming it.
+
+*Weft*: `per_uri_errors: true` reports failures per URI instead, so one
+request can resolve a mixed batch: the response keeps Weave's shape and adds
+`errors`, aligned with `uris`, where each entry is `null` or
+`{"code", "message"}`; a failed URI's `download_urls` entry is `""`. Codes:
+`bucket_not_registered` (no registration of the project or its team covers
+the URI, including outside a registration's `prefix`), `no_files_backend`,
+`not_project_file`, `file_not_found`, `invalid_uri` and `bucket_error` (the
+bucket's credentials secret is missing or signing failed). Errors about the
+request itself (project access, `expires_in`, more than 1000 uris) are still
+returned as the request's status. The SDKs do not send it; the UI does.
 
 **Bring your own bucket.** `--files-backend s3://bucket/prefix` (env
 `WEFT_FILES_BACKEND`) writes new file contents to an S3-compatible store
@@ -1651,7 +1672,8 @@ or for one project, in **Settings → Buckets** or with the endpoints below.
 `/files/resolve_url` then presigns any URI in a registered bucket that the
 request's project may use. URIs in buckets that are not registered (or
 outside a registration's `prefix`) are a 400, and one such URI fails the
-whole `uris` batch.
+whole `uris` batch unless `per_uri_errors` is set (see
+[Files and media](#files-and-media)).
 
 How the UI renders bucket URIs:
 
@@ -1668,13 +1690,14 @@ How the UI renders bucket URIs:
   `modality`): images, video, audio and PDFs render inline; other files show
   the URI with a **Get download link** button that presigns on demand.
 - **Resolution** is lazy: an inline URI is resolved when it scrolls near the
-  viewport, URIs of one bucket are batched per request, and each presigned URL
-  is cached until shortly before `expires_at` (then resolved again, also after
-  a load error). Refusals are remembered for a minute.
+  viewport, URIs of one bucket are batched per request (with
+  `per_uri_errors`, so 40 URIs of an unregistered bucket cost one request, not
+  one per URI), and each presigned URL is cached until shortly before
+  `expires_at` (then resolved again, also after a load error). Refusals are
+  remembered for a minute.
 - **Fallback.** When a URI cannot be resolved the URI shows as text with a
   short reason (for example "not rendered: bucket not registered for this
-  project"); the page never waits on it. The browser logs the refused
-  `/files/resolve_url` request (400) in its console.
+  project"); the page never waits on it.
 - In the Agents conversation view, a tool result that is media shows under
   the tool row without expanding it, and media attached to the first LLM
   call's user message (`attach_media`) shows with the turn's user message
@@ -1683,7 +1706,7 @@ How the UI renders bucket URIs:
 | Endpoint | Body | Access |
 |---|---|---|
 | `POST /reference_buckets/create` | `{entity \| project_id, provider: "s3"\|"gcs", bucket, prefix?, region?, endpoint?, path_style?, secret_name?, test_object_key, skip_test?}` → `{"bucket": ReferenceBucket}` | server admin |
-| `POST /reference_buckets/test` | same body → `{"ok": bool, "error": string\|null}` (nothing saved) | server admin |
+| `POST /reference_buckets/test` | same body → `{"ok": bool, "error": string\|null, "read": Check\|null, "cors": Check\|null}` (nothing saved) | server admin |
 | `GET\|POST /reference_buckets/list` | `?project_id=` (the project's and its team's buckets) or `?entity=`; none lists all | viewer on the project; server admin otherwise |
 | `POST /reference_buckets/delete` | `{id}` | server admin |
 
@@ -1692,16 +1715,32 @@ Credentials are never returned.
 
 - `bucket` is the name only (`s3://` / `gs://` and a trailing `/` are
   stripped). `prefix`, when set, limits which keys may be presigned.
-- **Test connection.** Unless `skip_test` is true, `create` first reads one
-  byte of `test_object_key` (an existing object) through a presigned URL, as
-  a browser would, and refuses the registration if that fails (bad
-  credentials, missing object, unreachable endpoint). Weave also checks the
-  bucket's CORS configuration; Weft does not, so configure CORS for the Weft
-  UI's origin yourself (`GET`, `HEAD`). Images, audio and video load without
-  CORS; PDFs are fetched by the page and need it (without it the UI embeds
-  the presigned URL directly, which depends on the object's `Content-Type`).
+- **Test connection.** As in Weave ("W&B reads this one object to confirm it
+  has read access and that CORS is configured correctly"), the test reads the
+  test object and checks the bucket's CORS rules, and unless `skip_test` is
+  true `create` runs it first and refuses the registration (400 with the
+  test's `error`) if either part fails:
+  - `read`: one byte of `test_object_key` (an existing object) through a
+    presigned URL, as a browser would fetch it (bad credentials, missing
+    object, unreachable endpoint fail it);
+  - `cors`: for the Weft origin, a preflight (`OPTIONS` on the presigned URL
+    with `Origin` and `Access-Control-Request-Method: GET`, which S3 and GCS
+    answer from the bucket's CORS configuration without credentials) must
+    allow the origin and `GET`, and the object's `GET` response must carry an
+    `Access-Control-Allow-Origin` admitting it. The origin is the request's
+    `Origin` header (the UI's own origin when the UI calls), otherwise this
+    server's externally visible `scheme://host` (honouring
+    `X-Forwarded-Proto/Host`); Weft has no public-URL setting.
+
+  `Check` is `{"ok": bool, "error": string|null, "origin"?}` (`origin` on
+  `cors`). `read` is null when the test could not start (missing secret,
+  bad `test_object_key`), `cors` when the bucket could not be reached; `error`
+  joins the failures. Configure the bucket as Weave's page shows, with this
+  Weft's origin in `AllowedOrigins` / `origin` (`GET`, `HEAD`). Images, audio
+  and video load without CORS; PDFs are fetched by the page and need it.
   The Buckets tab shows registrations to anyone who can view the project; its
-  Register, Test and Remove controls appear for server admins only.
+  Register, Test and Remove controls appear for server admins only, and a
+  test's read and CORS results show per row and in the Register dialog.
 - **S3** (`provider: "s3"`, also `"aws"`): presigned with SigV4
   (`internal/weft/objstore`). `secret_name` names a stored secret
   (Settings → Secrets, `/secrets/set`) holding

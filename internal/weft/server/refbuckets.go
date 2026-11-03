@@ -130,48 +130,188 @@ func (s *Server) bucketClient(ctx context.Context, b *store.ReferenceBucket) (bu
 // endpoint comes from the API, so the request goes through the egress guard.
 var bucketTestClient = egress.NewClient(15*time.Second, false)
 
-// testBucket reads the first byte of key through a presigned URL, the way a
-// browser would fetch it.
-func (s *Server) testBucket(ctx context.Context, b *store.ReferenceBucket) error {
+// bucketCheck is one part of a bucket test: reading the test object, or the
+// bucket's CORS rules for the Weft origin. Error is nil when OK.
+type bucketCheck struct {
+	OK    bool    `json:"ok"`
+	Error *string `json:"error"`
+	// Origin is the browser origin the CORS check used.
+	Origin string `json:"origin,omitempty"`
+}
+
+// bucketTestResult is what /reference_buckets/test returns and what create
+// requires to pass: ok only when the test object could be read and the
+// bucket's CORS rules let the Weft origin GET it, as Weave's test checks.
+type bucketTestResult struct {
+	OK    bool    `json:"ok"`
+	Error *string `json:"error"`
+	// Read is reading the first byte of test_object_key through a presigned
+	// URL; null when the test could not start (bad credentials or request).
+	Read *bucketCheck `json:"read"`
+	// CORS is the browser check for the origin: a preflight (OPTIONS with
+	// Access-Control-Request-Method: GET) and the Access-Control-Allow-Origin
+	// of the GET itself. Null when the bucket could not be reached.
+	CORS *bucketCheck `json:"cors"`
+}
+
+func strPtr(s string) *string { return &s }
+
+// bucketTestFailed reports a test that could not start.
+func bucketTestFailed(msg string) *bucketTestResult {
+	return &bucketTestResult{OK: false, Error: strPtr(msg)}
+}
+
+// bucketTestOrigin is the browser origin whose access the CORS check tests:
+// the Origin header of the request (the UI's own origin when the UI calls),
+// otherwise this server's externally visible scheme://host.
+func bucketTestOrigin(r *http.Request) string {
+	if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" && o != "null" {
+		if u, err := url.Parse(o); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.Path == "" {
+			return u.Scheme + "://" + u.Host
+		}
+	}
+	return requestBaseURL(r)
+}
+
+// bucketErrMessage extracts <Message> from an S3/GCS XML error body.
+func bucketErrMessage(body []byte) string {
+	msg := strings.TrimSpace(string(body))
+	if i := strings.Index(msg, "<Message>"); i >= 0 {
+		if j := strings.Index(msg[i:], "</Message>"); j > 0 {
+			msg = msg[i+9 : i+j]
+		}
+	}
+	if len(msg) > 300 {
+		msg = msg[:300] + "…"
+	}
+	return msg
+}
+
+// allowsOrigin reports whether an Access-Control-Allow-Origin value admits origin.
+func allowsOrigin(acao, origin string) bool {
+	acao = strings.TrimSpace(acao)
+	return acao == "*" || strings.EqualFold(strings.TrimSuffix(acao, "/"), origin)
+}
+
+// testBucket reads the first byte of the test object through a presigned URL,
+// the way a browser would fetch it, and checks that the bucket's CORS rules
+// let origin GET it (Weave: "W&B reads this one object to confirm it has read
+// access and that CORS is configured correctly"). Errors are request
+// validation errors; test failures are reported in the result.
+func (s *Server) testBucket(ctx context.Context, b *store.ReferenceBucket, origin string) (*bucketTestResult, error) {
 	c, err := s.bucketClient(ctx, b)
 	if err != nil {
-		return err
+		var inv *store.InvalidError
+		if errors.As(err, &inv) {
+			return bucketTestFailed(inv.Msg), nil
+		}
+		return nil, err
 	}
 	if b.TestObjectKey == "" {
-		return store.Invalidf("test_object_key (the key of an existing object) is required to test the bucket")
+		return bucketTestFailed("test_object_key (the key of an existing object) is required to test the bucket"), nil
 	}
 	if !strings.HasPrefix(b.TestObjectKey, b.Prefix) {
-		return store.Invalidf("test_object_key must start with the prefix %q", b.Prefix)
+		return bucketTestFailed(fmt.Sprintf("test_object_key must start with the prefix %q", b.Prefix)), nil
 	}
 	u, _, err := c.PresignGet(b.TestObjectKey, time.Minute)
 	if err != nil {
-		return store.Invalidf("%v", err)
+		return bucketTestFailed(err.Error()), nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Range", "bytes=0-0")
+	req.Header.Set("Origin", origin)
 	resp, err := bucketTestClient.Do(req)
 	if err != nil {
-		return store.Invalidf("cannot reach the bucket: %v", egress.Sanitize(err))
+		msg := fmt.Sprintf("cannot reach the bucket: %v", egress.Sanitize(err))
+		return &bucketTestResult{Error: strPtr(msg), Read: &bucketCheck{Error: strPtr(msg)}}, nil
 	}
-	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	resp.Body.Close()
+	res := &bucketTestResult{Read: &bucketCheck{OK: true}}
 	switch {
 	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent:
-		return nil
 	case resp.StatusCode == http.StatusNotFound:
-		return store.Invalidf("test object %s://%s/%s was not found", b.URIScheme(), b.Bucket, b.TestObjectKey)
+		res.Read = &bucketCheck{Error: strPtr(fmt.Sprintf("test object %s://%s/%s was not found", b.URIScheme(), b.Bucket, b.TestObjectKey))}
 	default:
-		msg := strings.TrimSpace(string(body))
-		if i := strings.Index(msg, "<Message>"); i >= 0 {
-			if j := strings.Index(msg[i:], "</Message>"); j > 0 {
-				msg = msg[i+9 : i+j]
+		res.Read = &bucketCheck{Error: strPtr(fmt.Sprintf("reading the test object failed: %d %s", resp.StatusCode, bucketErrMessage(body)))}
+	}
+	res.CORS = s.checkBucketCORS(ctx, u, origin, resp)
+	res.OK = res.Read.OK && res.CORS.OK
+	var msgs []string
+	if res.Read.Error != nil {
+		msgs = append(msgs, *res.Read.Error)
+	}
+	if res.CORS.Error != nil {
+		msgs = append(msgs, *res.CORS.Error)
+	}
+	if len(msgs) > 0 {
+		res.Error = strPtr(strings.Join(msgs, "; "))
+	}
+	return res, nil
+}
+
+// checkBucketCORS checks the bucket's CORS rules for origin the way a browser
+// meets them: a preflight (OPTIONS with Origin and
+// Access-Control-Request-Method: GET; S3 and GCS answer it without
+// credentials from the bucket's CORS configuration) must allow the origin and
+// GET, and the GET response (got, when the object was read) must carry an
+// Access-Control-Allow-Origin admitting the origin.
+func (s *Server) checkBucketCORS(ctx context.Context, presigned, origin string, got *http.Response) *bucketCheck {
+	out := &bucketCheck{Origin: origin}
+	fail := func(format string, a ...any) *bucketCheck {
+		out.Error = strPtr("CORS: " + fmt.Sprintf(format, a...) +
+			fmt.Sprintf(" (allow GET and HEAD from %s in the bucket's CORS configuration)", origin))
+		return out
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodOptions, presigned, nil)
+	if err != nil {
+		return fail("%v", err)
+	}
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	resp, err := bucketTestClient.Do(req)
+	if err != nil {
+		return fail("the preflight request failed: %v", egress.Sanitize(err))
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	resp.Body.Close()
+	acao := resp.Header.Get("Access-Control-Allow-Origin")
+	switch {
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		msg := bucketErrMessage(body)
+		if msg == "" {
+			msg = http.StatusText(resp.StatusCode)
+		}
+		return fail("the bucket refused a preflight from %s: %d %s", origin, resp.StatusCode, msg)
+	case acao == "":
+		return fail("the preflight response from the bucket has no Access-Control-Allow-Origin for %s", origin)
+	case !allowsOrigin(acao, origin):
+		return fail("the bucket allows origin %s, not %s", acao, origin)
+	}
+	if m := resp.Header.Get("Access-Control-Allow-Methods"); m != "" {
+		ok := false
+		for _, v := range strings.Split(m, ",") {
+			if strings.EqualFold(strings.TrimSpace(v), http.MethodGet) || strings.TrimSpace(v) == "*" {
+				ok = true
 			}
 		}
-		return store.Invalidf("reading the test object failed: %d %s", resp.StatusCode, msg)
+		if !ok {
+			return fail("the bucket allows %s from %s, not GET", m, origin)
+		}
 	}
+	if got != nil && (got.StatusCode == http.StatusOK || got.StatusCode == http.StatusPartialContent) {
+		if v := got.Header.Get("Access-Control-Allow-Origin"); !allowsOrigin(v, origin) {
+			if v == "" {
+				return fail("the object's GET response has no Access-Control-Allow-Origin for %s", origin)
+			}
+			return fail("the object's GET response allows origin %s, not %s", v, origin)
+		}
+	}
+	out.OK = true
+	return out
 }
 
 func (s *Server) refBucketTest(ctx context.Context, r *http.Request, req *refBucketReq) (any, error) {
@@ -182,14 +322,7 @@ func (s *Server) refBucketTest(ctx context.Context, r *http.Request, req *refBuc
 	if err := store.NormalizeReferenceBucket(&b); err != nil {
 		return nil, err
 	}
-	if err := s.testBucket(ctx, &b); err != nil {
-		var inv *store.InvalidError
-		if errors.As(err, &inv) {
-			return map[string]any{"ok": false, "error": inv.Msg}, nil
-		}
-		return nil, err
-	}
-	return map[string]any{"ok": true, "error": nil}, nil
+	return s.testBucket(ctx, &b, bucketTestOrigin(r))
 }
 
 func (s *Server) refBucketCreate(ctx context.Context, r *http.Request, req *refBucketReq) (any, error) {
@@ -205,8 +338,12 @@ func (s *Server) refBucketCreate(ctx context.Context, r *http.Request, req *refB
 	}
 	verified := false
 	if !req.SkipTest {
-		if err := s.testBucket(ctx, &b); err != nil {
+		res, err := s.testBucket(ctx, &b, bucketTestOrigin(r))
+		if err != nil {
 			return nil, err
+		}
+		if !res.OK {
+			return nil, store.Invalidf("%s", *res.Error)
 		}
 		verified = true
 	}

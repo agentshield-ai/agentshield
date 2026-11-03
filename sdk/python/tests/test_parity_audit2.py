@@ -122,6 +122,15 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
     with weft.start_conversation(conversation_id="conv-ts") as conv:
         with conv.start_turn(user_message="hi", agent_name="support") as turn:
             ts.system_one("inside a turn", ["q"])
+
+    @weft.op
+    def handle(text):
+        with weft.start_conversation(conversation_id="conv-op") as c2:
+            with c2.start_turn(user_message=text, agent_name="helper") as t2:
+                ts.system_one("turn inside an op", ["q"])
+        return t2.call_id
+
+    helper_turn_id = handle("x")
     monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false")
     ts.system_one("private state", ["private question"])
     monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT")
@@ -139,15 +148,35 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
         _settings.configure(None)
     client.flush()
     [op_call] = fake.calls_by_op("triage")
+    [handle_call] = fake.calls_by_op("handle")
     llms = sorted(fake.calls_by_op("chat"), key=lambda c: c["started_at"])
-    assert len(llms) == 4
-    under_op, under_turn, off_env, off_setting = llms
-    assert under_op["parent_id"] == op_call["id"], "nests under the current call, without a turn of its own"
+    assert len(llms) == 5
+    under_op, under_turn, op_turn, off_env, off_setting = llms
+    turns = {c["id"]: c for c in fake.calls_by_op("invoke_agent")}
+    # Inside an op (as in Weave): its own "typesafe SDK" turn on a new trace,
+    # linked to the op by weave.parent_call.* on both spans, not nested.
+    own = turns[under_op["parent_id"]]
+    assert own["display_name"] == "invoke_agent typesafe SDK" and own["parent_id"] is None
+    assert own["trace_id"] == under_op["trace_id"] != op_call["trace_id"]
+    link = {"trace_id": op_call["trace_id"], "id": op_call["id"]}
+    assert own["attributes"]["weave"]["parent_call"] == link and under_op["attributes"]["weave"]["parent_call"] == link
+    assert own["attributes"]["weft"]["integration"] == "typesafe"
+    assert not [c for c in fake.calls.values() if c.get("parent_id") == op_call["id"]], "nothing nests under the op"
+    # Inside a running turn: under the turn; no op running, so no link.
     assert under_turn["parent_id"] == turn.call_id and under_turn["attributes"]["gen_ai"]["conversation"]["id"] == "conv-ts"
+    assert "parent_call" not in under_turn["attributes"].get("weave", {})
+    assert "parent_call" not in turns[under_turn["parent_id"]]["attributes"].get("weave", {})
+    # A turn running inside an op: under the turn, linked to the op (the
+    # innermost op, not the turn), as Weave's OpLinkSpanProcessor stamps it.
+    assert op_turn["parent_id"] == helper_turn_id
+    assert op_turn["attributes"]["weave"]["parent_call"] == {"trace_id": handle_call["trace_id"], "id": handle_call["id"]}
     for c in (off_env, off_setting):
         assert not c["inputs"].get("messages") and "questions" not in json.dumps(c["attributes"]) and not c.get("output")
     assert "private" not in json.dumps(fake.calls)
-    assert len(fake.calls_by_op("invoke_agent")) == 3  # support turn + the two capture-off calls' own turns
+    # the op's own turn, support, helper, and the two capture-off calls' own turns
+    assert len(turns) == 5
+    for c in (off_env, off_setting):
+        assert "parent_call" not in c["attributes"].get("weave", {})
 
 
 # ---------------------------------------------------------------- require_current_call, urls

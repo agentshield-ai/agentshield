@@ -220,6 +220,30 @@ def test_object_management(client, fake):
     assert fake.objs["cfg"] == []
 
 
+def test_module_level_tags_and_aliases(client, fake):
+    """Weave's module-level weave.add_tags & co. (weave/trace/api.py), on the global client."""
+    ref0 = weft.publish({"v": 0}, name="mod")
+    ref1 = weft.publish({"v": 1}, name="mod")
+    weft.set_aliases(ref1, "production")
+    weft.set_aliases(ref0, ["staging", "dev"])
+    weft.remove_aliases(ref0, "dev")
+    assert weft.get_aliases(ref0) == ["staging"] and weft.get_aliases(ref1) == ["production"]
+    weft.add_tags(ref1, ["reviewed", "golden"])
+    weft.remove_tags(ref1, ["reviewed"])
+    assert weft.get_tags(ref1) == ["golden"]
+    assert weft.get_tags_and_aliases(ref1) == (["golden"], ["production"])
+    assert weft.list_tags() == ["golden"]
+    assert weft.list_aliases() == ["production", "staging"]
+    names = ["add_tags", "remove_tags", "get_tags", "set_aliases", "remove_aliases", "get_aliases", "get_tags_and_aliases", "list_tags", "list_aliases"]
+    assert all(n in weft.__all__ and callable(getattr(weft, n)) for n in names)
+
+
+def test_module_level_tags_need_init():
+    weft.finish()
+    with pytest.raises(RuntimeError, match="weft.init"):
+        weft.list_aliases()
+
+
 def test_alias_fallback_to_legacy_endpoint(client, fake):
     fake.weave_routes = False
     ref = weft.publish({"v": 0}, name="old")

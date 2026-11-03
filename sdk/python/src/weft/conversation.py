@@ -567,6 +567,7 @@ class _SpanBase(BaseModel):
             started_at=_iso(self.started_at),  # type: ignore[attr-defined]
         )
         self._call._client = client
+        self._call._conversation_span = True
         if parent_call is not None:
             parent_call._child_count += 1
         if set_current:
