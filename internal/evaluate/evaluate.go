@@ -163,6 +163,19 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Determine effective evaluation mode (server-side only)
 	effectiveMode := e.determineEffectiveMode()
 
+	// A replay (Weft re-evaluating a recorded tool call, honoured only in the
+	// replay session namespace) is evaluated as enforce mode would act,
+	// whatever the configured mode: its action, and the verdicts recorded in
+	// its session window (session.approval_count), are then the same on
+	// every engine and in Weft's in-process replay, so a replay's results
+	// depend only on the recording and the ruleset (docs/weft/DESIGN.md
+	// §5.4). Nothing acts on a replay verdict: it is neither stored nor
+	// pushed. Enforce is the strictest mode, so this never weakens a verdict.
+	replay := req.Replay && models.IsReplaySession(req.SessionID)
+	if replay {
+		effectiveMode = config.ModeEnforce
+	}
+
 	// Inject session-derived and cross-session fields in a single lock acquisition
 	if e.sessionRegistry != nil && req.SessionID != "" {
 		// Only a namespaced replay session is isolated: a replay flag on a
@@ -187,8 +200,10 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	// Check verdict cache before running rule evaluation.
 	// The cache key includes the final field map so session/correlation-derived
 	// context cannot replay stale verdicts across behavioural state changes.
+	// Replays bypass the verdict cache: they may be evaluated in another
+	// mode than live traffic (above), and the cache key does not include it.
 	var cacheKey string
-	if e.cache != nil {
+	if e.cache != nil && !replay {
 		cacheKey = cache.CacheKeyWithFields(req.Tool, req.Args, req.Fields, req.Context)
 		if cached, ok := e.cache.Get(cacheKey); ok {
 			slog.Debug("Cache hit", "tool", req.Tool, "key", cacheKey)
@@ -215,8 +230,7 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 			// A cached verdict is still a tool call of this session: record it
 			// like an evaluated one (after the derived fields above were
 			// computed), so the session's own window and other sessions'
-			// cross-session correlation see it. A replay session was isolated
-			// above, so its cache hits stay in its own window only.
+			// cross-session correlation see it. (Replays never get here.)
 			e.recordInSession(req, cached.Alerts, cached.Action)
 			return response, nil
 		}

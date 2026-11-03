@@ -73,7 +73,8 @@ export const STATUS_HELP: Record<StatusFilter, string> = {
     'The run itself failed: the top-level span of a trace ended with an error (for a session, of any of its traces). A sub-agent run linked to its caller that failed is a failed step instead.',
   failed_step:
     'It ended without failing, but a step in it failed: a tool call, model call, hand-off, delegated agent, or a sub-agent run in its own trace linked to its caller.',
-  running: 'Still running: a top-level span has not ended.',
+  running:
+    'Still running: a top-level span has not ended, or has not arrived yet while its steps have (OTLP sends a span when it ends; after 10 minutes without new spans the steps\' outcome is used instead).',
   unknown:
     'Known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown. On Traces, the engine evaluate traces of such sessions.',
 }

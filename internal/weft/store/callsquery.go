@@ -128,6 +128,9 @@ type CallsQuery struct {
 	IncludeTotalStorageSize bool `json:"include_total_storage_size"`
 	// IncludeUsernames resolves user_id to username.
 	IncludeUsernames bool `json:"include_usernames"`
+	// IncludeRunStatus adds summary.weft.run_status (run_status.go) to
+	// every returned call, the status the shared status filter reads.
+	IncludeRunStatus bool `json:"include_run_status"`
 }
 
 const statusSQL = `(CASE WHEN c.exception IS NOT NULL THEN 'error' WHEN c.ended_at IS NULL THEN 'running' WHEN COALESCE(json_extract(c.rollup, '$.status_counts.error'), 0) > 0 THEN 'descendant_error' ELSE 'success' END)`
@@ -289,7 +292,9 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 			}
 		}
 		if f.TraceRootsOnly {
-			conds = append(conds, "c.parent_id IS NULL")
+			// The root, or while it has not arrived a provisional root
+			// (run_status.go), so an in-progress OTLP trace is listed.
+			conds = append(conds, traceRootSQL("c"))
 		}
 	}
 	if query != nil {
@@ -581,6 +586,11 @@ func (s *Store) enrichCalls(ctx context.Context, projectID string, calls []*Call
 	}
 	if err := s.enrichCallFields(ctx, projectID, calls, q); err != nil { // callfields.go
 		return err
+	}
+	if q.IncludeRunStatus {
+		if err := s.enrichRunStatus(ctx, projectID, calls); err != nil { // run_status.go
+			return err
+		}
 	}
 	if len(q.ExpandColumns) > 0 {
 		if err := s.expandCalls(ctx, calls, q.ExpandColumns); err != nil {

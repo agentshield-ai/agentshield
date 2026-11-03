@@ -9,12 +9,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/agentshield-ai/agentshield/internal/auth"
 	"github.com/agentshield-ai/agentshield/internal/cache"
@@ -34,9 +32,6 @@ import (
 )
 
 var (
-	// Compile regex once at package level for better performance
-	controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`)
-
 	// Allowed enum values, allocated once at package level
 	validSeverities = []string{"low", "medium", "high", "critical"}
 )
@@ -45,9 +40,9 @@ const (
 	// MaxRequestBodySize limits request body size to prevent memory exhaustion attacks
 	MaxRequestBodySize = 1024 * 1024 // 1MB
 	// MaxFieldValueLength limits individual field value length
-	MaxFieldValueLength = 10000 // 10KB per field
+	MaxFieldValueLength = models.MaxFieldValueLength
 	// MaxFieldsCount limits number of fields in a request
-	MaxFieldsCount = 100
+	MaxFieldsCount = models.MaxFieldsCount
 )
 
 // Server represents the HTTP server
@@ -95,119 +90,13 @@ type FeedbackRequest struct {
 
 // validateStringInput validates and sanitizes string input to prevent injection attacks
 func validateStringInput(input string, maxLength int, fieldName string) error {
-	// Check length
-	if len(input) > maxLength {
-		return fmt.Errorf("%s exceeds maximum length of %d characters", fieldName, maxLength)
-	}
-
-	// Check for valid UTF-8
-	if !utf8.ValidString(input) {
-		return fmt.Errorf("%s contains invalid UTF-8 characters", fieldName)
-	}
-
-	// Check for control characters (except newline and tab which may be legitimate)
-	if controlCharsRegex.MatchString(input) {
-		return fmt.Errorf("%s contains forbidden control characters", fieldName)
-	}
-
-	return nil
+	return models.ValidateString(input, maxLength, fieldName)
 }
 
 // validateEvaluationRequest validates the evaluation request inputs
+// (models.ValidateEvaluationRequest, which Weft's in-process replay runs too).
 func validateEvaluationRequest(req *models.EvaluationRequest) error {
-	// Validate EventID
-	if req.EventID == "" {
-		return fmt.Errorf("event_id is required")
-	}
-	if err := validateStringInput(req.EventID, 256, "event_id"); err != nil {
-		return err
-	}
-
-	// Validate SessionID
-	if req.SessionID != "" {
-		if err := validateStringInput(req.SessionID, 256, "session_id"); err != nil {
-			return err
-		}
-	}
-
-	if req.EventType != "" {
-		if err := validateStringInput(req.EventType, 100, "event_type"); err != nil {
-			return err
-		}
-	}
-
-	// Validate Tool
-	if req.Tool != "" {
-		if err := validateStringInput(req.Tool, 100, "tool"); err != nil {
-			return err
-		}
-	}
-
-	// Validate correlation ids (optional; forwarded to Weft and OTel spans)
-	if req.ToolCallID != "" {
-		if err := validateStringInput(req.ToolCallID, 256, "tool_call_id"); err != nil {
-			return err
-		}
-	}
-	if req.AgentName != "" {
-		if err := validateStringInput(req.AgentName, 256, "agent_name"); err != nil {
-			return err
-		}
-	}
-
-	if req.Context != "" {
-		if req.Context != "prod" && req.Context != "test" {
-			return fmt.Errorf("context must be 'prod' or 'test'")
-		}
-	}
-
-	// Validate ToolName (plugin compat alias)
-	if req.ToolName != "" {
-		if err := validateStringInput(req.ToolName, 100, "tool_name"); err != nil {
-			return err
-		}
-	}
-
-	// Validate Command (plugin compat alias)
-	if req.Command != "" {
-		if err := validateStringInput(req.Command, MaxFieldValueLength, "command"); err != nil {
-			return err
-		}
-	}
-
-	// Validate Args map
-	if req.Args != nil {
-		if len(req.Args) > MaxFieldsCount {
-			return fmt.Errorf("too many args fields (max %d)", MaxFieldsCount)
-		}
-
-		for key, value := range req.Args {
-			if err := validateStringInput(key, 100, "args key"); err != nil {
-				return err
-			}
-			if err := validateStringInput(value, MaxFieldValueLength, "args value"); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Validate Fields map
-	if req.Fields != nil {
-		if len(req.Fields) > MaxFieldsCount {
-			return fmt.Errorf("too many fields (max %d)", MaxFieldsCount)
-		}
-
-		for key, value := range req.Fields {
-			if err := validateStringInput(key, 100, "fields key"); err != nil {
-				return err
-			}
-			if err := validateStringInput(value, MaxFieldValueLength, "fields value"); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
+	return models.ValidateEvaluationRequest(req)
 }
 
 // NewServer creates a new HTTP server instance
@@ -846,7 +735,7 @@ func (s *Server) handleFeedbackSubmission(w http.ResponseWriter, r *http.Request
 		http.Error(w, "event_id is required", http.StatusBadRequest)
 		return
 	}
-	if err := validateStringInput(req.EventID, 256, "event_id"); err != nil {
+	if err := validateStringInput(req.EventID, models.MaxIDLength, "event_id"); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid event_id: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -1047,12 +936,12 @@ func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
-	if err := validateStringInput(req.SessionID, 256, "session_id"); err != nil {
+	if err := validateStringInput(req.SessionID, models.MaxIDLength, "session_id"); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid session_id: %v", err), http.StatusBadRequest)
 		return
 	}
 	if req.EventID != "" {
-		if err := validateStringInput(req.EventID, 256, "event_id"); err != nil {
+		if err := validateStringInput(req.EventID, models.MaxIDLength, "event_id"); err != nil {
 			http.Error(w, fmt.Sprintf("Invalid event_id: %v", err), http.StatusBadRequest)
 			return
 		}

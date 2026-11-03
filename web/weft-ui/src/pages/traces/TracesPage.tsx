@@ -20,7 +20,7 @@ import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardM
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 import '../../components/traces/columns.css'
 import { FilterBar, ScopeCapNote, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
-import { FILTER_PARAMS, parseFilters, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
+import { FILTER_PARAMS, parseFilters, STATUS_LABEL as RUN_STATUS_LABEL, timeWindow, type FilterState, type StatusFilter, type TimeRange } from '../../lib/filters'
 import { useTraceScope } from '../../hooks/useTraceScope'
 import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
 
@@ -309,6 +309,7 @@ export function TracesPage() {
         offset: s.offset,
         include_costs: true,
         include_feedback: true,
+        include_run_status: true,
       }),
     enabled: ready,
     placeholderData: keepPreviousData,
@@ -715,6 +716,7 @@ export function TracesPage() {
                   onToggle={() => toggleSel(c)}
                   onOpen={() => navigate(callUrl(projectId, c.id))}
                   onFilterOp={(op) => update({ op })}
+                  provisionalRoot={s.roots && !!c.parent_id}
                 />
               ))}
             </tbody>
@@ -817,6 +819,7 @@ function CallRow({
   onToggle,
   onOpen,
   onFilterOp,
+  provisionalRoot,
 }: {
   call: Call
   index: number
@@ -829,8 +832,11 @@ function CallRow({
   onToggle: () => void
   onOpen: () => void
   onFilterOp: (op: string) => void
+  /** Listed for its trace while the trace's top-level span has not arrived. */
+  provisionalRoot: boolean
 }) {
   const st = callStatus(c)
+  const runStatus = c.summary?.weft?.run_status
   const tokens = callTokens(c)
   const cost = callCost(c)
   const reactions = reactionCounts(c.feedback)
@@ -844,7 +850,7 @@ function CallRow({
       case 'status':
         return (
           <td key={col} style={{ width: 20 }}>
-            <StatusDot status={st} />
+            {runStatus ? <RunStatusDot status={runStatus} own={st} /> : <StatusDot status={st} />}
           </td>
         )
       case 'name':
@@ -865,6 +871,11 @@ function CallRow({
                 >
                   {opBase}
                 </button>
+              )}
+              {provisionalRoot && (
+                <span title="OTLP sends a span when it ends: this trace's top-level span has not arrived yet, so its first step stands in for it.">
+                  top-level span not received yet
+                </span>
               )}
               {childCounts && (childCounts.success ?? 0) + (childCounts.error ?? 0) > 0 && (
                 <span title="Descendant spans">
@@ -930,7 +941,13 @@ function CallRow({
         return (
           <td key={col}>
             {c.exception ? (
-              <span className="cell-preview" style={{ color: 'var(--error)' }}>
+              // Red only when the run failed: a failed step the run went on
+              // after (or a verdict record of such a session) is not a failure.
+              <span
+                className="cell-preview"
+                style={!runStatus || runStatus === 'error' ? { color: 'var(--error)' } : undefined}
+                title={runStatus && runStatus !== 'error' ? `This span failed. Run: ${RUN_STATUS_LABEL[runStatus]}` : undefined}
+              >
                 {c.exception}
               </span>
             ) : (
@@ -960,5 +977,32 @@ function CallRow({
         return cloneElement(el, { className: `${el.props.className ?? ''} col-pinned`, style: { ...(el.props.style ?? {}), left: offsets[slot.id] ?? 0 } })
       })}
     </tr>
+  )
+}
+
+const RUN_STATUS_COLOR: Record<StatusFilter, string> = {
+  ok: 'var(--success)',
+  error: 'var(--error)',
+  failed_step: 'var(--warn)',
+  running: 'var(--running)',
+  unknown: 'var(--text-3)',
+}
+const OWN_STATUS_LABEL: Record<ReturnType<typeof callStatus>, string> = {
+  success: 'succeeded',
+  error: 'failed',
+  running: 'running',
+  descendant_error: 'succeeded, a span under it failed',
+}
+
+/**
+ * A row's run status (summary.weft.run_status, what the status chip keeps),
+ * with the span's own status in the tooltip: a failed sub-agent run is a
+ * failed step of its caller, and a trace whose top-level span has not
+ * arrived is running.
+ */
+function RunStatusDot({ status, own }: { status: StatusFilter; own: ReturnType<typeof callStatus> }) {
+  const label = `${RUN_STATUS_LABEL[status]} (this span ${OWN_STATUS_LABEL[own]})`
+  return (
+    <span className="dot" style={{ background: RUN_STATUS_COLOR[status] }} title={label} role="img" aria-label={label} data-run-status={status} />
   )
 }

@@ -372,6 +372,9 @@ export interface ReplayJob {
   no_longer_blocked?: ReplayChange[]
   changed?: ReplayChange[]
   truncated?: boolean
+  first_error?: string
+  /** Hashed replay session keys ("sha256:<hex>") to the recorded session ids. */
+  replay_sessions?: Record<string, string>
 }
 
 export interface ShieldStatus {

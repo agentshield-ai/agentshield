@@ -527,9 +527,10 @@ def test_calls_to_records_and_to_pandas(client, fake, monkeypatch):
 
 
 def test_get_calls_passes_usernames_and_storage_size(client, fake):
-    list(client.get_calls(include_usernames=True, include_storage_size=True))
+    list(client.get_calls(include_usernames=True, include_storage_size=True, include_run_status=True))
     [q] = [r for r in fake.requests if r["path"] == "/calls/stream_query"]
     assert q["body"]["include_usernames"] is True and q["body"]["include_storage_size"] is True
+    assert q["body"]["include_run_status"] is True
 
 
 # ---------------------------------------------------------------- registry

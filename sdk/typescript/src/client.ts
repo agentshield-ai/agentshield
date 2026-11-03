@@ -175,6 +175,8 @@ export interface GetCallsOptions {
   includeUsernames?: boolean;
   /** Ask the server for `storage_size_bytes`. */
   includeStorageSize?: boolean;
+  /** Ask the server for `summary.weft.run_status`, the status the shared status filter reads (`include_run_status`). */
+  includeRunStatus?: boolean;
 }
 
 /** A registry version as returned by `/registry/query`. */
@@ -547,6 +549,7 @@ export class WeftClient {
     if (opts.expandColumns?.length) body.expand_columns = opts.expandColumns;
     if (opts.includeUsernames) body.include_usernames = true;
     if (opts.includeStorageSize) body.include_storage_size = true;
+    if (opts.includeRunStatus) body.include_run_status = true;
     const rows = await this.http.postJsonl<CallData>('/calls/stream_query', body);
     return rows.map((d) => this.fetched(d));
   }

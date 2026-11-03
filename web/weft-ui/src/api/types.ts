@@ -51,6 +51,8 @@ export interface CallSummary {
     trace_name: string
     display_name: string | null
     costs?: Record<string, LLMCost>
+    /** The status the shared status filter reads (only with include_run_status). */
+    run_status?: 'ok' | 'error' | 'failed_step' | 'running' | 'unknown'
   }
   [k: string]: Any
 }
@@ -150,6 +152,8 @@ export interface CallsQueryReq {
   include_feedback?: boolean
   include_storage_size?: boolean
   include_deleted?: boolean
+  /** Adds summary.weft.run_status to every call. */
+  include_run_status?: boolean
 }
 
 export interface CallsStatsBucket {

@@ -56,6 +56,22 @@ type sessionState struct {
 	scope    string
 }
 
+// The window of an isolated (replay) session. A replay must not depend on
+// the engine's session configuration (session.max_events, window_sec), so
+// replay sessions use these fixed numbers on every engine, and Weft's
+// in-process replay uses them too (docs/weft/DESIGN.md §5.4):
+//
+//   - ReplayMaxEvents is the most recent tool calls a replay session's
+//     derived fields (session.*) cover: the engine's default max_events.
+//   - ReplayTTL is how long an idle replay session is kept. It outlasts any
+//     replay job (at most 10,000 tool calls, rate-limited by the engine to
+//     about 100 a minute), so no session of a running job is evicted while
+//     its other sessions still read it (scoped cross-session fields).
+const (
+	ReplayMaxEvents = 50
+	ReplayTTL       = 6 * time.Hour
+)
+
 // NewRegistry creates a Registry with the given max events per session and TTL.
 // maxSessions caps total concurrent sessions to prevent unbounded memory growth;
 // when exceeded, the oldest session is evicted. Pass 0 for the default (100,000).
@@ -128,12 +144,30 @@ func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []e
 	})
 	state.lastSeen = now
 
-	if len(state.events) > r.maxEvents {
-		state.events = state.events[len(state.events)-r.maxEvents:]
+	if limit := r.windowOf(state); len(state.events) > limit {
+		state.events = state.events[len(state.events)-limit:]
 	}
 
 	// Invalidate cross-session cache on any write
 	r.crossCache = nil
+}
+
+// windowOf is the most events a session keeps: ReplayMaxEvents for an
+// isolated (replay) session, the registry's maxEvents otherwise.
+func (r *Registry) windowOf(state *sessionState) int {
+	if state.isolated {
+		return ReplayMaxEvents
+	}
+	return r.maxEvents
+}
+
+// ttlOf is how long an idle session is kept: ReplayTTL for an isolated
+// (replay) session, the registry's ttl otherwise.
+func (r *Registry) ttlOf(state *sessionState) time.Duration {
+	if state.isolated {
+		return ReplayTTL
+	}
+	return r.ttl
 }
 
 // Isolate keeps sessionID out of every other session's cross-session fields
@@ -147,7 +181,8 @@ func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []e
 //
 // Within a scope the correlation window is not applied: a replay runs
 // recorded calls back to back, and its verdicts must not depend on how fast
-// it ran (session windows still hold at most maxEvents events each).
+// it ran. An isolated session's window is ReplayMaxEvents events and it is
+// kept for ReplayTTL, whatever the registry's own settings.
 func (r *Registry) Isolate(sessionID string) {
 	if sessionID == "" {
 		return
@@ -159,7 +194,7 @@ func (r *Registry) Isolate(sessionID string) {
 		if len(r.sessions) >= r.maxSessions {
 			r.evictOldest()
 		}
-		state = &sessionState{events: make([]Event, 0, r.maxEvents), lastSeen: time.Now()}
+		state = &sessionState{events: make([]Event, 0, ReplayMaxEvents), lastSeen: time.Now()}
 		r.sessions[sessionID] = state
 	}
 	if !state.isolated {
@@ -172,6 +207,9 @@ func (r *Registry) Isolate(sessionID string) {
 			r.scopes[state.scope] = map[string]struct{}{}
 		}
 		r.scopes[state.scope][sessionID] = struct{}{}
+		if len(state.events) > ReplayMaxEvents {
+			state.events = state.events[len(state.events)-ReplayMaxEvents:]
+		}
 		r.crossCache = nil
 	}
 }
@@ -228,9 +266,9 @@ func (r *Registry) Cleanup() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	cutoff := time.Now().Add(-r.ttl)
+	now := time.Now()
 	for id, state := range r.sessions {
-		if state.lastSeen.Before(cutoff) {
+		if state.lastSeen.Before(now.Add(-r.ttlOf(state))) {
 			r.deleteLocked(id)
 		}
 	}

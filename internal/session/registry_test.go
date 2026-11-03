@@ -394,3 +394,43 @@ func TestRegistry_ReplaySessionsSeeOnlyTheirJob(t *testing.T) {
 		t.Fatal("empty replay scope not removed")
 	}
 }
+
+// A replay session's window does not depend on the registry's settings (an
+// engine's session.max_events and window_sec): it holds ReplayMaxEvents
+// events and is kept for ReplayTTL, so a remote engine and Weft's
+// in-process replay derive the same session fields.
+func TestRegistry_ReplaySessionsUseTheReplayWindow(t *testing.T) {
+	for _, maxEvents := range []int{5, 200} {
+		r := NewRegistry(maxEvents, time.Minute)
+		live, replay := "live", "weft-replay:j:s"
+		r.Isolate(replay)
+		for i := 0; i < 120; i++ {
+			r.Record(live, fmt.Sprintf("t%d", i), nil)
+			r.Record(replay, fmt.Sprintf("t%d", i), nil)
+		}
+		if got := r.DeriveFields(replay)["session.tool_count"]; got != fmt.Sprint(ReplayMaxEvents) {
+			t.Errorf("maxEvents %d: replay window holds %s events, want %d", maxEvents, got, ReplayMaxEvents)
+		}
+		if got, want := r.DeriveFields(live)["session.tool_count"], fmt.Sprint(min(maxEvents, 120)); got != want {
+			t.Errorf("maxEvents %d: live window holds %s events, want %s", maxEvents, got, want)
+		}
+
+		// Idle past the registry's TTL: the live session goes, the replay
+		// session stays until ReplayTTL.
+		r.mu.Lock()
+		r.sessions[live].lastSeen = time.Now().Add(-2 * time.Minute)
+		r.sessions[replay].lastSeen = time.Now().Add(-2 * time.Minute)
+		r.mu.Unlock()
+		r.Cleanup()
+		if r.Get(live) != nil || r.Get(replay) == nil {
+			t.Fatalf("maxEvents %d: after the registry TTL live=%v replay=%v, want only the replay kept", maxEvents, r.Get(live) != nil, r.Get(replay) != nil)
+		}
+		r.mu.Lock()
+		r.sessions[replay].lastSeen = time.Now().Add(-ReplayTTL - time.Second)
+		r.mu.Unlock()
+		r.Cleanup()
+		if r.Get(replay) != nil {
+			t.Fatalf("maxEvents %d: replay session kept past ReplayTTL", maxEvents)
+		}
+	}
+}

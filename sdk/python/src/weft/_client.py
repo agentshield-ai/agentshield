@@ -569,6 +569,7 @@ class WeftClient:
         expand_columns: Optional[List[str]] = None,
         include_usernames: bool = False,
         include_storage_size: bool = False,
+        include_run_status: bool = False,
     ) -> CallsIter:
         """Query calls. ``filter`` follows the CallsQuery filter (op_names, trace_ids, ...)."""
         body: Dict[str, Any] = {"project_id": self.project_id}
@@ -596,6 +597,9 @@ class WeftClient:
             body["include_usernames"] = True
         if include_storage_size:
             body["include_storage_size"] = True
+        if include_run_status:
+            # summary.weft.run_status: the status the shared status filter reads
+            body["include_run_status"] = True
         return CallsIter(self, body)
 
     def get_call(

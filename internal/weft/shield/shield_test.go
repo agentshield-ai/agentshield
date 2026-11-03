@@ -321,20 +321,31 @@ func TestReplayRemoteEngine(t *testing.T) {
 	assertOnlySessions(t, st, "sess-x")
 }
 
-// liveEngine is an AgentShield engine's evaluate path (namespace check,
-// evaluator with a session registry) behind HTTP, as remote replay sees it.
+// liveEngine is an AgentShield engine's evaluate path (input validation,
+// namespace check, evaluator with a session registry) behind HTTP, as
+// remote replay sees it, in enforce mode with the default session window.
 func liveEngine(t *testing.T, rulesDir string) (*httptest.Server, *evaluate.Evaluator, *session.Registry) {
+	return liveEngineWith(t, rulesDir, config.ModeEnforce, 50, 15*time.Minute)
+}
+
+// liveEngineWith is liveEngine with the engine's evaluation_mode and
+// session window (session.max_events, window_sec).
+func liveEngineWith(t *testing.T, rulesDir string, mode config.EvaluationMode, maxEvents int, ttl time.Duration) (*httptest.Server, *evaluate.Evaluator, *session.Registry) {
 	t.Helper()
 	eng, err := engine.NewEngine(rulesDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev := evaluate.NewEvaluator(eng, config.ModeEnforce, "", nil, nil)
-	reg := session.NewRegistry(50, 15*time.Minute)
+	ev := evaluate.NewEvaluator(eng, mode, "", nil, nil)
+	reg := session.NewRegistry(maxEvents, ttl)
 	ev.SetSessionRegistry(reg)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.EvaluationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := models.ValidateEvaluationRequest(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -515,5 +526,161 @@ func TestEffectiveActionOfOriginalVerdicts(t *testing.T) {
 		if got := effectiveAction(&c.d); got != c.want {
 			t.Errorf("%+v -> %s, want %s", c.d, got, c.want)
 		}
+	}
+}
+
+// recordCommands stores one agent session whose tool calls are the given
+// Bash commands, with span and tool call ids derived from tag (so the
+// session id can be anything), and returns the tool spans' ids.
+func recordCommands(t *testing.T, st *store.Store, sessionID, tag string, cmds ...string) []string {
+	t.Helper()
+	root := tag + "-root"
+	mk := func(id string, parent *string, at time.Duration, attrs map[string]any) store.CompleteCall {
+		return store.CompleteCall{
+			Start: store.CallStart{ProjectID: proj, ID: id, TraceID: "trace-" + tag, ParentID: parent, OpName: "span", StartedAt: ts(at),
+				Attributes: map[string]any{"otel": map[string]any{"attributes": attrs}}, Inputs: map[string]any{}},
+			End: &store.CallEnd{EndedAt: ts(at + 500*time.Millisecond), Summary: map[string]any{}},
+		}
+	}
+	calls := []store.CompleteCall{mk(root, nil, 0, map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "coder", "gen_ai.conversation.id": sessionID})}
+	var ids []string
+	for i, c := range cmds {
+		id := fmt.Sprintf("%s-%d", tag, i)
+		ids = append(ids, id)
+		b, _ := json.Marshal(map[string]any{"command": c})
+		calls = append(calls, mk(id, &root, time.Duration(i+1)*time.Second, map[string]any{"gen_ai.operation.name": "execute_tool",
+			"gen_ai.tool.name": "Bash", "gen_ai.tool.call.id": fmt.Sprintf("toolu_%s_%d", tag, i), "gen_ai.tool.call.arguments": string(b)}))
+	}
+	if _, err := st.UpsertComplete(context.Background(), calls); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+// Remote and in-process replay record the same verdicts in a replay
+// session's window whatever the remote engine's evaluation_mode and session
+// window: both evaluate as enforce mode would act, in the fixed replay
+// window. Seven calls that each need approval are followed by an innocuous
+// one, which approval fatigue flags only when the approvals were recorded.
+func TestReplayIndependentOfTheEngineModeAndWindow(t *testing.T) {
+	st := newStore(t)
+	cmds := []string{}
+	for i := 0; i < 7; i++ {
+		cmds = append(cmds, "xxd /tmp/f")
+	}
+	cmds = append(cmds, "echo hi")
+	ids := recordCommands(t, st, "fatigue", "fat", cmds...)
+	rulesDir := repoRules(t)
+	local, err := New(Config{RulesDir: rulesDir}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	want := replayVerdicts(t, st, runJob(t, local, ReplayRequest{SessionIDs: []string{"fatigue"}, Label: "x"}))
+	fatigue := ruleID(t, "ai_agent_approval_fatigue.yml")
+	last := ""
+	for _, l := range strings.Split(want, "\n") {
+		if strings.Contains(l, ids[len(ids)-1]) {
+			last = l
+		}
+	}
+	if !strings.Contains(last, fatigue) || !strings.Contains(last, "require_approval") {
+		t.Fatalf("in-process replay: approval fatigue does not flag the call after seven approvals: %q\n%s", last, want)
+	}
+	for _, c := range []struct {
+		mode      config.EvaluationMode
+		maxEvents int
+		ttl       time.Duration
+	}{{config.ModeEnforce, 50, 15 * time.Minute}, {config.ModeAudit, 50, 15 * time.Minute}, {config.ModeShadow, 3, time.Minute}, {config.ModeEnforce, 500, 24 * time.Hour}} {
+		srv, _, _ := liveEngineWith(t, rulesDir, c.mode, c.maxEvents, c.ttl)
+		svc, err := New(Config{URL: srv.URL}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := replayVerdicts(t, st, runJob(t, svc, ReplayRequest{SessionIDs: []string{"fatigue"}, Label: "x"}))
+		svc.Close()
+		if got != want {
+			t.Errorf("engine in %s mode, window %d/%s: remote replay differs from in-process:\nremote:\n%s\nin-process:\n%s", c.mode, c.maxEvents, c.ttl, got, want)
+		}
+	}
+}
+
+// Recorded session ids the engine would reject in a replay session id (too
+// long once namespaced, or holding a control character) are replayed under
+// a hash, the same way in-process and remotely: every call is evaluated,
+// every session's detections are stored under its recorded id, and the job
+// reports the hashed keys.
+func TestReplaySessionIDsTheEngineWouldReject(t *testing.T) {
+	st := newStore(t)
+	long := strings.Repeat("L", 230)
+	sessions := map[string]string{long: "long", "a\tb": "tab", "normal": "normal", "sha256:not-a-hash": "hashlike"}
+	var ids []string
+	for sid, tag := range sessions {
+		recordCommands(t, st, sid, tag, "cat ~/.ssh/id_rsa")
+		ids = append(ids, sid)
+	}
+	sort.Strings(ids)
+	rulesDir := repoRules(t)
+	srv, _, _ := liveEngine(t, rulesDir)
+	remote, err := New(Config{URL: srv.URL}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	local, err := New(Config{RulesDir: rulesDir}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	var results []string
+	for _, svc := range []*Service{remote, local} {
+		res := runJob(t, svc, ReplayRequest{SessionIDs: ids, Label: "x"})
+		if res.Summary.ToolCalls != 4 || res.Summary.Evaluated != 4 || res.Summary.Errors != 0 || res.Summary.Blocked != 4 || res.Summary.Detections != 4 {
+			t.Fatalf("%s replay: summary %+v, first error %q", svc.Mode(), res.Summary, res.FirstError)
+		}
+		hashed := []string{}
+		for key, sid := range res.ReplaySessions {
+			if !strings.HasPrefix(key, "sha256:") {
+				t.Errorf("%s replay: replay session key %q is not a hash", svc.Mode(), key)
+			}
+			hashed = append(hashed, sessions[sid])
+		}
+		sort.Strings(hashed)
+		if strings.Join(hashed, ",") != "hashlike,long,tab" {
+			t.Errorf("%s replay: hashed sessions %v, want hashlike, long and tab", svc.Mode(), hashed)
+		}
+		results = append(results, replayVerdicts(t, st, res))
+	}
+	if results[0] != results[1] {
+		t.Fatalf("remote and in-process replay differ:\nremote:\n%s\nin-process:\n%s", results[0], results[1])
+	}
+	for _, sid := range ids {
+		if !strings.Contains(results[0], "detection "+sid+" ") {
+			t.Errorf("no replay detection stored for session %q:\n%s", sid, results[0])
+		}
+	}
+}
+
+// A session whose detections cannot be stored does not fail the job: its
+// detections count as errors and the other sessions' are stored.
+func TestReplayStoresEachSessionOnItsOwn(t *testing.T) {
+	st := newStore(t)
+	recordCommands(t, st, "ok-session", "ok", "cat ~/.ssh/id_rsa")
+	bad := recordCommands(t, st, "bad-session", "bad", "cat ~/.ssh/id_rsa")
+	// A tool span id too long for a detection's span_id.
+	if _, err := st.DB().Exec(`UPDATE agent_spans SET tool_call_id = ? WHERE id = ?`, strings.Repeat("x", 300), bad[0]); err != nil {
+		t.Fatal(err)
+	}
+	local, err := New(Config{RulesDir: repoRules(t)}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	res := runJob(t, local, ReplayRequest{SessionIDs: []string{"bad-session", "ok-session"}, Label: "x"})
+	if res.Summary.Detections != 1 || res.Summary.Errors != 1 || !strings.Contains(res.FirstError, "storing detections") {
+		t.Fatalf("summary %+v, first error %q", res.Summary, res.FirstError)
+	}
+	if v := replayVerdicts(t, st, res); !strings.Contains(v, "detection ok-session ") || strings.Contains(v, "detection bad-session ") {
+		t.Fatalf("stored detections:\n%s", v)
 	}
 }

@@ -34,7 +34,7 @@ All rows are scoped by `project_id` (`entity/project`).
 
 | Object | Source | Key fields |
 |---|---|---|
-| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `duration_ms` (null when unknown), `verdicts_only` (known only from AgentShield verdicts), `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`; `unknown` for `verdicts_only`), `failed_step` (an `ok` session in which a step failed); status comes from the top-level spans of the session's traces, as the Traces list reads them (API.md, *Run status*) |
+| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `duration_ms` (null when unknown), `verdicts_only` (known only from AgentShield verdicts), `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`; `unknown` for `verdicts_only`), `failed_step` (an `ok` session in which a step failed); status comes from the top-level spans of the session's traces, as the Traces list reads them (API.md, *Run status*); a trace whose finished steps have arrived but whose top-level span has not (OTLP exports a span when it ends) is `running`, until 10 minutes after its latest span, then it has its steps' outcome (`failed_step` or `ok`) |
 | **Agent** | `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.agent.version` on `invoke_agent` spans | name, versions, models, tools, sessions, handoffs in and out, detection rate (flagged tool calls / tool calls, API.md), scores |
 | **Team** | `weft.team.id` / `weft.team.name` on any span of a session; otherwise derived as the set of agents that took part in a session (`team_id` = `auto:` + sorted agent names joined by `+`) | `team_id`, `name`, `agents[]`, `session_count`, aggregated graph |
 | **Turn** | the existing turn detection (`is_turn`) | unchanged |
@@ -168,11 +168,41 @@ span arrives.
 Weft imports AgentShield's rule engine (`internal/evaluate`) as a library and
 can run it in-process with `--shield-rules-dir`, or call a running engine with
 `--shield-url` / `--shield-token`. Replay re-evaluates every tool call of the
-chosen sessions in `shadow` mode, stores the results as detections with
-`source=replay` and a `ruleset` label, and reports what would change. The
-`action` of a replay detection is the action enforce mode would take, so it
-can be compared with the engine's verdicts (an `audit` or `shadow` original is
-compared the same way). `ToolSafetyScorer` (§6) turns this into evaluation
+chosen sessions without acting on them, stores the results as detections
+with `source=replay`, `mode=shadow` and a `ruleset` label, and reports what
+would change. The `action` of a replay detection is the action enforce mode
+would take, so it can be compared with the engine's verdicts (an `audit` or
+`shadow` original is compared the same way).
+Replay results depend only on the recording and the ruleset, never on the
+engine's configuration, and are the same in-process and remotely:
+
+- *Mode.* The engine evaluates a replay request as enforce mode would act,
+  whatever its `evaluation_mode`, and in-process replay does the same, so
+  the verdicts recorded in a replayed session's window (and the fields
+  derived from them, such as `session.approval_count` for approval fatigue)
+  are those enforce mode would record. (Evaluating replays in shadow mode
+  instead would leave every replay session with no approvals, so a replay
+  could never show a rule that reads them.) Nothing acts on a replay
+  verdict, and enforce is the strictest mode, so honouring it for replay
+  requests weakens nothing. Replays bypass the engine's verdict cache, whose
+  key does not include the mode.
+- *Window.* A replay session keeps the last 50 tool calls
+  (`session.ReplayMaxEvents`, the engine's default `max_events`) and is
+  kept for 6 hours idle (`session.ReplayTTL`, longer than any replay job),
+  on every engine whatever its `session` settings, and in process.
+- *Ids.* The replay session id is `weft-replay:<job>:<key>`, where `<key>`
+  is the recorded session id, or `sha256:` + its hex SHA-256 when the full
+  id would be over the engine's 256-byte limit, would hold control
+  characters or padding, or the recorded id itself starts `sha256:`; the
+  job result maps hashed keys back (`replay_sessions`), and detections and
+  diffs always carry the recorded id. Tool call ids and agent names the
+  engine would reject are left out of the request (no rule reads them).
+  In-process replay applies the engine's input validation
+  (`models.ValidateEvaluationRequest`) before evaluating, so both paths
+  evaluate, and reject, the same calls.
+- *Storage.* Detections are stored per session; a session whose detections
+  cannot be stored counts them as errors without failing the job.
+ `ToolSafetyScorer` (§6) turns this into evaluation
 scores (`blocked`, `approvals_required`, `max_severity`) at session and agent
 scope, so rule changes can be evaluated against recorded agent behaviour.
 `--shield-url` is operator configuration and is not subject to the egress
@@ -194,7 +224,12 @@ Over OTLP, Weft treats an evaluate span as a replay only when it carries
 `agentshield.replay = true` or, for engines that predate that attribute, a
 `weft-replay:` session id; it never turns one into an engine detection, a
 session or agent activity, and the Traces list hides those engine traces
-unless asked (`summary.weft.replay`). Engines never push replays, so the push
+unless asked (`summary.weft.replay`). Only a replay span of the engine's
+instrumentation scope (`agentshield`) marks a trace, and only a trace that
+holds nothing but such spans and, as its root, the engine's HTTP span: any
+OTLP writer can send a span claiming to be a replay with any trace id, and
+it must not hide a trace with agent activity or a live verdict (the
+claiming span stays visible in it). Engines never push replays, so the push
 (`/api/v1/shield/ingest`) rejects replay-namespaced ids with 400. Replay never
 creates sessions.
 

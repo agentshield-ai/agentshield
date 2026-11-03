@@ -30,13 +30,37 @@ const TOOL_CALL_ID_META_KEYS = [
   "tool_call_id",
 ] as const;
 
-/** Extract the harness tool-use id from a tools/call request's `_meta`, if any. */
+/** The engine's limit on ids, in UTF-8 bytes. */
+const MAX_ID_BYTES = 256;
+
+/**
+ * A tool-use id as the engine accepts it, or null. The id comes from the
+ * MCP client, and the engine rejects (400) an evaluation whose tool_call_id
+ * is padded, holds a control character or is over 256 bytes; that would
+ * count as an engine failure and, through the circuit breaker, block the
+ * call. Surrounding whitespace is trimmed; anything else invalid is dropped,
+ * so the call is still evaluated, only without Weft correlation.
+ */
+export function sanitizeToolCallId(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  // Whitespace the engine trims as Go's unicode.IsSpace does (a superset is fine).
+  const id = v.replace(/^[\s\u0085]+|[\s\u0085]+$/gu, "");
+  if (id.length === 0) return null;
+  // Control characters (C0, DEL, C1) and the Unicode line/paragraph separators.
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(id)) return null;
+  // Lone surrogates are not valid UTF-8.
+  if (Buffer.from(id, "utf8").toString("utf8") !== id) return null;
+  if (Buffer.byteLength(id, "utf8") > MAX_ID_BYTES) return null;
+  return id;
+}
+
+/** Extract the harness tool-use id from a tools/call request's `_meta`, if any (sanitizeToolCallId). */
 export function toolCallIdFromMeta(meta: unknown): string | null {
   if (!meta || typeof meta !== "object") return null;
   const m = meta as Record<string, unknown>;
   for (const key of TOOL_CALL_ID_META_KEYS) {
-    const v = m[key];
-    if (typeof v === "string" && v.length > 0 && v.length <= 256) return v;
+    const id = sanitizeToolCallId(m[key]);
+    if (id) return id;
   }
   return null;
 }

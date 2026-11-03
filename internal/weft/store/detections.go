@@ -270,15 +270,28 @@ func (d *DetectionInput) Normalize() error {
 	if !detectionModes[d.Mode] {
 		return Invalidf("mode must be enforce, audit or shadow")
 	}
-	for _, f := range []struct {
+	type idField struct {
 		name, v string
 		max     int
-	}{
-		{"event_id", d.EventID, 512}, {"session_id", d.SessionID, 256}, {"tool_call_id", d.ToolCallID, 256},
-		{"tool_name", d.ToolName, 256}, {"agent_name", d.AgentName, 256}, {"ruleset", d.Ruleset, 256},
+	}
+	fields := []idField{
+		{"event_id", d.EventID, 512}, {"tool_name", d.ToolName, 256}, {"agent_name", d.AgentName, 256}, {"ruleset", d.Ruleset, 256},
 		{"event_source", d.EventSource, 128}, {"span_id", d.SpanID, 256}, {"trace_id", d.TraceID, 256},
 		{"engine_span_id", d.EngineSpanID, 256}, {"severity", d.Severity, 32},
-	} {
+	}
+	if d.Source == DetectionSourceReplay {
+		// A replay detection names a recorded session and tool call by the
+		// ids Weft stored for them, whatever characters those hold (OTLP
+		// accepts any string), so it can always be attached to them.
+		for _, f := range []idField{{"session_id", d.SessionID, 256}, {"tool_call_id", d.ToolCallID, 256}} {
+			if len(f.v) > f.max {
+				return Invalidf("%s is longer than %d bytes", f.name, f.max)
+			}
+		}
+	} else {
+		fields = append(fields, idField{"session_id", d.SessionID, 256}, idField{"tool_call_id", d.ToolCallID, 256})
+	}
+	for _, f := range fields {
 		if err := detCheckLen(f.name, f.v, f.max); err != nil {
 			return err
 		}

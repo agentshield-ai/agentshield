@@ -27,7 +27,10 @@ type EvaluationRequest struct {
 	AgentName string `json:"agent_name,omitempty"`
 	// Replay marks a re-evaluation of a recorded tool call (Weft's replay,
 	// docs/weft/DESIGN.md §5.4) rather than live agent traffic. The verdict
-	// is computed as usual; the evaluate span is tagged agentshield.replay,
+	// is computed as enforce mode would act whatever the configured mode,
+	// without the verdict cache, in a fixed session window
+	// (session.ReplayMaxEvents, session.ReplayTTL), so it depends only on
+	// the recording and the ruleset; the evaluate span is tagged agentshield.replay,
 	// the verdict is neither stored nor pushed to Weft, and the session is
 	// kept out of other sessions' cross-session fields (its own cover only
 	// its replay job's sessions, see ReplayScope). It is honoured only
@@ -42,6 +45,11 @@ type EvaluationRequest struct {
 // ReplaySessionPrefix is the session namespace of replayed evaluations.
 // Weft's replay always uses "weft-replay:<job>:<session>".
 const ReplaySessionPrefix = "weft-replay:"
+
+// MaxIDLength is the longest event, session or tool call id the engine's
+// HTTP API accepts, in bytes. Weft's replay session ids
+// ("weft-replay:<job>:<session>") are kept within it.
+const MaxIDLength = 256
 
 // ReplayEventPrefix starts the event id of every replayed evaluation
 // ("weft-replay-<job>-<n>"). Weft versions before the replay attribute

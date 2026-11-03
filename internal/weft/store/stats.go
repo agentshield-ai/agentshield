@@ -110,12 +110,12 @@ func (s *Store) OpCounts(ctx context.Context, projectID string, rootsOnly bool) 
 	if err != nil {
 		return nil, &InvalidError{Msg: err.Error()}
 	}
-	q := `SELECT op_name, op_base_name, COUNT(*), SUM(exception IS NOT NULL), MAX(started_at) FROM calls
-		WHERE project_id = ? AND deleted_at IS NULL AND has_start = 1`
+	q := `SELECT c.op_name, c.op_base_name, COUNT(*), SUM(c.exception IS NOT NULL), MAX(c.started_at) FROM calls c
+		WHERE c.project_id = ? AND c.deleted_at IS NULL AND c.has_start = 1`
 	if rootsOnly {
-		q += " AND parent_id IS NULL"
+		q += " AND " + traceRootSQL("c") // as the Traces list's roots (callsquery.go)
 	}
-	rows, err := s.r.QueryContext(ctx, q+" GROUP BY op_name ORDER BY COUNT(*) DESC LIMIT 1000", pid)
+	rows, err := s.r.QueryContext(ctx, q+" GROUP BY c.op_name ORDER BY COUNT(*) DESC LIMIT 1000", pid)
 	if err != nil {
 		return nil, err
 	}

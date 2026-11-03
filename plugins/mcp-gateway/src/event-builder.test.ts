@@ -58,6 +58,24 @@ describe("toolCallIdFromMeta", () => {
     expect(toolCallIdFromMeta(undefined)).toBeNull();
     expect(toolCallIdFromMeta({ toolUseId: "x".repeat(300) })).toBeNull();
   });
+
+  it("trims padding and drops ids the engine would reject (400)", () => {
+    // Padding is trimmed: the engine rejects leading or trailing whitespace.
+    expect(toolCallIdFromMeta({ toolUseId: "  toolu_1\t" })).toBe("toolu_1");
+    expect(toolCallIdFromMeta({ toolUseId: "\u00a0toolu_2\u2003" })).toBe("toolu_2");
+    // Control characters inside, separators, lone surrogates: dropped.
+    expect(toolCallIdFromMeta({ toolUseId: "tool\tu_3" })).toBeNull();
+    expect(toolCallIdFromMeta({ toolUseId: "tool\nu_3" })).toBeNull();
+    expect(toolCallIdFromMeta({ toolUseId: "tool\u0085u_3" })).toBeNull();
+    expect(toolCallIdFromMeta({ toolUseId: "tool\u2028u_3" })).toBeNull();
+    expect(toolCallIdFromMeta({ toolUseId: "tool\ud800u_3" })).toBeNull();
+    expect(toolCallIdFromMeta({ toolUseId: "   " })).toBeNull();
+    // The engine's limit is 256 bytes, not characters.
+    expect(toolCallIdFromMeta({ toolUseId: "é".repeat(128) })).toBe("é".repeat(128));
+    expect(toolCallIdFromMeta({ toolUseId: "é".repeat(129) })).toBeNull();
+    // An invalid id under one key does not hide a valid one under another.
+    expect(toolCallIdFromMeta({ "claudecode/toolUseId": "bad\u0001", toolCallId: "call_7" })).toBe("call_7");
+  });
 });
 
 describe("buildAuditReport", () => {

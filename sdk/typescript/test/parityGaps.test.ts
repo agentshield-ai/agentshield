@@ -314,12 +314,13 @@ describe('SDK extras', () => {
     });
     await f(1);
     await f(2);
-    const recs = await client.getCallsRecords({ filter: { op_names: ['f'] }, includeUsernames: true, includeStorageSize: true });
+    const recs = await client.getCallsRecords({ filter: { op_names: ['f'] }, includeUsernames: true, includeStorageSize: true, includeRunStatus: true });
     expect(recs.map((r) => r.output).sort()).toEqual([2, 3]);
     expect(recs[0]).toMatchObject({ status: 'success', op_name: expect.stringContaining('/op/f:'), run_id: null });
     const q = fake.requests.filter((r) => r.path === '/calls/stream_query').pop()!.body;
     expect(q.include_usernames).toBe(true);
     expect(q.include_storage_size).toBe(true);
+    expect(q.include_run_status).toBe(true);
     expect(new weft.Call({ id: 'x', project_id: 'a/b', op_name: 'o', trace_id: 't', username: 'ann', run_step: 2 }, null).toRecord()).toMatchObject({ username: 'ann', run_step: 2 });
   });
 

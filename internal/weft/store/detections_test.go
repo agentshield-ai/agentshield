@@ -602,17 +602,16 @@ func TestReplayEventIDAloneIsLiveTraffic(t *testing.T) {
 	if _, err := s.GetAgentSession(ctx, proj, "victim-9"); err != nil {
 		t.Fatalf("live session hidden: %v", err)
 	}
-	var hidden int
-	if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM replay_traces WHERE project_id = ? AND trace_id = ?`, proj, "rt-live-1").Scan(&hidden); err != nil || hidden != 0 {
-		t.Fatalf("live trace hidden from the Traces list: %d %v", hidden, err)
+	if isReplayTrace(t, s, "rt-live-1") {
+		t.Fatal("live trace hidden from the Traces list")
 	}
 	// The namespaced session id without the attribute (an engine that
 	// predates it) is still a replay.
 	if _, err := s.UpsertComplete(ctx, []CompleteCall{replayEngineSpan("old-1", "evt-o", "weft-replay:j:s", false)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM replay_traces WHERE project_id = ? AND trace_id = ?`, proj, "rt-old-1").Scan(&hidden); err != nil || hidden != 1 {
-		t.Fatalf("old-engine replay trace not marked: %d %v", hidden, err)
+	if !isReplayTrace(t, s, "rt-old-1") {
+		t.Fatal("old-engine replay trace not marked")
 	}
 }
 
@@ -626,9 +625,8 @@ func TestPaddedNamespaceSessionIsLiveTraffic(t *testing.T) {
 		if _, err := s.UpsertComplete(ctx, []CompleteCall{replayEngineSpan(id, "evt-"+id, sid, false)}); err != nil {
 			t.Fatal(err)
 		}
-		var hidden int
-		if err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM replay_traces WHERE project_id = ? AND trace_id = ?`, proj, "rt-"+id).Scan(&hidden); err != nil || hidden != 0 {
-			t.Fatalf("%q: live trace hidden as replay: %d %v", sid, hidden, err)
+		if isReplayTrace(t, s, "rt-"+id) {
+			t.Fatalf("%q: live trace hidden as replay", sid)
 		}
 		if d := getDet(t, s, "evt-"+id); d.Source != DetectionSourceEngine {
 			t.Fatalf("%q: live verdict dropped: %+v", sid, d)
@@ -637,6 +635,17 @@ func TestPaddedNamespaceSessionIsLiveTraffic(t *testing.T) {
 	if !InReplayNamespace(" weft-replay-x6", "s") || !InReplayNamespace("e", "\tweft-replay:x") {
 		t.Fatal("ingest must reject ids that fall in the namespace once trimmed")
 	}
+}
+
+// isReplayTrace reports summary.weft.replay of the trace's spans.
+func isReplayTrace(t *testing.T, s *Store, traceID string) bool {
+	t.Helper()
+	var v int
+	if err := s.r.QueryRowContext(context.Background(), `SELECT `+replayTraceSQL+` FROM calls c WHERE c.project_id = ? AND c.trace_id = ? LIMIT 1`,
+		proj, traceID).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v == 1
 }
 
 // verdictSpan is an engine evaluate span for session at offset.
@@ -794,7 +803,7 @@ func TestReplayTracesMarked(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	httpRoot := CompleteCall{Start: CallStart{ProjectID: proj, ID: "http-1", TraceID: "rt-rp-1", OpName: "/api/v1/evaluate", StartedAt: detTS(2 * time.Second),
-		Attributes: map[string]any{"otel": map[string]any{"attributes": map[string]any{"http.route": "/api/v1/evaluate"}}}},
+		Attributes: map[string]any{"otel": map[string]any{"scope": map[string]any{"name": EngineHTTPScope}, "attributes": map[string]any{"http.route": "/api/v1/evaluate"}}}},
 		End: &CallEnd{EndedAt: detTS(3 * time.Second), Summary: map[string]any{}}}
 	child := replayEngineSpan("rp-1", "weft-replay-job1-0", "weft-replay:job1:s1", true)
 	parent := "http-1"
@@ -855,5 +864,105 @@ func TestLiveVerdictWithUntidyNamesIsKept(t *testing.T) {
 	}
 	if d := getDet(t, s, "untidy-otel"); d.Action != "block" || d.ToolName != "Ba sh" || d.AgentName != "co der" {
 		t.Fatalf("OTel verdict = %+v", d)
+	}
+}
+
+// A padded session id (an engine older than the engine's id checks, or a
+// forged span) names the same session on the agent spans as on the
+// detection: ingest trims it for session indexing, as detections do.
+func TestPaddedSessionIDIsOneSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	putSpans(t, s, agentRoot("root", "t1", "  s-pad\t", "coder", 0), toolSpan("tool-1", "t1", "root", " s-pad ", "Bash", "toolu_1", "", time.Second))
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{verdictSpan("v-1", "evt-1", " s-pad\n", "toolu_1", time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if d := getDet(t, s, "evt-1"); d.SessionID != "s-pad" || spanOf(d) != "tool-1" {
+		t.Fatalf("detection session %q span %q", d.SessionID, spanOf(d))
+	}
+	sessions, total, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || sessions[0].SessionID != "s-pad" || sessions[0].DetectionCount["block"] != 1 {
+		var got []string
+		for _, x := range sessions {
+			got = append(got, fmt.Sprintf("%q %v", x.SessionID, x.DetectionCount))
+		}
+		t.Fatalf("sessions = %d %v, want one session \"s-pad\" with its block", total, got)
+	}
+}
+
+// Anyone who can write OTLP to a project can send a span claiming to be a
+// replayed evaluation (agentshield.verdict.action, agentshield.replay) with
+// any trace id. It must not hide that trace from the Traces list unless the
+// trace is the engine's own replay trace: a replay evaluate span of the
+// agentshield scope under the engine's HTTP root, and nothing else. The
+// claiming span stays a visible span of its trace.
+func TestForgedReplaySpanDoesNotHideATrace(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	forged := func(id, trace, parent, scope string) CompleteCall {
+		c := replayEngineSpan(id, "evt-"+id, "s1", true)
+		c.Start.TraceID = trace
+		if parent != "" {
+			c.Start.ParentID = ptr(parent)
+		}
+		if scope == "" {
+			delete(c.Start.Attributes["otel"].(map[string]any), "scope")
+		} else {
+			c.Start.Attributes["otel"].(map[string]any)["scope"] = map[string]any{"name": scope}
+		}
+		return c
+	}
+	httpRoot := func(id, trace string) CompleteCall {
+		return CompleteCall{Start: CallStart{ProjectID: proj, ID: id, TraceID: trace, OpName: "/api/v1/evaluate", StartedAt: detTS(2 * time.Second),
+			Attributes: map[string]any{"otel": map[string]any{"scope": map[string]any{"name": EngineHTTPScope}, "attributes": map[string]any{"http.route": "/api/v1/evaluate"}}}},
+			End: &CallEnd{EndedAt: detTS(3 * time.Second), Summary: map[string]any{}}}
+	}
+	// An agent trace, with forged replay spans of every scope added to it.
+	putSpans(t, s, agentRoot("root", "agent-t", "s1", "coder", 0), toolSpan("tool-1", "agent-t", "root", "", "Bash", "toolu_1", "", time.Second))
+	// A live verdict trace (HTTP root, live evaluate span), with a forged
+	// agentshield-scope replay span under its HTTP root.
+	live := verdictSpan("live-ev", "evt-live", "s1", "toolu_1", 2*time.Second)
+	live.Start.TraceID, live.Start.ParentID = "live-t", ptr("live-http")
+	// The engine's own replay trace, its evaluate span first.
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{
+		forged("f-noscope", "agent-t", "root", ""), forged("f-other", "agent-t", "root", "evil"), forged("f-agentshield", "agent-t", "root", "agentshield"),
+		httpRoot("live-http", "live-t"), live, forged("f-live", "live-t", "live-http", "agentshield"),
+		forged("rp-ev", "replay-t", "rp-http", "agentshield"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if isReplayTrace(t, s, "agent-t") || isReplayTrace(t, s, "live-t") {
+		t.Fatalf("forged replay span hid a trace: agent %v live %v", isReplayTrace(t, s, "agent-t"), isReplayTrace(t, s, "live-t"))
+	}
+	if !isReplayTrace(t, s, "replay-t") {
+		t.Fatal("a replay evaluate span whose HTTP root has not arrived does not mark its trace")
+	}
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{httpRoot("rp-http", "replay-t")}); err != nil {
+		t.Fatal(err)
+	}
+	if !isReplayTrace(t, s, "replay-t") {
+		t.Fatal("the engine's replay trace is not marked")
+	}
+	// The forged spans are still spans of their (visible) trace.
+	for _, id := range []string{"f-noscope", "f-other", "f-agentshield", "f-live"} {
+		if _, err := s.GetCall(ctx, proj, id, false, false, false); err != nil {
+			t.Errorf("forged span %s not kept: %v", id, err)
+		}
+	}
+	var visible []string
+	err := s.QueryCalls(ctx, CallsQuery{ProjectID: proj, Filter: &CallsFilter{TraceIDs: []string{"agent-t", "live-t"}},
+		Query:  map[string]any{"$expr": map[string]any{"$not": []any{map[string]any{"$eq": []any{map[string]any{"$getField": "summary.weft.replay"}, map[string]any{"$literal": true}}}}}},
+		SortBy: []SortBy{{Field: "id", Direction: "asc"}}}, func(c *Call) error {
+		visible = append(visible, c.ID)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(visible, ","); got != "f-agentshield,f-live,f-noscope,f-other,live-ev,live-http,root,tool-1" {
+		t.Fatalf("visible spans = %s", got)
 	}
 }

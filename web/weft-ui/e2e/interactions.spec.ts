@@ -193,12 +193,42 @@ test('the status chip keeps the same runs on Sessions and Traces', async ({ page
     ['Status check: an agent that fails inside a server span that does not', 'wrapholds'],
     ['Status check: a linked helper that fails in its own trace', 'caller'],
     ['Session st-verdicts', 'verdicts'],
+    ['st-inflight', 'inflight'],
   ]
   const traceOf: [RegExp, string][] = [
     [/\/api\/v1\/evaluate/, 'engine(finisher)'],
     [/\bevaluate\b/, 'engine(verdicts)'],
     ...['failer', 'recoverer', 'delegator', 'finisher', 'wrapfails', 'wrapholds', 'caller', 'linkedhelper'].map((a): [RegExp, string] => [new RegExp(`\\b${a}\\b`), a]),
+    [/\binflighter\b/, 'inflight'],
   ]
+  // A run in progress over OTLP: its finished steps (one a tool call that
+  // failed) have arrived, its top-level span has not (OTLP sends a span when
+  // it ends). It is running on both pages, listed once on Traces.
+  const now = Date.now()
+  const ns = (ms: number) => String((now - 60_000 + ms) * 1e6)
+  const kv = (key: string, value: string) => ({ key, value: { stringValue: value } })
+  const inflight = (id: string, name: string, at: number, attrs: Record<string, string>, failed = false) => ({
+    traceId: '1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f',
+    spanId: id,
+    parentSpanId: 'a0a0a0a0a0a0a0a0',
+    name,
+    kind: 1,
+    startTimeUnixNano: ns(at),
+    endTimeUnixNano: ns(at + 500),
+    attributes: Object.entries({ 'gen_ai.conversation.id': 'st-inflight', 'gen_ai.agent.name': 'inflighter', ...attrs }).map(([k, v]) => kv(k, v)),
+    ...(failed ? { status: { code: 2, message: 'exit status 1' } } : {}),
+  })
+  const otlp = await page.request.post('/otel/v1/traces', {
+    headers: { project_id: P },
+    data: {
+      resourceSpans: [{ resource: { attributes: [kv('service.name', 'e2e')] }, scopeSpans: [{ scope: { name: 'e2e' }, spans: [
+        inflight('b1b1b1b1b1b1b1b1', 'chat inflighter', 0, { 'gen_ai.operation.name': 'chat' }),
+        inflight('b2b2b2b2b2b2b2b2', 'execute_tool Bash', 1000, { 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': 'Bash' }, true),
+        inflight('b3b3b3b3b3b3b3b3', 'execute_tool Read', 2000, { 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': 'Read' }),
+      ] }] }],
+    },
+  })
+  expect(otlp.ok()).toBe(true)
   // A trace's status is read off its top-level span, agent span or not; a
   // session's combines its traces'. A helper linked to its caller that
   // failed is a failed step (its caller's own trace succeeded). The engine's
@@ -209,6 +239,7 @@ test('the status chip keeps the same runs on Sessions and Traces', async ({ page
     failed_step: { sessions: ['caller', 'delegator', 'recoverer', 'wrapholds'], traces: ['delegator', 'linkedhelper', 'recoverer', 'wrapholds'] },
     ok: { sessions: ['finisher'], traces: ['caller', 'engine(finisher)', 'finisher'] },
     unknown: { sessions: ['verdicts'], traces: ['engine(verdicts)'] },
+    running: { sessions: ['inflight'], traces: ['inflight'] },
   }
   for (const [status, want] of Object.entries(expected)) {
     await page.goto(`/${P}/sessions?status=${status}&time=all`)
@@ -231,6 +262,16 @@ test('the status chip keeps the same runs on Sessions and Traces', async ({ page
   await page.goto(`/${P}/traces?status=failed_step&time=all`)
   await expect(page.getByRole('button', { name: 'Edit filter Status: Went on after a failed step' })).toHaveAttribute('title', /a step in it failed/)
   await expect(page.getByRole('button', { name: 'Edit filter Status: Went on after a failed step' })).toHaveAttribute('title', /linked to its caller/)
+  // A row shows its run status, the span's own in the tooltip: the linked
+  // helper's span failed, its run is a failed step of its caller's.
+  const helperDot = page.locator('.traces-table tbody tr').filter({ hasText: 'linkedhelper' }).locator('[data-run-status]')
+  await expect(helperDot).toHaveAttribute('data-run-status', 'failed_step')
+  await expect(helperDot).toHaveAttribute('title', /Went on after a failed step \(this span failed\)/)
+  // The in-flight run is listed under its first step, marked as such.
+  await page.goto(`/${P}/traces?status=running&time=all`)
+  const inflightRow = page.locator('.traces-table tbody tr').filter({ hasText: 'inflighter' })
+  await expect(inflightRow.locator('[data-run-status]')).toHaveAttribute('data-run-status', 'running')
+  await expect(inflightRow).toContainText('top-level span not received yet')
   // The session row says a step failed.
   await page.goto(`/${P}/sessions?status=failed_step&time=all`)
   await expect(page.locator('.session-row').filter({ hasText: 'a linked helper that fails' }).getByRole('link', { name: /failed step/ })).toBeVisible()

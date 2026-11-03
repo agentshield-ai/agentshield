@@ -72,6 +72,7 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
     "weft": {                                      // computed on read
       "status": "success|error|running|descendant_error",
       "latency_ms": 1234, "trace_name": "my_fn", "display_name": null,
+      "run_status": "ok|error|failed_step|running|unknown",   // only with include_run_status (calls queries)
       "costs": {"gpt-4o-mini": {"requests":1,"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,
                 "cache_read_input_tokens":0,"cache_creation_input_tokens":0,
                 "prompt_token_cost":1.5e-7,"completion_token_cost":6e-7,
@@ -139,9 +140,15 @@ summaries are stored as sent instead of being rolled up again.
   "columns": ["id", "inputs.x"],     // optional projection hint
   "expand_columns": ["inputs.example", "inputs.model"],  // resolve refs at these paths
   "include_costs": false, "include_feedback": false, "include_storage_size": false,
-  "include_deleted": false
+  "include_deleted": false,
+  "include_run_status": false        // adds summary.weft.run_status to every call (the UI's Traces list shows it)
 }
 ```
+
+`trace_roots_only` keeps each trace's root, or, while a trace's root has not
+arrived (OTLP sends the top-level span last), its provisional root: the
+earliest-starting span whose parent has not arrived (*Run status* under
+`/api/v1/sessions`). `/calls/query_stats` and `/calls/op_counts` count the same rows.
 
 **Operation language** (Mongo-style, used by calls, feedback and costs):
 
@@ -151,7 +158,7 @@ summaries are stored as sent instead of being rolled up again.
 - Operands: `{"$literal": v}`, `{"$getField": "inputs.question"}`,
   `{"$convert": {"input": a, "to": "double|int|string|bool|exists"}}`, or a nested operation.
 
-Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, user_id, run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.run_status` (the status the shared status filter keeps: `ok`, `error`, `failed_step`, `running` or `unknown`, as `/api/v1/sessions` defines it under *Run status*; the UI's Traces list filters on it), `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, `summary.weft.replay` (`true` for every span of a trace that holds an AgentShield evaluation of a replayed tool call: the engine's `/api/v1/evaluate` span and its `evaluate` child; the UI's Traces list hides these unless *Replay evaluations* is ticked), and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
+Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, user_id, run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.run_status` (the status the shared status filter keeps: `ok`, `error`, `failed_step`, `running` or `unknown`, as `/api/v1/sessions` defines it under *Run status*; the UI's Traces list filters on it), `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, `summary.weft.replay` (`true` for every span of an AgentShield replay trace: one that holds an `evaluate` span of instrumentation scope `agentshield` for a replayed tool call and otherwise only, as its root, the engine's HTTP span (scope `github.com/riandyrn/otelchi`); a trace with any other span, agent activity or a live verdict, is never a replay trace, so a span claiming to be a replay cannot hide it; the UI's Traces list hides replay traces unless *Replay evaluations* is ticked), and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
 Sort fields use the same paths.
 
 **`/calls/stats` response**
@@ -1936,7 +1943,7 @@ existed are indexed once, the first time the server starts.
 |---|---|
 | `agent` | an agent took part |
 | `team_id` | the session's team |
-| `status` | `error`, `failed_step`, `ok`, `running` or `unknown` (verdicts only, below): the session's run status (*Run status* below), the same value the Traces list filters on (`summary.weft.run_status`), so a status keeps the same runs on both. `error`: a trace of the session failed; `failed_step`: it ended without failing, but a step in it failed (the session went on after a failed step); `ok`: it ended and nothing in it failed; `running`: a top-level span has not ended |
+| `status` | `error`, `failed_step`, `ok`, `running` or `unknown` (verdicts only, below): the session's run status (*Run status* below), the same value the Traces list filters on (`summary.weft.run_status`), so a status keeps the same runs on both. `error`: a trace of the session failed; `failed_step`: it ended without failing, but a step in it failed (the session went on after a failed step); `ok`: it ended and nothing in it failed; `running`: a top-level span has not ended, or has not arrived yet (*Run status*) |
 | `has_detection` | `any`, an action (`block`, `require_approval`, …) with at least one detection, or `flagged` (blocked at least once, or 3 or more `require_approval`) |
 | `min_score`, `max_score` | `scorer:value` against the mean of the session's session-scope scores by that scorer (inclusive) |
 | `score_below` | `value` or `scorer:value`: a session-scope score mean (of any scorer, or the named one) strictly below `value` |
@@ -1957,10 +1964,21 @@ does not mean the session failed). Only `status=unknown` lists such
 sessions; `ok`, `error`, `failed_step` and `running` never do.
 
 **Run status.** A trace's run status is read off its top-level span (the
-span without a parent; while that has not arrived, the spans whose parent
-has not), whether or not it is an agent span: `error` when it ended with an
-error, `running` while it has not ended, `failed_step` when it ended without
-an error but a span under it failed, else `ok`. A trace linked to a caller in
+span without a parent), whether or not it is an agent span: `error` when it
+ended with an error, `running` while it has not ended, `failed_step` when it
+ended without an error but a span under it failed, else `ok`. OTLP exports a
+span when it ends, so a run in progress has its finished steps stored before
+its top-level span: a trace whose spans have arrived but whose root has not
+is `running` (its root is still open), whatever its steps' outcome, while
+any of its spans ended within the last 10 minutes (`OrphanRunTimeout`, the
+time scope monitors wait for a running session); after that its root is
+taken to be lost and its run status is its spans' outcome: `failed_step` if
+one of them failed (the root's own outcome is unknown, so a failure under it
+counts as a step the run went on after), else `ok`. Every top-level span of
+such a trace (each span whose parent has not arrived) has that status, and
+the Traces list's `trace_roots_only` lists the trace once, under a
+provisional root: of those spans, the one that started first. When the root
+arrives the trace is read off it. A trace linked to a caller in
 another trace (an OTel span link or `weft.parent_call.id` on its top-level
 span, or a hand-off to its agent recorded in another trace of the session,
 with no target span there) is a step of the caller's run: when its top-level
@@ -2417,9 +2435,14 @@ that predate that attribute, when its session (`gen_ai.conversation.id` /
 only on a replay request, which also gets the attribute, so the fallback
 cannot hide their live traffic; an engine older than this check could still
 accept a live call in that namespace. An `event.id` starting `weft-replay-`
-alone does not make a span a replay. Their whole trace (the engine's HTTP
-span included) is marked `summary.weft.replay = true`, which the Traces list
-hides by default, as Sessions does.
+alone does not make a span a replay. A replay span of instrumentation scope
+`agentshield` marks its trace `summary.weft.replay = true` (the engine's HTTP
+span included), which the Traces list hides by default, as Sessions does,
+when the trace holds nothing else: any other span (agent activity, a live
+evaluate span, anything but the engine's HTTP root) keeps the trace visible,
+so a span claiming to be a replay, which anyone who can write OTLP to the
+project can send with any trace id, cannot hide a trace; it stays a visible
+span of that trace.
 
 ### `POST /api/v1/shield/replay`
 
@@ -2438,8 +2461,17 @@ Returns `{job_id, status: "queued"}`; 400 when replay is not configured.
 
 Each recorded `execute_tool` span (tool name, `gen_ai.tool.call.arguments` or
 the call's inputs) is turned into the request a shipped plugin would send
-(`internal/replay` field mapping) and evaluated in shadow mode, with a
-behavioural session per recorded session. Behavioural fields depend only on
+(`internal/replay` field mapping) and evaluated without acting on it (the
+stored detections have `mode` `shadow`), with a behavioural session per
+recorded session. The verdict is what enforce mode would decide: the engine
+evaluates a replay request as enforce mode would act whatever its configured
+`evaluation_mode`, and in-process replay does the same, so the actions
+recorded in a replayed session's window (`session.approval_count`, which
+approval-fatigue rules read) are the same everywhere. Replay sessions use a
+fixed window on every engine and in process, whatever the engine's `session`
+configuration: the last 50 tool calls (`session.ReplayMaxEvents`), kept for 6
+hours idle (`session.ReplayTTL`, longer than any job). Replay requests bypass
+the engine's verdict cache. Behavioural fields depend only on
 the recording: a session's `session.*` fields come from its own replayed
 calls, and its cross-session fields (`session.cross_session_*`) from the
 other sessions of the same replay job, never from live traffic or other jobs
@@ -2451,7 +2483,17 @@ the same verdicts and diff. Calls with a matched rule are
 stored as `source=replay` detections under the label (a re-run with the same
 label replaces them). Replay never creates sessions. With `--shield-url`, each
 request to the engine carries `"replay": true`, an `event_id` starting
-`weft-replay-<job>-` and a `session_id` `weft-replay:<job>:<session>`: the
+`weft-replay-<job>-` and a `session_id` `weft-replay:<job>:<session>`, where
+`<session>` is the recorded session id, or `sha256:` and the hex SHA-256 of
+it when the recorded id would not make an id the engine accepts (over 256
+bytes once namespaced, control characters, padding) or itself starts
+`sha256:` (the job result's `replay_sessions` maps those keys back; results
+always name the recorded id). A recorded tool call id or agent name the
+engine would reject is left out of the request (rules do not read them).
+In-process replay builds the same ids and applies the engine's input
+validation first, so both evaluate, and reject, the same calls. Detections
+are stored per session: a session whose detections cannot be stored adds
+them to `errors` (`first_error` says why) and the job still completes. The
 engine still evaluates it, tags its evaluate span `agentshield.replay`, does
 not store it in its own alert store (`/api/v1/alerts`, `agentshield alerts`),
 does not push the verdict to Weft, keeps the session out of live sessions'
@@ -2487,8 +2529,10 @@ as `allow`); an `audit` or `shadow` verdict is compared by the action enforce
 mode would have taken for its rules. `newly_blocked`: `after` blocks and
 `before` did not; `no_longer_blocked`: the reverse; `changed`: a different
 action or rule set otherwise. Each list holds at most 500 items
-(`truncated`). `GET /api/v1/shield/replay` lists jobs (`{items, total_count}`,
-results omitted).
+(`truncated`). `replay_sessions` (present when a session was replayed under
+a hash, see above) maps each `sha256:<hex>` replay session key to the
+recorded session id. `GET /api/v1/shield/replay` lists jobs
+(`{items, total_count}`, results omitted).
 
 ### `GET /api/v1/shield/insights`
 

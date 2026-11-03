@@ -42,19 +42,27 @@ func InReplayNamespace(eventID, sessionID string) bool {
 }
 
 func init() {
-	// replay_traces lists the traces that hold a replayed evaluate span (the
-	// engine's HTTP span and its evaluate child). The Traces list hides them
-	// by default through the summary.weft.replay call field.
+	// replay_spans lists the engine evaluate spans of replayed tool calls
+	// (indexReplaySpan). A trace made of them (and the engine's HTTP span)
+	// is a replay trace, which the Traces list hides by default through the
+	// summary.weft.replay call field (replayTraceSQL).
 	registerSchema(`
-CREATE TABLE IF NOT EXISTS replay_traces (
+CREATE TABLE IF NOT EXISTS replay_spans (
 	project_id TEXT NOT NULL,
+	span_id TEXT NOT NULL,
 	trace_id TEXT NOT NULL,
-	PRIMARY KEY (project_id, trace_id)
+	PRIMARY KEY (project_id, span_id)
 );
+CREATE INDEX IF NOT EXISTS replay_spans_trace ON replay_spans(project_id, trace_id);
 `)
-	registerCallHook(indexReplayTrace)
+	registerCallHook(indexReplaySpan)
 	registerMigration(func(db *sql.DB) error {
-		return runOnce(db, "replay-traces-1", func(tx *sql.Tx) error {
+		return runOnce(db, "replay-spans-1", func(tx *sql.Tx) error {
+			// replay_traces (before replay_spans) marked a whole trace on
+			// any span claiming to be a replay; it is rebuilt as replay_spans.
+			if _, err := tx.Exec(`DROP TABLE IF EXISTS replay_traces`); err != nil {
+				return err
+			}
 			rows, err := tx.Query(`SELECT project_id, id FROM calls WHERE instr(attributes, 'agentshield') > 0
 				AND (instr(attributes, 'weft-replay') > 0 OR instr(attributes, 'agentshield.replay') > 0)`)
 			if err != nil {
@@ -74,7 +82,7 @@ CREATE TABLE IF NOT EXISTS replay_traces (
 				return err
 			}
 			for _, k := range keys {
-				if err := indexReplayTrace(context.Background(), tx, k[0], k[1]); err != nil {
+				if err := indexReplaySpan(context.Background(), tx, k[0], k[1]); err != nil {
 					return err
 				}
 			}
@@ -100,25 +108,50 @@ CREATE TABLE IF NOT EXISTS replay_traces (
 	})
 }
 
-// replayTraceSQL is 1 when call c belongs to a trace with a replayed
-// evaluate span (callsquery.go, field summary.weft.replay).
-const replayTraceSQL = `(CASE WHEN EXISTS (SELECT 1 FROM replay_traces rt WHERE rt.project_id = c.project_id AND rt.trace_id = c.trace_id) THEN 1 ELSE 0 END)`
+// EngineHTTPScope is the instrumentation scope of the engine's HTTP server
+// spans (otelchi), the root of the trace of each evaluation it serves.
+const EngineHTTPScope = "github.com/riandyrn/otelchi"
 
-// indexReplayTrace (a call hook) records the trace of a replayed evaluate span.
-func indexReplayTrace(ctx context.Context, tx *sql.Tx, projectID, id string) error {
+// replayTraceSQL is 1 when call c belongs to a replay trace: one that holds
+// a replayed evaluate span (replay_spans) and nothing else but, as its root,
+// the engine's HTTP span. Anyone who can write OTLP to a project can send a
+// span claiming to be a replay with any trace id, so a trace with any other
+// span (agent activity, a live evaluate span, anything not the engine's
+// HTTP root) is never a replay trace: such a span cannot hide it from the
+// Traces list. The claiming span itself stays a visible span of that trace.
+// A replay span whose HTTP root has not arrived yet already marks its trace
+// (callsquery.go, field summary.weft.replay).
+const replayTraceSQL = `(CASE WHEN EXISTS (SELECT 1 FROM replay_spans rs WHERE rs.project_id = c.project_id AND rs.trace_id = c.trace_id)
+	AND NOT EXISTS (SELECT 1 FROM calls ro WHERE ro.project_id = c.project_id AND ro.trace_id = c.trace_id AND ro.deleted_at IS NULL
+		AND NOT EXISTS (SELECT 1 FROM replay_spans rs2 WHERE rs2.project_id = ro.project_id AND rs2.span_id = ro.id)
+		AND NOT (ro.parent_id IS NULL AND COALESCE(json_extract(ro.attributes, '$.otel.scope.name'), '') = '` + EngineHTTPScope + `'))
+	THEN 1 ELSE 0 END)`
+
+// indexReplaySpan (a call hook) records a replayed evaluate span: a span of
+// the engine's instrumentation scope (agentshield) that isReplaySpan
+// accepts. A span without that scope claiming to be a replay (any OTLP
+// writer can add agentshield.replay) is not recorded.
+func indexReplaySpan(ctx context.Context, tx *sql.Tx, projectID, id string) error {
 	var traceID, attrs string
 	err := tx.QueryRowContext(ctx, `SELECT trace_id, attributes FROM calls WHERE project_id = ? AND id = ?`, projectID, id).Scan(&traceID, &attrs)
-	if err == sql.ErrNoRows || (err == nil && (traceID == "" || !strings.Contains(attrs, "agentshield"))) {
+	if err == sql.ErrNoRows {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	am := decodeMap(attrs)
-	if !isVerdictSpan(am) || !isReplaySpan(newSpanAttrs(am)) {
-		return nil
+	replay := false
+	if traceID != "" && strings.Contains(attrs, "agentshield") {
+		am := decodeMap(attrs)
+		sc, _ := asMap(am["otel"])["scope"].(map[string]any)
+		replay = sc != nil && sc["name"] == "agentshield" && isReplaySpan(newSpanAttrs(am))
 	}
-	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO replay_traces(project_id, trace_id) VALUES(?, ?)`, projectID, traceID)
+	if !replay {
+		_, err = tx.ExecContext(ctx, `DELETE FROM replay_spans WHERE project_id = ? AND span_id = ?`, projectID, id)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO replay_spans(project_id, span_id, trace_id) VALUES(?, ?, ?)
+		ON CONFLICT(project_id, span_id) DO UPDATE SET trace_id = excluded.trace_id`, projectID, id, traceID)
 	return err
 }
 

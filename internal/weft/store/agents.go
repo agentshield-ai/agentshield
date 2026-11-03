@@ -271,7 +271,9 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 
 	// Conversation and turn.
 	if threadID != nil {
-		d.ConversationID = *threadID
+		// Trimmed as AgentShield detections trim it (detAttrStr), so a padded
+		// session id (from an old engine, or forged) names one session.
+		d.ConversationID = strings.TrimSpace(*threadID)
 	}
 	if d.ConversationID == "" {
 		d.ConversationID = a.str("gen_ai.conversation.id", "gcp.vertex.agent.session_id", "session.id", "weft.thread_id")

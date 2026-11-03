@@ -57,8 +57,22 @@ else Went on after a failed step when any did, else Succeeded.
 | **Failed** | a trace of the session failed: its top-level span ended with an error | the top-level span ended with an error |
 | **Went on after a failed step** | it ended without failing, but a step in one of its traces failed | the top-level span ended without an error, but a span under it failed; or it is a sub-agent run linked to its caller that failed |
 | **Succeeded** | it ended and nothing in it failed | the same |
-| **Running** | a top-level span has not ended | the top-level span has not ended |
+| **Running** | a top-level span has not ended, or has not arrived yet | the top-level span has not ended, or has not arrived yet (below) |
 | **No agent data** | known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown | the AgentShield evaluate traces of such sessions |
+
+OTLP sends a span when it ends, so while a run is in progress its finished
+steps arrive before its top-level span. Such a trace is **Running** on both
+pages, even when one of its steps failed: its top-level span is still open.
+Traces lists it once (with Roots only), under its earliest step whose parent
+has not arrived, marked "top-level span not received yet". When the
+top-level span arrives the trace takes its status as usual. If it never
+arrives (the process exited first), the trace stops being Running 10
+minutes after its latest span and takes its steps' outcome: **Went on after
+a failed step** when one of them failed, else **Succeeded**.
+
+Each row on Traces shows its run status (the status the chip keeps) as its
+dot; the tooltip adds the span's own status, so a failed sub-agent run
+listed under Went on after a failed step reads "this span failed".
 
 A failed sub-agent whose caller carried on is a failed step, not a failed
 session: under the caller's top-level span, or in a trace of its own that is

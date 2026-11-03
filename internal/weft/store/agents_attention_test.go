@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -458,5 +459,148 @@ func TestSessionsAttentionCountsTheLinkedList(t *testing.T) {
 	}
 	if a.Items[3].ID != "low_score" || a.Items[3].Count != 2 || a.LowestScore == nil || *a.LowestScore != 0.2 {
 		t.Errorf("low-score card under score_below=0.3: %+v lowest %v", a.Items[3], a.LowestScore)
+	}
+}
+
+// OTLP exports a span when it ends, so a run in progress has its finished
+// steps stored before its top-level span. Such a trace is running (its root
+// is open) on Sessions and on Traces alike, where "roots only" lists it once
+// under a provisional root; a recovered tool error under it is not a
+// failure. When the root arrives the trace is read off it. A trace whose
+// root never arrives is running only for OrphanRunTimeout after its latest
+// span; then it has its spans' outcome.
+func TestRunStatusWhileTheRootHasNotArrived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := func(base time.Time, d time.Duration) string { return base.Add(d).Format(time.RFC3339Nano) }
+	span := func(base time.Time, id, trace, parent, session string, start, end time.Duration, failed bool, attrs map[string]any) CompleteCall {
+		a := map[string]any{"gen_ai.conversation.id": session, "gen_ai.agent.name": "coder"}
+		for k, v := range attrs {
+			a[k] = v
+		}
+		st := CallStart{ProjectID: proj, ID: id, TraceID: trace, OpName: "span", StartedAt: at(base, start),
+			Attributes: map[string]any{"otel": map[string]any{"attributes": a}}, Inputs: map[string]any{}}
+		if parent != "" {
+			st.ParentID = ptr(parent)
+		}
+		st.ThreadID = ptr(session)
+		ce := &CallEnd{EndedAt: at(base, end), Summary: map[string]any{}}
+		if failed {
+			e := "boom"
+			ce.Exception = &e
+		}
+		return CompleteCall{Start: st, End: ce}
+	}
+	tool := map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "Bash"}
+	chat := map[string]any{"gen_ai.operation.name": "chat"}
+	agent := map[string]any{"gen_ai.operation.name": "invoke_agent"}
+	children := func(base time.Time, trace, session string, failed bool) []CompleteCall {
+		return []CompleteCall{
+			span(base, trace+"-chat", trace, trace+"-root", session, time.Second, 2*time.Second, false, chat),
+			span(base, trace+"-bash", trace, trace+"-root", session, 2*time.Second, 3*time.Second, failed, tool),
+			span(base, trace+"-read", trace, trace+"-root", session, 3*time.Second, 4*time.Second, false, tool),
+		}
+	}
+	now := time.Now().Add(-time.Minute)
+	old := time.Now().Add(-OrphanRunTimeout - time.Hour)
+	var calls []CompleteCall
+	calls = append(calls, children(now, "t-live", "s-live", true)...)         // in flight, a recovered tool error
+	calls = append(calls, children(old, "t-lost-err", "s-lost-err", true)...) // the root never came
+	calls = append(calls, children(old, "t-lost-ok", "s-lost-ok", false)...)
+	if _, err := s.UpsertComplete(ctx, calls); err != nil {
+		t.Fatal(err)
+	}
+	sessionStatus := func(id string) string {
+		t.Helper()
+		ss, err := s.GetAgentSession(ctx, proj, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ss.FailedStep {
+			return ss.Status + "+failed_step"
+		}
+		return ss.Status
+	}
+	rootRows := func() map[string]string {
+		t.Helper()
+		out := map[string]string{}
+		for _, st := range []string{"ok", "error", SessionStatusFailedStep, "running", SessionStatusUnknown} {
+			err := s.QueryCalls(ctx, CallsQuery{ProjectID: proj, Filter: &CallsFilter{TraceRootsOnly: true},
+				Query: map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "summary.weft.run_status"}, map[string]any{"$literal": st}}}}},
+				func(c *Call) error {
+					if prev, dup := out[c.TraceID]; dup {
+						t.Errorf("trace %s listed twice: %s and %s/%s", c.TraceID, prev, st, c.ID)
+					}
+					out[c.TraceID] = st + "/" + c.ID
+					return nil
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out
+	}
+
+	if got := sessionStatus("s-live"); got != "running" {
+		t.Errorf("in-flight session: %s, want running", got)
+	}
+	if got := sessionStatus("s-lost-err"); got != "ok+failed_step" {
+		t.Errorf("session whose root was lost, with a failed step: %s, want ok+failed_step", got)
+	}
+	if got := sessionStatus("s-lost-ok"); got != "ok" {
+		t.Errorf("session whose root was lost: %s, want ok", got)
+	}
+	want := map[string]string{"t-live": "running/t-live-chat", "t-lost-err": "failed_step/t-lost-err-chat", "t-lost-ok": "ok/t-lost-ok-chat"}
+	if got := rootRows(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Traces roots before the root arrives: %v, want %v", got, want)
+	}
+	// The Sessions status filter agrees.
+	if got, err := s.MatchingSessionIDs(ctx, SessionsQuery{ProjectID: proj, Status: "running"}); err != nil || fmt.Sprint(got) != "[s-live]" {
+		t.Errorf("Sessions status=running: %v %v", got, err)
+	}
+	// include_run_status returns each listed row's run status, as the
+	// filter reads it: every top-level span of the trace has the trace's.
+	runStatuses := func(trace string) string {
+		t.Helper()
+		var out []string
+		err := s.QueryCalls(ctx, CallsQuery{ProjectID: proj, Filter: &CallsFilter{TraceIDs: []string{trace}}, IncludeRunStatus: true,
+			SortBy: []SortBy{{Field: "id", Direction: "asc"}}}, func(c *Call) error {
+			out = append(out, c.ID+"="+fmt.Sprint(c.Summary["weft"].(map[string]any)["run_status"]))
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(out, " ")
+	}
+	if got := runStatuses("t-live"); got != "t-live-bash=running t-live-chat=running t-live-read=running" {
+		t.Errorf("run statuses before the root arrives: %s", got)
+	}
+
+	// The root arrives: the trace is read off it.
+	if _, err := s.UpsertComplete(ctx, []CompleteCall{span(now, "t-live-root", "t-live", "", "s-live", 0, 10*time.Second, false, agent)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionStatus("s-live"); got != "ok+failed_step" {
+		t.Errorf("session after its root arrived: %s, want ok+failed_step", got)
+	}
+	if got := runStatuses("t-live"); got != "t-live-bash=error t-live-chat=ok t-live-read=ok t-live-root=failed_step" {
+		t.Errorf("run statuses after the root arrived: %s", got)
+	}
+	want["t-live"] = "failed_step/t-live-root"
+	if got := rootRows(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Traces roots after the root arrived: %v, want %v", got, want)
+	}
+	// Op counts for roots count the same rows.
+	ops, err := s.OpCounts(ctx, proj, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	for _, o := range ops {
+		n += o.Count
+	}
+	if n != 3 {
+		t.Errorf("root op counts sum to %d, want 3: %+v", n, ops)
 	}
 }

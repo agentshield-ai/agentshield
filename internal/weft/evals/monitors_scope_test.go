@@ -169,3 +169,12 @@ func TestScopeMonitorCompletion(t *testing.T) {
 		t.Fatalf("scores = %d", n)
 	}
 }
+
+// A trace whose root span never arrives stops reading as running
+// (store.OrphanRunTimeout) when monitors stop waiting for a running session
+// at their default idle time.
+func TestOrphanRunTimeoutMatchesMonitors(t *testing.T) {
+	if got := defaultSessionIdle * abandonedFactor; got != store.OrphanRunTimeout {
+		t.Fatalf("monitors give up on running sessions after %s, store.OrphanRunTimeout is %s", got, store.OrphanRunTimeout)
+	}
+}

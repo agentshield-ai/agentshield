@@ -4,7 +4,8 @@
 // A replay rebuilds an AgentShield EvaluationRequest from every execute_tool
 // span of the chosen sessions, mapping tool names and arguments exactly as
 // internal/replay does for public trace datasets (which in turn mirrors the
-// shipped plugins), evaluates it in shadow mode, stores the results as
+// shipped plugins), evaluates it as enforce mode would decide without acting
+// on it (detections with mode shadow), stores the results as
 // detections with source=replay and a ruleset label, and diffs them against
 // the engine's original verdicts for the same tool spans.
 //
@@ -31,6 +32,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
 	"github.com/agentshield-ai/agentshield/internal/engine"
@@ -306,6 +308,11 @@ type Result struct {
 	Changed         []DiffItem `json:"changed"`
 	Truncated       bool       `json:"truncated"`
 	FirstError      string     `json:"first_error,omitempty"`
+	// ReplaySessions maps the hashed replay session keys this job used
+	// (replaySessionKey: "weft-replay:<job>:sha256:<hex>" on the engine) to
+	// the recorded session ids; sessions replayed under their own id are
+	// not listed.
+	ReplaySessions map[string]string `json:"replay_sessions,omitempty"`
 }
 
 // maxDiffItems bounds each diff list in a stored result.
@@ -377,8 +384,9 @@ type evaluator interface {
 }
 
 // markReplay namespaces a replay request, the same way in-process and
-// remotely. replay is set and the session id is "weft-replay:<job>:<session>"
-// (the event id already starts with "weft-replay-"), so the engine tags its
+// remotely. replay is set and the session id is "weft-replay:<job>:<key>"
+// (the event id already starts with "weft-replay-"), where key is
+// replaySessionKey of the recorded session id, so the engine tags its
 // evaluate span agentshield.replay, neither stores nor pushes the verdict,
 // keeps the session out of live sessions' cross-session fields, and computes
 // the session's own cross-session fields over this job's sessions only
@@ -386,9 +394,48 @@ type evaluator interface {
 // and the ruleset, not on live traffic or on other jobs. The engine reserves
 // both prefixes for replay, and Weft's OTLP ingest also recognises engines
 // that predate the flag by the session id.
-func markReplay(req *models.EvaluationRequest, jobID, sessionKey string) {
+//
+// Correlation ids the engine would reject (a recorded tool call id or agent
+// name with control characters, padding or over its length limit) are left
+// out: rules do not read them, and the replay result keeps the recorded
+// values. The context is the engine's default, "prod".
+func markReplay(req *models.EvaluationRequest, jobID, sessionID string) {
 	req.Replay = true
-	req.SessionID = store.ReplaySessionPrefix + jobID + ":" + sessionKey
+	req.SessionID = store.ReplaySessionPrefix + jobID + ":" + replaySessionKey(jobID, sessionID)
+	if !cleanID(req.ToolCallID) {
+		req.ToolCallID = ""
+	}
+	if req.AgentName != "" && models.ValidateString(req.AgentName, 256, "agent_name") != nil {
+		req.AgentName = ""
+	}
+	req.Context = "prod"
+}
+
+// replayKeyHashPrefix starts a replay session key that is a hash of the
+// recorded session id (replaySessionKey).
+const replayKeyHashPrefix = "sha256:"
+
+// replaySessionKey names a recorded session inside its replay job's session
+// namespace. It is the recorded id itself when the full replay session id
+// is one the engine accepts (at most models.MaxIDLength bytes, valid UTF-8,
+// no control characters or padding); otherwise, and for a recorded id that
+// itself starts with "sha256:", it is "sha256:" + the hex SHA-256 of the
+// recorded id, so every replay session id is valid and distinct sessions
+// keep distinct ids. Results are reported under the recorded id (the job's
+// replay_sessions lists the hashed keys).
+func replaySessionKey(jobID, sessionID string) string {
+	if len(store.ReplaySessionPrefix)+len(jobID)+1+len(sessionID) <= models.MaxIDLength && cleanID(sessionID) &&
+		!strings.HasPrefix(sessionID, replayKeyHashPrefix) {
+		return sessionID
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	return replayKeyHashPrefix + hex.EncodeToString(sum[:])
+}
+
+// cleanID reports whether id is an identifier the engine's HTTP API accepts
+// as is (empty is accepted: the field is left out).
+func cleanID(id string) bool {
+	return id == "" || (len(id) <= models.MaxIDLength && utf8.ValidString(id) && models.CheckID("id", id) == nil)
 }
 
 // localEvaluator is one job's in-process engine. Its session registry holds
@@ -398,13 +445,28 @@ type localEvaluator struct {
 	ev *evaluate.Evaluator
 }
 
+// newLocalEvaluator builds one job's engine. The engine evaluates a replay
+// as enforce mode would act whatever its configured mode, and keeps replay
+// sessions in a fixed window
+// (session.ReplayMaxEvents events, session.ReplayTTL); the local evaluator
+// does the same, so session fields that count verdicts or events
+// (session.approval_count, session.tool_count) match a remote replay.
 func newLocalEvaluator(eng *engine.Engine) *localEvaluator {
-	ev := evaluate.NewEvaluator(eng, config.ModeShadow, "", nil, nil)
-	ev.SetSessionRegistry(session.NewRegistry(200, 24*time.Hour))
+	ev := evaluate.NewEvaluator(eng, config.ModeEnforce, "", nil, nil)
+	ev.SetSessionRegistry(session.NewRegistry(session.ReplayMaxEvents, session.ReplayTTL))
 	return &localEvaluator{ev: ev}
 }
 
+// evaluate applies the engine HTTP API's input validation first, so the
+// local evaluator evaluates (and rejects) exactly the requests a remote
+// engine does.
 func (l *localEvaluator) evaluate(ctx context.Context, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
+	if err := models.ValidateEvaluationRequest(req); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+	if err := models.CheckReplayNamespace(req); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
 	resp, err := l.ev.EvaluateWithContext(ctx, req)
 	if err != nil {
 		return nil, err
@@ -522,6 +584,12 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 	}
 	for id := range sessSet {
 		res.SessionIDs = append(res.SessionIDs, id)
+		if key := replaySessionKey(jobID, id); key != id {
+			if res.ReplaySessions == nil {
+				res.ReplaySessions = map[string]string{}
+			}
+			res.ReplaySessions[key] = id
+		}
 	}
 	sort.Strings(res.SessionIDs)
 	originals, err := s.st.EngineDetectionsBySpan(ctx, projectID, res.SessionIDs)
@@ -617,12 +685,30 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 	if err := s.st.DeleteReplayDetections(ctx, projectID, res.Label, res.SessionIDs); err != nil {
 		return nil, err
 	}
-	for i := 0; i < len(inputs); i += 500 {
-		if _, err := s.st.UpsertDetections(ctx, projectID, inputs[i:min(i+500, len(inputs))]); err != nil {
-			return nil, err
+	// Store each session's detections on their own: a session whose
+	// detections cannot be stored counts as errors, the rest of the job
+	// still completes.
+	bySession := map[string][]store.DetectionInput{}
+	for _, in := range inputs {
+		bySession[in.SessionID] = append(bySession[in.SessionID], in)
+	}
+	for _, id := range res.SessionIDs {
+		batch := bySession[id]
+		for i := 0; i < len(batch); i += 500 {
+			part := batch[i:min(i+500, len(batch))]
+			if _, err := s.st.UpsertDetections(ctx, projectID, part); err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				res.Summary.Errors += len(part)
+				if res.FirstError == "" {
+					res.FirstError = "storing detections: " + err.Error()
+				}
+				continue
+			}
+			res.Summary.Detections += len(part)
 		}
 	}
-	res.Summary.Detections = len(inputs)
 	if res.SessionIDs == nil {
 		res.SessionIDs = []string{}
 	}
