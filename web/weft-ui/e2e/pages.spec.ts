@@ -1,13 +1,18 @@
 // Every main page in light and dark, at 1440 and 390 px: a full-page
 // screenshot, no console errors, no horizontal page overflow, and no serious
-// or critical axe-core violations (WCAG 2.1 A/AA).
+// or critical axe-core violations (WCAG 2.1 A/AA). The long-* pages show a
+// project whose names are long and unbroken (e2e/seed.ts longNames). Then
+// the main pages at 390 px under text-spacing stress (wider letter and word
+// spacing, a wide monospace fallback font): still no horizontal overflow.
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { outDir, project, watchErrors } from './helpers'
+import { LONG_AGENT, LONG_SESSION } from './seed'
 
 const blank = () => `${process.env.WEFT_E2E_EMPTY}-blank`
+const long = () => process.env.WEFT_E2E_LONG!
 
 const PAGES: [string, () => string][] = [
   ['projects', () => '/'],
@@ -42,6 +47,23 @@ const PAGES: [string, () => string][] = [
   ['empty-security', () => `/${blank()}/security`],
   ['empty-traces', () => `/${blank()}/traces`],
   ['empty-review-queues', () => `/${blank()}/review-queues`],
+  ['long-sessions', () => `/${long()}/sessions`],
+  ['long-session', () => `/${long()}/sessions/${LONG_SESSION}`],
+  ['long-session-security', () => `/${long()}/sessions/${LONG_SESSION}?tab=security`],
+  ['long-agents', () => `/${long()}/agents`],
+  ['long-agent', () => `/${long()}/agents/${encodeURIComponent(LONG_AGENT)}`],
+  ['long-teams', () => `/${long()}/teams`],
+  ['long-security', () => `/${long()}/security?time=30d`],
+  ['long-traces', () => `/${long()}/traces`],
+]
+
+// The pages a text-spacing stress check covers (WCAG 1.4.12 asks for
+// letter spacing 0.12em and word spacing 0.16em; these go further).
+const MAIN_PAGES = ['sessions', 'session-timeline', 'agents', 'agent', 'teams', 'team', 'security', 'traces', 'evaluations', 'long-sessions', 'long-agent', 'long-security']
+const SPACING_STRESS: [string, string][] = [
+  ['letter-3px', '*{letter-spacing:3px!important}'],
+  ['letter-0.2em-word-0.3em', '*{letter-spacing:0.2em!important;word-spacing:0.3em!important}'],
+  ['wide-mono', '*{font-family:"FreeMono","DejaVu Sans Mono",monospace!important;letter-spacing:2px!important}'],
 ]
 
 const CONFIGS = [
@@ -107,3 +129,30 @@ for (const cfg of CONFIGS) {
     }
   })
 }
+
+test.describe('390px text-spacing stress', () => {
+  test.use({ viewport: { width: 390, height: 900 }, colorScheme: 'light' })
+  for (const name of MAIN_PAGES) {
+    const path = PAGES.find(([n]) => n === name)![1]
+    test(name, async ({ page }) => {
+      await page.goto(path())
+      await page.waitForLoadState('networkidle')
+      await expect(page.locator('h1').first()).toBeVisible()
+      await expect(page.locator('.spinner')).toHaveCount(0)
+      for (const [label, css] of SPACING_STRESS) {
+        const tag = await page.addStyleTag({ content: css })
+        await page.waitForTimeout(300)
+        const overflow = await page.evaluate(() => {
+          const main = document.querySelector('.main') as HTMLElement | null
+          return {
+            doc: document.documentElement.scrollWidth - window.innerWidth,
+            main: main ? main.scrollWidth - main.clientWidth : 0,
+          }
+        })
+        expect(overflow.doc, `${label}: horizontal page overflow`).toBeLessThanOrEqual(1)
+        expect(overflow.main, `${label}: horizontal overflow of the main area`).toBeLessThanOrEqual(1)
+        await tag.evaluate((el) => el.remove())
+      }
+    })
+  }
+})

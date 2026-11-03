@@ -11,4 +11,5 @@ export default async function globalSetup(config: FullConfig) {
   process.env.WEFT_E2E_EMPTY = p.empty
   process.env.WEFT_E2E_STATUS = p.status
   process.env.WEFT_E2E_MANY = p.many
+  process.env.WEFT_E2E_LONG = p.long
 }

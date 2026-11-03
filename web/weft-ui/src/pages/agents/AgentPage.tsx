@@ -13,6 +13,7 @@ import { AgentEvalsView } from '../../components/agents/AgentEvals'
 import { AgentCharts } from '../../components/agents/AgentCharts'
 import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
 import { compact, errorRate, fmtPct, RANGES, windowStart } from '../../components/agents/agentUtils'
+import { TableScroll } from '../../components/ui/bits'
 import '../../components/agents/agents.css'
 
 const CONV_LIMIT = 25
@@ -82,30 +83,32 @@ function ModelUsage({ projectId, agent, since }: { projectId: string; agent: str
   if (q.isLoading) return <Spinner />
   if (!groups.length) return <span className="small muted">No LLM calls in this period.</span>
   return (
-    <table className="table">
-      <thead>
-        <tr>
-          <th>Model</th>
-          <th className="num">Calls</th>
-          <th className="num">Tokens in / out</th>
-          <th className="num">p50</th>
-          <th className="num">Cost</th>
-        </tr>
-      </thead>
-      <tbody>
-        {groups.map((g) => (
-          <tr key={String(g.group_keys.request_model)}>
-            <td className="mono">{String(g.group_keys.request_model ?? '(unknown)')}</td>
-            <td className="num">{fmtNumber(g.span_count)}</td>
-            <td className="num">
-              {compact(g.total_input_tokens)} / {compact(g.total_output_tokens)}
-            </td>
-            <td className="num">{fmtDuration(g.latency_ms_p50)}</td>
-            <td className="num">{fmtCost(g.total_cost_usd)}</td>
+    <TableScroll label="Models">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th className="num">Calls</th>
+            <th className="num">Tokens in / out</th>
+            <th className="num">p50</th>
+            <th className="num">Cost</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <tr key={String(g.group_keys.request_model)}>
+              <td className="mono">{String(g.group_keys.request_model ?? '(unknown)')}</td>
+              <td className="num">{fmtNumber(g.span_count)}</td>
+              <td className="num">
+                {compact(g.total_input_tokens)} / {compact(g.total_output_tokens)}
+              </td>
+              <td className="num">{fmtDuration(g.latency_ms_p50)}</td>
+              <td className="num">{fmtCost(g.total_cost_usd)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableScroll>
   )
 }
 
@@ -118,41 +121,43 @@ function Versions({ projectId, agent }: { projectId: string; agent: string }) {
   if (q.error) return <ErrorBox error={q.error} />
   const vs = q.data?.versions ?? []
   return (
-    <table className="table">
-      <thead>
-        <tr>
-          <th>Version</th>
-          <th className="num">Invocations</th>
-          <th className="num">Error rate</th>
-          <th className="num">p50 / p95</th>
-          <th className="num">Tokens</th>
-          <th className="num">Cost</th>
-          <th>First seen</th>
-          <th>Last seen</th>
-        </tr>
-      </thead>
-      <tbody>
-        {vs.map((v) => {
-          const rate = errorRate(v.invocation_error_count, v.invocation_count)
-          return (
-            <tr key={v.agent_version ?? ''}>
-              <td className="mono">{v.agent_version || <span className="faint">unversioned</span>}</td>
-              <td className="num">{fmtNumber(v.invocation_count)}</td>
-              <td className="num" style={rate ? { color: 'var(--error)' } : undefined}>
-                {fmtPct(rate)}
-              </td>
-              <td className="num">
-                {fmtDuration(v.latency_ms_p50)} / {fmtDuration(v.latency_ms_p95)}
-              </td>
-              <td className="num">{compact(v.total_input_tokens + v.total_output_tokens)}</td>
-              <td className="num">{fmtCost(v.total_cost_usd)}</td>
-              <td title={fmtDate(v.first_seen)}>{fmtRelative(v.first_seen)}</td>
-              <td title={fmtDate(v.last_seen)}>{fmtRelative(v.last_seen)}</td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
+    <TableScroll label="Versions">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th className="num">Invocations</th>
+            <th className="num">Error rate</th>
+            <th className="num">p50 / p95</th>
+            <th className="num">Tokens</th>
+            <th className="num">Cost</th>
+            <th>First seen</th>
+            <th>Last seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {vs.map((v) => {
+            const rate = errorRate(v.invocation_error_count, v.invocation_count)
+            return (
+              <tr key={v.agent_version ?? ''}>
+                <td className="mono">{v.agent_version || <span className="faint">unversioned</span>}</td>
+                <td className="num">{fmtNumber(v.invocation_count)}</td>
+                <td className="num" style={rate ? { color: 'var(--error)' } : undefined}>
+                  {fmtPct(rate)}
+                </td>
+                <td className="num">
+                  {fmtDuration(v.latency_ms_p50)} / {fmtDuration(v.latency_ms_p95)}
+                </td>
+                <td className="num">{compact(v.total_input_tokens + v.total_output_tokens)}</td>
+                <td className="num">{fmtCost(v.total_cost_usd)}</td>
+                <td title={fmtDate(v.first_seen)}>{fmtRelative(v.first_seen)}</td>
+                <td title={fmtDate(v.last_seen)}>{fmtRelative(v.last_seen)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </TableScroll>
   )
 }
 

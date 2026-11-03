@@ -7,7 +7,7 @@ import { useProjectId } from '../../hooks/useProject'
 import { flaggedOf, fmtCost, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentAnalyticsUrl, agentsUrlFor, agentUrl, sessionsUrl, teamUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
-import { AgentChip, AgentDot, Bar, Crumbs, humanScorer, Metric, Panel, ScorePill } from '../../components/ui/bits'
+import { AgentChip, AgentDot, Bar, Crumbs, humanScorer, Metric, Panel, ScorePill, TableScroll } from '../../components/ui/bits'
 import { usePageHelp } from '../../components/ui/PageHelp'
 import { SessionList } from '../../components/sessions/SessionList'
 import { filterQueryString } from '../../lib/filters'
@@ -137,33 +137,35 @@ export function AgentDetailPage() {
           {d.tool_counts.length === 0 ? (
             <p className="muted small">No tool calls recorded.</p>
           ) : (
-            <table className="table compact-table">
-              <caption className="sr-only">Tools</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Tool</th>
-                  <th scope="col">Calls</th>
-                  <th scope="col">Failed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.tool_counts.map((t) => (
-                  <tr key={t.tool}>
-                    <td>
-                      <Link className="mono small" to={sessionsUrl(pid, filterQueryString({ agent: agentName, tool: t.tool, time: 'all' }))}>
-                        {t.tool}
-                      </Link>
-                    </td>
-                    <td>
-                      <span className="row" style={{ gap: 6 }}>
-                        <Bar value={t.count} max={maxTool} label={`${t.count} calls`} /> {t.count}
-                      </span>
-                    </td>
-                    <td className={t.errors ? 'text-error' : ''}>{t.errors}</td>
+            <TableScroll label="Tools">
+              <table className="table compact-table">
+                <caption className="sr-only">Tools</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Tool</th>
+                    <th scope="col">Calls</th>
+                    <th scope="col">Failed</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {d.tool_counts.map((t) => (
+                    <tr key={t.tool}>
+                      <td>
+                        <Link className="mono small" to={sessionsUrl(pid, filterQueryString({ agent: agentName, tool: t.tool, time: 'all' }))}>
+                          {t.tool}
+                        </Link>
+                      </td>
+                      <td>
+                        <span className="row" style={{ gap: 6 }}>
+                          <Bar value={t.count} max={maxTool} label={`${t.count} calls`} /> {t.count}
+                        </span>
+                      </td>
+                      <td className={t.errors ? 'text-error' : ''}>{t.errors}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           )}
         </Panel>
         <Panel title="Scores" tip="Agent-level scores: the mean of each scorer's results for this agent, from 0 to 1.">

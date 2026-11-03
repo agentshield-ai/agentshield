@@ -482,6 +482,10 @@ ul.plain {
   max-width: 90ch;
   line-height: 1.6;
   color: var(--text);
+  /* Not the main area's break-anywhere: prose wraps between words, its
+     tables scroll and inline code breaks anywhere (below). Breaking
+     anywhere across the long guides also makes their layout very slow. */
+  overflow-wrap: normal;
 }
 .help-doc h1,
 .help-doc h2,
@@ -634,9 +638,9 @@ ul.plain {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
+  min-height: 24px;
   padding: 0 9px 0 7px;
-  border-radius: 999px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--ac) 35%, var(--border));
   background: color-mix(in srgb, var(--ac) 9%, var(--panel));
   color: var(--text);
@@ -645,12 +649,19 @@ ul.plain {
   max-width: 100%;
   white-space: nowrap;
 }
+/* A name too long for its place wraps inside the chip, breaking anywhere
+   if it has no spaces (a name of 40 "Ω" would otherwise widen the page). */
 .agent-chip .agent-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.agent-chip .agent-dot {
+  flex: none;
 }
 .agent-chip.sm {
-  height: 20px;
+  min-height: 20px;
+  border-radius: 10px;
   font-size: 12px;
   padding: 0 7px 0 5px;
 }
@@ -1773,6 +1784,13 @@ ol.steps {
 .det-ctx {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* A session link sits in a line of text (agent, tool, time): underline it
+   so it does not rely on colour alone (WCAG 1.4.1). */
+.session-link > a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 @media (max-width: 860px) {
   .det-row {

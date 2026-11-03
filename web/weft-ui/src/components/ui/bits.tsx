@@ -1,7 +1,7 @@
 // Shared presentational pieces for the agent-first pages: tooltips that
 // explain numbers, status pills (icon + text, never colour alone), agent
 // chips with their consistent colour, copyable ids and breadcrumbs.
-import { useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { DetectionAction, SessionStatus } from '../../api/v1'
 import { agentColor } from '../../lib/agentColor'
@@ -30,6 +30,30 @@ export function Metric({ label, value, tip, sub, tone }: { label: string; value:
       </div>
       <div className="metric-value">{value}</div>
       {sub && <div className="metric-sub">{sub}</div>}
+    </div>
+  )
+}
+
+// TableScroll holds a table that can be wider than its column (a narrow
+// screen, a wide font or letter spacing, a long unbroken name): the table
+// scrolls inside it instead of widening the page. While it scrolls it is a
+// labelled, focusable region, so it can be scrolled from the keyboard.
+export function TableScroll({ label, children }: { label: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [scrolls, setScrolls] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const check = () => setScrolls(el.scrollWidth > el.clientWidth + 1)
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    check()
+    return () => ro.disconnect()
+  }, [])
+  return (
+    <div ref={ref} className="table-scroll" {...(scrolls ? { tabIndex: 0, role: 'region', 'aria-label': label } : {})}>
+      {children}
     </div>
   )
 }

@@ -123,6 +123,8 @@ test('every attention card opens exactly the sessions it counts, with money show
   // No floating-point noise in any amount.
   await expect(page.locator('main, .main').first()).not.toContainText(/\$\d*\.\d{5,}/)
   const cards = page.locator('a.attn-link')
+  // The cards load after the list; count them once they are there.
+  await expect(cards.first()).toBeVisible()
   const n = await cards.count()
   expect(n).toBeGreaterThanOrEqual(3)
   for (let i = 0; i < n; i++) {

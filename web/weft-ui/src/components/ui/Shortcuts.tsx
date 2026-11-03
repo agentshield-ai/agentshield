@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Modal } from '../common'
+import { TableScroll } from './bits'
 
 export const SHORTCUTS: { keys: string[]; what: string; where?: string }[] = [
   { keys: ['?'], what: 'Show this list' },
@@ -74,32 +75,34 @@ export function ShortcutsHost() {
   if (!open) return null
   return (
     <Modal title="Keyboard shortcuts" onClose={() => setOpen(false)}>
-      <table className="table shortcuts">
-        <caption className="sr-only">Keyboard shortcuts</caption>
-        <thead>
-          <tr>
-            <th scope="col">Keys</th>
-            <th scope="col">Action</th>
-            <th scope="col">Where</th>
-          </tr>
-        </thead>
-        <tbody>
-          {SHORTCUTS.map((s) => (
-            <tr key={s.keys.join('+') + s.what}>
-              <td>
-                {s.keys.map((k, i) => (
-                  <span key={i}>
-                    {i > 0 && <span className="faint"> then </span>}
-                    <kbd className="kbd">{k}</kbd>
-                  </span>
-                ))}
-              </td>
-              <td>{s.what}</td>
-              <td className="muted">{s.where ?? 'Everywhere'}</td>
+      <TableScroll label="Keyboard shortcuts">
+        <table className="table shortcuts">
+          <caption className="sr-only">Keyboard shortcuts</caption>
+          <thead>
+            <tr>
+              <th scope="col">Keys</th>
+              <th scope="col">Action</th>
+              <th scope="col">Where</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {SHORTCUTS.map((s) => (
+              <tr key={s.keys.join('+') + s.what}>
+                <td>
+                  {s.keys.map((k, i) => (
+                    <span key={i}>
+                      {i > 0 && <span className="faint"> then </span>}
+                      <kbd className="kbd">{k}</kbd>
+                    </span>
+                  ))}
+                </td>
+                <td>{s.what}</td>
+                <td className="muted">{s.where ?? 'Everywhere'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableScroll>
     </Modal>
   )
 }

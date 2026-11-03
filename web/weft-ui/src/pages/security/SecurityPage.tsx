@@ -14,7 +14,7 @@ import { agentUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { Snippets } from '../../components/ui/EmptyState'
-import { ActionBadge, AgentChip, Bar, Callout, CapNote, CopyId, Metric, Panel, SeverityText, Tip } from '../../components/ui/bits'
+import { ActionBadge, AgentChip, Bar, Callout, CapNote, CopyId, Metric, Panel, SeverityText, TableScroll, Tip } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
 import { docsUrl, usePageHelp } from '../../components/ui/PageHelp'
 import { notify } from '../../components/ui/Toasts'
@@ -250,46 +250,48 @@ export function SecurityPage() {
               {!st?.by_rule.length ? (
                 <p className="muted small">No rules matched.</p>
               ) : (
-                <table className="table compact-table">
-                  <caption className="sr-only">Top rules</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Rule</th>
-                      <th scope="col">Level</th>
-                      <th scope="col">Verdicts</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {st.by_rule.slice(0, 8).map((r) => (
-                      <tr key={r.rule_id} className={ruleFilter === r.rule_id ? 'selected' : ''}>
-                        <td>
-                          <button
-                            type="button"
-                            className="linkish left"
-                            onClick={() => {
-                              const n = new URLSearchParams(params)
-                              if (ruleFilter === r.rule_id) n.delete('rule')
-                              else n.set('rule', r.rule_id)
-                              setParams(n, { replace: true })
-                            }}
-                            aria-pressed={ruleFilter === r.rule_id}
-                            title="Show only this rule's detections below"
-                          >
-                            {r.title || r.rule_id}
-                          </button>
-                        </td>
-                        <td>
-                          <SeverityText level={r.level} />
-                        </td>
-                        <td>
-                          <span className="row" style={{ gap: 6 }}>
-                            <Bar value={r.count} max={st.by_rule[0].count} tone={r.by_action.block ? 'error' : 'warn'} label={`${r.count} verdicts`} /> {r.count}
-                          </span>
-                        </td>
+                <TableScroll label="Top rules">
+                  <table className="table compact-table">
+                    <caption className="sr-only">Top rules</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Rule</th>
+                        <th scope="col">Level</th>
+                        <th scope="col">Verdicts</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {st.by_rule.slice(0, 8).map((r) => (
+                        <tr key={r.rule_id} className={ruleFilter === r.rule_id ? 'selected' : ''}>
+                          <td>
+                            <button
+                              type="button"
+                              className="linkish left"
+                              onClick={() => {
+                                const n = new URLSearchParams(params)
+                                if (ruleFilter === r.rule_id) n.delete('rule')
+                                else n.set('rule', r.rule_id)
+                                setParams(n, { replace: true })
+                              }}
+                              aria-pressed={ruleFilter === r.rule_id}
+                              title="Show only this rule's detections below"
+                            >
+                              {r.title || r.rule_id}
+                            </button>
+                          </td>
+                          <td>
+                            <SeverityText level={r.level} />
+                          </td>
+                          <td>
+                            <span className="row" style={{ gap: 6 }}>
+                              <Bar value={r.count} max={st.by_rule[0].count} tone={r.by_action.block ? 'error' : 'warn'} label={`${r.count} verdicts`} /> {r.count}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
               )}
             </Panel>
           </div>
@@ -301,33 +303,35 @@ export function SecurityPage() {
               {!st?.by_agent.length ? (
                 <p className="muted small">No agents flagged.</p>
               ) : (
-                <table className="table compact-table">
-                  <caption className="sr-only">Detections by agent</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Agent</th>
-                      <th scope="col">Verdicts</th>
-                      <th scope="col">Flagged tool calls</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {st.by_agent.map((a) => (
-                      <tr key={a.agent}>
-                        <td>
-                          <AgentChip name={a.agent} to={agentUrl(pid, a.agent)} size="sm" />
-                        </td>
-                        <td>{a.count}</td>
-                        <td>
-                          <span className="row wrap" style={{ gap: 6 }}>
-                            <span className="small">{flaggedOf(a.flagged_tool_calls, a.tool_calls)}</span>
-                            <Bar value={a.detection_rate ?? 0} max={1} tone="warn" label={`${Math.round((a.detection_rate ?? 0) * 100)}%`} />
-                            {a.detection_rate == null ? '—' : `${Math.round(a.detection_rate * 100)}%`}
-                          </span>
-                        </td>
+                <TableScroll label="Detections by agent">
+                  <table className="table compact-table">
+                    <caption className="sr-only">Detections by agent</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Agent</th>
+                        <th scope="col">Verdicts</th>
+                        <th scope="col">Flagged tool calls</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {st.by_agent.map((a) => (
+                        <tr key={a.agent}>
+                          <td>
+                            <AgentChip name={a.agent} to={agentUrl(pid, a.agent)} size="sm" />
+                          </td>
+                          <td>{a.count}</td>
+                          <td>
+                            <span className="row wrap" style={{ gap: 6 }}>
+                              <span className="small">{flaggedOf(a.flagged_tool_calls, a.tool_calls)}</span>
+                              <Bar value={a.detection_rate ?? 0} max={1} tone="warn" label={`${Math.round((a.detection_rate ?? 0) * 100)}%`} />
+                              {a.detection_rate == null ? '—' : `${Math.round(a.detection_rate * 100)}%`}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
               )}
             </Panel>
             <FatiguePanels pid={pid} insights={insights.data} keep={(s) => (!scope.active || scope.ids.has(s.session_id)) && (!state.agent || s.agents.includes(state.agent))} />
