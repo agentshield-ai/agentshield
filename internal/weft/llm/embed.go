@@ -195,7 +195,8 @@ func (c *Client) Moderate(ctx context.Context, projectID, model, text string) (*
 	return &body.Results[0], nil
 }
 
-// LookupSecret returns a stored secret, falling back to the environment.
+// LookupSecret returns a stored secret. It never reads the server environment:
+// the name may come from a project or user (scorer headers, OAuth secrets).
 func (c *Client) LookupSecret(ctx context.Context, name string) (string, bool) {
 	return c.secret(ctx, name)
 }

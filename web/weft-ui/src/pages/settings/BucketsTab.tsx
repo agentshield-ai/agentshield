@@ -109,7 +109,7 @@ export function BucketsTable({
                     </div>
                   )}
                 </td>
-                <td className="mono small">{b.secret_name || <span className="faint">server environment</span>}</td>
+                <td className="mono small">{b.secret_name || <span className="faint">server environment (AWS)</span>}</td>
                 <td className="small">
                   {t?.busy ? (
                     <span className="faint">testing…</span>
@@ -333,13 +333,14 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
         <label className="field">
           Credentials secret
           <select className="input mono" value={d.secretName} onChange={(e) => set({ secretName: e.target.value })}>
-            <option value="">{s3 ? 'Server environment (AWS_ACCESS_KEY_ID …)' : 'Choose a secret…'}</option>
-            {(secrets.data ?? []).map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-                {s.source === 'env' ? ' (environment)' : ''}
-              </option>
-            ))}
+            <option value="">{s3 ? 'Server environment (only if the server allows it, AWS only)' : 'Choose a secret…'}</option>
+            {(secrets.data ?? [])
+              .filter((s) => s.source !== 'env')
+              .map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name}
+                </option>
+              ))}
           </select>
           <span className="hint">
             {s3 ? (

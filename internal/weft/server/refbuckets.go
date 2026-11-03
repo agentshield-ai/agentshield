@@ -52,7 +52,8 @@ type bucketSigner interface {
 
 // s3SecretCreds reads S3 credentials from a stored secret (JSON with
 // access_key_id/secret_access_key/session_token, AWS-style key names also
-// accepted) or, with no secret, from the AWS_* environment variables.
+// accepted) or, with no secret, from the AWS_* environment variables (only
+// when RefBucketsEnvCredentials allows it; see bucketClient).
 func (s *Server) s3SecretCreds(ctx context.Context, name string) (objstore.Credentials, error) {
 	if name == "" {
 		c := objstore.Credentials{AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
@@ -92,10 +93,21 @@ func (s *Server) s3SecretCreds(ctx context.Context, name string) (objstore.Crede
 	return c, nil
 }
 
+// RefBucketsEnvCredentials lets an S3 registration without secret_name use
+// the server's AWS_* environment credentials. It is off by default: an admin
+// could otherwise point a bucket at any endpoint and receive the server's
+// access key id and session token in presigned URLs. Even when on, it applies
+// only to AWS itself (no custom endpoint). Set from
+// --ref-buckets-env-credentials in cmd/weft.
+var RefBucketsEnvCredentials bool
+
 // bucketClient builds a signer for a registration.
 func (s *Server) bucketClient(ctx context.Context, b *store.ReferenceBucket) (bucketSigner, error) {
 	switch b.Provider {
 	case store.BucketS3:
+		if b.SecretName == "" && (!RefBucketsEnvCredentials || b.Endpoint != "") {
+			return nil, store.Invalidf("secret_name is required: store the bucket's credentials as a secret (Settings → Secrets)")
+		}
 		creds, err := s.s3SecretCreds(ctx, b.SecretName)
 		if err != nil {
 			return nil, err

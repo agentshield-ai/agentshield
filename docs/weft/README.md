@@ -38,6 +38,7 @@ make weft         # build bin/weft
 | `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |
 | `--egress-allow-private` | `WEFT_EGRESS_ALLOW_PRIVATE` | `false`; `true` allows loopback, private, link-local and CGNAT destinations (cloud metadata addresses stay blocked) |
 | `--remote-scorer-allow-insecure-http` | `WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP` (or Weave's `WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP`) | `false`; `true` allows `http://` RemoteScorer URLs, which otherwise must be `https://` |
+| `--ref-buckets-env-credentials` | `WEFT_REF_BUCKETS_ENV_CREDENTIALS` | `false`; `true` lets S3 reference buckets registered without `secret_name` use the server's `AWS_*` credentials, for AWS endpoints only. Otherwise every bucket needs a stored secret |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
 | | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
 | `--db-encryption-key-file` | `WEFT_DB_ENCRYPTION_KEY_FILE` | empty (plaintext database); a file holding a passphrase encrypts the whole database at rest, see [Database encryption at rest](#database-encryption-at-rest) |

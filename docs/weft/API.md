@@ -1161,7 +1161,7 @@ CoreWeave service, Weft implements the endpoint in its own terms, as noted.
 ```jsonc
 // body
 {"base_url": "https://vllm.internal/v1",       // OpenAI-compatible base URL
- "api_key_secret": "VLLM_KEY",                  // name of a secret (Settings → Secrets or env); sent as a bearer token
+ "api_key_secret": "VLLM_KEY",                  // name of a secret (Settings → Secrets; never read from the server environment); sent as a bearer token
  "headers": {"X-Team": "ml"},                    // literal headers
  "runtime_ids": [{"id": "llama-3-8b", "max_tokens": 8192}, {"id": "qwen2-7b"}],  // complete list; max_tokens defaults to 4096
  "kind": "openai"}                               // Weft: "openai" (default) or "predict"
@@ -1458,7 +1458,7 @@ runtime accept an OAuth 2.0 client-credentials `auth_config`:
 
 ```jsonc
 "auth_config": {"token_url": "https://idp.example.com/oauth/token", "client_id": "weft",
-                "client_secret_secret": "SCORER_CLIENT_SECRET",   // name of a stored secret (or env var)
+                "client_secret_secret": "SCORER_CLIENT_SECRET",   // name of a stored secret (Settings → Secrets)
                 "scopes": ["score"],                              // list or space-separated string
                 "audience": "https://scorer.example.com"}         // optional, sent as a token parameter
 ```

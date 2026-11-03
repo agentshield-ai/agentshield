@@ -267,3 +267,28 @@ func TestReferenceBucketCORSCheck(t *testing.T) {
 		t.Fatalf("unreachable = %v", m)
 	}
 }
+
+// Without secret_name, S3 buckets must not sign with the server's AWS_*
+// environment credentials unless the operator opts in, and never for a
+// custom endpoint (where an admin could collect the access key id and
+// session token from presigned URLs).
+func TestReferenceBucketEnvCredentialsRequireOptIn(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAENVCANARY")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "envsecret")
+	t.Setenv("AWS_SESSION_TOKEN", "envsessiontokencanary")
+	e := newEnv(t)
+	body := map[string]any{"entity": "acme", "provider": "s3", "bucket": "exfil", "endpoint": "https://s3.example.com", "path_style": true, "test_object_key": "k"}
+	prev := RefBucketsEnvCredentials
+	defer func() { RefBucketsEnvCredentials = prev }()
+	for _, on := range []bool{false, true} {
+		RefBucketsEnvCredentials = on
+		r := e.post("/reference_buckets/test", body)
+		b, _ := json.Marshal(r)
+		if strings.Contains(string(b), "AKIAENVCANARY") || strings.Contains(string(b), "envsessiontokencanary") || r["ok"] == true {
+			t.Fatalf("env credentials used for a custom endpoint (opt-in=%v): %s", on, b)
+		}
+		if !strings.Contains(string(b), "secret_name is required") {
+			t.Fatalf("opt-in=%v: unexpected result %s", on, b)
+		}
+	}
+}

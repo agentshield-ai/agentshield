@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/evals"
+	"github.com/agentshield-ai/agentshield/internal/weft/server"
 )
 
 // egressFlags configure which internal destinations outbound requests made
@@ -19,12 +20,15 @@ type egressFlags struct {
 	allow        *string
 	allowPrivate *bool
 	insecureHTTP *bool
+	bucketEnv    *bool
 }
 
 func registerEgressFlags() *egressFlags {
 	priv, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("WEFT_EGRESS_ALLOW_PRIVATE")))
 	insecure := envBool("WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP") || envBool("WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP")
 	return &egressFlags{
+		bucketEnv: flag.Bool("ref-buckets-env-credentials", envBool("WEFT_REF_BUCKETS_ENV_CREDENTIALS"),
+			"let S3 reference buckets registered without secret_name use the server's AWS_* environment credentials (AWS endpoints only; env WEFT_REF_BUCKETS_ENV_CREDENTIALS=true)"),
 		insecureHTTP: flag.Bool("remote-scorer-allow-insecure-http", insecure,
 			"allow http:// RemoteScorer URLs; https is required otherwise (env WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP=true, or Weave's WF_SCORING_WORKER_REMOTE_SCORER_ALLOW_INSECURE_HTTP)"),
 		allow: flag.String("egress-allow", os.Getenv("WEFT_EGRESS_ALLOW"),
@@ -57,6 +61,7 @@ func (f *egressFlags) apply(log *slog.Logger) (string, error) {
 	}
 	egress.SetDefault(p)
 	evals.AllowInsecureRemoteScorerHTTP = f.insecureHTTP != nil && *f.insecureHTTP
+	server.RefBucketsEnvCredentials = f.bucketEnv != nil && *f.bucketEnv
 	if evals.AllowInsecureRemoteScorerHTTP {
 		log.Warn("remote scorers may use http:// URLs (--remote-scorer-allow-insecure-http)")
 	}
