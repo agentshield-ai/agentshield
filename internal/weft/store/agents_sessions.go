@@ -680,28 +680,32 @@ type SessionSummary struct {
 	// VerdictsOnly marks a session known only from AgentShield verdicts (no
 	// agent spans recorded). Its started_at and last_activity come from the
 	// verdicts, so it still sorts and filters by time.
-	VerdictsOnly       bool                `json:"verdicts_only"`
-	Agents             []string            `json:"agents"`
-	TeamID             string              `json:"team_id"`
-	TeamName           string              `json:"team_name"`
-	TurnCount          int                 `json:"turn_count"`
-	TraceCount         int                 `json:"trace_count"`
-	SpanCount          int                 `json:"span_count"`
-	LLMCallCount       int                 `json:"llm_call_count"`
-	ToolCallCount      int                 `json:"tool_call_count"`
-	HandoffCount       int                 `json:"handoff_count"`
-	ReasoningStepCount int                 `json:"reasoning_step_count"`
-	DetectionCount     map[string]int      `json:"detection_count"`
-	ErrorCount         int                 `json:"error_count"`
-	InputTokens        int64               `json:"input_tokens"`
-	OutputTokens       int64               `json:"output_tokens"`
-	ReasoningTokens    int64               `json:"reasoning_tokens"`
-	CostUSD            *float64            `json:"cost_usd"`
-	Status             string              `json:"status"`
-	Models             []string            `json:"models"`
-	Tools              []string            `json:"tools"`
-	Scores             map[string]ScoreAgg `json:"scores"`
-	TraceIDs           []string            `json:"trace_ids,omitempty"`
+	VerdictsOnly       bool           `json:"verdicts_only"`
+	Agents             []string       `json:"agents"`
+	TeamID             string         `json:"team_id"`
+	TeamName           string         `json:"team_name"`
+	TurnCount          int            `json:"turn_count"`
+	TraceCount         int            `json:"trace_count"`
+	SpanCount          int            `json:"span_count"`
+	LLMCallCount       int            `json:"llm_call_count"`
+	ToolCallCount      int            `json:"tool_call_count"`
+	HandoffCount       int            `json:"handoff_count"`
+	ReasoningStepCount int            `json:"reasoning_step_count"`
+	DetectionCount     map[string]int `json:"detection_count"`
+	ErrorCount         int            `json:"error_count"`
+	InputTokens        int64          `json:"input_tokens"`
+	OutputTokens       int64          `json:"output_tokens"`
+	ReasoningTokens    int64          `json:"reasoning_tokens"`
+	CostUSD            *float64       `json:"cost_usd"`
+	// Status is the session's own outcome (run_status.go): running, ok or
+	// error, or unknown for VerdictsOnly. FailedStep marks an ok session in
+	// which a step failed (the status filter's failed_step).
+	Status     string              `json:"status"`
+	FailedStep bool                `json:"failed_step"`
+	Models     []string            `json:"models"`
+	Tools      []string            `json:"tools"`
+	Scores     map[string]ScoreAgg `json:"scores"`
+	TraceIDs   []string            `json:"trace_ids,omitempty"`
 
 	spans    []*agentSpan
 	firstUS  int64
@@ -709,13 +713,12 @@ type SessionSummary struct {
 	titleSrc string
 }
 
-// sessionStatus is the session's own outcome, from its top-level spans (the
-// roots of its traces), the same way the Traces list reads a trace's status
-// off its root: error when one of them failed, running while one has not
-// ended, otherwise ok. A failed step under a root that did not fail (a tool
-// call, model call, hand-off or delegated agent) leaves the session ok; the
-// status filter's failed_step value finds those (error_count > 0). A session
-// with no spans of its own (VerdictsOnly) is unknown (buildSessions).
+// sessionStatus is a session's outcome read off its own agent spans alone:
+// error when a top-level one failed, running while one has not ended,
+// otherwise ok. buildSessions replaces it with the run statuses of the
+// top-level spans of the session's traces (run_status.go), agent spans or
+// not, as the Traces list reads them; this stays as the fallback for a
+// session whose traces have no stored top-level span.
 func sessionStatus(spans []*agentSpan) string {
 	ids := make(map[string]bool, len(spans))
 	for _, sp := range spans {
@@ -815,6 +818,7 @@ func summarizeSession(id string, spans []*agentSpan) *SessionSummary {
 	d := (ss.lastUS - ss.firstUS) / 1000
 	ss.DurationMS = &d
 	ss.Status = sessionStatus(spans)
+	ss.FailedStep = ss.Status == "ok" && ss.ErrorCount > 0
 	if titleSpan != nil {
 		ss.titleSrc = titleSpan.ID
 	}
@@ -982,6 +986,9 @@ func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]
 	if len(out) == 0 {
 		return out, nil
 	}
+	if err := s.applyRunStatuses(ctx, pid, out); err != nil {
+		return nil, err
+	}
 	sort.Strings(sids)
 	teams, err := s.sessionTeams(ctx, pid, sids)
 	if err != nil {
@@ -1044,6 +1051,38 @@ func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]
 		}
 	}
 	return out, nil
+}
+
+// applyRunStatuses sets each session's status from the run statuses of the
+// top-level spans of its traces (run_status.go), the spans the Traces list
+// reads, whether or not they are agent spans.
+func (s *Store) applyRunStatuses(ctx context.Context, pid string, sessions []*SessionSummary) error {
+	var tids []string
+	for _, ss := range sessions {
+		if !ss.VerdictsOnly {
+			tids = append(tids, ss.TraceIDs...)
+		}
+	}
+	if len(tids) == 0 {
+		return nil
+	}
+	runs, err := s.traceRunStatuses(ctx, pid, tids)
+	if err != nil {
+		return err
+	}
+	for _, ss := range sessions {
+		if ss.VerdictsOnly {
+			continue
+		}
+		var sts []string
+		for _, t := range ss.TraceIDs {
+			sts = append(sts, runs[t]...)
+		}
+		if st, step := combineRunStatuses(sts); st != "" {
+			ss.Status, ss.FailedStep = st, step
+		}
+	}
+	return nil
 }
 
 func containsStr(l []string, s string) bool {
@@ -2416,9 +2455,9 @@ func sessionStatusMatches(ss *SessionSummary, status string) bool {
 	case "":
 		return true
 	case SessionStatusFailedStep:
-		return ss.Status == "ok" && ss.ErrorCount > 0
+		return ss.Status == "ok" && ss.FailedStep
 	case "ok":
-		return ss.Status == "ok" && ss.ErrorCount == 0
+		return ss.Status == "ok" && !ss.FailedStep
 	}
 	return ss.Status == status
 }

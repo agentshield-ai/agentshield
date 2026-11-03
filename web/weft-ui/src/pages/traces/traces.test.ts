@@ -8,16 +8,16 @@ const ops = (url: string) => {
 }
 
 describe('Traces filters', () => {
-  it('status means the same as on Sessions: Failed is the trace itself, a failed step is descendant_error', () => {
-    expect(statusOp('error')).toEqual({ $eq: [{ $getField: 'summary.weft.status' }, { $literal: 'error' }] })
-    expect(ops('status=error')).toContain('{"$literal":"error"}')
-    expect(ops('status=error')).not.toContain('descendant_error')
-    expect(ops('status=failed_step')).toContain('{"$literal":"descendant_error"}')
-    // The shared bar's "ok" is a span's success (no failure anywhere under it).
-    expect(ops('status=ok')).toContain('{"$literal":"success"}')
-    expect(ops('status=running')).toContain('{"$literal":"running"}')
-    // "No agent data" has no span status: it applies through sessions.
-    expect(ops('status=unknown')).not.toContain('summary.weft.status')
+  it('status means the same as on Sessions: the run status the server computes for both pages', () => {
+    expect(statusOp('error')).toEqual({ $eq: [{ $getField: 'summary.weft.run_status' }, { $literal: 'error' }] })
+    for (const st of ['error', 'failed_step', 'ok', 'running', 'unknown']) {
+      expect(ops(`status=${st}`)).toContain(`{"$getField":"summary.weft.run_status"},{"$literal":"${st}"}`)
+      expect(ops(`status=${st}`)).not.toContain('summary.weft.status')
+    }
+    // Span status names from older links and saved views still work.
+    expect(ops('status=success')).toContain('{"$literal":"ok"}')
+    expect(ops('status=descendant_error')).toContain('{"$literal":"failed_step"}')
+    expect(ops('status=bogus')).not.toContain('run_status')
   })
 
   it('hides AgentShield replay evaluations unless asked', () => {

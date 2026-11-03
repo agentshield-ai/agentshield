@@ -329,9 +329,68 @@ func TestRegistry_IsolatedSessionsExcludedFromCrossSession(t *testing.T) {
 	if got := r.DeriveAllFields("live-2", time.Minute)["session.cross_session_tool_overlap"]; got != "0.00" {
 		t.Fatalf("tool overlap counts the replay session: %s", got)
 	}
-	// The replayed session still has its own window, and sees live sessions.
+	// The replayed session still has its own window, but does not see live
+	// sessions.
 	own := r.DeriveAllFields("weft-replay:j:s", time.Minute)
-	if own["session.tool_count"] != "2" || own["session.cross_session_alert_count"] != "1" {
+	if own["session.tool_count"] != "2" || own["session.cross_session_alert_count"] != "0" || own["session.cross_session_count"] != "0" {
 		t.Fatalf("isolated session fields = %v", own)
+	}
+}
+
+// A replayed session's cross-session fields cover the other sessions of its
+// own replay job ("weft-replay:<job>:"), whatever live traffic or other jobs
+// do, and regardless of the correlation window, so replaying the same
+// recording always gives the same fields.
+func TestRegistry_ReplaySessionsSeeOnlyTheirJob(t *testing.T) {
+	r := NewRegistry(50, time.Hour)
+	alert := []engine.RuleResult{{RuleID: "r", Matched: true}}
+	replay := func(id string, tools ...string) {
+		r.Isolate(id)
+		for _, tool := range tools {
+			r.Record(id, tool, alert)
+		}
+	}
+	replay("weft-replay:j1:a", "Bash", "Read")
+	replay("weft-replay:j1:a:b", "Bash") // a session key with a colon is still job j1
+	replay("weft-replay:j2:a", "Bash", "Read", "Write")
+	replay("weft-replay:j10:a", "Grep") // "j1" is not a prefix of job "j10"
+	r.Isolate("weft-replay:j1:c")
+	want := func(label string) {
+		t.Helper()
+		f := r.DeriveAllFields("weft-replay:j1:c", time.Nanosecond)
+		if f["session.cross_session_count"] != "2" || f["session.cross_session_alert_count"] != "3" || f["session.cross_session_tool_overlap"] != "0.00" {
+			t.Fatalf("%s: job j1 fields = %v", label, f)
+		}
+	}
+	want("quiet engine")
+	for i := 0; i < 20; i++ {
+		r.Record(fmt.Sprintf("live-%d", i), "Bash", alert)
+	}
+	want("after live traffic")
+	r.Record("weft-replay:j1:c", "Bash", nil)
+	if f := r.DeriveAllFields("weft-replay:j1:c", time.Minute); f["session.cross_session_tool_overlap"] != "1.00" {
+		t.Fatalf("overlap within the job = %v", f)
+	}
+	if f := r.DeriveAllFields("weft-replay:j2:a", time.Minute); f["session.cross_session_count"] != "0" {
+		t.Fatalf("job j2 sees other jobs or live sessions: %v", f)
+	}
+	// Live sessions see neither job.
+	if f := r.DeriveAllFields("live-0", time.Minute); f["session.cross_session_count"] != "19" || f["session.cross_session_alert_count"] != "19" {
+		t.Fatalf("live fields = %v", f)
+	}
+	// Evicted replay sessions leave their job's scope.
+	r.mu.Lock()
+	r.deleteLocked("weft-replay:j1:a")
+	r.mu.Unlock()
+	if f := r.DeriveAllFields("weft-replay:j1:c", time.Minute); f["session.cross_session_count"] != "1" {
+		t.Fatalf("after eviction = %v", f)
+	}
+	r.mu.Lock()
+	r.deleteLocked("weft-replay:j1:a:b")
+	r.deleteLocked("weft-replay:j1:c")
+	_, left := r.scopes["weft-replay:j1:"]
+	r.mu.Unlock()
+	if left {
+		t.Fatal("empty replay scope not removed")
 	}
 }

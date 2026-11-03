@@ -84,8 +84,8 @@ class Session {
     if (result !== undefined) a['gen_ai.tool.call.result'] = JSON.stringify(result)
     this.span(key, parent, `execute_tool ${name}`, start, dur, a, error)
   }
-  async send() {
-    const body = { resourceSpans: [{ resource: { attributes: [attr('service.name', 'e2e')] }, scopeSpans: [{ scope: { name: 'e2e' }, spans: this.spans }] }] }
+  async send(scope = 'e2e') {
+    const body = { resourceSpans: [{ resource: { attributes: [attr('service.name', 'e2e')] }, scopeSpans: [{ scope: { name: scope }, spans: this.spans }] }] }
     const r = await fetch(`${this.base}/otel/v1/traces`, { method: 'POST', headers: { 'Content-Type': 'application/json', project_id: this.project }, body: JSON.stringify(body) })
     if (!r.ok) throw new Error(`otlp ${r.status} ${await r.text()}`)
   }
@@ -196,7 +196,13 @@ async function coderRetry(base: string, project: string, sid: string, ago: numbe
 
 // One session per status, for the status chip meaning the same on Sessions
 // and Traces: the run itself failed; a tool call failed and the agent went
-// on; a delegated agent failed and its caller went on; nothing failed.
+// on; a delegated agent failed and its caller went on; nothing failed. Then
+// the shapes where an agent span is not the top-level span or a session has
+// more than one trace: a server span that failed around an agent that did
+// not, and one that did not around an agent that failed; a helper agent
+// that failed in its own trace, linked to its caller by a span link; a
+// session known only from an AgentShield verdict; and the engine's evaluate
+// trace of a session with agent data.
 async function statusSessions(base: string, project: string) {
   const failed = new Session(base, project, 'st-failed', 30 * 60_000)
   failed.agent('O', null, 'failer', 0, 3000, { user: 'Status check: a run that fails', root: true, error: 'gave up: the database is unreachable' })
@@ -215,6 +221,46 @@ async function statusSessions(base: string, project: string) {
   ok.agent('O', null, 'finisher', 0, 3000, { user: 'Status check: a run where nothing fails', root: true, output: 'All good.' })
   ok.tool('X1', 'O', 100, 500, 'Bash', 'toolu_st_o1', { command: 'true' }, 'ok')
   await ok.send()
+
+  const wrapFails = new Session(base, project, 'st-wrap-fails', 14 * 60_000)
+  wrapFails.span('W', null, 'POST /wrapfails', 0, 3000, { 'http.request.method': 'POST', 'http.route': '/wrapfails' }, 'response could not be written')
+  wrapFails.agent('O', 'W', 'wrapfails', 100, 2000, { user: 'Status check: a server span that fails around an agent that does not', root: true, output: 'Done.' })
+  await wrapFails.send()
+  const wrapHolds = new Session(base, project, 'st-wrap-holds', 13 * 60_000)
+  wrapHolds.span('W', null, 'POST /wrapholds', 0, 3000, { 'http.request.method': 'POST', 'http.route': '/wrapholds' })
+  wrapHolds.agent('O', 'W', 'wrapholds', 100, 2000, { user: 'Status check: an agent that fails inside a server span that does not', root: true, error: 'agent gave up' })
+  await wrapHolds.send()
+
+  // A helper agent in its own trace, linked to the caller's tool call.
+  const caller = new Session(base, project, 'st-linked', 12 * 60_000)
+  caller.agent('O', null, 'caller', 0, 3000, { user: 'Status check: a linked helper that fails in its own trace', root: true, output: 'Answered without the helper.' })
+  caller.tool('X1', 'O', 100, 1500, 'ask_helper', 'toolu_st_l1', { q: 'look it up' }, 'no answer')
+  await caller.send()
+  const helper = new Session(base, project, 'st-linked', 12 * 60_000 - 200)
+  helper.trace = hex(`${project}/st-linked/helper-trace`, 32)
+  helper.agent('H', null, 'linkedhelper', 0, 800, { user: 'look it up', root: true, error: 'helper crashed' })
+  ;(helper.spans[0] as Record<string, unknown>).links = [{ traceId: caller.trace, spanId: caller.id('X1') }]
+  await helper.send()
+
+  // AgentShield's evaluate traces: one of a session known only from it, and
+  // the engine's HTTP span with its evaluate span for the session above
+  // where nothing failed.
+  const verdict = (s: Session, key: string, parent: string | null, sid: string, event: string) =>
+    s.span(key, parent, 'evaluate', 10, 5, {
+      'event.id': event,
+      'gen_ai.conversation.id': sid,
+      'gen_ai.tool.name': 'Bash',
+      'agentshield.verdict.action': 'block',
+      'agentshield.verdict.mode': 'enforce',
+    })
+  const verdictsOnly = new Session(base, project, 'st-verdicts', 11 * 60_000)
+  verdict(verdictsOnly, 'V', null, 'st-verdicts', 'st-ev-1')
+  await verdictsOnly.send('agentshield')
+  const engine = new Session(base, project, 'st-ok', 15 * 60_000 - 50)
+  engine.trace = hex(`${project}/st-ok/engine-trace`, 32)
+  engine.span('E', null, 'POST /api/v1/evaluate', 0, 20, { 'http.request.method': 'POST', 'http.route': '/api/v1/evaluate' })
+  verdict(engine, 'V', 'E', 'st-ok', 'st-ev-2')
+  await engine.send('agentshield')
 }
 
 // More agents and teams than the Agents and Teams pages load at once (500).

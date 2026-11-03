@@ -46,7 +46,8 @@ const SORT_FIELD: Partial<Record<BaseCol, string>> = {
   name: 'op_name',
 }
 const PAGE_SIZES = [25, 50, 100, 200]
-const STATUSES = ['success', 'error', 'running', 'descendant_error'] as const
+/** The shared status chip's values (filters.ts StatusFilter). */
+const STATUSES = ['ok', 'error', 'failed_step', 'running', 'unknown'] as const
 const DEFAULT_TIME: TimeRange = '24h'
 /** URL parameters a saved Traces view keeps besides the shared filters. */
 const VIEW_KEYS = ['roots', 'system', 'replay', 'op', 'f', 'expr', 'sort', 'cols', 'order', 'pin', 'hide', 'limit', 'charts']
@@ -88,9 +89,7 @@ export function parseState(p: URLSearchParams): ViewState {
     replay: p.get('replay') === '1',
     op: p.get('op') ?? '',
     // The shared status chip means the same as on Sessions (filters.ts
-    // STATUS_HELP), read off each row: ok is success, failed_step is a
-    // span that ended without an error but has a failed span under it
-    // (descendant_error). "No agent data" applies through sessions.
+    // STATUS_HELP), read off each row's run status (statusOp).
     status: traceStatus(p.get('status')),
     q: p.get('q') ?? '',
     clauses: decodeClauses(p.get('f')),
@@ -134,21 +133,28 @@ export function sharedOps(f: FilterState, time: TimeRange = 'all', perSpan = tru
   return ops
 }
 
-/** The span status (summary.weft.status) a shared status chip value keeps, or '' for none. */
+/** The shared status chip value in a Traces URL, or '' for none (span status names from older links are accepted). */
 export function traceStatus(v: string | null): string {
-  if (v === 'ok') return 'success'
-  if (v === 'failed_step') return 'descendant_error'
+  if (v === 'success') return 'ok'
+  if (v === 'descendant_error') return 'failed_step'
   return (STATUSES as readonly string[]).includes(v ?? '') ? v! : ''
 }
 
 /**
- * The status chip on Traces: one span status. Failed is the span itself
- * (on trace roots, the trace itself) failing, as Failed on Sessions is the
- * session itself failing; a trace that went on after a failed step is
- * descendant_error, as on Sessions. So the same chip keeps the same runs.
+ * The status chip on Traces keeps the rows whose run status
+ * (summary.weft.run_status, computed by the server as on Sessions) is the
+ * chip's value. A trace's run status is read off its top-level span, agent
+ * span or not: Failed is that span failing, except that a sub-agent trace
+ * linked to its caller (span link, parent call link or hand-off) that
+ * failed is a failed step of the caller's run; "went on after a failed
+ * step" is a top-level span that ended without an error over a failed
+ * span. AgentShield verdict records (the engine's evaluate traces) are not
+ * runs: they take their session's status, "No agent data" when the session
+ * is known only from verdicts. So the same chip keeps the same runs on
+ * Sessions and Traces.
  */
 export function statusOp(status: string): Operation {
-  return { $eq: [{ $getField: 'summary.weft.status' }, { $literal: status }] }
+  return { $eq: [{ $getField: 'summary.weft.run_status' }, { $literal: status }] }
 }
 
 /** Never matches a trace id; stands for "no trace matched the session filters". */

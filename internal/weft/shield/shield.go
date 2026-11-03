@@ -371,25 +371,41 @@ func (s *Service) Run(ctx context.Context, projectID, jobID string, req ReplayRe
 	return res, nil
 }
 
-// evaluator evaluates one request; a fresh one is made per session so
-// behavioural (session.*) fields see only that session's history.
+// evaluator evaluates one replay request (see markReplay).
 type evaluator interface {
-	evaluate(ctx context.Context, sessionKey string, req *models.EvaluationRequest) ([]engine.RuleResult, error)
+	evaluate(ctx context.Context, req *models.EvaluationRequest) ([]engine.RuleResult, error)
 }
 
+// markReplay namespaces a replay request, the same way in-process and
+// remotely. replay is set and the session id is "weft-replay:<job>:<session>"
+// (the event id already starts with "weft-replay-"), so the engine tags its
+// evaluate span agentshield.replay, neither stores nor pushes the verdict,
+// keeps the session out of live sessions' cross-session fields, and computes
+// the session's own cross-session fields over this job's sessions only
+// (session.Registry.Isolate): a replay's verdicts depend on the recording
+// and the ruleset, not on live traffic or on other jobs. The engine reserves
+// both prefixes for replay, and Weft's OTLP ingest also recognises engines
+// that predate the flag by the session id.
+func markReplay(req *models.EvaluationRequest, jobID, sessionKey string) {
+	req.Replay = true
+	req.SessionID = store.ReplaySessionPrefix + jobID + ":" + sessionKey
+}
+
+// localEvaluator is one job's in-process engine. Its session registry holds
+// only this job's sessions, which is what a remote engine's isolated replay
+// scope sees too.
 type localEvaluator struct {
-	eng      *engine.Engine
-	sessions map[string]*evaluate.Evaluator
+	ev *evaluate.Evaluator
 }
 
-func (l *localEvaluator) evaluate(ctx context.Context, sessionKey string, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
-	ev := l.sessions[sessionKey]
-	if ev == nil {
-		ev = evaluate.NewEvaluator(l.eng, config.ModeShadow, "", nil, nil)
-		ev.SetSessionRegistry(session.NewRegistry(200, 24*time.Hour))
-		l.sessions[sessionKey] = ev
-	}
-	resp, err := ev.EvaluateWithContext(ctx, req)
+func newLocalEvaluator(eng *engine.Engine) *localEvaluator {
+	ev := evaluate.NewEvaluator(eng, config.ModeShadow, "", nil, nil)
+	ev.SetSessionRegistry(session.NewRegistry(200, 24*time.Hour))
+	return &localEvaluator{ev: ev}
+}
+
+func (l *localEvaluator) evaluate(ctx context.Context, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
+	resp, err := l.ev.EvaluateWithContext(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -397,20 +413,10 @@ func (l *localEvaluator) evaluate(ctx context.Context, sessionKey string, req *m
 }
 
 type remoteEvaluator struct {
-	s     *Service
-	jobID string
+	s *Service
 }
 
-func (r *remoteEvaluator) evaluate(ctx context.Context, sessionKey string, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
-	// Replay requests are marked so they are not mistaken for live traffic:
-	// replay is set, so the engine tags its evaluate span agentshield.replay,
-	// does not store or push the verdict and keeps the session out of live
-	// cross-session fields; the session id is namespaced per job (the engine
-	// requires it with the flag, and Weft's OTLP ingest also recognises
-	// engines that predate the flag by it), and the event id starts with
-	// "weft-replay-". The engine reserves both for replay.
-	req.Replay = true
-	req.SessionID = store.ReplaySessionPrefix + r.jobID + ":" + sessionKey
+func (r *remoteEvaluator) evaluate(ctx context.Context, req *models.EvaluationRequest) ([]engine.RuleResult, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -481,14 +487,14 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 		if res.Ruleset, err = RulesetHash(dir); err != nil {
 			return nil, err
 		}
-		ev = &localEvaluator{eng: eng, sessions: map[string]*evaluate.Evaluator{}}
+		ev = newLocalEvaluator(eng)
 	} else {
 		host := s.cfg.URL
 		if i := strings.Index(host, "://"); i >= 0 {
 			host = host[i+3:]
 		}
 		res.Ruleset = "remote:" + host
-		ev = &remoteEvaluator{s: s, jobID: jobID}
+		ev = &remoteEvaluator{s: s}
 	}
 	res.Label = req.Label
 	if res.Label == "" {
@@ -538,7 +544,8 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 			source = "weft"
 		}
 		er := BuildRequest(t, fmt.Sprintf("%s%s-%d", store.ReplayEventPrefix, jobID, i), source)
-		alerts, err := ev.evaluate(ctx, t.SessionID, er)
+		markReplay(er, jobID, t.SessionID)
+		alerts, err := ev.evaluate(ctx, er)
 		if err != nil {
 			res.Summary.Errors++
 			if res.FirstError == "" {

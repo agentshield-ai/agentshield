@@ -20,7 +20,7 @@ press Enter:
 | `status:failed_step` | sessions or traces that went on after a failed step |
 | `status:ok` | sessions or traces where nothing failed |
 | `status:running` | sessions or traces still running |
-| `status:unknown` | sessions known only from AgentShield verdicts ("No agent data") |
+| `status:unknown` | sessions known only from AgentShield verdicts ("No agent data"), and their evaluate traces |
 | `has:block` | where AgentShield blocked a tool call |
 | `has:approval` | where AgentShield asked for approval |
 | `has:flagged` | blocked, or asked for approval 3 or more times |
@@ -47,23 +47,39 @@ search by name to reach the rest.
 
 **Status** means the same on Sessions and Traces, so a chip carried from
 one page to the other keeps the same runs. Traces reads it off each trace's
-top-level span; a session off the top-level spans of its traces.
+top-level span, whether or not that is an agent span (an HTTP server span
+around an agent counts); a session combines the statuses of its traces: it
+is Failed when any of them failed, else Running when any is still running,
+else Went on after a failed step when any did, else Succeeded.
 
 | Chip | Sessions | Traces |
 |---|---|---|
-| **Failed** | the session itself failed: a top-level span ended with an error | the top-level span ended with an error |
-| **Went on after a failed step** | it ended without failing, but a tool call, model call, hand-off or delegated agent in it failed | it ended without an error, but a span under it failed |
+| **Failed** | a trace of the session failed: its top-level span ended with an error | the top-level span ended with an error |
+| **Went on after a failed step** | it ended without failing, but a step in one of its traces failed | the top-level span ended without an error, but a span under it failed; or it is a sub-agent run linked to its caller that failed |
 | **Succeeded** | it ended and nothing in it failed | the same |
 | **Running** | a top-level span has not ended | the top-level span has not ended |
-| **No agent data** | known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown | no traces (the session has none) |
+| **No agent data** | known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown | the AgentShield evaluate traces of such sessions |
 
 A failed sub-agent whose caller carried on is a failed step, not a failed
-session. A session with no agent data never matches Failed, Went on after a
-failed step, Succeeded or Running, even when AgentShield blocked a call in
-it: a blocked call is not a failed session. Use **Security: Has a block** to
-find those. Listing spans on Traces (Roots only unticked), the chip applies
-to each span: Failed keeps spans that ended with an error, Went on after a
-failed step keeps spans with a failed span under them.
+session: under the caller's top-level span, or in a trace of its own that is
+linked to the caller, by an OTel span link or `weft.parent_call.id` on its
+top-level span, or by a hand-off to its agent recorded in the caller's
+trace. On Traces that sub-agent trace is listed under **Went on after a
+failed step**, and its caller's trace under its own status. A trace of its
+own with nothing linking it to a caller is a separate run: when it failed,
+its session failed.
+
+AgentShield's evaluate traces (the engine's HTTP span and its `evaluate`
+span) are verdict records, not agent runs. On Traces each takes its
+session's status, so it is listed under the same chip as its session: **No
+agent data** when the session is known only from verdicts. A session with no
+agent data never matches Failed, Went on after a failed step, Succeeded or
+Running, even when AgentShield blocked a call in it: a blocked call is not a
+failed session. Use **Security: Has a block** to find those.
+
+Listing spans on Traces (Roots only unticked), the chip applies to each
+span: Failed keeps spans that ended with an error, Went on after a failed
+step keeps spans with a failed span under them.
 
 On Agents, Teams and Security the status chip keeps what belongs to a
 session with that status (Agents reads Failed and Succeeded off the agent's

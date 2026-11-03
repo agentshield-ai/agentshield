@@ -88,13 +88,13 @@ export function SessionRow({ projectId, s }: { projectId: string; s: SessionSumm
             Go to the failure <Icon name="chevron" size={12} />
           </Link>
         )}
-        {s.status !== 'error' && s.error_count > 0 && (
+        {s.status !== 'error' && (s.failed_step || s.error_count > 0) && (
           <Link
             className="flag-link pill warn step-failed"
             to={sessionUrl(projectId, s.session_id, { step: 'error' })}
-            title="A tool call, model call or hand-off failed, but the session went on. Click to see the failed step."
+            title="A tool call, model call, hand-off or linked sub-agent run failed, but the session went on. Click to see the failed step."
           >
-            <Icon name="error" size={12} /> {s.error_count} failed step{s.error_count === 1 ? '' : 's'}
+            <Icon name="error" size={12} /> {s.error_count > 0 ? `${s.error_count} failed step${s.error_count === 1 ? '' : 's'}` : 'A step failed'}
             <span className="sr-only">: go to the failed step in {sessionTitle(s)}</span>
           </Link>
         )}

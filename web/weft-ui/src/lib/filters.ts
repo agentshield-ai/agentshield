@@ -61,16 +61,21 @@ export const STATUS_LABEL: Record<StatusFilter, string> = {
   unknown: 'No agent data',
 }
 /**
- * What each status value keeps. They mean the same on Sessions and Traces
- * (a session's status comes from the top-level spans of its traces, a
- * trace's from its top-level span), so a chip keeps the same runs on both.
+ * What each status value keeps. They mean the same on Sessions and Traces:
+ * a trace's status is read off its top-level span (agent span or not), and
+ * a session's combines its traces' (server: store/run_status.go), so a chip
+ * keeps the same runs on both. AgentShield verdict records (the engine's
+ * evaluate traces) take their session's status.
  */
 export const STATUS_HELP: Record<StatusFilter, string> = {
   ok: 'It ended and nothing in it failed.',
-  error: 'The session or trace itself failed: its top-level span ended with an error.',
-  failed_step: 'It ended without failing, but a step in it failed: a tool call, model call, hand-off or delegated agent.',
+  error:
+    'The run itself failed: the top-level span of a trace ended with an error (for a session, of any of its traces). A sub-agent run linked to its caller that failed is a failed step instead.',
+  failed_step:
+    'It ended without failing, but a step in it failed: a tool call, model call, hand-off, delegated agent, or a sub-agent run in its own trace linked to its caller.',
   running: 'Still running: a top-level span has not ended.',
-  unknown: 'Known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown.',
+  unknown:
+    'Known only from AgentShield verdicts: no agent spans were recorded, so whether it succeeded is unknown. On Traces, the engine evaluate traces of such sessions.',
 }
 export const HAS_LABEL: Record<HasFilter, string> = {
   block: 'Has a block',
@@ -379,11 +384,12 @@ export const FILTER_SUPPORT: Record<FilterPage, Record<FilterKey, FilterSupport>
 
 /** Values a page cannot read off its own rows, even for a chip it applies itself. */
 function pageNeedsSessions(page: FilterPage, key: FilterKey, s: FilterState): boolean {
-  // Traces reads "went on after a failed step" off each trace's root
-  // (descendant_error); elsewhere it is a session's status.
+  // Traces reads "went on after a failed step" off each trace's run
+  // status; elsewhere it is a session's status.
   if (key === 'status' && s.status === 'failed_step') return page !== 'sessions' && page !== 'traces'
-  // Only sessions are known from verdicts alone.
-  if (key === 'status' && s.status === 'unknown') return page !== 'sessions'
+  // Only sessions are known from verdicts alone; Traces reads it off each
+  // trace's run status (verdict records of verdict-only sessions).
+  if (key === 'status' && s.status === 'unknown') return page !== 'sessions' && page !== 'traces'
   // An agent is not "running"; a session it takes part in is.
   if (key === 'status' && s.status === 'running') return page === 'agents'
   if (key === 'has' && s.has === 'flagged') return page === 'security' || page === 'traces'

@@ -36,7 +36,11 @@ When the rules change, choose **Replay** in the "Rules changed?" panel. Weft
 re-checks the recorded tool calls in the time range (or the sessions matching
 your filters) with the current rules, without touching your agents, and
 shows which calls would now be blocked, which no longer would, and which
-changed.
+changed. The result depends only on the recorded calls and the rules:
+replaying the same sessions twice gives the same answer, however busy a live
+engine is in between. Rules that look across sessions see the other sessions
+of the same replay, never live traffic, and a replay never changes a live
+verdict.
 
 Replay needs the server to know the rules: start it with
 `--shield-rules-dir rules/rules`, or with `--shield-url` pointing at a

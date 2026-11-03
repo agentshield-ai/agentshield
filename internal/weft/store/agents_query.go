@@ -45,12 +45,7 @@ type agentSpan struct {
 // was emitted from, stamped on spans that start their own trace inside an
 // op. It is read from SDK attributes (nested) or OTLP span attributes (flat
 // keys).
-func parentCallCol(field string) string {
-	parts := []string{`json_extract(c.attributes, '$.weft.parent_call.` + field + `')`,
-		`json_extract(c.attributes, '$.otel.attributes."weft.parent_call.` + field + `"')`,
-		`json_extract(c.attributes, '$."weft.parent_call.` + field + `"')`}
-	return `COALESCE(` + strings.Join(parts, ", ") + `, '')`
-}
+func parentCallCol(field string) string { return parentCallColOf("c", field) }
 
 type agentSpanFilter struct {
 	After, Before   int64

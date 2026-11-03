@@ -19,13 +19,18 @@ need the details.
 - Plain text in the filter box finds a trace when any of its spans contains
   it: names, inputs, outputs, messages, reasoning, tool calls, error
   messages and hand-offs, not only the top-level span.
-- **Status** means the same as on Sessions: **Failed** keeps traces whose
+- **Status** means the same as on Sessions, read off each trace's
+  top-level span (agent span or not): **Failed** keeps traces whose
   top-level span ended with an error; **Went on after a failed step** keeps
-  traces whose top-level span ended without one but with a failed span under
-  it; **Succeeded** keeps traces where nothing failed. So the same chip keeps
-  the same runs on both pages. Listing spans, it applies to each span (a
-  span that failed, or one with a failed span under it). See
-  [Status](filters.md#status).
+  traces whose top-level span ended without one but with a failed span
+  under it, and sub-agent traces linked to their caller (span link, parent
+  call link or hand-off) that failed; **Succeeded** keeps traces where
+  nothing failed. AgentShield's evaluate traces are verdict records, not
+  agent runs: each is listed under its session's status, **No agent data**
+  for a session known only from verdicts. So the same chip keeps the same
+  runs on both pages. The status dot on a row is the top-level span's own
+  status. Listing spans, the chip applies to each span (a span that failed,
+  or one with a failed span under it). See [Status](filters.md#status).
 - **Add filter → Advanced: field condition** adds a condition on any field,
   such as an input value or a token count. It shows as a **Field** chip with
   the others.

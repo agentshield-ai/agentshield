@@ -142,11 +142,12 @@ describe('one chip set on every page', () => {
     expect(sessionScope('security', all)).toEqual({ team: 'code-crew', status: 'error', scoreBelow: { value: 0.5 }, model: 'm', costMin: 0.1 })
     expect(sessionScope('traces', all)).toEqual({ team: 'code-crew', has: 'block', scoreBelow: { value: 0.5 }, costMin: 0.1 })
     // Session-only values go through sessions even where the chip is otherwise the page's own.
-    // Traces reads "went on after a failed step" off its own rows (descendant_error), as Sessions does.
+    // Traces reads every status off its own rows' run status, as Sessions does.
     expect(sessionScope('traces', { status: 'failed_step' })).toEqual({})
     expect(sessionScope('agents', { status: 'failed_step' })).toEqual({ status: 'failed_step' })
-    // "No agent data" exists only on sessions.
-    expect(sessionScope('traces', { status: 'unknown' })).toEqual({ status: 'unknown' })
+    // "No agent data": a session's, or on Traces a verdict record's run status.
+    expect(sessionScope('traces', { status: 'unknown' })).toEqual({})
+    expect(sessionScope('teams', { status: 'unknown' })).toEqual({ status: 'unknown' })
     expect(sessionScope('sessions', { status: 'unknown' })).toEqual({})
     expect(sessionScope('security', { has: 'flagged' })).toEqual({ has: 'flagged' })
     expect(sessionScope('agents', { status: 'running' })).toEqual({ status: 'running' })

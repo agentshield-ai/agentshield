@@ -149,6 +149,8 @@ func callField(path string) (string, []any, bool, error) {
 		return "c." + path, nil, true, nil
 	case "summary.weft.status":
 		return statusSQL, nil, false, nil
+	case "summary.weft.run_status":
+		return runStatusSQL("c"), nil, false, nil // run_status.go
 	case "summary.weft.latency_ms":
 		return latencySQL, nil, false, nil
 	case "summary.weft.replay":

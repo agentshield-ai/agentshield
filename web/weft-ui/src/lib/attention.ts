@@ -41,7 +41,7 @@ export function attentionCards(a: SessionAttention): AttentionCard[] {
       title: 'Failed sessions',
       count: failed.count,
       detail: failed.count ? `Most recent: ${failed.latest?.title || failed.latest?.session_id || ''}` : 'No session failed.',
-      explain: 'Sessions that failed themselves: a top-level run ended with an error. Sessions that went on after a failed tool call, model call, hand-off or delegated agent are counted under “Failed steps”.',
+      explain: 'Sessions that failed themselves: the top-level span of one of their traces (agent span or not) ended with an error. Sessions that went on after a failed tool call, model call, hand-off or delegated agent are counted under “Failed steps”.',
       filter: filterFromSessionsParams(failed.filter),
       tone: 'error',
     },
@@ -51,7 +51,7 @@ export function attentionCards(a: SessionAttention): AttentionCard[] {
       count: step.count,
       detail: step.count ? `${plural(step.count, 'session')} went on after a tool or model call failed` : 'No session had a failed step it went on from.',
       explain:
-        'Sessions that ended without failing, but where at least one tool call, model call, hand-off or delegated agent ended with an error. The agent may have retried, worked around it, or given a weaker answer.',
+        'Sessions that ended without failing, but where at least one tool call, model call, hand-off or delegated agent ended with an error (a sub-agent in a trace of its own counts when it is linked to its caller). The agent may have retried, worked around it, or given a weaker answer.',
       filter: filterFromSessionsParams(step.filter),
       tone: 'warn',
     },

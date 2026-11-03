@@ -40,6 +40,8 @@ export interface SessionSummary {
   reasoning_tokens: number
   cost_usd: number | null
   status: SessionStatus
+  /** Status ok, but a step failed (the status filter's failed_step): see filters.ts STATUS_HELP. */
+  failed_step?: boolean
   models: string[]
   tools: string[]
   scores: ScoreSummary

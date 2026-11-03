@@ -34,7 +34,7 @@ All rows are scoped by `project_id` (`entity/project`).
 
 | Object | Source | Key fields |
 |---|---|---|
-| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `duration_ms` (null when unknown), `verdicts_only` (known only from AgentShield verdicts), `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`; `unknown` for `verdicts_only`) |
+| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `duration_ms` (null when unknown), `verdicts_only` (known only from AgentShield verdicts), `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`; `unknown` for `verdicts_only`), `failed_step` (an `ok` session in which a step failed); status comes from the top-level spans of the session's traces, as the Traces list reads them (API.md, *Run status*) |
 | **Agent** | `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.agent.version` on `invoke_agent` spans | name, versions, models, tools, sessions, handoffs in and out, detection rate (flagged tool calls / tool calls, API.md), scores |
 | **Team** | `weft.team.id` / `weft.team.name` on any span of a session; otherwise derived as the set of agents that took part in a session (`team_id` = `auto:` + sorted agent names joined by `+`) | `team_id`, `name`, `agents[]`, `session_count`, aggregated graph |
 | **Turn** | the existing turn detection (`is_turn`) | unchanged |
@@ -181,6 +181,10 @@ field on `EvaluationRequest`), a `weft-replay-` event id and a
 `weft-replay:<job>:` session id. The engine still evaluates them, but tags
 the `evaluate` span `agentshield.replay`, neither stores nor pushes the
 verdict, and keeps the session out of live sessions' cross-session fields.
+A replayed session's own cross-session fields cover only the other sessions
+of its job (those sharing the `weft-replay:<job>:` prefix), in-process as
+well as remotely, so a replay's verdicts depend only on the recording and the
+ruleset, not on live traffic.
 The namespace is reserved for replay: the engine honours the flag only on
 session ids in the `weft-replay:` namespace, and rejects (400, logged) a
 request with the flag on any other session, and a request without it whose

@@ -39,14 +39,21 @@ type Registry struct {
 	crossCacheTotalSessions int
 	crossCacheTime          time.Time
 	crossCacheTTL           time.Duration
+
+	// scopes indexes isolated sessions by their scope (a replay job), so a
+	// replayed session's cross-session fields are computed over its own
+	// job's sessions without scanning every live session.
+	scopes map[string]map[string]struct{}
 }
 
 type sessionState struct {
 	events   []Event
 	lastSeen time.Time
 	// isolated sessions (replays of recorded sessions) keep their own window
-	// but are left out of other sessions' cross-session fields.
+	// but are left out of other sessions' cross-session fields, and their
+	// own cross-session fields cover only the sessions of the same scope.
 	isolated bool
+	scope    string
 }
 
 // NewRegistry creates a Registry with the given max events per session and TTL.
@@ -61,6 +68,7 @@ func NewRegistry(maxEvents int, ttl time.Duration, opts ...RegistryOption) *Regi
 	}
 	r := &Registry{
 		sessions:      make(map[string]*sessionState),
+		scopes:        make(map[string]map[string]struct{}),
 		maxEvents:     maxEvents,
 		maxSessions:   100_000,
 		ttl:           ttl,
@@ -129,9 +137,17 @@ func (r *Registry) RecordWithVerdict(sessionID, tool, eventID string, alerts []e
 }
 
 // Isolate keeps sessionID out of every other session's cross-session fields
-// (session.cross_session_*). Its own window and derived fields work as usual.
-// Weft's replay marks its re-evaluations this way so that replaying recorded
-// sessions against a live engine cannot change live verdicts.
+// (session.cross_session_*), and limits its own cross-session fields to the
+// sessions isolated in the same scope: for a replay session
+// ("weft-replay:<job>:<session>") the other sessions of that replay job
+// (models.ReplayScope). Its own window and per-session fields work as usual.
+// Weft's replay marks its re-evaluations this way, so replaying recorded
+// sessions against a live engine neither changes live verdicts nor depends
+// on live traffic.
+//
+// Within a scope the correlation window is not applied: a replay runs
+// recorded calls back to back, and its verdicts must not depend on how fast
+// it ran (session windows still hold at most maxEvents events each).
 func (r *Registry) Isolate(sessionID string) {
 	if sessionID == "" {
 		return
@@ -148,8 +164,30 @@ func (r *Registry) Isolate(sessionID string) {
 	}
 	if !state.isolated {
 		state.isolated = true
+		state.scope = models.ReplayScope(sessionID)
+		if state.scope == "" {
+			state.scope = sessionID
+		}
+		if r.scopes[state.scope] == nil {
+			r.scopes[state.scope] = map[string]struct{}{}
+		}
+		r.scopes[state.scope][sessionID] = struct{}{}
 		r.crossCache = nil
 	}
+}
+
+// deleteLocked removes a session and its scope entry. Must be called with
+// r.mu held.
+func (r *Registry) deleteLocked(id string) {
+	if state, ok := r.sessions[id]; ok && state.scope != "" {
+		if members := r.scopes[state.scope]; members != nil {
+			delete(members, id)
+			if len(members) == 0 {
+				delete(r.scopes, state.scope)
+			}
+		}
+	}
+	delete(r.sessions, id)
 }
 
 // evictOldest removes the session with the oldest lastSeen timestamp.
@@ -166,7 +204,7 @@ func (r *Registry) evictOldest() {
 		}
 	}
 	if oldestID != "" {
-		delete(r.sessions, oldestID)
+		r.deleteLocked(oldestID)
 	}
 }
 
@@ -193,7 +231,7 @@ func (r *Registry) Cleanup() {
 	cutoff := time.Now().Add(-r.ttl)
 	for id, state := range r.sessions {
 		if state.lastSeen.Before(cutoff) {
-			delete(r.sessions, id)
+			r.deleteLocked(id)
 		}
 	}
 }
@@ -333,6 +371,9 @@ func (r *Registry) CrossSessionFields(excludeSessionID string, correlationWindow
 // Caches aggregate totals across all sessions, then subtracts the excluded
 // session's contribution at query time.
 func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlationWindow time.Duration) map[string]string {
+	if state, ok := r.sessions[excludeSessionID]; ok && state.isolated {
+		return r.scopedCrossSessionFieldsLocked(excludeSessionID, state)
+	}
 	now := time.Now()
 
 	if r.crossCache == nil || now.Sub(r.crossCacheTime) >= r.crossCacheTTL {
@@ -362,6 +403,44 @@ func (r *Registry) crossSessionFieldsLocked(excludeSessionID string, correlation
 		"session.cross_session_alert_count":  fmt.Sprintf("%d", totalAlerts),
 		"session.cross_session_count":        fmt.Sprintf("%d", sessionCount),
 		"session.cross_session_tool_overlap": r.computeToolOverlap(excludeSessionID, correlationWindow),
+	}
+}
+
+// scopedCrossSessionFieldsLocked computes an isolated session's cross-session
+// fields over the other sessions of its scope only, counting all their
+// events regardless of age (see Isolate). Must be called with r.mu held.
+func (r *Registry) scopedCrossSessionFieldsLocked(sessionID string, state *sessionState) map[string]string {
+	totalAlerts, sessionCount := 0, 0
+	otherTools := make(map[string]struct{})
+	for id := range r.scopes[state.scope] {
+		other, ok := r.sessions[id]
+		if id == sessionID || !ok || len(other.events) == 0 {
+			continue
+		}
+		sessionCount++
+		for _, ev := range other.events {
+			totalAlerts += len(ev.Alerts)
+			otherTools[ev.Tool] = struct{}{}
+		}
+	}
+	overlap := "0.00"
+	myTools := make(map[string]struct{})
+	for _, ev := range state.events {
+		myTools[ev.Tool] = struct{}{}
+	}
+	if len(myTools) > 0 {
+		matchCount := 0
+		for tool := range myTools {
+			if _, ok := otherTools[tool]; ok {
+				matchCount++
+			}
+		}
+		overlap = fmt.Sprintf("%.2f", float64(matchCount)/float64(len(myTools)))
+	}
+	return map[string]string{
+		"session.cross_session_alert_count":  fmt.Sprintf("%d", totalAlerts),
+		"session.cross_session_count":        fmt.Sprintf("%d", sessionCount),
+		"session.cross_session_tool_overlap": overlap,
 	}
 }
 

@@ -180,10 +180,75 @@ func TestDetectionStatsByAgentExcludesReplay(t *testing.T) {
 	}
 }
 
-// The status filter means the same as on Traces: error, the session itself
-// (a top-level span) failed; failed_step, it ended without failing but a step
-// under it failed (a tool call, or a delegated agent); ok, nothing failed
-// anywhere; running, a top-level span is open; unknown, verdicts only.
+// statusSpan is one stored span for the status tests: OTLP attributes,
+// optional failure, scope and span links.
+type statusSpan struct {
+	id, trace, parent string
+	at                time.Duration
+	attrs             map[string]any
+	err, open         bool
+	scope             string
+	links             []map[string]any
+}
+
+func (sp statusSpan) call() CompleteCall {
+	o := map[string]any{"attributes": sp.attrs}
+	if sp.scope != "" {
+		o["scope"] = map[string]any{"name": sp.scope}
+	}
+	if sp.links != nil {
+		o["links"] = sp.links
+	}
+	st := CallStart{ProjectID: proj, ID: sp.id, TraceID: sp.trace, OpName: "span", StartedAt: detTS(sp.at), Attributes: map[string]any{"otel": o}, Inputs: map[string]any{}}
+	if sp.parent != "" {
+		st.ParentID = ptr(sp.parent)
+	}
+	if sp.open {
+		return CompleteCall{Start: st}
+	}
+	end := &CallEnd{EndedAt: detTS(sp.at + time.Second), Summary: map[string]any{}}
+	if sp.err {
+		e := "boom"
+		end.Exception = &e
+	}
+	return CompleteCall{Start: st, End: end}
+}
+
+func statusAgentAttrs(agent, session string) map[string]any {
+	a := map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": agent}
+	if session != "" {
+		a["gen_ai.conversation.id"] = session
+	}
+	return a
+}
+
+// runStatusRoots lists the trace roots the Traces page's status chip keeps
+// (summary.weft.run_status), by trace id.
+func runStatusRoots(t *testing.T, s *Store, status string) []string {
+	t.Helper()
+	var ids []string
+	err := s.QueryCalls(context.Background(), CallsQuery{ProjectID: proj, Filter: &CallsFilter{TraceRootsOnly: true},
+		Query: map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "summary.weft.run_status"}, map[string]any{"$literal": status}}}}},
+		func(c *Call) error {
+			ids = append(ids, c.TraceID)
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// The status filter means the same on Sessions and Traces. A trace's status
+// is read off its top-level span, agent span or not: error, it failed;
+// failed_step, it ended without failing but a span under it failed, or it
+// is a sub-agent run linked to its caller (span link, parent call link, or
+// a hand-off to its agent) that failed; running, it has not ended; ok,
+// nothing failed. A session combines its traces' statuses (any error, then
+// any running, then any failed step). AgentShield verdict records (engine
+// evaluate traces) are not runs: they take their session's status, unknown
+// for a session known only from verdicts.
 func TestSessionStatusFilterMatchesTraces(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -205,38 +270,114 @@ func TestSessionStatusFilterMatchesTraces(t *testing.T) {
 	calls = append(calls, run...)
 	// A session known only from an engine verdict (a blocked tool call).
 	calls = append(calls, verdictSpan("v-1", "e-v", "verdicts-only", "", 0))
+
+	// The verifier's shapes.
+	http := func(id, trace string, err bool) statusSpan {
+		return statusSpan{id: id, trace: trace, at: 10 * time.Second, attrs: map[string]any{"http.method": "POST"}, err: err}
+	}
+	tool := func(id, trace, parent string) statusSpan {
+		return statusSpan{id: id, trace: trace, parent: parent, at: 12 * time.Second, attrs: map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "Bash"}}
+	}
+	spans := []statusSpan{
+		// A non-agent top-level span (an HTTP server span) that succeeded
+		// around an agent that failed: the run went on after a failed step.
+		http("w1", "t-wrap-ok", false),
+		{id: "w1-a", trace: "t-wrap-ok", parent: "w1", at: 11 * time.Second, attrs: statusAgentAttrs("coder", "wrap-ok-agent-err"), err: true},
+		tool("w1-x", "t-wrap-ok", "w1-a"),
+		// ... and one that failed around an agent that succeeded: failed.
+		http("w2", "t-wrap-err", true),
+		{id: "w2-a", trace: "t-wrap-err", parent: "w2", at: 11 * time.Second, attrs: statusAgentAttrs("coder", "wrap-err-agent-ok")},
+		tool("w2-x", "t-wrap-err", "w2-a"),
+		// A helper that failed in its own trace with nothing linking it to
+		// the caller: two separate runs, one failed.
+		{id: "u-caller", trace: "t-unlinked-caller", at: 20 * time.Second, attrs: statusAgentAttrs("coder", "sub-unlinked")},
+		tool("u-x", "t-unlinked-caller", "u-caller"),
+		{id: "u-helper", trace: "t-unlinked-helper", at: 21 * time.Second, attrs: statusAgentAttrs("helper", "sub-unlinked"), err: true},
+		// A helper in its own trace linked to its caller by an OTel span link.
+		{id: "l-caller", trace: "t-link-caller", at: 30 * time.Second, attrs: statusAgentAttrs("coder", "sub-linked-span")},
+		tool("l-x", "t-link-caller", "l-caller"),
+		{id: "l-helper", trace: "t-link-helper", at: 31 * time.Second, attrs: statusAgentAttrs("helper", "sub-linked-span"), err: true,
+			links: []map[string]any{{"trace_id": "t-link-caller", "span_id": "l-x"}}},
+		// ... by a parent call link.
+		{id: "p-caller", trace: "t-pc-caller", at: 40 * time.Second, attrs: statusAgentAttrs("coder", "sub-linked-parentcall")},
+		{id: "p-helper", trace: "t-pc-helper", at: 41 * time.Second, err: true, attrs: map[string]any{"gen_ai.operation.name": "invoke_agent",
+			"gen_ai.agent.name": "helper", "gen_ai.conversation.id": "sub-linked-parentcall", "weft.parent_call.id": "p-caller", "weft.parent_call.trace_id": "t-pc-caller"}},
+		// ... by a hand-off to its agent recorded in the caller's trace.
+		{id: "h-caller", trace: "t-ho-caller", at: 50 * time.Second, attrs: statusAgentAttrs("coder", "sub-linked-handoff")},
+		{id: "h-x", trace: "t-ho-caller", parent: "h-caller", at: 50 * time.Second, attrs: map[string]any{"gen_ai.operation.name": "execute_tool",
+			"gen_ai.tool.name": "transfer_to_helper", "weft.handoff.to_agent": "helper"}},
+		{id: "h-helper", trace: "t-ho-helper", at: 51 * time.Second, attrs: statusAgentAttrs("helper", "sub-linked-handoff"), err: true},
+		// The engine's evaluate traces (HTTP root + evaluate child) of
+		// sessions with agent data follow their session.
+		{id: "eh-1", trace: "t-eng-recovered", at: 60 * time.Second, scope: "agentshield", attrs: map[string]any{"http.method": "POST", "http.route": "/api/v1/evaluate"}},
+		{id: "ev-1", trace: "t-eng-recovered", parent: "eh-1", at: 60 * time.Second, scope: "agentshield", attrs: map[string]any{"event.id": "e-r",
+			"gen_ai.conversation.id": "recovered", "gen_ai.tool.name": "Bash", "agentshield.verdict.action": "block"}},
+		{id: "eh-2", trace: "t-eng-both", at: 61 * time.Second, scope: "agentshield", attrs: map[string]any{"http.method": "POST"}},
+		{id: "ev-2", trace: "t-eng-both", parent: "eh-2", at: 61 * time.Second, scope: "agentshield", attrs: map[string]any{"event.id": "e-b",
+			"gen_ai.conversation.id": "both", "agentshield.verdict.action": "allow"}},
+	}
+	for _, sp := range spans {
+		calls = append(calls, sp.call())
+	}
+	ok := verdictSpan("v-ok", "e-ok", "ok-1", "", 2*time.Second)
+	ok.Start.TraceID = "t-eng-ok"
+	calls = append(calls, ok)
 	if _, err := s.UpsertComplete(ctx, calls); err != nil {
 		t.Fatal(err)
 	}
 
-	want := map[string][]string{
-		"error":                 {"both", "root-error"},
-		SessionStatusFailedStep: {"recovered", "sub-failed"},
+	wantSessions := map[string][]string{
+		"error":                 {"both", "root-error", "sub-unlinked", "wrap-err-agent-ok"},
+		SessionStatusFailedStep: {"recovered", "sub-failed", "sub-linked-handoff", "sub-linked-parentcall", "sub-linked-span", "wrap-ok-agent-err"},
 		"ok":                    {"ok-1"},
 		"running":               {"running-1"},
 		SessionStatusUnknown:    {"verdicts-only"},
 	}
-	for status, ids := range want {
+	// The same chip on Traces (trace roots, summary.weft.run_status).
+	wantTraces := map[string][]string{
+		"error": {"t-both", "t-eng-both", "t-root-error", "t-unlinked-helper", "t-wrap-err"},
+		SessionStatusFailedStep: {"t-eng-recovered", "t-ho-helper", "t-pc-helper", "t-recovered", "t-sub-failed", "t-link-helper",
+			"t-wrap-ok"},
+		"ok":                 {"t-eng-ok", "t-ho-caller", "t-link-caller", "t-ok-1", "t-pc-caller", "t-unlinked-caller"},
+		"running":            {"t-running-1"},
+		SessionStatusUnknown: {"vt-v-1"},
+	}
+	for status, ids := range wantSessions {
 		got, err := s.MatchingSessionIDs(ctx, SessionsQuery{ProjectID: proj, Status: status})
 		if err != nil {
 			t.Fatal(err)
 		}
 		sort.Strings(got)
 		if fmt.Sprint(got) != fmt.Sprint(ids) {
-			t.Errorf("status=%s: %v, want %v", status, got, ids)
+			t.Errorf("Sessions status=%s: %v, want %v", status, got, ids)
+		}
+		want := append([]string(nil), wantTraces[status]...)
+		sort.Strings(want)
+		if got := runStatusRoots(t, s, status); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("Traces status=%s: %v, want %v", status, got, want)
 		}
 	}
-	// The same split on the traces' roots (summary.weft.status).
-	for root, st := range map[string]string{"r-root-error": "error", "r-recovered": "descendant_error", "r-ok-1": "success", "r-sub-failed": "descendant_error", "r-both": "error", "r-running-1": "running"} {
-		c, err := s.GetCall(ctx, proj, root, false, false, false)
+	// Every trace with a session is under its session's chip, except the
+	// other runs of a session with several (only t-unlinked-caller here:
+	// a linked helper is a step of its caller's run).
+	sessionOf := map[string]string{}
+	all, _, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ss := range all {
+		full, err := s.GetAgentSession(ctx, proj, ss.SessionID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if c.Status() != st {
-			t.Errorf("trace root %s status %s, want %s", root, c.Status(), st)
+		for _, tid := range full.TraceIDs {
+			sessionOf[tid] = ss.SessionID
+		}
+		if (full.FailedStep) != (full.Status == "ok" && containsStr(wantSessions[SessionStatusFailedStep], ss.SessionID)) {
+			t.Errorf("session %s: status %s failed_step %v", ss.SessionID, full.Status, full.FailedStep)
 		}
 	}
-	if ss, err := s.GetAgentSession(ctx, proj, "verdicts-only"); err != nil || ss.Status != SessionStatusUnknown || !ss.VerdictsOnly {
+	if ss, err := s.GetAgentSession(ctx, proj, "verdicts-only"); err != nil || ss.Status != SessionStatusUnknown || !ss.VerdictsOnly || ss.FailedStep {
 		t.Errorf("verdict-only session: %+v %v", ss, err)
 	}
 	if _, _, err := s.QuerySessions(ctx, SessionsQuery{ProjectID: proj, Status: "bogus"}); err == nil {

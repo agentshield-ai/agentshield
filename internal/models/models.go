@@ -29,7 +29,8 @@ type EvaluationRequest struct {
 	// docs/weft/DESIGN.md §5.4) rather than live agent traffic. The verdict
 	// is computed as usual; the evaluate span is tagged agentshield.replay,
 	// the verdict is neither stored nor pushed to Weft, and the session is
-	// kept out of other sessions' cross-session fields. It is honoured only
+	// kept out of other sessions' cross-session fields (its own cover only
+	// its replay job's sessions, see ReplayScope). It is honoured only
 	// for session ids in the replay namespace (ReplaySessionPrefix), and the
 	// namespace is reserved for it: the HTTP API rejects a replay flag on any
 	// other session and a namespaced session or event id without the flag
@@ -50,6 +51,23 @@ const ReplayEventPrefix = "weft-replay-"
 // IsReplaySession reports whether sessionID is in the replay namespace.
 func IsReplaySession(sessionID string) bool {
 	return strings.HasPrefix(strings.TrimLeftFunc(sessionID, unicode.IsSpace), ReplaySessionPrefix)
+}
+
+// ReplayScope returns the part of a replay session id that names its replay
+// job, "weft-replay:<job>:", which every session of that job shares. A
+// replayed session's cross-session fields are computed over its own job's
+// sessions only. An id in the namespace without a job part is its own
+// scope; an id outside the namespace has none ("").
+func ReplayScope(sessionID string) string {
+	if !IsReplaySession(sessionID) {
+		return ""
+	}
+	id := strings.TrimLeftFunc(sessionID, unicode.IsSpace)
+	rest := id[len(ReplaySessionPrefix):]
+	if i := strings.IndexByte(rest, ':'); i >= 0 {
+		return id[:len(ReplaySessionPrefix)+i+1]
+	}
+	return id
 }
 
 // IsReplayEventID reports whether eventID carries the replay event prefix.

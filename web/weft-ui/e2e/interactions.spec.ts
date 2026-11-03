@@ -183,34 +183,57 @@ test('Traces defaults to the last 24 hours, widens when empty, and saves views',
 test('the status chip keeps the same runs on Sessions and Traces', async ({ page }) => {
   const errors = watchErrors(page)
   const P = process.env.WEFT_E2E_STATUS!
-  // Each seeded session is one trace, whose top-level span is its agent.
-  const expected: Record<string, string[]> = {
-    error: ['failer'],
-    failed_step: ['delegator', 'recoverer'],
-    ok: ['finisher'],
+  // Sessions, by their title; traces, by their top-level span (first match wins).
+  const sessionOf: [string, string][] = [
+    ['Status check: a run that fails', 'failer'],
+    ['Status check: a run that recovers', 'recoverer'],
+    ['Status check: a helper that fails', 'delegator'],
+    ['Status check: a run where nothing fails', 'finisher'],
+    ['Status check: a server span that fails around an agent that does not', 'wrapfails'],
+    ['Status check: an agent that fails inside a server span that does not', 'wrapholds'],
+    ['Status check: a linked helper that fails in its own trace', 'caller'],
+    ['Session st-verdicts', 'verdicts'],
+  ]
+  const traceOf: [RegExp, string][] = [
+    [/\/api\/v1\/evaluate/, 'engine(finisher)'],
+    [/\bevaluate\b/, 'engine(verdicts)'],
+    ...['failer', 'recoverer', 'delegator', 'finisher', 'wrapfails', 'wrapholds', 'caller', 'linkedhelper'].map((a): [RegExp, string] => [new RegExp(`\\b${a}\\b`), a]),
+  ]
+  // A trace's status is read off its top-level span, agent span or not; a
+  // session's combines its traces'. A helper linked to its caller that
+  // failed is a failed step (its caller's own trace succeeded). The engine's
+  // evaluate traces take their session's status: "No agent data" for a
+  // session known only from them.
+  const expected: Record<string, { sessions: string[]; traces: string[] }> = {
+    error: { sessions: ['failer', 'wrapfails'], traces: ['failer', 'wrapfails'] },
+    failed_step: { sessions: ['caller', 'delegator', 'recoverer', 'wrapholds'], traces: ['delegator', 'linkedhelper', 'recoverer', 'wrapholds'] },
+    ok: { sessions: ['finisher'], traces: ['caller', 'engine(finisher)', 'finisher'] },
+    unknown: { sessions: ['verdicts'], traces: ['engine(verdicts)'] },
   }
-  const agentOf: Record<string, string> = {
-    'Status check: a run that fails': 'failer',
-    'Status check: a run that recovers': 'recoverer',
-    'Status check: a helper that fails': 'delegator',
-    'Status check: a run where nothing fails': 'finisher',
-  }
-  for (const [status, agents] of Object.entries(expected)) {
+  for (const [status, want] of Object.entries(expected)) {
     await page.goto(`/${P}/sessions?status=${status}&time=all`)
     const rows = page.locator('.session-row')
-    await expect(rows).toHaveCount(agents.length)
-    const sessions = (await rows.allInnerTexts()).map((t) => Object.entries(agentOf).find(([title]) => t.includes(title))?.[1]).sort()
-    expect(sessions, `Sessions, status=${status}`).toEqual(agents)
+    await expect(rows).toHaveCount(want.sessions.length)
+    const sessions = (await rows.allInnerTexts()).map((t) => sessionOf.find(([title]) => t.includes(title))?.[1]).sort()
+    expect(sessions, `Sessions, status=${status}`).toEqual(want.sessions)
     await page.goto(`/${P}/traces?status=${status}&time=all`)
     const traces = page.locator('.traces-table tbody tr')
-    await expect(traces).toHaveCount(agents.length)
-    const roots = (await traces.allInnerTexts()).map((t) => Object.values(agentOf).find((a) => new RegExp(`\\b${a}\\b`).test(t))).sort()
-    expect(roots, `Traces, status=${status}`).toEqual(agents)
+    await expect(traces).toHaveCount(want.traces.length)
+    const roots = (await traces.allInnerTexts()).map((t) => traceOf.find(([re]) => re.test(t))?.[1]).sort()
+    expect(roots, `Traces, status=${status}`).toEqual(want.traces)
   }
-  // The chip says what it keeps.
+  // The chip says what it keeps, and Traces applies it to the traces themselves, not through sessions.
+  for (const status of ['failed_step', 'unknown']) {
+    await page.goto(`/${P}/traces?status=${status}&time=all`)
+    await expect(page.locator('.traces-table tbody tr').first()).toBeVisible()
+    await expect(page.getByRole('note')).toHaveCount(0)
+  }
   await page.goto(`/${P}/traces?status=failed_step&time=all`)
   await expect(page.getByRole('button', { name: 'Edit filter Status: Went on after a failed step' })).toHaveAttribute('title', /a step in it failed/)
-  await expect(page.getByRole('note')).toHaveCount(0) // applied to the traces themselves, not through sessions
+  await expect(page.getByRole('button', { name: 'Edit filter Status: Went on after a failed step' })).toHaveAttribute('title', /linked to its caller/)
+  // The session row says a step failed.
+  await page.goto(`/${P}/sessions?status=failed_step&time=all`)
+  await expect(page.locator('.session-row').filter({ hasText: 'a linked helper that fails' }).getByRole('link', { name: /failed step/ })).toBeVisible()
   expect(errors).toEqual([])
 })
 

@@ -11,8 +11,8 @@ look. Each card's number is exactly the list you get when you click it.
 
 | Card | What it counts |
 |---|---|
-| Failed sessions | Sessions that failed themselves: a top-level run ended with an error. |
-| Failed steps | Sessions that ended without failing, but where a tool call, model call, hand-off or delegated agent failed along the way. The agent may have retried, worked around it, or given a weaker answer. |
+| Failed sessions | Sessions that failed themselves: the top-level span of one of their traces (agent span or not) ended with an error. |
+| Failed steps | Sessions that ended without failing, but where a tool call, model call, hand-off or delegated agent failed along the way (a sub-agent in a trace of its own counts when it is linked to its caller). The agent may have retried, worked around it, or given a weaker answer. |
 | Blocked or needing approval | Sessions where AgentShield blocked a tool call, or asked a person for approval three or more times. |
 | Low scores | Sessions with any score below 0.5. |
 | Cost spikes | Sessions costing at least three times the typical (median) session. |
@@ -31,7 +31,9 @@ Badges flag problems:
 
 - **Blocked** or **Needs approval**: click the badge to jump straight to that
   tool call.
-- **N failed steps**: click it to jump to the failed step.
+- **N failed steps** (or **A step failed**, when the step that failed is not
+  an agent span, such as a database call under the server span around the
+  agent): click it to jump to the failed step.
 - **Go to the failure**: on a failed session, opens the step that failed.
 - **Verdicts only — no agent spans recorded**: AgentShield checked tool calls
   in this session, but the agent itself sent no spans to Weft, so its steps,
@@ -39,6 +41,10 @@ Badges flag problems:
   outcome: its status shows as **No agent data**, never Succeeded or Failed,
   even when a call was blocked. `status:unknown` lists these sessions.
   Connect the agent (see [Set up](setup.md)) to record them.
+
+A session's status comes from the top-level spans of its traces, as on
+Traces, so a status chip keeps the same runs on both pages (see
+[Status](filters.md#status)).
 
 Use the filter bar to narrow the list, for example `agent:researcher
 status:failed`. Plain text finds sessions by what was said and done in them,
