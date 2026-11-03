@@ -499,3 +499,33 @@ func TestShieldInsights(t *testing.T) {
 		t.Error("bad bucket should fail")
 	}
 }
+
+// A sub-agent launched by a tool (a coding agent's Task tool) is recorded as
+// invoke_agent with the tool-use id. Verdicts on that tool call link to it by
+// id, before or after it arrives, and never by time.
+func TestCorrelationSubAgentToolCall(t *testing.T) {
+	s := newTestStore(t)
+	sub := agentRoot("task-1", "t1", "s1", "researcher", 2*time.Second)
+	sub.parent = "root"
+	sub.attrs["gen_ai.tool.call.id"] = "toolu_task"
+	sub.attrs["gen_ai.tool.name"] = "Task"
+	putSpans(t, s, agentRoot("root", "t1", "s1", "coder", 0), sub)
+	mustUpsert(t, s, det("evt-task", "s1", "Task", "toolu_task", "require_approval", time.Minute))
+	if d := getDet(t, s, "evt-task"); spanOf(d) != "task-1" || d.Link != LinkToolCallID {
+		t.Fatalf("detection first: %q %q", spanOf(d), d.Link)
+	}
+	// Detection first, sub-agent span later.
+	mustUpsert(t, s, det("evt-task2", "s1", "Task", "toolu_task2", "block", 3*time.Second))
+	sub2 := agentRoot("task-2", "t1", "s1", "writer", 3*time.Second)
+	sub2.parent = "root"
+	sub2.attrs["gen_ai.tool.call.id"] = "toolu_task2"
+	putSpans(t, s, sub2)
+	if d := getDet(t, s, "evt-task2"); spanOf(d) != "task-2" || d.Link != LinkToolCallID {
+		t.Fatalf("late sub-agent: %q %q", spanOf(d), d.Link)
+	}
+	// An invoke_agent span without a tool call id never takes a time-based link.
+	mustUpsert(t, s, det("evt-near", "s1", "Task", "", "block", 2*time.Second))
+	if d := getDet(t, s, "evt-near"); d.SpanID != nil && (spanOf(d) == "root" || spanOf(d) == "task-1") {
+		t.Fatalf("time link to an agent span: %q", spanOf(d))
+	}
+}

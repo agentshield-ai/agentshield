@@ -555,7 +555,7 @@ func linkDetectionTx(ctx context.Context, tx detDB, projectID, id string) error 
 		var ref detSpanRef
 		err := tx.QueryRowContext(ctx, `SELECT a.id, a.trace_id, a.agent_name FROM agent_spans a
 			JOIN calls c ON c.project_id = a.project_id AND c.id = a.id
-			WHERE a.project_id = ? AND a.tool_call_id = ? AND a.operation_name = 'execute_tool' AND c.deleted_at IS NULL
+			WHERE a.project_id = ? AND a.tool_call_id = ? AND a.operation_name IN ('execute_tool', 'invoke_agent') AND c.deleted_at IS NULL
 				AND (? = '' OR a.conversation_id = ? OR a.conversation_id = '')
 			ORDER BY a.conversation_id = ? DESC, c.started_at LIMIT 1`,
 			projectID, toolCallID, session, session, session).Scan(&ref.id, &ref.traceID, &ref.agent)
@@ -628,7 +628,10 @@ func detectionCallHook(ctx context.Context, tx *sql.Tx, projectID, id string) er
 	if err != nil {
 		return err
 	}
-	if op == OpExecuteTool {
+	// A sub-agent started by a tool (e.g. a coding agent's Task tool) is an
+	// invoke_agent span carrying the tool-use id; verdicts on that tool call
+	// link to it by id (never by time).
+	if op == OpExecuteTool || (op == OpInvokeAgent && toolCallID != "") {
 		return linkToolSpanTx(ctx, tx, projectID, id)
 	}
 	if conv == "" {
@@ -682,12 +685,13 @@ func linkToolSpanTx(ctx context.Context, tx detDB, projectID, spanID string) err
 }
 
 func linkToolSpanDepth(ctx context.Context, tx detDB, projectID, spanID string, depth int) error {
-	var conv, toolCallID, toolName, traceID, agent string
+	var conv, toolCallID, toolName, traceID, agent, op string
 	var startedAt sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT a.conversation_id, a.tool_call_id, a.tool_name, a.trace_id, a.agent_name, c.started_at
+	err := tx.QueryRowContext(ctx, `SELECT a.conversation_id, a.tool_call_id, a.tool_name, a.trace_id, a.agent_name, c.started_at, a.operation_name
 		FROM agent_spans a JOIN calls c ON c.project_id = a.project_id AND c.id = a.id
-		WHERE a.project_id = ? AND a.id = ? AND c.deleted_at IS NULL AND a.operation_name = 'execute_tool'`, projectID, spanID).
-		Scan(&conv, &toolCallID, &toolName, &traceID, &agent, &startedAt)
+		WHERE a.project_id = ? AND a.id = ? AND c.deleted_at IS NULL
+			AND (a.operation_name = 'execute_tool' OR (a.operation_name = 'invoke_agent' AND a.tool_call_id <> ''))`, projectID, spanID).
+		Scan(&conv, &toolCallID, &toolName, &traceID, &agent, &startedAt, &op)
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -724,7 +728,7 @@ func linkToolSpanDepth(ctx context.Context, tx detDB, projectID, spanID string, 
 			}
 		}
 	}
-	if conv != "" && toolName != "" && startedAt.Valid {
+	if op == OpExecuteTool && conv != "" && toolName != "" && startedAt.Valid {
 		w := CorrelationWindow.Microseconds()
 		at := startedAt.Int64
 		var did, prev string
