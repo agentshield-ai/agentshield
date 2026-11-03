@@ -1,0 +1,257 @@
+# Weft design: observability for agents and agent teams
+
+Weft records what AI agents and teams of agents do, why they did it, and how
+well and how safely they did it. It stores sessions, agents, the hand-offs
+between them, each model's reasoning, every tool call, AgentShield security
+verdicts and evaluation scores, and it shows them together.
+
+This document is the contract between the server, the SDKs and the UI. Field
+and route names here are binding. Where an implementation has to differ, update
+this file in the same change.
+
+## 1. Principles
+
+1. **OpenTelemetry first.** Ingest and naming follow the OpenTelemetry GenAI
+   semantic conventions (`gen_ai.*`). Anything Weft adds lives under `weft.*`,
+   and AgentShield's attributes live under `agentshield.*`. Other conventions
+   (OpenInference, OpenLLMetry, Langfuse, MLflow, Vercel AI and so on) are
+   mapped onto the GenAI model at ingest.
+2. **Agents are the unit.** The primary objects are sessions, agents and teams,
+   not individual function calls. The generic call tree is still there,
+   underneath and in the raw Traces explorer.
+3. **Reasoning is data.** Model reasoning (thinking blocks, reasoning
+   summaries) is stored as steps that can be searched and scored, and each step
+   is linked to the tool call or hand-off it led to.
+4. **Security is part of the trace.** AgentShield verdicts are attached to the
+   exact tool call and reasoning step they concern.
+5. **Compatibility is an adapter.** Clients built for other tracing products
+   work only through an optional adapter that is off by default (§8). Nothing
+   outside the adapter depends on it.
+
+## 2. Data model
+
+All rows are scoped by `project_id` (`entity/project`).
+
+| Object | Source | Key fields |
+|---|---|---|
+| **Session** | `gen_ai.conversation.id` (falls back to `thread_id`) | `session_id`, `name`, `started_at`, `last_activity`, `agents[]`, `team_id`, `turn_count`, `span_count`, `tool_call_count`, `handoff_count`, `reasoning_step_count`, `detection_count` (by action), `error_count`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `status` (`running` / `ok` / `error`) |
+| **Agent** | `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.agent.version` on `invoke_agent` spans | name, versions, models, tools, sessions, handoffs in and out, detection rate, scores |
+| **Team** | `weft.team.id` / `weft.team.name` on any span of a session; otherwise derived as the set of agents that took part in a session (`team_id` = `auto:` + sorted agent names joined by `+`) | `team_id`, `name`, `agents[]`, `session_count`, aggregated graph |
+| **Turn** | the existing turn detection (`is_turn`) | unchanged |
+| **Hand-off** | an edge between two agents (§2.1) | `id`, `session_id`, `trace_id`, `from_span_id`, `to_span_id`, `from_agent`, `to_agent`, `kind` (`delegate` / `handoff` / `return`), `started_at`, `ended_at`, `status`, `input_preview`, `output_preview` |
+| **Reasoning step** | extracted from model spans (§2.2) | `id`, `span_id`, `session_id`, `trace_id`, `agent_name`, `index`, `kind` (`thinking` / `summary` / `redacted`), `text`, `tokens`, `started_at`, `next_span_id` (the tool call or hand-off that followed) |
+| **Tool call** | `execute_tool` spans | `gen_ai.tool.name`, `gen_ai.tool.call.id`, arguments, result, status |
+| **Detection** | an AgentShield verdict (§5) | `id`, `session_id`, `span_id` (the matched tool span, nullable), `tool_call_id`, `tool_name`, `agent_name`, `action` (`allow` / `log` / `require_approval` / `block`), `mode` (`enforce` / `audit` / `shadow`), `severity`, `rules[]` (`id`, `title`, `level`, `tags`), `source` (`engine` / `replay`), `ruleset` (a label or hash), `overridden` (bool), `created_at` |
+| **Score** | feedback rows with a scope (§6) | `scope` (`session` / `agent` / `handoff` / `turn` / `span`), the target ids, `scorer`, `value`, `reason` |
+
+### 2.1 Hand-offs
+
+A hand-off edge is recorded when any of these holds:
+
+- an `invoke_agent` span's nearest `invoke_agent` ancestor in the same trace
+  belongs to a different agent (`kind=delegate`);
+- a span carries `weft.handoff.to_agent` (plus optional
+  `weft.handoff.from_agent` and `weft.handoff.kind`), or is a framework
+  hand-off span: OpenAI Agents SDK `handoff` spans (`from_agent` /
+  `to_agent`), LangGraph node transitions between agent nodes, CrewAI
+  delegation, Google ADK `transfer_to_agent`;
+- an `invoke_agent` span has an OTel span link to a span of another agent
+  (`kind=handoff`).
+
+When the delegated agent finishes and control goes back, a `kind=return` edge
+is recorded. The edges are indexed into an `agent_handoffs` table from the
+existing call hook, so the order in which spans arrive does not matter.
+
+### 2.2 Reasoning steps
+
+Steps are extracted from model (`chat`) spans, both from what was sent and
+from what came back:
+
+- **Anthropic:** `thinking` content blocks (`kind=thinking`) and
+  `redacted_thinking` blocks (`kind=redacted`, no text).
+- **OpenAI Responses:** `reasoning` output items with their `summary` text
+  (`kind=summary`). `reasoning_tokens` comes from
+  `output_tokens_details.reasoning_tokens`.
+- **Gemini:** parts with `thought: true`.
+- **GenAI semconv messages** (`gen_ai.input.messages` /
+  `gen_ai.output.messages`): parts of type `reasoning` or `thinking`.
+- **Weft SDK:** `weft.reasoning(text, kind=...)` inside a span, recorded as a
+  span event named `weft.reasoning`.
+
+`next_span_id` points to the first tool call or hand-off that starts after
+the step, within the same agent turn.
+
+## 3. Native API (`/api/v1`)
+
+These are JSON over HTTP with the same authentication as the rest of the
+server. Every request carries `project_id` (in the query for GET, in the
+body for POST). Lists take `limit`, `offset` and `sort_by`, and return
+`{items, total_count}`.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/sessions` | list sessions. Filters: `agent`, `team_id`, `status`, `has_detection` (`any` / `block` / `require_approval`), `min_score` (`scorer:value`), `q` (text search), `from`, `to` |
+| `GET /api/v1/sessions/{id}` | the session summary (§2 fields) |
+| `GET /api/v1/sessions/{id}/timeline` | ordered items: `turn`, `message`, `reasoning`, `llm`, `tool_call`, `handoff`, `error`, each with `span_id`, `agent_name`, `started_at`, `ended_at` and a type-specific payload. Detections are fetched separately (`/detections?session_id=`) and merged by `span_id` / `tool_call_id` in the UI |
+| `GET /api/v1/sessions/{id}/graph` | `{nodes: [{agent, calls, errors, tokens, cost_usd, detections}], edges: [{from, to, kind, count, errors, p50_ms}]}` |
+| `GET /api/v1/sessions/{id}/reasoning` | reasoning steps in order |
+| `GET /api/v1/agents`, `GET /api/v1/agents/{name}` | as today, plus `handoffs_in`, `handoffs_out`, `reasoning_tokens`, `detection_counts`, `scores` |
+| `GET /api/v1/teams`, `GET /api/v1/teams/{id}` | team list; a team's agents, sessions, the aggregated graph and per-hand-off statistics (count, error rate, latency, mean score) |
+| `GET /api/v1/handoffs` | query hand-offs: `session_id`, `from_agent`, `to_agent`, `team_id` |
+| `GET /api/v1/detections`, `GET /api/v1/detections/stats` | query detections (`session_id`, `agent`, `action`, `rule_id`, `source`, time range); counts by rule, action, agent and day |
+| `POST /api/v1/shield/ingest` | AgentShield pushes verdicts here (§5.2) |
+| `POST /api/v1/shield/replay` | `{session_ids[] or filter, rules_dir?, label?}` starts a replay job, and returns `{job_id}` |
+| `GET /api/v1/shield/replay/{job_id}` | job status, and a diff against the engine's original verdicts: `newly_blocked`, `no_longer_blocked`, `changed` |
+| `GET /api/v1/shield/insights` | approval fatigue (`require_approval` per session and agent over time), override escalation, and cross-agent correlation within a team |
+| `GET /api/v1/scores` | scope-aware scores (§6): `scope`, `session_id`, `agent`, `handoff_id`, `scorer` |
+| `POST /api/v1/scores/run` | run scorers at a scope over chosen sessions |
+
+The trace, object, table, feedback, evaluation and LLM APIs that exist today
+remain Weft's lower-level API. The SDKs use them, and `docs/weft/API.md`
+documents them as Weft's own API.
+
+## 4. Ingest additions
+
+- OTLP mapping fills the hand-off and reasoning fields from §2.1 and §2.2 for
+  every convention Weft already maps.
+- Spans whose instrumentation scope is `agentshield` (or that carry
+  `agentshield.verdict.action`) become detections (§5.1). They are also stored
+  as ordinary spans.
+- Weft SDK attributes: `weft.team.id`, `weft.team.name`, `weft.handoff.*`, and
+  `weft.parent_call.id` / `weft.parent_call.trace_id` (a linked trace, as used
+  by TypeSafe). For a transition period, ingest also accepts the attribute
+  names the compatibility adapter maps (§8).
+
+## 5. AgentShield integration
+
+### 5.1 Engine to Weft over OTel
+
+AgentShield's engine already exports an `evaluate` span over OTLP. The engine
+adds these attributes to it:
+
+- `gen_ai.conversation.id`: the session id.
+- `gen_ai.tool.name`, plus `gen_ai.tool.call.id` when the plugin supplies
+  `tool_call_id` (a new optional field on `EvaluationRequest`).
+- `gen_ai.agent.name`: optional, from a new optional `agent_name` field.
+- `agentshield.verdict.action`, `agentshield.verdict.mode`,
+  `agentshield.verdict.severity` and `agentshield.rule_ids`.
+- One `agentshield.rule.matched` event per rule, with `rule.id`, `rule.title`,
+  `rule.level` and `rule.tags`.
+
+Pointing the engine's `telemetry.endpoint` at Weft's `/otel/v1/traces`, with
+`project_id` in the headers, is enough to make detections appear.
+
+### 5.2 Engine to Weft by direct push
+
+An optional `weft:` section in the engine config (`endpoint`, `project`,
+`api_key_env`) makes the engine POST each non-`allow` verdict, and optionally
+every verdict, to `/api/v1/shield/ingest`. The push happens in the background
+through a bounded queue, and it never delays or changes a verdict. User
+overrides that reach `/api/v1/override` are forwarded the same way, marking
+the detection as `overridden`.
+
+### 5.3 Correlation
+
+The plugins pass the coding harness's session id as both the AgentShield
+`session_id` and the Weft `gen_ai.conversation.id`, and the harness tool-use
+id as `tool_call_id` and `gen_ai.tool.call.id`. A detection is attached to the
+tool span with the same `(session_id, tool_call_id)`. Failing that, it is
+attached to the tool span in the same session with the same tool name whose
+start time is nearest within ±5 s. Failing that, it stays attached to the
+session only. Detections that arrive before their span are linked when the
+span arrives.
+
+### 5.4 Replay and security evaluations
+
+Weft imports AgentShield's rule engine (`internal/evaluate`) as a library and
+can run it in-process with `--shield-rules-dir`, or call a running engine with
+`--shield-url` / `--shield-token`. Replay re-evaluates every tool call of the
+chosen sessions in `shadow` mode, stores the results as detections with
+`source=replay` and a `ruleset` label, and reports what would change. A
+`ShieldScorer` turns this into evaluation scores (`blocked`,
+`approvals_required`, `max_severity`) at session and agent scope, so rule
+changes can be evaluated against recorded agent behaviour.
+
+## 6. Scoped evaluation
+
+Scores are feedback rows whose payload carries `scope` and the target ids
+(`session_id`, `agent`, `handoff_id`, `turn_id`, `span_id`). The rules for
+each scope:
+
+- **Session scorers** see the whole timeline.
+- **Agent scorers** see one agent's turns, reasoning and tools within a
+  session.
+- **Hand-off scorers** see the delegating context, the hand-off input, the
+  delegate's output and what the caller did next.
+
+The built-in scorers are the existing ones, plus:
+
+- `HandoffQualityJudge`: was the delegation appropriate, and was the result
+  used?
+- `ReasoningConsistencyJudge`: did the actions follow from the stated
+  reasoning?
+- `ToolSafetyScorer`: the AgentShield replay, as a scorer.
+- `GoalCompletionJudge`: did the session achieve the user's goal?
+
+Monitors can run any of these on new sessions automatically.
+
+## 7. UI
+
+The navigation:
+
+- **Observe:** Sessions (the home page), Agents, Teams, Security, Traces (the
+  raw span explorer), Dashboards, Monitors.
+- **Evaluate:** Evaluations, Scores, Leaderboards, Review queues, Playground.
+- **Assets:** Datasets, Models, Prompts, Scorers, Functions (ops), All
+  objects.
+- **Project:** Automations, Settings.
+
+The main pages:
+
+- **Session page.** A header with the summary figures, then these tabs:
+  - **Timeline:** turns, reasoning, tool calls, hand-offs and detections
+    interleaved, with each reasoning step visually tied to the action it led
+    to;
+  - **Graph:** the delegation graph, an SVG with agents as nodes and hand-offs
+    as edges, sized by count and coloured by errors and detections;
+  - **Reasoning;**
+  - **Security;**
+  - **Scores;**
+  - **Raw spans.**
+- **Team page.** The aggregated graph across sessions, a per-agent table, a
+  per-hand-off table (count, error rate, p50 latency, mean score), and
+  recent sessions.
+- **Security page.** Detections over time by action and severity, top rules,
+  a per-agent detection rate, approval fatigue and override escalation
+  panels, replay jobs with their diffs, and a "rules changed" call to action.
+
+All wording is Weft's own. The UI never names another product, except on the
+compatibility settings panel.
+
+## 8. Compatibility adapter
+
+`--weave-compat` (`WEFT_WEAVE_COMPAT=true`) is off by default. It lives in one
+package (`internal/weft/compat`), and it turns on everything that exists only
+for clients of the W&B Weave product:
+
+- the W&B GraphQL login endpoints;
+- the client's `v2` call routes;
+- the `weave:///` ref scheme in responses, and client detection by user agent;
+- `weave.*` attribute aliases on ingest (`weave.parent_call.*`,
+  `weave.eval.*`);
+- `/weave/...` UI link redirects;
+- `WF_*` environment-variable aliases.
+
+With the adapter off, those routes return 404 and Weft's own SDKs, UI and
+plugins still work fully. The adapter is documented in one page,
+`docs/weft/COMPATIBILITY.md`, and CI runs the official-client check with the
+flag on.
+
+## 9. Provenance
+
+- `NOTICE` credits any code ported from Apache-2.0 projects.
+- Prompts, preset texts and documentation are Weft's own wording. A scan for
+  text copied verbatim from other products' code or docs is kept up to date in
+  `docs/weft/PROVENANCE.md`.
+- Feature-parity comparisons with other products are not kept in this
+  repository.
