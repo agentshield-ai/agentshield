@@ -125,6 +125,9 @@ export interface AgentSummary {
   tools: string[] | null
   teams: string[] | null
   detection_counts: Partial<Record<DetectionAction, number>>
+  /** Tool calls with at least one non-allow engine verdict linked to them (API.md "Detection rate"). */
+  flagged_tool_calls?: number
+  /** flagged_tool_calls / tool_call_count, 0..1; null without recorded tool calls. */
   detection_rate: number | null
   scores: ScoreSummary
 }
@@ -264,7 +267,16 @@ export interface DetectionStats {
   overridden: number
   linked: number
   by_rule: { rule_id: string; title: string; level: string; count: number; by_action: Partial<Record<DetectionAction, number>> }[]
-  by_agent: { agent: string; count: number; by_action: Partial<Record<DetectionAction, number>>; tool_calls: number; detection_rate: number | null }[]
+  by_agent: {
+    agent: string
+    /** Verdicts, including ones not linked to a recorded tool call. */
+    count: number
+    by_action: Partial<Record<DetectionAction, number>>
+    tool_calls: number
+    flagged_tool_calls?: number
+    /** flagged_tool_calls / tool_calls, 0..1. */
+    detection_rate: number | null
+  }[]
   by_day: { day: string; count: number; by_action: Partial<Record<DetectionAction, number>>; by_severity: Record<string, number> }[]
 }
 

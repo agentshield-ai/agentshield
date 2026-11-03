@@ -5,8 +5,10 @@ same filters and the same typing shortcuts on every page.
 
 ## Filter
 
-Type in the filter box (press `/` to jump to it). Plain text searches; these
-shortcuts become filters when you press Enter:
+Type in the filter box (press `/` to jump to it). Plain text searches: on
+Sessions it finds sessions by their title, agents and team, and by what was
+said and done in them, including the agents' messages, their reasoning and
+their tool calls. These shortcuts become filters when you press Enter:
 
 | Type | Keeps |
 |---|---|

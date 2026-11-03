@@ -31,7 +31,9 @@ Badges flag problems:
 - **Go to the failure**: on a failed session, opens the step that failed.
 
 Use the filter bar to narrow the list, for example `agent:researcher
-status:failed`. See [Filters and saved views](filters.md).
+status:failed`. Plain text finds sessions by what was said and done in them,
+including the agents' reasoning and tool calls. See
+[Filters and saved views](filters.md).
 
 ## Read a session
 
@@ -43,7 +45,7 @@ Opening a session shows a header with its figures and these tabs:
   in control. Click a step to see its details.
 - **Graph:** which agent handed work to which, sized by how often. Switch to
   **Table** for the same data as a table.
-- **Reasoning:** every reasoning step on its own.
+- **Reasoning:** every reasoning step on its own, with a search box.
 - **Security:** AgentShield's verdicts in this session.
 - **Scores:** the session's scores, with the scorer and its reason.
 - **Raw spans:** the underlying trace data, for developers.

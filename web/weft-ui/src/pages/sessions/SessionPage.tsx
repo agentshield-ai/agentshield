@@ -3,7 +3,7 @@
 // Turn › Step for the focused step.
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { SCORERS_BY_SCOPE, v1, type Detection, type ReplayJob, type Score } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
@@ -269,10 +269,30 @@ function GraphTab({ pid, sessionId }: { pid: string; sessionId: string }) {
 }
 
 function ReasoningTab({ pid, sessionId, tl }: { pid: string; sessionId: string; tl: BuiltTimeline }) {
-  const r = useQuery({ queryKey: ['v1', pid, 'reasoning', sessionId], queryFn: () => v1.reasoning(pid, sessionId) })
+  const [text, setText] = useState('')
+  const [q, setQ] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setQ(text.trim()), 300)
+    return () => clearTimeout(t)
+  }, [text])
+  const r = useQuery({ queryKey: ['v1', pid, 'reasoning', sessionId, q], queryFn: () => v1.reasoning(pid, sessionId, q ? { q } : {}), placeholderData: keepPreviousData })
+  const search = (
+    <label className="filter-text reasoning-search">
+      <Icon name="search" size={14} />
+      <span className="sr-only">Search this session's reasoning</span>
+      <input className="filter-input" value={text} placeholder="Search the reasoning…" onChange={(e) => setText(e.target.value)} />
+    </label>
+  )
   if (r.isLoading) return <Loading />
   if (r.error) return <ErrorBox error={r.error} />
   const items = r.data?.items ?? []
+  if (!items.length && q)
+    return (
+      <div className="col" style={{ gap: 10 }}>
+        {search}
+        <p className="muted">No reasoning step mentions “{q}”.</p>
+      </div>
+    )
   if (!items.length)
     return (
       <p className="muted">
@@ -281,40 +301,43 @@ function ReasoningTab({ pid, sessionId, tl }: { pid: string; sessionId: string; 
       </p>
     )
   return (
-    <ol className="reasoning-list">
-      {items.map((x) => {
-        const target = x.next_span_id ? tl.steps.find((s) => s.item.span_id === x.next_span_id && (s.type === 'tool_call' || s.type === 'handoff')) : undefined
-        return (
-          <li key={x.id} className="reasoning-item">
-            <div className="row wrap" style={{ gap: 8 }}>
-              <AgentChip name={x.agent_name} to={x.agent_name ? agentUrl(pid, x.agent_name) : undefined} size="sm" />
-              <span className="small muted">
-                {x.kind === 'summary' ? 'summary' : x.kind === 'redacted' ? 'redacted' : 'thinking'}
-                {x.tokens != null ? ` · ${fmtNumber(x.tokens)} tokens` : ''} · {fmtRelative(x.started_at)}
-              </span>
-              <span className="grow" />
-              <Link className="small" to={sessionUrl(pid, sessionId, { step: `reasoning:${x.id}` })}>
-                Show in timeline
-              </Link>
-            </div>
-            <p className="pre">{x.kind === 'redacted' ? <em className="muted">Hidden by the provider.</em> : x.text}</p>
-            {target ? (
-              <Link className="led-to inline" to={sessionUrl(pid, sessionId, { step: target.key })}>
-                <Icon name="chevron" size={12} /> led to <strong>{stepTitle(target)}</strong>
-                {target.problem && (
-                  <span className={`text-${target.problem === 'approval' ? 'warn' : 'error'}`}>
-                    {' '}
-                    ({target.problem === 'block' ? 'blocked' : target.problem === 'approval' ? 'needed approval' : 'failed'})
-                  </span>
-                )}
-              </Link>
-            ) : (
-              <span className="small faint">did not lead to a tool call or hand-off</span>
-            )}
-          </li>
-        )
-      })}
-    </ol>
+    <div className="col" style={{ gap: 10 }}>
+      {search}
+      <ol className="reasoning-list">
+        {items.map((x) => {
+          const target = x.next_span_id ? tl.steps.find((s) => s.item.span_id === x.next_span_id && (s.type === 'tool_call' || s.type === 'handoff')) : undefined
+          return (
+            <li key={x.id} className="reasoning-item">
+              <div className="row wrap" style={{ gap: 8 }}>
+                <AgentChip name={x.agent_name} to={x.agent_name ? agentUrl(pid, x.agent_name) : undefined} size="sm" />
+                <span className="small muted">
+                  {x.kind === 'summary' ? 'summary' : x.kind === 'redacted' ? 'redacted' : 'thinking'}
+                  {x.tokens != null ? ` · ${fmtNumber(x.tokens)} tokens` : ''} · {fmtRelative(x.started_at)}
+                </span>
+                <span className="grow" />
+                <Link className="small" to={sessionUrl(pid, sessionId, { step: `reasoning:${x.id}` })}>
+                  Show in timeline
+                </Link>
+              </div>
+              <p className="pre">{x.kind === 'redacted' ? <em className="muted">Hidden by the provider.</em> : x.text}</p>
+              {target ? (
+                <Link className="led-to inline" to={sessionUrl(pid, sessionId, { step: target.key })}>
+                  <Icon name="chevron" size={12} /> led to <strong>{stepTitle(target)}</strong>
+                  {target.problem && (
+                    <span className={`text-${target.problem === 'approval' ? 'warn' : 'error'}`}>
+                      {' '}
+                      ({target.problem === 'block' ? 'blocked' : target.problem === 'approval' ? 'needed approval' : 'failed'})
+                    </span>
+                  )}
+                </Link>
+              ) : (
+                <span className="small faint">did not lead to a tool call or hand-off</span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </div>
   )
 }
 

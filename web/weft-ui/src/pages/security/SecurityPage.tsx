@@ -9,7 +9,7 @@ import { v1, type Detection, type DetectionAction, type DetectionStats } from '.
 import { useProjectId } from '../../hooks/useProject'
 import { useSessionScope, type SessionScope } from '../../hooks/useSessionScope'
 import { timeWindow, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
-import { fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
+import { flaggedOf, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
@@ -47,6 +47,8 @@ export function statsFromDetections(dets: Detection[], server?: DetectionStats):
   const out: DetectionStats = { total: dets.length, by_action: {}, by_severity: {}, by_source: {}, overridden: 0, linked: 0, by_rule: [], by_agent: [], by_day: [] }
   const rules = new Map<string, DetectionStats['by_rule'][number]>()
   const agents = new Map<string, number>()
+  // Tool calls (linked detections) per agent: a call with several verdicts counts once.
+  const flagged = new Map<string, Set<string>>()
   for (const d of dets) {
     out.by_action[d.action] = (out.by_action[d.action] ?? 0) + 1
     const sev = (d.severity || 'none').toLowerCase()
@@ -60,13 +62,17 @@ export function statsFromDetections(dets: Detection[], server?: DetectionStats):
       x.by_action[d.action] = (x.by_action[d.action] ?? 0) + 1
       rules.set(r.id, x)
     }
-    if (d.agent_name) agents.set(d.agent_name, (agents.get(d.agent_name) ?? 0) + 1)
+    if (d.agent_name) {
+      agents.set(d.agent_name, (agents.get(d.agent_name) ?? 0) + 1)
+      if (d.span_id && d.action !== 'allow') flagged.set(d.agent_name, (flagged.get(d.agent_name) ?? new Set()).add(d.span_id))
+    }
   }
   out.by_rule = [...rules.values()].sort((a, b) => b.count - a.count)
   out.by_agent = [...agents.entries()]
     .map(([agent, count]) => {
       const calls = server?.by_agent.find((a) => a.agent === agent)?.tool_calls ?? 0
-      return { agent, count, by_action: {}, tool_calls: calls, detection_rate: calls ? Math.min(1, count / calls) : null }
+      const f = flagged.get(agent)?.size ?? 0
+      return { agent, count, by_action: {}, tool_calls: calls, flagged_tool_calls: f, detection_rate: calls ? Math.min(1, f / calls) : null }
     })
     .sort((a, b) => b.count - a.count)
   return out
@@ -273,7 +279,10 @@ export function SecurityPage() {
             </Panel>
           </div>
           <div className="grid-2">
-            <Panel title="By agent" tip="Detection rate: the share of the agent's recorded tool calls that drew a non-allow verdict.">
+            <Panel
+              title="By agent"
+              tip="Flagged: the agent's recorded tool calls with at least one verdict other than allow (a call with several verdicts counts once), out of all its recorded tool calls. Verdicts also counts those not linked to a recorded tool call."
+            >
               {!st?.by_agent.length ? (
                 <p className="muted small">No agents flagged.</p>
               ) : (
@@ -283,7 +292,7 @@ export function SecurityPage() {
                     <tr>
                       <th scope="col">Agent</th>
                       <th scope="col">Verdicts</th>
-                      <th scope="col">Rate</th>
+                      <th scope="col">Flagged tool calls</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -292,11 +301,10 @@ export function SecurityPage() {
                         <td>
                           <AgentChip name={a.agent} to={agentUrl(pid, a.agent)} size="sm" />
                         </td>
+                        <td>{a.count}</td>
                         <td>
-                          {a.count} <span className="faint small">of {a.tool_calls} tool calls</span>
-                        </td>
-                        <td>
-                          <span className="row" style={{ gap: 6 }}>
+                          <span className="row wrap" style={{ gap: 6 }}>
+                            <span className="small">{flaggedOf(a.flagged_tool_calls, a.tool_calls)}</span>
                             <Bar value={a.detection_rate ?? 0} max={1} tone="warn" label={`${Math.round((a.detection_rate ?? 0) * 100)}%`} />
                             {a.detection_rate == null ? '—' : `${Math.round(a.detection_rate * 100)}%`}
                           </span>

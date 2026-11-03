@@ -383,6 +383,7 @@ export function FilterBar({
       )}
       {editing && (
         <FilterEditor
+          page={page}
           keys={[...addable, ...(keys.includes('q') ? (['q'] as FilterKey[]) : []), ...(editing === 'time' ? (['time'] as FilterKey[]) : [])]}
           initial={editing}
           state={state}
@@ -402,7 +403,17 @@ export function FilterBar({
   )
 }
 
+/** What the text box searches on each page. */
+const TEXT_SEARCH_LABEL: Record<FilterPage, string> = {
+  sessions: 'Text anywhere in a session: title, id, agents, team, messages, reasoning or tool calls',
+  agents: 'Text in the agent name',
+  teams: 'Text in the team name or its agents',
+  security: 'Text in the rule, tool, agent, severity or session',
+  traces: 'Text in the span name, inputs or outputs',
+}
+
 function FilterEditor({
+  page,
   keys,
   initial,
   state,
@@ -410,6 +421,7 @@ function FilterEditor({
   onApply,
   onClose,
 }: {
+  page: FilterPage
   keys: FilterKey[]
   initial: FilterKey
   state: FilterState
@@ -481,7 +493,7 @@ function FilterEditor({
       body = textField('tool', 'A tool that was called')
       break
     case 'q':
-      body = textField('q', 'Text in the title, id, agents or team')
+      body = textField('q', TEXT_SEARCH_LABEL[page])
       break
     case 'team':
       body = options.teams?.length ? (

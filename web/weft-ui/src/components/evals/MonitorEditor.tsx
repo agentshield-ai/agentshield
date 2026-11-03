@@ -9,6 +9,23 @@ import { ScorerPicker } from './ScorerPicker'
 
 const QUERY_EXAMPLE = `{"$expr": {"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 1000}]}}`
 
+export type MonitorScope = 'session' | 'agent' | 'handoff' | 'call'
+
+/** Where a monitor's scorers run (API.md "Monitors": scopes). */
+export const MONITOR_SCOPES: { id: MonitorScope; label: string; help: string }[] = [
+  { id: 'session', label: 'Each session', help: 'once a session is complete, e.g. goal completion' },
+  { id: 'agent', label: 'Each agent in a session', help: 'per agent that took part' },
+  { id: 'handoff', label: 'Each hand-off', help: 'per hand-off between agents' },
+  { id: 'call', label: 'Each call', help: 'every matching span as it finishes' },
+]
+export const DEFAULT_IDLE_SECONDS = 60
+
+/** The monitor fields for its scopes and idle time; no scopes means "each scorer where it fits". */
+export function monitorScopeFields(scopes: MonitorScope[], idleSeconds: number): { scopes?: MonitorScope[]; session_idle_seconds: number } {
+  const idle = Math.min(86400, Math.max(1, Math.round(idleSeconds) || DEFAULT_IDLE_SECONDS))
+  return scopes.length ? { scopes: MONITOR_SCOPES.map((s) => s.id).filter((s) => scopes.includes(s)), session_idle_seconds: idle } : { session_idle_seconds: idle }
+}
+
 export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: ObjSchema; onClose: () => void; onSaved: (c: Created) => void }) {
   const publish = usePublish(projectId)
   const v = initial?.val ?? {}
@@ -19,6 +36,8 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
   const [rate, setRate] = useState<number>(typeof v.sampling_rate === 'number' ? v.sampling_rate : 1)
   const [queryText, setQueryText] = useState<string>(v.query ? JSON.stringify(v.query, null, 2) : '')
   const [scorers, setScorers] = useState<string[]>(Array.isArray(v.scorers) ? v.scorers : [])
+  const [scopes, setScopes] = useState<MonitorScope[]>(Array.isArray(v.scopes) ? v.scopes : [])
+  const [idle, setIdle] = useState<number>(typeof v.session_idle_seconds === 'number' ? v.session_idle_seconds : DEFAULT_IDLE_SECONDS)
   const [opSearch, setOpSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
@@ -66,9 +85,10 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
               setBusy(true)
               setErr(null)
               try {
-                const fields: Record<string, unknown> = { name, description, active, sampling_rate: rate, op_names: opNames, scorers }
+                const fields: Record<string, unknown> = { name, description, active, sampling_rate: rate, op_names: opNames, scorers, ...monitorScopeFields(scopes, idle) }
                 const base = { ...(initial?.val ?? {}) }
                 delete base.query
+                delete base.scopes
                 if (queryText.trim()) fields.query = JSON.parse(queryText)
                 onSaved(await publish(name, { ...base, ...classVal('Monitor', [], fields) }))
               } catch (e) {
@@ -91,7 +111,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
         </label>
       </div>
       <label className="checkbox">
-        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active — score new calls as they finish
+        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active: score new sessions and calls as they finish
       </label>
 
       <div className="field" style={{ fontSize: 12, color: 'var(--text-2)' }}>
@@ -135,6 +155,30 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
         Scorers
         <ScorerPicker projectId={projectId} value={scorers} onChange={setScorers} judgeOnlyCreate />
       </div>
+
+      <fieldset className="field monitor-scopes">
+        <legend>Score</legend>
+        {MONITOR_SCOPES.map((s) => (
+          <label key={s.id} className="checkbox">
+            <input
+              type="checkbox"
+              checked={scopes.includes(s.id)}
+              onChange={(e) => setScopes(e.target.checked ? [...scopes, s.id] : scopes.filter((x) => x !== s.id))}
+            />{' '}
+            {s.label} <span className="hint">{s.help}</span>
+          </label>
+        ))}
+        <span className="hint">
+          {scopes.length ? '' : 'None ticked: session, agent and hand-off judges score each session, other scorers score each call.'}
+        </span>
+      </fieldset>
+      {(scopes.length === 0 || scopes.some((s) => s !== 'call')) && (
+        <label className="field">
+          A session is complete after this many seconds without new spans
+          <input className="input" type="number" min={1} max={86400} step={1} value={idle} onChange={(e) => setIdle(Number(e.target.value))} style={{ maxWidth: 140 }} />
+          <span className="hint">Session, agent and hand-off scorers run then. Default {DEFAULT_IDLE_SECONDS}.</span>
+        </label>
+      )}
       <ErrorBox error={err} />
     </Modal>
   )

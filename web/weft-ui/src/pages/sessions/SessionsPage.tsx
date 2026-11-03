@@ -105,7 +105,7 @@ export function SessionsPage() {
             defaultTime={DEFAULT_TIME}
             effectiveTime={time}
             options={{ ...filterOptions, teams: (teams.data?.items ?? []).filter((t) => !t.auto).map((t) => ({ id: t.team_id, name: t.name })) }}
-            placeholder="Filter sessions…  try has:block or agent:researcher"
+            placeholder="Search messages, reasoning and tool calls…  or try has:block agent:researcher"
           />
           {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
           <section aria-labelledby="attention-h">

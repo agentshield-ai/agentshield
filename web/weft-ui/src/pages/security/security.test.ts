@@ -48,7 +48,8 @@ describe('Security page filters', () => {
       ['r1', 2],
       ['r2', 1],
     ])
-    expect(st.by_agent).toEqual([{ agent: 'coder', count: 3, by_action: {}, tool_calls: 4, detection_rate: 0.75 }])
+    // Two verdicts on one tool call count once; the unlinked one is not a flagged tool call.
+    expect(st.by_agent).toEqual([{ agent: 'coder', count: 3, by_action: {}, tool_calls: 4, flagged_tool_calls: 1, detection_rate: 0.25 }])
     expect(statsFromDetections([]).total).toBe(0)
   })
 })

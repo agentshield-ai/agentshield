@@ -2256,3 +2256,28 @@ table.table tr.selected td {
   font-size: 14px;
   font-weight: 500;
 }
+
+/* The session Reasoning tab's search box (in a column, so no flex-basis height). */
+.reasoning-search {
+  flex: none;
+  max-width: 420px;
+}
+/* Under the filter chips: how chips applied through sessions work on this page. */
+.filter-scope-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.monitor-scopes {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.monitor-scopes legend {
+  padding: 0;
+  margin-bottom: 4px;
+}

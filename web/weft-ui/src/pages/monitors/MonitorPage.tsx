@@ -8,7 +8,7 @@ import type { Feedback } from '../../api/types'
 import { Empty, ErrorBox, Loading, Section, Spinner } from '../../components/common'
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock } from '../../components/ValueView'
-import { MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
+import { DEFAULT_IDLE_SECONDS, MONITOR_SCOPES, MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
 import { flattenScores, fmtMetric, objectRefPrefix, seriesColor, toNum } from '../../components/evals/evalUtils'
 import { Stat, Switch } from '../../components/objects/bits'
 import { useProjectId } from '../../hooks/useProject'
@@ -112,6 +112,15 @@ export function MonitorPage() {
                 </div>
                 <span className="mono">{Math.round((v.sampling_rate ?? 1) * 100)}%</span>
               </div>
+            </div>
+            <div className="k">scores</div>
+            <div className="v">
+              {Array.isArray(v.scopes) && v.scopes.length ? (
+                (v.scopes as string[]).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
+              ) : (
+                <span className="faint">each scorer where it fits (sessions for session judges, calls otherwise)</span>
+              )}
+              <span className="faint small"> · a session is complete after {v.session_idle_seconds ?? DEFAULT_IDLE_SECONDS}s without new spans</span>
             </div>
             <div className="k">scorers</div>
             <div className="v chips">

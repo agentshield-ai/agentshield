@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { v1 } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtCost, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
+import { flaggedOf, fmtCost, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentAnalyticsUrl, agentsUrlFor, agentUrl, sessionsUrl, teamUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { AgentChip, AgentDot, Bar, Crumbs, humanScorer, Metric, Panel, ScorePill } from '../../components/ui/bits'
@@ -86,9 +86,15 @@ export function AgentDetailPage() {
         />
         <Metric
           label="Flagged tool calls"
-          value={d.detection_rate == null ? '—' : `${(d.detection_rate * 100).toFixed(0)}%`}
-          sub={detectionSummary(d.detection_counts)}
-          tip="Share of this agent's tool calls that drew a block, approval request or logged alert from AgentShield. Replays are not counted."
+          value={d.detection_rate == null ? '—' : `${Math.round(d.detection_rate * 100)}%`}
+          sub={
+            <>
+              {flaggedOf(d.flagged_tool_calls, d.tool_call_count)}
+              <br />
+              {detectionSummary(d.detection_counts)}
+            </>
+          }
+          tip="This agent's recorded tool calls that drew a block, approval request or logged alert from AgentShield (a call with several verdicts counts once), out of all its recorded tool calls. Replays are not counted."
         />
         <Metric label="Cost" value={fmtCost(d.total_cost_usd)} tip="Token cost of this agent's model calls, priced per model, including cached tokens at their own price." />
       </div>

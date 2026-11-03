@@ -128,3 +128,8 @@ export function preview(v: unknown, n = 120): string {
     return String(v)
   }
 }
+
+/** "2 flagged of 5 tool calls" (the detection rate's numerator and denominator). */
+export function flaggedOf(flagged: number | undefined, toolCalls: number): string {
+  return `${flagged ?? 0} flagged of ${toolCalls} tool call${toolCalls === 1 ? '' : 's'}`
+}

@@ -7,7 +7,7 @@ import { v1, type AgentSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { useSessionScope } from '../../hooks/useSessionScope'
 import { isFlagged, scoreBelowMatches, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
-import { fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
+import { flaggedOf, fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentAnalyticsUrl, agentUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
@@ -122,7 +122,7 @@ export function AgentsListPage() {
                       Errors <Tip text="Spans of this agent that ended with an error, including tool calls it recovered from." />
                     </th>
                     <th scope="col">
-                      Flagged <Tip text="Share of the agent's tool calls that drew a non-allow AgentShield verdict (block, approval or log). Replays are not counted." />
+                      Flagged <Tip text="The agent's recorded tool calls that drew a non-allow AgentShield verdict (block, approval or log), out of all its recorded tool calls. A call with several verdicts counts once. Replays are not counted." />
                     </th>
                     <th scope="col">Scores</th>
                     <th scope="col">Cost</th>
@@ -146,7 +146,10 @@ export function AgentsListPage() {
                       <td className={a.error_count ? 'text-error' : ''}>{fmtNumber(a.error_count)}</td>
                       <td>
                         <div className="col" style={{ gap: 2 }}>
-                          <span>{a.detection_rate == null ? <span className="faint">—</span> : `${(a.detection_rate * 100).toFixed(0)}%`}</span>
+                          <span title={flaggedOf(a.flagged_tool_calls, a.tool_call_count)}>
+                            {a.detection_rate == null ? <span className="faint">—</span> : `${Math.round(a.detection_rate * 100)}%`}
+                          </span>
+                          {a.detection_rate != null && <span className="faint small">{flaggedOf(a.flagged_tool_calls, a.tool_call_count)}</span>}
                           <DetectionBadges counts={a.detection_counts} />
                         </div>
                       </td>
