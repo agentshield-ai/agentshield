@@ -1,9 +1,8 @@
 """TypeSafe (``pip install typesafe-sdk``): ``TypeSafeClient.system_one`` and
 ``AsyncTypeSafeClient.system_one``.
 
-A port of Weave 0.54's ``weave/integrations/typesafe`` (which has no docs
-page). Each ``system_one(state, questions, ...)`` call becomes one LLM
-(``chat``) span of provider ``typesafe``:
+Each ``system_one(state, questions, ...)`` call becomes one LLM (``chat``)
+span of provider ``typesafe``:
 
 * input: the ``state`` as a user message (a string as is, anything else as
   sorted-key JSON); the ``questions`` (a list or a mapping, each with its
@@ -13,12 +12,12 @@ page). Each ``system_one(state, questions, ...)`` call becomes one LLM
   request id (``gen_ai.response.id``);
 * parent: the current ``Turn`` when one is running; else a new
   ``invoke_agent`` turn named ``typesafe SDK``, the root of its own trace,
-  also inside an ``@weft.op`` (as in Weave, where the integration creates no
-  call). When an op is running, both spans carry Weave's link to it:
-  ``weave.parent_call.trace_id`` and ``weave.parent_call.id`` (what Weave's
-  ``OpLinkSpanProcessor`` stamps; the server exposes them as the agent span
+  also inside an ``@weft.op`` (the integration creates no op call of its
+  own). When an op is running, both spans are linked to it by the
+  ``weave.parent_call.trace_id`` and ``weave.parent_call.id`` attributes
+  (the Weave-compatible link keys; the server exposes them as the agent span
   fields ``parent_call_trace_id`` / ``parent_call_id``). The span is not made
-  the current call, so it nests nothing (as in Weave).
+  the current call, so nothing nests under it.
 * errors: ``error.type`` and ``http.response.status_code``, with the
   exception recorded as its type only: TypeSafe's API errors carry the
   response body in their message, which is not copied.
@@ -38,8 +37,7 @@ import json
 import logging
 import os
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .. import _context
 from . import _settings
@@ -48,333 +46,342 @@ from ._common import patch_attr
 logger = logging.getLogger("weft")
 
 INTEGRATION = "typesafe"
-_PROVIDER_NAME = "typesafe"
-_AGENT_NAME = "typesafe SDK"
-_OPERATION = "typesafe.system_one"
-_REQUEST_ID_HEADER = "x-typesafe-request-id"
-_CAPTURE_ENV = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
-_CAPTURE_OFF = {"0", "false", "no", "off"}
+PROVIDER = "typesafe"
+OWN_TURN_AGENT = "typesafe SDK"
+OPERATION = "typesafe.system_one"
+REQUEST_ID_HEADER = "x-typesafe-request-id"
+CAPTURE_ENV = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
+_FALSY = frozenset({"0", "false", "no", "off"})
+_DEFAULT_MODEL = "jev-latest"
 
-_capture_content_override: Optional[bool] = None
+# None: follow CAPTURE_ENV. Set by set_capture_content / patch_typesafe.
+_capture_default: Optional[bool] = None
 
 
 def set_capture_content(capture_content: Optional[bool]) -> None:
     """Set the process default (``None`` returns to the environment variable)."""
-    global _capture_content_override
-    _capture_content_override = capture_content
+    global _capture_default
+    _capture_default = capture_content
 
 
-def _process_capture_content() -> bool:
-    if _capture_content_override is not None:
-        return _capture_content_override
-    raw = os.environ.get(_CAPTURE_ENV)
-    if raw is None:
-        return True
-    return raw.strip().lower() not in _CAPTURE_OFF
-
-
-def _effective_capture() -> bool:
-    if not _process_capture_content():
+def _capture_enabled() -> bool:
+    """Whether state, questions and answers may be recorded right now."""
+    if _capture_default is None:
+        env = os.environ.get(CAPTURE_ENV)
+        allowed = env is None or env.strip().lower() not in _FALSY
+    else:
+        allowed = _capture_default
+    if not allowed:
         return False
     from ..conversation import get_current_conversation
 
     conv = get_current_conversation()
-    return not (conv is not None and not conv.include_content)
+    return conv is None or bool(conv.include_content)
 
 
-def _jsonable(value: Any) -> Any:
-    if hasattr(value, "model_dump"):
-        try:
-            return value.model_dump(mode="json")
-        except TypeError:
-            return value.model_dump()
-    if isinstance(value, Mapping):
-        return {str(k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_jsonable(v) for v in value]
-    if isinstance(value, Iterator):  # reading it would leave the SDK an empty one
+# ---------------------------------------------------------------- encoding
+
+
+def _to_plain(value: Any) -> Any:
+    """JSON-friendly copy of ``value`` (pydantic models dumped, unknown objects as text).
+
+    An iterator is returned untouched: reading it here would hand the SDK an
+    exhausted one."""
+    if value is None or isinstance(value, (bool, int, float, str)):
         return value
-    if value is None or isinstance(value, (str, int, float, bool)):
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump(mode="json")
+        except TypeError:
+            return dump()
+    if isinstance(value, Mapping):
+        return {str(k): _to_plain(v) for k, v in value.items()}
+    if isinstance(value, (bytes, bytearray)):
+        return str(value)
+    if isinstance(value, Sequence):
+        return [_to_plain(v) for v in value]
+    if isinstance(value, Iterator):
         return value
     return str(value)
 
 
-def _state_message(state: Any) -> Any:
+def _sorted_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _user_state_message(state: Any) -> Any:
     from ..conversation import Message, TextPart
 
-    value = _jsonable(state)
-    if isinstance(value, str):
-        return Message(role="user", content=value)
-    return Message(role="user", parts=[TextPart(content=json.dumps(value, sort_keys=True, default=str))])
+    plain = _to_plain(state)
+    if isinstance(plain, str):
+        return Message(role="user", content=plain)
+    return Message(role="user", parts=[TextPart(content=_sorted_json(plain))])
 
 
-def _question_wire(question: Any) -> Dict[str, Any]:
-    dumped = _jsonable(question)
-    return dumped if isinstance(dumped, dict) else {"value": dumped}
-
-
-def _questions_json(questions: Any) -> Optional[str]:
+def _encode_questions(questions: Any) -> Optional[str]:
+    """``[{"id": key-or-index, ...question}]`` as JSON, or None for anything else."""
     if isinstance(questions, Mapping):
-        items = [{"id": k, **_question_wire(q)} for k, q in questions.items()]
+        pairs: List[Tuple[Any, Any]] = list(questions.items())
     elif isinstance(questions, Sequence) and not isinstance(questions, (str, bytes)):
-        items = [{"id": i, **_question_wire(q)} for i, q in enumerate(questions)]
+        pairs = list(enumerate(questions))
     else:
         return None
-    return json.dumps(items, default=str)
+    rows = []
+    for key, question in pairs:
+        plain = _to_plain(question)
+        rows.append({"id": key, **plain} if isinstance(plain, dict) else {"id": key, "value": plain})
+    return json.dumps(rows, default=str)
 
 
-def _get(result: Any, key: str) -> Any:
-    v = getattr(result, key, None)
-    if v is None and isinstance(result, Mapping):
-        v = result.get(key)
-    return v
+def _field(result: Any, name: str) -> Any:
+    value = getattr(result, name, None)
+    if value is None and isinstance(result, Mapping):
+        value = result.get(name)
+    return value
 
 
-def _answers_message(result: Any) -> Any:
-    from ..conversation import Message, TextPart
+def _result_fields(result: Any, capture: bool) -> Dict[str, Any]:
+    """Keyword arguments for ``LLM.record`` describing a successful response."""
+    from ..conversation import Message, TextPart, Usage
 
-    answers = _get(result, "answers")
-    if answers is None:
-        return None
-    return Message(role="assistant", parts=[TextPart(content=json.dumps(_jsonable(answers), sort_keys=True, default=str))])
-
-
-def _usage_from(result: Any) -> Any:
-    from ..conversation import Usage
-
-    usage = _get(result, "usage")
-    if usage is None:
-        return None
-    i, o = (usage.get("input_tokens"), usage.get("output_tokens")) if isinstance(usage, Mapping) else (
-        getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None))
-    if not isinstance(i, int) and not isinstance(o, int):
-        return None
-    return Usage(input_tokens=i if isinstance(i, int) else 0, output_tokens=o if isinstance(o, int) else 0)
-
-
-def _request_id(result: Any) -> Optional[str]:
-    try:
-        rid = result.request_id
-    except Exception:
-        return None
-    return rid if isinstance(rid, str) and rid else None
-
-
-def _error_type(exc: BaseException) -> str:
-    cls = type(exc)
-    return cls.__qualname__ if cls.__module__ == "builtins" else f"{cls.__module__}.{cls.__qualname__}"
-
-
-def _error_request_id(exc: BaseException) -> Optional[str]:
-    getter = getattr(getattr(exc, "headers", None), "get", None)
-    if getter is None:
-        return None
-    try:
-        v = getter(_REQUEST_ID_HEADER)
-    except Exception:
-        return None
-    return v if isinstance(v, str) and v else None
-
-
-def _stamp_error(span: Any, exc: BaseException) -> None:
-    """Mark a span failed without copying the provider error text."""
-    et = _error_type(exc)  # becomes the error.type attribute
-    status = getattr(exc, "status", None)
-    if isinstance(status, int) and not isinstance(status, bool):
-        span.set_attributes({"http": {"response": {"status_code": status}}})
-    rid = _error_request_id(exc)
-    if rid is not None:
-        if hasattr(span, "response_id"):
-            span.response_id = rid  # gen_ai.response.id
+    fields: Dict[str, Any] = {"output_type": "json"}
+    model = _field(result, "model")
+    if isinstance(model, str) and model:
+        fields["response_model"] = model
+    usage = _field(result, "usage")
+    if usage is not None:
+        if isinstance(usage, Mapping):
+            tin, tout = usage.get("input_tokens"), usage.get("output_tokens")
         else:
-            span.set_attributes({"gen_ai": {"response": {"id": rid}}})
-    span._exception = et
-    span._error_type = et
+            tin, tout = getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None)
+        if isinstance(tin, int) or isinstance(tout, int):
+            fields["usage"] = Usage(
+                input_tokens=tin if isinstance(tin, int) else 0,
+                output_tokens=tout if isinstance(tout, int) else 0,
+            )
+    try:
+        request_id = result.request_id
+    except Exception:
+        request_id = None
+    if isinstance(request_id, str) and request_id:
+        fields["response_id"] = request_id
+    if capture:
+        answers = _field(result, "answers")
+        if answers is not None:
+            text = _sorted_json(_to_plain(answers))
+            fields["output_messages"] = [Message(role="assistant", parts=[TextPart(content=text)])]
+    return fields
 
 
-def _enclosing_op_call() -> Any:
-    """The innermost running op call, skipping conversation spans (which
-    Weave records as OTel spans, not calls); None outside an op."""
+# ---------------------------------------------------------------- errors
+
+
+def _qualified_error_name(exc: BaseException) -> str:
+    kind = type(exc)
+    if kind.__module__ == "builtins":
+        return kind.__qualname__
+    return kind.__module__ + "." + kind.__qualname__
+
+
+def _request_id_from_error(exc: BaseException) -> Optional[str]:
+    headers = getattr(exc, "headers", None)
+    if headers is None or not hasattr(headers, "get"):
+        return None
+    try:
+        value = headers.get(REQUEST_ID_HEADER)
+    except Exception:
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def _mark_failed(span: Any, exc: BaseException) -> None:
+    """Record the failure on ``span`` as error type, HTTP status and request id.
+
+    The exception message is left out on purpose: TypeSafe's API errors embed
+    the response body there."""
+    name = _qualified_error_name(exc)
+    status = getattr(exc, "status", None)
+    if type(status) is int:
+        span.set_attributes({"http": {"response": {"status_code": status}}})
+    request_id = _request_id_from_error(exc)
+    if request_id is not None:
+        if hasattr(span, "response_id"):  # an LLM span: gen_ai.response.id
+            span.response_id = request_id
+        else:
+            span.set_attributes({"gen_ai": {"response": {"id": request_id}}})
+    span._exception = name
+    span._error_type = name
+
+
+# ---------------------------------------------------------------- spans
+
+
+def _link_to_running_op() -> Dict[str, Any]:
+    """Link attributes to the innermost running op, skipping conversation spans."""
     for call in reversed(_context._call_stack.get()):
-        if not getattr(call, "_conversation_span", False):
-            return call if call.id and call.trace_id else None
-    return None
+        if getattr(call, "_conversation_span", False):
+            continue
+        if call.id and call.trace_id:
+            return {"weave": {"parent_call": {"trace_id": call.trace_id, "id": call.id}}}
+        break
+    return {}
 
 
-def _op_link(call: Any) -> Dict[str, Any]:
-    """Weave's span-to-op link (``weave.parent_call.trace_id`` / ``.id``)."""
-    return {"weave": {"parent_call": {"trace_id": call.trace_id, "id": call.id}}}
-
-
-def _provenance() -> Dict[str, Any]:
+def _integration_attrs() -> Dict[str, Any]:
     attrs = _settings.integration_attributes(INTEGRATION)
-    attrs.setdefault("weft", {})["integration_operation"] = _OPERATION
+    attrs.setdefault("weft", {})["integration_operation"] = OPERATION
     return attrs
 
 
-@dataclass
-class _Trace:
-    llm: Any
-    turn: Any
-    owns_turn: bool
-    capture: bool
-    closed: bool = False
+def _requested_model(client: Any, kwargs: Mapping[str, Any]) -> Tuple[Any, Any, str]:
+    """``(state, questions, model)`` as the request body will carry them."""
+    config = getattr(client, "_config", None)
+    fallback = getattr(config, "default_model", None) or getattr(client, "default_model", None) or _DEFAULT_MODEL
+    body: Dict[str, Any] = {"model": kwargs.get("model") or fallback}
+    extra = kwargs.get("extra_body")
+    if isinstance(extra, Mapping):
+        body.update(extra)
+    model = body.get("model")
+    return body, extra, model if isinstance(model, str) else ""
 
 
-def _open_trace(client: Any, state: Any, questions: Any, kwargs: Mapping[str, Any]) -> Optional[_Trace]:
-    from ..conversation import Turn, get_current_turn
+class _SystemOneSpan:
+    """The span (and, when needed, the turn) of one traced ``system_one`` call."""
 
-    if not _settings.is_enabled(INTEGRATION) or _context.tracing_suppressed():
-        return None
-    from .._client import tracing_client
+    __slots__ = ("llm", "turn", "owns_turn", "capture", "_finished")
 
-    weft_client = tracing_client()
-    if weft_client is None:
-        return None
-    turn = None
-    owns_turn = False
-    llm = None
-    try:
-        capture = _effective_capture()
-        config = getattr(client, "_config", None)
-        default_model = getattr(config, "default_model", None) or getattr(client, "default_model", None) or "jev-latest"
-        body: Dict[str, Any] = {"state": state, "model": kwargs.get("model") or default_model, "questions": questions}
-        extra = kwargs.get("extra_body")
-        if isinstance(extra, Mapping):
-            body.update(extra)
-        model = body.get("model") if isinstance(body.get("model"), str) else ""
-        # Encode before any span opens, so a rejected state leaves no turn.
-        state_message = _state_message(body.get("state")) if capture else None
-        questions_json = _questions_json(body.get("questions")) if capture else None
-        if questions_json is not None and weft_client._redact.pii:
-            questions_json = weft_client._redact.redact_text(questions_json)
-        op_call = _enclosing_op_call()
-        link = _op_link(op_call) if op_call is not None else {}
-        cur = get_current_turn()
-        if cur is not None and not cur._ended:
-            turn = cur
-            llm = turn.start_llm(model=model, provider_name=_PROVIDER_NAME)
-        else:
-            # Weave: no running turn (and no ambient OTel span) -> its own turn,
-            # a new trace even inside an op, linked to the op by attributes.
-            turn = Turn(agent_name=_AGENT_NAME)
-            turn.set_attributes({**_provenance(), **link})
-            turn.start(set_current=False)
-            owns_turn = True
-            llm = turn.start_llm(model=model, provider_name=_PROVIDER_NAME)
-        if state_message is not None:
-            llm.input_messages = [state_message]
-        attrs = {**_provenance(), **link}
-        if questions_json is not None:
-            attrs["typesafe"] = {"questions": questions_json}  # the typesafe.questions attribute
-        llm.set_attributes(attrs)
-        llm.start(set_current=False)
-        return _Trace(llm=llm, turn=turn, owns_turn=owns_turn, capture=capture)
-    except Exception:
-        logger.warning("weft: TypeSafe span setup failed", exc_info=True)
-        if llm is not None and not llm._ended:
-            llm.end()
-        if owns_turn and turn is not None and not turn._ended:
-            turn.end()
-        return None
+    def __init__(self, llm: Any, turn: Any, owns_turn: bool, capture: bool) -> None:
+        self.llm = llm
+        self.turn = turn
+        self.owns_turn = owns_turn
+        self.capture = capture
+        self._finished = False
 
+    @classmethod
+    def begin(cls, client: Any, state: Any, questions: Any, kwargs: Mapping[str, Any]) -> Optional["_SystemOneSpan"]:
+        """Open the spans, or return None when tracing is off or setup fails."""
+        if not _settings.is_enabled(INTEGRATION) or _context.tracing_suppressed():
+            return None
+        from .._client import tracing_client
 
-def _fill(trace: _Trace, result: Any) -> None:
-    record: Dict[str, Any] = {"output_type": "json"}
-    model = _get(result, "model")
-    if isinstance(model, str) and model:
-        record["response_model"] = model
-    usage = _usage_from(result)
-    if usage is not None:
-        record["usage"] = usage
-    rid = _request_id(result)
-    if rid is not None:
-        record["response_id"] = rid
-    if trace.capture:
-        answers = _answers_message(result)
-        if answers is not None:
-            record["output_messages"] = [answers]
-    trace.llm.record(**record)
+        weft_client = tracing_client()
+        if weft_client is None:
+            return None
+        from ..conversation import Turn, get_current_turn
 
+        llm = turn = None
+        owns_turn = False
+        try:
+            capture = _capture_enabled()
+            body, extra, model = _requested_model(client, kwargs)
+            sent_state = extra["state"] if isinstance(extra, Mapping) and "state" in extra else state
+            sent_questions = extra["questions"] if isinstance(extra, Mapping) and "questions" in extra else questions
+            # Encode first: state that cannot be encoded must not leave a turn behind.
+            message = _user_state_message(sent_state) if capture else None
+            questions_json = _encode_questions(sent_questions) if capture else None
+            if questions_json is not None and weft_client._redact.pii:
+                questions_json = weft_client._redact.redact_text(questions_json)
+            link = _link_to_running_op()
+            active = get_current_turn()
+            if active is not None and not active._ended:
+                turn = active
+            else:
+                # No running turn: a turn of our own, a new trace even inside an op.
+                turn = Turn(agent_name=OWN_TURN_AGENT)
+                turn.set_attributes({**_integration_attrs(), **link})
+                turn.start(set_current=False)
+                owns_turn = True
+            llm = turn.start_llm(model=model, provider_name=PROVIDER)
+            if message is not None:
+                llm.input_messages = [message]
+            attrs = {**_integration_attrs(), **link}
+            if questions_json is not None:
+                attrs["typesafe"] = {"questions": questions_json}
+            llm.set_attributes(attrs)
+            llm.start(set_current=False)
+            return cls(llm, turn, owns_turn, capture)
+        except Exception:
+            logger.warning("weft: could not open the TypeSafe span", exc_info=True)
+            if llm is not None and not llm._ended:
+                llm.end()
+            if owns_turn and turn is not None and not turn._ended:
+                turn.end()
+            return None
 
-def _close(trace: _Trace, exc: Optional[BaseException]) -> None:
-    if trace.closed:
-        return
-    trace.closed = True
-    if exc is not None:
-        _stamp_error(trace.llm, exc)
-        if trace.owns_turn and trace.turn is not None:
-            _stamp_error(trace.turn, exc)
-    if not trace.llm._ended:
-        trace.llm.end()
-    if trace.owns_turn and trace.turn is not None and not trace.turn._ended:
-        trace.turn.end()
+    def succeed(self, result: Any) -> None:
+        try:
+            self.llm.record(**_result_fields(result, self.capture))
+        except Exception:
+            logger.warning("weft: could not record the TypeSafe response", exc_info=True)
+        self._finish(None)
+
+    def fail(self, exc: BaseException) -> None:
+        self._finish(exc)
+
+    def _finish(self, exc: Optional[BaseException]) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        own_turn = self.turn if self.owns_turn else None
+        if exc is not None:
+            _mark_failed(self.llm, exc)
+            if own_turn is not None:
+                _mark_failed(own_turn, exc)
+        if not self.llm._ended:
+            self.llm.end()
+        if own_turn is not None and not own_turn._ended:
+            own_turn.end()
 
 
-def _trace_call(original: Any, client: Any, state: Any, questions: Any, kwargs: Dict[str, Any]) -> Any:
-    trace = _open_trace(client, state, questions, kwargs)
-    if trace is None:
-        return original(client, state, questions, **kwargs)
-    try:
-        result = original(client, state, questions, **kwargs)
-    except BaseException as exc:
-        _close(trace, exc)
-        raise
-    try:
-        _fill(trace, result)
-    except Exception:
-        logger.warning("weft: TypeSafe span capture failed", exc_info=True)
-    _close(trace, None)
-    return result
-
-
-async def _trace_call_async(original: Any, client: Any, state: Any, questions: Any, kwargs: Dict[str, Any]) -> Any:
-    trace = _open_trace(client, state, questions, kwargs)
-    if trace is None:
-        return await original(client, state, questions, **kwargs)
-    try:
-        result = await original(client, state, questions, **kwargs)
-    except BaseException as exc:
-        _close(trace, exc)
-        raise
-    try:
-        _fill(trace, result)
-    except Exception:
-        logger.warning("weft: TypeSafe span capture failed", exc_info=True)
-    _close(trace, None)
-    return result
-
-
-def _make_wrapper(original: Any) -> Any:
+def _wrap_system_one(original: Any) -> Any:
     if inspect.iscoroutinefunction(original):
 
         async def async_system_one(self: Any, state: Any, questions: Any, **kwargs: Any) -> Any:
-            return await _trace_call_async(original, self, state, questions, kwargs)
+            span = _SystemOneSpan.begin(self, state, questions, kwargs)
+            if span is None:
+                return await original(self, state, questions, **kwargs)
+            try:
+                result = await original(self, state, questions, **kwargs)
+            except BaseException as exc:
+                span.fail(exc)
+                raise
+            span.succeed(result)
+            return result
 
         return async_system_one
 
     def system_one(self: Any, state: Any, questions: Any, **kwargs: Any) -> Any:
-        return _trace_call(original, self, state, questions, kwargs)
+        span = _SystemOneSpan.begin(self, state, questions, kwargs)
+        if span is None:
+            return original(self, state, questions, **kwargs)
+        try:
+            result = original(self, state, questions, **kwargs)
+        except BaseException as exc:
+            span.fail(exc)
+            raise
+        span.succeed(result)
+        return result
 
     return system_one
 
 
 def patch_typesafe(capture_content: Optional[bool] = None) -> bool:
-    """Trace ``TypeSafeClient.system_one`` and ``AsyncTypeSafeClient.system_one``.
+    """Trace ``system_one`` on ``TypeSafeClient`` and ``AsyncTypeSafeClient``.
 
-    ``capture_content`` sets the process default for state, questions and
-    answers (``None`` keeps the current one)."""
+    ``capture_content`` changes the process-wide content capture default
+    (``None`` leaves it as it is)."""
     if capture_content is not None:
         set_capture_content(capture_content)
     try:
-        mod = importlib.import_module("typesafe_sdk")
+        module = importlib.import_module("typesafe_sdk")
     except ImportError:
         return False
     patched = False
-    for cls_name in ("TypeSafeClient", "AsyncTypeSafeClient"):
-        cls = getattr(mod, cls_name, None)
+    for name in ("TypeSafeClient", "AsyncTypeSafeClient"):
+        cls = getattr(module, name, None)
         if cls is not None and hasattr(cls, "system_one"):
-            patched |= patch_attr(cls, "system_one", _make_wrapper)
+            patched = patch_attr(cls, "system_one", _wrap_system_one) or patched
     return patched
 
 

@@ -21,6 +21,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/store"
 	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/triage"
+	"github.com/agentshield-ai/agentshield/internal/weftpush"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -43,6 +44,7 @@ type Daemon struct {
 	meterProvider        *sdkmetric.MeterProvider
 	retentionCancel      context.CancelFunc
 	telemetryShutdown    telemetry.ShutdownFunc
+	weftPusher           *weftpush.Pusher
 }
 
 // NewDaemon creates a new daemon instance
@@ -338,6 +340,17 @@ func (d *Daemon) initComponents() error {
 	if d.sessionRegistry != nil {
 		srv.SetSessionRegistry(d.sessionRegistry)
 	}
+	if d.config.Weft.Enabled() {
+		pusher, err := weftpush.New(d.config.Weft)
+		if err != nil {
+			return fmt.Errorf("initializing weft push: %w", err)
+		}
+		pusher.Start(context.Background())
+		d.weftPusher = pusher
+		srv.SetVerdictSink(pusher)
+		d.logger.Info("Weft verdict push enabled", "endpoint", d.config.Weft.Endpoint, "project", d.config.Weft.Project,
+			"send", d.config.Weft.Send, "queue_size", d.config.Weft.QueueSize)
+	}
 	d.server = srv
 	d.logger.Info("Server initialized", "listen_addr", d.config.ListenAddr())
 
@@ -409,6 +422,15 @@ func (d *Daemon) shutdown() error {
 		} else {
 			d.logger.Info("Server shut down successfully")
 		}
+	}
+
+	// Flush queued Weft pushes (bounded by the shutdown deadline)
+	if d.weftPusher != nil {
+		flushCtx, flushCancel := context.WithTimeout(ctx, 5*time.Second)
+		d.weftPusher.Close(flushCtx)
+		flushCancel()
+		st := d.weftPusher.Stats()
+		d.logger.Info("Weft push stopped", "sent", st.Sent, "dropped", st.Dropped, "failed", st.Failed)
 	}
 
 	// Flush and shutdown telemetry providers

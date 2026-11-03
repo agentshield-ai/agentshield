@@ -114,7 +114,42 @@ type TelemetryConfig struct {
 	SampleRate      float64 `yaml:"sample_rate"`
 	ExportAllEvents bool    `yaml:"export_all_events"`
 	Insecure        bool    `yaml:"insecure"`
+	// Headers are sent with every OTLP export, e.g. {project_id: team/app}
+	// when exporting to Weft. Endpoint may carry a URL path
+	// (http://host:6345/otel/v1/traces); without one the OTLP default is used.
+	Headers map[string]string `yaml:"headers" json:"-"`
+	// APIKeyEnv names an environment variable whose value is sent as
+	// "Authorization: Bearer <value>".
+	APIKeyEnv string `yaml:"api_key_env"`
+	// DisableMetrics turns off the OTLP metric exporter (for trace-only
+	// backends such as Weft).
+	DisableMetrics bool `yaml:"disable_metrics"`
 }
+
+// WeftConfig configures pushing verdicts to a Weft server's
+// /api/v1/shield/ingest (docs/weft/DESIGN.md §5.2). Empty Endpoint disables it.
+type WeftConfig struct {
+	Endpoint string `yaml:"endpoint" json:"endpoint"` // Weft base URL, e.g. https://weft.example.com
+	Project  string `yaml:"project" json:"project"`   // entity/project
+	// APIKeyEnv names the environment variable holding the Weft API key.
+	APIKeyEnv string `yaml:"api_key_env" json:"api_key_env"`
+	// Send is non_allow (default: everything except allow verdicts) or all.
+	Send      string `yaml:"send" json:"send"`
+	QueueSize int    `yaml:"queue_size" json:"queue_size"` // default 1000
+	// Insecure allows an http:// endpoint that is not a loopback address.
+	Insecure bool `yaml:"insecure" json:"insecure"`
+	// TimeoutSec bounds each push request (default 10).
+	TimeoutSec int `yaml:"timeout_sec" json:"timeout_sec"`
+}
+
+// Weft push send policies.
+const (
+	WeftSendNonAllow = "non_allow"
+	WeftSendAll      = "all"
+)
+
+// Enabled reports whether verdict push is configured.
+func (w WeftConfig) Enabled() bool { return strings.TrimSpace(w.Endpoint) != "" }
 
 // SessionConfig configures per-session behavioural sequencing.
 type SessionConfig struct {
@@ -147,6 +182,7 @@ type Config struct {
 	TestContext    TestContextConfig `yaml:"test_context" json:"test_context"`
 	Telemetry      TelemetryConfig   `yaml:"telemetry" json:"telemetry"`
 	Session        SessionConfig     `yaml:"session" json:"session"`
+	Weft           WeftConfig        `yaml:"weft" json:"weft"`
 	EvaluationMode EvaluationMode    `yaml:"evaluation_mode" json:"evaluation_mode"`
 	LogLevel       string            `yaml:"log_level" json:"log_level"`
 }
@@ -390,6 +426,10 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	if err := validateWeftConfig(&cfg.Weft); err != nil {
+		return err
+	}
+
 	// Apply session sequencing defaults when enabled
 	if cfg.Session.Enabled {
 		if cfg.Session.WindowSec <= 0 {
@@ -401,6 +441,56 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// validateWeftConfig checks the optional weft: section and fills defaults.
+func validateWeftConfig(w *WeftConfig) error {
+	if !w.Enabled() {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(w.Endpoint))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("weft.endpoint must be an http(s) URL")
+	}
+	if u.User != nil {
+		return fmt.Errorf("weft.endpoint must not contain credentials; use weft.api_key_env")
+	}
+	if u.Scheme == "http" && !w.Insecure && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("weft.endpoint must use HTTPS (set insecure: true to allow HTTP)")
+	}
+	if strings.TrimSpace(w.Project) == "" || !strings.Contains(w.Project, "/") {
+		return fmt.Errorf("weft.project is required (entity/project)")
+	}
+	switch w.Send {
+	case "":
+		w.Send = WeftSendNonAllow
+	case WeftSendNonAllow, WeftSendAll:
+	default:
+		return fmt.Errorf("weft.send must be non_allow or all")
+	}
+	if w.QueueSize == 0 {
+		w.QueueSize = 1000
+	}
+	if w.QueueSize < 1 || w.QueueSize > 1000000 {
+		return fmt.Errorf("weft.queue_size must be between 1 and 1000000")
+	}
+	if w.TimeoutSec == 0 {
+		w.TimeoutSec = 10
+	}
+	if w.TimeoutSec < 1 || w.TimeoutSec > 300 {
+		return fmt.Errorf("weft.timeout_sec must be between 1 and 300")
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.Unmap().IsLoopback()
+	}
+	return false
 }
 
 func validateIntRange(name string, value, min, max int) error {

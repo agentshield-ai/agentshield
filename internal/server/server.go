@@ -63,6 +63,19 @@ type Server struct {
 	httpServer      *http.Server
 	rateLimiter     *ipRateLimiter
 	startTime       time.Time
+	verdictSink     VerdictSink
+}
+
+// VerdictSink receives every verdict and accepted override after the response
+// is decided (internal/weftpush). Implementations must not block.
+type VerdictSink interface {
+	Verdict(req *models.EvaluationRequest, resp *evaluate.EvaluationResponse)
+	Override(sessionID, eventID string)
+}
+
+// SetVerdictSink forwards verdicts and overrides to sink (nil disables).
+func (s *Server) SetVerdictSink(sink VerdictSink) {
+	s.verdictSink = sink
 }
 
 // HealthResponse represents the health check response
@@ -647,6 +660,11 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		s.storeMatchedAlerts(response, &req)
 	}
 
+	// Forward to Weft (non-blocking; never changes the verdict)
+	if s.verdictSink != nil {
+		s.verdictSink.Verdict(&req, response)
+	}
+
 	// Return response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -1031,6 +1049,9 @@ func (s *Server) handleOverride(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("Override recorded", "session_id", req.SessionID, "event_id", req.EventID)
+	if s.verdictSink != nil {
+		s.verdictSink.Override(req.SessionID, req.EventID)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
