@@ -2406,17 +2406,25 @@ alias of `event_id`, and rules may use `rule_id` / `rule_name` / `severity`.
 At most 1000 detections and 1000 overrides per request, and 64 MiB of body
 (413 or 400 beyond). Validation: `event_id` required; `action`, `mode`,
 `severity` and rule levels from the lists above; `source` must be `engine`;
-ids (`event_id`, `session_id`, `tool_call_id`) at most 256 bytes without
-control characters. Descriptive values are cleaned rather than rejected,
+`event_id` at most 512 bytes, `session_id` and `tool_call_id` at most 256
+(the engine's own ids are at most 256), all without control characters. Descriptive values are cleaned rather than rejected,
 because the engine accepts them on live verdicts: `tool_name`, `agent_name`
 and rule titles have control characters turned into spaces and are cut (256,
 256 and 1024 bytes), `event_source` is cut to 128 bytes; rule tags are
-cleaned the same way and cut to 256 bytes, and only the first 64 are kept;
-a rule id over 256 bytes, or with control characters, is replaced by a
-stable stand-in (its leading part, `~sha256:` and the hex SHA-256 of the
-whole id, 256 bytes in all), so distinct rules keep distinct ids and the
-pushed and OTLP copies of a verdict agree; a detection keeps its 200 most
-severe rules (its `severity` counts them all). Re-sending an `event_id`
+cleaned the same way and cut to 256 bytes, and they are kept in order up to
+64 tags and 2048 bytes in all; a rule id is trimmed, and one over 256 bytes,
+or with control characters, is replaced by a stable stand-in (its leading
+part, `~sha256:` and the hex SHA-256 of the whole id, 256 bytes in all), so
+distinct rules keep distinct ids; a rule whose id is empty or only
+whitespace (the engine loads such rules) gets `rule~sha256:` + the hex
+SHA-256 of its cleaned title instead of failing the detection. Rules are
+then selected: a rule id given more than once keeps its most severe entry,
+rules are ordered most severe first (in their given order otherwise), and a
+detection keeps at most **64** rules (its `severity` counts them all). The
+engine applies the same cleaning and selection before it pushes a verdict
+and before it records it on the evaluate span, so the pushed and the OTLP
+copies of a verdict, and a replay of it, store the same rules in the same
+order. Re-sending an `event_id`
 updates the same detection (idempotent); `overridden` never reverts. An
 override without `event_id` marks the session's latest `block` /
 `require_approval`; one whose detection has not arrived yet is kept and
@@ -2450,11 +2458,19 @@ the request itself (no `project_id`, nothing to store, too many records, a
 body that is not JSON or is too large) fail it as a whole with 400.
 
 The engine's pusher bounds each record (descriptive fields cut with a
-`…[truncated]` marker, 256 KiB per record) and each request (4 MiB), sends
-JSON without HTML escaping, counts records Weft lists in `errors` as
-rejected, and when a request is refused with 400 or 413 splits it in halves
+`…[truncated]` marker, 512 KiB per record, above the largest detection the
+engine produces) and each request (4 MiB), sends JSON without HTML escaping,
+counts records Weft lists in `errors` as rejected, and when a request is
+refused with 400 or 413, or keeps getting another 5xx, splits it in halves
 until the offending records are isolated; only those are dropped (counted
-and logged), the rest are delivered.
+and logged), the rest are delivered. Connection failures, 408, 429, 502,
+503 and 504 (and 500 on every request) are an outage: the pusher keeps the
+batch and retries it until Weft has been failing for `weft.max_retry_sec`
+(default 300 s). The engine reports its delivery counters on
+`GET /api/v1/stats` (bearer token): `weft_push` (`accepted`, `sent`,
+`dropped`, `failed`, `rejected`, `undelivered_at_shutdown`, `pending`,
+`failing_since`) and `otel_export` (`ended`, `exported`, `failed`,
+`pending`, `undelivered_at_shutdown`, `errors`).
 
 Over OTLP, spans of instrumentation scope `agentshield` (or with
 `agentshield.verdict.action`) become detections from the attributes listed in

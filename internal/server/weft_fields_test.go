@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/store"
+	"github.com/agentshield-ai/agentshield/internal/weftpush"
 )
 
 type recordingSink struct {
@@ -374,4 +377,39 @@ func TestHandleEvaluate_SourceValidatedWithOrWithoutFieldsSource(t *testing.T) {
 	if len(sink.verdicts) != 2 {
 		t.Errorf("sink got %d verdicts, want 2", len(sink.verdicts))
 	}
+}
+
+// The Weft pusher's delivery counters are visible on /api/v1/stats (an
+// authenticated route), so verdicts that could not be delivered show up
+// without reading logs.
+func TestHandleStats_ReportsPushCounters(t *testing.T) {
+	srv, _ := newWeftTestServer(t, nil)
+	rec := httptest.NewRecorder()
+	srv.handleStats(rec, httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"weft_push":null`) {
+		t.Fatalf("without push: %d %s", rec.Code, rec.Body.String())
+	}
+
+	weft := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer weft.Close()
+	p, err := weftpush.New(config.WeftConfig{Endpoint: weft.URL, Project: "team/app", QueueSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetVerdictSink(p)
+	req, resp := &models.EvaluationRequest{EventID: "e1", SessionID: "s"}, &evaluate.EvaluationResponse{Action: models.ActionBlock}
+	p.Verdict(req, resp)
+	p.Verdict(req, resp) // the queue holds one: dropped
+	rec = httptest.NewRecorder()
+	srv.handleStats(rec, httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil))
+	var out StatsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.WeftPush == nil {
+		t.Fatalf("stats: %v %s", err, rec.Body.String())
+	}
+	if st := out.WeftPush; st.Accepted != 2 || st.Dropped != 1 || st.Pending != 1 {
+		t.Fatalf("weft_push = %+v", st)
+	}
+	p.Close(context.Background())
 }

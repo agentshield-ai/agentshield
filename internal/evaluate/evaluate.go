@@ -163,6 +163,9 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		}
 	}
 
+	// weftRules are the rules the verdict carries to Weft, selected once for
+	// the span's events (WeftRules).
+	var weftRules []models.Rule
 	if e.tracer != nil {
 		var span trace.Span
 		ctx, span = e.tracer.Start(ctx, "evaluate",
@@ -176,7 +179,10 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 					attribute.Bool("verdict.cached", response.Cached),
 					attribute.String("verdict.mode", string(response.EffectiveMode)),
 				)
-				recordVerdictOnSpan(span, response)
+				if weftRules == nil {
+					weftRules = WeftRules(response.Alerts)
+				}
+				recordVerdictOnSpan(span, response, weftRules)
 			}
 			span.End()
 		}()
@@ -274,15 +280,18 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 		}
 	}
 
-	// Emit span events for each matched rule
-	if e.tracer != nil {
+	// Emit a legacy rule.matched span event per rule, for the rules the
+	// verdict carries to Weft (WeftRules: bounded, so the span stays within
+	// its event limit and the agentshield.rule.matched events added at the
+	// end are never evicted).
+	if e.tracer != nil && len(alerts) > 0 {
 		span := trace.SpanFromContext(ctx)
-		for _, alert := range alerts {
-			id, title, _ := models.CleanRule(alert.RuleID, alert.RuleName, nil)
+		weftRules = WeftRules(alerts)
+		for _, r := range weftRules {
 			span.AddEvent("rule.matched", trace.WithAttributes(
-				attribute.String("rule.id", id),
-				attribute.String("rule.name", title),
-				attribute.String("rule.severity", string(alert.Severity)),
+				attribute.String("rule.id", r.ID),
+				attribute.String("rule.name", r.Title),
+				attribute.String("rule.severity", r.Level),
 			))
 		}
 	}

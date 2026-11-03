@@ -208,8 +208,8 @@ func TestPusher_ClientErrorIsNotRetried(t *testing.T) {
 	p.Start(context.Background())
 	defer p.Close(context.Background())
 	p.Verdict(verdict("r", models.ActionBlock))
-	waitFor(t, func() bool { return p.Stats().Failed == 1 })
-	if calls.Load() != 1 {
+	waitFor(t, func() bool { return p.Stats().Rejected == 1 })
+	if calls.Load() != 1 || p.Stats().Failed != 0 {
 		t.Errorf("calls = %d, want 1", calls.Load())
 	}
 }
@@ -253,8 +253,11 @@ func TestPusher_StopsOnContextCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker did not stop on context cancel")
 	}
-	if p.Stats().Failed != 1 {
-		t.Errorf("stats = %+v", p.Stats())
+	// Stopped mid-retry: the record is counted as undelivered, and a
+	// record offered afterwards is dropped (counted), not left queued.
+	p.Verdict(verdict("late", models.ActionBlock))
+	if st := p.Stats(); st.UndeliveredAtShutdown != 1 || st.Dropped != 1 || st.Failed != 0 || st.Pending != 0 || st.Accepted != 2 {
+		t.Errorf("stats = %+v", st)
 	}
 }
 

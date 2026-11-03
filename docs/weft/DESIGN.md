@@ -138,7 +138,8 @@ adds these attributes to it:
 - `agentshield.verdict.action`, `agentshield.verdict.mode`,
   `agentshield.verdict.severity` and `agentshield.rule_ids`.
 - One `agentshield.rule.matched` event per rule, with `rule.id`, `rule.title`,
-  `rule.level` and `rule.tags`.
+  `rule.level` and `rule.tags`, for the rules the verdict carries to Weft
+  (below).
 
 Pointing the engine's `telemetry.endpoint` at Weft's `/otel/v1/traces`, with
 `project_id` in the headers, is enough to make detections appear.
@@ -152,19 +153,53 @@ through a bounded queue, and it never delays or changes a verdict. User
 overrides that reach `/api/v1/override` are forwarded the same way, marking
 the detection as `overridden`.
 
-One bad record never takes others down with it. The engine validates every
-free-text value it forwards (`source` included, whether or not the caller
-also set `fields.source`) and sends rule ids, titles and tags cleaned
-(`models.CleanRule`: an over-long or control-character rule id becomes a
-stable prefix + hash stand-in, tags are cleaned, cut to 256 bytes and at most
-64 kept); Weft applies the same cleaning to whatever it receives instead of
-rejecting the verdict, so both paths store the same rule ids. The pusher
-bounds each record and each request, and when Weft refuses a batch (400,
-413) it splits it until the offending records are isolated, dropping and
-counting only those. Weft's ingest stores a batch's valid records and lists
-the invalid ones in its response (`rejected`, `errors`). On the OTel path the
-engine's span limits cut attribute values to 4 KiB and an export carries at
-most 64 spans, so one span cannot make an export too large for Weft (64 MiB).
+Every live verdict the engine accepts reaches Weft by both paths with the
+same content, and any that cannot be delivered is counted and logged at warn
+level.
+
+*Same rules on both paths.* The engine selects and cleans a verdict's rules
+once (`evaluate.WeftRules`) and sends that list both ways: each rule is
+cleaned (`models.CleanRule`: the id trimmed; an empty or whitespace-only id
+becomes `rule~sha256:` + the hex SHA-256 of the cleaned title; an over-long
+or control-character id a stable prefix + hash stand-in; tags cleaned, each
+cut to 256 bytes, at most 64 and 2 KiB in all), then selected
+(`models.SelectRules`: a repeated id keeps its most severe entry, the most
+severe first in their order otherwise, at most 64 rules). Weft applies the
+same functions to whatever it receives, so the pushed copy, the OTLP copy
+and a replay of a verdict store the same rules; the detection's `severity`
+still counts every matched rule.
+
+*Bounded OTLP exports.* The evaluate span's limits leave room for every
+rule event (two per rule: `agentshield.rule.matched` and the legacy
+`rule.matched`), cut attribute values to 2 KiB and keep at most 64
+attributes; the worst-case evaluate span is under 600 KiB and an export
+carries at most 16 spans, so no export comes near Weft's 64 MiB limit (the
+engine's tests compute this bound and check it against a real export).
+Failed exports are retried for `telemetry.max_retry_sec` (default 300):
+connection failures, 429, 502, 503 and 504 by the exporter, other 5xx by the
+engine, which splits an export Weft refuses (4xx) or keeps answering with
+500 until the offending spans are isolated (as the pusher does, below), so
+one bad span costs only itself; spans given up on or not exported by
+shutdown are counted and logged at warn level.
+
+*Push delivery.* One bad record never takes others down with it. The
+engine validates every free-text value it forwards (`source` included,
+whether or not the caller also set `fields.source`). The pusher bounds each
+record and each request, and when Weft refuses a batch (400, 413) it splits
+it until the offending records are isolated, dropping and counting only
+those; a batch Weft keeps answering with another 5xx (500) is split the same
+way, and a record that alone still gets one is dropped once Weft has stored
+other records since (otherwise Weft is failing as a whole, an outage). Weft's
+ingest stores a batch's valid records and lists the invalid ones in its
+response (`rejected`, `errors`). In an outage (connection failure, 408, 429,
+502, 503, 504, or 500 on every request) the batch is kept and retried with
+capped exponential backoff until Weft has been failing for
+`weft.max_retry_sec` (default 300) while new records queue up to
+`queue_size` (default 10000; drop-newest beyond). At shutdown the queue is
+flushed within a deadline and what is left is counted as
+`undelivered_at_shutdown`. The counters (`accepted = sent + dropped + failed
++ rejected + undelivered_at_shutdown + pending`) and the span exporter's are
+served on the engine's authenticated `GET /api/v1/stats`.
 
 ### 5.3 Correlation
 

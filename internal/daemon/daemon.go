@@ -416,6 +416,9 @@ func (d *Daemon) startRetentionLoop() {
 	d.logger.Info("Started retention cleanup loop", "interval_hours", intervalHours)
 }
 
+// weftFlushTimeout bounds the flush of the Weft push queue at shutdown.
+const weftFlushTimeout = 10 * time.Second
+
 // shutdown gracefully shuts down all components
 func (d *Daemon) shutdown() error {
 	d.logger.Info("Starting graceful shutdown...")
@@ -433,14 +436,16 @@ func (d *Daemon) shutdown() error {
 		}
 	}
 
-	// Flush queued Weft pushes (bounded by the shutdown deadline)
+	// Flush queued Weft pushes (bounded by the shutdown deadline). Records
+	// that cannot be delivered in time are counted and logged at warn level
+	// by the pusher (undelivered_at_shutdown).
 	if d.weftPusher != nil {
-		flushCtx, flushCancel := context.WithTimeout(ctx, 5*time.Second)
+		flushCtx, flushCancel := context.WithTimeout(ctx, weftFlushTimeout)
 		d.weftPusher.Close(flushCtx)
 		flushCancel()
 		st := d.weftPusher.Stats()
-		d.logger.Info("Weft push stopped", "sent", st.Sent, "dropped", st.Dropped, "failed", st.Failed,
-			"rejected", st.Rejected, "truncated", st.Truncated)
+		d.logger.Info("Weft push stopped", "accepted", st.Accepted, "sent", st.Sent, "dropped", st.Dropped, "failed", st.Failed,
+			"rejected", st.Rejected, "undelivered_at_shutdown", st.UndeliveredAtShutdown, "truncated", st.Truncated)
 	}
 
 	// Flush and shutdown telemetry providers

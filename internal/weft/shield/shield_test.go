@@ -723,3 +723,49 @@ func TestReplayKeepsDetectionsOfLongRecordedIDs(t *testing.T) {
 		}
 	}
 }
+
+// A rule loaded with a whitespace-only id ("   ") matches like any other:
+// in-process replay stores its detection under the id the engine gives it
+// on push and OTLP (models.CleanRuleID), instead of losing the detection
+// ("every rule needs an id"), and remote replay agrees.
+func TestReplayStoresDetectionOfRuleWithWhitespaceID(t *testing.T) {
+	dir := t.TempDir()
+	rule := `title: Whitespace id rule
+id: "   "
+status: experimental
+description: t
+logsource:
+  product: ai_agent
+  category: agent_events
+detection:
+  sel:
+    command|contains: 'c17wsid'
+  condition: sel
+level: high
+`
+	if err := os.WriteFile(filepath.Join(dir, "ws.yml"), []byte(rule), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := newStore(t)
+	recordCommands(t, st, "ws-session", "ws", "echo c17wsid")
+	gen := models.CleanRuleID("   ", "Whitespace id rule")
+	local, err := New(Config{RulesDir: dir}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	res := runJob(t, local, ReplayRequest{SessionIDs: []string{"ws-session"}, Label: "ws"})
+	want := replayVerdicts(t, st, res)
+	if res.Summary.Detections != 1 || res.Summary.Errors != 0 || !strings.Contains(want, "detection ws-session toolu_ws_0 block high ["+gen+"]") {
+		t.Fatalf("in-process: summary %+v, first error %q\n%s", res.Summary, res.FirstError, want)
+	}
+	srv, _, _ := liveEngine(t, dir)
+	remote, err := New(Config{URL: srv.URL}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	if got := replayVerdicts(t, st, runJob(t, remote, ReplayRequest{SessionIDs: []string{"ws-session"}, Label: "ws"})); got != want {
+		t.Fatalf("remote replay differs:\n%s\nin-process:\n%s", got, want)
+	}
+}

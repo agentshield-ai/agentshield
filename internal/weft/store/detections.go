@@ -27,7 +27,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"sort"
 	"strings"
 	"time"
 
@@ -234,9 +233,6 @@ func detClean(v string, max int) string {
 	return models.CleanText(v, max)
 }
 
-// maxDetectionRules is the most rules a detection keeps.
-const maxDetectionRules = 200
-
 // Normalize validates a detection and fills defaults. Identifiers are
 // checked strictly; descriptive fields are cleaned (detClean).
 func (d *DetectionInput) Normalize() error {
@@ -285,40 +281,34 @@ func (d *DetectionInput) Normalize() error {
 		}
 	}
 	best := ""
-	seen := map[string]bool{}
-	rules := make([]DetectionRule, 0, min(len(d.Rules), maxDetectionRules))
+	cleaned := make([]models.Rule, 0, len(d.Rules))
 	for _, r := range d.Rules {
-		r.ID = strings.TrimSpace(r.ID)
-		if r.ID == "" {
-			return Invalidf("every rule needs an id")
-		}
 		// Rule ids, titles and tags come from the engine's rule files, which
 		// it loads whatever they hold: clean them rather than reject the
-		// verdict (an over-long or control-character id becomes a stable
-		// prefix + hash stand-in, models.ShortID; tags are cleaned, cut and
-		// at most 64 kept). The engine applies the same functions, so the
-		// pushed and the OTLP copy of a verdict agree.
-		r.ID = models.ShortID(r.ID, models.MaxRuleIDLength)
+		// verdict (an empty or whitespace-only id gets a stable generated
+		// id, an over-long or control-character one a stable prefix + hash
+		// stand-in, models.CleanRuleID; tags are cleaned and bounded). The
+		// engine applies the same functions, and the same selection
+		// (models.SelectRules: a repeated id keeps its most severe entry,
+		// the most severe first, at most models.MaxRules), so the pushed and
+		// the OTLP copy of a verdict, and a replay of it, store the same
+		// rules.
+		r.ID = models.CleanRuleID(r.ID, r.Title)
 		r.Title = detClean(r.Title, models.MaxRuleTitleLength)
 		r.Level = normSeverity(r.Level)
 		if r.Level == "unknown" {
 			return Invalidf("rule level must be low, medium, high or critical")
 		}
 		r.Tags = models.CleanTags(r.Tags)
-		if seen[r.ID] {
-			continue
-		}
-		seen[r.ID] = true
 		if SeverityRank(r.Level) > SeverityRank(best) {
 			best = r.Level
 		}
-		rules = append(rules, r)
+		cleaned = append(cleaned, models.Rule{ID: r.ID, Title: r.Title, Level: r.Level, Tags: r.Tags})
 	}
-	if len(rules) > maxDetectionRules {
-		// Keep the most severe rules (in their order otherwise); the
-		// detection's severity still counts them all.
-		sort.SliceStable(rules, func(i, j int) bool { return SeverityRank(rules[i].Level) > SeverityRank(rules[j].Level) })
-		rules = rules[:maxDetectionRules]
+	// The detection's severity still counts every rule.
+	rules := make([]DetectionRule, 0, min(len(cleaned), models.MaxRules))
+	for _, r := range models.SelectRules(cleaned) {
+		rules = append(rules, DetectionRule{ID: r.ID, Title: r.Title, Level: r.Level, Tags: r.Tags})
 	}
 	d.Rules = rules
 	sev := normSeverity(d.Severity)

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/agentshield-ai/agentshield/internal/models"
 )
 
 var detBase = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
@@ -107,7 +109,6 @@ func TestDetectionNormalizeValidation(t *testing.T) {
 		{EventID: "e", Action: "block", Source: "elsewhere"},
 		{EventID: "e", Action: "block", SessionID: strings.Repeat("s", 300)},
 		{EventID: "e", Action: "block", ToolCallID: "a\x00b"}, // ids stay strict; names are cleaned (TestLiveVerdictWithUntidyNamesIsKept)
-		{EventID: "e", Action: "block", Rules: []DetectionRule{{Title: "no id"}}},
 		{EventID: "e", Action: "block", Rules: []DetectionRule{{ID: "r", Level: "extreme"}}},
 		{EventID: "e", Action: "block", Severity: "huge"},
 	}
@@ -120,7 +121,7 @@ func TestDetectionNormalizeValidation(t *testing.T) {
 	if err := d.Normalize(); err != nil {
 		t.Fatal(err)
 	}
-	if d.EventID != "e1" || d.Action != "block" || d.Source != "engine" || d.Severity != "high" || len(d.Rules) != 2 || d.Rules[0].Level != "low" {
+	if d.EventID != "e1" || d.Action != "block" || d.Source != "engine" || d.Severity != "high" || len(d.Rules) != 2 || d.Rules[0].ID != "b" || d.Rules[1].Level != "low" {
 		t.Errorf("normalized = %+v", d)
 	}
 	none := DetectionInput{EventID: "e2", Action: "allow"}
@@ -968,7 +969,7 @@ func TestForgedReplaySpanDoesNotHideATrace(t *testing.T) {
 }
 
 // A detection with more rules than Weft keeps is stored with the most severe
-// ones, not rejected; its severity counts them all.
+// ones (models.MaxRules), not rejected; its severity counts them all.
 func TestDetectionNormalizeKeepsMostSevereRules(t *testing.T) {
 	d := DetectionInput{EventID: "e", Action: "block", Mode: "enforce"}
 	for i := 0; i < 250; i++ {
@@ -978,10 +979,44 @@ func TestDetectionNormalizeKeepsMostSevereRules(t *testing.T) {
 	if err := d.Normalize(); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Rules) != maxDetectionRules || d.Severity != "critical" || d.Rules[0].Level != "critical" || len(d.Rules[0].ID) > 256 {
+	if len(d.Rules) != models.MaxRules || d.Severity != "critical" || d.Rules[0].Level != "critical" || len(d.Rules[0].ID) > 256 {
 		t.Fatalf("%d rules, severity %s, first %+v", len(d.Rules), d.Severity, d.Rules[0])
 	}
 	if d.Rules[1].Tags[0] != "a b" {
 		t.Errorf("tags = %v", d.Rules[1].Tags)
+	}
+}
+
+// A rule whose id is empty or only whitespace (the engine loads such rules)
+// no longer fails its verdict ("every rule needs an id"): it is stored under
+// the id the engine generates for it (models.CleanRuleID), pushed or over
+// OTLP. A repeated rule id keeps its most severe level.
+func TestDetectionRuleWithoutIDIsStoredUnderGeneratedID(t *testing.T) {
+	gen := models.CleanRuleID("   ", "Whitespace id rule")
+	d := DetectionInput{EventID: "ws", Action: "block", Mode: "enforce", Rules: []DetectionRule{
+		{ID: "   ", Title: "Whitespace id rule", Level: "high"},
+		{ID: "dup", Title: "dup a", Level: "low"}, {ID: "dup", Title: "dup b", Level: "critical"},
+	}}
+	if err := d.Normalize(); err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if len(d.Rules) != 2 || d.Rules[0].ID != "dup" || d.Rules[0].Level != "critical" || d.Rules[0].Title != "dup b" || d.Rules[1].ID != gen {
+		t.Fatalf("rules = %+v", d.Rules)
+	}
+
+	s := newTestStore(t)
+	span := CompleteCall{Start: CallStart{ProjectID: proj, ID: "ws-span", TraceID: "ws-trace", OpName: "evaluate", StartedAt: detTS(0),
+		Attributes: map[string]any{"otel": map[string]any{
+			"scope": map[string]any{"name": "agentshield"},
+			"attributes": map[string]any{"event.id": "evt-ws", "gen_ai.conversation.id": "s-ws", "agentshield.verdict.action": "block",
+				"agentshield.verdict.mode": "enforce"},
+			"events": []any{map[string]any{"name": "agentshield.rule.matched", "attributes": map[string]any{
+				"rule.id": "   ", "rule.title": "Whitespace id rule", "rule.level": "high"}}},
+		}}}, End: &CallEnd{EndedAt: detTS(time.Millisecond), Summary: map[string]any{}}}
+	if _, err := s.UpsertComplete(context.Background(), []CompleteCall{span}); err != nil {
+		t.Fatal(err)
+	}
+	if got := getDet(t, s, "evt-ws"); len(got.Rules) != 1 || got.Rules[0].ID != gen || got.Severity != "high" {
+		t.Fatalf("OTLP detection = %+v", got)
 	}
 }

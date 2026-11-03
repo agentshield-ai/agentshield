@@ -289,14 +289,26 @@ telemetry:
 ```
 
 Every evaluation is exported, `allow` included, subject to `sample_rate`.
+A failed export (connection refused, a 5xx answer) is retried with backoff
+for up to `max_retry_sec` (default 300), so an outage of Weft shorter than
+that loses no span, and an export Weft refuses, or answers with 500 because
+of one span, is split until only the offending span is dropped; spans given
+up on, or not exported by the shutdown deadline, are counted and logged at
+warn level.
 
 **By push.** The `weft:` section makes the engine POST verdicts to
-`/api/v1/shield/ingest` from a bounded background queue. A full queue drops
-(and counts) records; pushing never delays or changes a verdict. Failed
-requests are retried with backoff, and the queue is flushed on shutdown.
-Records and requests are size-bounded, and a record Weft refuses is isolated
-from its batch and dropped on its own (counted as `rejected`), so the rest
-of the batch is still delivered.
+`/api/v1/shield/ingest` from a bounded background queue; pushing never
+delays or changes a verdict. When Weft is unreachable or failing, the batch
+in flight is kept and retried with capped exponential backoff until Weft has
+been failing for `max_retry_sec` (default 300), while new records keep
+queueing; a full queue drops the newest record (drop-newest). The queue is
+flushed on shutdown within a 10 s deadline. Records and requests are
+size-bounded, and a record Weft refuses (400, 413, or a 500 for that record
+alone) is isolated from its batch and dropped on its own, so the rest of the
+batch is still delivered. Every record is counted, `accepted = sent +
+dropped + failed + rejected + undelivered_at_shutdown + pending`, every one
+not delivered is logged at warn level, and the counters of both paths are
+on the engine's `GET /api/v1/stats` (`weft_push`, `otel_export`).
 Overrides reported to the engine's `/api/v1/override` are forwarded too and
 mark the detection `overridden` (the OTel path cannot carry overrides).
 
@@ -306,11 +318,14 @@ weft:
   project: my-team/agents
   api_key_env: WEFT_API_KEY         # a key with the member role on the project
   send: non_allow                   # or all
-  queue_size: 1000
+  queue_size: 10000                 # records waiting; when full the newest is dropped and counted
+  max_retry_sec: 300                # longest Weft outage ridden out without losing records
 ```
 
 Both paths can be on at once: a verdict is stored once, keyed by the engine's
-event id.
+event id. Both carry the same rules: the engine selects them once (at most
+64, the most severe first, a repeated rule id keeping its most severe level)
+and cleans them the same way for both.
 
 **Querying.** `GET /api/v1/detections` (filters: `session_id`, `agent`,
 `action`, `rule_id`, `source`, `ruleset`, `span_id`, `tool_call_id`, time

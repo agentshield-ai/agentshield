@@ -236,13 +236,8 @@ func DetectionFromSpan(callID string, startedAt int64, attributes map[string]any
 			d.Rules = append(d.Rules, DetectionRule{ID: id})
 		}
 	}
-	kept := d.Rules[:0]
-	for _, r := range d.Rules {
-		if strings.TrimSpace(r.ID) != "" {
-			kept = append(kept, r)
-		}
-	}
-	d.Rules = kept
+	// A rule without an id is kept: Normalize gives it the generated id
+	// the engine gives it (models.CleanRuleID), so it is not lost.
 	return d, true
 }
 

@@ -2,8 +2,9 @@
 // screenshot, no console errors, no horizontal page overflow, and no serious
 // or critical axe-core violations (WCAG 2.1 A/AA). The long-* pages show a
 // project whose names are long and unbroken (e2e/seed.ts longNames). Then
-// the main pages at 390 px under text-spacing stress (wider letter and word
-// spacing, a wide monospace fallback font): still no horizontal overflow.
+// every page at 390 px under text-spacing stress (WCAG 1.4.12's minimum,
+// wider letter and word spacing, a wide monospace fallback font): still no
+// horizontal overflow.
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
@@ -57,10 +58,12 @@ const PAGES: [string, () => string][] = [
   ['long-traces', () => `/${long()}/traces`],
 ]
 
-// The pages a text-spacing stress check covers (WCAG 1.4.12 asks for
-// letter spacing 0.12em and word spacing 0.16em; these go further).
-const MAIN_PAGES = ['sessions', 'session-timeline', 'agents', 'agent', 'teams', 'team', 'security', 'traces', 'evaluations', 'long-sessions', 'long-agent', 'long-security']
+// The text-spacing stress check covers every page above. The first style is
+// WCAG 1.4.12's minimum (line height 1.5, paragraph spacing 2em, letter
+// spacing 0.12em, word spacing 0.16em); the others go further.
+const STRESS_PAGES = PAGES.map(([name]) => name)
 const SPACING_STRESS: [string, string][] = [
+  ['wcag-1.4.12', '*{line-height:1.5!important;letter-spacing:0.12em!important;word-spacing:0.16em!important} p{margin-bottom:2em!important}'],
   ['letter-3px', '*{letter-spacing:3px!important}'],
   ['letter-0.2em-word-0.3em', '*{letter-spacing:0.2em!important;word-spacing:0.3em!important}'],
   ['wide-mono', '*{font-family:"FreeMono","DejaVu Sans Mono",monospace!important;letter-spacing:2px!important}'],
@@ -132,7 +135,7 @@ for (const cfg of CONFIGS) {
 
 test.describe('390px text-spacing stress', () => {
   test.use({ viewport: { width: 390, height: 900 }, colorScheme: 'light' })
-  for (const name of MAIN_PAGES) {
+  for (const name of STRESS_PAGES) {
     const path = PAGES.find(([n]) => n === name)![1]
     test(name, async ({ page }) => {
       await page.goto(path())
@@ -144,13 +147,29 @@ test.describe('390px text-spacing stress', () => {
         await page.waitForTimeout(300)
         const overflow = await page.evaluate(() => {
           const main = document.querySelector('.main') as HTMLElement | null
+          // The elements that stick out, to say what overflows.
+          const right = main ? main.getBoundingClientRect().right : window.innerWidth
+          const offenders: string[] = []
+          const clipped = (el: HTMLElement) => {
+            for (let p = el.parentElement; p && p !== main; p = p.parentElement) {
+              if (getComputedStyle(p).overflowX !== 'visible') return true
+            }
+            return false
+          }
+          for (const el of Array.from(document.querySelectorAll<HTMLElement>('.main *'))) {
+            const r = el.getBoundingClientRect()
+            if (r.width > 0 && r.right > right + 1 && offenders.length < 5 && !clipped(el)) {
+              offenders.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ').join('.')} +${Math.round(r.right - right)}px "${(el.textContent ?? '').slice(0, 40)}"`)
+            }
+          }
           return {
             doc: document.documentElement.scrollWidth - window.innerWidth,
             main: main ? main.scrollWidth - main.clientWidth : 0,
+            offenders: offenders.join('; '),
           }
         })
-        expect(overflow.doc, `${label}: horizontal page overflow`).toBeLessThanOrEqual(1)
-        expect(overflow.main, `${label}: horizontal overflow of the main area`).toBeLessThanOrEqual(1)
+        expect(overflow.doc, `${label}: horizontal page overflow (${overflow.offenders})`).toBeLessThanOrEqual(1)
+        expect(overflow.main, `${label}: horizontal overflow of the main area (${overflow.offenders})`).toBeLessThanOrEqual(1)
         await tag.evaluate((el) => el.remove())
       }
     })

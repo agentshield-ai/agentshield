@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
 )
@@ -41,7 +42,12 @@ func TestInit_Enabled_ReturnsProvider(t *testing.T) {
 	_, span := tracer.Start(context.Background(), "test-span")
 	span.End()
 
-	if err := shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown failed: %v", err)
+	// Nothing listens on the endpoint: the export retries (an outage) until
+	// the shutdown deadline, and the span is counted as undelivered.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_ = shutdown(ctx)
+	if st := Stats(); st == nil || st.Ended != 1 || st.UndeliveredAtShutdown+st.Exported != 1 {
+		t.Fatalf("stats = %+v", st)
 	}
 }

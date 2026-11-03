@@ -486,7 +486,11 @@ th.num {
   background: var(--panel-2);
   color: var(--text-2);
   border: 1px solid var(--border);
-  white-space: nowrap;
+  /* Badges wrap between words rather than overflow a narrow column (WCAG
+     1.4.12 text spacing at 390 px); a single word never breaks. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 .badge.success {
   background: var(--success-bg);

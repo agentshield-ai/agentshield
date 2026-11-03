@@ -3,16 +3,29 @@
 //
 // Pushing never delays or changes a verdict: the request path only copies a
 // small record into a bounded queue with a non-blocking send, and a record
-// that does not fit is dropped and counted. A background worker sends the
-// queue in batches, retrying transient failures with exponential backoff, and
-// stops when its context is cancelled or Close is called.
+// that does not fit is dropped (drop-newest) and counted. A background worker
+// sends the queue in batches and stops when its context is cancelled or Close
+// is called.
+//
+// Every record is accounted for (Stats): Accepted = Sent + Dropped + Failed +
+// Rejected + UndeliveredAtShutdown + Pending, and every record that is not
+// delivered is logged at warn level.
+//
+// Outages: a batch Weft cannot take (connection failure, 408, 429, 502, 503,
+// 504) is kept and retried with capped exponential backoff until Weft has
+// been failing for MaxRetry (weft.max_retry_sec, default 5 minutes); only then
+// is it given up on (Failed). New records keep queueing meanwhile, up to the
+// queue size.
 //
 // One bad record never takes others down with it: each record is bounded in
-// size (descriptive fields are cut with a marker, rule ids, titles and tags
-// are cleaned as Weft cleans them), a request is bounded in bytes, and when
-// Weft rejects a request as invalid (400) or too large (413), the batch is
-// split in halves until the offending records are isolated; only those are
-// dropped (counted as rejected and logged), the rest are delivered.
+// size (descriptive fields are cut with a marker, rules are selected and
+// cleaned as on the evaluate span, evaluate.WeftRules), a request is bounded
+// in bytes, and when Weft rejects a request as invalid (400) or too large
+// (413), or keeps answering it with another 5xx (500), the batch is split in
+// halves until the offending records are isolated; only those are dropped
+// (counted and logged), the rest are delivered. A record that alone keeps
+// getting 500 is dropped only once Weft has taken other records since, so a
+// Weft that fails every request is treated as an outage, not as poison.
 package weftpush
 
 import (
@@ -83,24 +96,44 @@ type item struct {
 	ovr *Override
 }
 
-// Stats are the pusher's counters.
+// Stats are the pusher's counters. At any time Accepted = Sent + Dropped +
+// Failed + Rejected + UndeliveredAtShutdown + Pending; after Close, Pending
+// is 0.
 type Stats struct {
-	Queued  uint64 `json:"queued"`  // accepted into the queue
-	Dropped uint64 `json:"dropped"` // dropped because the queue was full or closed
-	Sent    uint64 `json:"sent"`    // records Weft acknowledged
-	Failed  uint64 `json:"failed"`  // records given up on after retries or a client error (rejected included)
+	// Accepted counts the records offered to the pusher (verdicts its send
+	// policy forwards, and overrides).
+	Accepted uint64 `json:"accepted"`
+	Queued   uint64 `json:"queued"`  // accepted into the queue
+	Dropped  uint64 `json:"dropped"` // dropped because the queue was full (drop-newest) or the pusher closed
+	Sent     uint64 `json:"sent"`    // records Weft stored
+	// Failed counts records given up on: Weft still failing after
+	// MaxRetry, a record Weft alone keeps answering with 5xx, or one that
+	// cannot be encoded.
+	Failed uint64 `json:"failed"`
 	// Rejected counts records Weft refused on their own as invalid or too
 	// large (isolated from their batch, whose other records were sent).
 	Rejected uint64 `json:"rejected"`
+	// UndeliveredAtShutdown counts records still queued or in flight when
+	// the pusher stopped (its flush deadline passed or its context ended).
+	UndeliveredAtShutdown uint64 `json:"undelivered_at_shutdown"`
+	// Pending counts records queued or being delivered now.
+	Pending uint64 `json:"pending"`
 	// Truncated counts records whose descriptive fields were cut to fit
 	// the record size limit.
 	Truncated uint64 `json:"truncated"`
+	// FailingSince is when Weft started failing (RFC 3339), empty while it
+	// takes records.
+	FailingSince string `json:"failing_since,omitempty"`
 }
 
 // Size limits of a push. Weft accepts request bodies of up to 64 MiB.
 const (
-	// DefaultMaxRecordBytes bounds one encoded detection.
-	DefaultMaxRecordBytes = 256 << 10
+	// DefaultMaxRecordBytes bounds one encoded detection. It is above the
+	// largest detection the engine can produce (at most models.MaxRules
+	// rules of bounded ids, titles and tags, JSON escaping included), so a
+	// pushed verdict always carries the same rules and tags as its evaluate
+	// span; the cut (shrinkDetection) only guards against other inputs.
+	DefaultMaxRecordBytes = 512 << 10
 	// DefaultMaxBatchBytes bounds one request body.
 	DefaultMaxBatchBytes = 4 << 20
 )
@@ -116,12 +149,17 @@ type Pusher struct {
 	log      *slog.Logger
 	closing  chan struct{}
 	done     chan struct{}
-	closed   atomic.Bool
+	mu       sync.RWMutex // guards closed against enqueues
+	closed   bool
 	started  atomic.Bool
 	stopOnce sync.Once
 	cancel   context.CancelFunc
 
-	queued, dropped, sent, failed, rejected, truncated atomic.Uint64
+	accepted, queued, dropped, sent, failed, rejected, undelivered, truncated atomic.Uint64
+	// failingSince is when Weft started failing (unix nanos, 0 while it
+	// takes records); lastOK is when it last stored a request.
+	failingSince, lastOK atomic.Int64
+	lastDropLog          atomic.Int64
 
 	// BatchSize is the most records sent in one request.
 	BatchSize int
@@ -130,11 +168,15 @@ type Pusher struct {
 	// MaxBatchBytes bounds one request body (DefaultMaxBatchBytes); a
 	// record is always sent, alone if need be.
 	MaxBatchBytes int
-	// MaxAttempts bounds tries per batch (transport errors, 408, 429, 5xx).
-	MaxAttempts int
+	// MaxRetry is the longest outage ridden out: a batch is retried until
+	// Weft has been failing for this long (weft.max_retry_sec).
+	MaxRetry time.Duration
+	// ServerErrorAttempts is how many 500 answers a request gets before it
+	// is split to isolate a record Weft cannot store.
+	ServerErrorAttempts int
 	// Backoff returns the wait before retry n (n starts at 1).
 	Backoff func(n int) time.Duration
-	// Now is the clock used for timestamps (tests).
+	// Now is the clock used for timestamps and the outage clock (tests).
 	Now func() time.Time
 }
 
@@ -146,27 +188,32 @@ func New(cfg config.WeftConfig) (*Pusher, error) {
 	}
 	size := cfg.QueueSize
 	if size <= 0 {
-		size = 1000
+		size = config.DefaultWeftQueueSize
 	}
 	timeout := time.Duration(cfg.TimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
+	maxRetry := time.Duration(cfg.MaxRetrySec) * time.Second
+	if maxRetry <= 0 {
+		maxRetry = time.Duration(config.DefaultMaxRetrySec) * time.Second
+	}
 	p := &Pusher{
-		url:            strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/") + IngestPath,
-		project:        cfg.Project,
-		sendAll:        cfg.Send == config.WeftSendAll,
-		client:         &http.Client{Timeout: timeout},
-		queue:          make(chan item, size),
-		log:            slog.Default(),
-		closing:        make(chan struct{}),
-		done:           make(chan struct{}),
-		BatchSize:      100,
-		MaxRecordBytes: DefaultMaxRecordBytes,
-		MaxBatchBytes:  DefaultMaxBatchBytes,
-		MaxAttempts:    6,
-		Backoff:        defaultBackoff,
-		Now:            time.Now,
+		url:                 strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/") + IngestPath,
+		project:             cfg.Project,
+		sendAll:             cfg.Send == config.WeftSendAll,
+		client:              &http.Client{Timeout: timeout},
+		queue:               make(chan item, size),
+		log:                 slog.Default(),
+		closing:             make(chan struct{}),
+		done:                make(chan struct{}),
+		BatchSize:           100,
+		MaxRecordBytes:      DefaultMaxRecordBytes,
+		MaxBatchBytes:       DefaultMaxBatchBytes,
+		MaxRetry:            maxRetry,
+		ServerErrorAttempts: 3,
+		Backoff:             defaultBackoff,
+		Now:                 time.Now,
 	}
 	if cfg.APIKeyEnv != "" {
 		p.apiKey = os.Getenv(cfg.APIKeyEnv)
@@ -177,18 +224,34 @@ func New(cfg config.WeftConfig) (*Pusher, error) {
 	return p, nil
 }
 
+// maxBackoff caps the wait between retries.
+const maxBackoff = 10 * time.Second
+
 func defaultBackoff(n int) time.Duration {
+	if n > 16 {
+		return maxBackoff
+	}
 	d := 250 * time.Millisecond << (n - 1)
-	if d > 10*time.Second || d <= 0 {
-		d = 10 * time.Second
+	if d > maxBackoff || d <= 0 {
+		d = maxBackoff
 	}
 	return d
 }
 
 // Stats returns the current counters.
 func (p *Pusher) Stats() Stats {
-	return Stats{Queued: p.queued.Load(), Dropped: p.dropped.Load(), Sent: p.sent.Load(), Failed: p.failed.Load(),
-		Rejected: p.rejected.Load(), Truncated: p.truncated.Load()}
+	st := Stats{Sent: p.sent.Load(), Dropped: p.dropped.Load(), Failed: p.failed.Load(), Rejected: p.rejected.Load(),
+		UndeliveredAtShutdown: p.undelivered.Load(), Truncated: p.truncated.Load(), Queued: p.queued.Load()}
+	// Read Accepted last: every terminal count above was preceded by its
+	// record's acceptance, so Pending never goes negative.
+	st.Accepted = p.accepted.Load()
+	if done := st.Sent + st.Dropped + st.Failed + st.Rejected + st.UndeliveredAtShutdown; st.Accepted > done {
+		st.Pending = st.Accepted - done
+	}
+	if since := p.failingSince.Load(); since != 0 {
+		st.FailingSince = time.Unix(0, since).UTC().Format(time.RFC3339)
+	}
+	return st
 }
 
 // Verdict queues an evaluation verdict. Allow verdicts are skipped unless the
@@ -224,8 +287,9 @@ func (p *Pusher) Verdict(req *models.EvaluationRequest, resp *evaluate.Evaluatio
 		ts = p.Now()
 	}
 	d.Timestamp = ts.UTC().Format(time.RFC3339Nano)
-	for _, a := range resp.Alerts {
-		d.Rules = append(d.Rules, Rule{ID: a.RuleID, Title: a.RuleName, Level: string(a.Severity), Tags: a.Tags})
+	// The same rules, in the same order, as the evaluate span carries.
+	for _, r := range evaluate.WeftRules(resp.Alerts) {
+		d.Rules = append(d.Rules, Rule{ID: r.ID, Title: r.Title, Level: r.Level, Tags: r.Tags})
 	}
 	p.enqueue(item{det: d})
 }
@@ -240,8 +304,12 @@ func (p *Pusher) Override(sessionID, eventID string) {
 }
 
 func (p *Pusher) enqueue(it item) {
-	if p.closed.Load() {
+	p.accepted.Add(1)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.closed {
 		p.dropped.Add(1)
+		p.warnDrop(it, "the pusher is stopped")
 		return
 	}
 	select {
@@ -249,7 +317,29 @@ func (p *Pusher) enqueue(it item) {
 		p.queued.Add(1)
 	default:
 		p.dropped.Add(1)
+		p.warnDrop(it, "the queue is full")
 	}
+}
+
+// warnDrop logs a dropped record at warn level, at most once per second
+// (the dropped counter has them all).
+func (p *Pusher) warnDrop(it item, why string) {
+	now := p.Now().UnixNano()
+	last := p.lastDropLog.Load()
+	if now-last < int64(time.Second) || !p.lastDropLog.CompareAndSwap(last, now) {
+		return
+	}
+	p.log.Warn("weft push: record dropped, "+why, "event_id", it.eventID(), "dropped_total", p.dropped.Load(), "queue_size", cap(p.queue))
+}
+
+func (it item) eventID() string {
+	if it.det != nil {
+		return it.det.EventID
+	}
+	if it.ovr != nil {
+		return it.ovr.EventID
+	}
+	return ""
 }
 
 // Start runs the sender until ctx is cancelled or Close is called.
@@ -262,20 +352,46 @@ func (p *Pusher) Start(ctx context.Context) {
 }
 
 // Close stops accepting records, sends what is queued within ctx's deadline,
-// and stops the sender.
+// and stops the sender. Records it could not deliver by then are counted
+// (UndeliveredAtShutdown) and logged at warn level.
 func (p *Pusher) Close(ctx context.Context) {
+	p.stop()
+	if p.started.Load() {
+		select {
+		case <-p.done:
+		case <-ctx.Done():
+			p.cancel()
+			<-p.done
+		}
+	}
+	// Nothing can be queued any more: count what is left.
+	p.drainUndelivered()
+	st := p.Stats()
+	if st.UndeliveredAtShutdown > 0 {
+		p.log.Warn("weft push: records not delivered at shutdown (lost)", "records", st.UndeliveredAtShutdown,
+			"sent", st.Sent, "dropped", st.Dropped, "failed", st.Failed, "rejected", st.Rejected, "accepted", st.Accepted)
+	}
+}
+
+// stop refuses further records.
+func (p *Pusher) stop() {
 	p.stopOnce.Do(func() {
-		p.closed.Store(true)
+		p.mu.Lock()
+		p.closed = true
+		p.mu.Unlock()
 		close(p.closing)
 	})
-	if !p.started.Load() {
-		return
-	}
-	select {
-	case <-p.done:
-	case <-ctx.Done():
-		p.cancel()
-		<-p.done
+}
+
+// drainUndelivered counts the records left in the queue as undelivered.
+func (p *Pusher) drainUndelivered() {
+	for {
+		select {
+		case <-p.queue:
+			p.undelivered.Add(1)
+		default:
+			return
+		}
 	}
 }
 
@@ -285,18 +401,20 @@ func (p *Pusher) loop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Stopped without Close: refuse further records and count
+			// what is queued.
+			p.stop()
+			p.drainUndelivered()
 			return
 		case <-p.closing:
-			// Flush what is queued; ctx bounds it (Close cancels on its deadline).
+			// Flush what is queued; ctx bounds it (Close cancels on its
+			// deadline), and send counts what it could not deliver.
 			for {
 				batch := p.collect(nil)
 				if len(batch) == 0 {
 					return
 				}
 				p.send(ctx, batch)
-				if ctx.Err() != nil {
-					return
-				}
 			}
 		case it := <-p.queue:
 			p.send(ctx, p.collect([]item{it}))
@@ -328,16 +446,25 @@ type record struct {
 	raw      []byte
 }
 
+// suspect is a record Weft keeps answering with a server error on its own.
+type suspect struct {
+	rec record
+	// since is when its batch first got a server error: if Weft stores
+	// another request after it, the record itself is the problem.
+	since int64
+}
+
 // send delivers a batch: records are bounded and encoded one by one, packed
 // into requests of at most MaxBatchBytes, and each request is delivered on
-// its own.
+// its own. Every record ends up counted: sent, rejected, failed or, when ctx
+// ends first, undelivered.
 func (p *Pusher) send(ctx context.Context, batch []item) {
 	recs := make([]record, 0, len(batch))
 	for _, it := range batch {
 		r, err := p.encode(it)
 		if err != nil {
 			p.failed.Add(1)
-			p.log.Warn("weft push: dropping a record that cannot be encoded", "err", err)
+			p.log.Warn("weft push: dropping a record that cannot be encoded", "event_id", it.eventID(), "err", err)
 			continue
 		}
 		recs = append(recs, r)
@@ -346,15 +473,26 @@ func (p *Pusher) send(ctx context.Context, batch []item) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBatchBytes
 	}
+	var suspects []suspect
 	for len(recs) > 0 {
 		n, size := 0, 0
 		for n < len(recs) && (n == 0 || size+len(recs[n].raw)+1 <= maxBytes) {
 			size += len(recs[n].raw) + 1
 			n++
 		}
-		p.deliver(ctx, recs[:n])
+		suspects = append(suspects, p.deliver(ctx, recs[:n], p.serverErrorAttempts(), 0)...)
 		recs = recs[n:]
 	}
+	for _, s := range suspects {
+		p.deliverSuspect(ctx, s)
+	}
+}
+
+func (p *Pusher) serverErrorAttempts() int {
+	if p.ServerErrorAttempts > 0 {
+		return p.ServerErrorAttempts
+	}
+	return 1
 }
 
 // encode bounds a record and encodes it without HTML escaping (which would
@@ -400,16 +538,14 @@ func marshal(v any) ([]byte, error) {
 // Field limits of a pushed detection (Weft's, docs/weft/API.md). Ids are
 // never altered: the engine's input validation keeps them within Weft's
 // limits.
-const (
-	maxNameBytes = 256
-	maxRules     = 200
-)
+const maxNameBytes = 256
 
 // boundDetection cuts a detection's descriptive fields to Weft's limits,
-// marking cut values (models.Truncate), and cleans its rules as Weft does
-// (models.ShortID, models.CleanTags), so Weft stores what it receives and
-// the pushed copy of a verdict matches its OTLP copy. It reports whether
-// anything was cut.
+// marking cut values (models.Truncate), and cleans and selects its rules as
+// the evaluate span does and Weft does (models.CleanRule,
+// models.SelectRules; a no-op on the rules Verdict built), so Weft stores
+// what it receives and the pushed copy of a verdict matches its OTLP copy.
+// It reports whether anything was cut.
 func boundDetection(d *Detection) bool {
 	cut := false
 	trunc := func(v string, max int) string {
@@ -422,24 +558,25 @@ func boundDetection(d *Detection) bool {
 	d.ToolName = trunc(d.ToolName, maxNameBytes)
 	d.AgentName = trunc(d.AgentName, maxNameBytes)
 	d.EventSource = trunc(d.EventSource, models.MaxEventSourceLength)
-	if len(d.Rules) > maxRules {
-		cut = true
-		rules := append([]Rule(nil), d.Rules...)
-		sort.SliceStable(rules, func(i, j int) bool { return levelRank(rules[i].Level) > levelRank(rules[j].Level) })
-		d.Rules = rules[:maxRules]
-	}
-	rules := make([]Rule, len(d.Rules))
+	rules := make([]models.Rule, len(d.Rules))
 	for i, r := range d.Rules {
-		r.ID, r.Title, r.Tags = models.CleanRule(r.ID, r.Title, r.Tags)
-		rules[i] = r
+		id, title, tags := models.CleanRule(r.ID, r.Title, r.Tags)
+		rules[i] = models.Rule{ID: id, Title: title, Level: r.Level, Tags: tags}
 	}
-	d.Rules = rules
+	if len(rules) > models.MaxRules {
+		cut = true
+	}
+	d.Rules = make([]Rule, 0, min(len(rules), models.MaxRules))
+	for _, r := range models.SelectRules(rules) {
+		d.Rules = append(d.Rules, Rule{ID: r.ID, Title: r.Title, Level: r.Level, Tags: r.Tags})
+	}
 	return cut
 }
 
 // shrinkDetection fits an encoded detection into max bytes: it drops the
 // rules' tags, then shortens their titles, then keeps fewer rules (the most
-// severe first; the detection's severity is kept).
+// severe first; the detection's severity is kept). Detections the engine
+// builds never need it (DefaultMaxRecordBytes).
 func shrinkDetection(d *Detection, max int) ([]byte, error) {
 	for i := range d.Rules {
 		d.Rules[i].Tags = nil
@@ -460,19 +597,7 @@ func shrinkDetection(d *Detection, max int) ([]byte, error) {
 	}
 }
 
-func levelRank(level string) int {
-	switch level {
-	case "low":
-		return 1
-	case "medium":
-		return 2
-	case "high":
-		return 3
-	case "critical":
-		return 4
-	}
-	return 0
-}
+func levelRank(level string) int { return models.LevelRank(level) }
 
 // body builds a request body from encoded records.
 func (p *Pusher) body(recs []record) []byte {
@@ -519,50 +644,146 @@ type ingestResponse struct {
 	} `json:"errors"`
 }
 
-// deliver sends one request, retrying transient failures. When Weft rejects
-// it as invalid (400) or too large (413), it is split in halves and each
-// half delivered on its own, down to single records; a single record Weft
-// rejects is dropped and counted as rejected.
-func (p *Pusher) deliver(ctx context.Context, recs []record) {
-	body := p.body(recs)
-	attempts := p.MaxAttempts
-	if attempts <= 0 {
-		attempts = 1
+// outageStatus reports the answers that mean Weft cannot take any request
+// right now (rather than this one): retried until MaxRetry.
+func outageStatus(status int) bool {
+	switch status {
+	case 0, http.StatusRequestTimeout, http.StatusTooManyRequests,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
 	}
-	var lastErr error
-	for n := 1; n <= attempts; n++ {
-		res, err := p.post(ctx, body)
-		if err == nil {
-			p.accepted(recs, res.body)
-			return
-		}
-		lastErr = err
-		if res.status == http.StatusBadRequest || res.status == http.StatusRequestEntityTooLarge {
-			p.split(ctx, recs, res, err)
-			return
-		}
-		if !res.retry || n == attempts {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			p.failed.Add(uint64(len(recs)))
-			return
-		case <-time.After(p.Backoff(n)):
-		}
-	}
-	p.failed.Add(uint64(len(recs)))
-	p.log.Warn("weft push failed", "records", len(recs), "err", lastErr)
+	return false
 }
 
-// accepted counts a request Weft acknowledged, less the records it reports
-// as rejected on their own.
-func (p *Pusher) accepted(recs []record, body []byte) {
+// deliver sends recs as one request until Weft takes it, and returns the
+// records Weft keeps answering with a server error on their own (suspects,
+// settled by deliverSuspect once the rest of the batch is through).
+//
+//   - 2xx: sent, less the records Weft lists as rejected.
+//   - 400, 413: split in halves down to the offending records (rejected).
+//   - an outage (outageStatus): retried with capped exponential backoff
+//     until Weft has been failing for MaxRetry, then failed.
+//   - another 5xx (500): after serverErrors such answers, split in halves
+//     (each half gets one try before it splits again); a single record is
+//     returned as a suspect. since is when the batch first got one (0: not
+//     yet).
+//
+// When ctx ends the records are counted as undelivered.
+func (p *Pusher) deliver(ctx context.Context, recs []record, serverErrors int, since int64) []suspect {
+	body := p.body(recs)
+	n5xx := 0
+	for try := 1; ; try++ {
+		res, err := p.post(ctx, body)
+		if err == nil {
+			p.up()
+			p.ack(recs, res.body)
+			return nil
+		}
+		if ctx.Err() != nil {
+			p.undelivered.Add(uint64(len(recs)))
+			return nil
+		}
+		switch {
+		case res.status == http.StatusBadRequest || res.status == http.StatusRequestEntityTooLarge:
+			return p.split(ctx, recs, res, err, serverErrors, since)
+		case res.status >= 500 && !outageStatus(res.status):
+			if since == 0 {
+				since = p.Now().UnixNano()
+			}
+			if n5xx++; n5xx >= serverErrors {
+				if len(recs) == 1 {
+					return []suspect{{rec: recs[0], since: since}}
+				}
+				mid := len(recs) / 2
+				out := p.deliver(ctx, recs[:mid], 1, since)
+				return append(out, p.deliver(ctx, recs[mid:], 1, since)...)
+			}
+		}
+		if !p.retryAfterFailure(ctx, try, recs, err) {
+			return nil
+		}
+	}
+}
+
+// deliverSuspect settles a record Weft answered with a server error on its
+// own: dropped (failed) when Weft keeps answering it so although it stored
+// other requests since its batch started failing, retried as an outage
+// while Weft takes nothing.
+func (p *Pusher) deliverSuspect(ctx context.Context, s suspect) {
+	recs := []record{s.rec}
+	body := p.body(recs)
+	for try := 1; ; try++ {
+		if ctx.Err() != nil {
+			p.undelivered.Add(1)
+			return
+		}
+		res, err := p.post(ctx, body)
+		if err == nil {
+			p.up()
+			p.ack(recs, res.body)
+			return
+		}
+		if ctx.Err() != nil {
+			p.undelivered.Add(1)
+			return
+		}
+		if res.status == http.StatusBadRequest || res.status == http.StatusRequestEntityTooLarge {
+			p.reject(recs, err)
+			return
+		}
+		if res.status >= 500 && !outageStatus(res.status) && p.lastOK.Load() > s.since {
+			p.failed.Add(1)
+			p.log.Warn("weft push: dropping a record Weft cannot store (server error on this record only)",
+				"event_id", s.rec.eventID, "override", s.rec.override, "bytes", len(s.rec.raw), "err", err)
+			return
+		}
+		if !p.retryAfterFailure(ctx, try, recs, err) {
+			return
+		}
+	}
+}
+
+// retryAfterFailure handles a failed try of recs: it gives them up (failed,
+// logged) once Weft has been failing for MaxRetry, counts them undelivered
+// if ctx ends, and otherwise waits for the next try and reports true.
+func (p *Pusher) retryAfterFailure(ctx context.Context, try int, recs []record, err error) bool {
+	now := p.Now()
+	since := p.failingSince.Load()
+	if since == 0 {
+		p.failingSince.CompareAndSwap(0, now.UnixNano())
+		since = p.failingSince.Load()
+		p.log.Warn("weft push: Weft is failing; retrying", "records", len(recs), "max_retry", p.MaxRetry, "err", err)
+	}
+	if now.Sub(time.Unix(0, since)) >= p.MaxRetry {
+		p.failed.Add(uint64(len(recs)))
+		p.log.Warn("weft push: giving up on records, Weft has been failing longer than max_retry_sec", "records", len(recs),
+			"first_event_id", recs[0].eventID, "failing_since", time.Unix(0, since).UTC().Format(time.RFC3339), "err", err)
+		return false
+	}
+	select {
+	case <-ctx.Done():
+		p.undelivered.Add(uint64(len(recs)))
+		return false
+	case <-time.After(p.Backoff(try)):
+		return true
+	}
+}
+
+// up records that Weft stored a request.
+func (p *Pusher) up() {
+	p.lastOK.Store(p.Now().UnixNano())
+	if since := p.failingSince.Swap(0); since != 0 {
+		p.log.Info("weft push: Weft takes records again", "failing_for", p.Now().Sub(time.Unix(0, since)).Round(time.Millisecond))
+	}
+}
+
+// ack counts a request Weft acknowledged, less the records it reports as
+// rejected on their own.
+func (p *Pusher) ack(recs []record, body []byte) {
 	var r ingestResponse
 	if len(body) > 0 && json.Unmarshal(body, &r) == nil && r.Rejected > 0 {
 		rej := min(r.Rejected, len(recs))
 		p.rejected.Add(uint64(rej))
-		p.failed.Add(uint64(rej))
 		p.sent.Add(uint64(len(recs) - rej))
 		for _, e := range r.Errors {
 			p.log.Warn("weft push: weft rejected a record", "kind", e.Kind, "event_id", e.EventID, "err", e.Error)
@@ -572,27 +793,27 @@ func (p *Pusher) accepted(recs []record, body []byte) {
 	p.sent.Add(uint64(len(recs)))
 }
 
+// reject counts and logs records Weft refused on their own.
+func (p *Pusher) reject(recs []record, err error) {
+	p.rejected.Add(uint64(len(recs)))
+	for _, rec := range recs {
+		p.log.Warn("weft push: weft rejected a record", "event_id", rec.eventID, "override", rec.override, "bytes", len(rec.raw), "err", err)
+	}
+}
+
 // split handles a 400 or 413: a single record is dropped as rejected, a
 // batch Weft reports as wholly invalid is dropped the same way, and any
 // other batch is delivered in halves.
-func (p *Pusher) split(ctx context.Context, recs []record, res postResult, err error) {
+func (p *Pusher) split(ctx context.Context, recs []record, res postResult, err error, serverErrors int, since int64) []suspect {
 	var r ingestResponse
 	allInvalid := res.status == http.StatusBadRequest && json.Unmarshal(res.body, &r) == nil && r.Rejected == len(recs)
 	if len(recs) == 1 || allInvalid {
-		p.rejected.Add(uint64(len(recs)))
-		p.failed.Add(uint64(len(recs)))
-		for _, rec := range recs {
-			p.log.Warn("weft push: weft rejected a record", "event_id", rec.eventID, "override", rec.override, "bytes", len(rec.raw), "err", err)
-		}
-		return
-	}
-	if ctx.Err() != nil {
-		p.failed.Add(uint64(len(recs)))
-		return
+		p.reject(recs, err)
+		return nil
 	}
 	mid := len(recs) / 2
-	p.deliver(ctx, recs[:mid])
-	p.deliver(ctx, recs[mid:])
+	out := p.deliver(ctx, recs[:mid], serverErrors, since)
+	return append(out, p.deliver(ctx, recs[mid:], serverErrors, since)...)
 }
 
 // postResult is the outcome of one request.

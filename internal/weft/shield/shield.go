@@ -628,7 +628,11 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 			continue
 		}
 		res.Summary.Evaluated++
-		after := Verdict{Action: string(evaluate.EnforceAction(alerts)), Severity: evaluate.MaxSeverity(alerts), RuleIDs: ruleIDs(alerts), Mode: "shadow"}
+		// The rules as a live verdict carries them to Weft (cleaned and
+		// selected, evaluate.WeftRules), so a replay names the same rules
+		// as the engine's own verdict for the call.
+		weftRules := evaluate.WeftRules(alerts)
+		after := Verdict{Action: string(evaluate.EnforceAction(alerts)), Severity: evaluate.MaxSeverity(alerts), RuleIDs: ruleIDs(weftRules), Mode: "shadow"}
 		switch after.Action {
 		case store.DetectionBlock:
 			res.Summary.Blocked++
@@ -636,9 +640,9 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 			res.Summary.ApprovalsRequired++
 		}
 		if len(alerts) > 0 || after.Action != store.DetectionAllow {
-			rules := make([]store.DetectionRule, 0, len(alerts))
-			for _, a := range alerts {
-				rules = append(rules, store.DetectionRule{ID: a.RuleID, Title: a.RuleName, Level: string(a.Severity), Tags: a.Tags})
+			rules := make([]store.DetectionRule, 0, len(weftRules))
+			for _, r := range weftRules {
+				rules = append(rules, store.DetectionRule{ID: r.ID, Title: r.Title, Level: r.Level, Tags: r.Tags})
 			}
 			inputs = append(inputs, store.DetectionInput{
 				EventID: "replay:" + res.Label + ":" + t.SpanID, SessionID: t.SessionID, ToolCallID: t.ToolCallID,
@@ -754,10 +758,10 @@ func effectiveAction(d *store.Detection) string {
 	return string(evaluate.EnforceAction(alerts))
 }
 
-func ruleIDs(alerts []engine.RuleResult) []string {
-	out := make([]string, 0, len(alerts))
-	for _, a := range alerts {
-		out = append(out, a.RuleID)
+func ruleIDs(rules []models.Rule) []string {
+	out := make([]string, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, r.ID)
 	}
 	sort.Strings(out)
 	return out

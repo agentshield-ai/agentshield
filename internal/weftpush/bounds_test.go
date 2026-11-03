@@ -86,7 +86,7 @@ func TestPusher_BisectsRejectedBatch(t *testing.T) {
 	if len(f.stored) != 28 {
 		t.Fatalf("stored %d of 28 good records", len(f.stored))
 	}
-	if st := p.Stats(); st.Sent != 28 || st.Rejected != 2 || st.Failed != 2 {
+	if st := p.Stats(); st.Sent != 28 || st.Rejected != 2 || st.Failed != 0 || st.Accepted != 30 || st.Pending != 0 {
 		t.Fatalf("stats = %+v", st)
 	}
 }
@@ -192,7 +192,7 @@ func TestPusher_CountsPerRecordRejections(t *testing.T) {
 	}
 	p.Start(context.Background())
 	p.Close(context.Background())
-	if st := p.Stats(); st.Sent != 2 || st.Rejected != 1 || st.Failed != 1 {
+	if st := p.Stats(); st.Sent != 2 || st.Rejected != 1 || st.Failed != 0 || st.Accepted != 3 {
 		t.Fatalf("stats = %+v", st)
 	}
 }

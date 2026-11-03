@@ -57,16 +57,38 @@ func evaluateSpanAttributes(req *models.EvaluationRequest) []attribute.KeyValue 
 	return attrs
 }
 
+// WeftRules are a verdict's matched rules as they reach Weft, by push and on
+// the evaluate span alike: each cleaned (models.CleanRule), then selected
+// once (models.SelectRules: duplicates keep their most severe entry, the most
+// severe first, at most models.MaxRules). Both copies of a verdict therefore
+// name the same rules in the same order, and Weft, which applies the same
+// functions, stores them unchanged.
+func WeftRules(alerts []engine.RuleResult) []models.Rule {
+	ids := make([]string, len(alerts))
+	levels := make([]string, len(alerts))
+	for i, a := range alerts {
+		ids[i], levels[i] = models.CleanRuleID(a.RuleID, a.RuleName), string(a.Severity)
+	}
+	// Select on the cleaned ids, then clean only the kept rules' titles
+	// and tags (models.SelectRules(CleanRule of each) gives the same).
+	keep := models.SelectRuleIndexes(ids, levels)
+	rules := make([]models.Rule, 0, len(keep))
+	for _, i := range keep {
+		_, title, tags := models.CleanRule(ids[i], alerts[i].RuleName, alerts[i].Tags)
+		rules = append(rules, models.Rule{ID: ids[i], Title: title, Level: levels[i], Tags: tags})
+	}
+	return rules
+}
+
 // recordVerdictOnSpan adds the verdict attributes and one
-// agentshield.rule.matched event per matched rule (cached verdicts included).
-func recordVerdictOnSpan(span trace.Span, resp *EvaluationResponse) {
-	// Rule ids, titles and tags go out as the push sends them
-	// (models.CleanRule): an over-long rule id becomes a stable stand-in
-	// rather than being cut by the span's attribute length limit, so both
-	// copies of a verdict name the same rules in Weft.
-	ruleIDs := make([]string, 0, len(resp.Alerts))
-	for _, a := range resp.Alerts {
-		ruleIDs = append(ruleIDs, models.ShortID(a.RuleID, models.MaxRuleIDLength))
+// agentshield.rule.matched event per rule Weft receives (WeftRules; cached
+// verdicts included). The span's event limit leaves room for them
+// (telemetry.SpanLimits), so the OTLP copy of a verdict holds the same rules
+// as the pushed one.
+func recordVerdictOnSpan(span trace.Span, resp *EvaluationResponse, rules []models.Rule) {
+	ruleIDs := make([]string, 0, len(rules))
+	for _, r := range rules {
+		ruleIDs = append(ruleIDs, r.ID)
 	}
 	span.SetAttributes(
 		attribute.String(AttrVerdictAction, string(resp.Action)),
@@ -74,13 +96,12 @@ func recordVerdictOnSpan(span trace.Span, resp *EvaluationResponse) {
 		attribute.String(AttrVerdictSeverity, MaxSeverity(resp.Alerts)),
 		attribute.StringSlice(AttrRuleIDs, ruleIDs),
 	)
-	for _, a := range resp.Alerts {
-		id, title, tags := models.CleanRule(a.RuleID, a.RuleName, a.Tags)
+	for _, r := range rules {
 		span.AddEvent(EventRuleMatched, trace.WithAttributes(
-			attribute.String("rule.id", id),
-			attribute.String("rule.title", title),
-			attribute.String("rule.level", string(a.Severity)),
-			attribute.StringSlice("rule.tags", tags),
+			attribute.String("rule.id", r.ID),
+			attribute.String("rule.title", r.Title),
+			attribute.String("rule.level", r.Level),
+			attribute.StringSlice("rule.tags", r.Tags),
 		))
 	}
 }

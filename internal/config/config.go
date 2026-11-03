@@ -124,6 +124,10 @@ type TelemetryConfig struct {
 	// DisableMetrics turns off the OTLP metric exporter (for trace-only
 	// backends such as Weft).
 	DisableMetrics bool `yaml:"disable_metrics"`
+	// MaxRetrySec is how long a failed span export is retried (connection
+	// failures, 429 and 5xx answers) before its spans are given up on and
+	// counted (default 300).
+	MaxRetrySec int `yaml:"max_retry_sec"`
 }
 
 // WeftConfig configures pushing verdicts to a Weft server's
@@ -134,12 +138,19 @@ type WeftConfig struct {
 	// APIKeyEnv names the environment variable holding the Weft API key.
 	APIKeyEnv string `yaml:"api_key_env" json:"api_key_env"`
 	// Send is non_allow (default: everything except allow verdicts) or all.
-	Send      string `yaml:"send" json:"send"`
-	QueueSize int    `yaml:"queue_size" json:"queue_size"` // default 1000
+	Send string `yaml:"send" json:"send"`
+	// QueueSize bounds the records waiting to be pushed (default 10000).
+	// When it is full a new record is dropped (drop-newest) and counted.
+	QueueSize int `yaml:"queue_size" json:"queue_size"`
 	// Insecure allows an http:// endpoint that is not a loopback address.
 	Insecure bool `yaml:"insecure" json:"insecure"`
 	// TimeoutSec bounds each push request (default 10).
 	TimeoutSec int `yaml:"timeout_sec" json:"timeout_sec"`
+	// MaxRetrySec is the longest outage the pusher rides out: a batch Weft
+	// cannot take (connection failures, 408, 429, 5xx) is kept and retried
+	// with capped exponential backoff until Weft has been failing for this
+	// long, and only then given up on and counted (default 300).
+	MaxRetrySec int `yaml:"max_retry_sec" json:"max_retry_sec"`
 }
 
 // Weft push send policies.
@@ -421,6 +432,12 @@ func validateConfig(cfg *Config) error {
 		if cfg.Telemetry.ServiceName == "" {
 			cfg.Telemetry.ServiceName = "agentshield"
 		}
+		if cfg.Telemetry.MaxRetrySec == 0 {
+			cfg.Telemetry.MaxRetrySec = DefaultMaxRetrySec
+		}
+		if cfg.Telemetry.MaxRetrySec < 1 || cfg.Telemetry.MaxRetrySec > 86400 {
+			return fmt.Errorf("telemetry.max_retry_sec must be between 1 and 86400")
+		}
 		if cfg.Telemetry.SampleRate == 0 {
 			cfg.Telemetry.SampleRate = 1.0
 		}
@@ -469,7 +486,7 @@ func validateWeftConfig(w *WeftConfig) error {
 		return fmt.Errorf("weft.send must be non_allow or all")
 	}
 	if w.QueueSize == 0 {
-		w.QueueSize = 1000
+		w.QueueSize = DefaultWeftQueueSize
 	}
 	if w.QueueSize < 1 || w.QueueSize > 1000000 {
 		return fmt.Errorf("weft.queue_size must be between 1 and 1000000")
@@ -480,8 +497,20 @@ func validateWeftConfig(w *WeftConfig) error {
 	if w.TimeoutSec < 1 || w.TimeoutSec > 300 {
 		return fmt.Errorf("weft.timeout_sec must be between 1 and 300")
 	}
+	if w.MaxRetrySec == 0 {
+		w.MaxRetrySec = DefaultMaxRetrySec
+	}
+	if w.MaxRetrySec < 1 || w.MaxRetrySec > 86400 {
+		return fmt.Errorf("weft.max_retry_sec must be between 1 and 86400")
+	}
 	return nil
 }
+
+// Delivery defaults of the weft: push and the telemetry: export.
+const (
+	DefaultWeftQueueSize = 10000
+	DefaultMaxRetrySec   = 300
+)
 
 func isLoopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {

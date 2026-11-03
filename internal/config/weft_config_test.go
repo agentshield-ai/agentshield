@@ -32,7 +32,7 @@ weft:
 	if !w.Enabled() || w.Project != "team/app" || w.APIKeyEnv != "WEFT_API_KEY" {
 		t.Errorf("weft = %+v", w)
 	}
-	if w.Send != WeftSendNonAllow || w.QueueSize != 1000 || w.TimeoutSec != 10 {
+	if w.Send != WeftSendNonAllow || w.QueueSize != DefaultWeftQueueSize || w.TimeoutSec != 10 || w.MaxRetrySec != DefaultMaxRetrySec {
 		t.Errorf("defaults not applied: %+v", w)
 	}
 

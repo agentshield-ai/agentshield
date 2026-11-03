@@ -23,7 +23,9 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/store"
+	"github.com/agentshield-ai/agentshield/internal/telemetry"
 	"github.com/agentshield-ai/agentshield/internal/toolresult"
+	"github.com/agentshield-ai/agentshield/internal/weftpush"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/riandyrn/otelchi"
@@ -291,6 +293,7 @@ func (s *Server) Start() error {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/evaluate", s.handleEvaluate)
 		r.Get("/health", s.handleHealth)
+		r.Get("/stats", s.handleStats)
 		r.Get("/alerts", s.handleAlerts)
 		r.Post("/audit", s.handleAuditEvent)
 		r.Post("/lifecycle", s.handleLifecycleEvent)
@@ -608,6 +611,39 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Warn("Failed to write response", "error", err)
+	}
+}
+
+// pushStatser is a verdict sink that counts its deliveries (weftpush).
+type pushStatser interface {
+	Stats() weftpush.Stats
+}
+
+// StatsResponse reports how verdicts are being delivered to Weft
+// (authenticated: unlike /health, it describes the deployment).
+type StatsResponse struct {
+	// WeftPush is the weft: pusher's counters, null when push is off.
+	WeftPush *weftpush.Stats `json:"weft_push"`
+	// OTelExport is the span exporter's counters, null when telemetry is
+	// off.
+	OTelExport *telemetry.ExportStats `json:"otel_export"`
+}
+
+// handleStats reports the delivery counters of the Weft push and the OTel
+// export, so verdicts that could not be delivered are visible without
+// reading logs.
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	var resp StatsResponse
+	if p, ok := s.verdictSink.(pushStatser); ok && p != nil {
+		st := p.Stats()
+		resp.WeftPush = &st
+	}
+	if s.config.Telemetry.Enabled {
+		resp.OTelExport = telemetry.Stats()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Warn("Failed to write response", "error", err)
 	}
 }
