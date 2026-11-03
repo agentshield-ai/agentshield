@@ -2184,6 +2184,17 @@ The three are also server-runnable scorer classes (`_class_name`), with the
 optional fields `model`, `model_id` and `scoring_prompt`, so they can be
 stored as scorer objects and run on calls or by monitors.
 
+### Test session
+
+`POST /api/v1/demo/session` with `{"project_id": "…"}` (member role) writes a
+sample session into that project, for the UI's "Send a test session" button:
+a `lead` agent delegates to a `coder` agent (team `demo-team`), both reason
+before acting, the coder's piped install script draws an AgentShield `block`
+(linked to its tool call) and it recovers with a safer command. The spans go
+through the normal OTLP ingest and the verdict through the detection store.
+Each call writes a new session and returns
+`{project_id, session_id, trace_id, spans, detections}`.
+
 ## AgentShield detections
 
 AgentShield verdicts stored as detections (DESIGN.md §2, §5). Every request

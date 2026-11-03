@@ -30,8 +30,9 @@ export const NODE_MAX_R = 36
 const LAYER_GAP = 170
 const NODE_GAP = 220
 const PAD = 70
-/** Room under the last layer for the node's name and figures. */
-const LABEL_ROOM = 50
+/** Room under the last layer, and to the right of the widest layer for node labels. */
+const LABEL_ROOM = 20
+export const LABEL_WIDTH = 150
 
 /** Layers by breadth-first search over non-return edges from the root agents. */
 export function layers(graph: Graph): string[][] {
@@ -75,14 +76,14 @@ export function layoutGraph(graph: Graph): GraphLayout {
   const byName = new Map(graph.nodes.map((n) => [n.agent, n]))
   const maxCalls = Math.max(0, ...graph.nodes.map((n) => n.calls))
   const widest = Math.max(1, ...ls.map((l) => l.length))
-  const width = Math.max(320, PAD * 2 + (widest - 1) * NODE_GAP)
+  const width = Math.max(320, PAD * 2 + (widest - 1) * NODE_GAP + LABEL_WIDTH)
   const height = PAD + (ls.length - 1) * LAYER_GAP + NODE_MAX_R + LABEL_ROOM
   const nodes: LaidNode[] = []
   ls.forEach((layer, li) => {
     const span = (layer.length - 1) * NODE_GAP
     layer.forEach((name, i) => {
       const base = byName.get(name) ?? { agent: name, calls: 0, errors: 0, tokens: 0, cost_usd: null, detections: {} }
-      nodes.push({ ...base, x: width / 2 - span / 2 + i * NODE_GAP, y: PAD + li * LAYER_GAP, r: nodeRadius(base.calls, maxCalls), layer: li })
+      nodes.push({ ...base, x: (width - LABEL_WIDTH) / 2 - span / 2 + i * NODE_GAP, y: PAD + li * LAYER_GAP, r: nodeRadius(base.calls, maxCalls), layer: li })
     })
   })
   const pos = new Map(nodes.map((n) => [n.agent, n]))

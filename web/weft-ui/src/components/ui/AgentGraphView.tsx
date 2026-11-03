@@ -56,7 +56,7 @@ export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: 
         >
           <defs>
             {(['ok', 'error', 'muted'] as const).map((t) => (
-              <marker key={t} id={`arrow-${t}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <marker key={t} id={`arrow-${t}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
                 <path d="M0,0 L10,5 L0,10 z" className={`arrowhead ${t}`} />
               </marker>
             ))}
@@ -93,10 +93,10 @@ export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: 
                 <text x={n.x} y={n.y + 4} textAnchor="middle" className="node-initials" aria-hidden>
                   {agentInitials(n.agent)}
                 </text>
-                <text x={n.x} y={n.y + n.r + 16} textAnchor="middle" className="node-label">
+                <text x={n.x + n.r + 10} y={n.y - 2} className="node-label">
                   {n.agent}
                 </text>
-                <text x={n.x} y={n.y + n.r + 30} textAnchor="middle" className="node-sub">
+                <text x={n.x + n.r + 10} y={n.y + 14} className="node-sub">
                   {n.calls} run{n.calls === 1 ? '' : 's'}
                   {n.errors ? ` · ${n.errors} err` : ''}
                   {n.detections?.block ? ` · ${n.detections.block} blocked` : ''}

@@ -54,8 +54,8 @@ describe('layoutGraph', () => {
   it('keeps every node inside the view box with room for its label', () => {
     for (const n of l.nodes) {
       expect(n.x - n.r).toBeGreaterThanOrEqual(0)
-      expect(n.x + n.r).toBeLessThanOrEqual(l.width)
-      expect(n.y + n.r + 30).toBeLessThanOrEqual(l.height)
+      expect(n.x + n.r + 120).toBeLessThanOrEqual(l.width)
+      expect(n.y + n.r).toBeLessThanOrEqual(l.height)
     }
     const ys = Object.fromEntries(l.nodes.map((n) => [n.agent, n.y]))
     expect(ys.orchestrator).toBeLessThan(ys.researcher)

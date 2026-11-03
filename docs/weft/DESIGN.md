@@ -271,7 +271,8 @@ review and by task-based browser tests.
    - Every empty page says what would appear there and gives the shortest way
      to produce it: a copyable snippet for Python, TypeScript, OTel and each
      coding-agent plugin, using the current server URL and project.
-   - A "Send a test session" button creates sample data in a demo project.
+   - A "Send a test session" button writes a sample session into the current
+     project (`POST /api/v1/demo/session`).
 8. **Explain the numbers.** Every metric has a tooltip saying how it is
    computed (for example, how cost treats cached tokens). Scores show their
    scorer and its reason inline.

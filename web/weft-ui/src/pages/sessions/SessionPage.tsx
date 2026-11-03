@@ -666,4 +666,3 @@ function RawTab({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: strin
   )
 }
 
-export { SeverityText }

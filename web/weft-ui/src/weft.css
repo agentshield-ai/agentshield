@@ -1753,6 +1753,7 @@ ol.steps {
   width: 100%;
   height: auto;
   display: block;
+  margin: 0 auto;
 }
 .graph-svg .edge path {
   fill: none;
@@ -2152,4 +2153,9 @@ table.table tr.selected td {
   .route-help {
     padding: 12px 12px 0;
   }
+}
+
+.metric-value .muted {
+  font-size: 14px;
+  font-weight: 500;
 }
