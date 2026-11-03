@@ -70,3 +70,32 @@ func TestLoadConfig_WeftSectionValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfig_TelemetryQueueKeys(t *testing.T) {
+	const base = "telemetry:\n  enabled: true\n  endpoint: https://weft.example.com/otel/v1/traces\n"
+	cfg, err := loadWithWeft(t, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc := cfg.Telemetry; tc.QueueSize != DefaultTelemetryQueueSize || tc.QueueMaxMB != DefaultTelemetryQueueMaxMB ||
+		tc.ExportConcurrency != DefaultTelemetryExportConcurrency || tc.MaxRetrySec != DefaultMaxRetrySec {
+		t.Errorf("defaults not applied: %+v", tc)
+	}
+	// The default queue holds a 300 s outage at 15 verdicts a second, two
+	// spans each.
+	if DefaultTelemetryQueueSize < 300*15*2 {
+		t.Errorf("default queue_size %d is too small", DefaultTelemetryQueueSize)
+	}
+	cfg, err = loadWithWeft(t, base+"  queue_size: 500\n  queue_max_mb: 8\n  export_concurrency: 2\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc := cfg.Telemetry; tc.QueueSize != 500 || tc.QueueMaxMB != 8 || tc.ExportConcurrency != 2 {
+		t.Errorf("telemetry = %+v", tc)
+	}
+	for _, bad := range []string{"  queue_size: -1\n", "  queue_max_mb: 99999\n", "  export_concurrency: 100\n"} {
+		if _, err := loadWithWeft(t, base+bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

@@ -2463,14 +2463,17 @@ engine produces) and each request (4 MiB), sends JSON without HTML escaping,
 counts records Weft lists in `errors` as rejected, and when a request is
 refused with 400 or 413, or keeps getting another 5xx, splits it in halves
 until the offending records are isolated; only those are dropped (counted
-and logged), the rest are delivered. Connection failures, 408, 429, 502,
-503 and 504 (and 500 on every request) are an outage: the pusher keeps the
+and logged), the rest are delivered (a 500 is put down to the records only
+when Weft stores a probe: the last detection it stored, re-sent, or the next
+queued record alone). Connection failures, 408, 429, 502, 503 and 504 (and
+500 on every request, the probe included) are an outage: the pusher keeps the
 batch and retries it until Weft has been failing for `weft.max_retry_sec`
 (default 300 s). The engine reports its delivery counters on
 `GET /api/v1/stats` (bearer token): `weft_push` (`accepted`, `sent`,
 `dropped`, `failed`, `rejected`, `undelivered_at_shutdown`, `pending`,
 `failing_since`) and `otel_export` (`ended`, `exported`, `failed`,
-`pending`, `undelivered_at_shutdown`, `errors`).
+`dropped`, `pending`, `undelivered_at_shutdown`, `errors`; `ended =
+exported + failed + dropped + undelivered_at_shutdown + pending`).
 
 Over OTLP, spans of instrumentation scope `agentshield` (or with
 `agentshield.verdict.action`) become detections from the attributes listed in

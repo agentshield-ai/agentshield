@@ -173,14 +173,21 @@ still counts every matched rule.
 rule event (two per rule: `agentshield.rule.matched` and the legacy
 `rule.matched`), cut attribute values to 2 KiB and keep at most 64
 attributes; the worst-case evaluate span is under 600 KiB and an export
-carries at most 16 spans, so no export comes near Weft's 64 MiB limit (the
-engine's tests compute this bound and check it against a real export).
+carries at most 256 spans and 8 MiB (a larger span goes alone), so no export
+comes near Weft's 64 MiB limit (the engine's tests compute this bound and
+check it against a real export). The engine's own span processor queues
+spans without ever blocking the verdict path, bounded by
+`telemetry.queue_size` (default 20000) and `telemetry.queue_max_mb`
+(default 256), dropping the newest span when full (counted, logged at
+warn), and exports up to `telemetry.export_concurrency` (default 4)
+batches at once.
 Failed exports are retried for `telemetry.max_retry_sec` (default 300):
 connection failures, 429, 502, 503 and 504 by the exporter, other 5xx by the
 engine, which splits an export Weft refuses (4xx) or keeps answering with
 500 until the offending spans are isolated (as the pusher does, below), so
 one bad span costs only itself; spans given up on or not exported by
-shutdown are counted and logged at warn level.
+shutdown are counted and logged at warn level (`ended = exported + failed +
+dropped + undelivered_at_shutdown + pending`).
 
 *Push delivery.* One bad record never takes others down with it. The
 engine validates every free-text value it forwards (`source` included,
@@ -188,8 +195,11 @@ whether or not the caller also set `fields.source`). The pusher bounds each
 record and each request, and when Weft refuses a batch (400, 413) it splits
 it until the offending records are isolated, dropping and counting only
 those; a batch Weft keeps answering with another 5xx (500) is split the same
-way, and a record that alone still gets one is dropped once Weft has stored
-other records since (otherwise Weft is failing as a whole, an outage). Weft's
+way, and a record that alone still gets one is dropped once Weft stores
+other records: it stored one since, or it stores a probe (the last detection
+it stored, re-sent, which is idempotent; or else the next queued record
+alone). When the probe fails too, Weft is failing as a whole: an outage,
+retried in place. Weft's
 ingest stores a batch's valid records and lists the invalid ones in its
 response (`rejected`, `errors`). In an outage (connection failure, 408, 429,
 502, 503, 504, or 500 on every request) the batch is kept and retried with

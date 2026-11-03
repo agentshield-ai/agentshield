@@ -128,6 +128,16 @@ type TelemetryConfig struct {
 	// failures, 429 and 5xx answers) before its spans are given up on and
 	// counted (default 300).
 	MaxRetrySec int `yaml:"max_retry_sec"`
+	// QueueSize bounds the spans waiting to be exported (default
+	// DefaultTelemetryQueueSize, enough for a 300 s outage at about 65 spans,
+	// 30 verdicts, a second); QueueMaxMB bounds their size in MiB (default
+	// DefaultTelemetryQueueMaxMB). When either is full a new span is dropped
+	// (drop-newest), counted and logged at warn level.
+	QueueSize  int `yaml:"queue_size"`
+	QueueMaxMB int `yaml:"queue_max_mb"`
+	// ExportConcurrency is how many export requests may be in flight at
+	// once (default 4).
+	ExportConcurrency int `yaml:"export_concurrency"`
 }
 
 // WeftConfig configures pushing verdicts to a Weft server's
@@ -438,6 +448,24 @@ func validateConfig(cfg *Config) error {
 		if cfg.Telemetry.MaxRetrySec < 1 || cfg.Telemetry.MaxRetrySec > 86400 {
 			return fmt.Errorf("telemetry.max_retry_sec must be between 1 and 86400")
 		}
+		if cfg.Telemetry.QueueSize == 0 {
+			cfg.Telemetry.QueueSize = DefaultTelemetryQueueSize
+		}
+		if cfg.Telemetry.QueueSize < 1 || cfg.Telemetry.QueueSize > 1000000 {
+			return fmt.Errorf("telemetry.queue_size must be between 1 and 1000000")
+		}
+		if cfg.Telemetry.QueueMaxMB == 0 {
+			cfg.Telemetry.QueueMaxMB = DefaultTelemetryQueueMaxMB
+		}
+		if cfg.Telemetry.QueueMaxMB < 1 || cfg.Telemetry.QueueMaxMB > 16384 {
+			return fmt.Errorf("telemetry.queue_max_mb must be between 1 and 16384")
+		}
+		if cfg.Telemetry.ExportConcurrency == 0 {
+			cfg.Telemetry.ExportConcurrency = DefaultTelemetryExportConcurrency
+		}
+		if cfg.Telemetry.ExportConcurrency < 1 || cfg.Telemetry.ExportConcurrency > 32 {
+			return fmt.Errorf("telemetry.export_concurrency must be between 1 and 32")
+		}
 		if cfg.Telemetry.SampleRate == 0 {
 			cfg.Telemetry.SampleRate = 1.0
 		}
@@ -510,6 +538,11 @@ func validateWeftConfig(w *WeftConfig) error {
 const (
 	DefaultWeftQueueSize = 10000
 	DefaultMaxRetrySec   = 300
+	// DefaultTelemetryQueueSize holds the spans of a 300 s outage at 15
+	// verdicts a second, two spans each (9000), twice over.
+	DefaultTelemetryQueueSize         = 20000
+	DefaultTelemetryQueueMaxMB        = 256
+	DefaultTelemetryExportConcurrency = 4
 )
 
 func isLoopbackHost(host string) bool {

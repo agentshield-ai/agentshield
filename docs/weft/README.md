@@ -286,15 +286,27 @@ telemetry:
   headers: {project_id: my-team/agents}
   api_key_env: WEFT_API_KEY                          # sent as Authorization: Bearer
   disable_metrics: true                              # Weft takes traces only
+  max_retry_sec: 300                                 # longest outage ridden out
+  queue_size: 20000                                  # spans waiting; when full the newest is dropped and counted
+  queue_max_mb: 256                                  # ... or when they reach this size
+  export_concurrency: 4                              # export requests in flight
 ```
 
 Every evaluation is exported, `allow` included, subject to `sample_rate`.
-A failed export (connection refused, a 5xx answer) is retried with backoff
-for up to `max_retry_sec` (default 300), so an outage of Weft shorter than
-that loses no span, and an export Weft refuses, or answers with 500 because
-of one span, is split until only the offending span is dropped; spans given
-up on, or not exported by the shutdown deadline, are counted and logged at
-warn level.
+Spans wait in a queue bounded by `queue_size` (default 20000 spans, a
+300 s outage at 15 verdicts a second twice over) and `queue_max_mb`
+(default 256); ending a span never waits, and when the queue is full the
+new span is dropped (drop-newest), counted and logged at warn level.
+Batches of at most 256 spans and 8 MiB are exported by up to
+`export_concurrency` requests at once (default 4), so a slow Weft does not
+make the queue grow. A failed export (connection refused, a 5xx answer) is
+retried with backoff for up to `max_retry_sec` (default 300), so an outage
+of Weft shorter than that loses no span while the queue holds, and an
+export Weft refuses, or answers with 500 because of one span, is split
+until only the offending span is dropped; spans given up on, dropped, or
+not exported by the shutdown deadline are counted and logged at warn level
+(`ended = exported + failed + dropped + undelivered_at_shutdown + pending`
+in `otel_export` on the engine's `GET /api/v1/stats`).
 
 **By push.** The `weft:` section makes the engine POST verdicts to
 `/api/v1/shield/ingest` from a bounded background queue; pushing never
@@ -305,7 +317,14 @@ queueing; a full queue drops the newest record (drop-newest). The queue is
 flushed on shutdown within a 10 s deadline. Records and requests are
 size-bounded, and a record Weft refuses (400, 413, or a 500 for that record
 alone) is isolated from its batch and dropped on its own, so the rest of the
-batch is still delivered. Every record is counted, `accepted = sent +
+batch is still delivered. To tell a record Weft cannot store from a Weft
+that stores nothing (both answer 500), the pusher sends a probe: the last
+detection Weft stored, again (Weft keeps one per event id, so nothing
+changes), or else the next queued record alone. If Weft stores it, the
+failing records are split and a lone one dropped after a few tries; if not,
+it is an outage and the request is retried in place. So one poisoned record
+costs about a second, not `max_retry_sec` of delivery for everything behind
+it. Every record is counted, `accepted = sent +
 dropped + failed + rejected + undelivered_at_shutdown + pending`, every one
 not delivered is logged at warn level, and the counters of both paths are
 on the engine's `GET /api/v1/stats` (`weft_push`, `otel_export`).

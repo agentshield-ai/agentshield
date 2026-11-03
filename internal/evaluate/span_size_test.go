@@ -65,17 +65,21 @@ func worstCaseAnySpanBytes() int {
 }
 
 // An export request must never be too large for Weft, or every verdict in
-// it is lost: one evaluate span is bounded well under 1 MiB, and a batch of
-// them far below 64 MiB (even spans filled to every limit fit).
+// it is lost: one evaluate span is bounded well under 1 MiB, and a batch
+// (at most telemetry.MaxExportBatchBytes, or one span alone) far below
+// 64 MiB (even spans filled to every limit fit).
 func TestEvaluateSpan_WorstCaseSizeTimesBatchUnderWeftLimit(t *testing.T) {
 	span := worstCaseEvaluateSpanBytes()
 	if span >= 640<<10 {
 		t.Errorf("worst-case evaluate span is %d bytes; it must stay well under 1 MiB", span)
 	}
-	if batch := span * telemetry.MaxExportBatchSize; batch > weftBodyLimit/4 {
+	// A batch holds spans up to MaxExportBatchBytes; the span that does
+	// not fit goes in the next batch, so a request is at most that, or one
+	// span alone.
+	if batch := max(telemetry.MaxExportBatchBytes, span); batch > weftBodyLimit/4 {
 		t.Errorf("worst-case export of evaluate spans is %d bytes, not far below Weft's %d", batch, weftBodyLimit)
 	}
-	if batch := worstCaseAnySpanBytes() * telemetry.MaxExportBatchSize; batch >= weftBodyLimit {
+	if batch := max(telemetry.MaxExportBatchBytes, worstCaseAnySpanBytes()); batch >= weftBodyLimit {
 		t.Errorf("an export of spans filled to every limit is %d bytes, over Weft's %d", batch, weftBodyLimit)
 	}
 	// Every rule a verdict carries gets both its events.
@@ -147,7 +151,8 @@ func TestEvaluateSpan_RuleHeavyVerdictsExportWithinBound(t *testing.T) {
 	reg := session.NewRegistry(50, 0)
 	ev.SetSessionRegistry(reg)
 	pad := func(p string) string { return p + strings.Repeat("x", models.MaxIDLength-len(p)) }
-	const n = 3*telemetry.MaxExportBatchSize + 1
+	// Enough worst-case spans for several byte-bounded batches.
+	n := 3*telemetry.MaxExportBatchBytes/worstCaseEvaluateSpanBytes() + 1
 	for i := 0; i < n; i++ {
 		req := &models.EvaluationRequest{EventID: pad(fmt.Sprintf("e%d-", i)), SessionID: pad(fmt.Sprintf("s%d-", i%2)),
 			ToolCallID: pad("tc-"), AgentName: pad("agent-"), Tool: strings.Repeat("B", 200), Source: strings.Repeat("<", 9999)}
@@ -164,7 +169,7 @@ func TestEvaluateSpan_RuleHeavyVerdictsExportWithinBound(t *testing.T) {
 	if spans != n || ruleEvents != models.MaxRules {
 		t.Fatalf("collector got %d of %d spans, at least %d rule events each (want %d)", spans, n, ruleEvents, models.MaxRules)
 	}
-	if largestSpan > bound || largestBody > bound*telemetry.MaxExportBatchSize {
+	if largestSpan > bound || largestBody > telemetry.MaxExportBatchBytes+4<<10 {
 		t.Fatalf("largest span %d bytes (bound %d), largest export %d bytes", largestSpan, bound, largestBody)
 	}
 	t.Logf("largest span %d bytes, largest export %d bytes, bound %d per span", largestSpan, largestBody, bound)

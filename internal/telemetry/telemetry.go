@@ -35,12 +35,15 @@ type ShutdownFunc func(ctx context.Context) error
 // it returns a no-op provider. The returned ShutdownFunc must be called on
 // process exit to flush pending spans.
 //
-// Every span the engine ends is accounted for (Stats): exported, given up on
-// (an export that failed after retries, logged at warn level), or still
-// queued; at shutdown, spans that could not be exported in time are counted
-// and logged at warn level. Export failures are retried for
+// Spans are queued and exported by spanQueue (bounded in spans and bytes,
+// never blocking the verdict path, exporting up to export_concurrency
+// batches at once) through spanExporter, which retries failed exports for
 // cfg.MaxRetrySec: connection failures and every 5xx answer count as
-// transient (retryTransport), so a Weft outage of that length loses nothing.
+// transient (retryTransport), so a Weft outage of that length loses nothing
+// while the queue holds. Every span the engine ends is accounted for
+// (Stats): exported, given up on (failed), dropped because the queue was
+// full, still pending (queued or being exported), or not exported by the
+// shutdown deadline; every loss is logged at warn level.
 func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (trace.TracerProvider, ShutdownFunc, error) {
 	if !cfg.Enabled {
 		noop := tracenoop.NewTracerProvider()
@@ -50,6 +53,18 @@ func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (tra
 	maxRetry := time.Duration(cfg.MaxRetrySec) * time.Second
 	if maxRetry <= 0 {
 		maxRetry = time.Duration(config.DefaultMaxRetrySec) * time.Second
+	}
+	queueSize := cfg.QueueSize
+	if queueSize <= 0 {
+		queueSize = config.DefaultTelemetryQueueSize
+	}
+	queueMB := cfg.QueueMaxMB
+	if queueMB <= 0 {
+		queueMB = config.DefaultTelemetryQueueMaxMB
+	}
+	workers := cfg.ExportConcurrency
+	if workers <= 0 {
+		workers = config.DefaultTelemetryExportConcurrency
 	}
 	hostPort, path := splitEndpoint(cfg.Endpoint)
 	opts := []otlptracehttp.Option{
@@ -91,17 +106,13 @@ func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (tra
 
 	sampler := sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))
 
-	st := &exportStats{}
-	activeStats.Store(st)
 	installErrorHandler()
-	counting := &countingExporter{SpanExporter: exporter, stats: st, maxRetry: maxRetry, backoff: exportBackoff}
-	bsp := sdktrace.NewBatchSpanProcessor(counting,
-		sdktrace.WithMaxExportBatchSize(MaxExportBatchSize),
-		// An export may retry for maxRetry; the processor must not cut it.
-		sdktrace.WithExportTimeout(maxRetry+exportRequestTimeout+5*time.Second),
-	)
+	exp := &spanExporter{SpanExporter: exporter, maxRetry: maxRetry, backoff: exportBackoff}
+	q := newSpanQueue(exp, queueSize, int64(queueMB)<<20, workers)
+	q.start()
+	activeQueue.Store(q)
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(&countingProcessor{SpanProcessor: bsp, stats: st}),
+		sdktrace.WithSpanProcessor(q),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
 		sdktrace.WithRawSpanLimits(SpanLimits()),
@@ -109,19 +120,13 @@ func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (tra
 	otel.SetTracerProvider(tp)
 
 	shutdown := func(ctx context.Context) error {
-		// Flush within ctx's deadline. When it passes (an export still
-		// retrying), stop the exporter so the retry ends; what is left is
+		// Export what is queued within ctx's deadline; when it passes,
+		// the exports still running are stopped and what is left is
 		// counted as undelivered rather than failed.
 		err := tp.Shutdown(ctx)
-		counting.stopping.Store(true)
-		if err != nil {
-			_ = exporter.Shutdown(context.Background())
-		}
-		s := st.snapshot()
-		st.undelivered.Store(s.Pending)
-		if s.Pending > 0 {
-			slog.Warn("OTel export: spans not exported at shutdown (lost)", "spans", s.Pending,
-				"exported", s.Exported, "failed", s.Failed, "ended", s.Ended)
+		if s := q.snapshot(); s.UndeliveredAtShutdown > 0 {
+			slog.Warn("OTel export: spans not exported at shutdown (lost)", "spans", s.UndeliveredAtShutdown,
+				"exported", s.Exported, "failed", s.Failed, "dropped", s.Dropped, "ended", s.Ended)
 		}
 		return err
 	}
@@ -157,11 +162,6 @@ const (
 	// MaxSpanLinks and MaxLinkAttributes bound links: the engine adds none.
 	MaxSpanLinks      = 0
 	MaxLinkAttributes = 0
-	// MaxExportBatchSize is the most spans per export request. The
-	// worst-case evaluate span is well under 1 MiB, so a request of them
-	// stays far below Weft's 64 MiB limit; even a span filled to every
-	// limit above (about 2.5 MiB) keeps a request under it.
-	MaxExportBatchSize = 16
 )
 
 // SpanLimits are the engine's span limits (the constants above), or lower
@@ -185,11 +185,11 @@ func SpanLimits() sdktrace.SpanLimits {
 }
 
 // retryTransport sorts export failures for the exporter and for
-// countingExporter. A connection failure is reported as 503, which the OTLP
+// spanExporter. A connection failure is reported as 503, which the OTLP
 // exporter retries (an outage), as it does 429, 502, 503 and 504; a
 // cancelled request (shutdown) is passed through. Any other answer the
 // exporter does not retry is marked in its status text (markServerError,
-// markClientError), which the exporter's error carries, so countingExporter
+// markClientError), which the exporter's error carries, so spanExporter
 // can isolate the spans a collector refuses instead of losing the batch.
 type retryTransport struct{ base http.RoundTripper }
 
@@ -228,39 +228,32 @@ func outageStatus(code int) bool {
 	return false
 }
 
-// ExportStats count the spans the engine ended and what became of them.
+// ExportStats count the spans the engine ended and what became of them. At
+// any time Ended = Exported + Failed + Dropped + UndeliveredAtShutdown +
+// Pending.
 type ExportStats struct {
-	// Ended counts sampled spans handed to the exporter's queue.
+	// Ended counts sampled spans the engine ended.
 	Ended uint64 `json:"ended"`
 	// Exported counts spans the collector acknowledged.
 	Exported uint64 `json:"exported"`
-	// Failed counts spans of exports that failed after retries (lost).
+	// Failed counts spans given up on (lost): an export that still failed
+	// after max_retry_sec, or a span the collector refuses.
 	Failed uint64 `json:"failed"`
-	// Pending counts spans neither exported nor failed: queued, being
-	// exported, or dropped because the queue was full.
+	// Dropped counts spans dropped because the export queue was full
+	// (queue_size spans or queue_max_mb bytes; drop-newest).
+	Dropped uint64 `json:"dropped"`
+	// Pending counts spans queued or being exported now.
 	Pending uint64 `json:"pending"`
-	// UndeliveredAtShutdown counts the spans still pending when the
-	// provider shut down (lost).
+	// UndeliveredAtShutdown counts spans not exported by the shutdown
+	// deadline (lost).
 	UndeliveredAtShutdown uint64 `json:"undelivered_at_shutdown"`
-	// Errors counts OpenTelemetry errors reported to the error handler.
+	// Errors counts OpenTelemetry errors reported to the error handler
+	// (failed exports among them).
 	Errors uint64 `json:"errors"`
 }
 
-type exportStats struct {
-	ended, exported, failed, undelivered atomic.Uint64
-}
-
-func (s *exportStats) snapshot() ExportStats {
-	out := ExportStats{Exported: s.exported.Load(), Failed: s.failed.Load(), Errors: otelErrors.Load(), UndeliveredAtShutdown: s.undelivered.Load()}
-	out.Ended = s.ended.Load()
-	if done := out.Exported + out.Failed; out.Ended > done {
-		out.Pending = out.Ended - done
-	}
-	return out
-}
-
 var (
-	activeStats atomic.Pointer[exportStats]
+	activeQueue atomic.Pointer[spanQueue]
 	otelErrors  atomic.Uint64
 	handlerOnce sync.Once
 )
@@ -268,40 +261,29 @@ var (
 // Stats returns the span export counters of the tracer provider Init last
 // built, or nil when telemetry is disabled.
 func Stats() *ExportStats {
-	st := activeStats.Load()
-	if st == nil {
+	q := activeQueue.Load()
+	if q == nil {
 		return nil
 	}
-	s := st.snapshot()
+	s := q.snapshot()
 	return &s
 }
 
-// countingProcessor counts the sampled spans that reach the batch processor.
-type countingProcessor struct {
-	sdktrace.SpanProcessor
-	stats *exportStats
-}
-
-func (p *countingProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
-	if s.SpanContext().IsSampled() {
-		p.stats.ended.Add(1)
-	}
-	p.SpanProcessor.OnEnd(s)
-}
-
-// countingExporter counts exported and failed spans, logs every lost span
-// at warn level, and keeps one span from taking its batch down with it: an
-// export the collector refuses (4xx), or keeps answering with another 5xx
-// (500), is split in halves until the offending spans are isolated; only
-// they are dropped. A span that alone keeps getting 500 is dropped only once
-// the collector has taken other spans since; while it takes none, that is an
-// outage, retried until maxRetry. (Connection failures and 429/502/503/504
-// are retried by the exporter itself.)
-type countingExporter struct {
+// spanExporter exports a batch, reports what became of every span
+// (spanQueue.settle), logs every lost span at warn level, and keeps one span
+// from taking its batch down with it: an export the collector refuses (4xx),
+// or keeps answering with another 5xx (500), is split in halves until the
+// offending spans are isolated; only they are dropped. A span that alone
+// keeps getting 500 is dropped only once the collector has taken other spans
+// since (from this export or a concurrent one); while it takes none, that is
+// an outage, retried until maxRetry. (Connection failures and
+// 429/502/503/504 are retried by the exporter itself.) It is safe for
+// concurrent use.
+type spanExporter struct {
 	sdktrace.SpanExporter
-	stats *exportStats
-	// stopping is set at shutdown: an export cut short then is counted as
-	// undelivered at shutdown, not as failed.
+	queue *spanQueue
+	// stopping is set when the shutdown deadline passed: an export cut
+	// short then is counted as undelivered at shutdown, not as failed.
 	stopping atomic.Bool
 	// maxRetry bounds an outage of server errors; backoff is the wait
 	// before retry n.
@@ -312,7 +294,7 @@ type countingExporter struct {
 	lastOK, failingSince atomic.Int64
 }
 
-// loggedError marks an export error countingExporter already logged.
+// loggedError marks an export error spanExporter already logged.
 type loggedError struct{ error }
 
 func (e loggedError) Unwrap() error { return e.error }
@@ -321,15 +303,11 @@ func (e loggedError) Unwrap() error { return e.error }
 // split.
 const serverErrorTries = 3
 
-func (e *countingExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	suspects, err := e.export(ctx, spans, serverErrorTries, 0)
-	for _, s := range suspects {
-		err = errors.Join(err, e.settle(ctx, s))
+// exportBatch exports spans and settles every one of them.
+func (e *spanExporter) exportBatch(ctx context.Context, spans []sdktrace.ReadOnlySpan) {
+	for _, s := range e.export(ctx, spans, serverErrorTries, 0) {
+		e.settle(ctx, s)
 	}
-	if err != nil {
-		return loggedError{err}
-	}
-	return nil
 }
 
 // suspectSpan is a span the collector answered with a server error on its
@@ -339,22 +317,21 @@ type suspectSpan struct {
 	since int64
 }
 
-// export delivers spans, splitting them as described on countingExporter,
-// and returns the spans that alone got server errors (settled once the rest
-// of the batch is through) and the error of any spans it lost.
-func (e *countingExporter) export(ctx context.Context, spans []sdktrace.ReadOnlySpan, serverTries int, since int64) ([]suspectSpan, error) {
+// export delivers spans, splitting them as described on spanExporter, and
+// returns the spans that alone got server errors (settled once the rest of
+// the batch is through); every other span is settled.
+func (e *spanExporter) export(ctx context.Context, spans []sdktrace.ReadOnlySpan, serverTries int, since int64) []suspectSpan {
 	for try := 1; ; try++ {
 		err := e.SpanExporter.ExportSpans(ctx, spans)
 		if err == nil {
 			e.ok(len(spans))
-			return nil, nil
+			return nil
 		}
 		refused, serverErr := classify(err)
-		switch {
-		case e.stopping.Load():
-			return nil, err // counted as undelivered at shutdown
-		case ctx.Err() != nil || (!refused && !serverErr):
-			return nil, e.lose(spans, err) // the exporter's own retries are exhausted
+		if e.stopping.Load() || ctx.Err() != nil || (!refused && !serverErr) {
+			// Shutdown, or the exporter's own retries are exhausted.
+			e.lose(spans, err)
+			return nil
 		}
 		if serverErr && since == 0 {
 			since = time.Now().UnixNano()
@@ -362,17 +339,17 @@ func (e *countingExporter) export(ctx context.Context, spans []sdktrace.ReadOnly
 		if refused || try >= serverTries {
 			if len(spans) == 1 {
 				if refused {
-					return nil, e.lose(spans, err)
+					e.lose(spans, err)
+					return nil
 				}
-				return []suspectSpan{{span: spans[0], since: since}}, nil
+				return []suspectSpan{{span: spans[0], since: since}}
 			}
 			mid := len(spans) / 2
-			s1, err1 := e.export(ctx, spans[:mid], 1, since)
-			s2, err2 := e.export(ctx, spans[mid:], 1, since)
-			return append(s1, s2...), errors.Join(err1, err2)
+			return append(e.export(ctx, spans[:mid], 1, since), e.export(ctx, spans[mid:], 1, since)...)
 		}
 		if !e.wait(ctx, try) {
-			return nil, e.lose(spans, err)
+			e.lose(spans, err)
+			return nil
 		}
 	}
 }
@@ -381,24 +358,23 @@ func (e *countingExporter) export(ctx context.Context, spans []sdktrace.ReadOnly
 // answering it with a server error although it took other spans since its
 // batch began failing, retried as an outage (until maxRetry) while it takes
 // nothing.
-func (e *countingExporter) settle(ctx context.Context, s suspectSpan) error {
+func (e *spanExporter) settle(ctx context.Context, s suspectSpan) {
 	spans := []sdktrace.ReadOnlySpan{s.span}
 	for try := 1; ; try++ {
 		err := e.SpanExporter.ExportSpans(ctx, spans)
 		if err == nil {
 			e.ok(1)
-			return nil
+			return
 		}
 		refused, serverErr := classify(err)
-		switch {
-		case e.stopping.Load():
-			return err
-		case ctx.Err() != nil || refused || !serverErr || e.lastOK.Load() > s.since:
-			return e.lose(spans, err)
+		if e.stopping.Load() || ctx.Err() != nil || refused || !serverErr || e.lastOK.Load() > s.since {
+			e.lose(spans, err)
+			return
 		}
 		e.failingSince.CompareAndSwap(0, time.Now().UnixNano())
 		if time.Since(time.Unix(0, e.failingSince.Load())) >= e.maxRetry || !e.wait(ctx, try) {
-			return e.lose(spans, err)
+			e.lose(spans, err)
+			return
 		}
 	}
 }
@@ -411,14 +387,14 @@ func classify(err error) (refused, serverErr bool) {
 	return strings.Contains(msg, markClientError), strings.Contains(msg, markServerError)
 }
 
-func (e *countingExporter) ok(n int) {
+func (e *spanExporter) ok(n int) {
 	e.lastOK.Store(time.Now().UnixNano())
 	e.failingSince.Store(0)
-	e.stats.exported.Add(uint64(n))
+	e.queue.settle(outcomeExported, n)
 }
 
 // wait sleeps before retry n; false when ctx ended first.
-func (e *countingExporter) wait(ctx context.Context, n int) bool {
+func (e *spanExporter) wait(ctx context.Context, n int) bool {
 	select {
 	case <-ctx.Done():
 		return false
@@ -428,14 +404,16 @@ func (e *countingExporter) wait(ctx context.Context, n int) bool {
 }
 
 // lose counts and logs spans given up on (at shutdown they are counted as
-// undelivered instead).
-func (e *countingExporter) lose(spans []sdktrace.ReadOnlySpan, err error) error {
+// undelivered instead), and reports the error to the OpenTelemetry error
+// handler (counted in ExportStats.Errors).
+func (e *spanExporter) lose(spans []sdktrace.ReadOnlySpan, err error) {
 	if e.stopping.Load() {
-		return err
+		e.queue.settle(outcomeUndelivered, len(spans))
+		return
 	}
-	total := e.stats.failed.Add(uint64(len(spans)))
-	slog.Warn("OTel export failed; spans lost", "spans", len(spans), "failed_total", total, "err", err)
-	return err
+	e.queue.settle(outcomeFailed, len(spans))
+	slog.Warn("OTel export failed; spans lost", "spans", len(spans), "failed_total", e.queue.snapshot().Failed, "err", err)
+	otel.Handle(loggedError{err})
 }
 
 func exportBackoff(n int) time.Duration {

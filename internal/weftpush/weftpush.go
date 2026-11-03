@@ -23,9 +23,20 @@
 // in bytes, and when Weft rejects a request as invalid (400) or too large
 // (413), or keeps answering it with another 5xx (500), the batch is split in
 // halves until the offending records are isolated; only those are dropped
-// (counted and logged), the rest are delivered. A record that alone keeps
-// getting 500 is dropped only once Weft has taken other records since, so a
-// Weft that fails every request is treated as an outage, not as poison.
+// (counted and logged), the rest are delivered.
+//
+// Poison or outage: a request Weft keeps answering with 500 is either
+// holding a record Weft cannot store, or Weft cannot store anything. The
+// pusher tells them apart by what Weft does with other requests: when Weft
+// has stored another request since this one began failing, or stores a
+// probe (the last detection it stored, sent again, which Weft keeps once per
+// event id; or else the next queued record alone), the request's records are
+// the problem: a batch is split, a lone record dropped (failed, logged). When
+// the probe fails too, it is an outage: the request is retried in place
+// until MaxRetry. With nothing to probe with yet, a batch is split (its
+// halves probe each other) and a lone record is retried until a record to
+// probe with arrives, so one poisoned record never holds up the queue for
+// long.
 package weftpush
 
 import (
@@ -160,6 +171,11 @@ type Pusher struct {
 	// takes records); lastOK is when it last stored a request.
 	failingSince, lastOK atomic.Int64
 	lastDropLog          atomic.Int64
+	// lastGood is the last detection Weft stored (the probe); held are
+	// records taken from the queue as probes that Weft did not take, sent
+	// next. Both belong to the sender goroutine.
+	lastGood *record
+	held     []record
 
 	// BatchSize is the most records sent in one request.
 	BatchSize int
@@ -405,13 +421,15 @@ func (p *Pusher) loop(ctx context.Context) {
 			// what is queued.
 			p.stop()
 			p.drainUndelivered()
+			p.undelivered.Add(uint64(len(p.held)))
+			p.held = nil
 			return
 		case <-p.closing:
 			// Flush what is queued; ctx bounds it (Close cancels on its
 			// deadline), and send counts what it could not deliver.
 			for {
 				batch := p.collect(nil)
-				if len(batch) == 0 {
+				if len(batch) == 0 && len(p.held) == 0 {
 					return
 				}
 				p.send(ctx, batch)
@@ -454,21 +472,40 @@ type suspect struct {
 	since int64
 }
 
-// send delivers a batch: records are bounded and encoded one by one, packed
-// into requests of at most MaxBatchBytes, and each request is delivered on
-// its own. Every record ends up counted: sent, rejected, failed or, when ctx
-// ends first, undelivered.
+// send delivers a batch, then any records held from a probe: records are
+// bounded and encoded one by one, packed into requests of at most
+// MaxBatchBytes, and each request is delivered on its own. Every record ends
+// up counted: sent, rejected, failed or, when ctx ends first, undelivered.
 func (p *Pusher) send(ctx context.Context, batch []item) {
 	recs := make([]record, 0, len(batch))
 	for _, it := range batch {
-		r, err := p.encode(it)
-		if err != nil {
-			p.failed.Add(1)
-			p.log.Warn("weft push: dropping a record that cannot be encoded", "event_id", it.eventID(), "err", err)
-			continue
+		r, ok := p.encodeOrFail(it)
+		if ok {
+			recs = append(recs, r)
 		}
-		recs = append(recs, r)
 	}
+	p.sendRecords(ctx, recs)
+	for len(p.held) > 0 {
+		held := p.held
+		p.held = nil
+		p.sendRecords(ctx, held)
+	}
+}
+
+// encodeOrFail encodes a record; one that cannot be encoded is counted as
+// failed and logged.
+func (p *Pusher) encodeOrFail(it item) (record, bool) {
+	r, err := p.encode(it)
+	if err != nil {
+		p.failed.Add(1)
+		p.log.Warn("weft push: dropping a record that cannot be encoded", "event_id", it.eventID(), "err", err)
+		return record{}, false
+	}
+	return r, true
+}
+
+// sendRecords packs encoded records into requests and delivers them.
+func (p *Pusher) sendRecords(ctx context.Context, recs []record) {
 	maxBytes := p.MaxBatchBytes
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBatchBytes
@@ -663,10 +700,15 @@ func outageStatus(status int) bool {
 //   - 400, 413: split in halves down to the offending records (rejected).
 //   - an outage (outageStatus): retried with capped exponential backoff
 //     until Weft has been failing for MaxRetry, then failed.
-//   - another 5xx (500): after serverErrors such answers, split in halves
-//     (each half gets one try before it splits again); a single record is
-//     returned as a suspect. since is when the batch first got one (0: not
-//     yet).
+//   - another 5xx (500): after serverErrors such answers, Weft is asked
+//     whether it stores anything else (stored, probe). If it does, the
+//     records are the problem: a batch is split in halves (each half gets
+//     one try before it splits again, a lone record ServerErrorAttempts)
+//     and a lone record is dropped. If the probe fails too, it is an
+//     outage: retried as above, probing again on every further 500. With
+//     nothing to probe with, a batch is split and a lone record is returned
+//     as a suspect (settled by deliverSuspect once the rest of its batch is
+//     through). since is when the request first got a 500 (0: not yet).
 //
 // When ctx ends the records are counted as undelivered.
 func (p *Pusher) deliver(ctx context.Context, recs []record, serverErrors int, since int64) []suspect {
@@ -691,12 +733,22 @@ func (p *Pusher) deliver(ctx context.Context, recs []record, serverErrors int, s
 				since = p.Now().UnixNano()
 			}
 			if n5xx++; n5xx >= serverErrors {
-				if len(recs) == 1 {
-					return []suspect{{rec: recs[0], since: since}}
+				switch p.stored(ctx, since) {
+				case weftOut:
+					// An outage: retry, probing again on the next 500.
+					serverErrors = 1
+				case weftStores:
+					if len(recs) == 1 {
+						p.poison(recs[0], err)
+						return nil
+					}
+					return p.halves(ctx, recs, since)
+				default:
+					if len(recs) == 1 {
+						return []suspect{{rec: recs[0], since: since}}
+					}
+					return p.halves(ctx, recs, since)
 				}
-				mid := len(recs) / 2
-				out := p.deliver(ctx, recs[:mid], 1, since)
-				return append(out, p.deliver(ctx, recs[mid:], 1, since)...)
 			}
 		}
 		if !p.retryAfterFailure(ctx, try, recs, err) {
@@ -705,10 +757,86 @@ func (p *Pusher) deliver(ctx context.Context, recs []record, serverErrors int, s
 	}
 }
 
+// halves delivers recs in two halves after a batch kept getting 500: a half
+// gets one try before it is split again, a lone record ServerErrorAttempts.
+func (p *Pusher) halves(ctx context.Context, recs []record, since int64) []suspect {
+	mid := len(recs) / 2
+	tries := func(n int) int {
+		if n == 1 {
+			return p.serverErrorAttempts()
+		}
+		return 1
+	}
+	out := p.deliver(ctx, recs[:mid], tries(mid), since)
+	return append(out, p.deliver(ctx, recs[mid:], tries(len(recs)-mid), since)...)
+}
+
+// poison drops a record Weft keeps answering with a server error while it
+// stores other requests.
+func (p *Pusher) poison(rec record, err error) {
+	p.failed.Add(1)
+	p.log.Warn("weft push: dropping a record Weft cannot store (server error on this record only; Weft stores other records)",
+		"event_id", rec.eventID, "override", rec.override, "bytes", len(rec.raw), "failed_total", p.failed.Load(), "err", err)
+}
+
+// Answers of stored.
+const (
+	weftUnknown = iota // nothing to probe with
+	weftStores
+	weftOut
+)
+
+// stored reports whether Weft stores requests other than one that has been
+// getting 500 since since: it has stored one since then, or it stores a
+// probe now: the last detection it stored, sent again (Weft keeps one
+// detection per event id, so this changes nothing), or else the next queued
+// record alone (delivered if Weft takes it, otherwise held and sent after
+// the current batch). weftUnknown when there is nothing to probe with.
+func (p *Pusher) stored(ctx context.Context, since int64) int {
+	if p.lastOK.Load() > since {
+		return weftStores
+	}
+	if p.lastGood != nil {
+		if _, err := p.post(ctx, p.body([]record{*p.lastGood})); err != nil {
+			return weftOut
+		}
+		p.up()
+		return weftStores
+	}
+	var it item
+	select {
+	case it = <-p.queue:
+	default:
+		return weftUnknown
+	}
+	rec, ok := p.encodeOrFail(it)
+	if !ok {
+		return weftUnknown
+	}
+	res, err := p.post(ctx, p.body([]record{rec}))
+	switch {
+	case err == nil:
+		p.up()
+		p.ack([]record{rec}, res.body)
+		return weftStores
+	case ctx.Err() != nil:
+		p.undelivered.Add(1)
+		return weftOut
+	case res.status == http.StatusBadRequest || res.status == http.StatusRequestEntityTooLarge:
+		// Weft refused the probe on its own: it says nothing about
+		// storing.
+		p.reject([]record{rec}, err)
+		return weftUnknown
+	}
+	p.held = append(p.held, rec)
+	return weftOut
+}
+
 // deliverSuspect settles a record Weft answered with a server error on its
-// own: dropped (failed) when Weft keeps answering it so although it stored
-// other requests since its batch started failing, retried as an outage
-// while Weft takes nothing.
+// own, after the rest of its batch: dropped (failed) when Weft keeps
+// answering it so although it stores other requests (stored), retried as an
+// outage while it stores nothing, and retried while there is nothing to
+// probe with (a record arriving in the queue becomes the probe).
 func (p *Pusher) deliverSuspect(ctx context.Context, s suspect) {
 	recs := []record{s.rec}
 	body := p.body(recs)
@@ -731,10 +859,8 @@ func (p *Pusher) deliverSuspect(ctx context.Context, s suspect) {
 			p.reject(recs, err)
 			return
 		}
-		if res.status >= 500 && !outageStatus(res.status) && p.lastOK.Load() > s.since {
-			p.failed.Add(1)
-			p.log.Warn("weft push: dropping a record Weft cannot store (server error on this record only)",
-				"event_id", s.rec.eventID, "override", s.rec.override, "bytes", len(s.rec.raw), "err", err)
+		if res.status >= 500 && !outageStatus(res.status) && p.stored(ctx, s.since) == weftStores {
+			p.poison(s.rec, err)
 			return
 		}
 		if !p.retryAfterFailure(ctx, try, recs, err) {
@@ -781,7 +907,20 @@ func (p *Pusher) up() {
 // rejected on their own.
 func (p *Pusher) ack(recs []record, body []byte) {
 	var r ingestResponse
-	if len(body) > 0 && json.Unmarshal(body, &r) == nil && r.Rejected > 0 {
+	if len(body) == 0 || json.Unmarshal(body, &r) != nil {
+		r = ingestResponse{}
+	}
+	if r.Rejected == 0 {
+		// Weft stored every record: the last detection is the probe.
+		for i := len(recs) - 1; i >= 0; i-- {
+			if !recs[i].override {
+				good := recs[i]
+				p.lastGood = &good
+				break
+			}
+		}
+	}
+	if r.Rejected > 0 {
 		rej := min(r.Rejected, len(recs))
 		p.rejected.Add(uint64(rej))
 		p.sent.Add(uint64(len(recs) - rej))

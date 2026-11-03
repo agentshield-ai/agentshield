@@ -264,3 +264,119 @@ func TestPusher_WorstCaseDetectionFitsRecordLimit(t *testing.T) {
 	}
 	t.Logf("worst-case detection: %d bytes", len(r.raw))
 }
+
+// A lone poisoned record (Weft answers 500 to any request holding it)
+// followed by ordinary records at a steady rate must not hold up delivery
+// until max_retry_sec: the pusher asks Weft whether it stores anything else
+// (the last detection it stored, sent again, or else the next queued record
+// alone), finds that it does, drops the poisoned record (failed, logged) and
+// carries on. Before, the record was retried alone, with every other record
+// queued behind it, until MaxRetry. Both cases: an engine that has pushed
+// before (a stored detection to probe with), and a fresh one (the next
+// record is the probe).
+func TestPusher_LonePoisonedRecordDoesNotStallTheQueue(t *testing.T) {
+	for _, warm := range []bool{true, false} {
+		t.Run(fmt.Sprintf("warm=%v", warm), func(t *testing.T) {
+			f := newFakeWeft()
+			var poisonHits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if bytes.Contains(body, []byte("POISON")) {
+					poisonHits.Add(1)
+					http.Error(w, "internal error", http.StatusInternalServerError)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				f.ServeHTTP(w, r)
+			}))
+			defer srv.Close()
+			p := testPusher(t, srv.URL, "", 1000)
+			p.Backoff = defaultBackoff // 250 ms, 500 ms, 1 s, ...
+			p.MaxRetry = time.Minute
+			logs := captureWarnings(p)
+			p.Start(context.Background())
+			stored := func() int {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				return len(f.stored)
+			}
+			if warm {
+				p.Verdict(verdict("before", models.ActionBlock, blockRule()))
+				waitFor(t, func() bool { return stored() == 1 })
+			}
+			start := time.Now()
+			p.Verdict(verdict("POISON-1", models.ActionBlock, blockRule()))
+			time.Sleep(time.Second)
+			const n = 20
+			for i := 0; i < n; i++ {
+				p.Verdict(verdict(fmt.Sprintf("ok-%d", i), models.ActionBlock, blockRule()))
+				time.Sleep(100 * time.Millisecond)
+			}
+			// Each ordinary record lands within a few seconds of being
+			// offered, nowhere near MaxRetry.
+			deadline := time.Now().Add(5 * time.Second)
+			for stored() < n+btoi(warm) && time.Now().Before(deadline) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			st := p.Stats()
+			checkBalance(t, st)
+			if got := stored(); got != n+btoi(warm) || st.Failed != 1 || st.Pending != 0 {
+				t.Fatalf("%v after the poisoned record: Weft stored %d of %d; stats %+v", time.Since(start), got, n+btoi(warm), st)
+			}
+			if out := logs(); !strings.Contains(out, "POISON-1") || !strings.Contains(out, "Weft cannot store") {
+				t.Errorf("dropped record not logged: %q", out)
+			}
+			p.Close(context.Background())
+		})
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// A Weft that answers every request with 500 after it has stored records is
+// an outage too: the probe (the last stored detection, sent again) fails as
+// well, so nothing is dropped as poison, and everything arrives once it
+// recovers.
+func TestPusher_ServerErrorsAfterStoringAreAnOutage(t *testing.T) {
+	f := newFakeWeft()
+	var down atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			http.Error(w, "database is locked", http.StatusInternalServerError)
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	p := testPusher(t, srv.URL, "", 1000)
+	p.Backoff = func(int) time.Duration { return 20 * time.Millisecond }
+	p.MaxRetry = time.Minute
+	p.Start(context.Background())
+	p.Verdict(verdict("first", models.ActionBlock, blockRule()))
+	waitFor(t, func() bool { return p.Stats().Sent == 1 })
+	down.Store(true)
+	for i := 0; i < 30; i++ {
+		p.Verdict(verdict(fmt.Sprintf("s-%d", i), models.ActionBlock, blockRule()))
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if st := p.Stats(); st.Failed != 0 || st.Pending != 30 {
+		t.Fatalf("during the outage: %+v", st)
+	}
+	down.Store(false)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	p.Close(ctx)
+	st := p.Stats()
+	checkBalance(t, st)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.stored) != 31 || st.Sent != 31 || st.Failed != 0 {
+		t.Fatalf("stored %d of 31; stats %+v", len(f.stored), st)
+	}
+}
