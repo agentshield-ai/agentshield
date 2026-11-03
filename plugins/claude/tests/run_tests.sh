@@ -282,7 +282,22 @@ wait_for_file() { for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do [ -s "$1" ] &
   assert_eq "envelope command" "whoami" "$(printf '%s' "$REQ" | jq -r '.command')"
   assert_eq "envelope params.command duplicated" "whoami" "$(printf '%s' "$REQ" | jq -r '.params.command')"
   assert_eq "envelope session_id" "sess-x" "$(printf '%s' "$REQ" | jq -r '.session_id')"
-  assert_eq "envelope working_dir" "/work" "$(printf '%s' "$REQ" | jq -r '.working_dir')" )
+  assert_eq "envelope working_dir" "/work" "$(printf '%s' "$REQ" | jq -r '.working_dir')"
+  assert_eq "envelope has no tool_call_id without tool_use_id" "false" "$(printf '%s' "$REQ" | jq -r 'has("tool_call_id")')"
+  assert_eq "envelope has no agent_name by default" "false" "$(printf '%s' "$REQ" | jq -r 'has("agent_name")')" )
+
+# Weft correlation: tool_use_id -> tool_call_id, subagent agent_type -> agent_name.
+( AS_CAP="${SANDBOX}/cap_corr"; rm -f "$AS_CAP"
+  export AGENTSHIELD_STATE_DIR="${SANDBOX}/dispatch_corr"; mkdir -p "$AGENTSHIELD_STATE_DIR"
+  export AS_CURL_CAPTURE="$AS_CAP" AS_CURL_RESPONSE='{"action":"allow"}'
+  run_hook '{"hook_event_name":"PreToolUse","session_id":"sess-c","tool_use_id":"toolu_01ABC","agent_type":"code-reviewer","tool_name":"Bash","tool_input":{"command":"ls"}}' >/dev/null 2>&1
+  REQ="$(jq -s -c ".[0]" "$AS_CAP" 2>/dev/null)"
+  assert_eq "envelope tool_call_id from tool_use_id" "toolu_01ABC" "$(printf '%s' "$REQ" | jq -r '.tool_call_id')"
+  assert_eq "envelope agent_name from agent_type" "code-reviewer" "$(printf '%s' "$REQ" | jq -r '.agent_name')"
+  rm -f "$AS_CAP"
+  AGENTSHIELD_AGENT_NAME="main-coder" run_hook '{"hook_event_name":"PreToolUse","session_id":"sess-c","tool_use_id":"toolu_02","tool_name":"Bash","tool_input":{"command":"ls"}}' >/dev/null 2>&1
+  REQ="$(jq -s -c ".[0]" "$AS_CAP" 2>/dev/null)"
+  assert_eq "envelope agent_name from AGENTSHIELD_AGENT_NAME" "main-coder" "$(printf '%s' "$REQ" | jq -r '.agent_name')" )
 
 # PostToolUse audit -> fire-and-forget, correlation id reused from PreToolUse.
 ( AS_CAP="${SANDBOX}/cap_audit"; rm -f "$AS_CAP"

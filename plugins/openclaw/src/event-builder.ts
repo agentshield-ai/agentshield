@@ -12,13 +12,28 @@ const MAX_RESULT_SUMMARY_LENGTH = 1000;
 type ToolEvent = {
   toolName: string;
   params: Record<string, unknown>;
+  /** The harness's id for this tool call, when OpenClaw provides one. */
+  toolCallId?: string;
 };
 
 type ToolContext = {
   agentId?: string;
   sessionKey?: string;
+  /** OpenClaw's session id; preferred over sessionKey for correlation. */
+  sessionId?: string;
   toolName: string;
+  toolCallId?: string;
 };
+
+/**
+ * The session id sent to AgentShield. It must equal the
+ * gen_ai.conversation.id the Weft OpenClaw plugin records (the OpenClaw
+ * session id, falling back to the session key) so verdicts attach to the
+ * right session and tool span in Weft.
+ */
+export function sessionIdFor(ctx: { sessionId?: string; sessionKey?: string }): string | null {
+  return ctx.sessionId ?? ctx.sessionKey ?? null;
+}
 
 type AfterToolEvent = ToolEvent & {
   result?: unknown;
@@ -40,6 +55,7 @@ export function buildEvaluationRequest(
     event.params,
   );
   const eventType = eventTypeForToolCall(event.toolName, event.params);
+  const toolCallId = event.toolCallId ?? ctx.toolCallId;
 
   return {
     event_id: randomUUID(),
@@ -54,7 +70,9 @@ export function buildEvaluationRequest(
       ...(command && { command }),
     },
     agent_id: ctx.agentId ?? null,
-    session_id: ctx.sessionKey ?? null,
+    session_id: sessionIdFor(ctx),
+    ...(toolCallId && { tool_call_id: toolCallId }),
+    ...(ctx.agentId && { agent_name: ctx.agentId }),
     working_dir: null,
     data: {},
   };
@@ -77,7 +95,7 @@ export function buildAuditReport(
     error_message: event.error ?? null,
     duration_ms: event.durationMs ?? 0,
     agent_id: ctx.agentId ?? null,
-    session_id: ctx.sessionKey ?? null,
+    session_id: sessionIdFor(ctx),
     working_dir: null,
     data: {},
   };

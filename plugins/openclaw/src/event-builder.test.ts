@@ -51,6 +51,34 @@ describe("buildEvaluationRequest", () => {
     );
     expect(req1.event_id).not.toBe(req2.event_id);
   });
+
+  it("sends tool_call_id and agent_name for Weft correlation", () => {
+    const req = buildEvaluationRequest(
+      { toolName: "exec", params: { command: "ls" }, toolCallId: "call_abc" },
+      { agentId: "coder", sessionKey: "agent:coder:main", sessionId: "sess-uuid", toolName: "exec" },
+    );
+    expect(req.tool_call_id).toBe("call_abc");
+    expect(req.agent_name).toBe("coder");
+    // The OpenClaw session id (the Weft gen_ai.conversation.id) wins over the session key.
+    expect(req.session_id).toBe("sess-uuid");
+  });
+
+  it("takes the tool call id from the context when the event has none", () => {
+    const req = buildEvaluationRequest(
+      { toolName: "exec", params: {} },
+      { toolName: "exec", toolCallId: "ctx-call" },
+    );
+    expect(req.tool_call_id).toBe("ctx-call");
+  });
+
+  it("omits tool_call_id and agent_name when unknown", () => {
+    const req = buildEvaluationRequest(
+      { toolName: "exec", params: {} },
+      { toolName: "exec" },
+    );
+    expect("tool_call_id" in req).toBe(false);
+    expect("agent_name" in req).toBe(false);
+  });
 });
 
 describe("buildAuditReport", () => {

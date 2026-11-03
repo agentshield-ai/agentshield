@@ -260,3 +260,25 @@ class TestUserPromptSubmit:
         }
         hook.handle_user_prompt_submit(event, _cfg(), _as_client(client), cb)
         assert client.requests == []
+
+
+class TestWeftCorrelation:
+    def test_pre_tool_use_sends_tool_call_id_and_agent_name(
+        self, breaker: CircuitBreaker, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AGENTSHIELD_AGENT_NAME", "codex-main")
+        client = _FakeClient({"action": "allow"})
+        event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"},
+                 "session_id": "s", "tool_use_id": "call_abc"}
+        hook.handle_pre_tool_use(event, _cfg(), _as_client(client), breaker)
+        req = client.requests[0]
+        assert req["tool_call_id"] == "call_abc"
+        assert req["agent_name"] == "codex-main"
+
+    def test_ids_omitted_when_unknown(self, breaker: CircuitBreaker, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("AGENTSHIELD_AGENT_NAME", raising=False)
+        client = _FakeClient({"action": "allow"})
+        event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+        hook.handle_pre_tool_use(event, _cfg(), _as_client(client), breaker)
+        assert "tool_call_id" not in client.requests[0]
+        assert "agent_name" not in client.requests[0]

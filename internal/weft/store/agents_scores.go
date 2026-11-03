@@ -50,8 +50,9 @@ type ScopeScore struct {
 }
 
 // ScoreValue reduces a scorer output to a number: numbers as they are,
-// booleans as 1 or 0, and for objects their value or score field, else
-// their first numeric or boolean field (by key order).
+// booleans as 1 or 0, and for objects their value, score, safe, passed,
+// pass or correct field, else their first numeric or boolean field (by key
+// order).
 func ScoreValue(v any) *float64 {
 	f := func(x float64) *float64 { return &x }
 	switch t := v.(type) {
@@ -61,7 +62,7 @@ func ScoreValue(v any) *float64 {
 		}
 		return f(0)
 	case map[string]any:
-		for _, k := range []string{"value", "score"} {
+		for _, k := range []string{"value", "score", "safe", "passed", "pass", "correct"} {
 			if x, ok := t[k]; ok {
 				if r := ScoreValue(x); r != nil {
 					return r

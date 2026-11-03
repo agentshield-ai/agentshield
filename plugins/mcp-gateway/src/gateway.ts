@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { AgentShieldClient } from "./client.js";
+import { toolCallIdFromMeta } from "./event-builder.js";
 import { GatewayPipeline } from "./pipeline.js";
 import type { AgentShieldConfig, Logger } from "./types.js";
 
@@ -166,7 +167,11 @@ export class McpGateway {
       const toolName = request.params.name;
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
-      const decision = await this.pipeline.evaluateToolCall(toolName, args, this.ctx());
+      const toolCallId = toolCallIdFromMeta(request.params._meta);
+      const decision = await this.pipeline.evaluateToolCall(toolName, args, {
+        ...this.ctx(),
+        ...(toolCallId ? { toolCallId } : {}),
+      });
 
       if (!decision.allowed) {
         // Return a tool result with isError=true so the agent receives the

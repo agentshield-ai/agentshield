@@ -56,6 +56,11 @@ make weft         # build bin/weft
 | `--session-ttl` | `WEFT_SESSION_TTL` | `12h` browser session lifetime |
 | `--secure-cookies` | `WEFT_SECURE_COOKIES` | auto (Secure on TLS or an https redirect URL); `true` behind a TLS-terminating proxy |
 | `--audit-retention-days` | `WEFT_AUDIT_RETENTION_DAYS` | `90`; `0` or `-1` keeps the audit log forever |
+| `--shield-rules-dir` | `WEFT_SHIELD_RULES_DIR` | empty; an AgentShield Sigma rules directory (e.g. `rules/rules`) turns on in-process replay of recorded tool calls, see [AgentShield integration](#agentshield-integration) |
+| `--shield-rules-roots` | `WEFT_SHIELD_RULES_ROOTS` | empty; comma-separated directories under which a replay request may name its own `rules_dir` |
+| `--shield-url` | `WEFT_SHIELD_URL` | empty; replay against a running AgentShield engine instead (operator configuration: not subject to the egress guard, so loopback works) |
+| `--shield-token` | `WEFT_SHIELD_TOKEN` | the engine's bearer token for `--shield-url` (prefer the env var) |
+| `--shield-timeout` | `WEFT_SHIELD_TIMEOUT` | `10s` per remote evaluation |
 | | `WEFT_SESSION_KEY` | session-cookie signing key (32+ chars); default is derived from the secret key |
 
 Provider keys for the playground, LLM judges and monitors come from the
@@ -213,6 +218,98 @@ official client end to end and runs in CI (weave 0.54.0).
 agent traces, threads, OTLP spans, datasets, evaluations, a leaderboard, a
 monitor and feedback, using offline mock models.
 
+## AgentShield integration
+
+[AgentShield](../../CLAUDE.md) evaluates every tool call an agent makes
+against Sigma rules and answers `allow`, `log`, `require_approval` or
+`block`. Weft stores those verdicts as **detections** attached to the exact
+tool span they concern ([DESIGN.md §5](DESIGN.md#5-agentshield-integration)),
+so a session's timeline shows what the agent did, why, and what the security
+engine said about it.
+
+**Correlation ids.** Both sides must name the same session and tool call:
+
+| | AgentShield `EvaluationRequest` | Weft span attribute |
+|---|---|---|
+| session | `session_id` | `gen_ai.conversation.id` |
+| tool call | `tool_call_id` (the harness tool-use id, e.g. Claude Code's `tool_use_id`) | `gen_ai.tool.call.id` |
+| agent | `agent_name` (optional) | `gen_ai.agent.name` |
+
+The AgentShield plugins send `tool_call_id` and `agent_name` when the harness
+provides them (Claude Code: `tool_use_id`, and `agent_type` or
+`AGENTSHIELD_AGENT_NAME`; OpenClaw: the tool call id and agent id, with the
+OpenClaw session id as `session_id`; MCP gateway: a tool-use id in the
+request `_meta`; Codex, Gemini CLI and Hermes: the hook's tool-call id and
+`AGENTSHIELD_AGENT_NAME`). A detection is linked to the tool span with the
+same session and tool call id; failing that, to the session's span of the same
+tool name that started nearest the verdict, within ±5 s; failing that, to the
+session only. Spans may arrive before or after their verdicts. Plugins that
+canonicalise tool names (the Claude Code hook sends `exec` for `Bash`) rely on
+the tool call id, because the time fallback compares tool names.
+
+**By OpenTelemetry.** Point the engine's trace exporter at Weft. The
+`evaluate` span carries `gen_ai.conversation.id`, `gen_ai.tool.name`,
+`gen_ai.tool.call.id`, `gen_ai.agent.name`, `agentshield.verdict.action`,
+`.mode`, `.severity`, `agentshield.rule_ids` and one
+`agentshield.rule.matched` event per rule; Weft stores it as an ordinary span
+and as a detection.
+
+```yaml
+# AgentShield config.yaml
+telemetry:
+  enabled: true
+  endpoint: http://127.0.0.1:6345/otel/v1/traces   # the URL path is honoured
+  insecure: true                                     # plain HTTP
+  headers: {project_id: my-team/agents}
+  api_key_env: WEFT_API_KEY                          # sent as Authorization: Bearer
+  disable_metrics: true                              # Weft takes traces only
+```
+
+Every evaluation is exported, `allow` included, subject to `sample_rate`.
+
+**By push.** The `weft:` section makes the engine POST verdicts to
+`/api/v1/shield/ingest` from a bounded background queue. A full queue drops
+(and counts) records; pushing never delays or changes a verdict. Failed
+requests are retried with backoff, and the queue is flushed on shutdown.
+Overrides reported to the engine's `/api/v1/override` are forwarded too and
+mark the detection `overridden` (the OTel path cannot carry overrides).
+
+```yaml
+weft:
+  endpoint: http://127.0.0.1:6345   # https required for non-loopback hosts unless insecure: true
+  project: my-team/agents
+  api_key_env: WEFT_API_KEY         # a key with the member role on the project
+  send: non_allow                   # or all
+  queue_size: 1000
+```
+
+Both paths can be on at once: a verdict is stored once, keyed by the engine's
+event id.
+
+**Querying.** `GET /api/v1/detections` (filters: `session_id`, `agent`,
+`action`, `rule_id`, `source`, `ruleset`, `span_id`, `tool_call_id`, time
+range), `GET /api/v1/detections/stats` (by action, severity, rule, agent with
+a detection rate, and day) and `GET /api/v1/shield/insights` (approval
+fatigue, override escalation, cross-agent correlation within a team). See
+[API.md](API.md#agentshield-detections).
+
+**Replay.** Start Weft with `--shield-rules-dir rules/rules` (in-process,
+rules reloaded for every job) or `--shield-url http://127.0.0.1:8433
+--shield-token …` (a running engine; its rate limit applies, about 100
+evaluations a minute). `POST /api/v1/shield/replay` with `session_ids` (or a
+filter) and optionally a `rules_dir` under `--shield-rules-roots` and a
+`label` re-evaluates every recorded `execute_tool` span in shadow mode,
+rebuilding each request the way `internal/replay` maps tool names and
+arguments, stores the results as `source=replay` detections under the label,
+and reports `newly_blocked`, `no_longer_blocked` and `changed` against the
+engine's original verdicts. Run it before shipping a rule change to see which
+recorded agent behaviour it would have blocked. `ToolSafetyScorer` scores a
+session or one agent from these verdicts (`blocked`, `approvals_required`,
+`max_severity`), optionally running a replay first (`replay: true`).
+
+The replay engine URL is operator configuration, like the PII analyzer and
+the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
+
 ## Feature map
 
 | Area | What Weft does |
@@ -221,6 +318,7 @@ monitor and feedback, using offline mock models.
 | Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models, with cache-read and cache-write prices, so prompt-cached tokens are billed at the provider's cache rates as in Weave ([Cached tokens](API.md#cached-tokens)); per-project price overrides (**Settings → Costs**). |
 | Threads | Calls sharing a `thread_id` group into conversations with turn latency and token totals. |
 | Agents | Weave's Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from calls (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or SDK ops with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
+| Security | AgentShield verdicts as detections linked to the tool spans they concern (by OTel or push), stats by rule, agent and day, approval-fatigue, override-escalation and cross-agent insights, replay of recorded sessions against changed rules with a diff, and `ToolSafetyScorer`. |
 | Objects | Content-addressed, versioned objects (datasets, models, prompts, scorers, ops, anything JSON). Aliases, version diffs, refs (`weft:///entity/project/object/name:digest`). |
 | Datasets | Row tables with paging and editing; create from CSV/JSON or from selected calls. |
 | Evaluations | SDK-run evaluations (`weft.Evaluation`, `EvaluationLogger`) and server-run evaluations of prompt-based models with built-in scorers and LLM judges. Comparison view with metric deltas and per-example diffs. |
@@ -240,6 +338,7 @@ monitor and feedback, using offline mock models.
 | `internal/weft/otlp` | OTLP decoding and span → call mapping |
 | `internal/weft/llm` | provider routing, Anthropic translation, streaming, mock models |
 | `internal/weft/evals` | scorers, server-side evaluation, comparison, leaderboards, monitors |
+| `internal/weft/shield` | AgentShield replay of recorded tool calls |
 | `internal/weft/server` | HTTP API, auth, UI serving |
 | `web/weft-ui` | React UI |
 | `sdk/python`, `sdk/typescript` | client SDKs |

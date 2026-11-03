@@ -158,3 +158,26 @@ class TestBuildLifecycleEvent:
     def test_no_data_defaults_to_empty(self) -> None:
         event = build_lifecycle_event("agent_start")
         assert event["data"] == {}
+
+
+class TestWeftCorrelation:
+    def test_tool_call_id_and_agent_name(self) -> None:
+        req = build_evaluation_request(
+            "terminal", {"command": "ls"}, task_id="t1", tool_call_id="call_1", agent_name="hermes-main"
+        )
+        assert req["tool_call_id"] == "call_1"
+        assert req["agent_name"] == "hermes-main"
+
+    def test_omitted_when_unknown(self) -> None:
+        req = build_evaluation_request("terminal", {"command": "ls"}, task_id="t1")
+        assert "tool_call_id" not in req
+        assert "agent_name" not in req
+
+    def test_ids_from_hook_kwargs(self, monkeypatch) -> None:
+        from hermes import _correlation_ids
+
+        monkeypatch.delenv("AGENTSHIELD_AGENT_NAME", raising=False)
+        assert _correlation_ids({"tool_call_id": "c1", "agent_name": "a"}) == ("c1", "a")
+        assert _correlation_ids({"call_id": "c2"}) == ("c2", None)
+        monkeypatch.setenv("AGENTSHIELD_AGENT_NAME", "env-agent")
+        assert _correlation_ids({}) == (None, "env-agent")

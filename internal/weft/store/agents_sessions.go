@@ -127,6 +127,51 @@ func msPtr(us int64, ok bool) *float64 {
 
 func fptr(v float64) *float64 { return &v }
 
+// ---------------------------------------------------------------- spans
+
+// verdictSpanIDs lists AgentShield verdict spans: stored as spans and as
+// detections, but not agent activity (agents_handoffs.go).
+func (s *Store) verdictSpanIDs(ctx context.Context, pid string) (map[string]bool, error) {
+	rows, err := s.r.QueryContext(ctx, `SELECT id FROM agent_span_meta WHERE project_id = ? AND verdict = 1`, pid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// loadActivitySpans is loadAgentSpans split into agent activity and
+// AgentShield verdict spans.
+func (s *Store) loadActivitySpans(ctx context.Context, pid string, f agentSpanFilter) (kept, verdicts []*agentSpan, err error) {
+	spans, err := s.loadAgentSpans(ctx, pid, f)
+	if err != nil || len(spans) == 0 {
+		return nil, nil, err
+	}
+	v, err := s.verdictSpanIDs(ctx, pid)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(v) == 0 {
+		return spans, nil, nil
+	}
+	for _, sp := range spans {
+		if v[sp.ID] {
+			verdicts = append(verdicts, sp)
+		} else {
+			kept = append(kept, sp)
+		}
+	}
+	return kept, verdicts, nil
+}
+
 // ---------------------------------------------------------------- teams
 
 type sessionTeam struct {
@@ -186,7 +231,9 @@ func (s *Store) sessionAgents(ctx context.Context, pid string, sessions []string
 	}
 	if err := run(`SELECT s.conversation_id, s.agent_name, MIN(c.started_at) FROM agent_spans s
 		JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
-		WHERE s.project_id = ? AND s.conversation_id != '' AND s.agent_name != '' AND c.deleted_at IS NULL`+cond+`
+		LEFT JOIN agent_span_meta m ON m.project_id = s.project_id AND m.id = s.id
+		WHERE s.project_id = ? AND s.conversation_id != '' AND s.agent_name != '' AND c.deleted_at IS NULL
+			AND COALESCE(m.verdict, 0) = 0`+cond+`
 		GROUP BY s.conversation_id, s.agent_name ORDER BY 3`, append([]any{pid}, cargs...)); err != nil {
 		return nil, err
 	}
@@ -821,7 +868,7 @@ func (s *Store) sessionsWithin(ctx context.Context, pid string, after, before in
 // buildSessions summarises sessions (all when ids is nil) with teams,
 // hand-off and reasoning counts, detections and session scores.
 func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]*SessionSummary, error) {
-	spans, err := s.loadAgentSpans(ctx, pid, agentSpanFilter{ConversationIDs: ids})
+	spans, verdicts, err := s.loadActivitySpans(ctx, pid, agentSpanFilter{ConversationIDs: ids})
 	if err != nil {
 		return nil, err
 	}
@@ -831,10 +878,31 @@ func (s *Store) buildSessions(ctx context.Context, pid string, ids []string) ([]
 			by[sp.ConvID] = append(by[sp.ConvID], sp)
 		}
 	}
+	// A session seen only through AgentShield verdicts is still a session.
+	vby := map[string][]*agentSpan{}
+	for _, sp := range verdicts {
+		if sp.ConvID != "" {
+			vby[sp.ConvID] = append(vby[sp.ConvID], sp)
+			if by[sp.ConvID] == nil {
+				by[sp.ConvID] = []*agentSpan{}
+			}
+		}
+	}
 	out := make([]*SessionSummary, 0, len(by))
 	sids := make([]string, 0, len(by))
 	for id, l := range by {
-		out = append(out, summarizeSession(id, l))
+		ss := summarizeSession(id, l)
+		for _, v := range vby[id] {
+			if ss.firstUS == 0 || v.StartedUS < ss.firstUS {
+				ss.firstUS = v.StartedUS
+			}
+			if v.StartedUS > ss.lastUS {
+				ss.lastUS = v.StartedUS
+			}
+		}
+		ss.StartedAt, ss.LastActivity = microsPtr(ss.firstUS), microsPtr(ss.lastUS)
+		ss.DurationMS = (ss.lastUS - ss.firstUS) / 1000
+		out = append(out, ss)
 		sids = append(sids, id)
 	}
 	if len(out) == 0 {
@@ -1290,11 +1358,11 @@ func (s *Store) SessionGraph(ctx context.Context, projectID, sessionID string) (
 	if err != nil {
 		return nil, &InvalidError{Msg: err.Error()}
 	}
-	spans, err := s.loadAgentSpans(ctx, pid, agentSpanFilter{ConversationIDs: []string{sessionID}})
+	spans, verdicts, err := s.loadActivitySpans(ctx, pid, agentSpanFilter{ConversationIDs: []string{sessionID}})
 	if err != nil {
 		return nil, err
 	}
-	if len(spans) == 0 {
+	if len(spans)+len(verdicts) == 0 {
 		return nil, ErrNotFound
 	}
 	edges, err := s.loadHandoffs(ctx, pid, HandoffsQuery{SessionID: sessionID})
@@ -1359,11 +1427,11 @@ func previewOut(c *Call) string {
 }
 
 func (s *Store) sessionTimeline(ctx context.Context, pid, sessionID string) ([]*TimelineItem, error) {
-	spans, err := s.loadAgentSpans(ctx, pid, agentSpanFilter{ConversationIDs: []string{sessionID}})
+	spans, verdicts, err := s.loadActivitySpans(ctx, pid, agentSpanFilter{ConversationIDs: []string{sessionID}})
 	if err != nil {
 		return nil, err
 	}
-	if len(spans) == 0 {
+	if len(spans)+len(verdicts) == 0 {
 		return nil, ErrNotFound
 	}
 	ids := make(map[string]bool, len(spans))
@@ -1566,7 +1634,7 @@ type AgentsV1Query struct {
 }
 
 func (s *Store) agentSummaries(ctx context.Context, pid string, after, before int64, only string) ([]*AgentSummary, error) {
-	spans, err := s.loadAgentSpans(ctx, pid, agentSpanFilter{After: after, Before: before, AgentName: only})
+	spans, _, err := s.loadActivitySpans(ctx, pid, agentSpanFilter{After: after, Before: before, AgentName: only})
 	if err != nil {
 		return nil, err
 	}
@@ -1782,7 +1850,7 @@ func (s *Store) GetAgentV1(ctx context.Context, projectID, name string) (*AgentD
 	}
 	d := &AgentDetail{AgentSummary: a, ToolCounts: []AgentToolCount{}, HandoffsFrom: []AgentCounterpart{}, HandoffsTo: []AgentCounterpart{},
 		RecentSessions: []AgentSessionRef{}}
-	spans, err := s.loadAgentSpans(ctx, pid, agentSpanFilter{AgentName: name})
+	spans, _, err := s.loadActivitySpans(ctx, pid, agentSpanFilter{AgentName: name})
 	if err != nil {
 		return nil, err
 	}
@@ -2065,7 +2133,7 @@ func (s *Store) GetAgentTeam(ctx context.Context, projectID, teamID string) (*Te
 	if t == nil {
 		return nil, ErrNotFound
 	}
-	spans, err := s.loadAgentSpans(ctx, pid, agentSpanFilter{ConversationIDs: ids})
+	spans, _, err := s.loadActivitySpans(ctx, pid, agentSpanFilter{ConversationIDs: ids})
 	if err != nil {
 		return nil, err
 	}

@@ -15,7 +15,31 @@ export type ToolCallEvent = {
 export type ToolContext = {
   agentId: string | null;
   sessionId: string | null;
+  /** The calling harness's tool-use id for this call, when the client sends one. */
+  toolCallId?: string | null;
+  /** The agent making the call (gen_ai.agent.name in Weft), when known. */
+  agentName?: string | null;
 };
+
+/** `_meta` keys MCP clients use to pass the harness tool-use id. */
+const TOOL_CALL_ID_META_KEYS = [
+  "claudecode/toolUseId",
+  "toolUseId",
+  "tool_use_id",
+  "toolCallId",
+  "tool_call_id",
+] as const;
+
+/** Extract the harness tool-use id from a tools/call request's `_meta`, if any. */
+export function toolCallIdFromMeta(meta: unknown): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  const m = meta as Record<string, unknown>;
+  for (const key of TOOL_CALL_ID_META_KEYS) {
+    const v = m[key];
+    if (typeof v === "string" && v.length > 0 && v.length <= 256) return v;
+  }
+  return null;
+}
 
 export type ToolResultEvent = ToolCallEvent & {
   result?: unknown;
@@ -51,6 +75,8 @@ export function buildEvaluationRequest(
     },
     agent_id: ctx.agentId,
     session_id: ctx.sessionId,
+    ...(ctx.toolCallId ? { tool_call_id: ctx.toolCallId } : {}),
+    ...(ctx.agentName ? { agent_name: ctx.agentName } : {}),
     working_dir: null,
     data: {},
   };

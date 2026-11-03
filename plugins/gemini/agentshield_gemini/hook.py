@@ -213,6 +213,28 @@ def _extract_tool(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return str(tool_name), tool_input
 
 
+def _correlation_ids(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """Return ``(tool_call_id, agent_name)`` for Weft correlation.
+
+    The tool-use id comes from the hook payload when the harness sends one;
+    the agent name from the payload or ``AGENTSHIELD_AGENT_NAME``.
+    """
+    tool_call_id = None
+    for key in ("tool_use_id", "tool_call_id", "call_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value and len(value) <= 256:
+            tool_call_id = value
+            break
+    agent_name = None
+    for key in ("agent_name", "agent_type"):
+        value = payload.get(key)
+        if isinstance(value, str) and value and len(value) <= 256:
+            agent_name = value
+            break
+    if agent_name is None:
+        agent_name = os.environ.get("AGENTSHIELD_AGENT_NAME") or None
+    return tool_call_id, agent_name
+
 def _extract_result(payload: Dict[str, Any]) -> Tuple[Any, bool, Optional[str]]:
     """Extract ``(result_summary, is_error, error_message)`` from AfterTool.
 
@@ -283,6 +305,7 @@ def handle_before_tool(
         )
         return _decision(_apply_timeout_policy(config.timeout_policy))
 
+    tool_call_id, agent_name = _correlation_ids(payload)
     request = build_evaluation_request(
         tool_name,
         args,
@@ -290,6 +313,8 @@ def handle_before_tool(
         canonical_name=canonical,
         command=command,
         working_dir=working_dir,
+        tool_call_id=tool_call_id,
+        agent_name=agent_name,
     )
 
     try:

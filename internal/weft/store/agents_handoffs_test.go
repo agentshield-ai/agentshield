@@ -41,7 +41,7 @@ func (g gs) complete(pid string) CompleteCall {
 		trace = "trace1"
 	}
 	st := CallStart{ProjectID: pid, ID: g.id, TraceID: trace, OpName: g.name,
-		StartedAt: graphBase.Add(time.Duration(g.start) * time.Millisecond).Format(time.RFC3339Nano),
+		StartedAt:  graphBase.Add(time.Duration(g.start) * time.Millisecond).Format(time.RFC3339Nano),
 		Attributes: map[string]any{"otel": otel}, Inputs: g.inputs}
 	if st.Inputs == nil {
 		st.Inputs = map[string]any{}

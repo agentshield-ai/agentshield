@@ -231,6 +231,24 @@ func TestCorrelationLateSpan(t *testing.T) {
 	}
 }
 
+// Spans of a trace arrive in one batch in any order: a farther span that
+// arrives first must give the detection up when a nearer one arrives.
+func TestCorrelationLateSpansNearestWins(t *testing.T) {
+	s := newTestStore(t)
+	mustUpsert(t, s, det("evt-cat", "s1", "Bash", "", "block", 3*time.Second))
+	putSpans(t, s, agentRoot("root", "t1", "s1", "coder", 0),
+		toolSpan("ls", "t1", "root", "", "Bash", "toolu_ls", "", 1*time.Second),
+		toolSpan("cat", "t1", "root", "", "Bash", "", "", 3020*time.Millisecond))
+	if d := getDet(t, s, "evt-cat"); spanOf(d) != "cat" || d.Link != LinkNearestTime {
+		t.Fatalf("linked to %q via %q, want the nearer span", spanOf(d), d.Link)
+	}
+	// The span a detection gave up is offered to other waiting detections.
+	mustUpsert(t, s, det("evt-ls-late", "s1", "Bash", "", "log", 900*time.Millisecond))
+	if d := getDet(t, s, "evt-ls-late"); spanOf(d) != "ls" {
+		t.Fatalf("second detection linked to %q", spanOf(d))
+	}
+}
+
 func TestCorrelationUpgradesTimeLinkToToolCallID(t *testing.T) {
 	s := newTestStore(t)
 	putSpans(t, s, agentRoot("root", "t1", "s1", "coder", 0), toolSpan("guess", "t1", "root", "", "Bash", "", "", 1*time.Second))
@@ -410,6 +428,14 @@ func TestDetectionQueriesAndStats(t *testing.T) {
 	all, _ := s.DetectionCountsBySession(ctx, proj, nil)
 	if len(all) != 2 {
 		t.Errorf("all sessions = %v", all)
+	}
+	byAgent, err := s.DetectionCountsByAgent(ctx, proj, []string{"coder", "helper", "ghost"})
+	if err != nil || byAgent["coder"]["block"] != 1 || byAgent["coder"]["require_approval"] != 1 || byAgent["helper"]["allow"] != 1 || byAgent["ghost"] != nil {
+		t.Errorf("by agent = %v %v", byAgent, err)
+	}
+	inSession, err := s.DetectionCountsBySessionAgent(ctx, proj, "s1")
+	if err != nil || len(inSession) != 1 || inSession["coder"]["block"] != 1 {
+		t.Errorf("by session agent = %v %v", inSession, err)
 	}
 }
 

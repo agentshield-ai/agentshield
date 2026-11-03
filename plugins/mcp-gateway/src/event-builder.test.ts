@@ -5,6 +5,7 @@ import {
   buildEvaluationRequest,
   buildLifecycleEvent,
   summariseResult,
+  toolCallIdFromMeta,
 } from "./event-builder.js";
 
 const CTX = { agentId: "agent-1", sessionId: "sess-1" };
@@ -34,6 +35,28 @@ describe("buildEvaluationRequest", () => {
     expect(req.tool_name).toBe("write");
     expect(req.event_type).toBe("file_write");
     expect(req.command).toBe("Write: /tmp/x");
+  });
+
+  it("sends tool_call_id and agent_name when known (Weft correlation)", () => {
+    const req = buildEvaluationRequest(
+      { toolName: "exec", params: { command: "ls" } },
+      { ...CTX, toolCallId: "toolu_01", agentName: "coder" },
+    );
+    expect(req.tool_call_id).toBe("toolu_01");
+    expect(req.agent_name).toBe("coder");
+    const bare = buildEvaluationRequest({ toolName: "exec", params: {} }, CTX);
+    expect("tool_call_id" in bare).toBe(false);
+    expect("agent_name" in bare).toBe(false);
+  });
+});
+
+describe("toolCallIdFromMeta", () => {
+  it("reads the harness tool-use id from _meta", () => {
+    expect(toolCallIdFromMeta({ "claudecode/toolUseId": "toolu_9" })).toBe("toolu_9");
+    expect(toolCallIdFromMeta({ toolCallId: "call_1" })).toBe("call_1");
+    expect(toolCallIdFromMeta({ progressToken: 3 })).toBeNull();
+    expect(toolCallIdFromMeta(undefined)).toBeNull();
+    expect(toolCallIdFromMeta({ toolUseId: "x".repeat(300) })).toBeNull();
   });
 });
 

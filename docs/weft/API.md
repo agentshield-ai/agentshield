@@ -1833,3 +1833,522 @@ qualified name and attributes `step`, `sample_index`, `rollout_n`,
 `trace.backend=mlflow` and MLflow's OTLP exporter pointed at Weft, its spans
 use the MLflow mapping (`mlflow.spanInputs` / `mlflow.spanOutputs`; test
 `TestVerlMLflowFixture`).
+
+## Native API (`/api/v1`)
+
+Weft's own API for agents and agent teams ([DESIGN.md](DESIGN.md) §2, §3):
+sessions, agents, teams, the hand-offs between agents, each model's
+reasoning, and scores at session, agent and hand-off scope. AgentShield
+detections and the `/api/v1/shield/*` routes are documented separately.
+
+**Conventions.** JSON over HTTP with the usual authentication. GET requests
+take `project_id` in the query, POST requests in the body; the caller needs
+the viewer role on the project for GET and the member role for POST
+(a read-only key cannot run scorers). Lists take `limit`, `offset` and
+`sort_by` (`field`, `-field` or `field:desc`) and return
+`{"items": [...], "total_count": n}`, where `total_count` counts all matches
+before paging. Timestamps are RFC 3339 UTC; durations are milliseconds.
+Path segments (session ids, agent names, team ids) are URL-escaped, and so
+are query values: an auto team id's `+` must be sent as `%2B`. Errors are
+`400` (bad parameter), `404` (unknown session, agent or team), `401`/`403`
+(authentication, role).
+
+### Where the data comes from
+
+Everything is derived at ingest from calls (SDK calls and OTLP spans), so
+the order spans arrive in does not matter: a child that arrives before its
+parent is linked when the parent arrives. Databases written before this API
+existed are indexed once, the first time the server starts.
+
+- **Session**: `gen_ai.conversation.id` (or the call's `thread_id`). Spans
+  without one belong to no session. AgentShield verdict spans
+  (instrumentation scope `agentshield`, or `agentshield.verdict.action`) count
+  as detections, not as agent activity: they are left out of span, agent,
+  tool and graph figures, and a session seen only through verdicts is listed
+  with `span_count: 0`. Weft's own judge and monitor calls are ignored.
+- **Agent**: `gen_ai.agent.name` on `invoke_agent` spans (see
+  [Agents](#agents) for the other conventions).
+- **Team**: the first `weft.team.id` (and `weft.team.name`) on any span of
+  the session; otherwise `auto:` + the session's agent names, sorted and
+  joined by `+` (name: joined by ` + `).
+- **Hand-offs** (`kind`, and `source` naming the rule that found them):
+
+| Rule | `source` | `kind` |
+|---|---|---|
+| an agent invocation whose nearest enclosing invocation belongs to another agent | `nested` | `delegate` |
+| a span with `weft.handoff.to_agent` (optional `weft.handoff.from_agent`, `weft.handoff.kind`) | `attribute` | given, default `handoff` |
+| OpenAI Agents SDK hand-off spans: `from_agent` / `to_agent` attributes, span names `handoff to <agent>` or `Handoff: <a> → <b>`; agent spans with OpenInference `graph.node.parent_id` | `openai_agents` | `handoff` |
+| LangGraph: consecutive agent nodes (`langgraph_node` / `langgraph_step`, flat or in OpenInference `metadata`) of one graph run; a node is an agent node when it ran a model | `langgraph` | `handoff` |
+| CrewAI tools `Delegate work to coworker` / `Ask question to coworker` (`coworker` argument) | `crewai` | `delegate` |
+| Google ADK `transfer_to_agent` tool (`agent_name` argument) | `adk` | `handoff` |
+| an agent invocation with an OTel span link to a span of another agent (any trace) | `link` | `handoff` |
+| a `delegate` hand-off whose delegate has finished: control goes back | `return` | `return` |
+
+  An explicit or framework hand-off resolves `to_span_id` to the target
+  agent's invocation (a descendant of the hand-off span first, else the first
+  one that starts after it) and replaces the `nested` edge for that span.
+  Hand-off ids are stable across re-indexing.
+- **Reasoning steps** come from model spans' inputs and outputs and from
+  `weft.reasoning` span events: Anthropic `thinking` (`kind: thinking`) and
+  `redacted_thinking` (`kind: redacted`, no text) blocks; OpenAI Responses
+  `reasoning` items (each summary part is a `kind: summary` step; raw
+  `reasoning_text` is `thinking`; an item with only `encrypted_content` is
+  `redacted`); Gemini parts with `thought: true`; GenAI semconv parts of type
+  `reasoning` or `thinking`; `reasoning_content` on chat messages; OTLP
+  ingest also keeps OpenInference `message_content.type: reasoning` parts and
+  the Vercel AI SDK's `ai.response.reasoning`. A `weft.reasoning` event takes
+  `weft.reasoning.text`, `weft.reasoning.kind` and `weft.reasoning.tokens`
+  attributes; SDK calls can carry the same as the call attribute
+  `weft.reasoning: [{text, kind, tokens}]`. A step's `tokens` is the span's
+  reasoning token count (`output_tokens_details.reasoning_tokens`,
+  `gen_ai.usage.reasoning.output_tokens`, Gemini `thoughts_token_count`) on
+  its first output step. Steps found in a model's input that repeat an
+  earlier step of the session (history sent back to the model) are
+  duplicates and hidden unless asked for.
+- **`next_span_id`** of a step is the first tool call or hand-off that
+  starts after it in the same agent run: for a model's output, the tool call
+  whose `gen_ai.tool.call.id` matches one the model requested, else the first
+  one before the agent's next model call; for an event, the first one after
+  the event. Input steps have none.
+
+### Sessions
+
+`GET /api/v1/sessions` lists sessions, most recent activity first.
+
+| Filter | Meaning |
+|---|---|
+| `agent` | an agent took part |
+| `team_id` | the session's team |
+| `status` | `running` (a root span has not ended), `error` (a root span or agent invocation failed), `ok` |
+| `has_detection` | `any`, or an action (`block`, `require_approval`, …) with at least one detection |
+| `min_score`, `max_score` | `scorer:value` against the mean of the session's session-scope scores by that scorer |
+| `model`, `tool` | a model or tool was used |
+| `q` | text in the session id, name, title, agents or team |
+| `from`, `to` | sessions with activity in `[from, to)` |
+
+`sort_by`: `last_activity` (default, desc), `started_at`, `duration_ms`,
+`span_count`, `turn_count`, `tool_call_count`, `handoff_count`,
+`reasoning_step_count`, `error_count`, `detection_count`, `input_tokens`,
+`output_tokens`, `reasoning_tokens`, `cost_usd`, `status`, `name`, `session_id`.
+
+`GET /api/v1/sessions/{id}` returns one summary, plus `trace_ids`.
+
+```json
+{
+  "session_id": "trip-42", "name": "", "title": "Find three facts about Oslo and summarise them",
+  "started_at": "2026-11-03T09:16:02.572650Z", "last_activity": "2026-11-03T09:16:06.572650Z", "duration_ms": 4000,
+  "agents": ["orchestrator", "researcher"], "team_id": "trip-planners", "team_name": "Trip planners",
+  "turn_count": 1, "trace_count": 1, "span_count": 8, "llm_call_count": 4, "tool_call_count": 2,
+  "handoff_count": 1, "reasoning_step_count": 3, "detection_count": {}, "error_count": 0,
+  "input_tokens": 830, "output_tokens": 310, "reasoning_tokens": 50, "cost_usd": 0.006525, "status": "ok",
+  "models": ["claude-sonnet-4", "gpt-4o"], "tools": ["delegate_research", "web_search"],
+  "scores": {"GoalCompletionJudge": {"mean": 0.25, "count": 1}}
+}
+```
+
+`title` is the first user request; `agents` are in order of first
+appearance; `turn_count` counts turn spans, else traces; `handoff_count`
+excludes `return` edges; `detection_count` counts AgentShield detections by
+action; `cost_usd` is `null` when no model price is known; `scores` are the
+session-scope scores (mean and count per scorer).
+
+`GET /api/v1/sessions/{id}/timeline` returns the session's steps in time
+order. Filters: `types` (comma-separated), `agent`; `limit` defaults to 1000.
+Each item has `type`, `span_id`, `trace_id`, `agent_name`, `started_at`,
+`ended_at` and a `payload`:
+
+| `type` | `payload` |
+|---|---|
+| `turn` | `name`, `status`, `duration_ms`, `input_preview`, `output_preview` (a turn is a turn span, else a trace's root span) |
+| `message` | `role` (`user` at the turn's start, `assistant` at its end), `text` |
+| `llm` | `model`, `provider`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cost_usd`, `duration_ms`, `status`, `output_preview`, `tool_calls` (`[{id, name, arguments}]`) |
+| `reasoning` | `step_id`, `index`, `kind`, `text`, `tokens`, `next_span_id`, `source` |
+| `tool_call` | `tool_name`, `tool_call_id`, `arguments` (main argument or JSON), `result`, `status`, `duration_ms` |
+| `handoff` | `handoff_id`, `from_agent`, `to_agent`, `kind`, `source`, `status`, `from_span_id`, `to_span_id`, `duration_ms`, `input_preview`, `output_preview` (`span_id` is the hand-off's `source_span_id`) |
+| `error` | `message` (first line), `error_type`, `operation`, `name` |
+
+```json
+{"session_id": "trip-42", "total_count": 14, "items": [
+  {"type": "llm", "span_id": "00000000000000a2", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "agent_name": "orchestrator",
+   "started_at": "2026-11-03T09:16:02.622650Z", "ended_at": "2026-11-03T09:16:03.422650Z",
+   "payload": {"model": "claude-sonnet-4", "provider": "anthropic", "input_tokens": 200, "output_tokens": 120, "reasoning_tokens": 0,
+     "cost_usd": 0.0024, "duration_ms": 800, "status": "OK", "output_preview": "", "name": "chat claude-sonnet-4",
+     "tool_calls": [{"id": "toolu_1", "name": "delegate_research", "arguments": "{\"task\":\"Find three facts about Oslo\"}"}]}},
+  {"type": "reasoning", "span_id": "00000000000000a2", "agent_name": "orchestrator", "started_at": "2026-11-03T09:16:02.622650Z", "ended_at": null,
+   "payload": {"step_id": "00000000000000a2#0", "index": 0, "kind": "thinking", "text": "The user wants facts; the researcher agent should gather them.",
+     "tokens": null, "next_span_id": "00000000000000a3", "source": "output"}},
+  {"type": "tool_call", "span_id": "00000000000000a3", "agent_name": "orchestrator", "started_at": "2026-11-03T09:16:03.472650Z",
+   "ended_at": "2026-11-03T09:16:04.972650Z", "payload": {"tool_name": "delegate_research", "tool_call_id": "toolu_1",
+     "arguments": "Find three facts about Oslo", "result": "", "status": "OK", "duration_ms": 1500}},
+  {"type": "handoff", "span_id": "00000000000000a4", "agent_name": "orchestrator", "started_at": "2026-11-03T09:16:03.572650Z",
+   "ended_at": "2026-11-03T09:16:04.872650Z", "payload": {"handoff_id": "459997d98657e7e6c51106885dd22d25", "from_agent": "orchestrator",
+     "to_agent": "researcher", "kind": "delegate", "source": "nested", "status": "ok", "from_span_id": "00000000000000a1",
+     "to_span_id": "00000000000000a4", "duration_ms": 1300, "input_preview": "Find three facts about Oslo",
+     "output_preview": "1. Capital of Norway 2. On the Oslofjord 3. Nobel Peace Prize"}}
+]}
+```
+
+(`trace_id` trimmed from some items.) Detections are not part of the
+timeline: fetch them with `/api/v1/detections?session_id=` and merge by
+`span_id` / `tool_call_id`.
+
+`GET /api/v1/sessions/{id}/graph` returns the delegation graph. Nodes:
+`agent`, `calls` (invocations), `spans`, `errors`, `tool_calls`, `tokens`
+(input + output), `cost_usd`, `detections` (by action). Edges, one per
+`from`, `to` and `kind`: `count`, `errors`, `error_rate`, `p50_ms`, `p95_ms`
+(hand-off durations; `null` for `return`), `mean_score` and `scores`
+(hand-off-scope scores).
+
+```json
+{"nodes": [
+   {"agent": "orchestrator", "calls": 1, "spans": 4, "errors": 0, "tokens": 810, "cost_usd": 0.00495, "tool_calls": 1, "detections": {}},
+   {"agent": "researcher", "calls": 1, "spans": 4, "errors": 0, "tokens": 330, "cost_usd": 0.001575, "tool_calls": 1, "detections": {}}],
+ "edges": [
+   {"from": "orchestrator", "to": "researcher", "kind": "delegate", "count": 1, "errors": 0, "error_rate": 0, "p50_ms": 1300, "p95_ms": 1300,
+    "mean_score": 0.75, "scores": {"HandoffQualityJudge": {"mean": 0.75, "count": 1}}},
+   {"from": "researcher", "to": "orchestrator", "kind": "return", "count": 1, "errors": 0, "error_rate": 0, "p50_ms": null, "p95_ms": null, "mean_score": null}]}
+```
+
+`GET /api/v1/sessions/{id}/reasoning` returns reasoning steps in order.
+Filters: `agent`, `kind` (`thinking`, `summary`, `redacted`),
+`include_duplicates=true`. `index` is the step's position among the
+session's non-duplicate steps (`-1` for duplicates); `span_index` its
+position within its span.
+
+```json
+{"session_id": "trip-42", "total_count": 3, "items": [
+  {"id": "00000000000000a2#0", "span_id": "00000000000000a2", "session_id": "trip-42", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+   "agent_name": "orchestrator", "index": 0, "span_index": 0, "kind": "thinking",
+   "text": "The user wants facts; the researcher agent should gather them.", "tokens": null,
+   "started_at": "2026-11-03T09:16:02.622650Z", "next_span_id": "00000000000000a3", "source": "output"}
+]}
+```
+
+### Agents
+
+`GET /api/v1/agents` lists agents with the [Agents](#agents) statistics
+(`agent_name`, `invocation_count`, `span_count`, `error_count`,
+`total_input_tokens`, `total_output_tokens`, `total_cost_usd`, latencies,
+`models`, …) plus `reasoning_tokens`, `reasoning_step_count`,
+`handoffs_in`, `handoffs_out` (excluding returns), `session_count`, `tools`,
+`teams`, `detection_counts` (by action), `detection_rate` (detections per
+tool call) and `scores` (agent-scope scores, mean and count per scorer).
+Agents that only appear as hand-off endpoints (for example LangGraph nodes)
+are listed too. Filters: `q` (name contains), `team_id`, `from`, `to`.
+`sort_by`: `last_seen` (default, desc), any agent statistic, or
+`reasoning_tokens`, `handoffs_in`, `handoffs_out`, `session_count`,
+`detection_count`.
+
+`GET /api/v1/agents/{name}` adds `tool_counts` (`[{tool, count, errors}]`),
+`handoffs_from` and `handoffs_to` (`[{agent, kind, count}]`) and
+`recent_sessions` (`[{session_id, team_id, last_activity}]`, newest 50).
+
+```json
+{"agent_name": "researcher", "invocation_count": 1, "span_count": 4, "error_count": 0, "total_input_tokens": 230, "total_output_tokens": 100,
+ "total_cost_usd": 0.001575, "latency_ms_p50": 1300, "llm_call_count": 2, "tool_call_count": 1, "models": ["gpt-4o"],
+ "reasoning_tokens": 50, "reasoning_step_count": 1, "handoffs_in": 1, "handoffs_out": 0, "session_count": 1, "tools": ["web_search"],
+ "teams": ["trip-planners"], "detection_counts": {}, "detection_rate": null,
+ "scores": {"ReasoningConsistencyJudge": {"mean": 1, "count": 1}},
+ "tool_counts": [{"tool": "web_search", "count": 1, "errors": 0}],
+ "handoffs_from": [{"agent": "orchestrator", "kind": "delegate", "count": 1}],
+ "handoffs_to": [{"agent": "orchestrator", "kind": "return", "count": 1}],
+ "recent_sessions": [{"session_id": "trip-42", "team_id": "trip-planners", "last_activity": "2026-11-03T09:16:04.872650Z"}]}
+```
+
+### Teams
+
+`GET /api/v1/teams` lists teams: `team_id`, `name`, `auto` (a derived
+team), `agents`, `session_count`, `error_session_count`, `handoff_count`,
+`span_count`, `input_tokens`, `output_tokens`, `cost_usd`, `first_seen`,
+`last_activity`, `detection_count`. Filters: `q`, `agent`, `from`, `to`.
+`sort_by`: `last_activity` (default, desc), `first_seen`, `session_count`,
+`handoff_count`, `error_session_count`, `cost_usd`, `name`, `team_id`.
+
+`GET /api/v1/teams/{id}` adds `agent_stats` (per agent: `calls`, `errors`,
+`tool_calls`, `tokens`, `cost_usd`, `sessions`, `handoffs_in`,
+`handoffs_out`, `detections`), `graph` (the session graph aggregated over the
+team's sessions; nodes also carry `sessions`), `handoff_stats` (the graph's
+non-return edges, most frequent first: `count`, `error_rate`, `p50_ms`,
+`p95_ms`, `mean_score`) and `recent_sessions` (newest 50 session summaries).
+
+```json
+{"team_id": "trip-planners", "name": "Trip planners", "auto": false, "agents": ["orchestrator", "researcher"], "session_count": 1,
+ "error_session_count": 0, "handoff_count": 1, "cost_usd": 0.006525, "last_activity": "2026-11-03T09:16:06.572650Z",
+ "agent_stats": [{"agent": "orchestrator", "calls": 1, "errors": 0, "tool_calls": 1, "tokens": 810, "cost_usd": 0.00495, "sessions": 1,
+   "handoffs_in": 0, "handoffs_out": 1, "detections": {}}],
+ "handoff_stats": [{"from": "orchestrator", "to": "researcher", "kind": "delegate", "count": 1, "errors": 0, "error_rate": 0,
+   "p50_ms": 1300, "p95_ms": 1300, "mean_score": 0.75, "scores": {"HandoffQualityJudge": {"mean": 0.75, "count": 1}}}],
+ "graph": {"nodes": ["…"], "edges": ["…"]},
+ "recent_sessions": ["… session summaries …"]}
+```
+
+### Hand-offs
+
+`GET /api/v1/handoffs` queries hand-offs, oldest first. Filters:
+`session_id`, `from_agent`, `to_agent`, `agent` (either end), `team_id`,
+`kind`, `from`, `to`. `sort_by`: `started_at` (default), `duration_ms`,
+`from_agent`, `to_agent`, `kind`, `status`, `session_id`.
+
+```json
+{"total_count": 2, "items": [
+  {"id": "459997d98657e7e6c51106885dd22d25", "session_id": "trip-42", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+   "source_span_id": "00000000000000a4", "from_span_id": "00000000000000a1", "to_span_id": "00000000000000a4",
+   "from_agent": "orchestrator", "to_agent": "researcher", "kind": "delegate", "source": "nested",
+   "started_at": "2026-11-03T09:16:03.572650Z", "ended_at": "2026-11-03T09:16:04.872650Z", "duration_ms": 1300, "status": "ok",
+   "input_preview": "Find three facts about Oslo", "output_preview": "1. Capital of Norway 2. On the Oslofjord 3. Nobel Peace Prize",
+   "team_id": "trip-planners"}
+]}
+```
+
+`from_span_id` is the delegating side (the caller's invocation, or the
+hand-off span), `to_span_id` the receiving invocation (`null` until it is
+known), `source_span_id` the span the edge was found on. `status` is
+`running`, `ok` or `error` from the receiving invocation (else the hand-off
+span). Previews are the first 500 characters of the receiving agent's input
+and output.
+
+### Scores
+
+Scope scores are feedback rows whose payload carries `scope` (`session`,
+`agent`, `handoff`, `turn`, `span`), the target ids (`session_id`, `agent`,
+`handoff_id`, `turn_id`, `span_id`), `scorer`, `value` (a number; booleans
+are 1 or 0), `reason`, and optionally `output` and `model`. The server's
+scorers write them with `feedback_type` `weft.score.<scorer>`, attached
+(`weave_ref`) to the target's first span; SDKs can write their own with
+`/feedback/create` and any feedback type, as long as the payload has a valid
+`scope`.
+
+`GET /api/v1/scores` lists them, newest first. Filters: `scope`,
+`session_id`, `agent`, `handoff_id`, `scorer`. With `session_id`, call-level
+scorer results (`wandb.runnable.*` feedback on the session's spans) are
+included as `span` scores.
+
+```json
+{"total_count": 4, "items": [
+  {"id": "01a1a0b1-ae46-78b2-b0ee-9baf12ebad2e", "scope": "handoff", "session_id": "trip-42", "handoff_id": "459997d98657e7e6c51106885dd22d25",
+   "scorer": "HandoffQualityJudge", "value": 0.75, "reason": "…", "model": "mock/json",
+   "output": {"appropriate": true, "result_used": true, "score": 0.75, "reasoning": "…"},
+   "weave_ref": "weft:///demo/agents/call/00000000000000a4", "feedback_type": "weft.score.HandoffQualityJudge",
+   "creator": null, "created_at": "2026-11-03T09:16:07.478592Z"}
+]}
+```
+
+`POST /api/v1/scores/run` runs scorers at a scope and stores the scores.
+It runs synchronously: at most 10 scorers and 100 targets per request.
+
+```json
+{"project_id": "demo/agents", "scope": "handoff", "scorers": ["HandoffQualityJudge"],
+ "handoff_ids": ["459997d98657e7e6c51106885dd22d25"], "model": "mock/json"}
+```
+
+| Field | Meaning |
+|---|---|
+| `scope` | `session`, `agent` or `handoff` |
+| `scorers` | scorer classes by name (the judges below, `ToolSafetyScorer`, or any server-runnable class that needs no configuration), or scorer refs |
+| `session_ids` | the sessions to score (required, except for `handoff` with `handoff_ids`) |
+| `agent` | `agent` scope: only this agent (default: every agent of each session) |
+| `handoff_ids` | `handoff` scope: these hand-offs (default: every non-return hand-off of the sessions) |
+| `model` | judge model for the built-in judges (default `gpt-4o-mini`; `mock/json` works offline) |
+
+The response is `{items, total_count}` with one result per target and
+scorer: `scope`, `session_id`, `agent`, `handoff_id`, `scorer`, `value`,
+`reason`, `output`, `feedback_id`, `scorer_call_id` (the judge's own call,
+marked internal), or `error`.
+
+`HandoffQualityJudge` runs at the `handoff` scope only, `GoalCompletionJudge`
+at `session`, `ReasoningConsistencyJudge` and `ToolSafetyScorer` at
+`session` and `agent`; other classes run at any scope. Each scorer also gets
+`session_id`, `agent` and `handoff_id` in its example row. A result's `value`
+is the output's `value`, `score`, `safe`, `passed`, `pass` or `correct`
+field (booleans as 1 or 0), else its first numeric or boolean field.
+
+What each scope's scorer sees (`{input}` / `{output}` in judge prompts):
+
+| Scope | `{input}` | `{output}` |
+|---|---|---|
+| `session` | the user's requests | the whole timeline as a transcript, ending with the final answer |
+| `agent` | the task handed to the agent (or the user's request) | the agent's reasoning, model replies, tool calls and hand-offs |
+| `handoff` | the user's request, what the delegating agent did before the hand-off, and the hand-off input | what the delegate returned and what the delegating agent did next |
+
+Built-in judges (JSON mode; `score` is 0..1, and a generic
+`{score: 1-5, correct}` reply is mapped onto these fields):
+
+| Scorer | Scopes | Output |
+|---|---|---|
+| `HandoffQualityJudge` | `handoff` | `appropriate`, `result_used`, `score`, `reasoning` |
+| `ReasoningConsistencyJudge` | `agent`, `session` | `consistent`, `score`, `reasoning` |
+| `GoalCompletionJudge` | `session` | `goal_achieved`, `score`, `reasoning` |
+
+The three are also server-runnable scorer classes (`_class_name`), with the
+optional fields `model`, `model_id` and `scoring_prompt`, so they can be
+stored as scorer objects and run on calls or by monitors.
+
+## AgentShield detections
+
+AgentShield verdicts stored as detections (DESIGN.md §2, §5). Every request
+names `project_id` (query for GET, body for POST); GET needs the viewer role,
+POST the member role. Times are RFC 3339 (or unix seconds in `from` / `to`).
+
+**Detection object**
+
+| Field | Meaning |
+|---|---|
+| `id` | Weft's id |
+| `event_id` | the engine's evaluation event id (unique per `source`); `replay:<label>:<span_id>` for replays |
+| `session_id` | AgentShield `session_id` = `gen_ai.conversation.id` |
+| `span_id`, `trace_id` | the tool span the verdict concerns, or null |
+| `link` | how `span_id` was found: `tool_call_id`, `nearest_time` (same session and tool name, start within ±5 s), `replay`, or `session` / `none` when unlinked |
+| `engine_span_id` | the engine's `evaluate` span when the verdict came over OTLP |
+| `tool_call_id`, `tool_name`, `agent_name` | from the verdict; `agent_name` is filled from the linked span when the engine had none |
+| `action` | `allow`, `log`, `require_approval`, `block`. For `source=replay`, the action enforce mode would take |
+| `mode` | `enforce`, `audit`, `shadow` (replays are always `shadow`) |
+| `severity` | highest rule level, or `none` |
+| `rules[]` | `{id, title, level, tags[]}` |
+| `source` | `engine` or `replay` |
+| `ruleset` | replay label (default the rules hash, `rules:<12 hex>`, or `remote:<host>`) |
+| `event_source` | the platform that sent the tool call (`claude-code`, `openclaw`, …) |
+| `overridden`, `overridden_at` | the user overrode the verdict (forwarded from the engine's `/api/v1/override`) |
+| `replay_job_id` | the replay job that produced it |
+| `created_at` | verdict time (replays: the tool span's start); `ingested_at` |
+
+### `GET /api/v1/detections`
+
+Filters: `session_id`, `agent`, `action` (comma-separated or repeated),
+`rule_id`, `source`, `ruleset`, `span_id`, `tool_call_id`, `tool_name`,
+`overridden` and `linked` (`true`/`false`), `from`, `to` (on `created_at`).
+`limit` (default 100, max 1000), `offset`, `sort_by` = `created_at` (newest
+first, default), `-created_at`, `severity` or `action`. Returns
+`{items: [detection], total_count}`. The session timeline merges these by
+`span_id` (or `tool_call_id`).
+
+### `GET /api/v1/detections/stats`
+
+Same filters. Returns `{total, by_action, by_severity, by_source, overridden,
+linked, by_rule: [{rule_id, title, level, count, by_action}], by_agent:
+[{agent, count, by_action, tool_calls, detection_rate}], by_day: [{day, count,
+by_action, by_severity}]}`. `detection_rate` is the share of the agent's
+recorded tool calls that drew a non-`allow` engine verdict (null without
+spans). Pass `source=engine` to leave replays out of the counts.
+
+### `POST /api/v1/shield/ingest`
+
+The engine's `weft:` push (`internal/weftpush`). Body:
+
+```json
+{"project_id": "team/app",
+ "detections": [{"event_id": "e-1", "session_id": "s-1", "tool_call_id": "toolu_01", "tool_name": "Bash",
+   "agent_name": "coder", "action": "block", "mode": "enforce", "severity": "critical",
+   "rules": [{"id": "c65a9620-…", "title": "Remote Code Execution via Piped Script Download", "level": "critical", "tags": ["attack.execution"]}],
+   "source": "engine", "event_source": "claude-code", "timestamp": "2026-11-03T09:21:20Z"}],
+ "overrides": [{"event_id": "e-1", "session_id": "s-1", "timestamp": "2026-11-03T09:21:25Z"}]}
+```
+
+`detection` (one object) is accepted in place of `detections`; `id` is an
+alias of `event_id`, and rules may use `rule_id` / `rule_name` / `severity`.
+At most 1000 detections and 1000 overrides per request. Validation: `event_id`
+required; `action`, `mode`, `severity` and rule levels from the lists above;
+`source` must be `engine`; ids and names at most 256 bytes without control
+characters. Re-sending an `event_id` updates the same detection (idempotent);
+`overridden` never reverts. An override without `event_id` marks the session's
+latest `block` / `require_approval`; one whose detection has not arrived yet
+is kept and applied when it does. Detections whose `event_id` starts with
+`weft-replay-` (remote replay traffic) are ignored. Response:
+
+```json
+{"accepted": 1, "created": 1, "duplicates": 0, "ignored": 0,
+ "overrides_applied": 1, "overrides_pending": 0,
+ "ids": [{"id": "01a1a0b7-26ce-765f-8d58-c15ed46fd607", "event_id": "e-1", "created": true}]}
+```
+
+Over OTLP, spans of instrumentation scope `agentshield` (or with
+`agentshield.verdict.action`) become detections from the attributes listed in
+[README](README.md#agentshield-integration) and their
+`agentshield.rule.matched` events; engines that predate them (`verdict.action`,
+`rule.matched` events with `rule.name` / `rule.severity`) are understood too.
+The event id is the span's `event.id` attribute, so a verdict sent both ways
+is stored once.
+
+### `POST /api/v1/shield/replay`
+
+```json
+{"project_id": "team/app", "session_ids": ["s-1"], "label": "candidate",
+ "rules_dir": "/srv/rulesets/candidate", "event_source": "claude-code",
+ "filter": {"agent": "coder", "from": "2026-11-01", "to": "2026-11-03", "limit": 5000}}
+```
+
+`session_ids` (at most 1000) or a `filter` (agent and/or time range on the
+tool spans' start; `limit` tool calls, default and maximum 10000) is
+required. `rules_dir` must lie under `--shield-rules-dir` or a
+`--shield-rules-roots` directory (in-process only). `event_source` is the
+`source` rules see when the engine recorded none for a call (default `weft`).
+Returns `{job_id, status: "queued"}`; 400 when replay is not configured.
+
+Each recorded `execute_tool` span (tool name, `gen_ai.tool.call.arguments` or
+the call's inputs) is turned into the request a shipped plugin would send
+(`internal/replay` field mapping) and evaluated in shadow mode with a fresh
+behavioural session per recorded session. Calls with a matched rule are
+stored as `source=replay` detections under the label (a re-run with the same
+label replaces them).
+
+### `GET /api/v1/shield/replay/{job_id}`
+
+```json
+{"job_id": "01a1a0b7-…", "status": "done", "label": "candidate", "ruleset": "rules:87735dfe7d4c",
+ "engine": "in-process", "rules_loaded": 2, "session_ids": ["s-1"],
+ "created_at": "…", "started_at": "…", "finished_at": "…", "error": null, "request": {…},
+ "summary": {"tool_calls": 3, "evaluated": 3, "errors": 0, "detections": 2, "blocked": 2,
+   "approvals_required": 0, "with_engine_verdict": 0, "newly_blocked": 2, "no_longer_blocked": 0,
+   "changed": 0, "unchanged": 1},
+ "newly_blocked": [{"span_id": "1e8f98db0bc28171", "trace_id": "…", "session_id": "s-1",
+   "tool_call_id": "toolu_r2", "tool_name": "Bash", "agent_name": "coder", "started_at": "…",
+   "before": null,
+   "after": {"action": "block", "severity": "critical", "rule_ids": ["c65a9620-…"], "mode": "shadow"}}],
+ "no_longer_blocked": [], "changed": [], "truncated": false}
+```
+
+`status` is `queued`, `running`, `done` or `failed` (with `error`). `before`
+is the engine's verdict linked to the same span (null: none recorded, treated
+as `allow`); an `audit` or `shadow` verdict is compared by the action enforce
+mode would have taken for its rules. `newly_blocked`: `after` blocks and
+`before` did not; `no_longer_blocked`: the reverse; `changed`: a different
+action or rule set otherwise. Each list holds at most 500 items
+(`truncated`). `GET /api/v1/shield/replay` lists jobs (`{items, total_count}`,
+results omitted).
+
+### `GET /api/v1/shield/insights`
+
+Query: `from`, `to`, `bucket` (`hour` / `day`), `fatigue_threshold` (default
+5), `escalation_threshold` (default 3), `window` (default `10m`), `limit`
+(default 50). Over engine detections other than `allow`:
+
+- `approval_fatigue`: `{threshold, series: [{bucket, require_approval,
+  overridden}], by_session: [{session_id, agents, require_approval, approved,
+  first_at, last_at, per_hour, fatigued}], by_agent: [{agent,
+  require_approval, approved, sessions, approval_rate}]}`; `approved` counts
+  overridden approvals.
+- `override_escalation`: `{threshold, series: [{bucket, overrides,
+  overridden_blocks}], by_session: [{session_id, agents, overrides,
+  overridden_blocks, overridden_approvals, rule_ids, first_at, last_at,
+  escalating}]}`; escalating at the threshold or two overridden blocks.
+- `cross_agent`: per team (`weft.team.id` on a span of the session, else
+  `auto:` + the sorted agent names joined by `+`; teams of one agent are left
+  out): `{team_id, agents, sessions, detections, agents_with_detections,
+  shared_rules: [{rule_id, title, level, agents, count}], incidents: [{start,
+  end, agents, rule_ids, session_ids, detections, max_action}], correlated}`.
+  A shared rule fired for two or more agents; an incident is a run of
+  detections no more than `window` apart involving two or more agents.
+
+### `GET /api/v1/shield/status`
+
+`{replay_enabled, replay_engine: "in-process" | "remote" | "", correlation_window_ms}`.
+
+### `ToolSafetyScorer`
+
+A server-runnable scorer class (`_class_name: "ToolSafetyScorer"`). Fields:
+`scope` (`session` / `agent`), `session_id`, `agent`, `source` (`engine` /
+`replay`), `ruleset`, `replay` (run a replay first), `label`. The session and
+agent also come from the example row (`session_id` / `conversation_id`,
+`agent` / `agent_name`) or, on `/calls/score` and monitors, from the scored
+call's session. Result: `{scope, session_id, agent?, source, ruleset?,
+tool_calls, detections, blocked, approvals_required, logged, overridden,
+max_severity, max_severity_score (0..1), safe}`.

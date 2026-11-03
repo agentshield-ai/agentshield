@@ -673,14 +673,20 @@ func detectionCallHook(ctx context.Context, tx *sql.Tx, projectID, id string) er
 }
 
 // linkToolSpanTx links detections waiting for this tool span: those with its
-// tool call id (upgrading a time-based link), then the nearest unlinked one
-// in its session with its tool name.
+// tool call id (upgrading a time-based link), then the nearest one in its
+// session with its tool name that is unlinked or time-linked to a span
+// farther from its verdict (spans of a trace can arrive in any order). A span
+// a detection moves away from is offered to the other waiting detections.
 func linkToolSpanTx(ctx context.Context, tx detDB, projectID, spanID string) error {
+	return linkToolSpanDepth(ctx, tx, projectID, spanID, 0)
+}
+
+func linkToolSpanDepth(ctx context.Context, tx detDB, projectID, spanID string, depth int) error {
 	var conv, toolCallID, toolName, traceID, agent string
 	var startedAt sql.NullInt64
 	err := tx.QueryRowContext(ctx, `SELECT a.conversation_id, a.tool_call_id, a.tool_name, a.trace_id, a.agent_name, c.started_at
 		FROM agent_spans a JOIN calls c ON c.project_id = a.project_id AND c.id = a.id
-		WHERE a.project_id = ? AND a.id = ? AND c.deleted_at IS NULL`, projectID, spanID).
+		WHERE a.project_id = ? AND a.id = ? AND c.deleted_at IS NULL AND a.operation_name = 'execute_tool'`, projectID, spanID).
 		Scan(&conv, &toolCallID, &toolName, &traceID, &agent, &startedAt)
 	if err == sql.ErrNoRows {
 		return nil
@@ -689,36 +695,67 @@ func linkToolSpanTx(ctx context.Context, tx detDB, projectID, spanID string) err
 		return err
 	}
 	ref := detSpanRef{id: spanID, traceID: traceID, agent: agent}
+	var freed []string
 	if toolCallID != "" {
-		ids, err := detQueryIDs(ctx, tx, `SELECT id FROM detections WHERE project_id = ? AND tool_call_id = ? AND link NOT IN ('tool_call_id', 'replay')
-			AND (session_id = ? OR session_id = '' OR ? = '')`, projectID, toolCallID, conv, conv)
+		rows, err := tx.QueryContext(ctx, `SELECT id, COALESCE(span_id, '') FROM detections WHERE project_id = ? AND tool_call_id = ?
+			AND link NOT IN ('tool_call_id', 'replay') AND (session_id = ? OR session_id = '' OR ? = '')`, projectID, toolCallID, conv, conv)
 		if err != nil {
 			return err
 		}
-		for _, did := range ids {
+		var ids, old []string
+		for rows.Next() {
+			var id, prev string
+			if err := rows.Scan(&id, &prev); err != nil {
+				rows.Close()
+				return err
+			}
+			ids, old = append(ids, id), append(old, prev)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for i, did := range ids {
 			if err := setLinkTx(ctx, tx, projectID, did, ref, LinkToolCallID); err != nil {
+				return err
+			}
+			if old[i] != "" && old[i] != spanID {
+				freed = append(freed, old[i])
+			}
+		}
+	}
+	if conv != "" && toolName != "" && startedAt.Valid {
+		w := CorrelationWindow.Microseconds()
+		at := startedAt.Int64
+		var did, prev string
+		err = tx.QueryRowContext(ctx, `SELECT d.id, COALESCE(d.span_id, '') FROM detections d
+			LEFT JOIN calls oc ON oc.project_id = d.project_id AND oc.id = d.span_id
+			WHERE d.project_id = ? AND d.session_id = ? AND d.tool_name = ? COLLATE NOCASE AND d.created_at BETWEEN ? AND ?
+				AND (d.tool_call_id = '' OR d.tool_call_id = ?)
+				AND (d.span_id IS NULL OR (d.link = 'nearest_time' AND d.span_id <> ?
+					AND abs(d.created_at - COALESCE(oc.started_at, 0)) > abs(d.created_at - ?)))
+				AND NOT EXISTS (SELECT 1 FROM detections o WHERE o.project_id = d.project_id AND o.span_id = ? AND o.source = d.source)
+			ORDER BY abs(d.created_at - ?) LIMIT 1`, projectID, conv, toolName, at-w, at+w, toolCallID, spanID, at, spanID, at).Scan(&did, &prev)
+		switch {
+		case err == nil:
+			if err := setLinkTx(ctx, tx, projectID, did, ref, LinkNearestTime); err != nil {
+				return err
+			}
+			if prev != "" {
+				freed = append(freed, prev)
+			}
+		case err != sql.ErrNoRows:
+			return err
+		}
+	}
+	if depth < 3 {
+		for _, f := range freed {
+			if err := linkToolSpanDepth(ctx, tx, projectID, f, depth+1); err != nil {
 				return err
 			}
 		}
 	}
-	if conv == "" || toolName == "" || !startedAt.Valid {
-		return nil
-	}
-	w := CorrelationWindow.Microseconds()
-	at := startedAt.Int64
-	var did, source string
-	err = tx.QueryRowContext(ctx, `SELECT d.id, d.source FROM detections d WHERE d.project_id = ? AND d.session_id = ? AND d.span_id IS NULL
-			AND d.tool_name = ? COLLATE NOCASE AND d.created_at BETWEEN ? AND ?
-			AND (d.tool_call_id = '' OR d.tool_call_id = ?)
-			AND NOT EXISTS (SELECT 1 FROM detections o WHERE o.project_id = d.project_id AND o.span_id = ? AND o.source = d.source)
-		ORDER BY abs(d.created_at - ?) LIMIT 1`, projectID, conv, toolName, at-w, at+w, toolCallID, spanID, at).Scan(&did, &source)
-	if err == sql.ErrNoRows {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return setLinkTx(ctx, tx, projectID, did, ref, LinkNearestTime)
+	return nil
 }
 
 func detQueryIDs(ctx context.Context, tx detDB, q string, args ...any) ([]string, error) {

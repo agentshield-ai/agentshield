@@ -41,6 +41,8 @@ def build_evaluation_request(
     agent_id: Optional[str] = None,
     canonical_name: Optional[str] = None,
     command: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build an ``EvaluationRequest`` payload for ``POST /api/v1/evaluate``.
 
@@ -63,6 +65,11 @@ def build_evaluation_request(
         working_dir=None,
         data={},
     )
+    # Weft correlation (optional): the harness tool-use id and the agent name.
+    if tool_call_id:
+        envelope["tool_call_id"] = tool_call_id
+    if agent_name:
+        envelope["agent_name"] = agent_name
     return envelope
 
 

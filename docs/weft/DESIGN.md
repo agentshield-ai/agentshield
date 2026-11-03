@@ -41,7 +41,7 @@ All rows are scoped by `project_id` (`entity/project`).
 | **Hand-off** | an edge between two agents (§2.1) | `id`, `session_id`, `trace_id`, `from_span_id`, `to_span_id`, `from_agent`, `to_agent`, `kind` (`delegate` / `handoff` / `return`), `started_at`, `ended_at`, `status`, `input_preview`, `output_preview` |
 | **Reasoning step** | extracted from model spans (§2.2) | `id`, `span_id`, `session_id`, `trace_id`, `agent_name`, `index`, `kind` (`thinking` / `summary` / `redacted`), `text`, `tokens`, `started_at`, `next_span_id` (the tool call or hand-off that followed) |
 | **Tool call** | `execute_tool` spans | `gen_ai.tool.name`, `gen_ai.tool.call.id`, arguments, result, status |
-| **Detection** | an AgentShield verdict (§5) | `id`, `session_id`, `span_id` (the matched tool span, nullable), `tool_call_id`, `tool_name`, `agent_name`, `action` (`allow` / `log` / `require_approval` / `block`), `mode` (`enforce` / `audit` / `shadow`), `severity`, `rules[]` (`id`, `title`, `level`, `tags`), `source` (`engine` / `replay`), `ruleset` (a label or hash), `overridden` (bool), `created_at` |
+| **Detection** | an AgentShield verdict (§5) | `id`, `session_id`, `span_id` (the matched tool span, nullable), `tool_call_id`, `tool_name`, `agent_name`, `action` (`allow` / `log` / `require_approval` / `block`), `mode` (`enforce` / `audit` / `shadow`), `severity`, `rules[]` (`id`, `title`, `level`, `tags`), `source` (`engine` / `replay`), `ruleset` (a label or hash), `overridden` (bool), `created_at`; also `event_id`, `trace_id`, `link` (`tool_call_id` / `nearest_time` / `replay` / `session` / `none`), `engine_span_id`, `event_source`, `overridden_at`, `replay_job_id`, `ingested_at` |
 | **Score** | feedback rows with a scope (§6) | `scope` (`session` / `agent` / `handoff` / `turn` / `span`), the target ids, `scorer`, `value`, `reason` |
 
 ### 2.1 Hand-offs
@@ -103,6 +103,7 @@ body for POST). Lists take `limit`, `offset` and `sort_by`, and return
 | `POST /api/v1/shield/replay` | `{session_ids[] or filter, rules_dir?, label?}` starts a replay job, and returns `{job_id}` |
 | `GET /api/v1/shield/replay/{job_id}` | job status, and a diff against the engine's original verdicts: `newly_blocked`, `no_longer_blocked`, `changed` |
 | `GET /api/v1/shield/insights` | approval fatigue (`require_approval` per session and agent over time), override escalation, and cross-agent correlation within a team |
+| `GET /api/v1/shield/replay`, `GET /api/v1/shield/status` | list replay jobs; whether replay is configured |
 | `GET /api/v1/scores` | scope-aware scores (§6): `scope`, `session_id`, `agent`, `handoff_id`, `scorer` |
 | `POST /api/v1/scores/run` | run scorers at a scope over chosen sessions |
 
@@ -167,10 +168,14 @@ Weft imports AgentShield's rule engine (`internal/evaluate`) as a library and
 can run it in-process with `--shield-rules-dir`, or call a running engine with
 `--shield-url` / `--shield-token`. Replay re-evaluates every tool call of the
 chosen sessions in `shadow` mode, stores the results as detections with
-`source=replay` and a `ruleset` label, and reports what would change. A
-`ShieldScorer` turns this into evaluation scores (`blocked`,
-`approvals_required`, `max_severity`) at session and agent scope, so rule
-changes can be evaluated against recorded agent behaviour.
+`source=replay` and a `ruleset` label, and reports what would change. The
+`action` of a replay detection is the action enforce mode would take, so it
+can be compared with the engine's verdicts (an `audit` or `shadow` original is
+compared the same way). `ToolSafetyScorer` (§6) turns this into evaluation
+scores (`blocked`, `approvals_required`, `max_severity`) at session and agent
+scope, so rule changes can be evaluated against recorded agent behaviour.
+`--shield-url` is operator configuration and is not subject to the egress
+guard.
 
 ## 6. Scoped evaluation
 

@@ -202,8 +202,9 @@ type RuleCount struct {
 }
 
 // AgentCount is a per-agent row of DetectionStats. Rate is the share of the
-// agent's tool calls (execute_tool spans) that drew a non-allow detection,
-// when Weft has the agent's spans; nil otherwise.
+// agent's tool calls (execute_tool spans) that drew a non-allow engine
+// verdict (replays are not counted), when Weft has the agent's spans; nil
+// otherwise.
 type AgentCount struct {
 	Agent     string       `json:"agent"`
 	Count     int          `json:"count"`
@@ -245,6 +246,7 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 		return nil, err
 	}
 	agents := map[string]*AgentCount{}
+	flagged := map[string]int{} // engine verdicts other than allow, per agent
 	days := map[string]*DayCount{}
 	for rows.Next() {
 		var action, sev, source, agent, day string
@@ -271,6 +273,9 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 		}
 		a.Count += n
 		a.ByAction[action] += n
+		if source == DetectionSourceEngine && action != DetectionAllow {
+			flagged[agent] += n
+		}
 		dc := days[day]
 		if dc == nil {
 			dc = &DayCount{Day: day, ByAction: ActionCounts{}, BySeverity: ActionCounts{}}
@@ -326,8 +331,7 @@ func (s *Store) DetectionStatsFor(ctx context.Context, q DetectionQuery) (*Detec
 	for _, a := range agents {
 		if tc, ok := toolCalls[a.Agent]; ok && tc > 0 && a.Agent != "" {
 			a.ToolCalls = tc
-			flagged := a.Count - a.ByAction[DetectionAllow]
-			r := float64(flagged) / float64(tc)
+			r := float64(flagged[a.Agent]) / float64(tc)
 			if r > 1 {
 				r = 1
 			}
@@ -492,4 +496,62 @@ func (s *Store) ConversationOf(ctx context.Context, projectID, callID string) (s
 		return "", nil
 	}
 	return conv, err
+}
+
+// DetectionCountsByAgent returns, for each agent, the number of engine
+// detections by action (agents without detections are absent; no names means
+// every agent of the project).
+func (s *Store) DetectionCountsByAgent(ctx context.Context, projectID string, agentNames []string) (map[string]map[string]int, error) {
+	out := map[string]map[string]int{}
+	run := func(names []string) error {
+		q := `SELECT agent_name, action, COUNT(*) FROM detections WHERE project_id = ? AND source = 'engine' AND agent_name <> ''`
+		args := []any{projectID}
+		if len(names) > 0 {
+			q += ` AND agent_name IN (` + placeholders(len(names)) + `)`
+			for _, n := range names {
+				args = append(args, n)
+			}
+		}
+		return s.scanCounts(ctx, out, q+` GROUP BY agent_name, action`, args...)
+	}
+	if len(agentNames) == 0 {
+		return out, run(nil)
+	}
+	for i := 0; i < len(agentNames); i += 500 {
+		if err := run(agentNames[i:min(i+500, len(agentNames))]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// DetectionCountsBySessionAgent returns one session's engine detections by
+// agent and action. Detections without an agent are counted under "".
+func (s *Store) DetectionCountsBySessionAgent(ctx context.Context, projectID, sessionID string) (map[string]map[string]int, error) {
+	out := map[string]map[string]int{}
+	err := s.scanCounts(ctx, out, `SELECT agent_name, action, COUNT(*) FROM detections
+		WHERE project_id = ? AND source = 'engine' AND session_id = ? GROUP BY agent_name, action`, projectID, sessionID)
+	return out, err
+}
+
+func (s *Store) scanCounts(ctx context.Context, out map[string]map[string]int, q string, args ...any) error {
+	rows, err := s.r.QueryContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, action string
+		var n int
+		if err := rows.Scan(&key, &action, &n); err != nil {
+			return err
+		}
+		m := out[key]
+		if m == nil {
+			m = map[string]int{}
+			out[key] = m
+		}
+		m[action] += n
+	}
+	return rows.Err()
 }

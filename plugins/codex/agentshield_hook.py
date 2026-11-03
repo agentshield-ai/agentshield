@@ -274,6 +274,29 @@ def _extract_common(event: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Optiona
     return tool_name, tool_input, session_id, cwd
 
 
+def _correlation_ids(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """Return ``(tool_call_id, agent_name)`` for Weft correlation.
+
+    The tool-use id comes from the hook payload when the harness sends one;
+    the agent name from the payload or ``AGENTSHIELD_AGENT_NAME``.
+    """
+    tool_call_id = None
+    for key in ("tool_use_id", "tool_call_id", "call_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value and len(value) <= 256:
+            tool_call_id = value
+            break
+    agent_name = None
+    for key in ("agent_name", "agent_type"):
+        value = payload.get(key)
+        if isinstance(value, str) and value and len(value) <= 256:
+            agent_name = value
+            break
+    if agent_name is None:
+        agent_name = os.environ.get("AGENTSHIELD_AGENT_NAME") or None
+    return tool_call_id, agent_name
+
+
 # ---------------------------------------------------------------------------
 # Event handlers
 # ---------------------------------------------------------------------------
@@ -313,6 +336,7 @@ def handle_pre_tool_use(
             return _deny_pre_tool("AgentShield unavailable (fail-closed policy)")
         return _allow_pre_tool()
 
+    tool_call_id, agent_name = _correlation_ids(event)
     request = build_evaluation_request(
         tool_name,
         tool_input,
@@ -320,6 +344,8 @@ def handle_pre_tool_use(
         working_dir=cwd,
         canonical_name=canonical,
         command=command,
+        tool_call_id=tool_call_id,
+        agent_name=agent_name,
     )
 
     try:
@@ -409,6 +435,7 @@ def handle_permission_request(
             return _deny_permission("AgentShield unavailable (fail-closed policy)")
         return None
 
+    tool_call_id, agent_name = _correlation_ids(event)
     request = build_evaluation_request(
         tool_name,
         tool_input,
@@ -416,6 +443,8 @@ def handle_permission_request(
         working_dir=cwd,
         canonical_name=canonical,
         command=command,
+        tool_call_id=tool_call_id,
+        agent_name=agent_name,
     )
 
     try:

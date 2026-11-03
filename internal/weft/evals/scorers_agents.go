@@ -55,6 +55,13 @@ var ScopeJudges = map[string]scopeJudge{
 	"GoalCompletionJudge":       {goalCompletionPrompt, []string{"goal_achieved"}, map[string]bool{store.ScopeSession: true}},
 }
 
+// ScorerScopes limits scorer classes to scopes when they run through
+// POST /api/v1/scores/run; classes not listed run at any scope. The agent
+// judges are added from ScopeJudges.
+var ScorerScopes = map[string]map[string]bool{
+	"ToolSafetyScorer": {store.ScopeSession: true, store.ScopeAgent: true},
+}
+
 // DefaultJudgeModel is used when neither the request nor the scorer names one.
 const DefaultJudgeModel = "gpt-4o-mini"
 
@@ -62,6 +69,7 @@ func init() {
 	for name, j := range ScopeJudges {
 		extraScorers[name] = scopeJudgeFunc(j)
 		RunnableScorers[name] = true
+		ScorerScopes[name] = j.scopes
 	}
 }
 
@@ -177,23 +185,28 @@ func (e *Engine) RunScopeScorers(ctx context.Context, req ScopeRunReq, user *str
 	scorers := make([]*Scorer, 0, len(req.Scorers))
 	for _, name := range req.Scorers {
 		name = strings.TrimSpace(name)
-		if j, ok := ScopeJudges[name]; ok {
-			if !j.scopes[req.Scope] {
+		if !refs.IsRef(name) {
+			// A scorer class by name: the agent judges, ToolSafetyScorer, or
+			// any server-runnable class that needs no configuration.
+			if !RunnableScorers[name] {
+				return nil, store.Invalidf("unknown scorer %q: use a scorer class (%s) or a scorer ref", name, runnableScorerList())
+			}
+			if sc, ok := ScorerScopes[name]; ok && !sc[req.Scope] {
 				return nil, store.Invalidf("%s does not score at the %s scope", name, req.Scope)
 			}
 			val := map[string]any{"_class_name": name}
-			if req.Model != "" {
+			if _, judge := ScopeJudges[name]; judge && req.Model != "" {
 				val["model"] = req.Model
 			}
 			scorers = append(scorers, &Scorer{Name: name, Val: val})
 			continue
 		}
-		if !refs.IsRef(name) {
-			return nil, store.Invalidf("unknown scorer %q: use HandoffQualityJudge, ReasoningConsistencyJudge, GoalCompletionJudge or a scorer ref", name)
-		}
 		sc, err := e.loadScorer(ctx, refs.Normalize(name))
 		if err != nil {
 			return nil, err
+		}
+		if allowed, ok := ScorerScopes[className(sc.Val)]; ok && !allowed[req.Scope] {
+			return nil, store.Invalidf("%s does not score at the %s scope", sc.Name, req.Scope)
 		}
 		if req.Model != "" && ScopeJudges[className(sc.Val)].prompt != "" {
 			v := map[string]any{}

@@ -245,3 +245,23 @@ class TestBeforeAgent:
         payload = {"hook_event_name": "BeforeAgent", "session_id": "s", "prompt": "   "}
         assert hook.handle_before_agent(payload, _cfg(), client) == {}
         assert client.requests == []
+
+
+class TestWeftCorrelation:
+    def test_before_tool_sends_tool_call_id_and_agent_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AGENTSHIELD_AGENT_NAME", "gemini-main")
+        client = _CapturingClient({"action": "allow"})
+        payload = {"hook_event_name": "BeforeTool", "tool_name": "run_shell_command",
+                   "tool_input": {"command": "ls"}, "session_id": "s1", "tool_call_id": "gem-call-1"}
+        hook.handle_before_tool(payload, _cfg(), client)
+        assert client.requests[0]["tool_call_id"] == "gem-call-1"
+        assert client.requests[0]["agent_name"] == "gemini-main"
+
+    def test_ids_omitted_when_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("AGENTSHIELD_AGENT_NAME", raising=False)
+        client = _CapturingClient({"action": "allow"})
+        payload = {"hook_event_name": "BeforeTool", "tool_name": "run_shell_command",
+                   "tool_input": {"command": "ls"}, "session_id": "s1"}
+        hook.handle_before_tool(payload, _cfg(), client)
+        assert "tool_call_id" not in client.requests[0]
+        assert "agent_name" not in client.requests[0]

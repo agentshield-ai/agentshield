@@ -63,6 +63,10 @@ export type EvaluationRequest = {
   params: Record<string, unknown>;
   agent_id: string | null;
   session_id: string | null;
+  /** Harness tool-use id; Weft attaches the verdict to the tool span with this gen_ai.tool.call.id. */
+  tool_call_id?: string;
+  /** Agent name (gen_ai.agent.name in Weft). */
+  agent_name?: string;
   working_dir: string | null;
   data: Record<string, unknown>;
 };

@@ -116,6 +116,7 @@ shared connector contract, with one deliberate divergence — the fail mode
 | `AGENTSHIELD_SKIP` | `TodoWrite todo memory_search Glob Grep LS NotebookRead` | Space-separated list of low-risk/noisy tools to skip entirely. |
 | `AGENTSHIELD_FAILURE_THRESHOLD` | `3` | Consecutive failures before the short-circuit opens (`>= 1`). |
 | `AGENTSHIELD_RECOVERY_INTERVAL_MS` | `30000` | Time before the short-circuit half-opens and allows a probe (`>= 1000`). |
+| `AGENTSHIELD_AGENT_NAME` | (unset) | Agent name sent as `agent_name` when the hook payload has no `agent_type` (subagents). With Claude Code's `tool_use_id` (sent as `tool_call_id`) it lets Weft attach each verdict to its tool span; see `docs/weft/README.md`, "AgentShield integration". |
 | `AGENTSHIELD_STATE_DIR` | `${TMPDIR}/agentshield-claude` | Directory for transient connector state (failure counter, correlation ids). |
 
 ## Evaluation Modes

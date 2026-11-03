@@ -52,6 +52,13 @@ INPUT="$(cat)"
 EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')"
 SESSION_ID="$(printf '%s' "$INPUT" | jq -r '.session_id // empty')"
 AGENT_ID="$(printf '%s' "$INPUT" | jq -r '.agent_id // empty')"
+# Correlation with Weft: Claude Code's tool_use_id and, for subagents, the
+# agent type (the main agent's name can be set with AGENTSHIELD_AGENT_NAME).
+TOOL_USE_ID="$(printf '%s' "$INPUT" | jq -r '.tool_use_id // empty')"
+AGENT_NAME="$(printf '%s' "$INPUT" | jq -r '.agent_type // empty')"
+if [ -z "$AGENT_NAME" ]; then
+  AGENT_NAME="${AGENTSHIELD_AGENT_NAME:-}"
+fi
 WORKING_DIR="$(printf '%s' "$INPUT" | jq -r '.cwd // empty')"
 
 # Globally disabled: do nothing.
@@ -136,6 +143,8 @@ handle_pre_tool_use() {
     --argjson agent_id "$(as__json_or_null "$AGENT_ID")" \
     --argjson session_id "$(as__json_or_null "$SESSION_ID")" \
     --argjson working_dir "$(as__json_or_null "$WORKING_DIR")" \
+    --arg tool_call_id "$TOOL_USE_ID" \
+    --arg agent_name "$AGENT_NAME" \
     '{
       event_id: $event_id,
       timestamp: $timestamp,
@@ -148,7 +157,9 @@ handle_pre_tool_use() {
       session_id: $session_id,
       working_dir: $working_dir,
       data: {}
-    }')"
+    }
+    + (if $tool_call_id == "" then {} else {tool_call_id: $tool_call_id} end)
+    + (if $agent_name == "" then {} else {agent_name: $agent_name} end)')"
 
   # 6. Evaluate (synchronous, timeout-bounded).
   local response curl_rc action

@@ -51,6 +51,8 @@ def build_evaluation_request(
     agent_id: Optional[str] = None,
     canonical_name: Optional[str] = None,
     command: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
     working_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build an ``EvaluationRequest`` for ``POST /api/v1/evaluate``.
@@ -62,6 +64,8 @@ def build_evaluation_request(
         agent_id: Optional agent identifier.
         canonical_name: Pre-computed canonical name (skips normalisation).
         command: Pre-computed command string (skips normalisation).
+        tool_call_id: The harness tool-use id, if known (Weft correlation).
+        agent_name: The agent name, if known (Weft correlation).
         working_dir: The Gemini ``cwd`` field.
 
     Returns:
@@ -83,6 +87,11 @@ def build_evaluation_request(
         working_dir=working_dir,
         data={},
     )
+    # Weft correlation (optional): the harness tool-use id and the agent name.
+    if tool_call_id:
+        envelope["tool_call_id"] = tool_call_id
+    if agent_name:
+        envelope["agent_name"] = agent_name
     return envelope
 
 

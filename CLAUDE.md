@@ -129,7 +129,13 @@ Exports evaluation telemetry as OTel traces and metrics:
 - **Traces**: Each evaluation becomes a span within a session-scoped trace. Span attributes include `event.id`, `session.id`, `tool.name`, `verdict.action`, `verdict.mode`. Rule matches are recorded as span events.
 - **Metrics**: `agentshield.evaluations.total` (counter), `agentshield.alerts.total` (counter), `agentshield.cache.hits` / `.misses` (counters).
 - **Export**: OTLP/HTTP to any OTel-compatible backend (Elastic, Splunk, Grafana, Datadog).
-- **Config**: `telemetry:` section in config.yaml with `enabled`, `endpoint`, `service_name`, `sample_rate`, `export_all_events`, `insecure`.
+- **Config**: `telemetry:` section in config.yaml with `enabled`, `endpoint`, `service_name`, `sample_rate`, `export_all_events`, `insecure`, plus `headers`, `api_key_env` and `disable_metrics` (the endpoint may carry a URL path, e.g. Weft's `/otel/v1/traces`).
+
+### Weft integration (`internal/weftpush/`, `internal/evaluate/span_attrs.go`)
+
+- `EvaluationRequest` has optional `tool_call_id` (harness tool-use id) and `agent_name`, validated like other strings (≤256 bytes, UTF-8, no control characters). Plugins send them when the harness provides them.
+- The `evaluate` span also carries `gen_ai.conversation.id`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.agent.name`, `agentshield.verdict.action|mode|severity`, `agentshield.rule_ids`, and one `agentshield.rule.matched` event per rule (`rule.id`, `rule.title`, `rule.level`, `rule.tags`); the legacy attributes and `rule.matched` events stay. `RuleResult` has `tags`.
+- Optional `weft:` config section (`endpoint`, `project`, `api_key_env`, `send: non_allow|all`, `queue_size`, `insecure`, `timeout_sec`) pushes verdicts and `/api/v1/override` events to Weft's `/api/v1/shield/ingest` from a bounded queue (drops and counts when full, never delays or changes a verdict, retries with backoff, flushed on shutdown). See docs/weft/README.md "AgentShield integration".
 
 ### Session Behavioural Sequencing (`internal/session/`)
 

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS agent_span_meta (
 	graph_parent TEXT NOT NULL DEFAULT '',
 	graph_step INTEGER NOT NULL DEFAULT 0,
 	out_tool_call_ids TEXT NOT NULL DEFAULT '',
+	verdict INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (project_id, id)
 );
 CREATE INDEX IF NOT EXISTS agent_span_meta_trace ON agent_span_meta(project_id, trace_id);
@@ -109,6 +110,13 @@ CREATE TABLE IF NOT EXISTS weft_backfills (
 	done_at INTEGER NOT NULL
 );
 `)
+	registerMigration(func(db *sql.DB) error { // databases from before the verdict flag
+		if ok, err := HasColumn(db, "agent_span_meta", "verdict"); err != nil || ok {
+			return err
+		}
+		_, err := db.Exec(`ALTER TABLE agent_span_meta ADD COLUMN verdict INTEGER NOT NULL DEFAULT 0`)
+		return err
+	})
 	registerMigration(backfillAgentGraph)
 	registerCallHook(indexAgentGraphSpan)
 }
@@ -140,10 +148,23 @@ type spanHints struct {
 	GraphNode, GraphParent                             string
 	GraphStep                                          int64
 	OutToolCallIDs                                     []string
+	// Verdict marks an AgentShield verdict span (DESIGN.md §5.1): stored as
+	// a span and a detection, but not agent activity.
+	Verdict bool
 }
 
 func (h spanHints) empty() bool {
-	return h.TeamID == "" && h.HandoffTo == "" && h.GraphNode == "" && h.GraphParent == "" && len(h.OutToolCallIDs) == 0
+	return h.TeamID == "" && h.HandoffTo == "" && h.GraphNode == "" && h.GraphParent == "" && len(h.OutToolCallIDs) == 0 && !h.Verdict
+}
+
+// isVerdictSpan reports an AgentShield verdict span: instrumentation scope
+// agentshield, or an agentshield.verdict.action attribute.
+func isVerdictSpan(attributes map[string]any) bool {
+	o := asMap(attributes["otel"])
+	if sc := asMap(o["scope"]); sc != nil && sc["name"] == "agentshield" {
+		return true
+	}
+	return newSpanAttrs(attributes).str("agentshield.verdict.action") != ""
 }
 
 func normHandoffKind(s, def string) string {
@@ -218,6 +239,7 @@ func toolArg(inputs map[string]any, keys ...string) string {
 func deriveHints(op, spanName, toolName string, attributes, inputs map[string]any, output any) spanHints {
 	a := newSpanAttrs(attributes)
 	var h spanHints
+	h.Verdict = isVerdictSpan(attributes)
 	h.TeamID = a.str("weft.team.id", "weft.team_id")
 	h.TeamName = a.str("weft.team.name", "weft.team_name")
 	if h.TeamID == "" {
@@ -386,14 +408,14 @@ func indexAgentGraphSpan(ctx context.Context, tx *sql.Tx, projectID, id string) 
 			return err
 		}
 	} else if _, err := tx.ExecContext(ctx, `INSERT INTO agent_span_meta(project_id, id, trace_id, team_id, team_name, handoff_to,
-			handoff_from, handoff_kind, handoff_source, graph_node, graph_parent, graph_step, out_tool_call_ids)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+			handoff_from, handoff_kind, handoff_source, graph_node, graph_parent, graph_step, out_tool_call_ids, verdict)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(project_id, id) DO UPDATE SET trace_id = excluded.trace_id, team_id = excluded.team_id, team_name = excluded.team_name,
 			handoff_to = excluded.handoff_to, handoff_from = excluded.handoff_from, handoff_kind = excluded.handoff_kind,
 			handoff_source = excluded.handoff_source, graph_node = excluded.graph_node, graph_parent = excluded.graph_parent,
-			graph_step = excluded.graph_step, out_tool_call_ids = excluded.out_tool_call_ids`,
+			graph_step = excluded.graph_step, out_tool_call_ids = excluded.out_tool_call_ids, verdict = excluded.verdict`,
 		projectID, id, traceID, h.TeamID, h.TeamName, h.HandoffTo, h.HandoffFrom, h.HandoffKind, h.HandoffSource,
-		h.GraphNode, h.GraphParent, h.GraphStep, strings.Join(h.OutToolCallIDs, "\n")); err != nil {
+		h.GraphNode, h.GraphParent, h.GraphStep, strings.Join(h.OutToolCallIDs, "\n"), h.Verdict); err != nil {
 		return err
 	}
 
@@ -562,7 +584,7 @@ func loadTraceSpans(ctx context.Context, tx *sql.Tx, projectID, traceID string) 
 			COALESCE(m.graph_node, ''), COALESCE(m.graph_parent, ''), COALESCE(m.graph_step, 0), COALESCE(m.out_tool_call_ids, '')
 		FROM agent_spans s JOIN calls c ON c.project_id = s.project_id AND c.id = s.id
 		LEFT JOIN agent_span_meta m ON m.project_id = s.project_id AND m.id = s.id
-		WHERE s.project_id = ? AND s.trace_id = ? AND c.deleted_at IS NULL
+		WHERE s.project_id = ? AND s.trace_id = ? AND c.deleted_at IS NULL AND COALESCE(m.verdict, 0) = 0
 		ORDER BY c.started_at, s.id`, projectID, traceID)
 	if err != nil {
 		return nil, err
@@ -819,12 +841,13 @@ func inputPreview(inputs map[string]any) string {
 	return InputText(inputs)
 }
 
-// outputPreview is what a span returned: assistant text, or its output.
+// outputPreview is what a span returned: the assistant text of a
+// chat-shaped output (empty when the reply was only reasoning or tool
+// calls), else the output as text.
 func outputPreview(output any) string {
 	if msgs := OutputMessages(output); msgs != nil {
-		if t, _ := assistantText(msgs); t != "" {
-			return t
-		}
+		t, _ := assistantText(msgs)
+		return t
 	}
 	return OutputText(output)
 }
