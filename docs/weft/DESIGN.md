@@ -228,6 +228,63 @@ The main pages:
 All wording is Weft's own. The UI never names another product, except on the
 compatibility settings panel.
 
+### 7.1 Usability requirements
+
+The owner finds the tool this started from hard to learn, so ease of use is a
+requirement, not polish. Each rule below is checked in Phase 4 by a usability
+review and by task-based browser tests.
+
+1. **Start from questions, not data types.** The Sessions home answers "what
+   happened recently, and what needs my attention?". It shows:
+   - attention cards (failed sessions, blocked or approval-heavy sessions,
+     low scores, cost spikes), each opening a filtered list;
+   - a plain list of recent sessions, each with a one-line summary: the first
+     user request, the agents involved, the outcome, duration and cost.
+2. **Plain language.** Labels use words a new user knows: "Session", "Agent",
+   "Hand-off", "Reasoning", "Tool call", "Blocked", "Needs approval", "Score".
+   - Internal terms (op, ref, digest, object, call, span) appear only in the
+     raw views and in developer panels, and each has a tooltip.
+   - Every ID can be copied, and is never the only label shown.
+3. **One click from symptom to cause.**
+   - From any error, block or low score, one click opens the session timeline
+     scrolled to the step responsible, with the reasoning that led to it
+     expanded.
+   - Breadcrumbs always show Session › Agent › Turn › Step.
+4. **Progressive disclosure.** Each step shows a readable summary first
+   (message text, tool name with its main argument, result preview). Raw JSON,
+   attributes and token details sit behind "Details". Long content is
+   collapsed, with a "show all" control.
+5. **One filter model everywhere.**
+   - A single filter bar uses the same chips and syntax on Sessions, Agents,
+     Teams, Security and Traces: agent, team, status, time, has block, score
+     below, model, tool, plus free text.
+   - Filters live in the URL and can be saved as a named view.
+6. **Good defaults.** The time range defaults to the last 24 hours, widening
+   automatically when that range is empty. Sort is newest first. Columns are
+   chosen per page, and nothing requires configuration before data shows.
+7. **Guided empty states.**
+   - Every empty page says what would appear there and gives the shortest way
+     to produce it: a copyable snippet for Python, TypeScript, OTel and each
+     coding-agent plugin, using the current server URL and project.
+   - A "Send a test session" button creates sample data in a demo project.
+8. **Explain the numbers.** Every metric has a tooltip saying how it is
+   computed (for example, how cost treats cached tokens). Scores show their
+   scorer and its reason inline.
+9. **Fast to scan.**
+   - Status uses colour and an icon with a text label, never colour alone.
+   - Agents get a consistent colour across pages.
+   - Timelines show time gaps, durations and nesting at a glance.
+10. **Keyboard and accessibility.**
+    - `j`/`k` move between steps, `/` focuses the filter, and `?` lists the
+      shortcuts.
+    - Contrast meets WCAG 2.1 AA, and every control has an accessible name.
+    - Layouts work at 390 px width.
+11. **Undo over confirm.** Deleting views, scores or queue items can be
+    undone for a few seconds, and only irreversible deletes ask for
+    confirmation.
+12. **Help in place.** Each page has a short "What is this page?" panel that
+    can be dismissed, and a link to the relevant guide in `docs/weft/`.
+
 ## 8. Compatibility adapter
 
 `--weave-compat` (`WEFT_WEAVE_COMPAT=true`) is off by default. It lives in one
