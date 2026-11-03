@@ -1,0 +1,602 @@
+{
+ "docs/weft/API.md|docs/reference__service-api__agents__genai-spans-query.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 98
+ },
+ "docs/weft/API.md|docs/reference__service-api__annotation-queues__annotation-queue-items-query.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 70
+ },
+ "docs/weft/API.md|docs/reference__service-api__calls__call-stats.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 58
+ },
+ "docs/weft/API.md|docs/reference__service-api__eval-results__eval-results-query.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "docs/weft/API.md|docs/reference__service-api__threads__threads-query-stream.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 64
+ },
+ "docs/weft/API.md|sdks/node/src/__tests__/live/prompt.test.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "docs/weft/API.md|sdks/node/src/vendor/weave-server-sdk/resources/dataset-sources.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 27
+ },
+ "docs/weft/API.md|weave-js/Browse3/pages/MonitorsPage/ScorerForms/LLMAsAJudgeScorerForm.tsx": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 27
+ },
+ "docs/weft/API.md|weave-js/Browse3/pages/SavedViews/savedViewUtil.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 39
+ },
+ "docs/weft/API.md|weave/trace/casting.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 27
+ },
+ "docs/weft/API.md|weave/trace/weave_client.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 143
+ },
+ "docs/weft/API.md|weave/vendor/weave_server_sdk/types/agents/span_query_params.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "docs/weft/API.md|weave/vendor/weave_server_sdk/types/call_stats_params.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 51
+ },
+ "internal/weft/otlp/frameworks.go|sdks/node/src/genai/semconv.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 35
+ },
+ "internal/weft/otlp/frameworks.go|weave/integrations/google_adk/_semconv.py": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 53
+ },
+ "internal/weft/otlp/frameworks_test.go|sdks/node/src/__tests__/genai/conversation.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 31
+ },
+ "internal/weft/otlp/frameworks_test.go|sdks/node/src/__tests__/genai/llm.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 27
+ },
+ "internal/weft/otlp/frameworks_test.go|sdks/node/src/__tests__/integrations/openaiAgent.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 27
+ },
+ "internal/weft/otlp/langfuse_test.go|sdks/node/src/__tests__/genai/genai.test.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 74
+ },
+ "internal/weft/otlp/langfuse_test.go|sdks/node/src/__tests__/genai/llm.test.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 130
+ },
+ "internal/weft/otlp/langfuse_test.go|sdks/node/src/__tests__/integrations/openaiAgent.test.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 82
+ },
+ "internal/weft/otlp/langfuse_test.go|weave/conversation/conversation_otel.py": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 20
+ },
+ "internal/weft/otlp/otlp.go|sdks/node/src/genai/semconv.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 35
+ },
+ "internal/weft/otlp/otlp.go|weave/integrations/google_adk/_semconv.py": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 27
+ },
+ "internal/weft/otlp/otlp_test.go|sdks/node/src/__tests__/genai/llm.test.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names and span test vectors",
+  "tokens": 55
+ },
+ "internal/weft/server/agents_test.go|sdks/node/src/__tests__/genai/genai.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 35
+ },
+ "internal/weft/server/agents_test.go|sdks/node/src/__tests__/genai/llm.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 70
+ },
+ "internal/weft/server/agents_test.go|sdks/node/src/__tests__/integrations/googleAdk.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 27
+ },
+ "internal/weft/server/compat_extra.go|docs/reference__service-api__calls__calls-usage.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "internal/weft/server/inference.go|weave-js/Browse3/pages/PlaygroundPage/llmMaxTokens.ts": {
+  "reason": "LLM provider names and their API-key environment variable names",
+  "tokens": 43
+ },
+ "internal/weft/store/agents_query.go|docs/reference__service-api__agents__genai-spans-query.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "internal/weft/store/agents_query.go|sdks/node/src/genai/conversation.ts": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names",
+  "tokens": 27
+ },
+ "internal/weft/store/agents_query.go|weave/conversation/conversation_otel.py": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names",
+  "tokens": 31
+ },
+ "internal/weft/store/costs.go|docs/reference__service-api__costs__cost-query.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "internal/weft/store/costs.go|weave/trace/weave_client.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 204
+ },
+ "internal/weft/store/queues.go|docs/reference__service-api__annotation-queues__annotation-queue-items-query.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 39
+ },
+ "internal/weft/store/stats.go|docs/reference__service-api__threads__threads-query-stream.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "plugins/weft-pi/README.md|sdks/node/src/integrations/piCodingAgent.ts": {
+  "reason": "Pi SDK API usage in an example",
+  "tokens": 31
+ },
+ "scripts/weft_seed_demo.py|sdks/node/src/__tests__/integrations/claude-agent-sdk/otelTracer.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/__init__.py|weave/__init__.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 222
+ },
+ "sdk/python/src/weft/__init__.py|weave/conversation/__init__.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 35
+ },
+ "sdk/python/src/weft/_call.py|docs/reference__service-api__calls__call-read.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 39
+ },
+ "sdk/python/src/weft/_call.py|weave/trace/call.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 66
+ },
+ "sdk/python/src/weft/_call.py|weave/trace/feedback.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 47
+ },
+ "sdk/python/src/weft/_call.py|weave/trace_server_bindings/call_batch_processor.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/_call.py|weave/vendor/weave_server_sdk/types/agent_trace_chat_res.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 27
+ },
+ "sdk/python/src/weft/_call.py|weave/vendor/weave_server_sdk/types/call_read_response.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 110
+ },
+ "sdk/python/src/weft/_client.py|weave/trace/api.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 117
+ },
+ "sdk/python/src/weft/_client.py|weave/trace/call.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 27
+ },
+ "sdk/python/src/weft/_client.py|weave/trace/refs.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 43
+ },
+ "sdk/python/src/weft/_client.py|weave/trace/weave_client.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 313
+ },
+ "sdk/python/src/weft/_custom_runtime.py|weave/trace/custom_runtime.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 84
+ },
+ "sdk/python/src/weft/_object.py|weave/dataset/dataset.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 187
+ },
+ "sdk/python/src/weft/_object.py|weave/object/obj.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 35
+ },
+ "sdk/python/src/weft/_op.py|weave/trace/refs_internal.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/_redact.py|docs/cookbooks__pii.md": {
+  "reason": "Presidio entity names and the common e-mail / US SSN regular expressions",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/_redact.py|weave/utils/pii_redaction.py": {
+  "reason": "Presidio entity names and the common e-mail / US SSN regular expressions",
+  "tokens": 112
+ },
+ "sdk/python/src/weft/_refs.py|weave/trace/refs.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 51
+ },
+ "sdk/python/src/weft/_refs.py|weave/trace/refs_internal.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 16
+ },
+ "sdk/python/src/weft/_saved_view.py|weave/flow/saved_view.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 798
+ },
+ "sdk/python/src/weft/_saved_view.py|weave/trace/casting.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 47
+ },
+ "sdk/python/src/weft/_sender.py|weave/trace/serialization/digest.py": {
+  "reason": "standard library imports",
+  "tokens": 18
+ },
+ "sdk/python/src/weft/conversation.py|docs/reference__python-sdk.md": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 54
+ },
+ "sdk/python/src/weft/conversation.py|weave/__init__.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 39
+ },
+ "sdk/python/src/weft/conversation.py|weave/conversation/__init__.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 108
+ },
+ "sdk/python/src/weft/conversation.py|weave/conversation/agent_context.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 118
+ },
+ "sdk/python/src/weft/conversation.py|weave/conversation/conversation.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 3513
+ },
+ "sdk/python/src/weft/conversation.py|weave/conversation/conversation_otel.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 114
+ },
+ "sdk/python/src/weft/conversation.py|weave/conversation/types.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 691
+ },
+ "sdk/python/src/weft/conversation.py|weave/integrations/openai_realtime/otel_state_exporter.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 56
+ },
+ "sdk/python/src/weft/conversation.py|weave/integrations/typesafe/typesafe_sdk.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 107
+ },
+ "sdk/python/src/weft/conversation.py|weave/scorers/bedrock_guardrails.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 25
+ },
+ "sdk/python/src/weft/conversation.py|weave/vendor/weave_server_sdk/types/agents/span_query_response.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 170
+ },
+ "sdk/python/src/weft/integrations/_hooks.py|weave/integrations/patch.py": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/integrations/_settings.py|weave/trace/autopatch.py": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 56
+ },
+ "sdk/python/src/weft/integrations/bedrock_agents.py|weave/conversation/conversation_otel.py": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 39
+ },
+ "sdk/python/src/weft/integrations/dspy.py|weave/integrations/dspy/dspy_callback.py": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 63
+ },
+ "sdk/python/src/weft/integrations/llamaindex.py|weave/integrations/llamaindex/llamaindex.py": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 66
+ },
+ "sdk/python/src/weft/integrations/typesafe.py|weave/integrations/typesafe/typesafe_sdk.py": {
+  "reason": "TypeSafe integration rewritten 2026-11 from its behaviour description; what remains is wire constants (request-id header, capture env var, provider/operation/agent names) and the generic sync/async wrapper shape",
+  "tokens": 322
+ },
+ "sdk/python/src/weft/integrations/verdict.py|weave/integrations/verdict/verdict_sdk.py": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 98
+ },
+ "sdk/python/src/weft/local_scorers.py|docs/guides__evaluation__weave_local_scorers.md": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 79
+ },
+ "sdk/python/src/weft/local_scorers.py|weave/scorers/__init__.py": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 75
+ },
+ "sdk/python/src/weft/local_scorers.py|weave/scorers/coherence_scorer.py": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 35
+ },
+ "sdk/python/src/weft/local_scorers.py|weave/scorers/context_relevance_scorer.py": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 27
+ },
+ "sdk/python/src/weft/local_scorers.py|weave/scorers/default_models.py": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 47
+ },
+ "sdk/python/src/weft/local_scorers.py|weave/scorers/moderation_scorer.py": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/local_scorers.py|weave/scorers/trust_scorer.py": {
+  "reason": "local model scorers: Hugging Face model ids, thresholds and input formats of the wandb/Weave*ScorerV1 models (the models' contract) and compatible class names; copied error text rewritten",
+  "tokens": 227
+ },
+ "sdk/python/src/weft/otel.py|weave/trace/weave_init.py": {
+  "reason": "standard OpenTelemetry SDK imports and exporter setup",
+  "tokens": 106
+ },
+ "sdk/python/src/weft/scorers.py|weave/flow/scorer.py": {
+  "reason": "Scorer API names (column_map, score, summarize) and a conventional NotImplementedError",
+  "tokens": 39
+ },
+ "sdk/python/src/weft/scorers.py|weave/scorers/__init__.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 75
+ },
+ "sdk/python/src/weft/trace_server_interface.py|docs/guides__tracking__threads.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 66
+ },
+ "sdk/python/src/weft/trace_server_interface.py|weave/vendor/weave_server_sdk/types/thread_stream_query_params.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 58
+ },
+ "sdk/python/src/weft/trace_server_interface.py|weave/vendor/weave_server_sdk/types/thread_stream_query_response.py": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "sdk/python/src/weft/urls.py|weave/trace/urls.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 332
+ },
+ "sdk/typescript/src/call.ts|docs/reference__typescript-sdk__interfaces__callschema.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 47
+ },
+ "sdk/typescript/src/call.ts|sdks/node/src/traceServerTypes.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 170
+ },
+ "sdk/typescript/src/call.ts|sdks/node/src/vendor/weave-server-sdk/resources/calls.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 54
+ },
+ "sdk/typescript/src/client.ts|sdks/node/src/traceServerTypes.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 73
+ },
+ "sdk/typescript/src/client.ts|sdks/node/src/weaveClient.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 92
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/genai/conversation.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 285
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/genai/llm.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 118
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/genai/subagent.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 179
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/genai/turn.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 31
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/genai/types.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 62
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/integrations/googleAdk.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 61
+ },
+ "sdk/typescript/src/conversation.ts|sdks/node/src/traceServerTypes.ts": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 47
+ },
+ "sdk/typescript/src/conversation.ts|weave/conversation/conversation.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 58
+ },
+ "sdk/typescript/src/conversation.ts|weave/conversation/conversation_otel.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 31
+ },
+ "sdk/typescript/src/index.ts|sdks/node/src/__tests__/integrations/loadOrderSuppression.test.ts": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 27
+ },
+ "sdk/typescript/src/integrations/common.ts|sdks/node/src/integrations/openai.ts": {
+  "reason": "hook and callback signatures of the instrumented libraries, autopatch setting names, generic patching idioms",
+  "tokens": 27
+ },
+ "sdk/typescript/src/integrations/typesafe.ts|sdks/node/src/integrations/typesafe.ts": {
+  "reason": "TypeSafe integration rewritten 2026-11 from its behaviour description; what remains is wire constants (request-id header, capture env var, provider/operation/agent names) and the generic sync/async wrapper shape",
+  "tokens": 117
+ },
+ "sdk/typescript/src/integrations/typesafe.ts|weave-js/Browse3/datasets/schemaUtils.ts": {
+  "reason": "generic canonical-JSON helper (sorted keys)",
+  "tokens": 31
+ },
+ "sdk/typescript/src/integrations/vercel_ai.ts|weave/conversation/conversation_otel.py": {
+  "reason": "OpenTelemetry GenAI semantic-convention attribute names",
+  "tokens": 27
+ },
+ "sdk/typescript/src/redact.ts|docs/cookbooks__pii.md": {
+  "reason": "Presidio entity names and the common e-mail / US SSN regular expressions",
+  "tokens": 35
+ },
+ "sdk/typescript/src/redact.ts|weave/utils/pii_redaction.py": {
+  "reason": "Presidio entity names and the common e-mail / US SSN regular expressions",
+  "tokens": 81
+ },
+ "sdk/typescript/src/savedView.ts|weave/flow/saved_view.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 197
+ },
+ "sdk/typescript/src/savedView.ts|weave/trace/casting.py": {
+  "reason": "public SDK API kept compatible with Weave: class, function, parameter and field names, signatures, stored operator values and URL paths; bodies are Weft's, copied docstrings and messages were rewritten",
+  "tokens": 39
+ },
+ "web/weft-ui/src/api/admin.ts|sdks/node/src/vendor/weave-server-sdk/resources/dataset-sources.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "web/weft-ui/src/api/agents.ts|sdks/node/src/traceServerTypes.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 609
+ },
+ "web/weft-ui/src/api/agents.ts|sdks/node/src/vendor/weave-server-sdk/resources/agents/agent-versions.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 150
+ },
+ "web/weft-ui/src/api/agents.ts|sdks/node/src/vendor/weave-server-sdk/resources/agents/agents.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 177
+ },
+ "web/weft-ui/src/api/agents.ts|sdks/node/src/vendor/weave-server-sdk/resources/agents/spans.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 237
+ },
+ "web/weft-ui/src/api/client.ts|sdks/node/src/vendor/weave-server-sdk/resources/costs.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 39
+ },
+ "web/weft-ui/src/api/client.ts|weave-js/Browse3/pages/wfReactInterface/traceServerClientTypes.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 188
+ },
+ "web/weft-ui/src/api/dashboards.ts|weave-js/Browse3/typeViews/Content/Shared.tsx": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 65
+ },
+ "web/weft-ui/src/api/queues.ts|sdks/node/src/vendor/weave-server-sdk/resources/annotation-queues/annotation-queues.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "web/weft-ui/src/api/queues.ts|sdks/node/src/vendor/weave-server-sdk/resources/annotation-queues/items.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 43
+ },
+ "web/weft-ui/src/api/runtimes.ts|sdks/node/src/traceServerTypes.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "web/weft-ui/src/api/types.ts|docs/guides__tracking__querying-calls.md": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 31
+ },
+ "web/weft-ui/src/api/types.ts|sdks/node/src/__tests__/helpers/inMemoryTraceServer.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 55
+ },
+ "web/weft-ui/src/api/types.ts|sdks/node/src/traceServerTypes.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 144
+ },
+ "web/weft-ui/src/api/types.ts|sdks/node/src/vendor/weave-server-sdk/resources/calls.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 35
+ },
+ "web/weft-ui/src/api/types.ts|sdks/node/src/vendor/weave-server-sdk/resources/costs.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 27
+ },
+ "web/weft-ui/src/api/types.ts|sdks/node/src/vendor/weave-server-sdk/resources/feedback.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 39
+ },
+ "web/weft-ui/src/api/types.ts|sdks/node/src/vendor/weave-server-sdk/resources/threads.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 27
+ },
+ "web/weft-ui/src/api/types.ts|weave-js/Browse3/pages/wfReactInterface/traceServerClientTypes.ts": {
+  "reason": "wire format of the Weave-compatible API: field names, request/response shapes, query parameters",
+  "tokens": 449
+ },
+ "web/weft-ui/src/components/agents/AgentCharts.tsx|weave-js/Browse3/charts/format.ts": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 31
+ },
+ "web/weft-ui/src/components/agents/signals.test.ts|sdks/node/src/__tests__/genai/llm.test.ts": {
+  "reason": "test or demo data written with OpenTelemetry GenAI attribute names",
+  "tokens": 27
+ },
+ "web/weft-ui/src/components/dashboards/MetricChart.tsx|weave-js/Browse3/charts/format.ts": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 27
+ },
+ "web/weft-ui/src/components/objects/objectUtils.ts|weave-js/Browse3/typeViews/Content/Shared.tsx": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 73
+ },
+ "web/weft-ui/src/components/playground/ImageMode.tsx|weave-js/Browse3/datasets/CellRenderers.tsx": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 56
+ },
+ "web/weft-ui/src/components/traces/CallCharts.tsx|weave-js/Browse3/charts/format.ts": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 27
+ },
+ "web/weft-ui/src/components/traces/FeedbackPanel.tsx|weave-js/Browse3/datasets/CellRenderers.tsx": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 56
+ },
+ "web/weft-ui/src/components/traces/FeedbackPanel.tsx|weave-js/Browse3/pages/wfReactInterface/tsDataModelHooks.ts": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 35
+ },
+ "web/weft-ui/src/components/traces/callUtils.ts|weave-js/Browse3/typeViews/Content/Shared.tsx": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 77
+ },
+ "web/weft-ui/src/lib/format.ts|weave-js/Browse3/charts/format.ts": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 57
+ },
+ "web/weft-ui/src/pages/settings/IamTabs.tsx|weave-js/Browse3/typeViews/Content/Shared.tsx": {
+  "reason": "common browser idioms: Blob download link, toLocaleString date options, Ctrl/Cmd+Enter handling, feedback query by weave_ref",
+  "tokens": 61
+ },
+ "web/weft-ui/src/pages/settings/SettingsPage.tsx|docs/guides__tracking__otel.md": {
+  "reason": "standard OpenTelemetry SDK imports and exporter setup",
+  "tokens": 31
+ },
+ "web/weft-ui/src/pages/settings/SettingsPage.tsx|docs/guides__tracking__trace-agents-otel.md": {
+  "reason": "standard OpenTelemetry SDK imports and exporter setup",
+  "tokens": 27
+ },
+ "web/weft-ui/src/pages/settings/SettingsPage.tsx|weave/trace/weave_init.py": {
+  "reason": "standard OpenTelemetry SDK imports and exporter setup",
+  "tokens": 87
+ }
+}

@@ -131,11 +131,11 @@ export interface CustomRuntimeId {
 /** Weave's `RegisterCustomRuntimeOptions`. */
 export interface RegisterCustomRuntimeOptions {
   name: string;
-  /** OpenAI-compatible base URL, e.g. `https://vllm.internal/v1`. */
+  /** Where the runtime serves the OpenAI chat API, e.g. `http://gpu-box:8000/v1`. */
   baseUrl: string;
-  /** Complete desired list; omitted IDs are removed from an existing runtime. */
+  /** Every model the runtime should offer. Registering again replaces the list, so IDs left out are dropped. */
   runtimeIds: ReadonlyArray<string | CustomRuntimeId>;
-  /** Name of a stored secret sent as the bearer token. */
+  /** Stored secret whose value goes in the `Authorization: Bearer` header. */
   apiKeySecret?: string;
   headers?: Readonly<Record<string, string>>;
 }

@@ -79,9 +79,12 @@ docker-build:
 # ---------------------------------------------------------------- Weft
 # OpenTelemetry-native LLM tracing and evaluation server (see docs/weft/).
 
-# Build the web UI into internal/weft/webui/static (embedded in the binary)
+# Build the web UI into internal/weft/webui/static (embedded in the binary),
+# then write the licences of the bundled npm packages next to it (the
+# minified bundle drops their licence comments).
 weft-ui:
 	cd web/weft-ui && npm ci && npm run build
+	node scripts/weft_ui_licenses.mjs
 
 # Build the weft server binary
 weft:
@@ -95,6 +98,7 @@ weft-run: weft
 weft-test:
 	$(GO) test ./internal/weft/...
 	cd web/weft-ui && npx tsc -b
+	node scripts/weft_ui_licenses.mjs --check
 	cd sdk/python && python -m pytest -q
 
 # Weft Go tests with the database encrypted at rest (go-sqlite3 adiantum VFS)

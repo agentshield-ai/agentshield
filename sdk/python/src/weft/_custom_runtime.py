@@ -15,6 +15,6 @@ DEFAULT_CUSTOM_RUNTIME_MAX_TOKENS = 4096
 
 class CustomRuntimeID(BaseModel):
     id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, pattern=r"^\S+$")] = Field(
-        description="Value sent in the OpenAI-compatible request model field"
+        description="Model name to put in the request's `model` field"
     )
-    max_tokens: int = Field(default=DEFAULT_CUSTOM_RUNTIME_MAX_TOKENS, gt=0, description="Maximum tokens supported by this runtime ID")
+    max_tokens: int = Field(default=DEFAULT_CUSTOM_RUNTIME_MAX_TOKENS, gt=0, description="Largest completion (in tokens) to request from this model")

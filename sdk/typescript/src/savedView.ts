@@ -105,7 +105,7 @@ export function filterToClause(f: ViewFilter): Record<string, unknown> {
     case '(date): after':
     case '(date): before': {
       const secs = toSeconds(v);
-      if (secs === null) throw new Error(`Invalid date value: ${String(v)}`);
+      if (secs === null) throw new Error(`not a date or timestamp: ${JSON.stringify(v)}`);
       const gt = { $gt: [get, { $literal: secs }] };
       return f.operator === '(date): after' ? gt : { $not: [gt] };
     }
@@ -130,7 +130,7 @@ export function filterToClause(f: ViewFilter): Record<string, unknown> {
         return { $not: [{ $gt: [lhs, lit] }] };
     }
   }
-  throw new Error(`Unsupported operator: ${f.operator}`);
+  throw new Error(`cannot translate filter operator ${JSON.stringify(f.operator)}`);
 }
 
 export function filtersToQuery(filters: ViewFilter[]): Record<string, unknown> | null {
@@ -215,7 +215,7 @@ function pathStr(p: string | Array<string | number>): string {
 }
 
 function checkColumn(path: string): void {
-  if (!KNOWN_COLUMNS.includes(String(pathParts(path)[0]))) throw new Error(`Column "${path}" is not known`);
+  if (!KNOWN_COLUMNS.includes(String(pathParts(path)[0]))) throw new Error(`unknown column ${JSON.stringify(path)}: the first path segment must be one of KNOWN_COLUMNS`);
 }
 
 export interface SavedViewGetCallsOptions {
@@ -273,9 +273,9 @@ export class SavedView extends WeftObject {
     field = COLUMN_ALIASES[field] ?? field;
     checkColumn(field);
     const op = OPERATOR_MAP[operator] ?? (Object.values(OPERATOR_MAP).includes(operator) ? operator : null);
-    if (!op) throw new Error(`Operator ${operator} not supported`);
-    if (VALUELESS.has(op) && value !== undefined) throw new Error(`Operator ${operator} does not support a value`);
-    if (!VALUELESS.has(op) && value === undefined) throw new Error(`Operator ${operator} requires a value`);
+    if (!op) throw new Error(`unknown filter operator ${JSON.stringify(operator)}`);
+    if (VALUELESS.has(op) && value !== undefined) throw new Error(`filter operator ${JSON.stringify(operator)} takes no value`);
+    if (!VALUELESS.has(op) && value === undefined) throw new Error(`filter operator ${JSON.stringify(operator)} needs a value`);
     const f: ViewFilter = VALUELESS.has(op) ? { field, operator: op } : { field, operator: op, value };
     filterToClause(f);
     const fs = this.filters;
@@ -439,12 +439,12 @@ export class SavedView extends WeftObject {
   columnIndex(path: number | string): number {
     const cols = this.getTableColumns();
     if (typeof path === 'number') {
-      if (path < 0 || path >= cols.length) throw new Error(`Column index "${path}" out of bounds`);
+      if (path < 0 || path >= cols.length) throw new Error(`no column at index ${path}`);
       return path;
     }
     const p = COLUMN_ALIASES[path] ?? path;
     const i = cols.findIndex((c) => c.path === p);
-    if (i < 0) throw new Error(`Column "${p}" not found`);
+    if (i < 0) throw new Error(`the view has no column ${JSON.stringify(p)}`);
     return i;
   }
 

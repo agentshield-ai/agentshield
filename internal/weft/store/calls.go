@@ -213,6 +213,7 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 		s.nerRedact(ctx, sts, ens)
 	}
 	var ended []EndedCall
+	ctx = withTraceBatch(ctx) // agents_handoffs.go: derive each touched trace once
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		touched := map[string]bool{}
 		for _, it := range items {
@@ -239,7 +240,7 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 				ended = append(ended, EndedCall{ProjectID: it.End.ProjectID, ID: it.End.ID})
 			}
 		}
-		return nil
+		return flushTraceBatch(ctx, tx)
 	})
 	return ended, err
 }
@@ -270,6 +271,7 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 		s.nerRedact(ctx, sts, ens)
 	}
 	var ended []EndedCall
+	ctx = withTraceBatch(ctx) // agents_handoffs.go: derive each touched trace once
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		touched := map[string]bool{}
 		for i := range calls {
@@ -290,7 +292,7 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 				ended = append(ended, EndedCall{ProjectID: c.Start.ProjectID, ID: c.Start.ID})
 			}
 		}
-		return nil
+		return flushTraceBatch(ctx, tx)
 	})
 	return ended, err
 }

@@ -297,7 +297,7 @@ class WeaveCoherenceScorerV1(LocalModelScorer):
     def score(self, *, query: str = "", output: Any = None, chat_history: Optional[List[Dict[str, str]]] = None,
               context: Optional[Union[str, List[str]]] = None, **kwargs: Any) -> WeaveScorerResult:
         if chat_history is not None and context is not None:
-            raise ValueError("Cannot provide both `chat_history` and `context`")
+            raise ValueError("pass either chat_history or context, not both")
         prompt = query
         if chat_history:
             hist = ""

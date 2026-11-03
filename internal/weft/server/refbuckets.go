@@ -207,9 +207,9 @@ func allowsOrigin(acao, origin string) bool {
 
 // testBucket reads the first byte of the test object through a presigned URL,
 // the way a browser would fetch it, and checks that the bucket's CORS rules
-// let origin GET it (Weave: "W&B reads this one object to confirm it has read
-// access and that CORS is configured correctly"). Errors are request
-// validation errors; test failures are reported in the result.
+// let origin GET it. One readable object proves both the credentials and the
+// CORS setup. Errors are request validation errors; test failures are
+// reported in the result.
 func (s *Server) testBucket(ctx context.Context, b *store.ReferenceBucket, origin string) (*bucketTestResult, error) {
 	c, err := s.bucketClient(ctx, b)
 	if err != nil {

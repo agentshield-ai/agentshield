@@ -149,10 +149,10 @@ def filter_to_clause(item: Filter) -> Dict[str, Any]:
     if op in ("(date): after", "(date): before"):
         secs = to_seconds(v)
         if secs is None:
-            raise ValueError(f"Invalid date value: {v}")
+            raise ValueError(f"not a date or timestamp: {v!r}")
         gt = {"$gt": [get, {"$literal": secs}]}
         return gt if op == "(date): after" else {"$not": [gt]}
-    raise ValueError(f"Unsupported operator: {op}")
+    raise ValueError(f"cannot translate filter operator {op!r}")
 
 
 def filters_to_query(filters: Optional[List[Filter]]) -> Optional[Dict[str, Any]]:
@@ -247,7 +247,7 @@ def _path_str(path: Union[str, List[Any]]) -> str:
 
 def _check_column(path: str) -> None:
     if _path_parts(path)[0] not in KNOWN_COLUMNS:
-        raise ValueError(f'Column "{path}" is not known')
+        raise ValueError(f"unknown column {path!r}: the first path segment must be one of KNOWN_COLUMNS")
 
 
 class SavedView(Object):
@@ -311,11 +311,11 @@ class SavedView(Object):
         _check_column(field)
         op = OPERATOR_MAP.get(operator, operator if operator in OPERATOR_MAP.values() else None)
         if not op:
-            raise ValueError(f"Operator {operator} not supported")
+            raise ValueError(f"unknown filter operator {operator!r}")
         if op in VALUELESS_OPERATORS and value is not None:
-            raise ValueError(f"Operator {operator} does not support a value")
+            raise ValueError(f"filter operator {operator!r} takes no value")
         if op not in VALUELESS_OPERATORS and value is None:
-            raise ValueError(f"Operator {operator} requires a value")
+            raise ValueError(f"filter operator {operator!r} needs a value")
         new = Filter(field=field, operator=op, value=value)
         filter_to_clause(new)  # validate now
         filters = self.filters
@@ -459,13 +459,13 @@ class SavedView(Object):
     def column_index(self, path: Union[int, str, List[Any]]) -> int:
         if isinstance(path, int):
             if path < 0 or path >= len(self.get_table_columns()):
-                raise ValueError(f'Column index "{path}" out of bounds')
+                raise ValueError(f"no column at index {path}")
             return path
         p = _path_str(COLUMN_ALIASES.get(path, path) if isinstance(path, str) else path)
         for i, col in enumerate(self.get_table_columns()):
             if col["path"] == p:
                 return i
-        raise ValueError(f'Column "{p}" not found')
+        raise ValueError(f"the view has no column {p!r}")
 
     def rename_column(self, path: Union[int, str, List[Any]], label: str) -> "SavedView":
         i = self.column_index(path)

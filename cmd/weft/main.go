@@ -60,6 +60,7 @@ func main() {
 	iamCfg := registerIAMFlags()       // iam.go
 	piiCfg := registerPIIFlags()       // pii.go
 	egressCfg := registerEgressFlags() // egress.go
+	shieldCfg := registerShieldFlags() // shield.go
 
 	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
 	flag.Parse()
@@ -132,6 +133,11 @@ func main() {
 	}
 	srv := server.New(cfg, st)
 	defer srv.Close()
+	shieldMode, err := shieldCfg.apply(srv, st, log)
+	if err != nil {
+		log.Error("configuring AgentShield replay", "err", err)
+		os.Exit(2)
+	}
 
 	if len(cfg.APIKeys) == 0 {
 		if host, _, err := net.SplitHostPort(*addr); err == nil {
@@ -150,7 +156,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

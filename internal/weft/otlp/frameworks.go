@@ -220,8 +220,16 @@ func frameworkOutput(attrs map[string]any) (any, bool) {
 	// Vercel AI SDK.
 	text, hasText := attrs["ai.response.text"].(string)
 	tcs := vercelToolCalls(decodeAny(attrs["ai.response.toolCalls"]))
-	if hasText || len(tcs) > 0 {
+	reasoning := vercelReasoning(attrs)
+	if hasText || len(tcs) > 0 || len(reasoning) > 0 {
 		msg := map[string]any{"role": "assistant", "content": text}
+		if len(reasoning) > 0 { // keep reasoning as thinking parts ahead of the reply
+			parts := reasoning
+			if text != "" {
+				parts = append(parts, map[string]any{"type": "text", "text": text})
+			}
+			msg["content"] = parts
+		}
 		if len(tcs) > 0 {
 			msg["tool_calls"] = tcs
 		}
@@ -262,6 +270,33 @@ func frameworkOutput(attrs map[string]any) (any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// vercelReasoning reads the AI SDK's ai.response.reasoning (a string, or a
+// list of reasoning parts) as thinking parts.
+func vercelReasoning(attrs map[string]any) []any {
+	var out []any
+	for _, k := range []string{"ai.response.reasoning", "ai.response.reasoningText"} {
+		switch t := decodeAny(attrs[k]).(type) {
+		case string:
+			if strings.TrimSpace(t) != "" {
+				out = append(out, map[string]any{"type": "thinking", "thinking": t})
+			}
+		case []any:
+			for _, x := range t {
+				m, _ := x.(map[string]any)
+				if s := firstString(m, "text", "reasoning", "content"); s != "" {
+					out = append(out, map[string]any{"type": "thinking", "thinking": s})
+				} else if s, ok := x.(string); ok && s != "" {
+					out = append(out, map[string]any{"type": "thinking", "thinking": s})
+				}
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return out
 }
 
 // splitFinal separates trailing assistant messages (the run's answer) from
@@ -545,8 +580,8 @@ func genAIPart(pm map[string]any) (map[string]any, bool) {
 	mt, _ := pm["mime_type"].(string)
 	modality, _ := pm["modality"].(string)
 	switch pm["type"] {
-	case "reasoning":
-		return map[string]any{"type": "thinking", "thinking": pm["content"]}, true
+	case "reasoning", "thinking":
+		return map[string]any{"type": "thinking", "thinking": firstNonNil(pm["content"], pm["thinking"], pm["text"])}, true
 	case "blob":
 		data, _ := pm["content"].(string)
 		if modality == "image" || strings.HasPrefix(mt, "image/") {

@@ -400,7 +400,7 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
       ) : (
         !cfg.q.isLoading && (
           <div className="info-box">
-            No signals are set up yet. Add presets such as <b>User Frustration</b>, <b>Task Success</b> or <b>Response Quality</b> with <b>+ New signal</b>, then score recent turns with a judge model.
+            No signals are set up yet. Add presets such as <b>Frustrated user</b>, <b>Task success</b> or <b>Response quality</b> with <b>+ New signal</b>, then score recent turns with a judge model.
           </div>
         )
       )}

@@ -4,13 +4,13 @@ names Weave uses (``weave.trace_server.trace_server_interface``).
 ```python
 from weft.trace_server_interface import SortBy, ThreadsQueryReq
 
-res = client.threads_query(ThreadsQueryReq(
-    project_id="my-project",
-    sort_by=[SortBy(field="last_updated", direction="desc")],
-    limit=50,
+busiest = client.threads_query(ThreadsQueryReq(
+    project_id="acme/helpdesk",
+    sort_by=[SortBy(field="turn_count", direction="desc")],
+    limit=10,
 ))
-for t in res.threads:
-    print(t.thread_id, t.turn_count, t.last_updated)
+for thread in busiest.threads:
+    print(f"{thread.thread_id}: {thread.turn_count} turns")
 ```
 """
 

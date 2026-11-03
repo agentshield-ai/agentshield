@@ -1339,12 +1339,12 @@ def link_prompt_to_registry(prompt: Any, *, target_path: str, aliases: Optional[
 # Tags and aliases of object versions (Weave's weave.add_tags & co., module
 # level in weave/trace/api.py), on the global client.
 def add_tags(obj_ref: Any, tags: List[str]) -> None:
-    """Add tags to an object version (an ObjectRef or a weave:/// / weft:/// URI)."""
+    """Tag an object version, given as an ObjectRef or a weave:/// / weft:/// URI."""
     require_client().add_tags(obj_ref, tags)
 
 
 def remove_tags(obj_ref: Any, tags: List[str]) -> None:
-    """Remove tags from an object version."""
+    """Take the given tags off an object version."""
     require_client().remove_tags(obj_ref, tags)
 
 
@@ -1359,7 +1359,7 @@ def set_aliases(obj_ref: Any, alias: Union[str, List[str]]) -> None:
 
 
 def remove_aliases(obj_ref: Any, alias: Union[str, List[str]]) -> None:
-    """Remove one or more aliases from an object."""
+    """Detach an alias (or a list of aliases) from the object version it points at."""
     require_client().remove_aliases(obj_ref, alias)
 
 

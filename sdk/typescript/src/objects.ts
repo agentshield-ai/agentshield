@@ -126,7 +126,7 @@ export class Dataset<R extends Record<string, unknown> = Record<string, unknown>
   /** A new (unpublished) dataset with the rows at `indices`, in that order. */
   select(indices: Iterable<number>): Dataset<R> {
     const idx = [...indices];
-    if (!idx.length) throw new Error('Cannot select rows with an empty set of indices.');
+    if (!idx.length) throw new Error('select() needs at least one row index');
     return new Dataset<R>({ name: this.name, description: this.description, rows: idx.map((i) => {
       const r = this.rows[i];
       if (r === undefined) throw new RangeError(`row index ${i} out of range`);

@@ -102,23 +102,24 @@ __all__ = [
 
 
 def _to_json_string(value: Any) -> str:
-    """JSON-encode a value for a string-typed payload field (strings pass through, None is "")."""
-    if value is None:
-        return ""
+    """Coerce a value for a field the wire format types as a string: text is kept,
+    None becomes "", anything else is serialised as JSON."""
     if isinstance(value, str):
         return value
-    return json.dumps(value, ensure_ascii=False, default=str)
+    return "" if value is None else json.dumps(value, ensure_ascii=False, default=str)
 
 
 JSONString = Annotated[str, BeforeValidator(_to_json_string)]
 
 
 def _parse_data_url(url: str) -> Tuple[str, str]:
-    """Split a ``data:`` URL into ``(mime_type, payload)`` (the payload stays base64)."""
-    if not url.startswith("data:"):
+    """``(mime type, encoded payload)`` of a ``data:`` URL; ``("", "")`` for any other URL.
+    The payload is returned as written (base64 is not decoded)."""
+    scheme, sep, rest = url.partition(":")
+    if scheme != "data" or not sep:
         return ("", "")
-    header, _, payload = url[len("data:") :].partition(",")
-    return (header.partition(";")[0], payload)
+    meta, _, payload = rest.partition(",")
+    return (meta.split(";", 1)[0], payload)
 
 
 class TextPart(BaseModel):
@@ -132,7 +133,7 @@ class ReasoningPart(BaseModel):
 
 
 class ToolCallPart(BaseModel):
-    """An assistant's request to call a tool; ``arguments`` may be given as a dict."""
+    """A tool invocation the model asked for. ``arguments`` accepts a dict (stored as JSON text)."""
 
     model_config = ConfigDict(validate_assignment=True)
     type: Literal["tool_call"] = "tool_call"
@@ -142,7 +143,7 @@ class ToolCallPart(BaseModel):
 
 
 class ToolCallResponsePart(BaseModel):
-    """The result of a tool call; ``response`` may be given as any JSON value."""
+    """What a tool returned, matched to its call by ``id``. ``response`` accepts any JSON value."""
 
     model_config = ConfigDict(validate_assignment=True)
     type: Literal["tool_call_response"] = "tool_call_response"
@@ -151,7 +152,7 @@ class ToolCallResponsePart(BaseModel):
 
 
 class BlobPart(BaseModel):
-    """Inline binary content (base64 in ``content``); uploaded as a file when recorded."""
+    """Media carried in the message itself, base64 in ``content``; stored as a file when the span is sent."""
 
     type: Literal["blob"] = "blob"
     mime_type: str = ""
@@ -213,7 +214,7 @@ class Message(BaseModel):
 
 
 class Usage(BaseModel):
-    """Token usage of one LLM call (``total_tokens`` None = not reported)."""
+    """Token counts reported for one LLM call (``total_tokens`` None means the provider gave none)."""
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -444,7 +445,7 @@ _current_agent_name: ContextVar[Optional[str]] = ContextVar("weft_agent_name_ove
 def agent_name_override(agent_name: str) -> Iterator[None]:
     """Name the agent of turns and sub-agents started in this block that do not name one."""
     if not isinstance(agent_name, str) or not agent_name.strip():
-        raise ValueError("agent_name must be a non-empty string")
+        raise ValueError("agent_name_override() needs a non-blank agent name")
     token = _current_agent_name.set(agent_name)
     try:
         yield
@@ -631,7 +632,7 @@ class _SpanBase(BaseModel):
 
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None, timestamp: Optional[datetime.datetime] = None) -> Any:
         """Deprecated (as in Weave): record a point-in-time event; prefer ``set_attributes``."""
-        warnings.warn("`add_event` is deprecated; record this data with `set_attributes` instead.", DeprecationWarning, stacklevel=2)
+        warnings.warn("`add_event` is kept for compatibility only; put the data in `set_attributes`.", DeprecationWarning, stacklevel=2)
         if self._ended:
             return self
         self._events.append({"name": name, "attributes": dict(attributes or {}), "timestamp": _iso(timestamp or _now())})
@@ -803,12 +804,12 @@ class LLM(_SpanBase):
         return _span_name("chat", self.model)
 
     def output(self, content: str) -> "LLM":
-        """Append an assistant message to ``output_messages``."""
+        """Add ``content`` as an assistant reply at the end of ``output_messages``."""
         self.output_messages.append(Message(role="assistant", content=content))
         return self
 
     def think(self, content: str) -> "LLM":
-        """Set the reasoning (chain-of-thought) content."""
+        """Record the model's reasoning text for this call."""
         self.reasoning = Reasoning(content=content)
         return self
 
@@ -818,7 +819,7 @@ class LLM(_SpanBase):
         Bytes, base64 and ``data:`` URIs are uploaded as files; other URIs and file ids are kept as references.
         """
         if sum(bool(s) for s in (content, uri, file_id)) != 1:
-            raise ValueError("Exactly one of content, uri, or file_id must be provided")
+            raise ValueError("attach_media takes one source: content=, uri= or file_id=")
         if not modality and mime_type:
             prefix = mime_type.split("/", 1)[0]
             if prefix in ("image", "audio", "video"):
@@ -1427,10 +1428,11 @@ def get_current_llm() -> Optional[LLM]:
 def _resolve_turn_timestamps(
     started_at: Optional[datetime.datetime], ended_at: Optional[datetime.datetime], spans: List[Any]
 ) -> Tuple[datetime.datetime, datetime.datetime]:
+    """Caller-given times win; otherwise the span of the children; otherwise now."""
+    first = min((s.started_at for s in spans if s.started_at is not None), default=None)
+    last = max((s.ended_at for s in spans if s.ended_at is not None), default=None)
     now = _now()
-    starts = [s.started_at for s in spans if s.started_at is not None]
-    ends = [s.ended_at for s in spans if s.ended_at is not None]
-    return started_at or (min(starts) if starts else now), ended_at or (max(ends) if ends else now)
+    return started_at or first or now, ended_at or last or now
 
 
 def _emit_turn(turn: Turn, info: _ConvInfo, attributes: Optional[Dict[str, Any]]) -> LogResult:

@@ -250,7 +250,7 @@ class Dataset(Object):
         if hasattr(v, "to_dict") and type(v).__module__.startswith("pandas"):
             return Table(v.to_dict(orient="records"))
         if isinstance(v, (str, bytes, dict)):
-            raise ValueError("rows must be a list of dicts")
+            raise ValueError("pass rows as a list of dicts, not a single string, bytes or dict")
         return Table(list(v))
 
     def __iter__(self) -> Iterator[Any]:  # type: ignore[override]
@@ -301,7 +301,7 @@ class Dataset(Object):
             if split is None and len(hf_dataset) > 1:
                 import warnings
 
-                warnings.warn("Input dataset has multiple splits. Using 'train' split by default.", stacklevel=2)
+                warnings.warn(f"the DatasetDict has {len(hf_dataset)} splits; taking 'train' (pass split=... to choose)", stacklevel=2)
             hf_dataset = hf_dataset[key]
         elif not isinstance(hf_dataset, HFDataset):
             raise TypeError(f"expected a datasets.Dataset or datasets.DatasetDict, got {type(hf_dataset).__name__}")
@@ -327,7 +327,7 @@ class Dataset(Object):
         """A new (unpublished) dataset with the rows at ``indices``, in that order."""
         idx = list(indices)
         if not idx:
-            raise ValueError("Cannot select rows with an empty set of indices.")
+            raise ValueError("select() needs at least one row index")
         rows = self.rows
         return Dataset(name=self.name, description=self.description, rows=[rows[i] for i in idx])
 

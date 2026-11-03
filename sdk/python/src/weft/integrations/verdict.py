@@ -108,11 +108,10 @@ def _make_tracer_cls(Tracer: Any, VerdictCall: Any, current_trace_context: Any, 
 
         @contextlib.contextmanager
         def start_call(self, name: str, inputs: Dict[str, Any], trace_id: Optional[str] = None, parent_id: Optional[str] = None) -> Iterator[Any]:
-            parent_ctx = current_trace_context.get()
-            if parent_id is None and parent_ctx is not None:
-                parent_id = parent_ctx.call_id
-            if trace_id is None and parent_ctx is not None:
-                trace_id = parent_ctx.trace_id
+            ambient = current_trace_context.get()
+            if ambient is not None:  # inherit what the caller left unset
+                parent_id = ambient.call_id if parent_id is None else parent_id
+                trace_id = ambient.trace_id if trace_id is None else trace_id
             client = _tracing(INTEGRATION)
             if client is None:
                 vc = VerdictCall(name=name, inputs=inputs, trace_id=trace_id, parent_id=parent_id)

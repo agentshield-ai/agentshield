@@ -613,13 +613,13 @@ export class LLM extends SpanBase {
     return spanName('chat', this.model);
   }
 
-  /** Append an assistant message. */
+  /** Add `content` as an assistant reply at the end of `outputMessages`. */
   output(content: string): this {
     this.outputMessages.push({ role: 'assistant', content });
     return this;
   }
 
-  /** Set the reasoning (chain-of-thought) text. */
+  /** Record the model's reasoning text for this call. */
   think(content: string): this {
     this.reasoning = content;
     return this;
@@ -634,7 +634,7 @@ export class LLM extends SpanBase {
   /** Attach media (bytes, base64 text, a URI or a provider file id) to the last user message; bytes are uploaded. */
   attachMedia(opts: { content?: Uint8Array | string; uri?: string; fileId?: string; mimeType?: string; modality?: string }): this {
     const n = [opts.content, opts.uri, opts.fileId].filter((x) => x !== undefined && x !== '' && x !== null).length;
-    if (n !== 1) throw new Error('Exactly one of content, uri, or fileId must be provided');
+    if (n !== 1) throw new Error('attachMedia takes one source: content, uri or fileId');
     let modality = opts.modality ?? '';
     if (!modality && opts.mimeType) {
       const top = opts.mimeType.split('/')[0];

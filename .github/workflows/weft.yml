@@ -9,6 +9,7 @@ on:
       - 'web/weft-ui/**'
       - 'sdk/**'
       - 'plugins/weft-*/**'
+      - 'scripts/weft_ui_licenses.mjs'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/weft.yml'
@@ -19,6 +20,7 @@ on:
       - 'web/weft-ui/**'
       - 'sdk/**'
       - 'plugins/weft-*/**'
+      - 'scripts/weft_ui_licenses.mjs'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/weft.yml'
@@ -53,6 +55,9 @@ jobs:
         run: npm test
       - name: Build
         run: npx vite build
+      - name: Third-party licences of the bundle
+        # vite build empties the output directory; regenerate THIRD_PARTY_LICENSES.txt.
+        run: node ../../scripts/weft_ui_licenses.mjs
       - name: Embedded UI is up to date
         # The Go binary embeds internal/weft/webui/static; rebuild with `make weft-ui` and commit.
         run: git diff --exit-code -- ../../internal/weft/webui/static

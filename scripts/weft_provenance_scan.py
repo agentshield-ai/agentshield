@@ -32,11 +32,19 @@ consecutive matching shingles are merged into a run, and runs of at least
 ``--min-tokens`` tokens are reported with the Weft file:line, the reference
 file:line and the matched text.
 
+``--fuzzy`` adds a near-verbatim pass for paraphrases with small edits: a
+window of n-grams (4 tokens, 24 per window) is flagged when at least half of
+them occur in one reference file. n-grams common to many reference files are
+ignored.
+
 A match is not necessarily a problem. Method names, JSON keys, route paths and
 wire formats have to be the same for compatibility; they are interface facts,
-not expression. Matches that were reviewed and accepted for that reason are
-listed in ``ACCEPTED`` below (keyed by the first tokens of the matched text)
-and are reported separately, so a re-run shows only what is new.
+not expression. Reviewed matches are recorded in a baseline
+(``scripts/weft_provenance_baseline.json``): for each pair of Weft file and
+reference file, the matched token count that was reviewed. A re-run reports a
+pair as new when it is not in the baseline or its matched tokens grew by more
+than ``--slack`` (default 24). After reviewing new matches, record them with
+``--update-baseline``.
 """
 
 from __future__ import annotations
@@ -86,9 +94,25 @@ DOCS_INDEXES = [
 ]
 DOCS_PREFIX = "https://docs.coreweave.com/products/wandb/weave"
 
-# Reviewed matches that are interface facts (names, keys, wire formats, the
-# Apache licence text, ...). Key: the first 10 normalised tokens of the run.
-ACCEPTED: dict[str, str] = {}
+BASELINE = REPO / "scripts" / "weft_provenance_baseline.json"
+
+
+def ref_name(path: str) -> str:
+    """A reference file's name independent of where the corpus lives."""
+    p = "/" + os.path.abspath(path).replace(os.sep, "/").lstrip("/")
+    for marker, prefix in (
+        ("/weave-docs/", "docs/"),
+        ("/weave-ui/", "weave-js/Browse3/"),
+        ("/Home/Browse3/", "weave-js/Browse3/"),
+        ("/sdks/node/src/", "sdks/node/src/"),
+        ("/package/dist/", "npm-weave/dist/"),
+        ("/site-packages/weave/", "weave/"),
+        ("/weave-repo/weave/", "weave/"),
+    ):
+        i = p.rfind(marker)
+        if i >= 0:
+            return prefix + p[i + len(marker) :]
+    return p.rsplit("/", 1)[-1]
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*|[0-9]+")
 _SUB = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
@@ -293,7 +317,7 @@ def fuzzy_scan_file(fx: FuzzyIndex, p: Path, window: int, threshold: float, min_
 
 
 def cmd_scan(args) -> int:
-    cache = Path(args.cache).expanduser() if args.cache else None
+    cache = Path(args.cache).expanduser().resolve() if args.cache else None
     sources: list[Path] = []
     if cache:
         for sub in ("weave-repo/weave", "weave-repo/sdks/node/src", "weave-ui", "weave-docs"):
@@ -331,24 +355,39 @@ def cmd_scan(args) -> int:
                     continue
                 findings.append(f)
 
-    new, accepted = [], []
+    pairs: dict[str, int] = {}
     for f in findings:
-        key = " ".join(f["text"].split()[:10])
-        reason = ACCEPTED.get(key)
-        if reason:
-            f["accepted"] = reason
-            accepted.append(f)
-        else:
-            new.append(f)
-    new.sort(key=lambda f: -f["tokens"])
+        f["reference"] = ref_name(f["source"])
+        key = f"{f['file']}|{f['reference']}"
+        pairs[key] = pairs.get(key, 0) + f["tokens"]
+    baseline_path = Path(args.baseline)
+    baseline = json.loads(baseline_path.read_text()) if baseline_path.exists() else {}
+    if args.update_baseline:
+        out = {}
+        for key, tokens in sorted(pairs.items()):
+            prev = baseline.get(key, {})
+            out[key] = {"tokens": tokens, "reason": prev.get("reason") or args.reason}
+        baseline_path.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+        print(f"baseline: {len(out)} file pairs written to {baseline_path}", file=sys.stderr)
+        baseline = out
+    new_pairs = {
+        k for k, t in pairs.items() if k not in baseline or t > baseline[k].get("tokens", 0) + args.slack
+    }
+    new = [f for f in findings if f"{f['file']}|{f['reference']}" in new_pairs]
+    reviewed = [f for f in findings if f"{f['file']}|{f['reference']}" not in new_pairs]
+    new.sort(key=lambda f: (f["file"], f["line"]))
 
     if args.json:
-        Path(args.json).write_text(json.dumps({"new": new, "accepted": accepted}, indent=1))
+        Path(args.json).write_text(json.dumps({"new": new, "reviewed": reviewed}, indent=1))
     for f in new:
         sim = f" ~{f['similarity']:.0%}" if f.get("mode") == "fuzzy" else ""
-        print(f"{f['file']}:{f['line']}-{f['end_line']}  {f['tokens']} tokens{sim}  <=  {f['source']}:{f['source_line']}")
+        print(f"{f['file']}:{f['line']}-{f['end_line']}  {f['tokens']} tokens{sim}  <=  {f['reference']}:{f['source_line']}")
         print(f"    {f['text'][:300]}")
-    print(f"\n{len(new)} unreviewed match(es), {len(accepted)} accepted", file=sys.stderr)
+    print(
+        f"\n{len(new)} match(es) in {len(new_pairs)} new or grown file pair(s); "
+        f"{len(reviewed)} match(es) in reviewed pairs",
+        file=sys.stderr,
+    )
     return 1 if (new and args.fail_on_new) else 0
 
 
@@ -374,7 +413,7 @@ def _get(url: str) -> bytes:
 
 
 def cmd_fetch(args) -> int:
-    cache = Path(args.cache).expanduser()
+    cache = Path(args.cache).expanduser().resolve()
     cache.mkdir(parents=True, exist_ok=True)
     _sparse_clone(cache / "weave-repo", args.weave_ref, ["/weave/", "/sdks/node/src/"])
     _sparse_clone(
@@ -393,7 +432,8 @@ def cmd_fetch(args) -> int:
         urls.update(re.findall(re.escape(DOCS_PREFIX) + r"[^)\s]*\.md", body))
 
     def one(u: str) -> None:
-        name = u[len(DOCS_PREFIX) :].strip("/").replace("/", "__") or "index.md"
+        rest = u[len(DOCS_PREFIX) :].strip("/")
+        name = "index.md" if rest in ("", ".md") else rest.replace("/", "__")
         out = docs / name
         if out.exists():
             return
@@ -429,6 +469,13 @@ def main() -> int:
     s.add_argument("--fuzzy-cap", type=int, default=25,
                    help="ignore n-grams found in more than this many reference files")
     s.add_argument("--json", help="write all findings to this file")
+    s.add_argument("--baseline", default=str(BASELINE), help="reviewed matches (default %(default)s)")
+    s.add_argument("--slack", type=int, default=24,
+                   help="matched tokens a reviewed file pair may grow by before it is reported again")
+    s.add_argument("--update-baseline", action="store_true",
+                   help="record the current matches as reviewed (after checking them!)")
+    s.add_argument("--reason", default="reviewed: interface names, field lists, signatures or common idioms",
+                   help="reason stored for pairs added by --update-baseline")
     s.add_argument("--fail-on-new", action="store_true", help="exit 1 if there are unreviewed matches")
     a = ap.parse_args()
     return cmd_fetch(a) if a.cmd == "fetch" else cmd_scan(a)

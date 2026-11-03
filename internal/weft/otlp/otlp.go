@@ -390,15 +390,13 @@ func indexedMessages(attrs map[string]any, prefix string, fieldPrefix string) []
 func normalizeFlatMessage(f map[string]any) map[string]any {
 	msg := map[string]any{}
 	toolCalls := map[int]map[string]any{}
-	var contents []string
+	contents := map[int]*flatPart{}
 	for k, v := range f {
 		switch {
 		case k == "role" || k == "content" || k == "name" || k == "tool_call_id" || k == "finish_reason":
 			msg[k] = v
-		case strings.HasPrefix(k, "contents.") && strings.HasSuffix(k, ".text"):
-			if s, ok := v.(string); ok {
-				contents = append(contents, s)
-			}
+		case strings.HasPrefix(k, "contents."):
+			addFlatPart(contents, strings.TrimPrefix(k, "contents."), v)
 		case strings.HasPrefix(k, "tool_calls."):
 			rest := strings.TrimPrefix(k, "tool_calls.")
 			dot := strings.IndexByte(rest, '.')
@@ -440,7 +438,7 @@ func normalizeFlatMessage(f map[string]any) map[string]any {
 		}
 	}
 	if _, ok := msg["content"]; !ok && len(contents) > 0 {
-		msg["content"] = strings.Join(contents, "\n")
+		msg["content"] = flatContent(contents)
 	}
 	if len(toolCalls) > 0 {
 		idxs := make([]int, 0, len(toolCalls))
@@ -455,6 +453,73 @@ func normalizeFlatMessage(f map[string]any) map[string]any {
 		msg["tool_calls"] = tcs
 	}
 	return msg
+}
+
+// flatPart is one OpenInference message content part
+// (contents.N.message_content.type / .text).
+type flatPart struct{ typ, text string }
+
+func addFlatPart(parts map[int]*flatPart, rest string, v any) {
+	dot := strings.IndexByte(rest, '.')
+	if dot < 0 {
+		return
+	}
+	n, err := strconv.Atoi(rest[:dot])
+	if err != nil {
+		return
+	}
+	field := strings.TrimPrefix(rest[dot+1:], "message_content.")
+	s, ok := v.(string)
+	if !ok {
+		return
+	}
+	p := parts[n]
+	if p == nil {
+		p = &flatPart{}
+		parts[n] = p
+	}
+	switch field {
+	case "text":
+		p.text = s
+	case "type":
+		p.typ = s
+	}
+}
+
+// flatContent joins text parts in order; reasoning parts make the content a
+// parts list so the reasoning stays separate from the reply.
+func flatContent(parts map[int]*flatPart) any {
+	idxs := make([]int, 0, len(parts))
+	reasoning := false
+	for i, p := range parts {
+		idxs = append(idxs, i)
+		if p.typ == "reasoning" || p.typ == "thinking" {
+			reasoning = true
+		}
+	}
+	sort.Ints(idxs)
+	if !reasoning {
+		var texts []string
+		for _, i := range idxs {
+			if p := parts[i]; p.text != "" && (p.typ == "" || p.typ == "text") {
+				texts = append(texts, p.text)
+			}
+		}
+		return strings.Join(texts, "\n")
+	}
+	var out []any
+	for _, i := range idxs {
+		p := parts[i]
+		switch p.typ {
+		case "reasoning", "thinking":
+			out = append(out, map[string]any{"type": "thinking", "thinking": p.text})
+		case "", "text":
+			if p.text != "" {
+				out = append(out, map[string]any{"type": "text", "text": p.text})
+			}
+		}
+	}
+	return out
 }
 
 // partsMessages converts GenAI semconv messages with "parts" into chat

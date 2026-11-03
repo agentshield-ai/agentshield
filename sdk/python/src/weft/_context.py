@@ -52,7 +52,7 @@ def require_current_call() -> "Call":
     ``weft.init``)."""
     call = get_current_call()
     if call is None:
-        raise NoCurrentCallError("Have you initialized weft and are you calling this from inside an op?")
+        raise NoCurrentCallError("no op is running: call require_current_call() from inside a @weft.op function, after weft.init()")
     return call
 
 

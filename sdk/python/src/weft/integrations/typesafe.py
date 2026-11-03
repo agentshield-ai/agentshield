@@ -202,7 +202,7 @@ def _mark_failed(span: Any, exc: BaseException) -> None:
     the response body there."""
     name = _qualified_error_name(exc)
     status = getattr(exc, "status", None)
-    if type(status) is int:
+    if isinstance(status, int) and not isinstance(status, bool):
         span.set_attributes({"http": {"response": {"status_code": status}}})
     request_id = _request_id_from_error(exc)
     if request_id is not None:
@@ -234,16 +234,15 @@ def _integration_attrs() -> Dict[str, Any]:
     return attrs
 
 
-def _requested_model(client: Any, kwargs: Mapping[str, Any]) -> Tuple[Any, Any, str]:
-    """``(state, questions, model)`` as the request body will carry them."""
+def _request_body(client: Any, state: Any, questions: Any, kwargs: Mapping[str, Any]) -> Dict[str, Any]:
+    """The request body as the SDK will send it (``extra_body`` keys win)."""
     config = getattr(client, "_config", None)
     fallback = getattr(config, "default_model", None) or getattr(client, "default_model", None) or _DEFAULT_MODEL
-    body: Dict[str, Any] = {"model": kwargs.get("model") or fallback}
+    body: Dict[str, Any] = {"state": state, "questions": questions, "model": kwargs.get("model") or fallback}
     extra = kwargs.get("extra_body")
     if isinstance(extra, Mapping):
         body.update(extra)
-    model = body.get("model")
-    return body, extra, model if isinstance(model, str) else ""
+    return body
 
 
 class _SystemOneSpan:
@@ -274,12 +273,11 @@ class _SystemOneSpan:
         owns_turn = False
         try:
             capture = _capture_enabled()
-            body, extra, model = _requested_model(client, kwargs)
-            sent_state = extra["state"] if isinstance(extra, Mapping) and "state" in extra else state
-            sent_questions = extra["questions"] if isinstance(extra, Mapping) and "questions" in extra else questions
+            body = _request_body(client, state, questions, kwargs)
+            model = body["model"] if isinstance(body.get("model"), str) else ""
             # Encode first: state that cannot be encoded must not leave a turn behind.
-            message = _user_state_message(sent_state) if capture else None
-            questions_json = _encode_questions(sent_questions) if capture else None
+            message = _user_state_message(body.get("state")) if capture else None
+            questions_json = _encode_questions(body.get("questions")) if capture else None
             if questions_json is not None and weft_client._redact.pii:
                 questions_json = weft_client._redact.redact_text(questions_json)
             link = _link_to_running_op()
@@ -303,10 +301,9 @@ class _SystemOneSpan:
             return cls(llm, turn, owns_turn, capture)
         except Exception:
             logger.warning("weft: could not open the TypeSafe span", exc_info=True)
-            if llm is not None and not llm._ended:
-                llm.end()
-            if owns_turn and turn is not None and not turn._ended:
-                turn.end()
+            for opened in (llm, turn if owns_turn else None):  # close what was opened here
+                if opened is not None and not opened._ended:
+                    opened.end()
             return None
 
     def succeed(self, result: Any) -> None:

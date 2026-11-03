@@ -1715,11 +1715,11 @@ Credentials are never returned.
 
 - `bucket` is the name only (`s3://` / `gs://` and a trailing `/` are
   stripped). `prefix`, when set, limits which keys may be presigned.
-- **Test connection.** As in Weave ("W&B reads this one object to confirm it
-  has read access and that CORS is configured correctly"), the test reads the
-  test object and checks the bucket's CORS rules, and unless `skip_test` is
-  true `create` runs it first and refuses the registration (400 with the
-  test's `error`) if either part fails:
+- **Test connection.** The test fetches the test object through a presigned
+  URL and checks the bucket's CORS rules, so one readable object shows that
+  both the credentials and CORS are in order. Unless `skip_test` is true,
+  `create` runs it first and refuses the registration (400 with the test's
+  `error`) if either part fails:
   - `read`: one byte of `test_object_key` (an existing object) through a
     presigned URL, as a browser would fetch it (bad credentials, missing
     object, unreachable endpoint fail it);

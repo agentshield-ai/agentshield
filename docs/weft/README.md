@@ -20,7 +20,8 @@ live in `sdk/`.
 ## Run it
 
 ```bash
-make weft-ui      # rebuild the React UI into internal/weft/webui/static (Node 20.19+; the built UI is committed)
+make weft-ui      # rebuild the React UI into internal/weft/webui/static (Node 20.19+; the built UI is committed),
+                  # plus static/THIRD_PARTY_LICENSES.txt for the bundled npm packages (scripts/weft_ui_licenses.mjs)
 make weft         # build bin/weft
 ./bin/weft        # http://127.0.0.1:6345, data in ~/.weft/weft.db
 ```
@@ -245,6 +246,7 @@ monitor and feedback, using offline mock models.
 | `examples/weft` | runnable SDK examples |
 | `scripts/weft_seed_demo.py` | demo data seeding |
 | `docs/weft/API.md` | API contract |
+| `docs/weft/PROVENANCE.md`, `scripts/weft_provenance_scan.py` | provenance scan and attribution record |
 
 ## Testing
 
