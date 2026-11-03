@@ -95,10 +95,12 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 		t.Fatalf("slack text: %v", txt)
 	}
 
-	runs := e.post("/automations/runs/query", map[string]any{"project_id": pid})["runs"].([]any)
-	if len(runs) != 2 {
-		t.Fatalf("runs: %v", runs)
-	}
+	// The run is recorded after the webhook returns, so wait for both rows.
+	var runs []any
+	waitFor(t, "two recorded runs", func() bool {
+		runs = e.post("/automations/runs/query", map[string]any{"project_id": pid})["runs"].([]any)
+		return len(runs) == 2
+	})
 	r0 := runs[0].(map[string]any)
 	if r0["status"] != "success" || r0["response_status"].(float64) != 200 {
 		t.Fatalf("run: %v", r0)
