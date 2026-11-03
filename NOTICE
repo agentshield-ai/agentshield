@@ -21,6 +21,33 @@ which ships with the UI and is served by the weft server at
 scripts/weft_ui_licenses.mjs when the UI is built (make weft-ui).
 
 ------------------------------------------------------------------------------
+Go modules linked into the binaries
+------------------------------------------------------------------------------
+
+The weft and agentshield binaries link the Go standard library and
+third-party Go modules (among them OpenTelemetry, chi, gRPC, protobuf,
+modernc.org/sqlite, ncruces/go-sqlite3, go-oidc, go-jose and golang.org/x
+packages) under the BSD-3-Clause, MIT, Apache-2.0 and ISC licences. Their
+licence and notice texts are reproduced in
+
+    third_party/licenses/weft-go.txt
+    third_party/licenses/agentshield-go.txt
+
+which are generated from the modules each binary actually links by
+scripts/go_licenses.py (make licenses) and checked in CI. Distribute the
+matching file with each binary.
+
+------------------------------------------------------------------------------
+Included source under other copyrights
+------------------------------------------------------------------------------
+
+pkg/sigma is a fork of sigmalite, Copyright 2024 RunReveal Inc., licensed
+under the Apache License, Version 2.0 (pkg/sigma/LICENSE).
+
+rules/ is vendored from the sigma-ai project by git subtree and is licensed
+under the Apache License, Version 2.0 (rules/LICENSE).
+
+------------------------------------------------------------------------------
 Ported code
 ------------------------------------------------------------------------------
 

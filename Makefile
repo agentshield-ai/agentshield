@@ -1,4 +1,4 @@
-.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score weft weft-ui weft-run weft-test weft-test-encrypted
+.PHONY: build test lint-rules clean run bench bench-all test-integration test-integration-docker docker-build replay-build replay replay-score weft weft-ui weft-run weft-test weft-test-encrypted licenses
 
 # Go binary path
 GO ?= go
@@ -99,7 +99,13 @@ weft-test:
 	$(GO) test ./internal/weft/...
 	cd web/weft-ui && npx tsc -b
 	node scripts/weft_ui_licenses.mjs --check
+	python3 scripts/go_licenses.py --check
 	cd sdk/python && python -m pytest -q
+
+# Licence notices of the Go modules linked into the weft and agentshield
+# binaries (third_party/licenses/); run after changing Go dependencies.
+licenses:
+	python3 scripts/go_licenses.py
 
 # Weft Go tests with the database encrypted at rest (go-sqlite3 adiantum VFS)
 weft-test-encrypted:
