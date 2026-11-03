@@ -63,6 +63,11 @@ type Evaluator struct {
 	tracer          trace.Tracer
 	metrics         *telemetry.MetricsRecorder
 	sessionRegistry *session.Registry
+	// replayRegistry holds replay sessions only (docs/weft/DESIGN.md §5.4).
+	// It exists whatever the live session configuration, so a replay gets
+	// the same fixed window (session.ReplayMaxEvents, session.ReplayTTL)
+	// on an engine with sessions disabled as in Weft's in-process replay.
+	replayRegistry *session.Registry
 }
 
 // NewEvaluator creates a new evaluator
@@ -94,6 +99,23 @@ func (e *Evaluator) SetMetrics(m *telemetry.MetricsRecorder) {
 // SetSessionRegistry sets the session registry for behavioural sequencing.
 func (e *Evaluator) SetSessionRegistry(r *session.Registry) {
 	e.sessionRegistry = r
+}
+
+// SetReplaySessionRegistry sets the registry replay requests (replay: true
+// in the replay session namespace) use, kept apart from live sessions. The
+// engine always sets one, whatever its session settings, so replay results
+// depend only on the recording and the ruleset. Without one, replays use
+// the live registry (isolated from live sessions), if any.
+func (e *Evaluator) SetReplaySessionRegistry(r *session.Registry) {
+	e.replayRegistry = r
+}
+
+// registryFor is the session registry req's evaluation reads and records in.
+func (e *Evaluator) registryFor(req *models.EvaluationRequest) *session.Registry {
+	if req.Replay && models.IsReplaySession(req.SessionID) && e.replayRegistry != nil {
+		return e.replayRegistry
+	}
+	return e.sessionRegistry
 }
 
 // Evaluate processes an evaluation request with a background context.
@@ -177,14 +199,14 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	}
 
 	// Inject session-derived and cross-session fields in a single lock acquisition
-	if e.sessionRegistry != nil && req.SessionID != "" {
+	if reg := e.registryFor(req); reg != nil && req.SessionID != "" {
 		// Only a namespaced replay session is isolated: a replay flag on a
 		// live session id must never remove it from cross-session
 		// correlation (the HTTP API also rejects that request).
 		if req.Replay && models.IsReplaySession(req.SessionID) {
-			e.sessionRegistry.Isolate(req.SessionID)
+			reg.Isolate(req.SessionID)
 		}
-		allFields := e.sessionRegistry.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
+		allFields := reg.DeriveAllFields(req.SessionID, defaultCorrelationWindow)
 		for k, v := range allFields {
 			req.Fields[k] = v
 		}
@@ -256,9 +278,10 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 	if e.tracer != nil {
 		span := trace.SpanFromContext(ctx)
 		for _, alert := range alerts {
+			id, title, _ := models.CleanRule(alert.RuleID, alert.RuleName, nil)
 			span.AddEvent("rule.matched", trace.WithAttributes(
-				attribute.String("rule.id", alert.RuleID),
-				attribute.String("rule.name", alert.RuleName),
+				attribute.String("rule.id", id),
+				attribute.String("rule.name", title),
 				attribute.String("rule.severity", string(alert.Severity)),
 			))
 		}
@@ -328,8 +351,8 @@ func (e *Evaluator) EvaluateWithContext(ctx context.Context, req *models.Evaluat
 // window. It runs after matching, so the call is visible to the session's
 // next evaluation, not to this one.
 func (e *Evaluator) recordInSession(req *models.EvaluationRequest, alerts []engine.RuleResult, action models.Action) {
-	if e.sessionRegistry != nil && req.SessionID != "" {
-		e.sessionRegistry.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, action, false)
+	if reg := e.registryFor(req); reg != nil && req.SessionID != "" {
+		reg.RecordWithVerdict(req.SessionID, req.Tool, req.EventID, alerts, action, false)
 	}
 }
 

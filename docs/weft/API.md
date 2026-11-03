@@ -2403,23 +2403,58 @@ The engine's `weft:` push (`internal/weftpush`). Body:
 
 `detection` (one object) is accepted in place of `detections`; `id` is an
 alias of `event_id`, and rules may use `rule_id` / `rule_name` / `severity`.
-At most 1000 detections and 1000 overrides per request. Validation: `event_id`
-required; `action`, `mode`, `severity` and rule levels from the lists above;
-`source` must be `engine`; ids and names at most 256 bytes without control
-characters. Re-sending an `event_id` updates the same detection (idempotent);
-`overridden` never reverts. An override without `event_id` marks the session's
-latest `block` / `require_approval`; one whose detection has not arrived yet
-is kept and applied when it does. The replay namespace is rejected (400):
-a detection or override whose `event_id` starts with `weft-replay-` or whose
-`session_id` starts with `weft-replay:` fails the whole request, because
-engines never push replay evaluations and reserve those ids for them.
-Response:
+At most 1000 detections and 1000 overrides per request, and 64 MiB of body
+(413 or 400 beyond). Validation: `event_id` required; `action`, `mode`,
+`severity` and rule levels from the lists above; `source` must be `engine`;
+ids (`event_id`, `session_id`, `tool_call_id`) at most 256 bytes without
+control characters. Descriptive values are cleaned rather than rejected,
+because the engine accepts them on live verdicts: `tool_name`, `agent_name`
+and rule titles have control characters turned into spaces and are cut (256,
+256 and 1024 bytes), `event_source` is cut to 128 bytes; rule tags are
+cleaned the same way and cut to 256 bytes, and only the first 64 are kept;
+a rule id over 256 bytes, or with control characters, is replaced by a
+stable stand-in (its leading part, `~sha256:` and the hex SHA-256 of the
+whole id, 256 bytes in all), so distinct rules keep distinct ids and the
+pushed and OTLP copies of a verdict agree; a detection keeps its 200 most
+severe rules (its `severity` counts them all). Re-sending an `event_id`
+updates the same detection (idempotent); `overridden` never reverts. An
+override without `event_id` marks the session's latest `block` /
+`require_approval`; one whose detection has not arrived yet is kept and
+applied when it does. The replay namespace is rejected: a detection or
+override whose `event_id` starts with `weft-replay-` or whose `session_id`
+starts with `weft-replay:` is never stored, because engines never push replay
+evaluations and reserve those ids for them.
+
+Each record is validated on its own: an invalid detection or override is
+not stored and is reported in `errors`, and the request's valid records are
+stored all the same, so one bad record never takes its batch down with it.
+Response (200 when at least one record was stored):
 
 ```json
 {"accepted": 1, "created": 1, "duplicates": 0,
  "overrides_applied": 1, "overrides_pending": 0,
- "ids": [{"id": "01a1a0b7-26ce-765f-8d58-c15ed46fd607", "event_id": "e-1", "created": true}]}
+ "ids": [{"id": "01a1a0b7-26ce-765f-8d58-c15ed46fd607", "event_id": "e-1", "created": true}],
+ "rejected": 1,
+ "errors": [{"kind": "detection", "index": 1, "event_id": "e-2", "error": "action must be allow, log, require_approval or block"}]}
 ```
+
+`rejected` counts the invalid records and `errors` lists them (at most 100;
+`kind` is `detection` or `override`, `index` its position in its list).
+Both are `0` / `[]` when everything was stored. This is backward compatible:
+the earlier fields are unchanged, and a client that ignores `rejected`
+still gets its valid records stored (before, one invalid record failed the
+whole request with 400 and stored nothing). When every record of a request
+is invalid the response is still 400, `{"reason": "detections[0]: …"}` as
+before, with `accepted: 0`, `rejected` and `errors` beside it. Problems with
+the request itself (no `project_id`, nothing to store, too many records, a
+body that is not JSON or is too large) fail it as a whole with 400.
+
+The engine's pusher bounds each record (descriptive fields cut with a
+`…[truncated]` marker, 256 KiB per record) and each request (4 MiB), sends
+JSON without HTML escaping, counts records Weft lists in `errors` as
+rejected, and when a request is refused with 400 or 413 splits it in halves
+until the offending records are isolated; only those are dropped (counted
+and logged), the rest are delivered.
 
 Over OTLP, spans of instrumentation scope `agentshield` (or with
 `agentshield.verdict.action`) become detections from the attributes listed in
@@ -2491,9 +2526,12 @@ bytes once namespaced, control characters, padding) or itself starts
 always name the recorded id). A recorded tool call id or agent name the
 engine would reject is left out of the request (rules do not read them).
 In-process replay builds the same ids and applies the engine's input
-validation first, so both evaluate, and reject, the same calls. Detections
-are stored per session: a session whose detections cannot be stored adds
-them to `errors` (`first_error` says why) and the job still completes. The
+validation first, so both evaluate, and reject, the same calls. Replay
+detections keep the recorded session and tool call ids whatever their
+length (they are Weft's own records, so the 256-byte id limit of ingest does
+not apply), and `session_ids` takes recorded ids of up to 64 KiB. Detections
+are stored independently: one that cannot be stored adds to `errors`
+(`first_error` says why), the others are stored and the job still completes. The
 engine still evaluates it, tags its evaluate span `agentshield.replay`, does
 not store it in its own alert store (`/api/v1/alerts`, `agentshield alerts`),
 does not push the verdict to Weft, keeps the session out of live sessions'

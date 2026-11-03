@@ -2,6 +2,8 @@ package evaluate
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,5 +209,50 @@ func TestEvaluate_ReplayFlagIgnoredOutsideReplayNamespace(t *testing.T) {
 		Fields: map[string]string{"tool": "Bash"}, Replay: true})
 	if f := reg.DeriveAllFields("live-2", time.Minute); f["session.cross_session_count"] != "1" {
 		t.Fatalf("namespaced replay counted in live cross-session fields: %v", f)
+	}
+}
+
+// Rules the engine loads may have long ids, control characters in tags or
+// many tags. The span carries them as the push does (models.CleanRule), so
+// both copies of the verdict reach Weft with the same rule ids; the event
+// source is cut to what Weft keeps.
+func TestEvaluateSpan_CleansRuleValuesAndSource(t *testing.T) {
+	longID := strings.Repeat("i", 400)
+	tags := []string{"attack.x\tfoo", strings.Repeat("z", 300)}
+	for i := 0; i < 70; i++ {
+		tags = append(tags, fmt.Sprintf("t%d", i))
+	}
+	eng := &mockEngine{mockResults: []engine.RuleResult{
+		{RuleID: longID, RuleName: strings.Repeat("T", 2000), Severity: engine.SeverityHigh, Matched: true, Tags: tags},
+	}}
+	ev := NewEvaluator(eng, config.ModeEnforce, "", nil, nil)
+	req := &models.EvaluationRequest{EventID: "evt-1", SessionID: "sess-1", Tool: "Bash", Source: strings.Repeat("<", 5000),
+		Fields: map[string]string{"tool": "Bash"}}
+	_, spans := evalWithExporter(t, ev, req)
+	a := attrMap(spans[0].Attributes)
+	short := models.ShortID(longID, models.MaxRuleIDLength)
+	if len(short) > 256 || short == longID {
+		t.Fatalf("ShortID = %q", short)
+	}
+	if ids := a["agentshield.rule_ids"].AsStringSlice(); len(ids) != 1 || ids[0] != short {
+		t.Errorf("rule_ids = %v", ids)
+	}
+	if src := a["source"].AsString(); len(src) > models.MaxEventSourceLength {
+		t.Errorf("source attribute is %d bytes", len(src))
+	}
+	for _, e := range spans[0].Events {
+		ea := attrMap(e.Attributes)
+		if got := ea["rule.id"].AsString(); got != short {
+			t.Errorf("%s rule.id = %q", e.Name, got)
+		}
+		if len(ea["rule.title"].AsString()) > models.MaxRuleTitleLength || len(ea["rule.name"].AsString()) > models.MaxRuleTitleLength {
+			t.Errorf("%s title not bounded", e.Name)
+		}
+		if e.Name == EventRuleMatched {
+			got := ea["rule.tags"].AsStringSlice()
+			if len(got) != models.MaxRuleTags || got[0] != "attack.x foo" || len(got[1]) != models.MaxRuleTagLength {
+				t.Errorf("rule.tags = %d tags, first %q", len(got), got[0])
+			}
+		}
 	}
 }

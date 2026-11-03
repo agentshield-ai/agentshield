@@ -66,9 +66,10 @@ func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (tra
 	sampler := sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))
 
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		sdktrace.WithBatcher(exporter, sdktrace.WithMaxExportBatchSize(MaxExportBatchSize)),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
+		sdktrace.WithRawSpanLimits(SpanLimits()),
 	)
 	otel.SetTracerProvider(tp)
 
@@ -76,6 +77,36 @@ func Init(ctx context.Context, cfg *config.TelemetryConfig, version string) (tra
 		return tp.Shutdown(ctx)
 	}
 	return tp, shutdown, nil
+}
+
+// Export size bounds. One evaluate span must not be able to make an export
+// request too large for the collector (Weft accepts 64 MiB per request), or
+// the whole batch would be lost with it.
+const (
+	// MaxAttributeValueLength cuts every string attribute value (and each
+	// string of a string slice) of a span or span event. The engine's own
+	// ids are validated to 256 bytes and its rule ids shortened to 256
+	// (models.ShortID), so only free text (e.g. a long source) is cut.
+	MaxAttributeValueLength = 4096
+	// MaxExportBatchSize is the most spans per export request. A span holds
+	// at most 128 attributes and 128 events of at most 128 attributes,
+	// strings cut to MaxAttributeValueLength; the evaluate span carries
+	// about 30 attributes and two events per matched rule whose values
+	// are bounded (models.CleanRule), well under 1 MiB, so a batch stays
+	// far below 64 MiB.
+	MaxExportBatchSize = 64
+)
+
+// SpanLimits are the engine's span limits: the SDK's (128 attributes,
+// events and links unless the OTEL_* limit variables say otherwise) with
+// string values cut to MaxAttributeValueLength, or the shorter length
+// OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT sets.
+func SpanLimits() sdktrace.SpanLimits {
+	l := sdktrace.NewSpanLimits()
+	if l.AttributeValueLengthLimit < 0 || l.AttributeValueLengthLimit > MaxAttributeValueLength {
+		l.AttributeValueLengthLimit = MaxAttributeValueLength
+	}
+	return l
 }
 
 // InitMeter creates an OTel MeterProvider with an OTLP/HTTP metric exporter.

@@ -64,6 +64,16 @@ func ValidateEvaluationRequest(req *EvaluationRequest) error {
 		}
 	}
 
+	// Validate Source. It is forwarded (Weft's event_source, the evaluate
+	// span's source attribute) and copied into fields.source when the
+	// caller did not set that, so it gets the same limits as a field value
+	// whether or not fields.source is set.
+	if req.Source != "" {
+		if err := ValidateString(req.Source, MaxFieldValueLength, "source"); err != nil {
+			return err
+		}
+	}
+
 	// Validate Tool
 	if req.Tool != "" {
 		if err := ValidateString(req.Tool, 100, "tool"); err != nil {

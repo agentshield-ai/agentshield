@@ -342,3 +342,36 @@ func TestCheckReplayNamespace(t *testing.T) {
 		}
 	}
 }
+
+// The request's source is forwarded (Weft's event_source, the evaluate span)
+// and copied into fields.source unless the caller set that, so it gets the
+// limits of a field value whether or not fields.source is set: an oversized
+// source used to slip through when fields.source was present.
+func TestHandleEvaluate_SourceValidatedWithOrWithoutFieldsSource(t *testing.T) {
+	srv, sink := newWeftTestServer(t, []engine.RuleResult{{RuleID: "r1", RuleName: "R1", Severity: engine.SeverityHigh, Matched: true}})
+	r := srv.setupTestRouter()
+	post := func(source string, withField bool) int {
+		fields := ""
+		if withField {
+			fields = `,"fields":{"source":"x"}`
+		}
+		body := `{"event_id":"e","session_id":"s","tool_name":"Bash","command":"ls","source":"` + source + `"` + fields + `}`
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(body)))
+		return rec.Code
+	}
+	for _, withField := range []bool{false, true} {
+		if code := post(strings.Repeat("<", models.MaxFieldValueLength+1), withField); code != http.StatusBadRequest {
+			t.Errorf("oversized source (fields.source set: %v): status %d, want 400", withField, code)
+		}
+		if code := post(`a\u0001b`, withField); code != http.StatusBadRequest {
+			t.Errorf("control character in source (fields.source set: %v): status %d, want 400", withField, code)
+		}
+		if code := post(strings.Repeat("<", models.MaxFieldValueLength), withField); code != http.StatusOK {
+			t.Errorf("source at the limit (fields.source set: %v): status %d, want 200", withField, code)
+		}
+	}
+	if len(sink.verdicts) != 2 {
+		t.Errorf("sink got %d verdicts, want 2", len(sink.verdicts))
+	}
+}

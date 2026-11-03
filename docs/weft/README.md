@@ -294,6 +294,9 @@ Every evaluation is exported, `allow` included, subject to `sample_rate`.
 `/api/v1/shield/ingest` from a bounded background queue. A full queue drops
 (and counts) records; pushing never delays or changes a verdict. Failed
 requests are retried with backoff, and the queue is flushed on shutdown.
+Records and requests are size-bounded, and a record Weft refuses is isolated
+from its batch and dropped on its own (counted as `rejected`), so the rest
+of the batch is still delivered.
 Overrides reported to the engine's `/api/v1/override` are forwarded too and
 mark the detection `overridden` (the OTel path cannot carry overrides).
 

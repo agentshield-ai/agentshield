@@ -152,6 +152,20 @@ through a bounded queue, and it never delays or changes a verdict. User
 overrides that reach `/api/v1/override` are forwarded the same way, marking
 the detection as `overridden`.
 
+One bad record never takes others down with it. The engine validates every
+free-text value it forwards (`source` included, whether or not the caller
+also set `fields.source`) and sends rule ids, titles and tags cleaned
+(`models.CleanRule`: an over-long or control-character rule id becomes a
+stable prefix + hash stand-in, tags are cleaned, cut to 256 bytes and at most
+64 kept); Weft applies the same cleaning to whatever it receives instead of
+rejecting the verdict, so both paths store the same rule ids. The pusher
+bounds each record and each request, and when Weft refuses a batch (400,
+413) it splits it until the offending records are isolated, dropping and
+counting only those. Weft's ingest stores a batch's valid records and lists
+the invalid ones in its response (`rejected`, `errors`). On the OTel path the
+engine's span limits cut attribute values to 4 KiB and an export carries at
+most 64 spans, so one span cannot make an export too large for Weft (64 MiB).
+
 ### 5.3 Correlation
 
 The plugins pass the coding harness's session id as both the AgentShield
@@ -189,7 +203,10 @@ engine's configuration, and are the same in-process and remotely:
 - *Window.* A replay session keeps the last 50 tool calls
   (`session.ReplayMaxEvents`, the engine's default `max_events`) and is
   kept for 6 hours idle (`session.ReplayTTL`, longer than any replay job),
-  on every engine whatever its `session` settings, and in process.
+  on every engine whatever its `session` settings, and in process. The
+  engine keeps replay sessions in a registry of their own, which it creates
+  even when `session.enabled` is false, so replays get their `session.*`
+  fields there too.
 - *Ids.* The replay session id is `weft-replay:<job>:<key>`, where `<key>`
   is the recorded session id, or `sha256:` + its hex SHA-256 when the full
   id would be over the engine's 256-byte limit, would hold control
@@ -200,8 +217,11 @@ engine's configuration, and are the same in-process and remotely:
   In-process replay applies the engine's input validation
   (`models.ValidateEvaluationRequest`) before evaluating, so both paths
   evaluate, and reject, the same calls.
-- *Storage.* Detections are stored per session; a session whose detections
-  cannot be stored counts them as errors without failing the job.
+- *Storage.* Replay detections keep the recorded session and tool call ids
+  whatever their length (they are Weft's own records), and a replay request
+  may name sessions by recorded ids of up to 64 KiB. Detections are stored
+  independently; one that cannot be stored counts as an error without
+  failing the job or the other detections.
  `ToolSafetyScorer` (§6) turns this into evaluation
 scores (`blocked`, `approvals_required`, `max_severity`) at session and agent
 scope, so rule changes can be evaluated against recorded agent behaviour.

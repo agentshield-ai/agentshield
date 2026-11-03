@@ -27,10 +27,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/google/uuid"
 )
 
@@ -226,23 +227,15 @@ func detCheckLen(field, v string, max int) error {
 
 // detClean makes a descriptive field (a name or label, never an id) safe to
 // store instead of rejecting it: control characters become spaces, runs of
-// whitespace collapse, and the value is cut to max bytes on a rune boundary.
-// The engine accepts such values on live verdicts, so rejecting them here
-// would drop a real block (and, on push, the rest of its batch).
+// whitespace collapse, and the value is cut to max bytes on a rune boundary
+// (models.CleanText, which the engine applies too). The engine accepts such
+// values on live verdicts, so rejecting them here would drop a real block.
 func detClean(v string, max int) string {
-	if strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		v = strings.Join(strings.FieldsFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f || r == ' ' }), " ")
-	}
-	v = strings.TrimSpace(v)
-	if len(v) > max {
-		cut := max
-		for cut > 0 && !utf8.RuneStart(v[cut]) {
-			cut--
-		}
-		v = v[:cut]
-	}
-	return v
+	return models.CleanText(v, max)
 }
+
+// maxDetectionRules is the most rules a detection keeps.
+const maxDetectionRules = 200
 
 // Normalize validates a detection and fills defaults. Identifiers are
 // checked strictly; descriptive fields are cleaned (detClean).
@@ -279,53 +272,39 @@ func (d *DetectionInput) Normalize() error {
 		{"event_source", d.EventSource, 128}, {"span_id", d.SpanID, 256}, {"trace_id", d.TraceID, 256},
 		{"engine_span_id", d.EngineSpanID, 256}, {"severity", d.Severity, 32},
 	}
-	if d.Source == DetectionSourceReplay {
-		// A replay detection names a recorded session and tool call by the
-		// ids Weft stored for them, whatever characters those hold (OTLP
-		// accepts any string), so it can always be attached to them.
-		for _, f := range []idField{{"session_id", d.SessionID, 256}, {"tool_call_id", d.ToolCallID, 256}} {
-			if len(f.v) > f.max {
-				return Invalidf("%s is longer than %d bytes", f.name, f.max)
-			}
-		}
-	} else {
+	if d.Source != DetectionSourceReplay {
 		fields = append(fields, idField{"session_id", d.SessionID, 256}, idField{"tool_call_id", d.ToolCallID, 256})
 	}
+	// A replay detection (only Weft's replay produces them: ingest accepts
+	// source=engine only) names a recorded session and tool call by the ids
+	// Weft stored for them, whatever length or characters those have (OTLP
+	// accepts any string), so it is stored and attached to them as they are.
 	for _, f := range fields {
 		if err := detCheckLen(f.name, f.v, f.max); err != nil {
 			return err
 		}
 	}
-	if len(d.Rules) > 200 {
-		return Invalidf("at most 200 rules per detection")
-	}
 	best := ""
 	seen := map[string]bool{}
-	rules := make([]DetectionRule, 0, len(d.Rules))
+	rules := make([]DetectionRule, 0, min(len(d.Rules), maxDetectionRules))
 	for _, r := range d.Rules {
 		r.ID = strings.TrimSpace(r.ID)
 		if r.ID == "" {
 			return Invalidf("every rule needs an id")
 		}
-		if err := detCheckLen("rule id", r.ID, 256); err != nil {
-			return err
-		}
-		r.Title = detClean(r.Title, 1024)
+		// Rule ids, titles and tags come from the engine's rule files, which
+		// it loads whatever they hold: clean them rather than reject the
+		// verdict (an over-long or control-character id becomes a stable
+		// prefix + hash stand-in, models.ShortID; tags are cleaned, cut and
+		// at most 64 kept). The engine applies the same functions, so the
+		// pushed and the OTLP copy of a verdict agree.
+		r.ID = models.ShortID(r.ID, models.MaxRuleIDLength)
+		r.Title = detClean(r.Title, models.MaxRuleTitleLength)
 		r.Level = normSeverity(r.Level)
 		if r.Level == "unknown" {
 			return Invalidf("rule level must be low, medium, high or critical")
 		}
-		if len(r.Tags) > 64 {
-			return Invalidf("at most 64 tags per rule")
-		}
-		for _, t := range r.Tags {
-			if err := detCheckLen("rule tag", t, 256); err != nil {
-				return err
-			}
-		}
-		if r.Tags == nil {
-			r.Tags = []string{}
-		}
+		r.Tags = models.CleanTags(r.Tags)
 		if seen[r.ID] {
 			continue
 		}
@@ -334,6 +313,12 @@ func (d *DetectionInput) Normalize() error {
 			best = r.Level
 		}
 		rules = append(rules, r)
+	}
+	if len(rules) > maxDetectionRules {
+		// Keep the most severe rules (in their order otherwise); the
+		// detection's severity still counts them all.
+		sort.SliceStable(rules, func(i, j int) bool { return SeverityRank(rules[i].Level) > SeverityRank(rules[j].Level) })
+		rules = rules[:maxDetectionRules]
 	}
 	d.Rules = rules
 	sev := normSeverity(d.Severity)

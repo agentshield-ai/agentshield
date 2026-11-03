@@ -236,6 +236,12 @@ type ReplayRequest struct {
 	EventSource string `json:"event_source,omitempty"`
 }
 
+// MaxReplaySessionIDBytes bounds a session id in a replay request. It is
+// the recorded id, which OTLP lets be any string (the engine's 256-byte id
+// limit applies to the replay session id, which hashes long ids), so the
+// bound only keeps requests reasonable.
+const MaxReplaySessionIDBytes = 64 << 10
+
 // Validate checks a request.
 func (r *ReplayRequest) Validate() error {
 	if len(r.SessionIDs) == 0 && (r.Filter == nil || (r.Filter.Agent == "" && r.Filter.From == "" && r.Filter.To == "")) {
@@ -245,8 +251,8 @@ func (r *ReplayRequest) Validate() error {
 		return store.Invalidf("at most 1000 session_ids")
 	}
 	for _, id := range r.SessionIDs {
-		if id == "" || len(id) > 256 {
-			return store.Invalidf("invalid session id")
+		if id == "" || len(id) > MaxReplaySessionIDBytes {
+			return store.Invalidf("invalid session id: give the recorded session id (1 to %d bytes)", MaxReplaySessionIDBytes)
 		}
 	}
 	if len(r.Label) > 128 || strings.ContainsAny(r.Label, "\x00\n\r\t") {
@@ -685,28 +691,44 @@ func (s *Service) run(ctx context.Context, projectID, jobID string, req ReplayRe
 	if err := s.st.DeleteReplayDetections(ctx, projectID, res.Label, res.SessionIDs); err != nil {
 		return nil, err
 	}
-	// Store each session's detections on their own: a session whose
-	// detections cannot be stored counts as errors, the rest of the job
-	// still completes.
+	// Store each session's detections in batches; a batch that cannot be
+	// stored is stored one detection at a time, so a detection that cannot
+	// be stored counts as an error on its own and never takes the others
+	// (of its session or job) with it.
 	bySession := map[string][]store.DetectionInput{}
 	for _, in := range inputs {
 		bySession[in.SessionID] = append(bySession[in.SessionID], in)
+	}
+	storeErr := func(err error) {
+		res.Summary.Errors++
+		if res.FirstError == "" {
+			res.FirstError = "storing detections: " + err.Error()
+		}
 	}
 	for _, id := range res.SessionIDs {
 		batch := bySession[id]
 		for i := 0; i < len(batch); i += 500 {
 			part := batch[i:min(i+500, len(batch))]
-			if _, err := s.st.UpsertDetections(ctx, projectID, part); err != nil {
+			if _, err := s.st.UpsertDetections(ctx, projectID, part); err == nil {
+				res.Summary.Detections += len(part)
+				continue
+			} else if len(part) == 1 {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				res.Summary.Errors += len(part)
-				if res.FirstError == "" {
-					res.FirstError = "storing detections: " + err.Error()
-				}
+				storeErr(err)
 				continue
 			}
-			res.Summary.Detections += len(part)
+			for _, one := range part {
+				if _, err := s.st.UpsertDetections(ctx, projectID, []store.DetectionInput{one}); err != nil {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					storeErr(err)
+					continue
+				}
+				res.Summary.Detections++
+			}
 		}
 	}
 	if res.SessionIDs == nil {

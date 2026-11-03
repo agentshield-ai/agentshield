@@ -966,3 +966,22 @@ func TestForgedReplaySpanDoesNotHideATrace(t *testing.T) {
 		t.Fatalf("visible spans = %s", got)
 	}
 }
+
+// A detection with more rules than Weft keeps is stored with the most severe
+// ones, not rejected; its severity counts them all.
+func TestDetectionNormalizeKeepsMostSevereRules(t *testing.T) {
+	d := DetectionInput{EventID: "e", Action: "block", Mode: "enforce"}
+	for i := 0; i < 250; i++ {
+		d.Rules = append(d.Rules, DetectionRule{ID: fmt.Sprintf("low-%d", i), Level: "low", Tags: []string{"a\tb"}})
+	}
+	d.Rules = append(d.Rules, DetectionRule{ID: strings.Repeat("c", 300), Level: "critical"})
+	if err := d.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Rules) != maxDetectionRules || d.Severity != "critical" || d.Rules[0].Level != "critical" || len(d.Rules[0].ID) > 256 {
+		t.Fatalf("%d rules, severity %s, first %+v", len(d.Rules), d.Severity, d.Rules[0])
+	}
+	if d.Rules[1].Tags[0] != "a b" {
+		t.Errorf("tags = %v", d.Rules[1].Tags)
+	}
+}

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/agentshield-ai/agentshield/internal/config"
+	"github.com/agentshield-ai/agentshield/internal/models"
 )
 
 // TestNewDaemon tests daemon creation with various configurations
@@ -878,5 +880,38 @@ func TestShutdown_CallsTelemetryShutdown(t *testing.T) {
 	_ = d.shutdown()
 	if !called {
 		t.Error("expected telemetryShutdown to be called during shutdown")
+	}
+}
+
+// Replays get the fixed replay session window even when the engine's own
+// session sequencing is disabled, so their session.* fields (and the rules
+// that read them) match Weft's in-process replay (docs/weft/DESIGN.md §5.4).
+func TestInitComponents_ReplayRegistryWithSessionsDisabled(t *testing.T) {
+	daemon := newTestDaemon(t, 18436, func(cfg *config.Config) {
+		cfg.Session = config.SessionConfig{Enabled: false}
+	})
+	if daemon.replayRegistry == nil {
+		t.Fatal("expected a replay session registry when sessions are disabled")
+	}
+	sid := models.ReplaySessionPrefix + "job1:s1"
+	var last *models.EvaluationRequest
+	for i := 0; i < 3; i++ {
+		req := &models.EvaluationRequest{EventID: fmt.Sprintf("weft-replay-job1-%d", i), SessionID: sid, Tool: "Bash",
+			Args: map[string]string{"command": "ls"}, Fields: map[string]string{"command": "ls"}, Replay: true}
+		if _, err := daemon.evaluator.Evaluate(req); err != nil {
+			t.Fatal(err)
+		}
+		last = req
+	}
+	if got := last.Fields["session.tool_count"]; got != "2" {
+		t.Fatalf("replay session.tool_count = %q, want 2 (fields %v)", got, last.Fields)
+	}
+	// Live traffic still gets no session fields.
+	live := &models.EvaluationRequest{EventID: "e-live", SessionID: "live-1", Tool: "Bash", Fields: map[string]string{"command": "ls"}}
+	if _, err := daemon.evaluator.Evaluate(live); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := live.Fields["session.tool_count"]; ok {
+		t.Fatalf("live request got session fields with sessions disabled: %v", live.Fields)
 	}
 }

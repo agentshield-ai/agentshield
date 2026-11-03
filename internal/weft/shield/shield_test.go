@@ -661,14 +661,15 @@ func TestReplaySessionIDsTheEngineWouldReject(t *testing.T) {
 	}
 }
 
-// A session whose detections cannot be stored does not fail the job: its
-// detections count as errors and the other sessions' are stored.
-func TestReplayStoresEachSessionOnItsOwn(t *testing.T) {
+// A detection that cannot be stored does not fail the job, nor take the
+// other detections of its session with it: it counts as an error and the
+// rest are stored.
+func TestReplayStoresEachDetectionOnItsOwn(t *testing.T) {
 	st := newStore(t)
 	recordCommands(t, st, "ok-session", "ok", "cat ~/.ssh/id_rsa")
-	bad := recordCommands(t, st, "bad-session", "bad", "cat ~/.ssh/id_rsa")
-	// A tool span id too long for a detection's span_id.
-	if _, err := st.DB().Exec(`UPDATE agent_spans SET tool_call_id = ? WHERE id = ?`, strings.Repeat("x", 300), bad[0]); err != nil {
+	bad := recordCommands(t, st, "bad-session", "bad", "cat ~/.ssh/id_rsa", "cat ~/.ssh/id_rsa")
+	// A trace id too long for a detection's trace_id.
+	if _, err := st.DB().Exec(`UPDATE agent_spans SET trace_id = ? WHERE id = ?`, strings.Repeat("x", 300), bad[0]); err != nil {
 		t.Fatal(err)
 	}
 	local, err := New(Config{RulesDir: repoRules(t)}, st)
@@ -677,10 +678,48 @@ func TestReplayStoresEachSessionOnItsOwn(t *testing.T) {
 	}
 	defer local.Close()
 	res := runJob(t, local, ReplayRequest{SessionIDs: []string{"bad-session", "ok-session"}, Label: "x"})
-	if res.Summary.Detections != 1 || res.Summary.Errors != 1 || !strings.Contains(res.FirstError, "storing detections") {
+	if res.Summary.Detections != 2 || res.Summary.Errors != 1 || !strings.Contains(res.FirstError, "storing detections") {
 		t.Fatalf("summary %+v, first error %q", res.Summary, res.FirstError)
 	}
-	if v := replayVerdicts(t, st, res); !strings.Contains(v, "detection ok-session ") || strings.Contains(v, "detection bad-session ") {
+	v := replayVerdicts(t, st, res)
+	if !strings.Contains(v, "detection ok-session ") || !strings.Contains(v, "detection bad-session toolu_bad_1 ") || strings.Contains(v, "toolu_bad_0") {
 		t.Fatalf("stored detections:\n%s", v)
+	}
+}
+
+// Recorded ids over the engine's 256-byte limit: a tool call id (left out
+// of the engine request) and a session id (hashed in the replay session id)
+// must not lose the replay's detections, which keep the recorded ids, and
+// such a session can be requested by its recorded id.
+func TestReplayKeepsDetectionsOfLongRecordedIDs(t *testing.T) {
+	st := newStore(t)
+	longSession := strings.Repeat("P", 300)
+	recordCommands(t, st, "ok-session", "ok", "cat ~/.ssh/id_rsa", "cat ~/.ssh/id_rsa")
+	tc := recordCommands(t, st, "longtc-session", "ltc", "cat ~/.ssh/id_rsa", "cat ~/.ssh/id_rsa")
+	recordCommands(t, st, longSession, "lsess", "cat ~/.ssh/id_rsa", "cat ~/.ssh/id_rsa")
+	longTC := strings.Repeat("t", 300)
+	if _, err := st.DB().Exec(`UPDATE agent_spans SET tool_call_id = ? WHERE id = ?`, longTC, tc[1]); err != nil {
+		t.Fatal(err)
+	}
+	local, err := New(Config{RulesDir: repoRules(t)}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	for _, req := range []ReplayRequest{
+		{Filter: &ReplayFilter{From: "2000-01-01", To: "2100-01-01"}, Label: "by-filter"},
+		{SessionIDs: []string{"ok-session", "longtc-session", longSession}, Label: "by-ids"},
+	} {
+		if err := req.Validate(); err != nil {
+			t.Fatalf("%s: %v", req.Label, err)
+		}
+		res := runJob(t, local, req)
+		if res.Summary.Detections != 6 || res.Summary.Errors != 0 {
+			t.Fatalf("%s: summary %+v, first error %q", req.Label, res.Summary, res.FirstError)
+		}
+		v := replayVerdicts(t, st, res)
+		if !strings.Contains(v, "detection "+longSession+" ") || !strings.Contains(v, "detection longtc-session "+longTC+" ") {
+			t.Fatalf("%s: stored detections:\n%s", req.Label, v)
+		}
 	}
 }

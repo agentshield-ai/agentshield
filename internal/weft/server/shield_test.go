@@ -160,20 +160,33 @@ func TestShieldIngestValidationAndIdempotency(t *testing.T) {
 	}
 	e.key = "k1"
 
-	// Engines never push replays: replay-namespaced ids are rejected (400),
-	// not silently dropped, and nothing in the request is stored.
+	// Engines never push replays: replay-namespaced records are rejected,
+	// never stored or silently dropped. A request of nothing else is a 400;
+	// otherwise the request's valid records are stored and the namespaced
+	// one is reported in errors (one bad record never drops its batch).
 	for name, body := range map[string]map[string]any{
-		"replay event id":         shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "weft-replay-hide-1", "session_id": "victim-9", "action": "block"}),
-		"replay session id":       shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"), map[string]any{"event_id": "evt-r2", "session_id": "weft-replay:job:s1", "action": "block"}),
 		"replay override":         {"project_id": shieldProj, "overrides": []any{map[string]any{"event_id": "weft-replay-job-1", "session_id": "s1"}}},
 		"replay override session": {"project_id": shieldProj, "overrides": []any{map[string]any{"event_id": "evt-1", "session_id": "weft-replay:job:s1"}}},
+		"replay event id alone":   shieldIngestBody(map[string]any{"event_id": "weft-replay-hide-1", "session_id": "victim-9", "action": "block"}),
 	} {
-		if code, out := e.do(http.MethodPost, "/api/v1/shield/ingest", body, ""); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out), "reserved for replay") {
+		code, out := e.do(http.MethodPost, "/api/v1/shield/ingest", body, "")
+		if code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out), "reserved for replay") || out["rejected"].(float64) != 1 {
 			t.Fatalf("%s: %d %v", name, code, out)
 		}
 	}
-	if list := e.get("/api/v1/detections", url.Values{}); list["total_count"].(float64) != 0 {
-		t.Fatalf("rejected ingest stored detections: %v", list)
+	for name, body := range map[string]map[string]any{
+		"replay event id":   shieldIngestBody(shieldBlockDet("evt-ok", "s-ok", "toolu_ok"), map[string]any{"event_id": "weft-replay-hide-1", "session_id": "victim-9", "action": "block"}),
+		"replay session id": shieldIngestBody(shieldBlockDet("evt-ok", "s-ok", "toolu_ok"), map[string]any{"event_id": "evt-r2", "session_id": "weft-replay:job:s1", "action": "block"}),
+	} {
+		code, out := e.do(http.MethodPost, "/api/v1/shield/ingest", body, "")
+		errs, _ := out["errors"].([]any)
+		if code != http.StatusOK || out["accepted"].(float64) != 1 || out["rejected"].(float64) != 1 || len(errs) != 1 ||
+			errs[0].(map[string]any)["index"].(float64) != 1 || !strings.Contains(fmt.Sprint(errs[0]), "reserved for replay") {
+			t.Fatalf("%s: %d %v", name, code, out)
+		}
+	}
+	if list := e.get("/api/v1/detections", url.Values{}); list["total_count"].(float64) != 1 || shieldItems(list)[0]["event_id"] != "evt-ok" {
+		t.Fatalf("replay-namespaced records were stored: %v", list)
 	}
 
 	body := shieldIngestBody(shieldBlockDet("evt-1", "s1", "toolu_1"))

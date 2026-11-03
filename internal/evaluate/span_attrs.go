@@ -35,7 +35,9 @@ func evaluateSpanAttributes(req *models.EvaluationRequest) []attribute.KeyValue 
 		attribute.String("event.id", req.EventID),
 		attribute.String("session.id", req.SessionID),
 		attribute.String("tool.name", req.Tool),
-		attribute.String("source", req.Source),
+		// The event source is a platform name; Weft keeps 128 bytes of it,
+		// and the push sends the same cut value (models.Truncate).
+		attribute.String("source", models.Truncate(req.Source, models.MaxEventSourceLength)),
 	}
 	if req.SessionID != "" {
 		attrs = append(attrs, attribute.String(AttrConversationID, req.SessionID))
@@ -58,9 +60,13 @@ func evaluateSpanAttributes(req *models.EvaluationRequest) []attribute.KeyValue 
 // recordVerdictOnSpan adds the verdict attributes and one
 // agentshield.rule.matched event per matched rule (cached verdicts included).
 func recordVerdictOnSpan(span trace.Span, resp *EvaluationResponse) {
+	// Rule ids, titles and tags go out as the push sends them
+	// (models.CleanRule): an over-long rule id becomes a stable stand-in
+	// rather than being cut by the span's attribute length limit, so both
+	// copies of a verdict name the same rules in Weft.
 	ruleIDs := make([]string, 0, len(resp.Alerts))
 	for _, a := range resp.Alerts {
-		ruleIDs = append(ruleIDs, a.RuleID)
+		ruleIDs = append(ruleIDs, models.ShortID(a.RuleID, models.MaxRuleIDLength))
 	}
 	span.SetAttributes(
 		attribute.String(AttrVerdictAction, string(resp.Action)),
@@ -69,13 +75,10 @@ func recordVerdictOnSpan(span trace.Span, resp *EvaluationResponse) {
 		attribute.StringSlice(AttrRuleIDs, ruleIDs),
 	)
 	for _, a := range resp.Alerts {
-		tags := a.Tags
-		if tags == nil {
-			tags = []string{}
-		}
+		id, title, tags := models.CleanRule(a.RuleID, a.RuleName, a.Tags)
 		span.AddEvent(EventRuleMatched, trace.WithAttributes(
-			attribute.String("rule.id", a.RuleID),
-			attribute.String("rule.title", a.RuleName),
+			attribute.String("rule.id", id),
+			attribute.String("rule.title", title),
 			attribute.String("rule.level", string(a.Severity)),
 			attribute.StringSlice("rule.tags", tags),
 		))

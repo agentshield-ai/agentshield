@@ -12,12 +12,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/models"
 	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 	"github.com/agentshield-ai/agentshield/internal/weft/shield"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
@@ -28,7 +31,7 @@ func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
 		r.Get("/api/v1/detections", s.detectionsList)
 		r.Get("/api/v1/detections/stats", s.detectionsStats)
-		r.Post("/api/v1/shield/ingest", handle(s.shieldIngest))
+		r.Post("/api/v1/shield/ingest", s.shieldIngestHandler)
 		r.Get("/api/v1/shield/insights", s.shieldInsights)
 		r.Get("/api/v1/shield/status", s.shieldStatus)
 		r.Post("/api/v1/shield/replay", handle(s.shieldReplayStart))
@@ -286,7 +289,62 @@ const maxIngestItems = 1000
 // maxDetectionSessionIDs caps session_ids on a detections query (the UI sends at most one page of 1000 sessions).
 const maxDetectionSessionIDs = 1000
 
-func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestReq) (any, error) {
+// ingestError reports one record of an ingest request that was not stored.
+type ingestError struct {
+	Kind    string `json:"kind"` // detection or override
+	Index   int    `json:"index"`
+	EventID string `json:"event_id,omitempty"`
+	Error   string `json:"error"`
+}
+
+// maxIngestErrors bounds the errors listed in an ingest response (rejected
+// counts them all).
+const maxIngestErrors = 100
+
+// shieldIngestHandler stores what an ingest request holds that is valid and
+// reports each invalid record on its own (docs/weft/API.md): one bad record
+// never takes the rest of its batch down with it. The response is 200 when
+// at least one record was stored, listing the rejected ones in `errors`;
+// when every record is invalid it is 400, with the same `errors` list
+// beside the usual `reason` (as before for a request of one bad record).
+func (s *Server) shieldIngestHandler(w http.ResponseWriter, r *http.Request) {
+	req := new(ingestReq)
+	if err := decodeBody(r, req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	out, err := s.shieldIngest(r.Context(), req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if out.allRejected {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(map[string]any{"reason": out.Errors[0].Kind + "s[" + strconv.Itoa(out.Errors[0].Index) + "]: " + out.Errors[0].Error,
+			"accepted": 0, "rejected": out.Rejected, "errors": out.Errors})
+		return
+	}
+	writeJSON(w, out)
+}
+
+type ingestResult struct {
+	Accepted         int                     `json:"accepted"`
+	Created          int                     `json:"created"`
+	Duplicates       int                     `json:"duplicates"`
+	OverridesApplied int                     `json:"overrides_applied"`
+	OverridesPending int                     `json:"overrides_pending"`
+	IDs              []store.DetectionUpsert `json:"ids"`
+	// Rejected counts the detections and overrides not stored because they
+	// are invalid; Errors lists them (at most maxIngestErrors).
+	Rejected    int           `json:"rejected"`
+	Errors      []ingestError `json:"errors"`
+	allRejected bool
+}
+
+func (s *Server) shieldIngest(ctx context.Context, req *ingestReq) (*ingestResult, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {
 		return nil, err
@@ -300,82 +358,110 @@ func (s *Server) shieldIngest(ctx context.Context, _ *http.Request, req *ingestR
 	if len(req.Detections) > maxIngestItems || len(req.Overrides) > maxIngestItems {
 		return nil, store.Invalidf("at most %d detections and %d overrides per request", maxIngestItems, maxIngestItems)
 	}
+	out := &ingestResult{IDs: []store.DetectionUpsert{}, Errors: []ingestError{}}
+	reject := func(kind string, i int, eventID string, err error) {
+		out.Rejected++
+		if len(out.Errors) < maxIngestErrors {
+			msg := err.Error()
+			var inv *store.InvalidError
+			if errors.As(err, &inv) {
+				msg = inv.Msg
+			}
+			out.Errors = append(out.Errors, ingestError{Kind: kind, Index: i, EventID: models.CleanText(eventID, 512), Error: msg})
+		}
+	}
 	inputs := make([]store.DetectionInput, 0, len(req.Detections))
 	for i, d := range req.Detections {
 		eventID := d.EventID
 		if eventID == "" {
 			eventID = d.ID
 		}
-		// Engines never push replays (the namespace is reserved for them and
-		// replay verdicts are not pushed), so a replay-namespaced id here is
-		// a misbehaving or forged sender: reject it rather than store it or
-		// drop it silently.
-		if store.InReplayNamespace(eventID, d.SessionID) {
-			return nil, store.Invalidf("detections[%d]: event ids starting %q and session ids starting %q are reserved for replay and are never pushed",
-				i, store.ReplayEventPrefix, store.ReplaySessionPrefix)
-		}
-		if d.Source != "" && d.Source != store.DetectionSourceEngine {
-			return nil, store.Invalidf("detections[%d]: source must be engine (replay detections are produced by Weft)", i)
-		}
-		ts := d.Timestamp
-		if ts == "" {
-			ts = d.CreatedAt
-		}
-		var created int64
-		if ts != "" {
-			if created, err = store.ParseTime(ts); err != nil {
-				return nil, store.Invalidf("detections[%d]: invalid timestamp", i)
-			}
-		}
-		in := store.DetectionInput{EventID: eventID, SessionID: d.SessionID, ToolCallID: d.ToolCallID, ToolName: d.ToolName,
-			AgentName: d.AgentName, Action: d.Action, Mode: d.Mode, Severity: d.Severity, Source: store.DetectionSourceEngine,
-			Ruleset: d.Ruleset, EventSource: d.EventSource, Overridden: d.Overridden, CreatedAt: created}
-		for _, r := range d.Rules {
-			in.Rules = append(in.Rules, store.DetectionRule{ID: shieldFirstNonEmpty(r.ID, r.RuleID), Title: shieldFirstNonEmpty(r.Title, r.RuleName),
-				Level: shieldFirstNonEmpty(r.Level, r.Severity), Tags: r.Tags})
-		}
-		if err := in.Normalize(); err != nil {
-			return nil, store.Invalidf("detections[%d]: %s", i, err.Error())
+		in, err := ingestDetectionInput(d, eventID)
+		if err != nil {
+			reject("detection", i, eventID, err)
+			continue
 		}
 		inputs = append(inputs, in)
 	}
 	ovs := make([]store.DetectionOverride, 0, len(req.Overrides))
 	for i, o := range req.Overrides {
 		if store.InReplayNamespace(o.EventID, o.SessionID) {
-			return nil, store.Invalidf("overrides[%d]: event ids starting %q and session ids starting %q are reserved for replay and are never pushed",
-				i, store.ReplayEventPrefix, store.ReplaySessionPrefix)
+			reject("override", i, o.EventID, store.Invalidf("event ids starting %q and session ids starting %q are reserved for replay and are never pushed",
+				store.ReplayEventPrefix, store.ReplaySessionPrefix))
+			continue
 		}
 		var at int64
 		if o.Timestamp != "" {
 			if at, err = store.ParseTime(o.Timestamp); err != nil {
-				return nil, store.Invalidf("overrides[%d]: invalid timestamp", i)
+				reject("override", i, o.EventID, store.Invalidf("invalid timestamp"))
+				continue
 			}
 		}
 		ovs = append(ovs, store.DetectionOverride{EventID: o.EventID, SessionID: o.SessionID, At: at})
 	}
-	res, err := s.store.UpsertDetections(ctx, pid, inputs)
-	if err != nil {
-		return nil, err
+	if len(inputs) == 0 && len(ovs) == 0 {
+		out.allRejected = true
+		return out, nil
 	}
-	created := 0
-	for _, r := range res {
-		if r.Created {
-			created++
-		}
-	}
-	var ores store.OverrideResult
-	if len(ovs) > 0 {
-		if ores, err = s.store.ApplyDetectionOverrides(ctx, pid, ovs); err != nil {
+	if len(inputs) > 0 {
+		res, err := s.store.UpsertDetections(ctx, pid, inputs)
+		if err != nil {
 			return nil, err
 		}
+		out.IDs = res
+		for _, r := range res {
+			if r.Created {
+				out.Created++
+			}
+		}
+		out.Accepted = len(res)
+		out.Duplicates = len(res) - out.Created
 	}
-	if res == nil {
-		res = []store.DetectionUpsert{}
+	if len(ovs) > 0 {
+		ores, err := s.store.ApplyDetectionOverrides(ctx, pid, ovs)
+		if err != nil {
+			return nil, err
+		}
+		out.OverridesApplied, out.OverridesPending = ores.Applied, ores.Pending
 	}
-	return map[string]any{
-		"accepted": len(res), "created": created, "duplicates": len(res) - created,
-		"overrides_applied": ores.Applied, "overrides_pending": ores.Pending, "ids": res,
-	}, nil
+	return out, nil
+}
+
+// ingestDetectionInput validates and normalizes one pushed detection.
+func ingestDetectionInput(d ingestDetection, eventID string) (store.DetectionInput, error) {
+	// Engines never push replays (the namespace is reserved for them and
+	// replay verdicts are not pushed), so a replay-namespaced id here is a
+	// misbehaving or forged sender: reject it rather than store it or drop
+	// it silently.
+	if store.InReplayNamespace(eventID, d.SessionID) {
+		return store.DetectionInput{}, store.Invalidf("event ids starting %q and session ids starting %q are reserved for replay and are never pushed",
+			store.ReplayEventPrefix, store.ReplaySessionPrefix)
+	}
+	if d.Source != "" && d.Source != store.DetectionSourceEngine {
+		return store.DetectionInput{}, store.Invalidf("source must be engine (replay detections are produced by Weft)")
+	}
+	ts := d.Timestamp
+	if ts == "" {
+		ts = d.CreatedAt
+	}
+	var created int64
+	if ts != "" {
+		var err error
+		if created, err = store.ParseTime(ts); err != nil {
+			return store.DetectionInput{}, store.Invalidf("invalid timestamp")
+		}
+	}
+	in := store.DetectionInput{EventID: eventID, SessionID: d.SessionID, ToolCallID: d.ToolCallID, ToolName: d.ToolName,
+		AgentName: d.AgentName, Action: d.Action, Mode: d.Mode, Severity: d.Severity, Source: store.DetectionSourceEngine,
+		Ruleset: d.Ruleset, EventSource: d.EventSource, Overridden: d.Overridden, CreatedAt: created}
+	for _, r := range d.Rules {
+		in.Rules = append(in.Rules, store.DetectionRule{ID: shieldFirstNonEmpty(r.ID, r.RuleID), Title: shieldFirstNonEmpty(r.Title, r.RuleName),
+			Level: shieldFirstNonEmpty(r.Level, r.Severity), Tags: r.Tags})
+	}
+	if err := in.Normalize(); err != nil {
+		return store.DetectionInput{}, err
+	}
+	return in, nil
 }
 
 func shieldFirstNonEmpty(vs ...string) string {

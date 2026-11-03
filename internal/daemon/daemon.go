@@ -40,6 +40,8 @@ type Daemon struct {
 	verdictCache         *cache.VerdictCache
 	sessionRegistry      *session.Registry
 	sessionCleanupCancel func()
+	replayRegistry       *session.Registry
+	replayCleanupCancel  func()
 	tracerProvider       trace.TracerProvider
 	meterProvider        *sdkmetric.MeterProvider
 	retentionCancel      context.CancelFunc
@@ -308,6 +310,13 @@ func (d *Daemon) initComponents() error {
 	} else {
 		d.logger.Info("Session sequencing disabled")
 	}
+	// Replay requests (Weft, docs/weft/DESIGN.md §5.4) always get their own
+	// session registry with the fixed replay window, whatever the session
+	// settings above, so a replay's session.* fields (and the verdicts of
+	// rules that read them) match Weft's in-process replay.
+	d.replayRegistry = session.NewRegistry(session.ReplayMaxEvents, session.ReplayTTL)
+	d.evaluator.SetReplaySessionRegistry(d.replayRegistry)
+	d.replayCleanupCancel = d.replayRegistry.StartCleanupLoop(1 * time.Minute)
 
 	// Initialize metrics
 	mp, err := telemetry.InitMeter(context.Background(), &d.config.Telemetry)
@@ -430,7 +439,8 @@ func (d *Daemon) shutdown() error {
 		d.weftPusher.Close(flushCtx)
 		flushCancel()
 		st := d.weftPusher.Stats()
-		d.logger.Info("Weft push stopped", "sent", st.Sent, "dropped", st.Dropped, "failed", st.Failed)
+		d.logger.Info("Weft push stopped", "sent", st.Sent, "dropped", st.Dropped, "failed", st.Failed,
+			"rejected", st.Rejected, "truncated", st.Truncated)
 	}
 
 	// Flush and shutdown telemetry providers
@@ -449,6 +459,10 @@ func (d *Daemon) shutdown() error {
 	if d.sessionCleanupCancel != nil {
 		d.sessionCleanupCancel()
 		d.sessionCleanupCancel = nil
+	}
+	if d.replayCleanupCancel != nil {
+		d.replayCleanupCancel()
+		d.replayCleanupCancel = nil
 	}
 
 	// Close store
