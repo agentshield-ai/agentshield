@@ -57,7 +57,9 @@ export interface InitOptions {
 export interface ClientSettings extends RedactSettings {
   /** Attributes added to every call. */
   globalAttributes?: Record<string, unknown>;
-  /** Print `<server>/<entity>/<project>/spans/<id>` for each root span (default true; env WEFT_PRINT_CALL_LINK). */
+  /** Print `<server>/<entity>/<project>/spans/<id>` for each root span (default true; env WEFT_PRINT_SPAN_LINK). */
+  printSpanLink?: boolean;
+  /** @deprecated Use printSpanLink. */
   printCallLink?: boolean;
   /** Store op source code (default true; env WEFT_CAPTURE_CODE). */
   captureCode?: boolean;
@@ -117,6 +119,20 @@ export function senderOptionsFromEnv(): SenderOptions {
   const queue = envNumber('WEFT_MAX_CALLS_QUEUE_SIZE') ?? envNumber('WEFT_MAX_QUEUE_SIZE');
   if (queue !== undefined) out.maxQueue = Math.floor(queue);
   return out;
+}
+
+/** `printSpanLink` / WEFT_PRINT_SPAN_LINK; the earlier printCallLink / WEFT_PRINT_CALL_LINK are read with one warning. */
+function printSpanLinkSetting(st: ClientSettings): boolean {
+  if (st.printSpanLink !== undefined) return st.printSpanLink;
+  if (st.printCallLink !== undefined) {
+    deprecated('settings.printCallLink', 'settings.printSpanLink');
+    return st.printCallLink;
+  }
+  if (!(process.env.WEFT_PRINT_SPAN_LINK ?? '').trim() && (process.env.WEFT_PRINT_CALL_LINK ?? '').trim()) {
+    deprecated('WEFT_PRINT_CALL_LINK', 'WEFT_PRINT_SPAN_LINK');
+    return settingBool(undefined, 'WEFT_PRINT_CALL_LINK', true);
+  }
+  return settingBool(undefined, 'WEFT_PRINT_SPAN_LINK', true);
 }
 
 function settingBool(v: boolean | undefined, env: string, dflt: boolean): boolean {
@@ -282,7 +298,7 @@ export class WeftClient {
   readonly settings: ClientSettings;
   readonly captureCode: boolean;
   readonly captureReasoning: boolean;
-  readonly printCallLink: boolean;
+  readonly printSpanLink: boolean;
   readonly globalAttributes: Record<string, unknown>;
   private runLink: { runId: string; step?: number | (() => number | undefined) } | null = null;
 
@@ -299,7 +315,7 @@ export class WeftClient {
     this.http = new HttpClient(this.serverUrl, opts.apiKey ?? process.env.WEFT_API_KEY, timeoutMs);
     this.captureCode = settingBool(st.captureCode, 'WEFT_CAPTURE_CODE', true);
     this.captureReasoning = settingBool(st.captureReasoning, 'WEFT_CAPTURE_REASONING', true);
-    this.printCallLink = settingBool(st.printCallLink, 'WEFT_PRINT_CALL_LINK', true);
+    this.printSpanLink = printSpanLinkSetting(st);
     this.globalAttributes = { ...(st.globalAttributes ?? {}) };
     let walPath: string | undefined;
     if (settingBool(st.enableDiskFallback, 'WEFT_ENABLE_WAL', false)) {
@@ -387,13 +403,13 @@ export class WeftClient {
     const parent = opts.parent === undefined ? getCurrentCall() : opts.parent;
     const id = uuid7();
     const ctx = currentContext();
-    let threadId: string | null = null;
+    let sessionId: string | null = null;
     let turnId: string | null = null;
-    if (ctx.thread) {
-      threadId = ctx.thread.threadId;
-      turnId = !parent || parent.id === ctx.thread.entryParentId || parent.sessionId !== threadId ? id : parent.turnId;
+    if (ctx.session) {
+      sessionId = ctx.session.sessionId;
+      turnId = !parent || parent.id === ctx.session.entryParentId || parent.sessionId !== sessionId ? id : parent.turnId;
     } else if (parent?.sessionId) {
-      threadId = parent.sessionId;
+      sessionId = parent.sessionId;
       turnId = parent.turnId;
     }
     let raw = inputs;
@@ -429,7 +445,7 @@ export class WeftClient {
     };
     const call = new Span(data, this);
     call.rawInputs = { ...inputs };
-    call.sessionId = threadId;
+    call.sessionId = sessionId;
     call.turnId = turnId;
     if (kind === 'llm') {
       // An LLM call nested in a framework's LLM call holds the reasoning; the
@@ -453,7 +469,7 @@ export class WeftClient {
       if (link.step !== undefined) call.runStep = link.step;
     }
     this.sender.enqueue({ kind: 'span_start', payload: this.startPayload(call) });
-    if (!parent && this.printCallLink) process.stderr.write(`weft: ${this.spanUrl(call)}\n`);
+    if (!parent && this.printSpanLink) process.stderr.write(`weft: ${this.spanUrl(call)}\n`);
     return call;
   }
 
@@ -484,18 +500,35 @@ export class WeftClient {
     return scrubReasoning(value, this.captureReasoning);
   }
 
+  /** @deprecated Use printSpanLink. */
+  get printCallLink(): boolean {
+    deprecated('WeftClient.printCallLink', 'WeftClient.printSpanLink');
+    return this.printSpanLink;
+  }
+
   /**
-   * Change a running span's attributes (deep-merged), session (`threadId`) or display name.
+   * Change a running span's attributes (deep-merged), session (`sessionId`), turn or display name.
    * The start is sent again with the new values before the end (the server
    * upserts it), so this works after the start went out.
    */
-  updateCall(call: Span, attributes?: Record<string, unknown> | null, opts: { threadId?: string; turnId?: string; displayName?: string } = {}): void {
+  updateSpan(span: Span, attributes?: Record<string, unknown> | null, opts: { sessionId?: string; turnId?: string; displayName?: string } = {}): void {
+    this.applySpanUpdate(span, attributes, opts);
+  }
+
+  /** @deprecated Use `updateSpan(span, attributes, { sessionId })`. */
+  updateCall(call: Span, attributes?: Record<string, unknown> | null, opts: { threadId?: string; sessionId?: string; turnId?: string; displayName?: string } = {}): void {
+    deprecated('WeftClient.updateCall({ threadId })', 'WeftClient.updateSpan({ sessionId })');
+    const { threadId, ...rest } = opts;
+    this.applySpanUpdate(call, attributes, { ...rest, sessionId: rest.sessionId ?? threadId });
+  }
+
+  private applySpanUpdate(call: Span, attributes: Record<string, unknown> | null | undefined, opts: { sessionId?: string; turnId?: string; displayName?: string }): void {
     if (call.ended) {
-      logger.debug(`weft: updateCall ignored: call ${call.id} already ended`);
+      logger.debug(`weft: updateSpan ignored: span ${call.id} already ended`);
       return;
     }
     if (attributes && Object.keys(attributes).length) call.attributes = deepMergeAttrs(call.attributes ?? {}, toJson(attributes, this) as Record<string, unknown>);
-    if (opts.threadId !== undefined) call.sessionId = opts.threadId;
+    if (opts.sessionId !== undefined) call.sessionId = opts.sessionId;
     if (opts.turnId !== undefined) call.turnId = opts.turnId;
     if (opts.displayName !== undefined) call.displayName = opts.displayName;
     call.resendStart = true;

@@ -223,7 +223,7 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 		ProjectID: project,
 		ID:        id,
 		TraceID:   hex.EncodeToString(sp.GetTraceId()),
-		OpName:    firstString(attrs, "weft.op_name"),
+		OpName:    firstString(attrs, store.AttrKeys(store.AttrSpanName)...),
 		StartedAt: nanosToTime(sp.GetStartTimeUnixNano()),
 	}
 	if st.OpName == "" {
@@ -240,8 +240,8 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 	if st.DisplayName == nil {
 		st.DisplayName = frameworkDisplayName(attrs)
 	}
-	st.ThreadID = optString(attrs, "weft.thread_id", "gen_ai.conversation.id", "session.id",
-		"gcp.vertex.agent.session_id", "ai.telemetry.metadata.sessionId", "ai.telemetry.metadata.threadId", "ai.telemetry.metadata.conversationId")
+	st.ThreadID = optString(attrs, append(store.AttrKeys(store.AttrSessionID), "gen_ai.conversation.id", "session.id",
+		"gcp.vertex.agent.session_id", "ai.telemetry.metadata.sessionId", "ai.telemetry.metadata.threadId", "ai.telemetry.metadata.conversationId")...)
 	st.TurnID = optString(attrs, "weft.turn_id")
 	if st.TurnID == nil && isTrue(attrs["weft.is_turn"]) {
 		st.TurnID = &id

@@ -54,9 +54,9 @@ export interface AgentSpan {
   span_id: string
   trace_id: string
   parent_span_id: string | null
-  /** The op (call id / trace id) the span was emitted from, when it started its own trace inside one (weft.parent_call.*). */
-  parent_call_id?: string | null
-  parent_call_trace_id?: string | null
+  /** The span (span id / trace id) this span was emitted from, when it started its own trace inside one (weft.parent_span.*). */
+  linked_parent_span_id?: string | null
+  linked_parent_trace_id?: string | null
   operation_name: string | null
   span_name: string | null
   display_name: string

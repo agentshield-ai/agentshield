@@ -1,4 +1,4 @@
-"""Context propagation (contextvars) for the call stack, attributes and threads.
+"""Context propagation (contextvars) for the span stack, attributes and sessions.
 
 asyncio tasks inherit the context automatically. For threads use
 ``weft.ThreadPoolExecutor`` / ``weft.Thread`` or ``contextvars.copy_context()``.
@@ -24,20 +24,29 @@ _suppressed: contextvars.ContextVar[bool] = contextvars.ContextVar("weft_suppres
 
 
 @dataclass
-class ThreadContext:
-    thread_id: str
-    # The call that was current when the thread block was entered. Calls
-    # created whose parent is this call are turns.
+class SessionContext:
+    """The block of ``with weft.session(...)``."""
+
+    session_id: str
+    """The session (conversation) id the block's spans get."""
+    # The span that was current when the block was entered. Spans created
+    # whose parent is this span are turns.
     entry_parent_id: Optional[str]
     turn_id: Optional[str] = None
 
     @property
-    def session_id(self) -> str:
-        """The session (conversation) id the block's spans get."""
-        return self.thread_id
+    def thread_id(self) -> str:
+        """Deprecated: ``session_id``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("SessionContext.thread_id", "SessionContext.session_id")
+        return self.session_id
 
 
-_thread: contextvars.ContextVar[Optional[ThreadContext]] = contextvars.ContextVar("weft_thread", default=None)
+# The earlier name of SessionContext.
+ThreadContext = SessionContext
+
+_session: contextvars.ContextVar[Optional[SessionContext]] = contextvars.ContextVar("weft_session", default=None)
 
 
 @dataclass(frozen=True)
@@ -168,29 +177,44 @@ def attributes(attrs: Dict[str, Any]) -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def thread(thread_id: Optional[str] = None) -> Iterator[ThreadContext]:
-    """Group spans into a conversation (session).
+def session(session_id: Optional[str] = None) -> Iterator[SessionContext]:
+    """Group spans into a session (conversation).
 
-    Every span started inside the block gets ``session_id`` = ``thread_id``.
-    Spans started directly inside the block (not nested in another span from
-    the block) are *turns*: their ``turn_id`` is their own id; descendants
-    inherit it.
+    Every span started inside the block gets ``session_id`` (a new id when
+    it is omitted). Spans started directly inside the block (not nested in
+    another span from the block) are *turns*: their ``turn_id`` is their own
+    id; descendants inherit it.
     """
     parent = get_current_call()
-    ctx = ThreadContext(thread_id=thread_id or uuid7(), entry_parent_id=parent.id if parent else None)
-    token = _thread.set(ctx)
+    ctx = SessionContext(session_id=session_id or uuid7(), entry_parent_id=parent.id if parent else None)
+    token = _session.set(ctx)
     try:
         yield ctx
     finally:
-        _thread.reset(token)
+        _session.reset(token)
 
 
-def current_thread_context() -> Optional[ThreadContext]:
-    return _thread.get()
+@contextlib.contextmanager
+def thread(thread_id: Optional[str] = None) -> Iterator[SessionContext]:
+    """Deprecated: ``weft.session(session_id)``."""
+    from ._deprecation import deprecated_call
+
+    deprecated_call("weft.thread(thread_id)", "weft.session(session_id)", stacklevel=4)
+    with session(thread_id) as ctx:
+        yield ctx
+
+
+def current_session_context() -> Optional[SessionContext]:
+    return _session.get()
+
+
+def current_thread_context() -> Optional[SessionContext]:
+    """Deprecated internal name of ``current_session_context``."""
+    return _session.get()
 
 
 # Eval metadata of the EvaluationLogger prediction being recorded (``weft.eval.*``
-# span attributes: run_id, predict_and_score_call_id, project_id, kind, ...).
+# span attributes: run_id, prediction_span_id, project_id, kind, ...).
 _eval_span: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("weft_eval_span", default=None)
 
 

@@ -63,12 +63,12 @@ def test_cache_serves_immutable_reads(client, fake):
 
 def test_cache_persists_on_disk_across_clients(fake, tmp_path, monkeypatch):
     monkeypatch.setenv("WEFT_SERVER_CACHE_DIR", str(tmp_path / "c"))
-    c1 = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c1 = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     ref = weft.save(weft.Dataset(name="d", rows=[{"x": 1}]))
     c1.get(ref)
     weft.finish()
     before = _count(fake, OBJ_READ)
-    c2 = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c2 = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     assert [r["x"] for r in c2.get(ref).rows] == [1]
     assert _count(fake, OBJ_READ) == before
     assert (tmp_path / "c" / "server_cache.sqlite").exists()
@@ -79,7 +79,7 @@ def test_cache_persists_on_disk_across_clients(fake, tmp_path, monkeypatch):
 
 
 def test_cache_invalidated_on_delete_and_can_be_disabled(fake, monkeypatch):
-    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     ref = weft.save(weft.Dataset(name="gone", rows=[{"x": 1}]))
     c.get(ref)
     assert c.delete_object_version(ref) == 1
@@ -87,7 +87,7 @@ def test_cache_invalidated_on_delete_and_can_be_disabled(fake, monkeypatch):
         c.get(ref)
     weft.finish()
 
-    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"use_server_cache": False, "print_call_link": False})
+    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"use_server_cache": False, "print_span_link": False})
     ref = weft.save(weft.Dataset(name="nocache", rows=[{"x": 1}]))
     before = _count(fake, OBJ_READ)
     c.get(ref)
@@ -97,7 +97,7 @@ def test_cache_invalidated_on_delete_and_can_be_disabled(fake, monkeypatch):
     weft.finish()
 
     monkeypatch.setenv("WEFT_USE_SERVER_CACHE", "false")
-    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     assert getattr(c._http, "enabled") is False
     weft.finish()
 
@@ -246,14 +246,14 @@ def test_log_prediction_links_existing_calls_and_turns(client, fake):
     assert p1.output == "answer:one" and p1.model_latency is not None
     pas = fake.calls[p1.predict_and_score_call.id]
     w = pas["attributes"]["weft"]
-    assert w["linked_calls"] == [{"call_id": c1.id, "trace_id": c1.trace_id}]
+    assert w["linked_spans"] == [{"span_id": c1.id, "trace_id": c1.trace_id}] and "linked_calls" not in w
     assert w["genai_span_ref"] == [{"trace_id": c1.trace_id, "span_id": c1.id}]
     assert w["eval"]["kind"] == "agent"
     pred = fake.calls[p1.predict_call.id]
-    assert pred["output"] == "answer:one" and pred["attributes"]["weft"]["linked_calls"][0]["call_id"] == c1.id
-    assert fake.calls[p2.predict_and_score_call.id]["attributes"]["weft"]["linked_calls"][0]["call_id"] == turn.call_id
+    assert pred["output"] == "answer:one" and pred["attributes"]["weft"]["linked_spans"][0]["span_id"] == c1.id
+    assert fake.calls[p2.predict_and_score_call.id]["attributes"]["weft"]["linked_spans"][0]["span_id"] == turn.call_id
     w3 = fake.calls[p3.predict_and_score_call.id]["attributes"]["weft"]
-    assert w3["linked_calls"][0]["call_id"] == batch.root_span_ids[0]
+    assert w3["linked_spans"][0]["span_id"] == batch.root_span_ids[0]
     assert w3["linked_conversation_ids"] == ["c-3", conv.conversation_id]
     assert p4.output == "answer:one"  # fetched from the server by id
     assert summary["correct"] == {"true_count": 1, "true_fraction": 1.0}
@@ -283,7 +283,7 @@ def test_log_prediction_context_manager_nests_and_links_agent_spans(client, fake
     assert r["parent_id"] == pc["id"]
     t = fake.calls[turn.call_id]
     link = t["attributes"]["weft"]["eval"]
-    assert link["predict_and_score_call_id"] == pred.predict_and_score_call.id
+    assert link["prediction_span_id"] == pred.predict_and_score_call.id and "predict_and_score_call_id" not in link
     assert link["run_id"] == ev.call.id and link["example_id"] == "ex-1" and link["trial_index"] == 0
     assert link["evaluation_name"] == "ctx eval" and link["kind"] == "agent"
     pas = fake.calls[pred.predict_and_score_call.id]

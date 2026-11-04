@@ -164,7 +164,7 @@ export interface LogPredictionOptions {
    * Link the prediction to traces that already exist instead of re-recording
    * them: a Call, a call id or call URI, a conversation span (Turn, LLM, ...),
    * a `LogResult`, a `Conversation`, or a list of these. The links are stored
-   * on the prediction as `attributes.weft.linked_calls`,
+   * on the prediction as `attributes.weft.linked_spans`,
    * `attributes.weft.genai_span_ref` (`[{trace_id, span_id}]`, as in the
    * v2 predictions API) and `attributes.weft.linked_conversation_ids`. Without
    * an explicit output, a linked Call's output (and duration) is used.
@@ -178,7 +178,7 @@ export interface LogPredictionOptions {
 }
 
 interface Linked {
-  calls: Array<{ call_id: string; trace_id?: string }>;
+  calls: Array<{ span_id: string; trace_id?: string }>;
   conversationIds: string[];
   callObjects: Array<Call | string>;
 }
@@ -189,26 +189,26 @@ function linkedCalls(link: unknown): Linked {
   for (const it of items) {
     if (it === null || it === undefined) continue;
     if (it instanceof CallClass) {
-      out.calls.push({ call_id: it.id, trace_id: it.traceId });
+      out.calls.push({ span_id: it.id, trace_id: it.traceId });
       out.callObjects.push(it);
     } else if (typeof it === 'string') {
       if (isRefUri(it)) {
         const r = Ref.parse(it);
         if (r.kind !== 'span') throw new Error(`${it} is not a span ref`);
-        out.calls.push({ call_id: r.name });
-      } else out.calls.push({ call_id: it });
+        out.calls.push({ span_id: r.name });
+      } else out.calls.push({ span_id: it });
       out.callObjects.push(it);
     } else if (it instanceof SpanBase) {
       it.start();
       if (it.call) {
-        out.calls.push({ call_id: it.call.id, trace_id: it.call.traceId });
+        out.calls.push({ span_id: it.call.id, trace_id: it.call.traceId });
         out.callObjects.push(it.call);
       }
     } else if (it instanceof Conversation) {
       out.conversationIds.push(it.conversationId);
     } else if (typeof it === 'object' && Array.isArray((it as any).rootSpanIds)) {
       const lr = it as { rootSpanIds: string[]; traceIds?: string[]; conversationId?: string };
-      lr.rootSpanIds.forEach((id, i) => out.calls.push({ call_id: id, ...(lr.traceIds?.[i] ? { trace_id: lr.traceIds[i] } : {}) }));
+      lr.rootSpanIds.forEach((id, i) => out.calls.push({ span_id: id, ...(lr.traceIds?.[i] ? { trace_id: lr.traceIds[i] } : {}) }));
       if (lr.conversationId) out.conversationIds.push(lr.conversationId);
     } else throw new Error(`cannot link ${typeof it === 'object' ? (it as object).constructor?.name : typeof it} to a prediction`);
   }
@@ -390,8 +390,8 @@ export class EvaluationLogger {
     const evalKind = opts.evalKind === undefined ? 'agent' : opts.evalKind;
     const weft: Record<string, unknown> = {};
     if (linked.calls.length) {
-      weft.linked_calls = linked.calls;
-      weft.genai_span_ref = linked.calls.map((c) => ({ trace_id: c.trace_id ?? null, span_id: c.call_id }));
+      weft.linked_spans = linked.calls;
+      weft.genai_span_ref = linked.calls.map((c) => ({ trace_id: c.trace_id ?? null, span_id: c.span_id }));
     }
     if (linked.conversationIds.length) weft.linked_conversation_ids = linked.conversationIds;
     const evalMeta: Record<string, unknown> = {};
@@ -410,7 +410,7 @@ export class EvaluationLogger {
       if (output !== undefined || linked.calls.length) this.client.finishCall(pc, output ?? null);
       evalContext = {
         run_id: this.call.id,
-        predict_and_score_call_id: pas.id,
+        prediction_span_id: pas.id,
         project_id: this.client.projectId,
         kind: evalKind,
         row_digest: opts.rowDigest ?? digest(toJson(inputs)),

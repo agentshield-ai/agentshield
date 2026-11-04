@@ -112,7 +112,7 @@ def test_threads_and_turns(live):
     def step(i):
         return i
 
-    with weft.thread("conv-it"):
+    with weft.session("conv-it"):
         step(1)
         step(2)
     live.flush()

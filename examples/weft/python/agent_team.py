@@ -21,7 +21,7 @@ import uuid
 import weft
 from weft.conversation import ToolCallPart
 
-client = weft.init("agent-team-demo", settings={"print_call_link": False})
+client = weft.init("agent-team-demo", settings={"print_span_link": False})
 SESSION = f"trip-oslo-{uuid.uuid4().hex[:6]}"
 
 

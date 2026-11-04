@@ -11,7 +11,7 @@ import pytest
 
 import weft
 from weft.integrations import unpatch_all
-from weft.trace_server_interface import SortBy, ThreadsQueryReq
+from weft.api_types import SortBy, ThreadsQueryReq
 
 
 @pytest.fixture(autouse=True)
@@ -154,29 +154,29 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
     under_op, under_turn, op_turn, off_env, off_setting = llms
     turns = {c["id"]: c for c in fake.calls_by_op("invoke_agent")}
     # Inside an op: its own "typesafe SDK" turn on a new trace,
-    # linked to the op by weft.parent_call.* on both spans, not nested.
+    # linked to the op by weft.parent_span.* on both spans, not nested.
     own = turns[under_op["parent_id"]]
     assert own["display_name"] == "invoke_agent typesafe SDK" and own["parent_id"] is None
     assert own["trace_id"] == under_op["trace_id"] != op_call["trace_id"]
     link = {"trace_id": op_call["trace_id"], "id": op_call["id"]}
-    assert own["attributes"]["weft"]["parent_call"] == link and under_op["attributes"]["weft"]["parent_call"] == link
+    assert own["attributes"]["weft"]["parent_span"] == link and under_op["attributes"]["weft"]["parent_span"] == link
     assert own["attributes"]["weft"]["integration"] == "typesafe"
     assert not [c for c in fake.calls.values() if c.get("parent_id") == op_call["id"]], "nothing nests under the op"
     # Inside a running turn: under the turn; no op running, so no link.
     assert under_turn["parent_id"] == turn.call_id and under_turn["attributes"]["gen_ai"]["conversation"]["id"] == "conv-ts"
-    assert "parent_call" not in under_turn["attributes"].get("weft", {})
-    assert "parent_call" not in turns[under_turn["parent_id"]]["attributes"].get("weft", {})
+    assert "parent_span" not in under_turn["attributes"].get("weft", {})
+    assert "parent_span" not in turns[under_turn["parent_id"]]["attributes"].get("weft", {})
     # A turn running inside an op: under the turn, linked to the op (the
     # innermost op, not the turn).
     assert op_turn["parent_id"] == helper_turn_id
-    assert op_turn["attributes"]["weft"]["parent_call"] == {"trace_id": handle_call["trace_id"], "id": handle_call["id"]}
+    assert op_turn["attributes"]["weft"]["parent_span"] == {"trace_id": handle_call["trace_id"], "id": handle_call["id"]}
     for c in (off_env, off_setting):
         assert not c["inputs"].get("messages") and "questions" not in json.dumps(c["attributes"]) and not c.get("output")
     assert "private" not in json.dumps(fake.calls)
     # the op's own turn, support, helper, and the two capture-off calls' own turns
     assert len(turns) == 5
     for c in (off_env, off_setting):
-        assert "parent_call" not in c["attributes"].get("weft", {})
+        assert "parent_span" not in c["attributes"].get("weft", {})
 
 
 # ---------------------------------------------------------------- require_current_call, urls
@@ -222,10 +222,10 @@ def test_threads_query(client, fake):
     def turn(i):
         return i
 
-    with weft.thread("t-a"):
+    with weft.session("t-a"):
         turn(1)
         turn(2)
-    with weft.thread("t-b"):
+    with weft.session("t-b"):
         turn(3)
     client.flush()
     res = client.threads_query(ThreadsQueryReq(project_id="test-proj", sort_by=[SortBy(field="turn_count", direction="desc")], limit=10))
@@ -243,7 +243,7 @@ def test_threads_query(client, fake):
 # ---------------------------------------------------------------- WEFT_DEBUG_HTTP, WEFT_DISABLE_WAL_SENDER
 def test_debug_http(fake, monkeypatch, capsys):
     monkeypatch.setenv("WEFT_DEBUG_HTTP", "1")
-    c = weft.init("test-entity/dbg", server_url=fake.url, api_key="sk-secret", autopatch=False, settings={"print_call_link": False})
+    c = weft.init("test-entity/dbg", server_url=fake.url, api_key="sk-secret", autopatch=False, settings={"print_span_link": False})
     try:
         @weft.trace
         def f(x):
@@ -260,7 +260,7 @@ def test_debug_http(fake, monkeypatch, capsys):
     assert "Authorization: <Redacted>" in err and "sk-secret" not in err
     assert "----- Response below -----" in err and "Status Code: 404" in err and '"x": 1' in err
     monkeypatch.delenv("WEFT_DEBUG_HTTP")
-    weft.init("test-entity/dbg", server_url=fake.url, autopatch=False, settings={"print_call_link": False}).flush()
+    weft.init("test-entity/dbg", server_url=fake.url, autopatch=False, settings={"print_span_link": False}).flush()
     weft.finish()
     assert "Method:" not in capsys.readouterr().err
 
@@ -269,7 +269,7 @@ def test_disable_wal_sender(fake, monkeypatch, tmp_path):
     monkeypatch.setenv("WEFT_ENABLE_WAL", "true")
     monkeypatch.setenv("WEFT_WAL_DIR", str(tmp_path))
     monkeypatch.setenv("WEFT_DISABLE_WAL_SENDER", "true")
-    c = weft.init("test-entity/wal", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c = weft.init("test-entity/wal", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
 
     @weft.trace
     def g(x):
@@ -281,7 +281,7 @@ def test_disable_wal_sender(fake, monkeypatch, tmp_path):
     assert not [r for r in fake.requests if r["path"] in ("/api/v1/spans/batch", "/api/v1/objects/save")], "nothing is sent"
     assert c._sender.wal is not None and c._sender.wal.count() >= 3  # op object, call start, call end
     monkeypatch.delenv("WEFT_DISABLE_WAL_SENDER")
-    c2 = weft.init("test-entity/wal", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c2 = weft.init("test-entity/wal", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     c2.flush(5)
     weft.finish()
     [call] = fake.calls_by_op("g")

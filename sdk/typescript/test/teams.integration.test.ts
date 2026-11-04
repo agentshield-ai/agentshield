@@ -41,7 +41,7 @@ const edges = (g: any) => new Set<string>(g.edges.map((e: any) => `${e.from}>${e
 
 describe.skipIf(!URL)('real server: agent teams, hand-offs and reasoning', () => {
   beforeAll(async () => {
-    client = await weft.init(`it/ts-teams-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printCallLink: false } });
+    client = await weft.init(`it/ts-teams-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printSpanLink: false } });
   });
   afterAll(() => weft.finish());
 

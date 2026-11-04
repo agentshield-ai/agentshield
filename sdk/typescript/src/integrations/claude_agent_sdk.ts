@@ -110,7 +110,7 @@ class QueryTracer {
         attributes: this.attrs(attrs),
         startedAt: this.startedAt,
       });
-    this.root = this.sessionId ? runWith({ thread: { threadId: this.sessionId, entryParentId: this.parent?.id ?? null } }, create) : create();
+    this.root = this.sessionId ? runWith({ session: { sessionId: this.sessionId, entryParentId: this.parent?.id ?? null } }, create) : create();
     return this.root;
   }
 

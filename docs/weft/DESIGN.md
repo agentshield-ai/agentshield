@@ -120,9 +120,31 @@ documents them.
   `agentshield.verdict.action`) become detections (§5.1). They are also stored
   as ordinary spans.
 - Weft SDK attributes: `weft.team.id`, `weft.team.name`, `weft.handoff.*`,
-  `weft.parent_call.id` / `weft.parent_call.trace_id` (a linked trace, as used
-  by TypeSafe) and `weft.eval.*` (evaluation links). Other names for these
-  are accepted only through the compatibility adapter (§8).
+  `weft.parent_span.id` / `weft.parent_span.trace_id` (a linked trace, as used
+  by TypeSafe), `weft.eval.*` (evaluation links: `weft.eval.run_id`,
+  `weft.eval.prediction_span_id`), `weft.linked_spans` (`[{span_id,
+  trace_id?}]`, a prediction's links), `weft.session_id` and, on OTLP spans,
+  `weft.span.name` (the stored span name). API.md, *Span attributes*, lists
+  them all. Other products' names for these are accepted only through the
+  compatibility adapter (§8).
+- Attribute keys are an ingest contract. Keys whose names used Weft's earlier
+  terms were renamed with §10 (op → span name, call → span, thread →
+  session): `weft.op_name` → `weft.span.name`, `weft.thread_id` →
+  `weft.session_id`, `weft.parent_call.*` → `weft.parent_span.*`,
+  `weft.eval.predict_and_score_call_id` → `weft.eval.prediction_span_id`,
+  `weft.linked_calls` (`{call_id}` items) → `weft.linked_spans`
+  (`{span_id}`). The SDKs and plugins write only the new keys. The server
+  keeps reading the old ones, which earlier SDK versions send and stored
+  spans carry: this is Weft's own backward compatibility, not the adapter's,
+  and the old names are listed in one place (`internal/weft/store/attrkeys.go`).
+  Stored attributes are not rewritten; queries on either name match spans
+  stored under both, and the new key wins when a span has both.
+  `weft.span.name` was chosen over `weft.name` because it says what it names
+  (an OTel span's own name is separate) and leaves `weft.name` free. The
+  Agents API span fields that mirrored the old link (`parent_call_id`,
+  `parent_call_trace_id`) are now `linked_parent_span_id` /
+  `linked_parent_trace_id` (`parent_span_id` already names the parent within
+  the trace); the old names stay accepted in queries.
 
 ## 5. AgentShield integration
 
@@ -527,6 +549,17 @@ digests in the older form; both forms resolve.
   their generic names.
 - The previous names (`op`, `publish`, `ref(...).get()`, `get_calls`,
   `get_call`) stay as deprecated aliases for one release.
+- Other SDK names that used the earlier terms follow them: Python
+  `weft.session(session_id)` (was `weft.thread(thread_id)`),
+  `client.update_span(span, ..., session_id=)` (was
+  `update_call(..., thread_id=)`), the `print_span_link` setting and
+  `WEFT_PRINT_SPAN_LINK` (were `print_call_link` / `WEFT_PRINT_CALL_LINK`),
+  a saved view's default pinned column `name` (was `op_name`; pins saved
+  with the earlier column names are read as Weft's) and the module
+  `weft.api_types` (was `weft.trace_server_interface`, kept as a
+  re-export); TypeScript `withSession`, `client.updateSpan(span, …,
+  { sessionId })` and `printSpanLink`. The earlier names are deprecated
+  aliases on the same terms.
   - They emit a `DeprecationWarning`.
   - They are documented only in the SDK changelog.
 - The local scorers default to openly licensed models with neutral names.
@@ -582,7 +615,5 @@ digests in the older form; both forms resolve.
   Stored records (automation runs, signal feedback, lineage links) were
   rewritten once and saved objects got a new version (`weft-names-1`).
   Table columns keep their names (`annotation_queue_items.call_*`,
-  `audit_log.call_ids`, like `calls.op_name`). Attribute keys are an ingest
-  contract and keep their names (`weft.op_name`, `weft.thread_id`,
-  `weft.parent_call.*`, `weft.eval.predict_and_score_call_id`,
-  `weft.linked_calls`; §4).
+  `audit_log.call_ids`, like `calls.op_name`). Attribute keys were renamed
+  afterwards, with the old names still read (§4).

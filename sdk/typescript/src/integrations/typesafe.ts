@@ -13,9 +13,9 @@
  *   turn named `typesafe SDK` (in the current conversation, if any), the root
  *   of its own trace, also inside an op (the integration creates no op call of
  *   its own). When an op is running, the spans are linked to it by the
- *   `weft.parent_call.id` and `weft.parent_call.trace_id` attributes
+ *   `weft.parent_span.id` and `weft.parent_span.trace_id` attributes
  *   (DESIGN.md §4; the server exposes them as the agent span fields
- *   `parent_call_id` / `parent_call_trace_id`);
+ *   `linked_parent_span_id` / `linked_parent_trace_id`);
  * - errors: `error.type` and `http.response.status_code`; the provider error
  *   text (it carries the response body) is not copied.
  *
@@ -116,7 +116,7 @@ function markFailed(span: LLM | Turn, error: any): void {
 function linkToRunningOp(): Record<string, unknown> {
   const calls = currentContext().stack.filter((c) => !c.conversationSpan);
   const op = calls[calls.length - 1];
-  return op?.id && op.traceId ? { weft: { parent_call: { id: op.id, trace_id: op.traceId } } } : {};
+  return op?.id && op.traceId ? { weft: { parent_span: { id: op.id, trace_id: op.traceId } } } : {};
 }
 
 function withLink(attrs: Record<string, unknown>, link: Record<string, unknown>): Record<string, unknown> {

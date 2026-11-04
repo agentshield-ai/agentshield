@@ -556,20 +556,21 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 	}
 }
 
-// Spans emitted inside an op carry a link to it (weft.parent_call.id /
-// .trace_id, as the Weft SDKs' TypeSafe integration stamps them); agent
-// spans expose it as parent_call_id / parent_call_trace_id.
-func TestAgentSpansParentCallLink(t *testing.T) {
+// Spans emitted inside a traced function carry a link to it
+// (weft.parent_span.id / .trace_id, as the Weft SDKs' TypeSafe integration
+// stamps them); agent spans expose it as linked_parent_span_id /
+// linked_parent_trace_id.
+func TestAgentSpansParentSpanLink(t *testing.T) {
 	e := newEnv(t)
 	base := time.Now().Add(-time.Minute)
 	tr := hexID("lnk", 32)
 	body := otlpBody(base, []testSpan{
 		{trace: tr, id: hexID("t1", 16), name: "invoke_agent typesafe SDK", durMS: 50, attrs: map[string]any{
 			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "typesafe SDK",
-			"weft.parent_call.trace_id": "op-trace-1", "weft.parent_call.id": "op-call-1"}},
+			"weft.parent_span.trace_id": "op-trace-1", "weft.parent_span.id": "op-call-1"}},
 		{trace: tr, id: hexID("c1", 16), parent: hexID("t1", 16), name: "chat jev-latest", startMS: 5, durMS: 40, attrs: map[string]any{
 			"gen_ai.operation.name": "chat", "gen_ai.provider.name": "typesafe", "gen_ai.request.model": "jev-latest",
-			"weft.parent_call.trace_id": "op-trace-1", "weft.parent_call.id": "op-call-1"}},
+			"weft.parent_span.trace_id": "op-trace-1", "weft.parent_span.id": "op-call-1"}},
 		{trace: hexID("other", 32), id: hexID("t2", 16), name: "invoke_agent other", durMS: 10, attrs: map[string]any{
 			"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "other"}},
 	})
@@ -583,28 +584,31 @@ func TestAgentSpansParentCallLink(t *testing.T) {
 			"query": map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": field}, map[string]any{"$literal": v}}}}})
 		return res["spans"].([]any)
 	}
-	spans := query("parent_call_id", "op-call-1")
-	if len(spans) != 2 {
-		t.Fatalf("spans of op-call-1 = %v", spans)
-	}
-	for _, s := range spans {
-		m := s.(map[string]any)
-		if m["parent_call_trace_id"] != "op-trace-1" || m["trace_id"] == "op-trace-1" {
-			t.Fatalf("span = %v", m)
+	// The field, the attribute key, and their deprecated names.
+	for _, f := range []string{"linked_parent_span_id", "weft.parent_span.id", "parent_call_id", "weft.parent_call.id"} {
+		spans := query(f, "op-call-1")
+		if len(spans) != 2 {
+			t.Fatalf("spans of op-call-1 by %s = %v", f, spans)
+		}
+		for _, s := range spans {
+			m := s.(map[string]any)
+			if m["linked_parent_trace_id"] != "op-trace-1" || m["trace_id"] == "op-trace-1" || m["parent_call_id"] != nil {
+				t.Fatalf("span = %v", m)
+			}
 		}
 	}
 	// An SDK-recorded span (nested attributes), as the Weft SDKs send it.
 	e.startSpan(map[string]any{"id": "sdk-llm-weft", "trace_id": "sdk-trace-3",
 		"name": "chat", "started_at": now, "inputs": map[string]any{},
-		"attributes": map[string]any{"weft": map[string]any{"span_kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-3", "id": "op-call-3"}}}})
-	if s := query("weft.parent_call.id", "op-call-3"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm-weft" ||
-		s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-3" {
-		t.Fatalf("weft.parent_call link = %v", s)
+		"attributes": map[string]any{"weft": map[string]any{"span_kind": "llm", "parent_span": map[string]any{"trace_id": "op-trace-3", "id": "op-call-3"}}}})
+	if s := query("weft.parent_span.id", "op-call-3"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm-weft" ||
+		s[0].(map[string]any)["linked_parent_trace_id"] != "op-trace-3" {
+		t.Fatalf("weft.parent_span link = %v", s)
 	}
 	// Unlinked spans have null link fields.
 	res := e.post("/agents/spans/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{
 		"$eq": []any{map[string]any{"$getField": "agent_name"}, map[string]any{"$literal": "other"}}}}})
-	if s := res["spans"].([]any); len(s) != 1 || s[0].(map[string]any)["parent_call_id"] != nil {
+	if s := res["spans"].([]any); len(s) != 1 || s[0].(map[string]any)["linked_parent_span_id"] != nil {
 		t.Fatalf("unlinked = %v", s)
 	}
 }

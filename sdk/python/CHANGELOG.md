@@ -91,8 +91,33 @@ These earlier names still work and emit a `DeprecationWarning`:
 | `SavedView.get_calls()`, `SavedView.to_calls_query()` | `SavedView.spans()`, `SavedView.to_spans_query()` |
 | `weft.Monitor(op_names=...)`, `monitor.op_names` | `weft.Monitor(names=...)`, `monitor.names` |
 | `weft.AnnotationSpec(op_scope=...)`, `spec.op_scope` | `weft.AnnotationSpec(names=...)`, `spec.names` |
+| `weft.thread(thread_id)` (yields a context with `thread_id`) | `weft.session(session_id)` (a `SessionContext` with `session_id`) |
+| `client.update_call(span, attrs, thread_id=...)` | `client.update_span(span, attrs, session_id=...)` |
+| setting `print_call_link`, `client.print_call_link` | `print_span_link`, `client.print_span_link` |
+| module `weft.trace_server_interface` (warns on import) | `weft.api_types` (the same classes) |
+
+`WEFT_PRINT_CALL_LINK` is read when `WEFT_PRINT_SPAN_LINK` is unset, with one
+logged warning. A saved view's default pinned column is `name` (was
+`op_name`); `pin_column_left/right` and `unpin_column` take the earlier
+column names (`op_name`, `exception`, `thread_id`), and pins saved with them
+are read as `name`, `error`, `session_id`. `KNOWN_COLUMNS` has Weft's names
+as well as the earlier ones.
 
 Without a warning, for one release: `call_ref=` on `feedback.add` (now
 `span_ref=`), `"call_id"` in `evaluate_model`'s result and `"version_index"`
 in `link_to_registry`'s (now `"id"` and `"version"`), and write-ahead logs
 written by earlier versions (replayed with the new field names).
+
+### Span attribute keys
+
+The SDK writes Weft's renamed span attribute keys (docs/weft/API.md, *Span
+attributes*): `weft.parent_span.{id, trace_id}` (was `weft.parent_call.*`,
+the TypeSafe integration's link to the running traced function),
+`weft.linked_spans` with `{"span_id", "trace_id"}` items (was
+`weft.linked_calls` with `{"call_id"}`, on `log_prediction(call=...)`
+predictions) and `weft.eval.prediction_span_id` (was
+`weft.eval.predict_and_score_call_id`, on spans recorded inside a
+prediction). The server still reads the old keys, so spans sent by earlier
+SDK versions keep their links. The Agents API span fields for the TypeSafe
+link are `linked_parent_span_id` / `linked_parent_trace_id` (were
+`parent_call_id` / `parent_call_trace_id`, still accepted in queries).

@@ -25,7 +25,7 @@ describe.skipIf(!URL)('real server', () => {
     const agent = weft.trace(async function agent(q: string) {
       return llm(llm(q));
     });
-    expect(await weft.withThread('ts-thread', () => agent('hello <&> é'))).toBe('hello <&> é');
+    expect(await weft.withSession('ts-thread', () => agent('hello <&> é'))).toBe('hello <&> é');
     const [root] = await client.spans({ filter: { names: ['agent'] } });
     expect(root.summary.usage['gpt-4o-mini'].requests).toBe(2);
     expect(root.summary.usage['gpt-4o-mini'].total_tokens).toBe(240);

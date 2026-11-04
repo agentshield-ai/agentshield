@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="WEFT_TEST_SERVER_URL not set")
 def live():
     project = f"it/integ-{uuid.uuid4().hex[:8]}"
     c = weft.init(project, server_url=URL, api_key=os.environ.get("WEFT_TEST_API_KEY"), autopatch=False,
-                  settings={"print_call_link": False})
+                  settings={"print_span_link": False})
     yield c
     weft.flush(10)
     weft.finish()

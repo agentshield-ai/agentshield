@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="WEFT_TEST_SERVER_URL not set")
 @pytest.fixture
 def live():
     project = f"it/agents-{uuid.uuid4().hex[:8]}"
-    c = weft.init(project, server_url=URL, api_key=os.environ.get("WEFT_TEST_API_KEY"), autopatch=False, settings={"print_call_link": False})
+    c = weft.init(project, server_url=URL, api_key=os.environ.get("WEFT_TEST_API_KEY"), autopatch=False, settings={"print_span_link": False})
     yield c
     weft.flush(10)
     weft.finish()
@@ -149,8 +149,8 @@ def test_evaluation_logger_links_existing_turns(live):
     ev.log_summary()
     live.flush()
     [pas, _] = list(live.spans(filter={"names": ["Evaluation.predict_and_score"]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
-    links = pas.attributes["weft"]["linked_calls"]
-    assert links == [{"call_id": turns[0].call_id, "trace_id": turns[0].trace_id}]
+    links = pas.attributes["weft"]["linked_spans"]
+    assert links == [{"span_id": turns[0].call_id, "trace_id": turns[0].trace_id}]
     q = {"$eq": [{"$getField": "attributes.weft.genai_span_ref.0.span_id"}, {"$literal": turns[1].call_id}]}
     found = list(live.spans(query=q))
     assert len(found) >= 1 and all(c.base_name in ("Evaluation.predict_and_score", "calc.predict") for c in found)

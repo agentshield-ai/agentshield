@@ -80,7 +80,7 @@ windows. After review:
 | `sdk/python/src/weft/_custom_runtime.py` | `weave/trace/custom_runtime.py` | pydantic `Field` descriptions (35-token run; they appear in JSON schemas) | Rewritten. |
 | `sdk/typescript/src/client.ts`, `RegisterCustomRuntimeOptions` | `sdks/node/src/weaveClient.ts` | doc comments ("Complete desired list; omitted IDs are removed from an existing runtime.") | Rewritten. |
 | `sdk/python/src/weft/_client.py`, module-level `add_tags` / `remove_tags` / `remove_aliases` | `weave/trace/api.py` | one-line docstrings | Rewritten. |
-| `sdk/python/src/weft/trace_server_interface.py`, module docstring | Weave docs, *Threads* | usage example (22 tokens) | Replaced with a different example. |
+| `sdk/python/src/weft/api_types.py` (was `trace_server_interface.py`), module docstring | Weave docs, *Threads* | usage example (22 tokens) | Replaced with a different example. |
 | `sdk/python/src/weft/integrations/verdict.py`, `start_call` | `weave/integrations/verdict/verdict_sdk.py` | parent-context inheritance (41 tokens) | Rewritten. |
 
 No scorer or LLM-judge prompt, monitor preset, guardrail text or UI string

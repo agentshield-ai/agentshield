@@ -15,7 +15,7 @@ let client: weft.WeftClient;
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
-  client = await weft.init('ts-entity/audit2', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false }, autopatchSettings: {} });
+  client = await weft.init('ts-entity/audit2', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printSpanLink: false }, autopatchSettings: {} });
 });
 
 afterEach(async () => {
@@ -109,10 +109,10 @@ describe('TypeSafe', () => {
     expect(llms[0].parent_id).toBe(turn.callId);
     expect(llms[0].attributes.gen_ai.conversation.id).toBe('conv-ts');
     expect(JSON.stringify(fake.callsByOp('chat'))).not.toMatch(/private|not traced/);
-    expect(llms.every((c) => !c.attributes.weft?.parent_call)).toBe(true);
+    expect(llms.every((c) => !c.attributes.weft?.parent_span && !c.attributes.weft?.parent_call)).toBe(true);
   });
 
-  it('inside an op starts its own trace linked to the op by weft.parent_call.*', async () => {
+  it('inside an op starts its own trace linked to the op by weft.parent_span.*', async () => {
     const ts = weft.wrapTypeSafe(new TypeSafeClient());
     const classify = weft.trace(async function classify(msg: string) {
       return (await ts.systemOne({ state: msg, questions: ['refund?'] })).answers;
@@ -142,12 +142,13 @@ describe('TypeSafe', () => {
     expect(own.trace_id).toBe(underOp.trace_id);
     expect(own.trace_id).not.toBe(op.trace_id);
     const link = { id: op.id, trace_id: op.trace_id };
-    expect(own.attributes.weft.parent_call).toEqual(link);
-    expect(underOp.attributes.weft.parent_call).toEqual(link);
+    expect(own.attributes.weft.parent_span).toEqual(link);
+    expect(own.attributes.weft.parent_call).toBeUndefined();
+    expect(underOp.attributes.weft.parent_span).toEqual(link);
     expect([...fake.calls.values()].filter((c: any) => c.parent_id === op.id)).toHaveLength(0);
     // In a running turn inside an op: under the turn, linked to the op (not the turn).
     expect(underTurn.parent_id).toBe(helperTurn);
-    expect(underTurn.attributes.weft.parent_call).toEqual({ id: handleCall.id, trace_id: handleCall.trace_id });
+    expect(underTurn.attributes.weft.parent_span).toEqual({ id: handleCall.id, trace_id: handleCall.trace_id });
   });
 });
 
@@ -186,7 +187,7 @@ describe('environment', () => {
     });
     try {
       process.env.WEFT_DEBUG_HTTP = '1';
-      const c = await weft.init('ts-entity/dbg', { serverUrl: fake.url, apiKey: 'sk-secret', settings: { printCallLink: false } });
+      const c = await weft.init('ts-entity/dbg', { serverUrl: fake.url, apiKey: 'sk-secret', settings: { printSpanLink: false } });
       const f = weft.trace(function f(x: number) {
         return x + 1;
       });
@@ -216,7 +217,7 @@ describe('environment', () => {
     process.env.WEFT_ENABLE_WAL = 'true';
     process.env.WEFT_WAL_DIR = dir;
     process.env.WEFT_DISABLE_WAL_SENDER = 'true';
-    const c = await weft.init('ts-entity/wal', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });
+    const c = await weft.init('ts-entity/wal', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printSpanLink: false } });
     const g = weft.trace(function g(x: number) {
       return x * 2;
     });
@@ -225,7 +226,7 @@ describe('environment', () => {
     expect(fake.requests.filter((r) => r.path === '/api/v1/spans/batch')).toHaveLength(0);
     expect((c as any).sender.wal.count()).toBeGreaterThanOrEqual(2);
     delete process.env.WEFT_DISABLE_WAL_SENDER;
-    const c2 = await weft.init('ts-entity/wal', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });
+    const c2 = await weft.init('ts-entity/wal', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printSpanLink: false } });
     await settle(c2);
     const [call] = fake.callsByOp('g');
     expect(call.output).toBe(4);

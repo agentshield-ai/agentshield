@@ -73,7 +73,7 @@ def bedrock_agent_client():
 
 
 def main():
-    client = weft.init("examples-agents-registry", settings={"print_call_link": False})
+    client = weft.init("examples-agents-registry", settings={"print_span_link": False})
 
     # --- Bedrock Agents: one conversation turn per invoke_agent ------------------
     br, agent_id, alias = bedrock_agent_client()

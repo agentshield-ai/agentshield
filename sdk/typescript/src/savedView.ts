@@ -22,10 +22,15 @@ import { Ref, isRefUri } from './refs.js';
 import { deprecated } from './deprecation.js';
 
 export const KNOWN_COLUMNS = [
-  'id', 'display_name', 'op_name', 'inputs', 'output', 'attributes', 'summary', 'started_at', 'ended_at',
-  'exception', 'func_name', 'parent_id', 'project_id', 'trace_id', 'thread_id', 'turn_id', 'ui_url',
+  'id', 'display_name', 'name', 'inputs', 'output', 'attributes', 'summary', 'started_at', 'ended_at',
+  'error', 'func_name', 'parent_id', 'project_id', 'trace_id', 'session_id', 'turn_id', 'ui_url',
   'user_id', 'run_id', 'feedback',
+  // the earlier names of name, error and session_id
+  'op_name', 'exception', 'thread_id',
 ];
+/** The earlier column names (views saved before the rename) → Weft's span field names. */
+const COLUMN_NAMES: Record<string, string> = { op_name: 'name', exception: 'error', thread_id: 'session_id' };
+const columnName = (c: string) => COLUMN_NAMES[c] ?? c;
 const COLUMN_ALIASES: Record<string, string> = { Status: 'summary.weft.status' };
 
 /** User operator → stored operator (as the UI stores it). */
@@ -52,7 +57,7 @@ export const OPERATOR_MAP: Record<string, string> = {
 };
 const VALUELESS = new Set(['(any): isEmpty', '(any): isNotEmpty']);
 const NO_FLOAT_CONVERT = new Set(['summary.weft.latency_ms', 'started_at', 'ended_at']);
-const DEFAULT_PIN = { left: ['CustomCheckbox', 'op_name'], right: [] as string[] };
+const DEFAULT_PIN = { left: ['CustomCheckbox', 'name'], right: [] as string[] };
 export const CALLS_FILTER_KEYS = new Set([
   'names', 'ids', 'session_ids', 'input_refs', 'output_refs', 'parent_ids', 'trace_ids', 'trace_roots_only',
   'user_ids', 'run_ids', 'turn_ids',
@@ -464,12 +469,15 @@ export class SavedView extends WeftObject {
     return i;
   }
 
+  /** The pinned columns; a view saved with the earlier column names (`op_name`, ...) gets Weft's. */
   private pin(): { left: string[]; right: string[] } {
     const pin = this.definition.pin ?? DEFAULT_PIN;
-    return { left: [...(pin.left ?? [])], right: [...(pin.right ?? [])] };
+    const names = (cols: string[] | undefined) => [...new Set((cols ?? []).map(columnName))];
+    return { left: names(pin.left), right: names(pin.right) };
   }
 
   pinColumnLeft(col: string): this {
+    col = columnName(col);
     const pin = this.pin();
     pin.right = pin.right.filter((c) => c !== col);
     if (!pin.left.includes(col)) pin.left.push(col);
@@ -478,6 +486,7 @@ export class SavedView extends WeftObject {
   }
 
   pinColumnRight(col: string): this {
+    col = columnName(col);
     const pin = this.pin();
     pin.left = pin.left.filter((c) => c !== col);
     if (!pin.right.includes(col)) pin.right.push(col);
@@ -486,6 +495,7 @@ export class SavedView extends WeftObject {
   }
 
   unpinColumn(col: string): this {
+    col = columnName(col);
     const pin = this.pin();
     pin.left = pin.left.filter((c) => c !== col);
     pin.right = pin.right.filter((c) => c !== col);

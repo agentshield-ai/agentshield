@@ -76,7 +76,7 @@ listed under Went on after a failed step reads "this span failed".
 
 A failed sub-agent whose caller carried on is a failed step, not a failed
 session: under the caller's top-level span, or in a trace of its own that is
-linked to the caller, by an OTel span link or `weft.parent_call.id` on its
+linked to the caller, by an OTel span link or `weft.parent_span.id` on its
 top-level span, or by a hand-off to its agent recorded in the caller's
 trace. On Traces that sub-agent trace is listed under **Went on after a
 failed step**, and its caller's trace under its own status. A trace of its

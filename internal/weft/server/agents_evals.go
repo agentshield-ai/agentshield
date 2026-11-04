@@ -10,10 +10,10 @@ import (
 
 // Agent evals (Weft extensions): evaluation runs with the agent spans and
 // conversations linked to them (weft.eval.* span attributes, or
-// EvaluationLogger predictions' weft.linked_calls / genai_span_ref /
+// EvaluationLogger predictions' weft.linked_spans / genai_span_ref /
 // linked_conversation_ids). /agents/spans/query, /agents/spans/stats and
 // /agents/spans/custom-attrs/schema take evaluation_run_id and
-// predict_and_score_call_id filters.
+// prediction_span_id filters.
 
 func init() {
 	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {

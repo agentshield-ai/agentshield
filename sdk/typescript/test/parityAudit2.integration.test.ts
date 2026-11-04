@@ -20,7 +20,7 @@ function wavData(w: Uint8Array): Buffer {
 
 describe.skipIf(!URL)('real server: parity audit 2', () => {
   beforeAll(async () => {
-    client = await weft.init(`it/ts-audit2-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printCallLink: false } });
+    client = await weft.init(`it/ts-audit2-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printSpanLink: false } });
   });
   afterAll(() => weft.finish());
 
@@ -86,10 +86,10 @@ describe.skipIf(!URL)('real server: parity audit 2', () => {
     const res = await fetch(`${URL}/agents/spans/query`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ project_id: client.projectId, query: { $expr: { $eq: [{ $getField: 'parent_call_id' }, { $literal: op.id }] } } }),
+      body: JSON.stringify({ project_id: client.projectId, query: { $expr: { $eq: [{ $getField: 'linked_parent_span_id' }, { $literal: op.id }] } } }),
     });
     const spans: any[] = (await res.json()).spans;
     expect(spans.map((s) => s.operation_name).sort()).toEqual(['chat', 'invoke_agent']);
-    expect(spans.every((s) => s.parent_call_trace_id === op.traceId && s.trace_id !== op.traceId)).toBe(true);
+    expect(spans.every((s) => s.linked_parent_trace_id === op.traceId && s.trace_id !== op.traceId)).toBe(true);
   });
 });

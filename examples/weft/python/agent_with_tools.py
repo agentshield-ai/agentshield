@@ -72,10 +72,10 @@ def agent_turn(question: str) -> str:
 
 
 if __name__ == "__main__":
-    with weft.thread() as t:  # each top-level call in the block is a turn
+    with weft.session() as t:  # each top-level call in the block is a turn
         print(agent_turn("What's the weather in Paris?"))
         print(agent_turn("And what is 21 * 2?"))
     weft.flush()
-    print("thread:", t.session_id)
+    print("session:", t.session_id)
     root = next(iter(client.spans(filter={"names": ["agent_turn"]}, limit=1)))
     print("root usage (rolled up by the server):", root.summary.get("usage"))

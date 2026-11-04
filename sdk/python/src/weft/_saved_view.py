@@ -31,10 +31,14 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._client import SpansIter, WeftClient
 
 KNOWN_COLUMNS = [
-    "id", "display_name", "op_name", "inputs", "output", "attributes", "summary", "started_at", "ended_at",
-    "exception", "func_name", "parent_id", "project_id", "trace_id", "thread_id", "turn_id", "ui_url",
+    "id", "display_name", "name", "inputs", "output", "attributes", "summary", "started_at", "ended_at",
+    "error", "func_name", "parent_id", "project_id", "trace_id", "session_id", "turn_id", "ui_url",
     "user_id", "run_id", "feedback",
+    # the earlier names of name, error and session_id
+    "op_name", "exception", "thread_id",
 ]
+# The earlier column names (views saved before the rename) → Weft's span field names.
+_COLUMN_NAMES = {"op_name": "name", "exception": "error", "thread_id": "session_id"}
 
 COLUMN_ALIASES = {"Status": "summary.weft.status"}
 
@@ -62,7 +66,7 @@ OPERATOR_MAP = {
 }
 VALUELESS_OPERATORS = {"(any): isEmpty", "(any): isNotEmpty"}
 FIELDS_NO_FLOAT_CONVERT = {"summary.weft.latency_ms", "started_at", "ended_at"}
-DEFAULT_PIN = {"left": ["CustomCheckbox", "op_name"], "right": []}
+DEFAULT_PIN = {"left": ["CustomCheckbox", "name"], "right": []}
 CALLS_FILTER_KEYS = {
     "names", "ids", "session_ids", "input_refs", "output_refs", "parent_ids", "trace_ids", "trace_roots_only",
     "user_ids", "run_ids", "turn_ids",
@@ -521,10 +525,21 @@ class SavedView(Object):
         return self
 
     def _pin(self) -> Dict[str, List[str]]:
+        """The pinned columns; a view saved with the earlier column names (``op_name``, ...) gets Weft's."""
         pin = self.definition.get("pin") or {"left": list(DEFAULT_PIN["left"]), "right": []}
-        return {"left": list(pin.get("left") or []), "right": list(pin.get("right") or [])}
+
+        def names(cols: Any) -> List[str]:
+            out: List[str] = []
+            for c in cols or []:
+                c = _COLUMN_NAMES.get(c, c)
+                if c not in out:
+                    out.append(c)
+            return out
+
+        return {"left": names(pin.get("left")), "right": names(pin.get("right"))}
 
     def pin_column_left(self, col_name: str) -> "SavedView":
+        col_name = _COLUMN_NAMES.get(col_name, col_name)
         pin = self._pin()
         if col_name in pin["right"]:
             pin["right"].remove(col_name)
@@ -534,6 +549,7 @@ class SavedView(Object):
         return self
 
     def pin_column_right(self, col_name: str) -> "SavedView":
+        col_name = _COLUMN_NAMES.get(col_name, col_name)
         pin = self._pin()
         if col_name in pin["left"]:
             pin["left"].remove(col_name)
@@ -543,6 +559,7 @@ class SavedView(Object):
         return self
 
     def unpin_column(self, col_name: str) -> "SavedView":
+        col_name = _COLUMN_NAMES.get(col_name, col_name)
         pin = self._pin()
         for side in ("left", "right"):
             if col_name in pin[side]:

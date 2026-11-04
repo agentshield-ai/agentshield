@@ -276,7 +276,7 @@ func DeriveSpan(opName, displayName string, threadID, turnID *string, id string,
 		d.ConversationID = strings.TrimSpace(*threadID)
 	}
 	if d.ConversationID == "" {
-		d.ConversationID = a.str("gen_ai.conversation.id", "gcp.vertex.agent.session_id", "session.id", "weft.thread_id")
+		d.ConversationID = a.str(append([]string{"gen_ai.conversation.id", "gcp.vertex.agent.session_id", "session.id"}, AttrKeys(AttrSessionID)...)...)
 	}
 	d.ConversationName = a.str("gen_ai.conversation.name", "weft.conversation.name")
 	d.IsTurn = (turnID != nil && *turnID == id) || a.truthy("weft.is_turn")

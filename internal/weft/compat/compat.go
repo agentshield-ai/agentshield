@@ -251,7 +251,7 @@ func RewriteRequest(path string, body []byte) []byte {
 		body = rewriteFeedbackTypes(body, legacy.FeedbackType)
 	}
 	if agentsPath(path) {
-		body = bytes.ReplaceAll(body, []byte(`"weave.parent_call.`), []byte(`"weft.parent_call.`))
+		body = bytes.ReplaceAll(body, []byte(`"weave.parent_call.`), []byte(`"weft.parent_span.`))
 	}
 	return body
 }
@@ -319,6 +319,11 @@ func rewriteResponse(path string, body []byte) []byte {
 	body = bytes.ReplaceAll(body, []byte("weft:///"), []byte(legacy.RefScheme))
 	if recordPath(path) {
 		body = legacy.JSONRewrite{Key: legacy.FieldNameOut, Skip: func(k string) bool { return dataKeys[k] }}.Apply(body)
+	}
+	if agentsPath(path) {
+		// The client's agent span fields for the weft.parent_span.* link.
+		body = bytes.ReplaceAll(body, []byte(`"linked_parent_span_id":`), []byte(`"parent_call_id":`))
+		body = bytes.ReplaceAll(body, []byte(`"linked_parent_trace_id":`), []byte(`"parent_call_trace_id":`))
 	}
 	if strings.HasPrefix(path, "/completions/") || path == "/image/create" {
 		body = bytes.ReplaceAll(body, []byte(`"call_id":`), []byte(`"weave_call_id":`))

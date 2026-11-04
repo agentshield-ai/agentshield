@@ -30,7 +30,7 @@ describe.skipIf(!URL)('real server: framework integrations', () => {
     client = await weft.init(`it/ts-frameworks-${randomUUID().slice(0, 8)}`, {
       serverUrl: URL,
       apiKey: process.env.WEFT_TEST_API_KEY,
-      settings: { printCallLink: false },
+      settings: { printSpanLink: false },
       autopatchSettings: { bedrock: { opSettings: { postprocessOutput: (o: any) => ({ ...o, scrubbed: true }) } } },
     });
   });

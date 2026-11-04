@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import * as weft from '../../../sdk/typescript/dist/index.js';
 
-const client = await weft.init('ts-agent-team-demo', { settings: { printCallLink: false } });
+const client = await weft.init('ts-agent-team-demo', { settings: { printSpanLink: false } });
 const session = `trip-oslo-${randomUUID().slice(0, 6)}`;
 
 const webSearch = weft.trace(

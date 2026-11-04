@@ -35,8 +35,8 @@ export function LinkedCalls({ projectId, attributes, compact }: { projectId: str
       {l.evalLink && (
         <div className="row wrap" style={{ gap: 6 }}>
           <span className="muted small">Recorded during an evaluation</span>
-          {l.evalLink.predictAndScoreCallId && (
-            <Link to={spanUrl(projectId, l.evalLink.predictAndScoreCallId)} className="chip">
+          {l.evalLink.predictionSpanId && (
+            <Link to={spanUrl(projectId, l.evalLink.predictionSpanId)} className="chip">
               predict_and_score ↗
             </Link>
           )}

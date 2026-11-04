@@ -91,7 +91,7 @@ is sent and stored is fully redacted. The server can also apply NER
 await weft.init('my-project', {
   settings: {
     globalAttributes: { app: 'support-bot' },   // added to every call
-    printCallLink: true,                         // "weft: <server>/<entity>/<project>/spans/<id>" per root span (WEFT_PRINT_CALL_LINK)
+    printSpanLink: true,                         // "weft: <server>/<entity>/<project>/spans/<id>" per root span (WEFT_PRINT_SPAN_LINK)
     captureCode: true,                           // store traced functions' source (WEFT_CAPTURE_CODE)
     captureReasoning: true,                      // model reasoning: thinking, summaries, weft.reasoning() (WEFT_CAPTURE_REASONING)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
@@ -145,8 +145,10 @@ stderr.
 - Parent/child tracking uses `AsyncLocalStorage`, so it follows `await`,
   `Promise.all` and timers.
 - `weft.attributes({ env: 'prod' }, () => ...)` attaches attributes to spans
-  started inside the callback. `weft.withThread('conversation-id', () => ...)`
+  started inside the callback. `weft.withSession('conversation-id', () => ...)`
   sets the spans' `session_id`, and spans started directly inside are turns.
+  `client.updateSpan(span, attributes, { sessionId, turnId, displayName })`
+  changes a running span.
 - `weft.getCurrentSpan()` returns the current span, and
   `weft.addUsage(span, model, promptTokens, completionTokens)` records the
   span's own LLM usage. The server adds up descendants.
@@ -261,9 +263,9 @@ of provider `typesafe`: the state as the user message, the questions as the
 `typesafe.questions` attribute, the answers, response model, usage and request
 id, inside the running turn or its own `typesafe SDK` turn. That turn is a
 trace of its own even inside an op; when an op is running, the turn
-and the LLM call carry a link to it, `attributes.weft.parent_call.id` and
+and the LLM call carry a link to it, `attributes.weft.parent_span.id` and
 `.trace_id`, which the server exposes as the agent span fields
-`parent_call_id` / `parent_call_trace_id`. Errors keep their
+`linked_parent_span_id` / `linked_parent_trace_id`. Errors keep their
 type and HTTP status but not TypeSafe's message (it holds the response body).
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
 `captureContent: false` or a conversation with `includeContent: false` drops
@@ -627,7 +629,7 @@ ev.logPrediction({ q: '2+2' }, undefined, { call });          // output and late
 ev.logPrediction({ q: 'hi' }, 'hello', { call: turn, exampleId: 'ex-1' });
 ```
 
-Links are stored as `attributes.weft.linked_calls`, `attributes.weft.genai_span_ref`
+Links are stored as `attributes.weft.linked_spans` (`[{span_id, trace_id}]`), `attributes.weft.genai_span_ref`
 (`[{trace_id, span_id}]`, the v2 predictions field) and `attributes.weft.linked_conversation_ids`.
 
 Pass a `Dataset` as `dataset` to link predictions to its rows. Load a

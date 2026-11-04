@@ -93,7 +93,7 @@ export class RunTracker {
     this.runs.delete(runId);
     try {
       const client = getClient();
-      if (late && (late.attributes || late.displayName)) client?.updateCall(r.call, late.attributes ?? null, late.displayName ? { displayName: late.displayName } : {});
+      if (late && (late.attributes || late.displayName)) client?.updateSpan(r.call, late.attributes ?? null, late.displayName ? { displayName: late.displayName } : {});
       if (usage && r.children === 0 && (usage.promptTokens || usage.completionTokens)) {
         addUsage(r.call, usage.model ?? undefined, usage.promptTokens ?? 0, usage.completionTokens ?? 0, usage.totalTokens ?? undefined);
         const e = (r.call.summary.usage as any)?.[usage.model || 'unknown'];

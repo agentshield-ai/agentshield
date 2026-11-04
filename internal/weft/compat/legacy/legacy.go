@@ -158,12 +158,13 @@ func FeedbackTypePattern(p string) string {
 // IsLegacyFeedbackType reports whether t is a legacy feedback type name.
 func IsLegacyFeedbackType(t string) bool { return strings.HasPrefix(t, "wandb.") }
 
-// attrKeys maps legacy attribute keys (flat, dotted) to Weft's.
+// attrKeys maps legacy attribute keys (flat, dotted) to Weft's (the
+// current names, docs/weft/DESIGN.md §4).
 var attrKeys = map[string]string{
-	"weave.op_name":      "weft.op_name",
+	"weave.op_name":      "weft.span.name",
 	"weave.display_name": "weft.display_name",
 	"wandb.display_name": "weft.display_name",
-	"wandb.thread_id":    "weft.thread_id",
+	"wandb.thread_id":    "weft.session_id",
 	"wandb.thread_name":  "weft.conversation.name",
 	"wandb.turn_id":      "weft.turn_id",
 	"wandb.is_turn":      "weft.is_turn",
@@ -172,11 +173,13 @@ var attrKeys = map[string]string{
 	"weave.kind":         "weft.span_kind",
 	"weave.color":        "weft.color",
 	"weave.agent.name":   "weft.agent.name",
+
+	"weave.eval.predict_and_score_call_id": "weft.eval.prediction_span_id",
 }
 
 // attrPrefixes maps legacy attribute key prefixes to Weft's.
 var attrPrefixes = [][2]string{
-	{"weave.parent_call.", "weft.parent_call."},
+	{"weave.parent_call.", "weft.parent_span."},
 	{"weave.eval.", "weft.eval."},
 }
 
@@ -195,17 +198,18 @@ func AttributeKey(k string) (string, bool) {
 }
 
 // nestedKeys maps the keys of a nested attributes.weave map that have a
-// Weft equivalent under attributes.weft. The weave client's other nested
-// keys (client_version, os_name, ...) are kept where they are.
+// Weft equivalent under attributes.weft (a dotted value is a nested path:
+// op_name goes to attributes.weft.span.name). The weave client's other
+// nested keys (client_version, os_name, ...) are kept where they are.
 var nestedKeys = map[string]string{
 	"kind":         "span_kind",
 	"span_kind":    "span_kind",
 	"color":        "color",
 	"display_name": "display_name",
 	"eval":         "eval",
-	"parent_call":  "parent_call",
+	"parent_call":  "parent_span",
 	"is_turn":      "is_turn",
-	"op_name":      "op_name",
+	"op_name":      "span.name",
 }
 
 // Resource attribute keys naming the target project.
@@ -238,8 +242,20 @@ func RewriteAttributes(attrs map[string]any) bool {
 			if weft == nil {
 				weft = map[string]any{}
 			}
-			if _, exists := weft[nk]; !exists {
-				weft[nk] = v
+			if k == "eval" {
+				v = renameEvalKeys(v)
+			}
+			dst, leaf := weft, nk
+			if head, rest, ok := strings.Cut(nk, "."); ok {
+				sub, _ := weft[head].(map[string]any)
+				if sub == nil {
+					sub = map[string]any{}
+					weft[head] = sub
+				}
+				dst, leaf = sub, rest
+			}
+			if _, exists := dst[leaf]; !exists {
+				dst[leaf] = v
 			}
 			delete(w, k)
 			changed = true
@@ -252,6 +268,22 @@ func RewriteAttributes(attrs map[string]any) bool {
 		}
 	}
 	return changed
+}
+
+// renameEvalKeys renames the weave client's prediction key in a nested
+// eval map (predict_and_score_call_id) to Weft's (prediction_span_id).
+func renameEvalKeys(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	if p, ok := m["predict_and_score_call_id"]; ok {
+		if _, exists := m["prediction_span_id"]; !exists {
+			m["prediction_span_id"] = p
+		}
+		delete(m, "predict_and_score_call_id")
+	}
+	return m
 }
 
 func renameFlat(m map[string]any) bool {

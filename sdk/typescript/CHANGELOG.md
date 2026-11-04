@@ -75,8 +75,29 @@ time it is used:
 | `SavedView.getCalls()`, `SavedView.toCallsQuery()` | `SavedView.spans()`, `SavedView.toSpansQuery()` |
 | `new weft.Monitor({ opNames })`, `monitor.opNames` | `new weft.Monitor({ names })`, `monitor.names` |
 | `new weft.AnnotationSpec({ opScope })`, `spec.opScope` | `new weft.AnnotationSpec({ names })`, `spec.names` |
+| `weft.withThread(threadId, fn)` (and the `ThreadContext` type) | `weft.withSession(sessionId, fn)` (`SessionContext`) |
+| `client.updateCall(span, attrs, { threadId })` | `client.updateSpan(span, attrs, { sessionId })` |
+| setting `printCallLink`, env `WEFT_PRINT_CALL_LINK`, `client.printCallLink` | `printSpanLink`, `WEFT_PRINT_SPAN_LINK`, `client.printSpanLink` |
+
+A saved view's default pinned column is `name` (was `op_name`); pins saved
+with the earlier column names (`op_name`, `exception`, `thread_id`) are
+read as `name`, `error`, `session_id`.
 
 Without a warning, for one release: `call_ref` in `feedback.add` extras (now
 `span_ref`), `callId` in `evaluateModel`'s result and `versionIndex` in
 `linkToRegistry`'s (now `id` and `version`), and write-ahead logs written by
 earlier versions (replayed with the new field names).
+
+### Span attribute keys
+
+The SDK writes Weft's renamed span attribute keys (docs/weft/API.md, *Span
+attributes*): `weft.parent_span.{id, trace_id}` (was `weft.parent_call.*`,
+the TypeSafe integration's link to the running traced function),
+`weft.linked_spans` with `{span_id, trace_id}` items (was
+`weft.linked_calls` with `{call_id}`, on `logPrediction({ call })`
+predictions) and `weft.eval.prediction_span_id` (was
+`weft.eval.predict_and_score_call_id`, on spans recorded inside a
+prediction). The server still reads the old keys, so spans sent by earlier
+SDK versions keep their links. The Agents API span fields for the TypeSafe
+link are `linked_parent_span_id` / `linked_parent_trace_id` (were
+`parent_call_id` / `parent_call_trace_id`, still accepted in queries).

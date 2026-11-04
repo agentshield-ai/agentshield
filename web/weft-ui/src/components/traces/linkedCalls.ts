@@ -1,11 +1,14 @@
-// Links between evaluation predictions and existing calls/spans (unit tested in linkedCalls.test.ts).
+// Links between evaluation predictions and existing spans (unit tested in linkedCalls.test.ts).
 //
 // - EvaluationLogger predictions linked to existing traces carry
-//   attributes.weft.linked_calls ([{call_id, trace_id?}] or ids / call refs),
+//   attributes.weft.linked_spans ([{span_id, trace_id?}] or ids / span refs),
 //   attributes.weft.genai_span_ref ([{trace_id, span_id}]) and
 //   attributes.weft.linked_conversation_ids.
 // - Agent spans started inside a prediction carry weft.eval.* attributes
-//   (run_id, predict_and_score_call_id, ...), flat, nested or as OTel attributes.
+//   (run_id, prediction_span_id, ...), flat, nested or as OTel attributes.
+// - Spans recorded by earlier SDK versions use the deprecated keys
+//   weft.linked_calls ({call_id} items) and weft.eval.predict_and_score_call_id
+//   (docs/weft/API.md, "Span attributes"); both are read.
 
 export interface LinkedCall {
   callId: string
@@ -14,7 +17,8 @@ export interface LinkedCall {
 
 export interface EvalLink {
   runId?: string
-  predictAndScoreCallId?: string
+  /** The prediction's predict_and_score span. */
+  predictionSpanId?: string
   extra: Record<string, string>
 }
 
@@ -28,7 +32,7 @@ type Obj = Record<string, unknown>
 const asObj = (v: unknown): Obj | undefined => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : undefined)
 const s = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
 
-/** A call id from an id, a weft:/// call ref, or {call_id|span_id|id}. */
+/** A span id from an id, a weft:/// span ref, or {span_id|call_id|id}. */
 function callOf(v: unknown): LinkedCall | null {
   if (typeof v === 'string') {
     const m = /^weft:\/\/\/[^/]+\/[^/]+\/(?:span|call)\/([^/?#]+)/.exec(v)
@@ -37,7 +41,7 @@ function callOf(v: unknown): LinkedCall | null {
   }
   const o = asObj(v)
   if (!o) return null
-  const id = s(o.call_id) ?? s(o.span_id) ?? s(o.id)
+  const id = s(o.span_id) ?? s(o.call_id) ?? s(o.id)
   return id ? { callId: id, traceId: s(o.trace_id) } : null
 }
 
@@ -57,7 +61,7 @@ export function linksOf(attributes: unknown): Links {
     seen.add(c.callId)
     calls.push(c)
   }
-  for (const key of ['linked_calls', 'genai_span_ref']) {
+  for (const key of ['linked_spans', 'linked_calls', 'genai_span_ref']) {
     const v = weft[key]
     for (const x of Array.isArray(v) ? v : v != null ? [v] : []) add(callOf(x))
   }
@@ -73,8 +77,8 @@ export function linksOf(attributes: unknown): Links {
   for (const [k, v] of Object.entries(asObj(weft.eval) ?? {})) if (typeof v === 'string' || typeof v === 'number') ev[k] = String(v)
   let evalLink: EvalLink | null = null
   if (Object.keys(ev).length) {
-    const { run_id, predict_and_score_call_id, ...extra } = ev
-    evalLink = { runId: run_id, predictAndScoreCallId: predict_and_score_call_id, extra }
+    const { run_id, prediction_span_id, predict_and_score_call_id, ...extra } = ev
+    evalLink = { runId: run_id, predictionSpanId: prediction_span_id ?? predict_and_score_call_id, extra }
   }
   return { calls, conversations, evalLink }
 }

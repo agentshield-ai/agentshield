@@ -100,7 +100,7 @@ def test_anthropic_capture_reasoning_off(fake, models, monkeypatch):
     import anthropic
 
     monkeypatch.delenv("WEFT_DISABLED", raising=False)
-    weft.init("e/p", server_url=fake.url, autopatch=False, settings={"capture_reasoning": False, "print_call_link": False})
+    weft.init("e/p", server_url=fake.url, autopatch=False, settings={"capture_reasoning": False, "print_span_link": False})
     try:
         from weft.integrations import patch_anthropic
 

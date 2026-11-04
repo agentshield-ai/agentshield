@@ -15,15 +15,17 @@ func TestEvalLinksOf(t *testing.T) {
 		attrs map[string]any
 		want  []evalLink
 	}{
-		{"nested weft.eval (Python SDK)", "weft:///e/p/op/turn:abc", map[string]any{"weft": map[string]any{"eval": map[string]any{"run_id": run, "predict_and_score_call_id": "pas-1"}}},
+		{"nested weft.eval (Python SDK)", "weft:///e/p/op/turn:abc", map[string]any{"weft": map[string]any{"eval": map[string]any{"run_id": run, "prediction_span_id": "pas-1"}}},
 			[]evalLink{{kind: evalLinkAttr, target: "span", runID: run, pasID: "pas-1"}}},
-		{"flat OTel attributes", "invoke_agent bot", map[string]any{"otel": map[string]any{"attributes": map[string]any{"weft.eval.run_id": run, "weft.eval.predict_and_score_call_id": "pas-2"}}},
+		{"flat OTel attributes", "invoke_agent bot", map[string]any{"otel": map[string]any{"attributes": map[string]any{"weft.eval.run_id": run, "weft.eval.prediction_span_id": "pas-2"}}},
 			[]evalLink{{kind: evalLinkAttr, target: "span", runID: run, pasID: "pas-2"}}},
-		{"prediction only resolves its run", "x", map[string]any{"weft.eval.predict_and_score_call_id": "pas-3"},
+		{"deprecated prediction key (earlier SDKs)", "invoke_agent bot", map[string]any{"otel": map[string]any{"attributes": map[string]any{"weft.eval.run_id": run, "weft.eval.predict_and_score_call_id": "pas-2"}}},
+			[]evalLink{{kind: evalLinkAttr, target: "span", runID: run, pasID: "pas-2"}}},
+		{"prediction only resolves its run", "x", map[string]any{"weft.eval.prediction_span_id": "pas-3"},
 			[]evalLink{{kind: evalLinkAttr, target: "span", runID: "run-from-pas", pasID: "pas-3"}}},
 		{"plain call", "x", map[string]any{"weft": map[string]any{"span_kind": "agent"}}, nil},
 		{"prediction links", "weft:///e/p/op/Evaluation.predict_and_score:abc", map[string]any{"weft": map[string]any{
-			"linked_calls":            []any{map[string]any{"call_id": "c1", "trace_id": "t1"}, "weft:///e/p/call/c2", "c3"},
+			"linked_spans":            []any{map[string]any{"span_id": "c1", "trace_id": "t1"}, "weft:///e/p/span/c2", "c3"},
 			"genai_span_ref":          []any{map[string]any{"trace_id": "t1", "span_id": "c1"}, map[string]any{"trace_id": "t4", "span_id": "c4"}},
 			"linked_conversation_ids": []any{"conv-1"},
 		}}, []evalLink{
@@ -35,7 +37,12 @@ func TestEvalLinksOf(t *testing.T) {
 		}},
 		{"v2 prediction names its run", "Evaluation.predict_and_score", map[string]any{"weft": map[string]any{"evaluation_run_id": "v2-run", "genai_span_ref": []any{map[string]any{"span_id": "c9"}}}},
 			[]evalLink{{kind: evalLinkSpan, target: "c9", runID: "v2-run", pasID: "span"}}},
-		{"links on a non-prediction call are ignored", "Model.predict", map[string]any{"weft": map[string]any{"linked_calls": []any{"c1"}}}, nil},
+		{"deprecated linked_calls (earlier SDKs)", "Evaluation.predict_and_score", map[string]any{"weft": map[string]any{
+			"linked_calls": []any{map[string]any{"call_id": "c5", "trace_id": "t5"}, "weft:///e/p/call/c6"}}}, []evalLink{
+			{kind: evalLinkSpan, target: "c5", runID: "parent-run", pasID: "span", traceID: "t5"},
+			{kind: evalLinkSpan, target: "c6", runID: "parent-run", pasID: "span"},
+		}},
+		{"links on a non-prediction call are ignored", "Model.predict", map[string]any{"weft": map[string]any{"linked_spans": []any{"c1"}}}, nil},
 	}
 	parent := "parent-run"
 	for _, c := range cases {

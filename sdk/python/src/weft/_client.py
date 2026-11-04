@@ -80,6 +80,22 @@ def _setting_bool(settings: Dict[str, Any], key: str, env: str, default: bool) -
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _print_span_link_setting(settings: Dict[str, Any]) -> bool:
+    """``settings["print_span_link"]`` / ``WEFT_PRINT_SPAN_LINK`` (default True).
+
+    The earlier names ``print_call_link`` and ``WEFT_PRINT_CALL_LINK`` are
+    still read, with a deprecation warning."""
+    if settings.get("print_span_link") is not None:
+        return bool(settings["print_span_link"])
+    if settings.get("print_call_link") is not None:
+        deprecated_call('settings["print_call_link"]', 'settings["print_span_link"]', stacklevel=4)
+        return bool(settings["print_call_link"])
+    if _env_raw("WEFT_PRINT_SPAN_LINK") is None and _env_raw("WEFT_PRINT_CALL_LINK") is not None:
+        logger.warning("weft: WEFT_PRINT_CALL_LINK is deprecated; use WEFT_PRINT_SPAN_LINK")
+        return _setting_bool({}, "", "WEFT_PRINT_CALL_LINK", True)
+    return _setting_bool({}, "", "WEFT_PRINT_SPAN_LINK", True)
+
+
 def _env_raw(env: str) -> Optional[str]:
     raw = os.environ.get(env)
     return raw.strip() if raw is not None and raw.strip() != "" else None
@@ -242,7 +258,7 @@ class WeftClient:
         self.capture_code = _setting_bool(st, "capture_code", "WEFT_CAPTURE_CODE", True)
         # Model reasoning (thinking blocks, reasoning summaries, weft.reasoning()).
         self.capture_reasoning = _setting_bool(st, "capture_reasoning", "WEFT_CAPTURE_REASONING", True)
-        self.print_call_link = _setting_bool(st, "print_call_link", "WEFT_PRINT_CALL_LINK", True)
+        self.print_span_link = _print_span_link_setting(st)
         self.global_attributes: Dict[str, Any] = dict(st.get("global_attributes") or {})
         wal_path = None
         if _setting_bool(st, "enable_disk_fallback", "WEFT_ENABLE_WAL", False):
@@ -360,16 +376,16 @@ class WeftClient:
             parent = _context.get_current_call()
         call_id = uuid7()
         trace_id = parent.trace_id if parent is not None else uuid7()
-        thread_id = turn_id = None
-        tctx = _context.current_thread_context()
-        if tctx is not None:
-            thread_id = tctx.thread_id
-            if parent is None or parent.id == tctx.entry_parent_id or parent.session_id != thread_id:
+        session_id = turn_id = None
+        sctx = _context.current_session_context()
+        if sctx is not None:
+            session_id = sctx.session_id
+            if parent is None or parent.id == sctx.entry_parent_id or parent.session_id != session_id:
                 turn_id = call_id
             else:
                 turn_id = parent.turn_id
         elif parent is not None and parent.session_id:
-            thread_id, turn_id = parent.session_id, parent.turn_id
+            session_id, turn_id = parent.session_id, parent.turn_id
 
         raw_inputs = dict(inputs)
         if op.postprocess_inputs is not None:
@@ -413,7 +429,7 @@ class WeftClient:
             trace_id=trace_id,
             parent_id=parent.id if parent is not None else None,
             display_name=display_name,
-            session_id=thread_id,
+            session_id=session_id,
             turn_id=turn_id,
             started_at=now_iso(),
             inputs=ser_inputs,
@@ -439,7 +455,7 @@ class WeftClient:
         if link is not None:
             call.run_id, call.run_step = link
         self._sender.enqueue("span_start", self._start_payload(call))
-        if parent is None and self.print_call_link:
+        if parent is None and self.print_span_link:
             print(f"weft: {call.ui_url}", file=sys.stderr)
         return call
 
@@ -467,26 +483,63 @@ class WeftClient:
         """Drop reasoning when capture_reasoning is off; digest opaque reasoning payloads otherwise."""
         return _reasoning.scrub(value, capture=self.capture_reasoning)
 
+    @property
+    def print_call_link(self) -> bool:
+        """Deprecated: ``print_span_link``."""
+        deprecated_call("WeftClient.print_call_link", "WeftClient.print_span_link")
+        return self.print_span_link
+
+    @print_call_link.setter
+    def print_call_link(self, v: bool) -> None:
+        deprecated_call("WeftClient.print_call_link", "WeftClient.print_span_link")
+        self.print_span_link = bool(v)
+
+    def update_span(
+        self,
+        span: Span,
+        attributes: Optional[Dict[str, Any]] = None,
+        *,
+        session_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Change a running span's attributes (deep-merged), session (``session_id``), turn or display name.
+
+        The span's start is sent again, with the new values, before its end
+        (the server upserts it), so this works after the start went out."""
+        self._update_span(span, attributes, session_id=session_id, turn_id=turn_id, display_name=display_name)
+
     def update_call(
         self,
         call: Span,
         attributes: Optional[Dict[str, Any]] = None,
         *,
         thread_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         turn_id: Optional[str] = None,
         display_name: Optional[str] = None,
     ) -> None:
-        """Change a running span's attributes (deep-merged), session (``thread_id``) or display name.
+        """Deprecated: ``update_span(span, ..., session_id=...)``."""
+        deprecated_call("WeftClient.update_call(thread_id=...)", "WeftClient.update_span(session_id=...)")
+        self._update_span(call, attributes, session_id=session_id if session_id is not None else thread_id,
+                          turn_id=turn_id, display_name=display_name)
 
-        The span's start is sent again, with the new values, before its end
-        (the server upserts it), so this works after the start went out."""
+    def _update_span(
+        self,
+        call: Span,
+        attributes: Optional[Dict[str, Any]],
+        *,
+        session_id: Optional[str],
+        turn_id: Optional[str],
+        display_name: Optional[str],
+    ) -> None:
         if call._ended:
-            logger.debug("weft: update_call ignored: call %s already ended", call.id)
+            logger.debug("weft: update_span ignored: span %s already ended", call.id)
             return
         if attributes:
             call.attributes = _deep_merge(dict(call.attributes or {}), to_json(attributes, self))
-        if thread_id is not None:
-            call.session_id = thread_id
+        if session_id is not None:
+            call.session_id = session_id
         if turn_id is not None:
             call.turn_id = turn_id
         if display_name is not None:
@@ -745,16 +798,16 @@ class WeftClient:
         ``session_id``) with turn counts, times and turn-duration percentiles
         (``POST /api/v1/spans/sessions``).
 
-        ``req`` is a ``weft.trace_server_interface.ThreadsQueryReq`` or a dict; keyword
+        ``req`` is a ``weft.api_types.ThreadsQueryReq`` or a dict; keyword
         arguments build one (``client.threads_query(limit=20, sort_by=[...])``).
         Returns a ``ThreadsQueryRes`` (``.threads``: ``ThreadSchema`` list)."""
-        from .trace_server_interface import ThreadsQueryRes
+        from .api_types import ThreadsQueryRes
 
         return ThreadsQueryRes(threads=list(self.threads_query_stream(req, **kwargs)))
 
     def threads_query_stream(self, req: Any = None, **kwargs: Any) -> Iterator[Any]:
         """``threads_query`` as an iterator of ``ThreadSchema`` (every page of ``/api/v1/spans/sessions``)."""
-        from .trace_server_interface import ThreadSchema, ThreadsQueryReq, thread_from_session, threads_query_body
+        from .api_types import ThreadSchema, ThreadsQueryReq, thread_from_session, threads_query_body
 
         if req is None:
             req = ThreadsQueryReq(**kwargs)
@@ -799,7 +852,7 @@ class WeftClient:
         from urllib.parse import quote
 
         from ._custom_runtime import DEFAULT_CUSTOM_RUNTIME_MAX_TOKENS, CustomRuntimeID
-        from .trace_server_interface import CustomRuntimeApplyRes
+        from .api_types import CustomRuntimeApplyRes
 
         if isinstance(runtime_ids, (str, bytes)) or not hasattr(runtime_ids, "__iter__"):
             raise TypeError("runtime_ids must be a list of IDs")
@@ -1416,8 +1469,8 @@ def init(
     ``redact_pii_fields``, ``redact_pii_exclude_fields``, ``redact_pii_engine``)
     are described in ``weft._redact``.
 
-    ``settings`` (dict): ``global_attributes``, ``print_call_link`` (default
-    True, env ``WEFT_PRINT_CALL_LINK``), ``capture_code`` (default True, env
+    ``settings`` (dict): ``global_attributes``, ``print_span_link`` (default
+    True, env ``WEFT_PRINT_SPAN_LINK``), ``capture_code`` (default True, env
     ``WEFT_CAPTURE_CODE``), ``enable_disk_fallback`` (env ``WEFT_ENABLE_WAL``)
     with ``wal_dir`` (env ``WEFT_WAL_DIR``) and ``disable_wal_sender`` (env
     ``WEFT_DISABLE_WAL_SENDER``: write every request to the WAL and send

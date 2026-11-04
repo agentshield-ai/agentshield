@@ -51,7 +51,7 @@ const answer = weft.trace(
   { kind: 'agent', color: 'blue', callDisplayName: (call) => `answer: ${String(call.inputs.question).slice(0, 20)}` },
 );
 
-await weft.withThread('demo-conversation', async () => {
+await weft.withSession('demo-conversation', async () => {
   await weft.attributes({ env: 'dev' }, async () => {
     console.log(await answer('What is Weft?'));
     console.log(await answer('Does it speak OpenTelemetry?'));

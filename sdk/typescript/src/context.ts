@@ -1,11 +1,16 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Call } from './call.js';
 import { uuid7 } from './ids.js';
+import { deprecated } from './deprecation.js';
 
-export interface ThreadContext {
-  threadId: string;
+/** The block of `withSession`: its session id, and the span current when it began (spans started under that one are turns). */
+export interface SessionContext {
+  sessionId: string;
   entryParentId: string | null;
 }
+
+/** @deprecated Use SessionContext. */
+export type ThreadContext = SessionContext;
 
 /** The agent team calls belong to (`weft.team.id` / `weft.team.name`). */
 export interface TeamInfo {
@@ -18,7 +23,7 @@ export interface WeftContext {
   attributes: Record<string, unknown>;
   /** The team declared by the innermost `withTeam` (or team conversation). */
   team?: TeamInfo | null;
-  thread: ThreadContext | null;
+  session: SessionContext | null;
   suppressed: boolean;
   /** Active agent conversation / turn / LLM span (see conversation.ts). */
   conversation?: unknown;
@@ -28,7 +33,7 @@ export interface WeftContext {
   evalSpan?: Record<string, unknown> | null;
 }
 
-const EMPTY: WeftContext = { stack: [], attributes: {}, thread: null, suppressed: false };
+const EMPTY: WeftContext = { stack: [], attributes: {}, session: null, suppressed: false };
 export const storage = new AsyncLocalStorage<WeftContext>();
 
 export function currentContext(): WeftContext {
@@ -54,16 +59,26 @@ export function attributes<T>(attrs: Record<string, unknown>, fn: () => T): T {
 }
 
 /**
- * Run `fn` inside a conversation thread. Calls started directly inside are
- * turns (turn_id = their id); descendants inherit thread and turn ids.
+ * Run `fn` inside a session (conversation): every span started inside gets
+ * its `session_id` (a new id when omitted). Spans started directly inside
+ * are turns (turn_id = their id); descendants inherit session and turn ids.
  */
+export function withSession<T>(fn: (sessionId: string) => T): T;
+export function withSession<T>(sessionId: string | null | undefined, fn: (sessionId: string) => T): T;
+export function withSession<T>(a: unknown, b?: unknown): T {
+  const fn = (typeof a === 'function' ? a : b) as (sessionId: string) => T;
+  const sessionId = (typeof a === 'string' && a) || uuid7();
+  const parent = getCurrentCall();
+  return runWith({ session: { sessionId, entryParentId: parent ? parent.id : null } }, () => fn(sessionId));
+}
+
+/** @deprecated Use `withSession(sessionId, fn)`. */
 export function withThread<T>(fn: (threadId: string) => T): T;
+/** @deprecated Use `withSession(sessionId, fn)`. */
 export function withThread<T>(threadId: string | null | undefined, fn: (threadId: string) => T): T;
 export function withThread<T>(a: unknown, b?: unknown): T {
-  const fn = (typeof a === 'function' ? a : b) as (threadId: string) => T;
-  const threadId = (typeof a === 'string' && a) || uuid7();
-  const parent = getCurrentCall();
-  return runWith({ thread: { threadId, entryParentId: parent ? parent.id : null } }, () => fn(threadId));
+  deprecated('withThread()', 'withSession()');
+  return withSession(a as string, b as (sessionId: string) => T);
 }
 
 /** Run `fn` without recording any calls (ops still execute). */

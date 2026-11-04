@@ -143,7 +143,7 @@ describe('op tracing', () => {
       tool();
       return i;
     });
-    await weft.withThread('conv-1', async () => {
+    await weft.withSession('conv-1', async () => {
       await weft.attributes({ env: 'test' }, async () => {
         await turn(1);
         await turn(2);

@@ -134,8 +134,8 @@ class _Stream:
                 pass
         if first and not self.root._ended:
             own_thread = self.root.session_id is None or self.root.session_id == self.root.id
-            self.client.update_call(self.root, {"gen_ai": {"conversation": {"id": sid}}},
-                                    thread_id=sid if own_thread else None, turn_id=self.root.id if own_thread else None)
+            self.client.update_span(self.root, {"gen_ai": {"conversation": {"id": sid}}},
+                                    session_id=sid if own_thread else None, turn_id=self.root.id if own_thread else None)
 
     def _parent(self, msg: Any) -> Any:
         pid = getattr(msg, "parent_tool_use_id", None)
@@ -238,8 +238,8 @@ def _root(client: Any, name: str, prompt: Any, options: Any, session_id: Optiona
     display = _short(prompt) if isinstance(prompt, str) else None
     attrs = _attrs({"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": AGENT_NAME, "gen_ai.provider.name": "anthropic",
                     "gen_ai.request.model": _option(options, "model"), "gen_ai.conversation.id": session_id})
-    if session_id is not None and _context.current_thread_context() is None:
-        with _context.thread(session_id):
+    if session_id is not None and _context.current_session_context() is None:
+        with _context.session(session_id):
             call = client.create_call(op, inputs, display_name=display, attributes=attrs)
     else:
         call = client.create_call(op, inputs, display_name=display, attributes=attrs)

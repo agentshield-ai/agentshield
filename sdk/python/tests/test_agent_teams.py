@@ -168,7 +168,7 @@ def test_reasoning_on_op_call_resends_start(client, fake):
 
 def test_reasoning_redacts_pii(fake, monkeypatch):
     monkeypatch.delenv("WEFT_DISABLED", raising=False)
-    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"redact_pii": True, "redact_pii_engine": "regex", "print_call_link": False})
+    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"redact_pii": True, "redact_pii_engine": "regex", "print_span_link": False})
     try:
         with weft.start_conversation(agent_name="a") as conv:
             with conv.start_turn(user_message="q") as turn:
@@ -187,7 +187,7 @@ def test_reasoning_redacts_pii(fake, monkeypatch):
 def test_capture_reasoning_off(fake, monkeypatch):
     monkeypatch.delenv("WEFT_DISABLED", raising=False)
     monkeypatch.setenv("WEFT_CAPTURE_REASONING", "false")
-    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     assert c.capture_reasoning is False
     try:
         with weft.start_conversation(agent_name="a") as conv:
@@ -203,7 +203,7 @@ def test_capture_reasoning_off(fake, monkeypatch):
     finally:
         weft.finish()
     # the explicit setting wins over the environment
-    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"capture_reasoning": True, "print_call_link": False})
+    c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"capture_reasoning": True, "print_span_link": False})
     assert c.capture_reasoning is True
     weft.finish()
 
@@ -254,9 +254,9 @@ def test_framework_llm_call_does_not_repeat_nested_reasoning(client, fake):
     assert fake.calls[outer.id]["output"]["content"] == [{"type": "text", "text": "a"}]
 
 
-def test_update_call_resends_start(client, fake):
+def test_update_span_resends_start(client, fake):
     call = client.create_call("thing", {"a": 1})
-    client.update_call(call, {"gen_ai": {"conversation": {"id": "sess"}}}, thread_id="sess")
+    client.update_span(call, {"gen_ai": {"conversation": {"id": "sess"}}}, session_id="sess")
     client.finish_call(call, 1)
     weft.flush(5)
     c = fake.calls[call.id]

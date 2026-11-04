@@ -48,11 +48,12 @@ from ._context import (
     attributes,
     get_current_span,
     require_current_span,
+    session,
     thread,
     tracing_disabled,
 )
 from ._custom_runtime import CustomRuntimeID
-from . import trace_server_interface, urls
+from . import api_types, urls
 from ._evaluation import Evaluation, EvaluationLogger, ScoreLogger, auto_summarize
 from ._http import WeftHTTPError
 from ._object import (
@@ -124,9 +125,10 @@ __all__ = [
     "require_current_span",
     "NoCurrentSpanError",
     "CustomRuntimeID",
-    "trace_server_interface",
+    "api_types",
     "urls",
     "attributes",
+    "session",
     "thread",
     "ThreadPoolExecutor",
     "Thread",
@@ -243,6 +245,10 @@ _DEPRECATED = {
 
 
 def __getattr__(name: str) -> _Any:
+    if name == "trace_server_interface":  # deprecated module (warns on import): weft.api_types
+        import importlib
+
+        return importlib.import_module(".trace_server_interface", __name__)
     if name in _DEPRECATED:
         from ._deprecation import deprecated_call
 

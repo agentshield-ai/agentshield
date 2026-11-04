@@ -22,7 +22,7 @@ async function waitFor<T>(fn: () => Promise<T | null | undefined | false>, ms = 
 
 describe.skipIf(!URL)('real server: agents and SDK extras', () => {
   beforeAll(async () => {
-    client = await weft.init(`it/ts-agents-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printCallLink: false } });
+    client = await weft.init(`it/ts-agents-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printSpanLink: false } });
   });
   afterAll(() => weft.finish());
 
@@ -98,7 +98,7 @@ describe.skipIf(!URL)('real server: agents and SDK extras', () => {
     await ev.logSummary();
     await client.flush();
     const [pas] = await client.spans({ filter: { names: ['Evaluation.predict_and_score'] } });
-    expect((pas.attributes as any).weft.linked_calls).toEqual([{ call_id: turn.callId, trace_id: turn.traceId }]);
+    expect((pas.attributes as any).weft.linked_spans).toEqual([{ span_id: turn.callId, trace_id: turn.traceId }]);
 
     const local = new weft.Content('ts stored', { mimetype: 'text/plain' });
     const look = weft.trace(function look(img: unknown, l: unknown) {

@@ -44,16 +44,20 @@ func TestNames(t *testing.T) {
 		}
 	}
 	attrs := map[string]any{
-		"weave.eval.run_id": "r", "wandb.thread_id": "th", "weft.thread_id": "mine",
-		"weave": map[string]any{"kind": "llm", "client_version": "1", "eval": map[string]any{"run_id": "r2"}},
-		"otel":  map[string]any{"attributes": map[string]any{"wandb.is_turn": true}},
+		"weave.eval.run_id": "r", "wandb.thread_id": "th", "weft.session_id": "mine",
+		"weave": map[string]any{"kind": "llm", "client_version": "1", "op_name": "my.op",
+			"eval":        map[string]any{"run_id": "r2", "predict_and_score_call_id": "p2"},
+			"parent_call": map[string]any{"id": "c", "trace_id": "t"}},
+		"otel": map[string]any{"attributes": map[string]any{"wandb.is_turn": true}},
 	}
 	if !legacy.RewriteAttributes(attrs) {
 		t.Fatal("nothing rewritten")
 	}
 	w := attrs["weft"].(map[string]any)
-	if attrs["weft.eval.run_id"] != "r" || attrs["weft.thread_id"] != "mine" || attrs["wandb.thread_id"] != nil ||
+	if attrs["weft.eval.run_id"] != "r" || attrs["weft.session_id"] != "mine" || attrs["wandb.thread_id"] != nil ||
 		w["span_kind"] != "llm" || w["eval"].(map[string]any)["run_id"] != "r2" ||
+		w["eval"].(map[string]any)["prediction_span_id"] != "p2" || w["eval"].(map[string]any)["predict_and_score_call_id"] != nil ||
+		w["parent_span"].(map[string]any)["id"] != "c" || w["span"].(map[string]any)["name"] != "my.op" ||
 		attrs["weave"].(map[string]any)["client_version"] != "1" || attrs["weave"].(map[string]any)["kind"] != nil ||
 		attrs["otel"].(map[string]any)["attributes"].(map[string]any)["weft.is_turn"] != true {
 		t.Fatalf("attributes = %v", attrs)

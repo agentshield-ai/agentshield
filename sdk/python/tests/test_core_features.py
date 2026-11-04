@@ -59,7 +59,7 @@ def test_global_attributes_print_link_and_capture_code(fake, capsys):
         assert fake.objs["root"][0]["value"]["code"] == "# Code capture disabled\n"
     finally:
         weft.finish()
-    c2 = weft.init("p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
+    c2 = weft.init("p", server_url=fake.url, autopatch=False, settings={"print_span_link": False})
     try:
         weft.trace(lambda: 1, name="quiet")()
         assert "weft: http" not in capsys.readouterr().err

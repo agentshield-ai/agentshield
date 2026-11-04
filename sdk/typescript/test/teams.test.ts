@@ -11,7 +11,7 @@ let fake: FakeWeft;
 let client: weft.WeftClient;
 
 async function init(settings: weft.ClientSettings = {}): Promise<void> {
-  client = await weft.init('ts-entity/teams', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printCallLink: false, ...settings }, autopatchSettings: {} });
+  client = await weft.init('ts-entity/teams', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printSpanLink: false, ...settings }, autopatchSettings: {} });
 }
 
 beforeEach(async () => {

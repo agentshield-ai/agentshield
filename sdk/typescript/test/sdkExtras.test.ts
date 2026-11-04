@@ -7,7 +7,7 @@ let client: weft.WeftClient;
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
-  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printCallLink: false } });
+  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printSpanLink: false } });
 });
 
 afterEach(async () => {
@@ -110,12 +110,13 @@ describe('EvaluationLogger links', () => {
     expect(p1.output).toBe('answer:one');
     expect(p1.modelLatency).not.toBeNull();
     const pas = fake.calls.get(p1.predictAndScoreCall!.id);
-    expect(pas.attributes.weft.linked_calls).toEqual([{ call_id: c1!.id, trace_id: c1!.traceId }]);
+    expect(pas.attributes.weft.linked_spans).toEqual([{ span_id: c1!.id, trace_id: c1!.traceId }]);
+    expect(pas.attributes.weft.linked_calls).toBeUndefined();
     expect(pas.attributes.weft.genai_span_ref).toEqual([{ trace_id: c1!.traceId, span_id: c1!.id }]);
     expect(fake.calls.get(p1.predictCall!.id).output).toBe('answer:one');
-    expect(fake.calls.get(p2.predictAndScoreCall!.id).attributes.weft.linked_calls[0].call_id).toBe(turn.callId);
+    expect(fake.calls.get(p2.predictAndScoreCall!.id).attributes.weft.linked_spans[0].span_id).toBe(turn.callId);
     const w3 = fake.calls.get(p3.predictAndScoreCall!.id).attributes.weft;
-    expect(w3.linked_calls[0].call_id).toBe(batch.rootSpanIds[0]);
+    expect(w3.linked_spans[0].span_id).toBe(batch.rootSpanIds[0]);
     expect(w3.linked_conversation_ids).toEqual(['c-3']);
     expect(summary.correct).toEqual({ true_count: 1, true_fraction: 1 });
     expect(() => ev.logPrediction({ q: 1 }, undefined, { call: 42 })).toThrow();
@@ -140,7 +141,8 @@ describe('EvaluationLogger links', () => {
     expect(pc.output).toEqual({ docs: ['hi'] });
     expect(fake.callsByOp('retrieve')[0].parent_id).toBe(pc.id);
     const link = fake.calls.get(turn!.callId!).attributes.weft.eval;
-    expect(link.predict_and_score_call_id).toBe(pred.predictAndScoreCall!.id);
+    expect(link.prediction_span_id).toBe(pred.predictAndScoreCall!.id);
+    expect(link.predict_and_score_call_id).toBeUndefined();
     expect(link.run_id).toBe(ev.call!.id);
     expect(link.example_id).toBe('ex-1');
     expect(link.trial_index).toBe(0);

@@ -91,3 +91,72 @@ def test_platform_object_field_names(client, fake):
     assert view.definition["filter"] == {"names": ["a"], "session_ids": ["t"], "ids": ["c"]}
     view.filter_op(None)
     assert view.definition["filter"] == {"session_ids": ["t"], "ids": ["c"]}
+
+
+def test_session_span_link_update_and_api_types(client, fake, monkeypatch):
+    """weft.session(), print_span_link, update_span(session_id=) and
+    weft.api_types; the earlier names (weft.thread, print_call_link /
+    WEFT_PRINT_CALL_LINK, update_call(thread_id=), weft.trace_server_interface)
+    still work and warn."""
+    import importlib
+    import logging
+    import sys
+
+    @weft.trace
+    def f():
+        return 1
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        with weft.session("s-new") as s:
+            assert s.session_id == "s-new"
+            f()
+        span = client.create_call("upd", {})
+        client.update_span(span, {"a": 1}, session_id="sess-1")
+        assert span.session_id == "sess-1"
+        client.finish_call(span, None)
+        assert weft.api_types.ThreadsQueryReq(limit=1).limit == 1
+        assert client.print_span_link is True
+    with pytest.warns(DeprecationWarning, match=r"weft\.thread\(thread_id\) is deprecated; use weft\.session\(session_id\)"):
+        with weft.thread("s-old") as t:
+            f()
+    assert _warns(lambda: t.thread_id, r"SessionContext\.thread_id is deprecated") == "s-old"
+    client.flush()
+    assert sorted(c["session_id"] for c in fake.calls_by_op("f")) == ["s-new", "s-old"]
+    span = client.create_call("upd2", {})
+    _warns(lambda: client.update_call(span, None, thread_id="sess-2"), r"update_call\(thread_id=\.\.\.\) is deprecated")
+    assert span.session_id == "sess-2"
+    client.finish_call(span, None)
+    assert _warns(lambda: client.print_call_link, r"WeftClient\.print_call_link is deprecated") is True
+
+    c2 = _warns(lambda: weft.WeftClient("e/p2", server_url=fake.url, settings={"print_call_link": False}),
+                r'settings\["print_call_link"\] is deprecated')
+    assert c2.print_span_link is False
+    monkeypatch.delenv("WEFT_PRINT_SPAN_LINK", raising=False)
+    monkeypatch.setenv("WEFT_PRINT_CALL_LINK", "false")
+    logger = logging.getLogger("weft")
+    seen = []
+    handler = logging.Handler()
+    handler.emit = lambda r: seen.append(r.getMessage())  # type: ignore[method-assign]
+    logger.addHandler(handler)
+    try:
+        assert weft.WeftClient("e/p3", server_url=fake.url).print_span_link is False
+    finally:
+        logger.removeHandler(handler)
+    assert any("WEFT_PRINT_CALL_LINK is deprecated; use WEFT_PRINT_SPAN_LINK" in m for m in seen)
+    monkeypatch.setenv("WEFT_PRINT_SPAN_LINK", "true")
+    assert weft.WeftClient("e/p4", server_url=fake.url).print_span_link is True
+
+    sys.modules.pop("weft.trace_server_interface", None)
+    with pytest.warns(DeprecationWarning, match=r"weft\.trace_server_interface is deprecated; use weft\.api_types"):
+        tsi = importlib.import_module("weft.trace_server_interface")
+    assert tsi.ThreadsQueryReq is weft.api_types.ThreadsQueryReq and tsi.threads_query_body is weft.api_types.threads_query_body
+
+
+def test_saved_view_pins_span_name():
+    v = weft.SavedView()
+    v.pin_column_right("started_at")
+    assert v.definition["pin"] == {"left": ["CustomCheckbox", "name"], "right": ["started_at"]}
+    old = weft.SavedView(definition={"pin": {"left": ["CustomCheckbox", "op_name"], "right": ["thread_id"]}})
+    old.unpin_column("session_id")
+    assert old.definition["pin"] == {"left": ["CustomCheckbox", "name"], "right": []}

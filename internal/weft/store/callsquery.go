@@ -181,7 +181,18 @@ func callField(path string) (string, []any, bool, error) {
 		return "", nil, false, unknownField(path)
 	}
 	switch segs[0] {
-	case "inputs", "output", "attributes":
+	case "attributes":
+		// A renamed Weft attribute key (attrkeys.go) matches spans stored
+		// under either name: stored attributes are never rewritten.
+		s, a := jsonField("c.attributes", segs[1:])
+		for _, toOld := range []bool{true, false} {
+			if other, ok := renamedAttrPath(segs[1:], toOld); ok {
+				s2, a2 := jsonField("c.attributes", other)
+				return "COALESCE(" + s + ", " + s2 + ")", append(a, a2...), false, nil
+			}
+		}
+		return s, a, false, nil
+	case "inputs", "output":
 		s, a := jsonField("c."+segs[0], segs[1:])
 		return s, a, false, nil
 	case "summary":

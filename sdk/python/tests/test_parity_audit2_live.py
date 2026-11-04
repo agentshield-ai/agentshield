@@ -16,7 +16,7 @@ import pytest
 
 import weft
 from weft.integrations import RealtimeTracer, patch_typesafe, patch_verdict, unpatch_all
-from weft.trace_server_interface import SortBy, ThreadsQueryReq
+from weft.api_types import SortBy, ThreadsQueryReq
 
 from test_parity_audit2 import _install_typesafe
 from test_realtime_audio import SESSION, b64, pcm16, response_events
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="WEFT_TEST_SERVER_URL not set")
 def live():
     project = f"it/audit2-{uuid.uuid4().hex[:8]}"
     c = weft.init(project, server_url=URL, api_key=os.environ.get("WEFT_TEST_API_KEY"), autopatch=False,
-                  settings={"print_call_link": False})
+                  settings={"print_span_link": False})
     yield c
     weft.flush(10)
     weft.finish()
@@ -100,10 +100,10 @@ def test_custom_runtime_and_threads_live(live):
     def turn(i):
         return weft.require_current_span().id
 
-    with weft.thread("live-a"):
+    with weft.session("live-a"):
         turn(1)
         turn(2)
-    with weft.thread("live-b"):
+    with weft.session("live-b"):
         turn(3)
     live.flush()
     res = live.threads_query(ThreadsQueryReq(sort_by=[SortBy(field="turn_count", direction="desc")]))
@@ -136,14 +136,14 @@ def test_typesafe_inside_op_is_a_linked_trace_live(live, monkeypatch):
     [llm] = live.spans(filter={"names": ["chat"]}).to_list()
     [turn] = live.spans(filter={"names": ["invoke_agent"]}).to_list()
     assert op.trace_id != llm.trace_id == turn.trace_id and turn.parent_id is None and llm.parent_id == turn.id
-    # The server exposes the weft.parent_call.* link as the agent span fields parent_call_id / parent_call_trace_id.
+    # The server exposes the weft.parent_span.* link as the agent span fields linked_parent_span_id / linked_parent_trace_id.
     res = live._http.post("/agents/spans/query", {
         "project_id": live.project_id,
-        "query": {"$expr": {"$eq": [{"$getField": "parent_call_id"}, {"$literal": op.id}]}},
+        "query": {"$expr": {"$eq": [{"$getField": "linked_parent_span_id"}, {"$literal": op.id}]}},
     })
     spans = {s["span_id"]: s for s in res["spans"]}
     assert set(spans) == {turn.id, llm.id}
-    assert all(s["parent_call_trace_id"] == op.trace_id for s in spans.values())
+    assert all(s["linked_parent_trace_id"] == op.trace_id for s in spans.values())
 
 
 def test_list_aliases_and_get_tags_and_aliases(live):

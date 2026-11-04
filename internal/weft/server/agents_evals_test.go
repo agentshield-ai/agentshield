@@ -10,8 +10,17 @@ import (
 
 // seedAgentEvals records three SDK conversations, an OTLP agent trace and two
 // evaluation runs that link to them in each of the supported ways.
-func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
+func seedAgentEvals(t *testing.T, e *testEnv) time.Time { return seedAgentEvalsKeys(t, e, false) }
+
+// seedAgentEvalsKeys is seedAgentEvals; with deprecated, the links use the
+// attribute keys earlier SDK versions emitted (weft.linked_calls with
+// call_id items, weft.eval.predict_and_score_call_id).
+func seedAgentEvalsKeys(t *testing.T, e *testEnv, deprecated bool) time.Time {
 	t.Helper()
+	linkedKey, linkedID, predKey := "linked_spans", "span_id", "prediction_span_id"
+	if deprecated {
+		linkedKey, linkedID, predKey = "linked_calls", "call_id", "predict_and_score_call_id"
+	}
 	now := time.Now().UTC().Add(-time.Minute)
 	ts := func(ms int) string { return now.Add(time.Duration(ms) * time.Millisecond).Format(time.RFC3339Nano) }
 	call := func(id, parent, trace, thread, op string, ms int, attrs, inputs map[string]any, out any) []any {
@@ -47,7 +56,7 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	add(call("d-turn", "", "tr-d", "conv-d", "support_turn", 100, agent("support_bot", nil), map[string]any{"question": "refund"}, "ok"))
 	// A conversation recorded inside a prediction: weft.eval.* on the turn only.
 	add(call("b-turn", "", "tr-b", "conv-b", "billing_turn", 200, agent("billing_bot", map[string]any{"weft": map[string]any{"eval": map[string]any{
-		"run_id": "run-1", "predict_and_score_call_id": "pas-2", "kind": "agent"}}}), map[string]any{"question": "invoice"}, "sent"))
+		"run_id": "run-1", predKey: "pas-2", "kind": "agent"}}}), map[string]any{"question": "invoice"}, "sent"))
 	add(call("b-llm", "b-turn", "tr-b", "conv-b", "chat", 205, llm, map[string]any{}, "sent"))
 	// Unrelated.
 	add(call("c-turn", "", "tr-c", "conv-c", "support_turn", 300, agent("support_bot", nil), map[string]any{"question": "hello"}, "hi"))
@@ -55,7 +64,7 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	add(call("run-1", "", "tr-run1", "", "Evaluation.evaluate", 400, nil, map[string]any{"self": evalRef, "model": modelRef},
 		map[string]any{"resolved": map[string]any{"true_fraction": 0.67}}))
 	add(call("pas-1", "run-1", "tr-run1", "", "Evaluation.predict_and_score", 410, map[string]any{"weft": map[string]any{
-		"linked_calls": []any{map[string]any{"call_id": "a-turn", "trace_id": "tr-a"}}, "genai_span_ref": []any{map[string]any{"trace_id": "tr-a", "span_id": "a-turn"}},
+		linkedKey: []any{map[string]any{linkedID: "a-turn", "trace_id": "tr-a"}}, "genai_span_ref": []any{map[string]any{"trace_id": "tr-a", "span_id": "a-turn"}},
 		"eval": map[string]any{"kind": "agent", "row_digest": "row-a"}}},
 		map[string]any{"example": map[string]any{"question": "reset password"}}, map[string]any{"output": "use the link", "scores": map[string]any{"resolved": true}, "model_latency": 0.05}))
 	add(call("pas-2", "run-1", "tr-run1", "", "Evaluation.predict_and_score", 420, nil, map[string]any{"example": map[string]any{"question": "invoice"}},
@@ -64,7 +73,7 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 		map[string]any{"example": map[string]any{"question": "refund"}}, map[string]any{"output": "ok", "scores": map[string]any{"resolved": false}}))
 	// Run 2 links the same turn again.
 	add(call("run-2", "", "tr-run2", "", "Evaluation.evaluate", 500, nil, map[string]any{"self": evalRef, "model": modelRef}, map[string]any{"resolved": map[string]any{"true_fraction": 1.0}}))
-	add(call("pas-9", "run-2", "tr-run2", "", "Evaluation.predict_and_score", 510, map[string]any{"weft": map[string]any{"linked_calls": []any{"weft:///" + pid + "/call/a-turn"}}},
+	add(call("pas-9", "run-2", "tr-run2", "", "Evaluation.predict_and_score", 510, map[string]any{"weft": map[string]any{linkedKey: []any{"weft:///" + pid + "/call/a-turn"}}},
 		map[string]any{"example": map[string]any{"question": "reset password"}}, map[string]any{"output": "use the link", "scores": map[string]any{"resolved": true}}))
 	e.post("/api/v1/spans/batch", map[string]any{"items": batch})
 
@@ -73,7 +82,7 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	body := otlpBody(now.Add(600*time.Millisecond), []testSpan{
 		{tr, child, root, "chat gpt-4o", 5, 20, map[string]any{"gen_ai.operation.name": "chat", "gen_ai.request.model": "gpt-4o"}, ""},
 		{tr, root, "", "invoke_agent otel_bot", 0, 40, map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "otel_bot",
-			"gen_ai.conversation.id": "conv-otel", "weft.eval.run_id": "run-1", "weft.eval.predict_and_score_call_id": "pas-2"}, ""},
+			"gen_ai.conversation.id": "conv-otel", "weft.eval.run_id": "run-1", "weft.eval." + predKey: "pas-2"}, ""},
 	})
 	if code, b := e.raw("/agents/otel/v1/traces", body, map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("otlp: %d %s", code, b)

@@ -21,7 +21,7 @@ export { logger, setLogLevel, getLogLevel, parseLogLevel, type LogLevel } from '
 export { getClient, requireClient } from './global.js';
 export { trace, isOp, type Op, type OpOptions, type TraceOptions } from './op.js';
 export { Span, SpanFeedback, type SpanData, type CallData, type ApplyScorerResult } from './call.js';
-export { attributes, withThread, getCurrentSpan, withTracingDisabled, withTeam, getCurrentTeam, type TeamInfo } from './context.js';
+export { attributes, withSession, withThread, getCurrentSpan, withTracingDisabled, withTeam, getCurrentTeam, type TeamInfo } from './context.js';
 export { scrubReasoning, hasReasoning, reasoningStep, normReasoningKind, reasoningDigest, type ReasoningKind, type ReasoningStep } from './reasoning.js';
 export { Content, Image, Audio, Video, PDF, Html, Markdown } from './content.js';
 export { Ref, isRefUri } from './refs.js';

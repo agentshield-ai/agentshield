@@ -10,7 +10,7 @@ let client: weft.WeftClient;
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
-  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });
+  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printSpanLink: false } });
   resetDeprecationWarnings();
 });
 
@@ -93,5 +93,49 @@ describe('names', () => {
     expect(view.toSpansQuery().filter).toEqual({ names: ['a'], session_ids: ['t'] });
     view.setFilter({ call_ids: ['c'] });
     expect(view.definition.filter).toEqual({ names: ['a'], session_ids: ['t'], ids: ['c'] });
+  });
+  it('saved view pins name; pins saved with op_name get Weft\'s column names', () => {
+    const v = new weft.SavedView();
+    v.pinColumnRight('started_at');
+    expect(v.definition.pin).toEqual({ left: ['CustomCheckbox', 'name'], right: ['started_at'] });
+    const old = new weft.SavedView({ definition: { pin: { left: ['CustomCheckbox', 'op_name'], right: ['thread_id'] } } });
+    old.unpinColumn('session_id');
+    expect(old.definition.pin).toEqual({ left: ['CustomCheckbox', 'name'], right: [] });
+  });
+  it('withSession, printSpanLink and updateSpan; the earlier names warn once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = weft.trace(function f() {
+      return 1;
+    });
+    await weft.withSession('s-new', () => f());
+    await weft.withThread('s-old', () => f());
+    await client.flush();
+    expect(fake.callsByOp('f').map((c) => c.session_id).sort()).toEqual(['s-new', 's-old']);
+    const span = client.createCall('upd', {});
+    client.updateSpan(span, { a: 1 }, { sessionId: 'sess-1' });
+    expect(span.sessionId).toBe('sess-1');
+    client.updateCall(span, null, { threadId: 'sess-2' });
+    expect(span.sessionId).toBe('sess-2');
+    client.finishCall(span, null);
+    expect(client.printSpanLink).toBe(false);
+    expect(client.printCallLink).toBe(false);
+    const c2 = new weft.WeftClient('ts-entity/x', { serverUrl: fake.url, settings: { printCallLink: false } });
+    expect(c2.printSpanLink).toBe(false);
+    const prev = { span: process.env.WEFT_PRINT_SPAN_LINK, call: process.env.WEFT_PRINT_CALL_LINK };
+    delete process.env.WEFT_PRINT_SPAN_LINK;
+    process.env.WEFT_PRINT_CALL_LINK = 'false';
+    try {
+      expect(new weft.WeftClient('ts-entity/y', { serverUrl: fake.url }).printSpanLink).toBe(false);
+      process.env.WEFT_PRINT_SPAN_LINK = 'true';
+      expect(new weft.WeftClient('ts-entity/z', { serverUrl: fake.url }).printSpanLink).toBe(true);
+    } finally {
+      for (const [k, v] of [['WEFT_PRINT_SPAN_LINK', prev.span], ['WEFT_PRINT_CALL_LINK', prev.call]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    const msgs = warn.mock.calls.map((c) => String(c[0]));
+    for (const m of ['withThread() is deprecated; use withSession()', 'WeftClient.updateCall({ threadId })', 'WeftClient.printCallLink', 'settings.printCallLink', 'WEFT_PRINT_CALL_LINK is deprecated'])
+      expect(msgs.some((x) => x.includes(m))).toBe(true);
   });
 });

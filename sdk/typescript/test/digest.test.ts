@@ -29,7 +29,7 @@ describe('digest vectors', () => {
 
 describe.skipIf(!URL)('digests against a live server', () => {
   it('objects, tables, files and functions', async () => {
-    const client = await weft.init(`digest-check/ts-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printCallLink: false } });
+    const client = await weft.init(`digest-check/ts-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printSpanLink: false } });
     try {
       // plus numbers whose text is JavaScript's own (Python sends 1.0 for 1.0)
       const values = [...VECTORS.values.map((v: any) => v.value), { f: 1.0, g: 1e-7, h: 1e21, k: 2 ** 60, m: -0 }];

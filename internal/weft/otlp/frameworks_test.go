@@ -202,7 +202,7 @@ func TestGoogleADK(t *testing.T) {
 func TestGenAIToolAndTurnAttributes(t *testing.T) {
 	c := oneCall(t, "execute_tool search", map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "search",
 		"gen_ai.tool.call.id": "call_9", "gen_ai.tool.call.arguments": `{"q":"otel"}`, "gen_ai.tool.call.result": `{"hits":2}`,
-		"weft.is_turn": true, "weft.thread_id": "th-1"})
+		"weft.is_turn": true, "weft.session_id": "th-1"})
 	if c.Start.Inputs["q"] != "otel" || num(c.End.Output.(map[string]any)["hits"]) != 2 {
 		t.Fatalf("tool = %v %v", c.Start.Inputs, c.End.Output)
 	}
@@ -307,5 +307,24 @@ func TestSpanKindsReachIndex(t *testing.T) {
 	}
 	if !strings.HasPrefix(c.Start.ID, "7370") { // hex of "spanid01"
 		t.Fatalf("id = %s", c.Start.ID)
+	}
+}
+
+// weft.span.name names the stored span and weft.session_id its session;
+// the names earlier SDK versions emitted (weft.op_name, weft.thread_id) are
+// read too.
+func TestWeftSpanNameAndSessionKeys(t *testing.T) {
+	c := oneCall(t, "otel name", map[string]any{"weft.span.name": "my.fn", "weft.session_id": "s-1"})
+	if c.Start.OpName != "my.fn" || c.Start.ThreadID == nil || *c.Start.ThreadID != "s-1" {
+		t.Fatalf("new keys: name %q session %v", c.Start.OpName, c.Start.ThreadID)
+	}
+	c = oneCall(t, "otel name", map[string]any{"weft.op_name": "old.fn", "weft.thread_id": "s-2"})
+	if c.Start.OpName != "old.fn" || c.Start.ThreadID == nil || *c.Start.ThreadID != "s-2" {
+		t.Fatalf("deprecated keys: name %q session %v", c.Start.OpName, c.Start.ThreadID)
+	}
+	c = oneCall(t, "otel name", map[string]any{"weft.span.name": "new.fn", "weft.op_name": "old.fn",
+		"weft.session_id": "s-new", "weft.thread_id": "s-old"})
+	if c.Start.OpName != "new.fn" || *c.Start.ThreadID != "s-new" {
+		t.Fatalf("new keys win: name %q session %v", c.Start.OpName, *c.Start.ThreadID)
 	}
 }

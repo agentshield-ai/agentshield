@@ -7,7 +7,7 @@ let client: weft.WeftClient;
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
-  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printCallLink: false } });
+  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printSpanLink: false } });
 });
 
 afterEach(async () => {

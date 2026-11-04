@@ -302,7 +302,7 @@ func TestSessionStatusFilterMatchesTraces(t *testing.T) {
 		// ... by a parent call link.
 		{id: "p-caller", trace: "t-pc-caller", at: 40 * time.Second, attrs: statusAgentAttrs("coder", "sub-linked-parentcall")},
 		{id: "p-helper", trace: "t-pc-helper", at: 41 * time.Second, err: true, attrs: map[string]any{"gen_ai.operation.name": "invoke_agent",
-			"gen_ai.agent.name": "helper", "gen_ai.conversation.id": "sub-linked-parentcall", "weft.parent_call.id": "p-caller", "weft.parent_call.trace_id": "t-pc-caller"}},
+			"gen_ai.agent.name": "helper", "gen_ai.conversation.id": "sub-linked-parentcall", "weft.parent_span.id": "p-caller", "weft.parent_span.trace_id": "t-pc-caller"}},
 		// ... by a hand-off to its agent recorded in the caller's trace.
 		{id: "h-caller", trace: "t-ho-caller", at: 50 * time.Second, attrs: statusAgentAttrs("coder", "sub-linked-handoff")},
 		{id: "h-x", trace: "t-ho-caller", parent: "h-caller", at: 50 * time.Second, attrs: map[string]any{"gen_ai.operation.name": "execute_tool",

@@ -25,7 +25,7 @@ const tinyNer: weft.PiiAnalyzer = (text) => {
 
 const client = await weft.init('ts-agents-redaction', {
   settings: {
-    printCallLink: false,
+    printSpanLink: false,
     redactPii: true,
     ...(process.env.WEFT_PRESIDIO_ANALYZER_URL ? { redactPiiEngine: 'presidio' as const } : { redactPiiAnalyzer: tinyNer }),
     retryMaxAttempts: 5, // or WEFT_RETRY_MAX_ATTEMPTS

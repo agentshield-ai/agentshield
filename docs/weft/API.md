@@ -685,14 +685,14 @@ OTLP span → Weft span mapping:
 | Span field | Source (first match wins) |
 |---|---|
 | `id`, `trace_id`, `parent_id` | hex span id, trace id, parent span id |
-| `name` | `weft.op_name`, else span name |
+| `name` | `weft.span.name`, else span name |
 | `display_name` | `weft.display_name`; Traceloop `traceloop.entity.name` (or `traceloop.workflow.name` on workflow spans) |
 | `started_at`, `ended_at` | span start/end |
 | `inputs` | `weft.inputs` (JSON), OpenInference LLM spans' `llm.input_messages.*`, `input.value` (OpenInference; serialised LangChain/LangGraph messages become chat messages), framework layouts (see below), `gen_ai.input.messages`, `llm.input_messages.N.message.*`, `gen_ai.prompt.N.*` (OpenLLMetry), `gen_ai.prompt`, `traceloop.entity.input`, `gen_ai.*.message` span events. Request params (`gen_ai.request.*`, `llm.invocation_parameters`) are added. |
 | `output` | `weft.output`, OpenInference LLM spans' `llm.output_messages.*`, `output.value`, framework layouts (see below), `gen_ai.output.messages`, `llm.output_messages.N.message.*`, `gen_ai.completion.N.*`, `gen_ai.completion`, `traceloop.entity.output`, `gen_ai.choice` events |
 | `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata`; also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
 | `error` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
-| `session_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
+| `session_id`, `turn_id` | `weft.session_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
 | `user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
 | `attributes` | `weft.attributes.*` (prefix stripped), plus `otel: {span_name, kind, status, resource, scope, attributes, events, links}` |
 
@@ -714,6 +714,49 @@ GenAI message parts: `text` parts are joined; `tool_call` parts become OpenAI
 `reasoning` becomes `{"type":"thinking"}`; `blob` / `uri` image parts become
 `{"type":"image_url","image_url":{"url": data URI or URI}}`, and other media
 `{"type":"media","mime_type","modality","data": data URI or URI}`.
+
+### Span attributes
+
+Weft's own `weft.*` span attributes (DESIGN.md §4) are read from OTLP span
+attributes (flat dotted keys) and from a span's `attributes`, either as flat
+dotted keys or nested (`attributes.weft.parent_span.id`). The Weft SDKs and
+plugins write them nested; OTel instrumentation writes them flat.
+
+| Key | Meaning |
+|---|---|
+| `weft.span.name` | the stored span `name` of an OTLP span (else the OTel span name) |
+| `weft.display_name` | the span's `display_name` |
+| `weft.session_id` | the span's `session_id` (the session, or conversation) |
+| `weft.turn_id`, `weft.is_turn` | the span's `turn_id`; `weft.is_turn: true` makes the span its own turn |
+| `weft.span_kind` | the span kind the Agents index uses (`llm`, `agent`, `tool`, …) |
+| `weft.parent_span.id`, `weft.parent_span.trace_id` | the span this span was emitted from, when it started its own trace inside it (the caller); the Agents API's `linked_parent_span_id` / `linked_parent_trace_id`, and a linked trace's failure is a failed step of the caller's run |
+| `weft.eval.run_id`, `weft.eval.prediction_span_id`, `weft.eval.*` | the evaluation run and prediction (the `Evaluation.predict_and_score` span) a span belongs to (*Agent evals*) |
+| `weft.linked_spans` | on a prediction: the existing spans it links to, `[{span_id, trace_id?}]` (or span ids / `weft:///…/span/<id>` refs) |
+| `weft.linked_conversation_ids`, `weft.genai_span_ref` | on a prediction: linked conversations; linked spans as `[{trace_id, span_id}]` |
+| `weft.team.id`, `weft.team.name`, `weft.handoff.*`, `weft.reasoning`, `weft.agent.*` | teams, hand-offs, reasoning steps and agent identity (*Native API*) |
+| `weft.inputs`, `weft.output`, `weft.attributes.*` | an OTLP span's inputs, output and user attributes |
+
+**Deprecated keys.** Earlier SDK versions wrote some of these keys under
+other names. They are still read on ingest and by every view, for spans
+sent by those versions and for spans stored before the rename (stored
+attributes are never rewritten); the SDKs and plugins write only the keys
+above. A query on an attribute path (`attributes.weft.parent_span.id`,
+`attributes.otel.attributes.[weft.session_id]`, or the Agents API's
+`weft.parent_span.id`) matches spans stored under either name; the new key
+wins when a span carries both.
+
+| Deprecated key | Key |
+|---|---|
+| `weft.op_name` | `weft.span.name` |
+| `weft.thread_id` | `weft.session_id` |
+| `weft.parent_call.id`, `weft.parent_call.trace_id` | `weft.parent_span.id`, `weft.parent_span.trace_id` |
+| `weft.eval.predict_and_score_call_id` | `weft.eval.prediction_span_id` |
+| `weft.linked_calls` (`[{call_id, trace_id?}]`) | `weft.linked_spans` (`[{span_id, trace_id?}]`) |
+
+The Agents API span fields `parent_call_id` / `parent_call_trace_id` are
+likewise accepted in queries as deprecated names of `linked_parent_span_id` /
+`linked_parent_trace_id`. The names are listed once, in
+`internal/weft/store/attrkeys.go`.
 
 ## Annotation queues
 
@@ -1209,12 +1252,15 @@ provider_name, status_code` (`OK|ERROR|UNSET`), `status_message, error_type,
 started_at, ended_at, duration_ms, input_tokens, output_tokens, total_tokens,
 reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens,
 input_cost_usd, output_cost_usd, total_cost_usd, cache_read_cost_usd,
-cache_creation_cost_usd, user_id, run_id, parent_call_id,
-parent_call_trace_id` (the op a span was emitted from when it started its own
-trace inside one: the `weft.parent_call.id` / `weft.parent_call.trace_id`
+cache_creation_cost_usd, user_id, run_id, linked_parent_span_id,
+linked_parent_trace_id` (the span a span was emitted from when it started its
+own trace inside it: the `weft.parent_span.id` / `weft.parent_span.trace_id`
 attributes the Weft SDKs stamp, from SDK or OTLP spans; so
-"which agent spans did this call produce" is
-`{"$eq": [{"$getField": "parent_call_id"}, {"$literal": "<call id>"}]}`), the
+"which agent spans did this span produce" is
+`{"$eq": [{"$getField": "linked_parent_span_id"}, {"$literal": "<span id>"}]}`;
+`parent_span_id` is the parent within the trace. The deprecated names
+`parent_call_id` / `parent_call_trace_id` and `weft.parent_call.*` are
+accepted in queries, see *Span attributes*), the
 booleans `is_turn, is_error, is_invocation, is_agent, is_llm, is_tool`, and
 custom attributes as `custom_attrs_string|int|float|bool.<key>` (or source
 `custom_attrs_*` with the bare key). Dotted aliases such as `agent.name`,
@@ -1673,15 +1719,16 @@ Agents view's **Evals** tab and the **View spans** / **View conversations**
 actions on evaluations. A span belongs to evaluation run R and prediction P
 (an `Evaluation.predict_and_score` span under R) when:
 
-- it carries `weft.eval.run_id = R` and `weft.eval.predict_and_score_call_id = P`
-  (flat, nested under `attributes.weft.eval`, or as OTel span attributes; the
-  attribute names are an ingest contract the SDKs and OTel instrumentation
-  write, so they keep their names, DESIGN.md §4);
+- it carries `weft.eval.run_id = R` and `weft.eval.prediction_span_id = P`
+  (flat, nested under `attributes.weft.eval`, or as OTel span attributes;
+  *Span attributes* lists the keys and their deprecated names, here
+  `weft.eval.predict_and_score_call_id`);
   spans the SDKs record inside `EvaluationLogger.log_prediction()` get them.
-  A span with only `predict_and_score_call_id` is linked to P's parent run;
-- P links it through `attributes.weft.linked_calls` or
+  A span with only `prediction_span_id` is linked to P's parent run;
+- P links it through `attributes.weft.linked_spans` (deprecated:
+  `weft.linked_calls`) or
   `attributes.weft.genai_span_ref` (span id, `weft:///…/span/<id>`
-  ref (the older `/call/<id>` too), or `{call_id|span_id, trace_id}`), or links its conversation through
+  ref (the older `/call/<id>` too), or `{span_id|call_id, trace_id}`), or links its conversation through
   `attributes.weft.linked_conversation_ids` (v2 `POST /predictions` with
   `genai_span_ref` and `evaluation_run_id` too);
 - or it descends from such a span (OTel attributes do not propagate, and
@@ -2051,7 +2098,7 @@ such a trace (each span whose parent has not arrived) has that status, and
 the Traces list's `trace_roots_only` lists the trace once, under a
 provisional root: of those spans, the one that started first. When the root
 arrives the trace is read off it. A trace linked to a caller in
-another trace (an OTel span link or `weft.parent_call.id` on its top-level
+another trace (an OTel span link or `weft.parent_span.id` on its top-level
 span, or a hand-off to its agent recorded in another trace of the session,
 with no target span there) is a step of the caller's run: when its top-level
 span failed it is `failed_step`, not `error`. A session's traces are those

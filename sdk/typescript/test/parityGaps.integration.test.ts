@@ -26,7 +26,7 @@ async function waitFor<T>(fn: () => Promise<T | null | undefined | false>, ms = 
 
 describe.skipIf(!URL)('real server: parity gaps', () => {
   beforeAll(async () => {
-    client = await weft.init(`it/ts-gaps-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printCallLink: false } });
+    client = await weft.init(`it/ts-gaps-${randomUUID().slice(0, 8)}`, { serverUrl: URL, apiKey: process.env.WEFT_TEST_API_KEY, settings: { printSpanLink: false } });
   });
   afterAll(() => weft.finish());
 
@@ -89,7 +89,7 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
       const c = new weft.WeftClient(client.projectId, {
         serverUrl: URL,
         apiKey: process.env.WEFT_TEST_API_KEY,
-        settings: { printCallLink: false, redactPii: true, redactPiiEngine: 'presidio', redactPiiPresidioUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}` },
+        settings: { printSpanLink: false, redactPii: true, redactPiiEngine: 'presidio', redactPiiPresidioUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}` },
       });
       const call = c.createCall('ner.echo', { text: 'Grace Hopper, grace@navy.mil' });
       c.finishCall(call, 'Thanks Grace Hopper');

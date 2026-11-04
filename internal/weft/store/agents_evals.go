@@ -5,13 +5,17 @@ package store
 // activity listed.
 //
 // A span belongs to evaluation run R (prediction P) when
-//   - it carries weft.eval.run_id = R (and weft.eval.predict_and_score_call_id
+//   - it carries weft.eval.run_id = R (and weft.eval.prediction_span_id
 //     = P), as spans recorded inside EvaluationLogger.log_prediction() do, or
 //     OTel spans an agent service tags itself;
 //   - an Evaluation.predict_and_score call P under R links to it through
-//     attributes.weft.linked_calls / attributes.weft.genai_span_ref (a span id
-//     or call ref), or links its conversation through
-//     attributes.weft.linked_conversation_ids;
+//     attributes.weft.linked_spans / attributes.weft.genai_span_ref (a span id
+//     or span ref), or links its conversation through
+//     attributes.weft.linked_conversation_ids.
+//
+// The deprecated names weft.eval.predict_and_score_call_id and
+// weft.linked_calls ({call_id} items), which earlier SDK versions emit, are
+// read as well (attrkeys.go).
 //   - or it descends from such a span (OTel attributes do not propagate to
 //     children, and LLM integrations inside a turn do not tag their calls).
 //
@@ -62,9 +66,9 @@ type evalLink struct {
 	kind, target, runID, pasID, traceID string
 }
 
-// linkedCallID reads a call id from an id, a weft:/// span ref,
-// or {call_id|span_id|id, trace_id?}.
-func linkedCallID(v any) (id, trace string) {
+// linkedSpanID reads a span id from an id, a weft:/// span ref,
+// or {span_id|call_id|id, trace_id?}.
+func linkedSpanID(v any) (id, trace string) {
 	switch t := v.(type) {
 	case string:
 		s := strings.TrimSpace(t)
@@ -75,7 +79,7 @@ func linkedCallID(v any) (id, trace string) {
 		}
 		return s, ""
 	case map[string]any:
-		for _, k := range []string{"call_id", "span_id", "id"} {
+		for _, k := range []string{LinkedSpanID, DeprecatedLinkedSpanID, "id"} {
 			if s, ok := t[k].(string); ok && strings.TrimSpace(s) != "" {
 				tr, _ := t["trace_id"].(string)
 				return strings.TrimSpace(s), tr
@@ -100,7 +104,7 @@ func listOf(v any) []any {
 func evalLinksOf(opName, id string, parentID *string, attributes map[string]any, pasParent func(string) string) []evalLink {
 	a := newSpanAttrs(attributes)
 	var out []evalLink
-	run, pas := a.str("weft.eval.run_id"), a.str("weft.eval.predict_and_score_call_id")
+	run, pas := a.str(AttrEvalRunID), a.str(AttrKeys(AttrEvalPredictionSpanID)...)
 	if run == "" && pas != "" && pasParent != nil {
 		run = pasParent(pas)
 	}
@@ -126,9 +130,9 @@ func evalLinksOf(opName, id string, parentID *string, attributes map[string]any,
 		return out
 	}
 	seen := map[string]bool{}
-	for _, key := range []string{"linked_calls", "genai_span_ref"} {
-		for _, v := range listOf(weft[key]) {
-			cid, tr := linkedCallID(v)
+	for _, key := range append(AttrKeys(AttrLinkedSpans), "weft.genai_span_ref") {
+		for _, v := range listOf(weft[strings.TrimPrefix(key, "weft.")]) {
+			cid, tr := linkedSpanID(v)
 			if cid == "" || seen[cid] {
 				continue
 			}
@@ -172,7 +176,7 @@ func backfillEvalLinks(db *sql.DB) error {
 		return err
 	}
 	rows, err := db.Query(`SELECT project_id, id, op_name, parent_id, attributes FROM calls
-		WHERE attributes LIKE '%eval%' OR attributes LIKE '%linked_c%' OR attributes LIKE '%genai_span_ref%'`)
+		WHERE attributes LIKE '%eval%' OR attributes LIKE '%linked_%' OR attributes LIKE '%genai_span_ref%'`)
 	if err != nil {
 		return err
 	}

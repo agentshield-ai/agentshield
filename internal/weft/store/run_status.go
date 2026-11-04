@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -14,7 +13,7 @@ import (
 // A trace's run status is read off its top-level span:
 //
 //   - error: the top-level span failed. A trace linked to a caller in
-//     another trace (an OTel span link or weft.parent_call.id on its
+//     another trace (an OTel span link or weft.parent_span.id on its
 //     top-level span, or a hand-off to its agent recorded in another trace
 //     of the session) is a step of that caller's run, so its failure is
 //     failed_step instead: a failed sub-agent is a failed step.
@@ -94,13 +93,8 @@ func combineRunStatuses(statuses []string) (status string, failedStep bool) {
 	return RunStatusOK, false
 }
 
-// parentCallColOf is parentCallCol for calls alias a.
-func parentCallColOf(a, field string) string {
-	parts := []string{`json_extract(` + a + `.attributes, '$.weft.parent_call.` + field + `')`,
-		`json_extract(` + a + `.attributes, '$.otel.attributes."weft.parent_call.` + field + `"')`,
-		`json_extract(` + a + `.attributes, '$."weft.parent_call.` + field + `"')`}
-	return `COALESCE(` + strings.Join(parts, ", ") + `, '')`
-}
+// parentSpanColOf is parentSpanCol for calls alias a.
+func parentSpanColOf(a, field string) string { return attrJSONCol(a, AttrParentSpan+"."+field) }
 
 // linkedToCallerSQL is true when calls row a is the top-level span of a
 // trace that is a step of a caller in another trace.
@@ -109,7 +103,7 @@ func linkedToCallerSQL(a string) string {
 	return `(` + a + `.parent_id IS NULL AND (
 		EXISTS (SELECT 1 FROM agent_span_links ` + l + ` WHERE ` + l + `.project_id = ` + a + `.project_id AND ` + l + `.span_id = ` + a + `.id
 			AND ` + l + `.linked_trace_id != ` + a + `.trace_id)
-		OR ` + parentCallColOf(a, "id") + ` != ''
+		OR ` + parentSpanColOf(a, "id") + ` != ''
 		OR EXISTS (SELECT 1 FROM agent_spans ` + s + ` JOIN agent_handoffs ` + h + ` ON ` + h + `.project_id = ` + s + `.project_id
 				AND ` + h + `.session_id = ` + s + `.conversation_id
 			WHERE ` + s + `.project_id = ` + a + `.project_id AND ` + s + `.id = ` + a + `.id AND ` + s + `.conversation_id != ''

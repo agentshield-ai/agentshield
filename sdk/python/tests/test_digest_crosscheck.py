@@ -36,7 +36,7 @@ def test_table_and_file_vectors():
 @pytest.mark.skipif(not URL, reason="WEFT_TEST_SERVER_URL not set")
 def test_digests_match_a_live_server():
     c = weft.init(f"digest-check/{uuid.uuid4().hex[:8]}", server_url=URL, api_key=os.environ.get("WEFT_TEST_API_KEY"),
-                  autopatch=False, settings={"print_call_link": False})
+                  autopatch=False, settings={"print_span_link": False})
     try:
         # plus numbers whose text is Python's own (the TypeScript SDK sends 1 for 1.0)
         values = [v["value"] for v in VECTORS["values"]] + [{"f": 1.0, "g": 1e-07, "h": 1e16, "k": 10**20, "m": -0.0}]

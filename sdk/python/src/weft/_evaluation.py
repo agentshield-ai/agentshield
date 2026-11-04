@@ -323,11 +323,11 @@ def _parse_ts(s: Any) -> Optional[float]:
     return base.timestamp() + frac
 
 
-def _linked_calls(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any]]":
+def _linked_spans(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any]]":
     """Normalise what ``log_prediction(call=...)`` links to.
 
-    Returns ``(calls, conversation_ids, call_objects)`` where ``calls`` is
-    ``[{"call_id", "trace_id"?}]``. Accepts a Call, a call id or call URI, a
+    Returns ``(spans, conversation_ids, span_objects)`` where ``spans`` is
+    ``[{"span_id", "trace_id"?}]`` (the ``weft.linked_spans`` items). Accepts a Call, a call id or call URI, a
     conversation span (Turn, LLM, Tool, SubAgent), a ``LogResult``, a
     ``Conversation``, or a list of these.
     """
@@ -342,7 +342,7 @@ def _linked_calls(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
         if it is None:
             continue
         if isinstance(it, Call):
-            calls.append({"call_id": it.id, "trace_id": it.trace_id})
+            calls.append({"span_id": it.id, "trace_id": it.trace_id})
             objs.append(it)
             continue
         if isinstance(it, str):
@@ -350,9 +350,9 @@ def _linked_calls(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
                 r = parse_uri(it)
                 if not isinstance(r, SpanRef):
                     raise TypeError(f"{it} is not a span ref")
-                calls.append({"call_id": r.id})
+                calls.append({"span_id": r.id})
             else:
-                calls.append({"call_id": it})
+                calls.append({"span_id": it})
             objs.append(it)
             continue
         span_call = getattr(it, "call", None)
@@ -361,13 +361,13 @@ def _linked_calls(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
                 it._start(set_current=False)
             c = it.call
             if c is not None:
-                calls.append({"call_id": c.id, "trace_id": c.trace_id})
+                calls.append({"span_id": c.id, "trace_id": c.trace_id})
                 objs.append(c)
             continue
         root_ids = getattr(it, "root_span_ids", None)
         if root_ids is not None:  # conversation.LogResult
             for cid, tid in zip(root_ids, list(getattr(it, "trace_ids", []) or []) + [None] * len(root_ids)):
-                calls.append({"call_id": cid, **({"trace_id": tid} if tid else {})})
+                calls.append({"span_id": cid, **({"trace_id": tid} if tid else {})})
             if getattr(it, "conversation_id", None):
                 convs.append(it.conversation_id)
             continue
@@ -606,7 +606,7 @@ class EvaluationLogger:
         re-recording them: a ``Call``, a call id or URI, a conversation span
         (``Turn``, ``LLM``, ...), a ``LogResult`` or a ``Conversation`` (or a
         list). The links are stored on the prediction as
-        ``attributes.weft.linked_calls`` / ``attributes.weft.genai_span_ref``
+        ``attributes.weft.linked_spans`` / ``attributes.weft.genai_span_ref``
         (``[{"trace_id", "span_id"}]``, as in the v2 predictions API) and
         ``attributes.weft.linked_conversation_ids``. When ``output`` is omitted
         the linked call's output is used, and ``model_latency`` defaults to its
@@ -618,15 +618,15 @@ class EvaluationLogger:
         """
         if self._finished:
             raise RuntimeError("evaluation already finished")
-        linked, conv_ids, objs = _linked_calls(call) if call is not None else ([], [], [])
+        linked, conv_ids, objs = _linked_spans(call) if call is not None else ([], [], [])
         if linked and output is None and len(objs) == 1:
             output, lat = self._linked_output(objs[0])
             if model_latency is None:
                 model_latency = lat
         weft_attrs: Dict[str, Any] = {}
         if linked:
-            weft_attrs["linked_calls"] = linked
-            weft_attrs["genai_span_ref"] = [{"trace_id": c.get("trace_id"), "span_id": c["call_id"]} for c in linked]
+            weft_attrs["linked_spans"] = linked
+            weft_attrs["genai_span_ref"] = [{"trace_id": c.get("trace_id"), "span_id": c["span_id"]} for c in linked]
         if conv_ids:
             weft_attrs["linked_conversation_ids"] = conv_ids
         eval_meta = {k: v for k, v in (("example_id", example_id), ("row_digest", row_digest), ("trial_index", trial_index), ("kind", eval_kind)) if v is not None}
@@ -650,7 +650,7 @@ class EvaluationLogger:
                 self._client.finish_call(pc, output=output)
             eval_ctx = {
                 "run_id": self._call.id if self._call is not None else None,
-                "predict_and_score_call_id": pas.id,
+                "prediction_span_id": pas.id,
                 "project_id": self._client.project_id,
                 "kind": eval_kind,
                 "row_digest": row_digest or _row_key(inputs),

@@ -60,7 +60,7 @@ export function SpanSessionsPage() {
           <div className="col" style={{ alignItems: 'center' }}>
             <b>No sessions yet</b>
             <span className="small">
-              Spans with a <code>session_id</code> are grouped by session. With the Python SDK wrap each turn in <code>with weft.thread("conversation-id"):</code>; with OpenTelemetry set{' '}
+              Spans with a <code>session_id</code> are grouped by session. With the Python SDK wrap each turn in <code>with weft.session("conversation-id"):</code>; with OpenTelemetry set{' '}
               <code>gen_ai.conversation.id</code> or <code>session.id</code> on spans.
             </span>
           </div>

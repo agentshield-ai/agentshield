@@ -291,11 +291,11 @@ def test_thread_context_sets_thread_and_turns(client, fake):
         tool()
         return i
 
-    with weft.thread("conv-1") as t:
+    with weft.session("conv-1") as t:
         assert t.session_id == "conv-1"
         turn(1)
         turn(2)
-    with weft.thread() as t2:
+    with weft.session() as t2:
         turn(3)
     client.flush()
     turns = fake.calls_by_op("turn")
@@ -317,7 +317,7 @@ def test_thread_inside_op_marks_inner_calls_as_turns(client, fake):
 
     @weft.trace
     def session():
-        with weft.thread("t"):
+        with weft.session("t"):
             step()
 
     session()

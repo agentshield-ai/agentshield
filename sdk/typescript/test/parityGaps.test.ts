@@ -15,7 +15,7 @@ let client: weft.WeftClient;
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
-  client = await weft.init('ts-entity/gaps', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false }, autopatchSettings: {} });
+  client = await weft.init('ts-entity/gaps', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printSpanLink: false }, autopatchSettings: {} });
 });
 
 afterEach(async () => {
@@ -194,7 +194,7 @@ describe('NER PII redaction', () => {
     const c = await weft.init('ts-entity/ner', {
       serverUrl: fake.url,
       sender: { flushIntervalMs: 5 },
-      settings: { printCallLink: false, redactPii: true, redactPiiAnalyzer: analyzer, redactPiiScoreThreshold: 0.5, redactPiiExcludeFields: ['PHONE_NUMBER'] },
+      settings: { printSpanLink: false, redactPii: true, redactPiiAnalyzer: analyzer, redactPiiScoreThreshold: 0.5, redactPiiExcludeFields: ['PHONE_NUMBER'] },
     });
     const greet = weft.trace(function greet(msg: string, meta: Record<string, unknown>) {
       return `Hi Bob, mail alice@example.com or call 555-123-4567 from Paris`;
@@ -230,7 +230,7 @@ describe('NER PII redaction', () => {
     try {
       process.env.WEFT_PRESIDIO_ANALYZER_URL = url;
       process.env.WEFT_REDACT_PII = 'true';
-      const c = await weft.init('ts-entity/presidio', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });
+      const c = await weft.init('ts-entity/presidio', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printSpanLink: false } });
       expect(c.redactor.ner).not.toBeNull();
       const echo = weft.trace(function echo(text: string) {
         return text;

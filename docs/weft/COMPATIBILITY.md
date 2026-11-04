@@ -78,13 +78,17 @@ rewritten; requests are translated for every caller while the adapter is on.
 | `wb_user_id`, `wb_username` (calls, feedback, objects; query and sort fields) | `user_id`, `username` |
 | `wb_run_id`, `wb_run_step`, `wb_run_step_end` | `run_id`, `run_step`, `run_step_end` |
 | calls filter `wb_user_ids`, `wb_run_ids` | `user_ids`, `run_ids` |
-| attributes `weave.eval.*`, `weave.parent_call.*` | `weft.eval.*`, `weft.parent_call.*` |
-| `weave.op_name`, `weave.display_name`, `wandb.display_name` | `weft.op_name`, `weft.display_name` |
-| `wandb.thread_id`, `wandb.turn_id`, `wandb.is_turn` / `weave.is_turn`, `wandb.thread_name` | `weft.thread_id`, `weft.turn_id`, `weft.is_turn`, `weft.conversation.name` |
+| attributes `weave.eval.*` (`weave.eval.predict_and_score_call_id`), `weave.parent_call.*` | `weft.eval.*` (`weft.eval.prediction_span_id`), `weft.parent_span.*` |
+| `weave.op_name`, `weave.display_name`, `wandb.display_name` | `weft.span.name`, `weft.display_name` |
+| `wandb.thread_id`, `wandb.turn_id`, `wandb.is_turn` / `weave.is_turn`, `wandb.thread_name` | `weft.session_id`, `weft.turn_id`, `weft.is_turn`, `weft.conversation.name` |
 | `weave.kind` / `weave.span_kind`, `weave.color`, `weave.agent.name` | `weft.span_kind`, `weft.color`, `weft.agent.name` |
-| nested `attributes.weave.{kind, eval, parent_call, ...}` | `attributes.weft.{span_kind, eval, parent_call, ...}`; the client's other keys (`client_version`, `os_name`, ...) stay under `attributes.weave` |
+| nested `attributes.weave.{kind, eval, parent_call, op_name, ...}` | `attributes.weft.{span_kind, eval, parent_span, span.name, ...}` (in `eval`, `predict_and_score_call_id` becomes `prediction_span_id`); the client's other keys (`client_version`, `os_name`, ...) stay under `attributes.weave` |
+| Agents API span fields `parent_call_id`, `parent_call_trace_id` (the client's names, given back in responses to it) | `linked_parent_span_id`, `linked_parent_trace_id` |
 
-The mapping lives in `internal/weft/compat/legacy`.
+The mapping lives in `internal/weft/compat/legacy`. It maps onto Weft's
+current attribute keys. Weft's own earlier key names (`weft.op_name`,
+`weft.thread_id`, `weft.parent_call.*`, …) are not part of the adapter:
+Weft reads them itself, with or without it (API.md, *Span attributes*).
 
 ### Decision: legacy ref input is behind the flag
 

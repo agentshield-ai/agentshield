@@ -59,7 +59,7 @@ flushed at exit (`weft.flush()` / `weft.finish()` do it explicitly).
 | PII entities and engine | `settings={"redact_pii_fields": [...], "redact_pii_exclude_fields": [...], "redact_pii_engine": "auto"}` | `WEFT_REDACT_PII_FIELDS`, `WEFT_REDACT_PII_EXCLUDE_FIELDS`, `WEFT_REDACT_PII_ENGINE` | `DEFAULT_PII_ENTITIES`; Presidio if installed |
 | Integrations | `autopatch=False`, `autopatch_settings={...}` | `WEFT_AUTOPATCH=0`, `WEFT_DISABLED_INTEGRATIONS=a,b`, `WEFT_AUTOPATCH_<NAME>=0` | all on |
 | Attributes on every call | `settings={"global_attributes": {...}}` | | none |
-| Print a link per root call | `settings={"print_call_link": False}` | `WEFT_PRINT_CALL_LINK` | on |
+| Print a link per root span | `settings={"print_span_link": False}` | `WEFT_PRINT_SPAN_LINK` | on |
 | Store op source code | `settings={"capture_code": False}` | `WEFT_CAPTURE_CODE` | on |
 | Record model reasoning (thinking, reasoning summaries, `weft.reasoning()`) | `settings={"capture_reasoning": False}` | `WEFT_CAPTURE_REASONING` | on |
 | On-disk write-ahead log | `settings={"enable_disk_fallback": True, "wal_dir": ...}` | `WEFT_ENABLE_WAL`, `WEFT_WAL_DIR` | off (`~/.weft/wal`) |
@@ -197,9 +197,11 @@ weft.require_current_span()                # the same, raising weft.NoCurrentSpa
 with weft.attributes({"env": "prod", "user_id": "u1"}):
     search("x", api_key="...")             # attributes stored on every span in the block
 
-with weft.thread("conversation-42"):       # the spans' session_id; top-level spans are turns
+with weft.session("conversation-42"):      # the spans' session_id; top-level spans are turns
     answer("hi")
     answer("and then?")
+
+weft.get_client().update_span(span, {"step": 2}, session_id="conversation-42")  # change a running span
 
 with weft.tracing_disabled():              # run without recording anything
     answer("off the record")
@@ -434,7 +436,7 @@ frameworks you do not use. Pass `autopatch=False` to opt out entirely.
 | `claude_agent_sdk` | claude-agent-sdk | `query()` (agent `claude-agent-sdk`) and `ClaudeSDKClient` turns (agent), session = the Claude session id; each assistant message (llm, with its thinking blocks), each tool use (tool, `gen_ai.tool.call.id` = the tool-use id; `Task` sub-agents are agents named by `subagent_type` and nest their messages) | `claude_agent_sdk.query`, `.turn`, `.llm`, `.tool.<name>` |
 | `haystack` | haystack-ai | pipelines (chain) and components (`llm`, `retriever`, `embedding`, `reranker`, `tool`, `agent`) via `WeftHaystackTracer` | `haystack.pipeline.run`, `haystack.<ComponentType>` |
 | `verdict` | verdict | `Pipeline` runs (workflow) and units such as `JudgeUnit` (scorer), via Verdict's tracer interface | `verdict.<pipeline name>`, `verdict.<Unit>` |
-| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn is running; inside an op that turn is a separate trace linked by `weft.parent_call.*`) | `chat` |
+| `typesafe` | typesafe-sdk | `TypeSafeClient.system_one` / `AsyncTypeSafeClient.system_one` (llm, in its own `typesafe SDK` turn unless a turn is running; inside an op that turn is a separate trace linked by `weft.parent_span.*`) | `chat` |
 | `autogen` | autogen-agentchat / -core / -ext | agents `run`/`run_stream`/`on_messages` (agent, `gen_ai.agent.name`), teams (workflow; a team with its own `name` is the Weft team), model clients `create`/`create_stream` (llm), tools (Swarm `transfer_to_<agent>` tools are hand-offs), memory, code executors | `autogen.Agent.run`, `autogen.ChatCompletionClient.create`, ... |
 | `agno` | agno | `Agent`/`Team` `run`/`arun` (agent), `Workflow` (workflow), `Model.response` (llm), tool calls | `agno.Agent.run`, `agno.Model.response`, ... |
 | `google_adk` | google-adk | `Runner.run(_async)` (workflow; session = `session_id`), agents (`gen_ai.agent.name`), tools (with the function call id; `transfer_to_agent` is a hand-off), LLM calls | `google_adk.Runner.run`, `google_adk.Agent.run`, ... |
@@ -593,9 +595,9 @@ response model, token usage and request id. It nests under the running turn,
 else in its own `typesafe SDK` turn. The integration creates no op call, so
 that turn starts its own trace even inside an `@weft.trace`;
 when an op is running, the turn and the LLM call carry a link to it,
-`attributes.weft.parent_call.trace_id` and `.id`, which the server exposes as the agent span fields
-`parent_call_trace_id` / `parent_call_id` (so
-`{"$eq": [{"$getField": "parent_call_id"}, {"$literal": call.id}]}` on
+`attributes.weft.parent_span.trace_id` and `.id`, which the server exposes as the agent span fields
+`linked_parent_trace_id` / `linked_parent_span_id` (so
+`{"$eq": [{"$getField": "linked_parent_span_id"}, {"$literal": call.id}]}` on
 `/agents/spans/query` finds the spans an op produced). A failed call records the error
 type and HTTP status, not TypeSafe's error message (it carries the response
 body). `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
@@ -884,7 +886,7 @@ pred = ev.log_prediction({"question": "2+2"}, call=call)   # output and latency 
 pred = ev.log_prediction({"question": "hi"}, output="hello", call=turn, example_id="ex-1")
 ```
 
-The links are stored on the prediction as `attributes.weft.linked_calls`,
+The links are stored on the prediction as `attributes.weft.linked_spans` (`[{"span_id", "trace_id"}]`),
 `attributes.weft.genai_span_ref` (`[{"trace_id", "span_id"}]`, the field of
 the v2 predictions API) and `attributes.weft.linked_conversation_ids`, so
 `client.spans(query={"$eq": [{"$getField": "attributes.weft.genai_span_ref.0.span_id"}, {"$literal": call_id}]})`
@@ -1029,7 +1031,7 @@ client.query_costs(["my-model"]); client.purge_costs(ids)
 client.server_info(); client.whoami()
 client.resolve_url(file_digest)                  # download URL for a file or media reference
 
-from weft.trace_server_interface import SortBy, ThreadsQueryReq
+from weft.api_types import SortBy, ThreadsQueryReq
 res = client.threads_query(ThreadsQueryReq(       # sessions (POST /api/v1/spans/sessions); also threads_query_stream
     sort_by=[SortBy(field="last_updated", direction="desc")], limit=50,
     sortable_datetime_after=datetime.datetime.now() - datetime.timedelta(days=1)))

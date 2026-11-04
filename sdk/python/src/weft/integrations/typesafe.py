@@ -14,9 +14,9 @@ span of provider ``typesafe``:
   ``invoke_agent`` turn named ``typesafe SDK``, the root of its own trace,
   also inside an ``@weft.op`` (the integration creates no op call of its
   own). When an op is running, both spans are linked to it by the
-  ``weft.parent_call.trace_id`` and ``weft.parent_call.id`` attributes
+  ``weft.parent_span.trace_id`` and ``weft.parent_span.id`` attributes
   (DESIGN.md §4; the server exposes them as the agent span fields
-  ``parent_call_trace_id`` / ``parent_call_id``). The span is not made
+  ``linked_parent_trace_id`` / ``linked_parent_span_id``). The span is not made
   the current call, so nothing nests under it.
 * errors: ``error.type`` and ``http.response.status_code``, with the
   exception recorded as its type only: TypeSafe's API errors carry the
@@ -223,7 +223,7 @@ def _link_to_running_op() -> Dict[str, Any]:
         if getattr(call, "_conversation_span", False):
             continue
         if call.id and call.trace_id:
-            return {"weft": {"parent_call": {"trace_id": call.trace_id, "id": call.id}}}
+            return {"weft": {"parent_span": {"trace_id": call.trace_id, "id": call.id}}}
         break
     return {}
 

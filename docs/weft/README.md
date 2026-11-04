@@ -165,7 +165,7 @@ const openai = weft.wrapOpenAI(new OpenAI())
 ```
 
 It also provides `Dataset`, `Evaluation`, `EvaluationLogger`, built-in scorers,
-`save`/`get`, `spans`/`span`, `wrapAnthropic`, `attributes` and `withThread`. See
+`save`/`get`, `spans`/`span`, `wrapAnthropic`, `attributes` and `withSession`. See
 [sdk/typescript/README.md](../../sdk/typescript/README.md).
 
 The TypeScript SDK also traces LangChain.js, LlamaIndex.TS, the Vercel AI SDK

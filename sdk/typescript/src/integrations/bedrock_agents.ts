@@ -28,7 +28,7 @@
  */
 import type { Call } from '../call.js';
 import type { WeftClient } from '../client.js';
-import { currentContext, withThread } from '../context.js';
+import { currentContext, withSession } from '../context.js';
 import type { OpMeta } from '../op.js';
 import { addUsage } from '../usage.js';
 import { integrationAttributes, integrationOp, type IntegrationOpSettings } from './settings.js';
@@ -394,7 +394,7 @@ export function startAgentCall(client: WeftClient, name: string, input: Record<s
   // A Bedrock session is a conversation: thread it unless the caller already did.
   const ctx = currentContext();
   const parent = ctx.stack[ctx.stack.length - 1];
-  const call = sessionId && !ctx.thread && !parent?.sessionId ? withThread(sessionId, make) : make();
+  const call = sessionId && !ctx.session && !parent?.sessionId ? withSession(sessionId, make) : make();
   return new AgentTraceProcessor(client, call, meta, agentName, sessionId, model);
 }
 

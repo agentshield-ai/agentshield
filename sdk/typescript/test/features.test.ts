@@ -11,7 +11,7 @@ let client: weft.WeftClient;
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
-  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printCallLink: false } });
+  client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printSpanLink: false } });
 });
 
 afterEach(async () => {
@@ -61,7 +61,7 @@ describe('op options and settings', () => {
     expect(r.attributes.team).toBe('b');
     expect(fake.objs.get('root')![0].value.code).toBe('// Code capture disabled\n');
     const secret = weft.trace(function secret() {}, { enableCodeCapture: false });
-    await weft.init('p2', { serverUrl: fake.url, settings: { printCallLink: false } });
+    await weft.init('p2', { serverUrl: fake.url, settings: { printSpanLink: false } });
     secret();
     await weft.flush();
     expect(fake.objs.get('secret')![0].value.code).toBe('// Code capture disabled\n');
@@ -88,7 +88,7 @@ describe('op options and settings', () => {
 
   it('retries with configured settings and replays the write-ahead log', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'weft-wal-'));
-    const settings = { enableDiskFallback: true, walDir: dir, retryMaxAttempts: 1, retryBackoffMs: 1, printCallLink: false };
+    const settings = { enableDiskFallback: true, walDir: dir, retryMaxAttempts: 1, retryBackoffMs: 1, printSpanLink: false };
     fake.failStatus = 503;
     const c1 = await weft.init('wal-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 1 }, settings });
     expect(c1.sender.maxRetries).toBe(1);

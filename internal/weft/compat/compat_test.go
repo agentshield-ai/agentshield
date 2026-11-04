@@ -355,14 +355,20 @@ func TestAttributeAliases(t *testing.T) {
 	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "sdk-llm"}, nil)["call"].(map[string]any)
 	a := c["attributes"].(map[string]any)
 	w, _ := a["weft"].(map[string]any)
-	if w["span_kind"] != "llm" || w["parent_call"].(map[string]any)["id"] != "op-call-2" || a["weave"].(map[string]any)["client_version"] != "0.54.0" {
+	if w["span_kind"] != "llm" || w["parent_span"].(map[string]any)["id"] != "op-call-2" || a["weave"].(map[string]any)["client_version"] != "0.54.0" {
 		t.Fatalf("attributes = %v", a)
 	}
-	// The agents API takes the legacy field name in queries.
-	res := e.post("/agents/spans/query", map[string]any{"project_id": pid,
-		"query": map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "weave.parent_call.id"}, map[string]any{"$literal": "op-call-2"}}}}}, nil)
-	if s := res["spans"].([]any); len(s) != 1 || s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-2" {
+	// The agents API takes the legacy field name in queries, and answers the
+	// weave client with its span field names.
+	q := map[string]any{"project_id": pid,
+		"query": map[string]any{"$expr": map[string]any{"$eq": []any{map[string]any{"$getField": "weave.parent_call.id"}, map[string]any{"$literal": "op-call-2"}}}}}
+	res := e.post("/agents/spans/query", q, nil)
+	if s := res["spans"].([]any); len(s) != 1 || s[0].(map[string]any)["linked_parent_trace_id"] != "op-trace-2" {
 		t.Fatalf("spans = %v", res)
+	}
+	code, raw, _ := e.raw(http.MethodPost, "/agents/spans/query", q, weaveUA)
+	if code != 200 || !strings.Contains(string(raw), `"parent_call_trace_id":"op-trace-2"`) || strings.Contains(string(raw), "linked_parent") {
+		t.Fatalf("weave client spans = %d %s", code, raw)
 	}
 
 	// OTLP: a wandb.project resource and weave.* span attributes.
@@ -370,7 +376,8 @@ func TestAttributeAliases(t *testing.T) {
 	 "scopeSpans":[{"scope":{"name":"x"},"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174",
 	  "name":"turn","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000000500000000",
 	  "attributes":[{"key":"wandb.thread_id","value":{"stringValue":"th-1"}},{"key":"wandb.is_turn","value":{"boolValue":true}},
-	                {"key":"weave.eval.run_id","value":{"stringValue":"run-1"}}]}]}]}]}`)
+	                {"key":"weave.eval.run_id","value":{"stringValue":"run-1"}},
+	                {"key":"weave.eval.predict_and_score_call_id","value":{"stringValue":"pas-1"}}]}]}]}]}`)
 	code, out, _ := e.raw(http.MethodPost, "/otel/v1/traces", body, nil)
 	if code != 200 {
 		t.Fatalf("otlp -> %d %s", code, out)
@@ -380,7 +387,8 @@ func TestAttributeAliases(t *testing.T) {
 		t.Fatalf("otlp call = %v", c)
 	}
 	oa := c["attributes"].(map[string]any)["otel"].(map[string]any)["attributes"].(map[string]any)
-	if oa["weft.eval.run_id"] != "run-1" || oa["weave.eval.run_id"] != nil {
+	if oa["weft.eval.run_id"] != "run-1" || oa["weave.eval.run_id"] != nil || oa["weft.session_id"] != "th-1" ||
+		oa["weft.eval.prediction_span_id"] != "pas-1" || oa["weft.eval.predict_and_score_call_id"] != nil {
 		t.Fatalf("otel attributes = %v", oa)
 	}
 }
