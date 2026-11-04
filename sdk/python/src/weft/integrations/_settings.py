@@ -11,11 +11,11 @@
 Each value is an ``IntegrationSettings`` (or a dict of its fields):
 
 * ``enabled`` (default True): patch and trace this integration.
-* ``op_settings``: ``OpSettings`` applied to every call the integration
-  records: ``name`` (op name override), ``call_display_name`` (string or
-  ``callable(call) -> str``), ``postprocess_inputs(dict) -> dict``,
+* ``op_settings``: ``OpSettings`` applied to every span the integration
+  records: ``name`` (span name override), ``span_display_name`` (string or
+  ``callable(span) -> str``), ``postprocess_inputs(dict) -> dict``,
   ``postprocess_output(value) -> value``, ``kind``, ``color`` and
-  ``attributes`` (merged into each call's attributes).
+  ``attributes`` (merged into each span's attributes).
 
 Environment variables (read at patch time and at call time):
 
@@ -34,7 +34,7 @@ import os
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _FALSE = ("0", "false", "no", "off", "disabled")
 
@@ -78,17 +78,38 @@ def canonical(name: str) -> str:
 
 
 class OpSettings(BaseModel):
-    """Op options applied to the calls an integration records (mirrors ``@weft.op``)."""
+    """Options applied to the spans an integration records (mirrors ``@weft.trace``)."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     name: Optional[str] = None
-    call_display_name: Optional[Union[str, Callable[[Any], str]]] = None
+    span_display_name: Optional[Union[str, Callable[[Any], str]]] = None
     postprocess_inputs: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
     postprocess_output: Optional[Callable[[Any], Any]] = None
     kind: Optional[str] = None
     color: Optional[str] = None
     attributes: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _earlier_names(cls, data: Any) -> Any:
+        if isinstance(data, Mapping) and "call_display_name" in data:
+            from .._deprecation import deprecated_call
+
+            deprecated_call("OpSettings(call_display_name=...)", "OpSettings(span_display_name=...)", stacklevel=6)
+            data = dict(data)
+            old = data.pop("call_display_name")
+            if data.get("span_display_name") is None:
+                data["span_display_name"] = old
+        return data
+
+    @property
+    def call_display_name(self) -> Optional[Union[str, Callable[[Any], str]]]:
+        """Deprecated: ``OpSettings.span_display_name``."""
+        from .._deprecation import deprecated_call
+
+        deprecated_call("OpSettings.call_display_name", "OpSettings.span_display_name")
+        return self.span_display_name
 
 
 class IntegrationSettings(BaseModel):
@@ -227,7 +248,7 @@ def _apply(op: Any, integration: str) -> None:
     op.name = new_name
     op.kind = s.kind or d.kind
     op.color = s.color or d.color
-    op.call_display_name = s.call_display_name if s.call_display_name is not None else d.display
+    op.span_display_name = s.span_display_name if s.span_display_name is not None else d.display
     op.postprocess_inputs = _compose(d.inputs, s.postprocess_inputs)
     op.postprocess_output = _compose(d.output, s.postprocess_output)
 
@@ -257,7 +278,7 @@ def integration_op(
 ) -> Any:
     """Return an ``Op`` for an integration, with that integration's settings applied.
 
-    Without ``fn`` the op is a cached marker op (used with ``create_call``);
+    Without ``fn`` the op is a cached marker op (used with ``create_span``);
     with ``fn`` it wraps and runs ``fn``.
     """
     from .._op import Op

@@ -589,7 +589,7 @@ def test_retry_queue_timeout_and_log_level_env(fake, monkeypatch):
     monkeypatch.setenv("WEFT_RETRY_MAX_ATTEMPTS", "7")
     monkeypatch.setenv("WEFT_RETRY_BACKOFF", "0.5")
     monkeypatch.setenv("WEFT_RETRY_MAX_INTERVAL", "9")
-    monkeypatch.setenv("WEFT_MAX_CALLS_QUEUE_SIZE", "123")
+    monkeypatch.setenv("WEFT_MAX_SPANS_QUEUE_SIZE", "123")
     monkeypatch.setenv("WEFT_HTTP_TIMEOUT", "4.5")
     monkeypatch.setenv("WEFT_LOG_LEVEL", "debug")
     lg = logging.getLogger("weft")
@@ -605,7 +605,7 @@ def test_retry_queue_timeout_and_log_level_env(fake, monkeypatch):
         assert c2._sender.max_retries == 1 and c2._sender.max_queue == sys.maxsize and c2._http.timeout == 2.0
         assert lg.level == logging.ERROR
         monkeypatch.setenv("WEFT_HTTP_TIMEOUT", "soon")
-        monkeypatch.delenv("WEFT_MAX_CALLS_QUEUE_SIZE")
+        monkeypatch.delenv("WEFT_MAX_SPANS_QUEUE_SIZE")
         monkeypatch.setenv("WEFT_MAX_QUEUE_SIZE", "55")
         monkeypatch.setenv("WEFT_LOG_LEVEL", "LOUD")
         c3 = weft.WeftClient("e/p", server_url=fake.url)
@@ -618,7 +618,7 @@ def test_retry_queue_timeout_and_log_level_env(fake, monkeypatch):
 
 
 def test_env_defaults_unchanged(fake, monkeypatch):
-    for k in ("WEFT_RETRY_MAX_ATTEMPTS", "WEFT_RETRY_BACKOFF", "WEFT_RETRY_MAX_INTERVAL", "WEFT_MAX_CALLS_QUEUE_SIZE",
+    for k in ("WEFT_RETRY_MAX_ATTEMPTS", "WEFT_RETRY_BACKOFF", "WEFT_RETRY_MAX_INTERVAL", "WEFT_MAX_SPANS_QUEUE_SIZE",
               "WEFT_MAX_QUEUE_SIZE", "WEFT_HTTP_TIMEOUT", "WEFT_LOG_LEVEL"):
         monkeypatch.delenv(k, raising=False)
     c = weft.WeftClient("e/p", server_url=fake.url)

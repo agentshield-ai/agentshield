@@ -79,7 +79,7 @@ describe('hand-offs', () => {
     const [h] = byOpPrefix('handoff');
     expect(attr(h, 'weft.handoff')).toEqual({ to_agent: 'billing', kind: 'handoff', from_agent: 'triage' });
     expect(h.inputs).toEqual({ input: 'refund order 7' });
-    expect(h.parent_id).toBe(turn.callId);
+    expect(h.parent_id).toBe(turn.spanId);
     expect(h.display_name).toBe('handoff to billing');
     expect(attr(h, 'gen_ai.conversation.id')).toBe('s-1');
     expect(attr(h, 'weft.span_kind')).toBe('handoff');
@@ -111,13 +111,13 @@ describe('hand-offs', () => {
     const [h] = byOpPrefix('handoff');
     expect(attr(h, 'weft.handoff.kind')).toBe('delegate');
     expect(h.output).toBe('3 facts');
-    const rc = fake.calls.get(inner.callId!);
+    const rc = fake.calls.get(inner.spanId!);
     expect(rc.parent_id).toBe(h.id);
     expect(rc.trace_id).toBe(outer.traceId);
     expect(rc.session_id).toBe('s-2');
-    expect(fake.calls.get(outer.callId!).ended_at).toBeTruthy(); // the outer turn stayed open and ended normally
-    expect(fake.calls.get(nested.callId!).parent_id).toBe(outer.callId);
-    expect(fake.calls.get(same.callId!).parent_id).toBeNull();
+    expect(fake.calls.get(outer.spanId!).ended_at).toBeTruthy(); // the outer turn stayed open and ended normally
+    expect(fake.calls.get(nested.spanId!).parent_id).toBe(outer.spanId);
+    expect(fake.calls.get(same.spanId!).parent_id).toBeNull();
   });
 
   it('turn and sub-agent helpers, and batch logging with a hand-off', async () => {
@@ -154,7 +154,7 @@ describe('reasoning', () => {
     });
     await plan('trip');
     await settle();
-    const steps = attr(fake.calls.get(turn.callId!), 'weft.reasoning');
+    const steps = attr(fake.calls.get(turn.spanId!), 'weft.reasoning');
     expect(steps.map((s: any) => [s.kind, s.text])).toEqual([
       ['thinking', 'The user wants facts; delegate.'],
       ['summary', 'short summary'],
@@ -185,8 +185,8 @@ describe('reasoning', () => {
       });
     });
     await settle();
-    expect(attr(fake.calls.get(turn.callId!), 'weft.reasoning')[0].text).toBe('mail <EMAIL_ADDRESS> about it');
-    expect(fake.calls.get(llm.callId!).output.choices[0].message.content[0]).toEqual({ type: 'thinking', thinking: 'call <PHONE_NUMBER> first' });
+    expect(attr(fake.calls.get(turn.spanId!), 'weft.reasoning')[0].text).toBe('mail <EMAIL_ADDRESS> about it');
+    expect(fake.calls.get(llm.spanId!).output.choices[0].message.content[0]).toEqual({ type: 'thinking', thinking: 'call <PHONE_NUMBER> first' });
   });
 
   it('captureReasoning off (WEFT_CAPTURE_REASONING=false) drops reasoning everywhere', async () => {
@@ -207,8 +207,8 @@ describe('reasoning', () => {
     const anthropic = weft.wrapAnthropic({ messages: { create: async (_b: any) => ({ model: 'claude-test', content: [{ type: 'thinking', thinking: 'x', signature: 's' }, { type: 'text', text: 'a' }], usage: { input_tokens: 1, output_tokens: 1 } }) } });
     await anthropic.messages.create({ model: 'claude-test', messages: [{ role: 'assistant', content: [{ type: 'thinking', thinking: 'old' }, { type: 'text', text: 'b' }] }] } as any);
     await settle();
-    expect(attr(fake.calls.get(turn.callId!), 'weft.reasoning')).toBeUndefined();
-    expect(JSON.stringify(fake.calls.get(llm.callId!).output)).not.toContain('hidden');
+    expect(attr(fake.calls.get(turn.spanId!), 'weft.reasoning')).toBeUndefined();
+    expect(JSON.stringify(fake.calls.get(llm.spanId!).output)).not.toContain('hidden');
     const [a] = fake.callsByOp('anthropic.messages.create');
     expect(a.output.content).toEqual([{ type: 'text', text: 'a' }]);
     expect(a.inputs.messages[0].content).toEqual([{ type: 'text', text: 'b' }]);

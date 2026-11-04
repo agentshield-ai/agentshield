@@ -33,7 +33,7 @@ async def summarize(texts: list) -> dict:
 
 @weft.trace
 def stream_numbers(n: int):
-    """Generators are traced too: the yielded items become the call output."""
+    """Generators are traced too: the yielded items become the span output."""
     for i in range(n):
         yield i * i
 
@@ -43,8 +43,8 @@ if __name__ == "__main__":
     print(asyncio.run(summarize(["a b c", "b c d"])))
     print(list(stream_numbers(4)))
 
-    result, call = count_words.call("one two two")
-    print("call id:", call.id, "trace:", call.trace_id)
+    result, span = count_words.call("one two two")
+    print("span id:", span.id, "trace:", span.trace_id)
 
     with weft.attributes({"env": "dev", "user_id": "u-123"}):
         count_words("tagged with attributes")

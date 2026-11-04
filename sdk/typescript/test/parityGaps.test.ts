@@ -344,7 +344,7 @@ describe('SDK extras', () => {
   });
 
   it('reads retry, queue, timeout and log-level settings from the environment', async () => {
-    const env = { WEFT_RETRY_MAX_ATTEMPTS: '7', WEFT_RETRY_BACKOFF: '0.5', WEFT_RETRY_MAX_INTERVAL: '9', WEFT_MAX_CALLS_QUEUE_SIZE: '0', WEFT_HTTP_TIMEOUT: '4.5' };
+    const env = { WEFT_RETRY_MAX_ATTEMPTS: '7', WEFT_RETRY_BACKOFF: '0.5', WEFT_RETRY_MAX_INTERVAL: '9', WEFT_MAX_SPANS_QUEUE_SIZE: '0', WEFT_HTTP_TIMEOUT: '4.5' };
     Object.assign(process.env, env);
     try {
       const c = new weft.WeftClient('e/p', { serverUrl: fake.url });

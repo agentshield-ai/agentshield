@@ -216,12 +216,12 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
     if (model) attrs['gen_ai.request.model'] = model;
     let call: Call;
     try {
-      call = client.createCall(meta, { model, ...input }, { attributes: integrationAttributes(INTEGRATION, attrs, local) });
+      call = client.createSpan(meta, { model, ...input }, { attributes: integrationAttributes(INTEGRATION, attrs, local) });
     } catch {
       return orig.call(this, command, ...rest);
     }
     const fail = (e: unknown) => {
-      client.finishCall(call, undefined, e, meta);
+      client.finishSpan(call, undefined, e, meta);
       throw e;
     };
     let p: any;
@@ -234,7 +234,7 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
       try {
         return handle(res);
       } catch {
-        client.finishCall(call, strip(res), undefined, meta);
+        client.finishSpan(call, strip(res), undefined, meta);
         return res;
       }
     }, fail);
@@ -243,14 +243,14 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
       if (name === 'ConverseCommand') {
         const u = res?.usage;
         if (u) addB(call, model, converseUsage(u));
-        client!.finishCall(call, strip(res), undefined, meta);
+        client!.finishSpan(call, strip(res), undefined, meta);
         return res;
       }
       if (name === 'ConverseStreamCommand' && res?.stream) {
         const acc = new ConverseStreamAccumulator();
         res.stream = proxyStream(res.stream, acc, (out, err) => {
           if (acc.usage) addB(call, model, acc.usage);
-          client!.finishCall(call, out, err, meta);
+          client!.finishSpan(call, out, err, meta);
         });
         return res;
       }
@@ -258,7 +258,7 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
         const acc = new InvokeStreamAccumulator();
         res.body = proxyStream(res.body, acc, (out, err) => {
           if (acc.usage) addB(call, model, acc.usage);
-          client!.finishCall(call, out, err, meta);
+          client!.finishSpan(call, out, err, meta);
         }, { raw: true });
         return res;
       }
@@ -266,7 +266,7 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
       const body = decodeBody(res?.body);
       const u = usageFromBody(body);
       if (u) addB(call, model, u);
-      client!.finishCall(call, { ...strip(res), body }, undefined, meta);
+      client!.finishSpan(call, { ...strip(res), body }, undefined, meta);
       return res;
     }
   };

@@ -91,8 +91,8 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
         apiKey: process.env.WEFT_TEST_API_KEY,
         settings: { printSpanLink: false, redactPii: true, redactPiiEngine: 'presidio', redactPiiPresidioUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}` },
       });
-      const call = c.createCall('ner.echo', { text: 'Grace Hopper, grace@navy.mil' });
-      c.finishCall(call, 'Thanks Grace Hopper');
+      const call = c.createSpan('ner.echo', { text: 'Grace Hopper, grace@navy.mil' });
+      c.finishSpan(call, 'Thanks Grace Hopper');
       await c.flush();
       const got = await client.span(call.id);
       expect(got!.inputs.text).toBe('<PERSON>, <EMAIL_ADDRESS>');

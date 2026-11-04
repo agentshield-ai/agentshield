@@ -90,7 +90,7 @@ def test_op_settings_postprocess_and_display(client, fake, fake_openai, fake_cre
 
     wi.autopatch({
         "openai": {"op_settings": {"postprocess_inputs": scrub_inputs, "postprocess_output": scrub_output,
-                                   "call_display_name": "LLM call", "color": "purple", "attributes": {"team": "search"}}},
+                                   "span_display_name": "LLM call", "color": "purple", "attributes": {"team": "search"}}},
         "crewai": {"op_settings": {"name": "my_crew_step", "kind": "chain", "postprocess_output": lambda o: o.upper()}},
     })
     r = fake_openai().create(model="gpt-4o", messages=[{"role": "user", "content": "my password is hunter2"}])
@@ -151,7 +151,7 @@ def test_env_switches(monkeypatch, fake_openai, fake_crewai):
 
 def test_init_with_autopatch_settings(fake, fake_openai, monkeypatch):
     monkeypatch.delenv("WEFT_DISABLED", raising=False)
-    weft.init("p", server_url=fake.url, autopatch_settings={"openai": {"op_settings": {"call_display_name": "chat"}}})
+    weft.init("p", server_url=fake.url, autopatch_settings={"openai": {"op_settings": {"span_display_name": "chat"}}})
     try:
         assert getattr(fake_openai.create, "__weft_patched__", False)
         fake_openai().create(model="gpt-4o", messages=[])

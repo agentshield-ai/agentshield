@@ -1,4 +1,4 @@
-"""Attach feedback (reactions, notes, custom payloads) to calls and query it.
+"""Attach feedback (reactions, notes, custom payloads) to spans and query it.
 
     python examples/weft/python/feedback.py
 """
@@ -14,13 +14,13 @@ def answer(question: str) -> str:
 
 
 if __name__ == "__main__":
-    result, call = answer.call("What is the meaning of life?")
-    call.feedback.add_reaction("👍")
-    call.feedback.add_note("Correct, if terse.")
-    call.feedback.add("quality", {"stars": 5})
-    call.set_display_name("meaning-of-life")
+    result, span = answer.call("What is the meaning of life?")
+    span.feedback.add_reaction("👍")
+    span.feedback.add_note("Correct, if terse.")
+    span.feedback.add("quality", {"stars": 5})
+    span.set_display_name("meaning-of-life")
 
-    for fb in call.feedback:
+    for fb in span.feedback:
         print(fb["feedback_type"], fb["payload"])
 
     # Custom model prices are used for cost roll-ups in the UI and API.
@@ -31,4 +31,4 @@ if __name__ == "__main__":
         query={"$eq": [{"$getField": "feedback.weft.reaction.emoji"}, {"$literal": "👍"}]},
         include_feedback=True,
     )
-    print("liked calls:", [c.display_name or c.base_name for c in liked])
+    print("liked spans:", [c.display_name or c.base_name for c in liked])

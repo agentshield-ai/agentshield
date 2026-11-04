@@ -104,7 +104,7 @@ describe('op tracing', () => {
       },
       {
         name: 'renamed',
-        callDisplayName: (call) => `q=${call.inputs.q}`,
+        spanDisplayName: (span) => `q=${span.inputs.q}`,
         postprocessInputs: ({ secret, ...rest }) => rest,
         postprocessOutput: (o) => ({ len: String(o).length }),
       },

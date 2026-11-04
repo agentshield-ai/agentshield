@@ -1,5 +1,6 @@
 import { logger } from './log.js';
 import { Call } from './call.js';
+import { deprecated } from './deprecation.js';
 import { currentContext, storage, type WeftContext } from './context.js';
 import { tracingClient } from './global.js';
 import type { Ref } from './refs.js';
@@ -7,7 +8,9 @@ import type { Ref } from './refs.js';
 export interface OpOptions {
   /** Op name (default: the function name). */
   name?: string;
-  /** Display name for each call, or a function of the call. */
+  /** Display name for each span, or a function of the span. */
+  spanDisplayName?: string | ((span: Call) => string);
+  /** @deprecated Use `spanDisplayName`. */
   callDisplayName?: string | ((call: Call) => string);
   /** Input names for positional arguments (default: parsed from the function source). */
   parameterNames?: string[];
@@ -166,6 +169,11 @@ export const op = trace;
 /** Options of `trace` (earlier name `OpOptions`). */
 export type TraceOptions = OpOptions;
 
+/** @internal The display-name option of `options` (`spanDisplayName`, else the earlier `callDisplayName`). */
+export function spanDisplayNameOption(options: OpOptions): OpOptions['spanDisplayName'] {
+  return options.spanDisplayName ?? options.callDisplayName;
+}
+
 function makeTraced(a: any, b?: any, c?: any): any {
   let thisArg: unknown;
   let fn: (...args: any[]) => any;
@@ -177,6 +185,11 @@ function makeTraced(a: any, b?: any, c?: any): any {
     thisArg = a;
     fn = b;
     options = c ?? {};
+  }
+  if (options.callDisplayName !== undefined) {
+    deprecated('trace() option callDisplayName', 'spanDisplayName');
+    const { callDisplayName, ...rest } = options;
+    options = { ...rest, spanDisplayName: rest.spanDisplayName ?? callDisplayName };
   }
   if (isOp(fn) && thisArg === undefined && !Object.keys(options).length) return fn;
   const inner = isOp(fn) ? fn.__weftOp.fn : fn;
@@ -224,9 +237,9 @@ function startTracer(meta: OpMeta, self: unknown, args: unknown[]): Tracer {
   try {
     let inputs = buildInputs(meta, args);
     if (meta.thisArg !== undefined) inputs = { self: meta.thisArg, ...inputs };
-    const call = client.createCall(meta, inputs);
+    const call = client.createSpan(meta, inputs);
     const ctx = { ...currentContext(), stack: [...currentContext().stack, call] };
-    return { call, ctx, finish: (output, err) => client.finishCall(call, output, err, meta) };
+    return { call, ctx, finish: (output, err) => client.finishSpan(call, output, err, meta) };
   } catch (e) {
     logger.warn(`weft: failed to start call for ${meta.name}: ${(e as Error).message}`);
     return { call: null, ctx: null, finish: () => {} };

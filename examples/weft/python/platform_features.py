@@ -36,20 +36,20 @@ def support_agent(query: str) -> dict:
 
 
 if __name__ == "__main__":
-    result, call = support_agent.call("How long do refunds take?")
+    result, span = support_agent.call("How long do refunds take?")
 
-    # guardrails: score the call and block on the result
+    # guardrails: score the span and block on the result
     rule = scorers.RuleScorer(
         name="mentions_days",
         rule={"$contains": {"input": {"$getField": "output.answer"}, "substr": {"$literal": "days"}}},
     )
-    check = call.apply_scorer_sync(rule)
+    check = span.apply_scorer_sync(rule)
     print("guardrail passed:", check.result)
 
     with weft.tracing_disabled():
         support_agent("not recorded")
 
-    # attach a document to a call
+    # attach a document to a span
     @weft.trace
     def attach_policy() -> weft.Content:
         return weft.Content.from_text("Refund policy: 5 business days.", filename="policy.txt")

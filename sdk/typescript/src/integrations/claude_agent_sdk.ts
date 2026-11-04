@@ -104,7 +104,7 @@ class QueryTracer {
     const attrs: Record<string, unknown> = { 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': o?.agentName ?? 'claude-agent-sdk', 'gen_ai.provider.name': 'anthropic' };
     if (o?.model) attrs['gen_ai.request.model'] = o.model;
     const create = () =>
-      this.client.createCall(this.rootMeta, inputs, {
+      this.client.createSpan(this.rootMeta, inputs, {
         parent: this.parent,
         displayName: typeof this.prompt === 'string' ? short(this.prompt) : undefined,
         attributes: this.attrs(attrs),
@@ -116,7 +116,7 @@ class QueryTracer {
 
   private start(name: string, kind: string, inputs: Record<string, unknown>, parent: Call, display: string | undefined, attrs: Record<string, unknown>) {
     const meta = integrationOp(INTEGRATION, name, kind, {}, this.local);
-    const call = this.client.createCall(meta, inputs, { parent, displayName: display, attributes: this.attrs(attrs) });
+    const call = this.client.createSpan(meta, inputs, { parent, displayName: display, attributes: this.attrs(attrs) });
     return { call, meta };
   }
 
@@ -156,7 +156,7 @@ class QueryTracer {
         if (recordClaudeUsage(call, m.model, m.usage)) this.llmUsage = true;
       }
       const out = { object: 'chat.completion', model: m.model, choices: [{ index: 0, message: { role: 'assistant', content: blocks }, finish_reason: m.stop_reason ?? null }] };
-      this.client.finishCall(call, out, msg.error ? new Error(String(msg.error)) : undefined, meta);
+      this.client.finishSpan(call, out, msg.error ? new Error(String(msg.error)) : undefined, meta);
       for (const b of uses) {
         const name = b.name ?? 'tool';
         const input = b.input && typeof b.input === 'object' && !Array.isArray(b.input) ? { ...b.input } : { input: b.input };
@@ -183,14 +183,14 @@ class QueryTracer {
         const out: Record<string, unknown> = { content: b.content, is_error: !!b.is_error };
         if (msg.tool_use_result !== undefined) out.tool_use_result = msg.tool_use_result;
         const err = b.is_error ? new Error(short(Array.isArray(b.content) ? b.content.map((c: any) => c?.text ?? '').join(' ') : b.content, 500) || 'tool error') : undefined;
-        this.client.finishCall(t.call, out, err, t.meta);
+        this.client.finishSpan(t.call, out, err, t.meta);
       }
     }
   }
 
   finish(err?: unknown): void {
     const root = this.ensureRoot();
-    for (const t of this.tools.values()) this.client.finishCall(t.call, undefined, err ?? new Error('query ended before the tool returned'), t.meta);
+    for (const t of this.tools.values()) this.client.finishSpan(t.call, undefined, err ?? new Error('query ended before the tool returned'), t.meta);
     this.tools.clear();
     const out: Record<string, unknown> = { messages: this.messages };
     if (this.model) out.model = this.model;
@@ -202,7 +202,7 @@ class QueryTracer {
       if (r.is_error && error === undefined) error = new Error(String(r.result ?? r.subtype ?? 'Claude Agent SDK query ended with an error'));
       if (typeof r.result === 'string') out.messages = [...this.messages, { role: 'assistant', content: r.result }];
     }
-    this.client.finishCall(root, out, error, this.rootMeta);
+    this.client.finishSpan(root, out, error, this.rootMeta);
   }
 }
 

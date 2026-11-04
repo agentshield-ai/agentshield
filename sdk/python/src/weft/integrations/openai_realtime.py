@@ -318,7 +318,7 @@ class RealtimeTracer:
         kw: Dict[str, Any] = {"display_name": display, "attributes": _settings.integration_attributes(INTEGRATION)}
         if parent is not None:
             kw["parent"] = parent
-        call = self.client.create_call(op, inputs, **kw)
+        call = self.client.create_span(op, inputs, **kw)
         call._weft_op = op
         return call
 

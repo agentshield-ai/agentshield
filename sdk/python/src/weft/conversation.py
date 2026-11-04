@@ -541,7 +541,7 @@ def _eval_link_attributes() -> Dict[str, Any]:
 
 
 class _SpanBase(BaseModel):
-    """Shared behaviour: lazily-started Weft call, nesting, attributes, errors."""
+    """Shared behaviour: lazily-started Weft span, nesting, attributes, errors."""
 
     model_config = ConfigDict(protected_namespaces=(), arbitrary_types_allowed=True)
 
@@ -566,12 +566,29 @@ class _SpanBase(BaseModel):
 
     # ---- identity ------------------------------------------------------------
     @property
+    def span(self) -> Optional[Call]:
+        """The Weft span recording this conversation span (None until started, or when tracing is off)."""
+        return self._call
+
+    @property
+    def span_id(self) -> Optional[str]:
+        """The id of ``span`` (None until started, or when tracing is off)."""
+        return self._call.id if self._call is not None else None
+
+    @property
     def call(self) -> Optional[Call]:
-        """The Weft call recording this span (None until started, or when tracing is off)."""
+        """Deprecated: ``.span``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call(f"{type(self).__name__}.call", f"{type(self).__name__}.span")
         return self._call
 
     @property
     def call_id(self) -> Optional[str]:
+        """Deprecated: ``.span_id``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call(f"{type(self).__name__}.call_id", f"{type(self).__name__}.span_id")
         return self._call.id if self._call is not None else None
 
     @property
@@ -1744,7 +1761,7 @@ def _emit_turn(turn: Turn, info: _ConvInfo, attributes: Optional[Dict[str, Any]]
     return LogResult(
         conversation_id=info.conversation_id,
         trace_ids=[turn.trace_id] if turn.trace_id else [],
-        root_span_ids=[turn.call_id] if turn.call_id else [],
+        root_span_ids=[turn.span_id] if turn.span_id else [],
         span_count=1 + len(turn.spans),
     )
 

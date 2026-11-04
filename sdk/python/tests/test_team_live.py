@@ -103,9 +103,9 @@ def test_conversation_team_with_handoff_and_reasoning(live):
     steps = {st["text"]: st for st in reasoning["items"]}
     think = steps["The user wants facts; the researcher agent should gather them."]
     assert think["agent_name"] == "orchestrator" and think["kind"] == "thinking" and think["source"] == "output"
-    assert think["next_span_id"] == tool.call_id  # the tool call the model asked for (toolu_1)
+    assert think["next_span_id"] == tool.span_id  # the tool call the model asked for (toolu_1)
     research = steps["Search the web first, then pick three facts."]
-    assert research["agent_name"] == "researcher" and research["next_span_id"] == ws.call_id
+    assert research["agent_name"] == "researcher" and research["next_span_id"] == ws.span_id
     summary = steps["Facts are in; the writer agent should summarise."]
     assert summary["kind"] == "summary" and summary["agent_name"] == "orchestrator"
     handoff_ids = {it["span_id"] for it in timeline["items"] if it["type"] == "handoff"}

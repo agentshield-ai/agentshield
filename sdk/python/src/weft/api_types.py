@@ -1,19 +1,18 @@
 """Request and response models for the lower-level client methods (see
-docs/weft/API.md). This module was ``weft.trace_server_interface``, which
-still re-exports it (deprecated). ``client.threads_query`` lists sessions (spans grouped by
-``session_id``, ``POST /api/v1/spans/sessions``); each ``ThreadSchema`` carries
-the session id as ``session_id`` and, under its earlier name, ``thread_id``.
+docs/weft/API.md). ``client.sessions_query`` lists sessions (spans grouped by
+``session_id``, ``POST /api/v1/spans/sessions``); each ``SessionSchema``
+carries the session id as ``session_id``.
 
 ```python
-from weft.api_types import SortBy, ThreadsQueryReq
+from weft.api_types import SortBy, SessionsQueryReq
 
-busiest = client.threads_query(ThreadsQueryReq(
+busiest = client.sessions_query(SessionsQueryReq(
     project_id="acme/helpdesk",
     sort_by=[SortBy(field="turn_count", direction="desc")],
     limit=10,
 ))
-for thread in busiest.threads:
-    print(f"{thread.session_id}: {thread.turn_count} turns")
+for session in busiest.sessions:
+    print(f"{session.session_id}: {session.turn_count} turns")
 ```
 """
 
@@ -22,7 +21,9 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ._deprecation import deprecated_call
 
 
 class SortBy(BaseModel):
@@ -30,23 +31,24 @@ class SortBy(BaseModel):
     direction: Literal["asc", "desc"] = "asc"
 
 
-class ThreadsQueryFilter(BaseModel):
+class SessionsQueryFilter(BaseModel):
     after_datetime: Optional[Union[datetime.datetime, str]] = None
     """Only sessions whose first turn started after this time (``started_after``)."""
     before_datetime: Optional[Union[datetime.datetime, str]] = None
     """Only sessions whose last turn ended before this time (``started_before``)."""
-    thread_ids: Optional[List[str]] = None
-    """Only these sessions (``session_ids``)."""
     session_ids: Optional[List[str]] = None
+    """Only these sessions."""
+    thread_ids: Optional[List[str]] = None
+    """Deprecated: ``session_ids`` (still read)."""
 
 
-class ThreadsQueryReq(BaseModel):
+class SessionsQueryReq(BaseModel):
     """``POST /api/v1/spans/sessions``. ``project_id`` defaults to the client's project; a bare
     project name is taken in the client's entity. ``sortable_datetime_after`` /
     ``_before`` map to ``filter.after_datetime`` / ``before_datetime``."""
 
     project_id: Optional[str] = None
-    filter: Optional[ThreadsQueryFilter] = None
+    filter: Optional[SessionsQueryFilter] = None
     limit: Optional[int] = None
     offset: Optional[int] = None
     sort_by: Optional[List[SortBy]] = None
@@ -55,14 +57,12 @@ class ThreadsQueryReq(BaseModel):
     sortable_datetime_before: Optional[datetime.datetime] = None
 
 
-class ThreadSchema(BaseModel):
+class SessionSchema(BaseModel):
     """One session: spans sharing a ``session_id``."""
 
     model_config = ConfigDict(extra="allow")
 
     session_id: str
-    thread_id: str
-    """The session id (earlier name)."""
     turn_count: int = 0
     span_count: int = 0
     started_at: Optional[datetime.datetime] = None
@@ -76,9 +76,41 @@ class ThreadSchema(BaseModel):
     total_tokens: Optional[float] = None
     cost_usd: Optional[float] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _earlier_names(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "thread_id" in data:
+            data = dict(data)
+            tid = data.pop("thread_id")
+            data.setdefault("session_id", tid)
+        return data
 
-class ThreadsQueryRes(BaseModel):
-    threads: List[ThreadSchema] = Field(default_factory=list)
+    @property
+    def thread_id(self) -> str:
+        """Deprecated: ``SessionSchema.session_id``."""
+        deprecated_call("SessionSchema.thread_id", "SessionSchema.session_id")
+        return self.session_id
+
+
+class SessionsQueryRes(BaseModel):
+    sessions: List[SessionSchema] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _earlier_names(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "threads" in data:
+            deprecated_call("SessionsQueryRes(threads=...)", "SessionsQueryRes(sessions=...)", stacklevel=6)
+            data = dict(data)
+            threads = data.pop("threads")
+            if data.get("sessions") is None:
+                data["sessions"] = threads
+        return data
+
+    @property
+    def threads(self) -> List[SessionSchema]:
+        """Deprecated: ``SessionsQueryRes.sessions``."""
+        deprecated_call("SessionsQueryRes.threads", "SessionsQueryRes.sessions")
+        return self.sessions
 
 
 class CustomRuntimeIDRes(BaseModel):
@@ -116,7 +148,7 @@ _FILTER_NAMES = {"after_datetime": "started_after", "before_datetime": "started_
 _SORT_NAMES = {"start_time": "started_at"}
 
 
-def threads_query_body(req: ThreadsQueryReq, default_project: str, entity: str) -> Dict[str, Any]:
+def sessions_query_body(req: SessionsQueryReq, default_project: str, entity: str) -> Dict[str, Any]:
     """The ``POST /api/v1/spans/sessions`` body for ``req``."""
     pid = req.project_id or default_project
     if "/" not in pid:
@@ -143,22 +175,38 @@ def threads_query_body(req: ThreadsQueryReq, default_project: str, entity: str) 
     return body
 
 
-def thread_from_session(item: Dict[str, Any]) -> Dict[str, Any]:
-    """A ``ThreadSchema`` dict from a ``/api/v1/spans/sessions`` item."""
+def session_from_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """A ``SessionSchema`` dict from a ``/api/v1/spans/sessions`` item."""
     out = dict(item)
-    sid = item.get("session_id")
-    out["session_id"] = sid
-    out["thread_id"] = sid
+    out["session_id"] = item.get("session_id")
     out["start_time"] = item.get("started_at")
     return out
 
 
 __all__ = [
     "SortBy",
-    "ThreadsQueryFilter",
-    "ThreadsQueryReq",
-    "ThreadSchema",
-    "ThreadsQueryRes",
+    "SessionsQueryFilter",
+    "SessionsQueryReq",
+    "SessionSchema",
+    "SessionsQueryRes",
     "CustomRuntimeIDRes",
     "CustomRuntimeApplyRes",
 ]
+
+# Earlier names, kept as deprecated aliases for one release (CHANGELOG.md).
+_DEPRECATED = {
+    "ThreadsQueryFilter": "SessionsQueryFilter",
+    "ThreadsQueryReq": "SessionsQueryReq",
+    "ThreadSchema": "SessionSchema",
+    "ThreadsQueryRes": "SessionsQueryRes",
+    "threads_query_body": "sessions_query_body",
+    "thread_from_session": "session_from_item",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DEPRECATED:
+        new = _DEPRECATED[name]
+        deprecated_call(f"weft.api_types.{name}", f"weft.api_types.{new}")
+        return globals()[new]
+    raise AttributeError(f"module 'weft.api_types' has no attribute {name!r}")

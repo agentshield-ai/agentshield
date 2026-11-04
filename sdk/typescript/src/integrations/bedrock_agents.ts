@@ -125,7 +125,7 @@ export class AgentTraceProcessor {
   private start(name: string, kind: string, inputs: Record<string, unknown>, parent: Call, displayName: string, attrs: Record<string, unknown>): { call: Call; meta: OpMeta } | null {
     const meta = integrationOp(INTEGRATION, name, kind);
     try {
-      const call = this.client.createCall(meta, inputs, {
+      const call = this.client.createSpan(meta, inputs, {
         parent,
         displayName,
         attributes: integrationAttributes(INTEGRATION, defined({ 'gen_ai.provider.name': PROVIDER, 'gen_ai.conversation.id': this.sessionId, ...attrs })),
@@ -139,7 +139,7 @@ export class AgentTraceProcessor {
   private end(s: { call: Call; meta: OpMeta } | null | undefined, output?: unknown, err?: unknown): void {
     if (!s) return;
     try {
-      this.client.finishCall(s.call, output ?? null, err, s.meta);
+      this.client.finishSpan(s.call, output ?? null, err, s.meta);
     } catch {
       /* never break the stream */
     }
@@ -364,7 +364,7 @@ export class AgentTraceProcessor {
     this.open.clear();
     for (const s of this.collaborators.values()) this.end(s, null, e);
     this.collaborators.clear();
-    this.client.finishCall(this.root, this.output(extra), e, this.rootMeta);
+    this.client.finishSpan(this.root, this.output(extra), e, this.rootMeta);
   }
 }
 
@@ -390,7 +390,7 @@ export function startAgentCall(client: WeftClient, name: string, input: Record<s
   );
   const inputs: Record<string, unknown> = { ...input };
   if (typeof input.inputText === 'string') inputs.messages = [{ role: 'user', content: input.inputText }];
-  const make = () => client.createCall(meta, inputs, { displayName: `invoke_agent ${agentName}`, attributes: attrs });
+  const make = () => client.createSpan(meta, inputs, { displayName: `invoke_agent ${agentName}`, attributes: attrs });
   // A Bedrock session is a conversation: thread it unless the caller already did.
   const ctx = currentContext();
   const parent = ctx.stack[ctx.stack.length - 1];

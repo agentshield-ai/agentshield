@@ -10,6 +10,7 @@ import { autoSummarizeValues } from './summarize.js';
 import { digest } from './canonical.js';
 import { Ref, isRefUri } from './refs.js';
 import { toJson } from './serialize.js';
+import { deprecated } from './deprecation.js';
 
 type AnyFn = (...args: any[]) => any;
 
@@ -162,13 +163,15 @@ export interface LogPredictionOptions {
   modelLatency?: number | null;
   /**
    * Link the prediction to traces that already exist instead of re-recording
-   * them: a Call, a call id or call URI, a conversation span (Turn, LLM, ...),
+   * them: a Span, a span id or span URI, a conversation span (Turn, LLM, ...),
    * a `LogResult`, a `Conversation`, or a list of these. The links are stored
    * on the prediction as `attributes.weft.linked_spans`,
    * `attributes.weft.genai_span_ref` (`[{trace_id, span_id}]`, as in the
    * v2 predictions API) and `attributes.weft.linked_conversation_ids`. Without
-   * an explicit output, a linked Call's output (and duration) is used.
+   * an explicit output, a linked Span's output (and duration) is used.
    */
+  span?: unknown;
+  /** @deprecated Use `span`. */
   call?: unknown;
   exampleId?: string;
   rowDigest?: string;
@@ -200,9 +203,9 @@ function linkedCalls(link: unknown): Linked {
       out.callObjects.push(it);
     } else if (it instanceof SpanBase) {
       it.start();
-      if (it.call) {
-        out.calls.push({ span_id: it.call.id, trace_id: it.call.traceId });
-        out.callObjects.push(it.call);
+      if (it.span) {
+        out.calls.push({ span_id: it.span.id, trace_id: it.span.traceId });
+        out.callObjects.push(it.span);
       }
     } else if (it instanceof Conversation) {
       out.conversationIds.push(it.conversationId);
@@ -219,7 +222,7 @@ function linkedCalls(link: unknown): Linked {
 /**
  * Returned by `EvaluationLogger.logPrediction`; log scores, then `finish()`.
  * `await pred.run(async () => { ...; pred.output = x })` runs code as children
- * of the predict call (and stamps `weft.eval.*` on conversation spans started
+ * of the predict span (and stamps `weft.eval.*` on conversation spans started
  * inside), then finishes the prediction.
  */
 export class ScoreLogger {
@@ -231,49 +234,62 @@ export class ScoreLogger {
 
   constructor(
     private readonly ev: EvaluationLogger,
-    private readonly call: Call | null,
+    private readonly pasSpan: Call | null,
     readonly inputs: Record<string, unknown>,
     output: unknown,
     modelLatency: number | null,
-    readonly predictCall: Call | null = null,
+    readonly predictSpan: Call | null = null,
     private readonly evalContext: Record<string, unknown> | null = null,
   ) {
     this.output = output;
     this.modelLatency = modelLatency;
   }
 
+  /** The prediction's `Evaluation.predictAndScore` span. */
+  get predictAndScoreSpan(): Call | null {
+    return this.pasSpan;
+  }
+
+  /** @deprecated Use `predictAndScoreSpan`. */
   get predictAndScoreCall(): Call | null {
-    return this.call;
+    deprecated('ScoreLogger.predictAndScoreCall', 'ScoreLogger.predictAndScoreSpan');
+    return this.pasSpan;
+  }
+
+  /** @deprecated Use `predictSpan`. */
+  get predictCall(): Call | null {
+    deprecated('ScoreLogger.predictCall', 'ScoreLogger.predictSpan');
+    return this.predictSpan;
   }
 
   logScore(scorer: string | Scorer, score: unknown): void {
     if (this.finished) throw new Error('cannot log a score after finish()');
     const name = typeof scorer === 'string' ? scorer : scorer.scorerName;
     const client = this.ev.client;
-    if (client && this.call) {
+    if (client && this.pasSpan) {
       const c =
         typeof scorer === 'string'
-          ? client.createCall(name, { output: this.output, ...this.inputs }, { parent: this.call })
-          : client.createCall(scorer.scoreOp.__weftOp, { self: scorer, modelOutput: this.output, datasetRow: this.inputs }, { parent: this.call });
-      client.finishCall(c, score);
+          ? client.createSpan(name, { output: this.output, ...this.inputs }, { parent: this.pasSpan })
+          : client.createSpan(scorer.scoreOp.__weftOp, { self: scorer, modelOutput: this.output, datasetRow: this.inputs }, { parent: this.pasSpan });
+      client.finishSpan(c, score);
     }
     this.scores[name] = score;
     this.ev.scorerNames.add(name);
   }
 
   private finishPredict(): void {
-    const pc = this.predictCall;
+    const pc = this.predictSpan;
     if (this.ev.client && pc && !pc.ended) {
       if (this.modelLatency === null) this.modelLatency = (performance.now() - this.t0) / 1000;
-      this.ev.client.finishCall(pc, this.output);
+      this.ev.client.finishSpan(pc, this.output);
     }
   }
 
-  /** Run `fn` inside the prediction (calls become children of its predict call), then finish it. */
+  /** Run `fn` inside the prediction (spans become children of its predict span), then finish it. */
   async run<T>(fn: (pred: this) => T | Promise<T>): Promise<T> {
     const ctx = currentContext();
     const patch: Partial<WeftContext> = {};
-    if (this.predictCall && !this.predictCall.ended) patch.stack = [...ctx.stack, this.predictCall];
+    if (this.predictSpan && !this.predictSpan.ended) patch.stack = [...ctx.stack, this.predictSpan];
     if (this.evalContext) patch.evalSpan = this.evalContext;
     try {
       return await runWith(patch, () => fn(this));
@@ -286,8 +302,8 @@ export class ScoreLogger {
     if (this.finished) return;
     this.finished = true;
     this.finishPredict();
-    if (this.ev.client && this.call) {
-      this.ev.client.finishCall(this.call, { output: this.output, scores: { ...this.scores }, model_latency: this.modelLatency });
+    if (this.ev.client && this.pasSpan) {
+      this.ev.client.finishSpan(this.pasSpan, { output: this.output, scores: { ...this.scores }, model_latency: this.modelLatency });
     }
   }
 }
@@ -303,7 +319,7 @@ export interface EvaluationLoggerOptions {
 }
 
 /**
- * Log an evaluation imperatively; produces the same calls as `Evaluation`:
+ * Log an evaluation imperatively; produces the same spans as `Evaluation`:
  *
  *   const ev = new EvaluationLogger({ model: 'my-model', dataset: 'qa' });
  *   const pred = ev.logPrediction({ q: '2+2' }, '4');
@@ -319,7 +335,8 @@ export class EvaluationLogger {
   readonly dataset: Dataset;
   readonly evaluation: Evaluation;
   readonly scorerNames = new Set<string>();
-  readonly call: Call | null = null;
+  /** The run's `Evaluation.evaluate` span (null when tracing is off). */
+  readonly span: Call | null = null;
   summary: Record<string, unknown> | null = null;
   private predictions: ScoreLogger[] = [];
   private finished = false;
@@ -346,13 +363,19 @@ export class EvaluationLogger {
     if (this.client) {
       this.client.publishLocal(this.evaluation, this.evaluation.name);
       this.client.publishLocal(this.model);
-      this.call = this.client.createCall(evaluateOp.__weftOp, { self: this.evaluation, model: this.model }, { displayName: opts.name });
+      this.span = this.client.createSpan(evaluateOp.__weftOp, { self: this.evaluation, model: this.model }, { displayName: opts.name });
       // link predictions whose inputs equal a dataset row to that row's ref
       this.dataset.rows.forEach((row, i) => {
         const key = digest(toJson(row));
         if (!this.rowIndex.has(key)) this.rowIndex.set(key, i);
       });
     }
+  }
+
+  /** @deprecated Use `span`. */
+  get call(): Call | null {
+    deprecated('EvaluationLogger.call', 'EvaluationLogger.span');
+    return this.span;
   }
 
   private example(inputs: Record<string, unknown>): Record<string, unknown> {
@@ -373,7 +396,7 @@ export class EvaluationLogger {
 
   /**
    * Log one prediction. Without an output (and without a link) the predict
-   * call stays open: set `pred.output` inside `pred.run(...)`. The third
+   * span stays open: set `pred.output` inside `pred.run(...)`. The third
    * argument is the model latency in seconds, or LogPredictionOptions.
    */
   logPrediction(inputs: Record<string, unknown>, output?: unknown, modelLatencyOrOpts: number | null | LogPredictionOptions = null): ScoreLogger {
@@ -381,7 +404,9 @@ export class EvaluationLogger {
     const opts: LogPredictionOptions =
       modelLatencyOrOpts !== null && typeof modelLatencyOrOpts === 'object' ? modelLatencyOrOpts : { modelLatency: modelLatencyOrOpts as number | null };
     let modelLatency = opts.modelLatency ?? null;
-    const linked = opts.call !== undefined ? linkedCalls(opts.call) : { calls: [], conversationIds: [], callObjects: [] };
+    if (opts.call !== undefined) deprecated('EvaluationLogger.logPrediction({ call })', 'EvaluationLogger.logPrediction({ span })');
+    const link = opts.span !== undefined ? opts.span : opts.call;
+    const linked = link !== undefined ? linkedCalls(link) : { calls: [], conversationIds: [], callObjects: [] };
     if (linked.calls.length && output === undefined && linked.callObjects.length === 1 && linked.callObjects[0] instanceof CallClass) {
       const c = linked.callObjects[0] as Call;
       output = !c.fetched && c.rawOutput !== undefined ? c.rawOutput : c.output;
@@ -404,12 +429,12 @@ export class EvaluationLogger {
     let pas: Call | null = null;
     let pc: Call | null = null;
     let evalContext: Record<string, unknown> | null = null;
-    if (this.client && this.call) {
-      pas = this.client.createCall(predictAndScore.__weftOp, { self: this.evaluation, model: this.model, example: this.example(inputs) }, { parent: this.call, attributes });
-      pc = this.client.createCall(`${this.model.name ?? 'Model'}.predict`, { self: this.model, ...inputs }, { parent: pas, attributes });
-      if (output !== undefined || linked.calls.length) this.client.finishCall(pc, output ?? null);
+    if (this.client && this.span) {
+      pas = this.client.createSpan(predictAndScore.__weftOp, { self: this.evaluation, model: this.model, example: this.example(inputs) }, { parent: this.span, attributes });
+      pc = this.client.createSpan(`${this.model.name ?? 'Model'}.predict`, { self: this.model, ...inputs }, { parent: pas, attributes });
+      if (output !== undefined || linked.calls.length) this.client.finishSpan(pc, output ?? null);
       evalContext = {
-        run_id: this.call.id,
+        run_id: this.span.id,
         prediction_span_id: pas.id,
         project_id: this.client.projectId,
         kind: evalKind,
@@ -438,10 +463,10 @@ export class EvaluationLogger {
       if (lat.length) result.model_latency = { mean: lat.reduce((a, b) => a + b, 0) / lat.length };
     }
     Object.assign(result, summary ?? {});
-    if (this.client && this.call) {
-      const sc = this.client.createCall(summarize.__weftOp, { self: this.evaluation }, { parent: this.call });
-      this.client.finishCall(sc, result);
-      this.client.finishCall(this.call, result);
+    if (this.client && this.span) {
+      const sc = this.client.createSpan(summarize.__weftOp, { self: this.evaluation }, { parent: this.span });
+      this.client.finishSpan(sc, result);
+      this.client.finishSpan(this.span, result);
     }
     this.finished = true;
     this.summary = result;

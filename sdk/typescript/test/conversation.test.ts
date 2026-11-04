@@ -77,7 +77,7 @@ describe('agent conversations', () => {
     expect(tl.inputs).toEqual({ id: 7 });
     expect(tl.output).toEqual({ status: 'shipped' });
     expect(attr(tl, 'gen_ai.tool.call.id')).toBe('t1');
-    expect(turn.callId).toBe(tc.id);
+    expect(turn.spanId).toBe(tc.id);
   });
 
   it('starts a new trace per turn, ends the previous turn and nests with continueParentTrace', async () => {
@@ -175,7 +175,7 @@ describe('agent conversations', () => {
       expect(attr(c, 'gen_ai.conversation.name')).toBe('replayed');
     }
     expect(turns[0].agentName).toBe('');
-    expect(turns[0].call).toBeNull();
+    expect(turns[0].span).toBeNull();
   });
 
   it('uploads media attachments and honours agent-name overrides and tracing off', async () => {
@@ -195,7 +195,7 @@ describe('agent conversations', () => {
     await client.flush();
     const [t] = fake.callsByOp('invoke_agent');
     expect(attr(t, 'gen_ai.agent.name')).toBe('auto');
-    expect(quiet!.call).toBeNull();
+    expect(quiet!.span).toBeNull();
     const parts = fake.callsByOp('chat')[0].inputs.messages.at(-1).content;
     expect(parts[0]).toEqual({ type: 'text', text: 'what is this?' });
     expect(parts[1]._type).toBe('Image');

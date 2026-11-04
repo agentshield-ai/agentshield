@@ -1,5 +1,5 @@
 """Second parity audit follow-ups: TypeSafe, require_current_call,
-threads_query, register_custom_runtime, conversation links, WEFT_DEBUG_HTTP
+sessions_query, register_custom_runtime, conversation links, WEFT_DEBUG_HTTP
 and WEFT_DISABLE_WAL_SENDER, against fakes and the fake server."""
 
 import asyncio
@@ -11,7 +11,7 @@ import pytest
 
 import weft
 from weft.integrations import unpatch_all
-from weft.api_types import SortBy, ThreadsQueryReq
+from weft.api_types import SortBy, SessionsQueryReq
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +128,7 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
         with weft.start_conversation(conversation_id="conv-op") as c2:
             with c2.start_turn(user_message=text, agent_name="helper") as t2:
                 ts.system_one("turn inside an op", ["q"])
-        return t2.call_id
+        return t2.span_id
 
     helper_turn_id = handle("x")
     monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false")
@@ -163,7 +163,7 @@ def test_typesafe_parents_and_capture(client, fake, monkeypatch):
     assert own["attributes"]["weft"]["integration"] == "typesafe"
     assert not [c for c in fake.calls.values() if c.get("parent_id") == op_call["id"]], "nothing nests under the op"
     # Inside a running turn: under the turn; no op running, so no link.
-    assert under_turn["parent_id"] == turn.call_id and under_turn["attributes"]["gen_ai"]["conversation"]["id"] == "conv-ts"
+    assert under_turn["parent_id"] == turn.span_id and under_turn["attributes"]["gen_ai"]["conversation"]["id"] == "conv-ts"
     assert "parent_span" not in under_turn["attributes"].get("weft", {})
     assert "parent_span" not in turns[under_turn["parent_id"]]["attributes"].get("weft", {})
     # A turn running inside an op: under the turn, linked to the op (the
@@ -192,10 +192,10 @@ def test_require_current_call_and_urls(client, fake):
         weft.require_current_span()
     url = weft.urls.agent_conversation_path("test-entity", "test-proj", "conv/1 a")
     assert url == f"{fake.url}/test-entity/test-proj/conversations/conv%2F1%20a"
-    assert weft.urls.redirect_call("e", "p", "c1").endswith("/e/p/spans/c1")
+    assert weft.urls.redirect_span("e", "p", "c1").endswith("/e/p/spans/c1")
 
 
-# ---------------------------------------------------------------- custom runtimes, threads
+# ---------------------------------------------------------------- custom runtimes, sessions
 def test_register_custom_runtime(client, fake):
     res = client.register_custom_runtime(
         name="my-vllm",
@@ -217,7 +217,7 @@ def test_register_custom_runtime(client, fake):
         client.register_custom_runtime(name="x", base_url="u", runtime_ids="llama")
 
 
-def test_threads_query(client, fake):
+def test_sessions_query(client, fake):
     @weft.trace
     def turn(i):
         return i
@@ -228,16 +228,16 @@ def test_threads_query(client, fake):
     with weft.session("t-b"):
         turn(3)
     client.flush()
-    res = client.threads_query(ThreadsQueryReq(project_id="test-proj", sort_by=[SortBy(field="turn_count", direction="desc")], limit=10))
-    assert [(t.session_id, t.turn_count) for t in res.threads] == [("t-a", 2), ("t-b", 1)]
+    res = client.sessions_query(SessionsQueryReq(project_id="test-proj", sort_by=[SortBy(field="turn_count", direction="desc")], limit=10))
+    assert [(t.session_id, t.turn_count) for t in res.sessions] == [("t-a", 2), ("t-b", 1)]
     req = [r for r in fake.requests if r["path"] == "/api/v1/spans/sessions"][-1]["body"]
     assert req["project_id"] == "test-entity/test-proj" and req["sort_by"] == [{"field": "turn_count", "direction": "desc"}]
     import datetime
 
-    client.threads_query(limit=1, sortable_datetime_after=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc))
+    client.sessions_query(limit=1, sortable_datetime_after=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc))
     req = [r for r in fake.requests if r["path"] == "/api/v1/spans/sessions"][-1]["body"]
     assert req == {"project_id": "test-entity/test-proj", "limit": 1, "offset": 0, "filter": {"started_after": "2026-01-01T00:00:00+00:00"}}
-    assert [t.session_id for t in client.threads_query_stream({"limit": 1})] == ["t-a"]
+    assert [t.session_id for t in client.sessions_query_stream({"limit": 1})] == ["t-a"]
 
 
 # ---------------------------------------------------------------- WEFT_DEBUG_HTTP, WEFT_DISABLE_WAL_SENDER

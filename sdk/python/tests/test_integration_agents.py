@@ -143,15 +143,15 @@ def test_evaluation_logger_links_existing_turns(live):
         turns.append(t)
     ev = weft.EvaluationLogger(model="calc", dataset="calc-qs", name="calc eval")
     for q, t in zip(("2+2", "3+3"), turns):
-        p = ev.log_prediction({"q": q}, output=str(eval(q)), call=t)
+        p = ev.log_prediction({"q": q}, output=str(eval(q)), span=t)
         p.log_score("correct", True)
         p.finish()
     ev.log_summary()
     live.flush()
     [pas, _] = list(live.spans(filter={"names": ["Evaluation.predict_and_score"]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
     links = pas.attributes["weft"]["linked_spans"]
-    assert links == [{"span_id": turns[0].call_id, "trace_id": turns[0].trace_id}]
-    q = {"$eq": [{"$getField": "attributes.weft.genai_span_ref.0.span_id"}, {"$literal": turns[1].call_id}]}
+    assert links == [{"span_id": turns[0].span_id, "trace_id": turns[0].trace_id}]
+    q = {"$eq": [{"$getField": "attributes.weft.genai_span_ref.0.span_id"}, {"$literal": turns[1].span_id}]}
     found = list(live.spans(query=q))
     assert len(found) >= 1 and all(c.base_name in ("Evaluation.predict_and_score", "calc.predict") for c in found)
 

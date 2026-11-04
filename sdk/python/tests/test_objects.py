@@ -200,7 +200,7 @@ def test_dataset_large_table_chunked(client, fake):
     assert len(loaded.rows) == 2500 and loaded.rows[2499] == {"i": 2499}
 
 
-def test_dataset_from_calls(client, fake):
+def test_dataset_from_spans(client, fake):
     @weft.trace
     def f(x):
         return x * 2
@@ -208,7 +208,7 @@ def test_dataset_from_calls(client, fake):
     f(1)
     f(2)
     calls = list(client.spans(filter={"names": ["f"]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
-    ds = weft.Dataset.from_calls(calls)
+    ds = weft.Dataset.from_spans(calls)
     assert list(ds.rows) == [{"inputs": {"x": 1}, "output": 2}, {"inputs": {"x": 2}, "output": 4}]
 
 

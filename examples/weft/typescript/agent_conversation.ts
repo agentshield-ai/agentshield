@@ -40,7 +40,7 @@ await conv.run(async (c) => {
 const ev = new weft.EvaluationLogger({ model: 'support-bot', name: 'support eval (ts)' });
 for (const turn of turns) {
   const answer = turn.outputMessages[0].content ?? '';
-  const pred = ev.logPrediction({ question: turn.messages[0].content }, answer, { call: turn });
+  const pred = ev.logPrediction({ question: turn.messages[0].content }, answer, { span: turn });
   pred.logScore('mentions_eta', answer.includes('Friday'));
   pred.finish();
 }

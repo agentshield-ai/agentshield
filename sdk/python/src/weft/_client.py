@@ -101,6 +101,18 @@ def _env_raw(env: str) -> Optional[str]:
     return raw.strip() if raw is not None and raw.strip() != "" else None
 
 
+def _queue_size_env() -> str:
+    """The environment variable that sets ``max_queue_size``: ``WEFT_MAX_SPANS_QUEUE_SIZE``,
+    else the earlier ``WEFT_MAX_CALLS_QUEUE_SIZE`` (with a logged warning), else
+    ``WEFT_MAX_QUEUE_SIZE``."""
+    if _env_raw("WEFT_MAX_SPANS_QUEUE_SIZE") is not None:
+        return "WEFT_MAX_SPANS_QUEUE_SIZE"
+    if _env_raw("WEFT_MAX_CALLS_QUEUE_SIZE") is not None:
+        logger.warning("weft: WEFT_MAX_CALLS_QUEUE_SIZE is deprecated; use WEFT_MAX_SPANS_QUEUE_SIZE")
+        return "WEFT_MAX_CALLS_QUEUE_SIZE"
+    return "WEFT_MAX_QUEUE_SIZE"
+
+
 def _setting_num(settings: Dict[str, Any], key: str, env: str, default: Any, cast: Any = float, explicit: Any = None) -> Any:
     """``settings[key]``, else an explicit argument, else ``$env``, else ``default`` (bad env values warn)."""
     if key in settings and settings[key] is not None:
@@ -245,8 +257,7 @@ class WeftClient:
 
         # Settings and their WEFT_* environment variables (see init()).
         self.http_timeout = _setting_num(st, "http_timeout", "WEFT_HTTP_TIMEOUT", 30.0, float, timeout)
-        queue_env = "WEFT_MAX_CALLS_QUEUE_SIZE" if _env_raw("WEFT_MAX_CALLS_QUEUE_SIZE") is not None else "WEFT_MAX_QUEUE_SIZE"
-        queue = _setting_num(st, "max_queue_size", queue_env, 10_000, int, max_queue)
+        queue = _setting_num(st, "max_queue_size", _queue_size_env(), 10_000, int, max_queue)
         self.max_queue_size = queue if queue > 0 else sys.maxsize  # 0 = unbounded
         self.retry_max_attempts = _setting_num(st, "retry_max_attempts", "WEFT_RETRY_MAX_ATTEMPTS", 3, int)
         self.retry_backoff = _setting_num(st, "retry_backoff", "WEFT_RETRY_BACKOFF", 0.25, float)
@@ -358,7 +369,7 @@ class WeftClient:
             cache.clear()
 
     # ------------------------------------------------------------------ calls
-    def create_call(
+    def create_span(
         self,
         op: Union[Op, BoundOp, str],
         inputs: Dict[str, Any],
@@ -367,7 +378,7 @@ class WeftClient:
         attributes: Optional[Dict[str, Any]] = None,
         **_: Any,
     ) -> Span:
-        """Start a span explicitly (``finish_call`` ends it). Used by ``@weft.trace`` and loggers."""
+        """Start a span explicitly (``finish_span`` ends it). Used by ``@weft.trace`` and loggers."""
         if isinstance(op, str):
             op = _synthetic_op(op)
         elif isinstance(op, BoundOp):
@@ -441,16 +452,16 @@ class WeftClient:
             parent._child_count += 1
         if kind == "llm":
             # An LLM call nested in a framework's LLM call holds the reasoning;
-            # the framework call does not repeat it (see finish_call).
+            # the framework call does not repeat it (see finish_span).
             for anc in (parent,) + _context._call_stack.get():
                 if anc is not None:
                     anc._llm_descendant = True
-        if call.display_name is None and op.call_display_name is not None:
+        dn = getattr(op, "span_display_name", None)
+        if call.display_name is None and dn is not None:
             try:
-                dn = op.call_display_name
                 call.display_name = dn(call) if callable(dn) else str(dn)
             except Exception as e:
-                logger.warning("weft: call_display_name failed for %s: %s", op.name, e)
+                logger.warning("weft: span_display_name failed for %s: %s", op.name, e)
         link = self._run_now()
         if link is not None:
             call.run_id, call.run_step = link
@@ -562,7 +573,7 @@ class WeftClient:
                     st["text"] = self._redact(st["text"])
         return out
 
-    def finish_call(
+    def finish_span(
         self,
         call: Span,
         output: Any = None,
@@ -611,6 +622,16 @@ class WeftClient:
                 call.run_step_end = link[1]
                 end["run_step_end"] = link[1]
         self._sender.enqueue("span_end", end)
+
+    def create_call(self, *args: Any, **kwargs: Any) -> Span:
+        """Deprecated: use ``client.create_span(...)``."""
+        deprecated_call("WeftClient.create_call()", "WeftClient.create_span()")
+        return self.create_span(*args, **kwargs)
+
+    def finish_call(self, *args: Any, **kwargs: Any) -> None:
+        """Deprecated: use ``client.finish_span(...)``."""
+        deprecated_call("WeftClient.finish_call()", "WeftClient.finish_span()")
+        self.finish_span(*args, **kwargs)
 
     def _serialize_self(self, v: Any) -> Any:
         ref = getattr(v, "_weft_ref", None)
@@ -793,29 +814,29 @@ class WeftClient:
         return self._http.get("/auth/whoami")
 
     # ------------------------------------------------------------------ sessions, custom runtimes
-    def threads_query(self, req: Any = None, **kwargs: Any) -> Any:
-        """``client.threads_query(ThreadsQueryReq(...))``: sessions (spans grouped by
+    def sessions_query(self, req: Any = None, **kwargs: Any) -> Any:
+        """``client.sessions_query(SessionsQueryReq(...))``: sessions (spans grouped by
         ``session_id``) with turn counts, times and turn-duration percentiles
         (``POST /api/v1/spans/sessions``).
 
-        ``req`` is a ``weft.api_types.ThreadsQueryReq`` or a dict; keyword
-        arguments build one (``client.threads_query(limit=20, sort_by=[...])``).
-        Returns a ``ThreadsQueryRes`` (``.threads``: ``ThreadSchema`` list)."""
-        from .api_types import ThreadsQueryRes
+        ``req`` is a ``weft.api_types.SessionsQueryReq`` or a dict; keyword
+        arguments build one (``client.sessions_query(limit=20, sort_by=[...])``).
+        Returns a ``SessionsQueryRes`` (``.sessions``: ``SessionSchema`` list)."""
+        from .api_types import SessionsQueryRes
 
-        return ThreadsQueryRes(threads=list(self.threads_query_stream(req, **kwargs)))
+        return SessionsQueryRes(sessions=list(self.sessions_query_stream(req, **kwargs)))
 
-    def threads_query_stream(self, req: Any = None, **kwargs: Any) -> Iterator[Any]:
-        """``threads_query`` as an iterator of ``ThreadSchema`` (every page of ``/api/v1/spans/sessions``)."""
-        from .api_types import ThreadSchema, ThreadsQueryReq, thread_from_session, threads_query_body
+    def sessions_query_stream(self, req: Any = None, **kwargs: Any) -> Iterator[Any]:
+        """``sessions_query`` as an iterator of ``SessionSchema`` (every page of ``/api/v1/spans/sessions``)."""
+        from .api_types import SessionSchema, SessionsQueryReq, session_from_item, sessions_query_body
 
         if req is None:
-            req = ThreadsQueryReq(**kwargs)
+            req = SessionsQueryReq(**kwargs)
         elif isinstance(req, dict):
-            req = ThreadsQueryReq(**{**req, **kwargs})
+            req = SessionsQueryReq(**{**req, **kwargs})
         elif kwargs:
             req = req.model_copy(update=kwargs)
-        body = threads_query_body(req, self.project_id, self.entity)
+        body = sessions_query_body(req, self.project_id, self.entity)
         want = body.pop("limit", None)
         offset = int(body.pop("offset", 0) or 0)
         page = 1000
@@ -825,11 +846,21 @@ class WeftClient:
             res = self._http.post("/api/v1/spans/sessions", {**body, "limit": n, "offset": offset})
             items = list(res.get("items") or [])
             for t in items:
-                yield ThreadSchema.model_validate(thread_from_session(t))
+                yield SessionSchema.model_validate(session_from_item(t))
             seen += len(items)
             offset += len(items)
             if len(items) < n:
                 break
+
+    def threads_query(self, req: Any = None, **kwargs: Any) -> Any:
+        """Deprecated: use ``client.sessions_query(...)``."""
+        deprecated_call("WeftClient.threads_query()", "WeftClient.sessions_query()")
+        return self.sessions_query(req, **kwargs)
+
+    def threads_query_stream(self, req: Any = None, **kwargs: Any) -> Iterator[Any]:
+        """Deprecated: use ``client.sessions_query_stream(...)``."""
+        deprecated_call("WeftClient.threads_query_stream()", "WeftClient.sessions_query_stream()")
+        return self.sessions_query_stream(req, **kwargs)
 
     def register_custom_runtime(
         self,
@@ -1475,7 +1506,7 @@ def init(
     with ``wal_dir`` (env ``WEFT_WAL_DIR``) and ``disable_wal_sender`` (env
     ``WEFT_DISABLE_WAL_SENDER``: write every request to the WAL and send
     nothing; the WAL is replayed by a later run without it), ``max_queue_size`` (default
-    10000, 0 = unbounded; env ``WEFT_MAX_CALLS_QUEUE_SIZE``),
+    10000, 0 = unbounded; env ``WEFT_MAX_SPANS_QUEUE_SIZE``),
     ``retry_max_attempts`` (default 3, env ``WEFT_RETRY_MAX_ATTEMPTS``),
     ``retry_backoff`` (first retry delay in seconds, default 0.25, env
     ``WEFT_RETRY_BACKOFF``), ``retry_max_backoff`` (default 4, env

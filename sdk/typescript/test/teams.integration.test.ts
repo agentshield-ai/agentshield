@@ -61,12 +61,12 @@ describe.skipIf(!URL)('real server: agent teams, hand-offs and reasoning', () =>
         });
         const tool = turn.startTool({ name: 'delegate_research', arguments: { task: 'Find three facts about Oslo' }, toolCallId: 'toolu_1' });
         await tool.run(async (t) => {
-          toolId = t.callId!;
+          toolId = t.spanId!;
           await weft.startHandoff('researcher', { input: 'Find three facts about Oslo', kind: 'delegate' }).run(async (h) => {
             await c.startTurn({ agentName: 'researcher', userMessage: 'Find three facts about Oslo' }).run(async (rt) => {
               weft.reasoning('Search the web first, then pick three facts.');
               await rt.startTool({ name: 'web_search', arguments: { q: 'Oslo facts' }, toolCallId: 'call_9' }).run((ws) => {
-                searchId = ws.callId!;
+                searchId = ws.spanId!;
                 ws.result = ['Capital of Norway', 'On the Oslofjord', 'Nobel Peace Prize'];
               });
               rt.outputMessages = [weft.Message.assistant('1. Capital of Norway 2. On the Oslofjord 3. Nobel Peace Prize')];

@@ -125,7 +125,7 @@ class AgentTraceProcessor:
     def _start(self, name: str, kind: Optional[str], inputs: Dict[str, Any], parent: Any, display: Optional[str], attrs: Dict[str, Any]) -> Any:
         op = _settings.integration_op(INTEGRATION, name, kind)
         try:
-            call = self.client.create_call(op, inputs, parent=parent, display_name=display, attributes=self._attrs(attrs))
+            call = self.client.create_span(op, inputs, parent=parent, display_name=display, attributes=self._attrs(attrs))
         except Exception as e:  # pragma: no cover - never break the stream
             logger.debug("weft: could not start %s: %s", name, e)
             return None
@@ -136,7 +136,7 @@ class AgentTraceProcessor:
         if call is None:
             return
         try:
-            self.client.finish_call(call, output=output, exception=exc, op=getattr(call, "_weft_op", None))
+            self.client.finish_span(call, output=output, exception=exc, op=getattr(call, "_weft_op", None))
         except Exception as e:  # pragma: no cover
             logger.debug("weft: could not end a bedrock agent span: %s", e)
 
@@ -443,9 +443,9 @@ def start_agent_call(client: Any, operation_name: str, api_params: Dict[str, Any
     # A Bedrock session is a conversation: thread it unless the caller already did.
     if session_id and _context.current_session_context() is None and not getattr(_context.get_current_call(), "session_id", None):
         with _context.session(str(session_id)):
-            call = client.create_call(op, inputs, display_name=f"invoke_agent {name}", attributes=attrs)
+            call = client.create_span(op, inputs, display_name=f"invoke_agent {name}", attributes=attrs)
     else:
-        call = client.create_call(op, inputs, display_name=f"invoke_agent {name}", attributes=attrs)
+        call = client.create_span(op, inputs, display_name=f"invoke_agent {name}", attributes=attrs)
     call._weft_op = op
     return call, AgentTraceProcessor(client, call, agent_name=name, session_id=session_id, model=model)
 

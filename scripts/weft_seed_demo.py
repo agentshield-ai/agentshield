@@ -105,12 +105,12 @@ def chat_usage(model, p, c):
 
 def seed_traces(c, ops, n=40):
     now = datetime.now(timezone.utc)
-    threads = [f"conv-{i:03d}" for i in range(6)]
+    sessions = [f"conv-{i:03d}" for i in range(6)]
     for i in range(n):
         q, a = QUESTIONS[i % len(QUESTIONS)]
         start = now - timedelta(hours=random.uniform(0, 72))
-        thread = threads[i % len(threads)] if i < 24 else None
-        tr = Trace(c, start, thread)
+        session = sessions[i % len(sessions)] if i < 24 else None
+        tr = Trace(c, start, session)
         model = random.choice(["gpt-4o-mini", "gpt-4o-mini", "claude-sonnet-4-5", "gpt-4.1"])
         failed = random.random() < 0.08
         total = random.randint(900, 4200)

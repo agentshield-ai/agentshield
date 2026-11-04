@@ -1,7 +1,7 @@
 """UI links against the Weft server.
 
 ``agent_conversation_path(entity, project, conversation_id)`` links to a
-conversation in **Agents**; ``redirect_call`` to a call. The base is the
+conversation in **Agents**; ``redirect_span`` to a span. The base is the
 current client's server URL (else ``WEFT_SERVER_URL``, else
 ``http://localhost:6345``), since the Weft UI is served by the server.
 """
@@ -31,9 +31,17 @@ def project_weft_root_url(entity_name: str, project_name: str) -> str:
     return remote_project_root_url(entity_name, project_name)
 
 
-def redirect_call(entity_name: str, project_name: str, call_id: str) -> str:
+def redirect_span(entity_name: str, project_name: str, span_id: str) -> str:
     """Link to a span in the Weft UI (``/<entity>/<project>/spans/<id>``)."""
-    return f"{remote_project_root_url(entity_name, project_name)}/spans/{quote(call_id)}"
+    return f"{remote_project_root_url(entity_name, project_name)}/spans/{quote(span_id)}"
+
+
+def redirect_call(entity_name: str, project_name: str, call_id: str) -> str:
+    """Deprecated: use ``weft.urls.redirect_span``."""
+    from ._deprecation import deprecated_call
+
+    deprecated_call("weft.urls.redirect_call()", "weft.urls.redirect_span()")
+    return redirect_span(entity_name, project_name, call_id)
 
 
 def agent_conversation_path(entity_name: str, project_name: str, conversation_id: str) -> str:
@@ -55,7 +63,7 @@ def leaderboard_path(entity_name: str, project_name: str, object_name: str) -> s
 
 __all__ = [
     "agent_conversation_path",
-    "redirect_call",
+    "redirect_span",
     "remote_project_root_url",
     "project_weft_root_url",
     "op_version_path",

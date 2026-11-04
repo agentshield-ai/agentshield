@@ -255,7 +255,7 @@ export class RealtimeTracer {
     if (!this.client) return null;
     const meta = integrationOp(INTEGRATION, name, kind);
     try {
-      const call = this.client.createCall(meta, inputs, { parent, displayName, attributes: integrationAttributes(INTEGRATION) });
+      const call = this.client.createSpan(meta, inputs, { parent, displayName, attributes: integrationAttributes(INTEGRATION) });
       return { call, meta };
     } catch {
       return null;
@@ -263,7 +263,7 @@ export class RealtimeTracer {
   }
 
   private end(s: Span | null | undefined, out: unknown, err?: unknown): void {
-    if (s && this.client) this.client.finishCall(s.call, out, err, s.meta);
+    if (s && this.client) this.client.finishSpan(s.call, out, err, s.meta);
   }
 
   private ensureSession(): Span | null {

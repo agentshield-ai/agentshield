@@ -93,12 +93,12 @@ describe.skipIf(!URL)('real server: agents and SDK extras', () => {
     turn.outputMessages = [weft.Message.assistant('4')];
     turn.end();
     const ev = new weft.EvaluationLogger({ model: 'calc', name: 'ts calc eval' });
-    const p = ev.logPrediction({ q: '2+2' }, '4', { call: turn });
+    const p = ev.logPrediction({ q: '2+2' }, '4', { span: turn });
     p.logScore('correct', true);
     await ev.logSummary();
     await client.flush();
     const [pas] = await client.spans({ filter: { names: ['Evaluation.predict_and_score'] } });
-    expect((pas.attributes as any).weft.linked_spans).toEqual([{ span_id: turn.callId, trace_id: turn.traceId }]);
+    expect((pas.attributes as any).weft.linked_spans).toEqual([{ span_id: turn.spanId, trace_id: turn.traceId }]);
 
     const local = new weft.Content('ts stored', { mimetype: 'text/plain' });
     const look = weft.trace(function look(img: unknown, l: unknown) {

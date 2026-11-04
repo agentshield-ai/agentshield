@@ -77,10 +77,10 @@ function traced(spec: MethodSpec, orig: (...a: any[]) => any, local: Integration
     const client = integrationClient(INTEGRATION);
     if (!client || (isList(spec.op) && !listOps())) return orig.call(this, params, ...rest);
     const p = spec.op.startsWith('mcp.server.') ? params?.params : params;
-    const meta = integrationOp(INTEGRATION, spec.op, spec.kind, { callDisplayName: spec.display ? spec.display(p) : undefined }, local);
+    const meta = integrationOp(INTEGRATION, spec.op, spec.kind, { spanDisplayName: spec.display ? spec.display(p) : undefined }, local);
     let call: Call;
     try {
-      call = client.createCall(meta, plainParams(p), { attributes: integrationAttributes(INTEGRATION, { ...(spec.attrs?.(p) ?? {}), ...serverInfo() }, local) });
+      call = client.createSpan(meta, plainParams(p), { attributes: integrationAttributes(INTEGRATION, { ...(spec.attrs?.(p) ?? {}), ...serverInfo() }, local) });
     } catch {
       return orig.call(this, params, ...rest);
     }
@@ -88,16 +88,16 @@ function traced(spec: MethodSpec, orig: (...a: any[]) => any, local: Integration
     try {
       res = withCall(call, () => orig.call(this, params, ...rest));
     } catch (e) {
-      client.finishCall(call, undefined, e, meta);
+      client.finishSpan(call, undefined, e, meta);
       throw e;
     }
     return Promise.resolve(res).then(
       (r) => {
-        client.finishCall(call, r, mcpError(r), meta);
+        client.finishSpan(call, r, mcpError(r), meta);
         return r;
       },
       (e) => {
-        client.finishCall(call, undefined, e, meta);
+        client.finishSpan(call, undefined, e, meta);
         throw e;
       },
     );

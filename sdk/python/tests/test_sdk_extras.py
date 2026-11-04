@@ -231,35 +231,35 @@ def test_log_prediction_links_existing_calls_and_turns(client, fake):
     batch = weft.log_turn(conversation_id="c-3", agent_name="bot", messages=[weft.Message.user("three")])
 
     ev = weft.EvaluationLogger(model="bot", dataset="agent-evals", name="agent eval")
-    p1 = ev.log_prediction({"q": "one"}, call=c1)
+    p1 = ev.log_prediction({"q": "one"}, span=c1)
     p1.log_score("correct", True)
     p1.finish()
-    p2 = ev.log_prediction({"q": "two"}, output="answer:two", call=turn)
+    p2 = ev.log_prediction({"q": "two"}, output="answer:two", span=turn)
     p2.finish()
-    p3 = ev.log_prediction({"q": "three"}, call=[batch, conv])
+    p3 = ev.log_prediction({"q": "three"}, span=[batch, conv])
     p3.finish()
-    p4 = ev.log_prediction({"q": "four"}, call=c1.id)
+    p4 = ev.log_prediction({"q": "four"}, span=c1.id)
     p4.finish()
     summary = ev.log_summary()
     client.flush()
 
     assert p1.output == "answer:one" and p1.model_latency is not None
-    pas = fake.calls[p1.predict_and_score_call.id]
+    pas = fake.calls[p1.predict_and_score_span.id]
     w = pas["attributes"]["weft"]
     assert w["linked_spans"] == [{"span_id": c1.id, "trace_id": c1.trace_id}] and "linked_calls" not in w
     assert w["genai_span_ref"] == [{"trace_id": c1.trace_id, "span_id": c1.id}]
     assert w["eval"]["kind"] == "agent"
-    pred = fake.calls[p1.predict_call.id]
+    pred = fake.calls[p1.predict_span.id]
     assert pred["output"] == "answer:one" and pred["attributes"]["weft"]["linked_spans"][0]["span_id"] == c1.id
-    assert fake.calls[p2.predict_and_score_call.id]["attributes"]["weft"]["linked_spans"][0]["span_id"] == turn.call_id
-    w3 = fake.calls[p3.predict_and_score_call.id]["attributes"]["weft"]
+    assert fake.calls[p2.predict_and_score_span.id]["attributes"]["weft"]["linked_spans"][0]["span_id"] == turn.span_id
+    w3 = fake.calls[p3.predict_and_score_span.id]["attributes"]["weft"]
     assert w3["linked_spans"][0]["span_id"] == batch.root_span_ids[0]
     assert w3["linked_conversation_ids"] == ["c-3", conv.conversation_id]
     assert p4.output == "answer:one"  # fetched from the server by id
     assert summary["correct"] == {"true_count": 1, "true_fraction": 1.0}
     with pytest.raises(TypeError):
         ev2 = weft.EvaluationLogger(model="m")
-        ev2.log_prediction({"q": 1}, call=object())
+        ev2.log_prediction({"q": 1}, span=object())
 
 
 def test_log_prediction_context_manager_nests_and_links_agent_spans(client, fake):
@@ -277,23 +277,23 @@ def test_log_prediction_context_manager_nests_and_links_agent_spans(client, fake
         pred.log_score("has_docs", True)
     ev.log_summary()
     client.flush()
-    pc = fake.calls[pred.predict_call.id]
+    pc = fake.calls[pred.predict_span.id]
     assert pc["output"] == {"docs": ["hi"]} and pc["ended_at"]
     [r] = [c for c in fake.calls.values() if fake.op_base(c) == "retrieve"]
     assert r["parent_id"] == pc["id"]
-    t = fake.calls[turn.call_id]
+    t = fake.calls[turn.span_id]
     link = t["attributes"]["weft"]["eval"]
-    assert link["prediction_span_id"] == pred.predict_and_score_call.id and "predict_and_score_call_id" not in link
-    assert link["run_id"] == ev.call.id and link["example_id"] == "ex-1" and link["trial_index"] == 0
+    assert link["prediction_span_id"] == pred.predict_and_score_span.id and "predict_and_score_call_id" not in link
+    assert link["run_id"] == ev.span.id and link["example_id"] == "ex-1" and link["trial_index"] == 0
     assert link["evaluation_name"] == "ctx eval" and link["kind"] == "agent"
-    pas = fake.calls[pred.predict_and_score_call.id]
+    pas = fake.calls[pred.predict_and_score_span.id]
     assert pas["output"]["output"] == {"docs": ["hi"]} and pas["output"]["scores"] == {"has_docs": True}
     assert isinstance(pas["output"]["model_latency"], float)
     # after the block, new spans are not linked
     with weft.start_turn(user_message="later") as later:
         pass
     client.flush()
-    assert "eval" not in (fake.calls[later.call_id]["attributes"].get("weft") or {})
+    assert "eval" not in (fake.calls[later.span_id]["attributes"].get("weft") or {})
 
 
 # ---------------------------------------------------------------- dataset helpers

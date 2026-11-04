@@ -14,7 +14,7 @@ import { Content } from './content.js';
 import { Dataset, WeftObject, loadPromptOrModel } from './objects.js';
 import { SavedView } from './savedView.js';
 import { loadPlatformObject } from './platform.js';
-import { op as makeOp, isOp, type OpMeta } from './op.js';
+import { op as makeOp, isOp, spanDisplayNameOption, type OpMeta } from './op.js';
 import { Ref, isRefUri, splitProject } from './refs.js';
 import { Redactor, type RedactSettings } from './redact.js';
 import { Sender, type SenderOptions } from './sender.js';
@@ -47,7 +47,7 @@ export interface InitOptions {
   settings?: ClientSettings;
   /**
    * Per-integration settings, keyed by integration name (`openai`, `langchain`,
-   * `mcp`, ...): `{ enabled?, opSettings?: { name, callDisplayName,
+   * `mcp`, ...): `{ enabled?, opSettings?: { name, spanDisplayName,
    * postprocessInputs, postprocessOutput, kind, color, attributes } }`.
    * Replaces earlier settings when given.
    */
@@ -107,7 +107,7 @@ function envNumber(name: string, scale = 1): number | undefined {
   return n * scale;
 }
 
-/** Sender options from WEFT_RETRY_MAX_ATTEMPTS, WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL, WEFT_MAX_CALLS_QUEUE_SIZE. */
+/** Sender options from WEFT_RETRY_MAX_ATTEMPTS, WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL, WEFT_MAX_SPANS_QUEUE_SIZE. */
 export function senderOptionsFromEnv(): SenderOptions {
   const out: SenderOptions = {};
   const retries = envNumber('WEFT_RETRY_MAX_ATTEMPTS');
@@ -116,7 +116,12 @@ export function senderOptionsFromEnv(): SenderOptions {
   if (backoff !== undefined) out.backoffMs = backoff;
   const maxBackoff = envNumber('WEFT_RETRY_MAX_INTERVAL', 1000);
   if (maxBackoff !== undefined) out.maxBackoffMs = maxBackoff;
-  const queue = envNumber('WEFT_MAX_CALLS_QUEUE_SIZE') ?? envNumber('WEFT_MAX_QUEUE_SIZE');
+  let queue = envNumber('WEFT_MAX_SPANS_QUEUE_SIZE');
+  if (queue === undefined) {
+    queue = envNumber('WEFT_MAX_CALLS_QUEUE_SIZE');
+    if (queue !== undefined) deprecated('WEFT_MAX_CALLS_QUEUE_SIZE', 'WEFT_MAX_SPANS_QUEUE_SIZE');
+  }
+  queue ??= envNumber('WEFT_MAX_QUEUE_SIZE');
   if (queue !== undefined) out.maxQueue = Math.floor(queue);
   return out;
 }
@@ -174,6 +179,22 @@ export interface CustomRuntimeApplyRes {
   ref?: string;
 }
 export type RegisterCustomRuntimeResult = CustomRuntimeApplyRes;
+
+/** Options of `client.getSessions`. */
+export interface GetSessionsOptions {
+  limit?: number;
+  offset?: number;
+  /** Only these sessions. */
+  sessionIds?: string[];
+  /** @deprecated Use `sessionIds`. */
+  threadIds?: string[];
+  /** Only sessions whose first turn started after this time (ISO). */
+  after?: string;
+  /** Only sessions whose first turn started before this time (ISO). */
+  before?: string;
+  /** Fields: last_updated, started_at, turn_count, span_count, total_tokens. */
+  sortBy?: Array<{ field: string; direction: 'asc' | 'desc' }>;
+}
 
 export interface SpansOptions {
   filter?: Record<string, unknown>;
@@ -374,8 +395,9 @@ export class WeftClient {
     return `${this.serverUrl}/${this.projectId}/spans/${typeof span === 'string' ? span : span.id}`;
   }
 
-  /** @internal Earlier name of spanUrl. */
+  /** @deprecated Use `spanUrl`. */
   callUrl(call: Span | string): string {
+    deprecated('WeftClient.callUrl()', 'WeftClient.spanUrl()');
     return this.spanUrl(call);
   }
 
@@ -393,8 +415,8 @@ export class WeftClient {
   }
 
   // ---------------------------------------------------------------- spans
-  /** Start a span explicitly; end it with finishCall. `parent: null` starts a new trace. */
-  createCall(
+  /** Start a span explicitly; end it with finishSpan. `parent: null` starts a new trace. */
+  createSpan(
     op: OpMeta | string,
     inputs: Record<string, unknown>,
     opts: { parent?: Span | null; displayName?: string; attributes?: Record<string, unknown>; startedAt?: string | Date } = {},
@@ -449,17 +471,17 @@ export class WeftClient {
     call.turnId = turnId;
     if (kind === 'llm') {
       // An LLM call nested in a framework's LLM call holds the reasoning; the
-      // framework call does not repeat it (see finishCall).
+      // framework call does not repeat it (see finishSpan).
       if (parent) parent.llmDescendant = true;
       for (const anc of ctx.stack) anc.llmDescendant = true;
     }
     let dn = opts.displayName ?? null;
-    if (!dn && meta.options.callDisplayName) {
+    const dnOpt = spanDisplayNameOption(meta.options);
+    if (!dn && dnOpt) {
       try {
-        const f = meta.options.callDisplayName;
-        dn = typeof f === 'function' ? f(call) : f;
+        dn = typeof dnOpt === 'function' ? dnOpt(call) : dnOpt;
       } catch (e) {
-        logger.warn(`weft: callDisplayName failed for ${meta.name}: ${(e as Error).message}`);
+        logger.warn(`weft: spanDisplayName failed for ${meta.name}: ${(e as Error).message}`);
       }
     }
     call.displayName = dn;
@@ -545,7 +567,7 @@ export class WeftClient {
     return steps.map((st) => (typeof st.text === 'string' && st.text ? { ...st, text: this.redactor.apply(st.text) } : { ...st }));
   }
 
-  finishCall(call: Span, output?: unknown, error?: unknown, meta?: OpMeta, endedAt?: string | Date): void {
+  finishSpan(call: Span, output?: unknown, error?: unknown, meta?: OpMeta, endedAt?: string | Date): void {
     if (call.ended) return;
     call.ended = true;
     let out = output;
@@ -584,6 +606,22 @@ export class WeftClient {
       if (link?.step !== undefined) call.runStepEnd = end.run_step_end = link.step;
     }
     this.sender.enqueue({ kind: 'span_end', payload: end });
+  }
+
+  /** @deprecated Use `createSpan`. */
+  createCall(
+    op: OpMeta | string,
+    inputs: Record<string, unknown>,
+    opts: { parent?: Span | null; displayName?: string; attributes?: Record<string, unknown>; startedAt?: string | Date } = {},
+  ): Span {
+    deprecated('WeftClient.createCall()', 'WeftClient.createSpan()');
+    return this.createSpan(op, inputs, opts);
+  }
+
+  /** @deprecated Use `finishSpan`. */
+  finishCall(call: Span, output?: unknown, error?: unknown, meta?: OpMeta, endedAt?: string | Date): void {
+    deprecated('WeftClient.finishCall()', 'WeftClient.finishSpan()');
+    this.finishSpan(call, output, error, meta, endedAt);
   }
 
   private serializeSelf(v: unknown): unknown {
@@ -726,11 +764,12 @@ export class WeftClient {
   /**
    * Sessions: spans grouped by `session_id`, with turn counts, times and
    * turn-duration percentiles (`POST /api/v1/spans/sessions`). Each item has
-   * `session_id` and, under its earlier name, `thread_id`.
+   * `session_id`; `sessionIds` limits the result to those sessions.
    */
-  async getThreads(opts: { limit?: number; offset?: number; threadIds?: string[]; sessionIds?: string[]; after?: string; before?: string; sortBy?: Array<{ field: string; direction: 'asc' | 'desc' }> } = {}): Promise<any[]> {
+  async getSessions(opts: GetSessionsOptions = {}): Promise<any[]> {
     await this.flush();
     const filter: Record<string, unknown> = {};
+    if (opts.threadIds) deprecated('WeftClient.getSessions({ threadIds })', 'WeftClient.getSessions({ sessionIds })');
     const ids = [...(opts.sessionIds ?? []), ...(opts.threadIds ?? [])];
     if (ids.length) filter.session_ids = ids;
     if (opts.after) filter.started_after = opts.after;
@@ -741,7 +780,16 @@ export class WeftClient {
     if (opts.offset !== undefined) body.offset = opts.offset;
     if (opts.sortBy) body.sort_by = opts.sortBy.map((s) => (s.field === 'start_time' ? { ...s, field: 'started_at' } : s));
     const items: any[] = (await this.http.post('/api/v1/spans/sessions', body)).items ?? [];
-    return items.map((t) => ({ ...t, thread_id: t.session_id, start_time: t.started_at }));
+    return items.map((t) => ({ ...t, start_time: t.started_at }));
+  }
+
+  /** @deprecated Use `getSessions({ sessionIds })`; its items have no `thread_id`. */
+  async getThreads(opts: GetSessionsOptions = {}): Promise<any[]> {
+    deprecated('WeftClient.getThreads({ threadIds })', 'WeftClient.getSessions({ sessionIds })');
+    const { threadIds, ...rest } = opts;
+    const sessionIds = [...(rest.sessionIds ?? []), ...(threadIds ?? [])];
+    const items = await this.getSessions({ ...rest, sessionIds: sessionIds.length ? sessionIds : undefined });
+    return items.map((t) => ({ ...t, thread_id: t.session_id }));
   }
 
   /** Latest version of every Evaluation object (loaded values). */

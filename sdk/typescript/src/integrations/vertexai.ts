@@ -44,14 +44,14 @@ function traceMethod(owner: any, attr: string, op: string, model: () => string |
       const attrs: Record<string, unknown> = { 'gen_ai.operation.name': 'chat', 'gen_ai.provider.name': 'gcp.vertex_ai' };
       if (m) attrs['gen_ai.request.model'] = m;
       const inputs: Record<string, unknown> = typeof req === 'string' || Array.isArray(req) ? { model: m, contents: req } : { model: m, ...(req ?? {}) };
-      const call = client.createCall(meta, inputs, { attributes: integrationAttributes(INTEGRATION, attrs, local) });
+      const call = client.createSpan(meta, inputs, { attributes: integrationAttributes(INTEGRATION, attrs, local) });
       const done = (resp: any, err?: unknown) => {
         try {
           if (resp) recordVertexUsage(call, m, resp);
         } catch {
           /* ignore */
         }
-        client.finishCall(call, resp ? { ...plain(resp), text: textOf(resp) } : undefined, err, meta);
+        client.finishSpan(call, resp ? { ...plain(resp), text: textOf(resp) } : undefined, err, meta);
       };
       let p: any;
       try {

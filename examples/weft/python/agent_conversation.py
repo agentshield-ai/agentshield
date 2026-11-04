@@ -56,7 +56,7 @@ weft.log_conversation(
 # --- agent eval: score the turns we already traced ----------------------------
 ev = weft.EvaluationLogger(model="support-bot", dataset="support-questions", name="support eval")
 for turn in turns:
-    pred = ev.log_prediction({"question": turn.messages[0].content}, output=turn.output_messages[0].content, call=turn)
+    pred = ev.log_prediction({"question": turn.messages[0].content}, output=turn.output_messages[0].content, span=turn)
     pred.log_score("mentions_eta", "Friday" in pred.output)
     pred.finish()
 print("eval summary:", ev.log_summary())

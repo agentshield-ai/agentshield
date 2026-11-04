@@ -1,5 +1,5 @@
 """Second parity audit follow-ups against a real Weft server: Verdict with the
-real ``verdict`` package, Realtime WAV audio, custom runtimes, threads_query
+real ``verdict`` package, Realtime WAV audio, custom runtimes, sessions_query
 and TypeSafe. Skipped unless WEFT_TEST_SERVER_URL is set, e.g.::
 
     WEFT_TEST_SERVER_URL=http://127.0.0.1:6345 pytest tests/test_parity_audit2_live.py
@@ -16,7 +16,7 @@ import pytest
 
 import weft
 from weft.integrations import RealtimeTracer, patch_typesafe, patch_verdict, unpatch_all
-from weft.api_types import SortBy, ThreadsQueryReq
+from weft.api_types import SortBy, SessionsQueryReq
 
 from test_parity_audit2 import _install_typesafe
 from test_realtime_audio import SESSION, b64, pcm16, response_events
@@ -86,7 +86,7 @@ def test_realtime_audio_round_trip_live(live):
     assert frames(resp.output["output"][0]["content"][0]["audio"]) == (24000, out)
 
 
-def test_custom_runtime_and_threads_live(live):
+def test_custom_runtime_and_sessions_live(live):
     res = live.register_custom_runtime(name="audit2-vllm", base_url="http://127.0.0.1:9/v1",
                                        runtime_ids=["llama-3-8b", weft.CustomRuntimeID(id="qwen2-7b", max_tokens=8192)])
     assert {r.playground_id: r.max_tokens for r in res.runtime_ids} == {"audit2-vllm/llama-3-8b": 4096, "audit2-vllm/qwen2-7b": 8192}
@@ -106,9 +106,9 @@ def test_custom_runtime_and_threads_live(live):
     with weft.session("live-b"):
         turn(3)
     live.flush()
-    res = live.threads_query(ThreadsQueryReq(sort_by=[SortBy(field="turn_count", direction="desc")]))
-    assert [(t.session_id, t.turn_count) for t in res.threads] == [("live-a", 2), ("live-b", 1)]
-    assert res.threads[0].last_updated is not None and res.threads[0].p50_turn_duration_ms is not None
+    res = live.sessions_query(SessionsQueryReq(sort_by=[SortBy(field="turn_count", direction="desc")]))
+    assert [(t.session_id, t.turn_count) for t in res.sessions] == [("live-a", 2), ("live-b", 1)]
+    assert res.sessions[0].last_updated is not None and res.sessions[0].p50_turn_duration_ms is not None
     url = weft.urls.agent_conversation_path(live.entity, live.project, "live-a")
     assert url == f"{URL}/{live.entity}/{live.project}/conversations/live-a"
 

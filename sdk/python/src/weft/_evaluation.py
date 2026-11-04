@@ -242,7 +242,7 @@ class Evaluation(Object):
             out.append(r)
         return out
 
-    @op(name="Evaluation.evaluate", call_display_name=_display_name)
+    @op(name="Evaluation.evaluate", span_display_name=_display_name)
     async def _evaluate(self, model: Any) -> Dict[str, Any]:
         examples = self._examples()
         try:
@@ -324,10 +324,10 @@ def _parse_ts(s: Any) -> Optional[float]:
 
 
 def _linked_spans(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any]]":
-    """Normalise what ``log_prediction(call=...)`` links to.
+    """Normalise what ``log_prediction(span=...)`` links to.
 
     Returns ``(spans, conversation_ids, span_objects)`` where ``spans`` is
-    ``[{"span_id", "trace_id"?}]`` (the ``weft.linked_spans`` items). Accepts a Call, a call id or call URI, a
+    ``[{"span_id", "trace_id"?}]`` (the ``weft.linked_spans`` items). Accepts a Span, a span id or span URI, a
     conversation span (Turn, LLM, Tool, SubAgent), a ``LogResult``, a
     ``Conversation``, or a list of these.
     """
@@ -355,11 +355,10 @@ def _linked_spans(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
                 calls.append({"span_id": it})
             objs.append(it)
             continue
-        span_call = getattr(it, "call", None)
-        if isinstance(span_call, Call) or hasattr(it, "_start") and hasattr(it, "call_id"):
-            if getattr(it, "_started", True) is False and hasattr(it, "_start"):
+        if hasattr(it, "_start") and isinstance(getattr(type(it), "span_id", None), property):  # conversation span
+            if getattr(it, "_started", True) is False:
                 it._start(set_current=False)
-            c = it.call
+            c = it.span
             if c is not None:
                 calls.append({"span_id": c.id, "trace_id": c.trace_id})
                 objs.append(c)
@@ -381,8 +380,8 @@ def _linked_spans(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
 class ScoreLogger:
     """Returned by ``EvaluationLogger.log_prediction``; log scores then ``finish()``.
 
-    Also a context manager: calls made inside ``with ev.log_prediction(inputs) as pred:``
-    become children of the prediction's predict call, conversation spans started
+    Also a context manager: spans started inside ``with ev.log_prediction(inputs) as pred:``
+    become children of the prediction's predict span, conversation spans started
     there carry ``weft.eval.*`` link attributes, and set ``pred.output`` before
     the block ends.
     """
@@ -390,16 +389,25 @@ class ScoreLogger:
     def __init__(
         self,
         ev: "EvaluationLogger",
-        call: Any,
+        span: Any,
         inputs: Dict[str, Any],
         output: Any,
         model_latency: Optional[float],
-        predict_call: Any = None,
+        predict_span: Any = None,
         eval_context: Optional[Dict[str, Any]] = None,
+        **earlier: Any,
     ):
+        if "predict_call" in earlier:
+            from ._deprecation import deprecated_call
+
+            deprecated_call("ScoreLogger(predict_call=...)", "ScoreLogger(predict_span=...)")
+            pc = earlier.pop("predict_call")
+            predict_span = predict_span if predict_span is not None else pc
+        if earlier:
+            raise TypeError(f"ScoreLogger() got unexpected keyword arguments {sorted(earlier)}")
         self._ev = ev
-        self._call = call
-        self._predict_call = predict_call
+        self._call = span
+        self._predict_call = predict_span
         self._eval_context = eval_context
         self.inputs = inputs
         self.output = output
@@ -410,11 +418,29 @@ class ScoreLogger:
         self._tokens: List[Any] = []
 
     @property
+    def predict_and_score_span(self) -> Any:
+        """The prediction's ``Evaluation.predict_and_score`` span."""
+        return self._call
+
+    @property
+    def predict_span(self) -> Any:
+        """The prediction's predict span (the model's ``predict``)."""
+        return self._predict_call
+
+    @property
     def predict_and_score_call(self) -> Any:
+        """Deprecated: ``ScoreLogger.predict_and_score_span``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("ScoreLogger.predict_and_score_call", "ScoreLogger.predict_and_score_span")
         return self._call
 
     @property
     def predict_call(self) -> Any:
+        """Deprecated: ``ScoreLogger.predict_span``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("ScoreLogger.predict_call", "ScoreLogger.predict_span")
         return self._predict_call
 
     def log_score(self, scorer: Union[str, Scorer], score: Any) -> None:
@@ -429,8 +455,8 @@ class ScoreLogger:
             else:
                 sop = name
                 inputs = {"output": self.output, **self.inputs}
-            c = client.create_call(sop, inputs, parent=self._call)
-            client.finish_call(c, output=score)
+            c = client.create_span(sop, inputs, parent=self._call)
+            client.finish_span(c, output=score)
         self.scores[name] = score
         self._ev._scorer_names.setdefault(name, None)
 
@@ -440,7 +466,7 @@ class ScoreLogger:
         if client is not None and pc is not None and not pc._ended:
             if self.model_latency is None:
                 self.model_latency = time.perf_counter() - self._started
-            client.finish_call(pc, output=self.output)
+            client.finish_span(pc, output=self.output)
 
     def finish(self) -> None:
         if self._finished:
@@ -450,7 +476,7 @@ class ScoreLogger:
         client = self._ev._client
         out = {"output": self.output, "scores": dict(self.scores), "model_latency": self.model_latency}
         if client is not None and self._call is not None:
-            client.finish_call(self._call, output=out)
+            client.finish_span(self._call, output=out)
 
     def __enter__(self) -> "ScoreLogger":
         from . import _context
@@ -516,7 +542,7 @@ def _row_key(row: Any) -> Optional[str]:
 
 
 class EvaluationLogger:
-    """Log an evaluation imperatively, producing the same calls as ``Evaluation``.
+    """Log an evaluation imperatively, producing the same spans as ``Evaluation``.
 
     >>> ev = weft.EvaluationLogger(model="my-model", dataset="qa")
     >>> pred = ev.log_prediction(inputs={"q": "2+2"}, output="4")
@@ -550,12 +576,21 @@ class EvaluationLogger:
             if isinstance(self.model, Object):
                 self._client.save(self.model)
             self._index_dataset_rows()
-            self._call = self._client.create_call(
+            self._call = self._client.create_span(
                 Evaluation.__dict__["_evaluate"], {"self": self.evaluation, "model": self.model}, display_name=name
             )
 
     @property
+    def span(self) -> Any:
+        """The run's ``Evaluation.evaluate`` span (None when tracing is off)."""
+        return self._call
+
+    @property
     def call(self) -> Any:
+        """Deprecated: ``EvaluationLogger.span``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("EvaluationLogger.call", "EvaluationLogger.span")
         return self._call
 
     def _index_dataset_rows(self) -> None:
@@ -594,31 +629,38 @@ class EvaluationLogger:
         output: Any = None,
         model_latency: Optional[float] = None,
         *,
-        call: Any = None,
+        span: Any = None,
         example_id: Optional[str] = None,
         row_digest: Optional[str] = None,
         trial_index: Optional[int] = None,
         eval_kind: Optional[str] = "agent",
+        call: Any = None,
     ) -> ScoreLogger:
         """Log one prediction; returns a ``ScoreLogger`` (also usable as a context manager).
 
-        ``call`` links the prediction to traces that already exist instead of
-        re-recording them: a ``Call``, a call id or URI, a conversation span
+        ``span`` links the prediction to traces that already exist instead of
+        re-recording them: a ``Span``, a span id or URI, a conversation span
         (``Turn``, ``LLM``, ...), a ``LogResult`` or a ``Conversation`` (or a
         list). The links are stored on the prediction as
         ``attributes.weft.linked_spans`` / ``attributes.weft.genai_span_ref``
         (``[{"trace_id", "span_id"}]``, as in the v2 predictions API) and
         ``attributes.weft.linked_conversation_ids``. When ``output`` is omitted
-        the linked call's output is used, and ``model_latency`` defaults to its
+        the linked span's output is used, and ``model_latency`` defaults to its
         duration.
 
-        Without ``output`` (and without a link) the predict call stays open:
+        Without ``output`` (and without a link) the predict span stays open:
         set ``pred.output`` inside ``with ev.log_prediction(inputs) as pred:``
-        and calls made in the block become its children.
+        and spans started in the block become its children.
         """
+        if call is not None:
+            from ._deprecation import deprecated_call
+
+            deprecated_call("EvaluationLogger.log_prediction(call=...)", "EvaluationLogger.log_prediction(span=...)")
+            if span is None:
+                span = call
         if self._finished:
             raise RuntimeError("evaluation already finished")
-        linked, conv_ids, objs = _linked_spans(call) if call is not None else ([], [], [])
+        linked, conv_ids, objs = _linked_spans(span) if span is not None else ([], [], [])
         if linked and output is None and len(objs) == 1:
             output, lat = self._linked_output(objs[0])
             if model_latency is None:
@@ -636,7 +678,7 @@ class EvaluationLogger:
         pas = pc = None
         eval_ctx = None
         if self._client is not None:
-            pas = self._client.create_call(
+            pas = self._client.create_span(
                 Evaluation.__dict__["predict_and_score"],
                 {"self": self.evaluation, "model": self.model, "example": self._example(inputs)},
                 parent=self._call,
@@ -645,9 +687,9 @@ class EvaluationLogger:
             pinputs = dict(inputs)
             if isinstance(self.model, Model):
                 pinputs = {"self": self.model, **pinputs}
-            pc = self._client.create_call(self._predict_op(), pinputs, parent=pas, attributes=attrs)
+            pc = self._client.create_span(self._predict_op(), pinputs, parent=pas, attributes=attrs)
             if output is not None or linked:
-                self._client.finish_call(pc, output=output)
+                self._client.finish_span(pc, output=output)
             eval_ctx = {
                 "run_id": self._call.id if self._call is not None else None,
                 "prediction_span_id": pas.id,
@@ -658,7 +700,7 @@ class EvaluationLogger:
                 "trial_index": trial_index,
                 "evaluation_name": self.evaluation.name,
             }
-        sl = ScoreLogger(self, pas, dict(inputs), output, model_latency, predict_call=pc, eval_context=eval_ctx)
+        sl = ScoreLogger(self, pas, dict(inputs), output, model_latency, predict_span=pc, eval_context=eval_ctx)
         self._predictions.append(sl)
         return sl
 
@@ -715,9 +757,9 @@ class EvaluationLogger:
         if summary:
             result.update(summary)
         if self._client is not None and self._call is not None:
-            sc = self._client.create_call(Evaluation.__dict__["summarize"], {"self": self.evaluation}, parent=self._call)
-            self._client.finish_call(sc, output=result)
-            self._client.finish_call(self._call, output=result)
+            sc = self._client.create_span(Evaluation.__dict__["summarize"], {"self": self.evaluation}, parent=self._call)
+            self._client.finish_span(sc, output=result)
+            self._client.finish_span(self._call, output=result)
         self._finished = True
         self.summary = result
         return result

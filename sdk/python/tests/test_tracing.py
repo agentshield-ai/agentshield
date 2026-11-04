@@ -242,7 +242,7 @@ def test_plain_threads_start_new_traces(client, fake):
 def test_display_name_and_postprocess(client, fake):
     @weft.trace(
         name="renamed",
-        call_display_name=lambda call: f"q={call.inputs['q']}",
+        span_display_name=lambda call: f"q={call.inputs['q']}",
         postprocess_inputs=lambda d: {k: v for k, v in d.items() if k != "secret"},
         postprocess_output=lambda o: {"len": len(o)},
     )
@@ -256,7 +256,7 @@ def test_display_name_and_postprocess(client, fake):
     assert c["inputs"] == {"q": "x"}
     assert c["output"] == {"len": 5}
 
-    @weft.trace(call_display_name="static")
+    @weft.trace(span_display_name="static")
     def g():
         return 1
 

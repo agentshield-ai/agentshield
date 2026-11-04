@@ -1,5 +1,5 @@
 """Bedrock Agents and Verdict tracing, the prompt registry, run linkage and
-calls as a DataFrame.
+spans as a DataFrame.
 
     pip install -e sdk/python            # pandas is optional (for to_pandas)
     WEFT_SERVER_URL=http://localhost:6345 python examples/weft/python/agents_registry_and_queries.py
@@ -82,7 +82,7 @@ def main():
     answer = "".join(e["chunk"]["bytes"].decode() for e in res["completion"] if "chunk" in e)
     print("agent:", answer)
 
-    # --- Run linkage: calls carry run_id / run_step -----------------------
+    # --- Run linkage: spans carry run_id / run_step -----------------------
     step = {"n": 0}
 
     @weft.trace
@@ -105,13 +105,13 @@ def main():
     prod = client.get_from_registry("prompts-registry/weather", "production")
     print("production prompt:", prod.format(q="Oslo?"))
 
-    # --- Calls as records / a DataFrame ------------------------------------------
+    # --- Spans as records / a DataFrame ------------------------------------------
     client.flush()
-    calls = client.spans(filter={"names": ["train_step"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
-    for r in calls.to_records():
+    spans = client.spans(filter={"names": ["train_step"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
+    for r in spans.to_records():
         print(r["name"].rsplit("/", 1)[-1].split(":")[0], r["output"], r["run_id"], r["run_step"])
     try:
-        df = calls.to_pandas(flatten=True)
+        df = spans.to_pandas(flatten=True)
         print(df[["inputs.batch", "output", "run_step"]])
     except ImportError as e:
         print(e)

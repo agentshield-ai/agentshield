@@ -14,7 +14,7 @@ from weft._usage import record_openai_usage
 
 
 def _call(client, name="llm.test"):
-    return client.create_call(_settings.integration_op("test", name, "llm"), {"model": "m"})
+    return client.create_span(_settings.integration_op("test", name, "llm"), {"model": "m"})
 
 
 def _usage(fake, call_id):

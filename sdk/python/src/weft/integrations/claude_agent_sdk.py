@@ -118,7 +118,7 @@ class _Stream:
     def _start(self, name: str, kind: Optional[str], inputs: Dict[str, Any], parent: Any, display: Optional[str],
                flat: Optional[Dict[str, Any]] = None) -> Any:
         op = self._op(name, kind)
-        call = self.client.create_call(op, inputs, parent=parent, display_name=display, attributes=_attrs(flat or {}))
+        call = self.client.create_span(op, inputs, parent=parent, display_name=display, attributes=_attrs(flat or {}))
         call._weft_op = op
         return call
 
@@ -240,9 +240,9 @@ def _root(client: Any, name: str, prompt: Any, options: Any, session_id: Optiona
                     "gen_ai.request.model": _option(options, "model"), "gen_ai.conversation.id": session_id})
     if session_id is not None and _context.current_session_context() is None:
         with _context.session(session_id):
-            call = client.create_call(op, inputs, display_name=display, attributes=attrs)
+            call = client.create_span(op, inputs, display_name=display, attributes=attrs)
     else:
-        call = client.create_call(op, inputs, display_name=display, attributes=attrs)
+        call = client.create_span(op, inputs, display_name=display, attributes=attrs)
     call._weft_op = op
     return call
 

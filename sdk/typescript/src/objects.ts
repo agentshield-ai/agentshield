@@ -1,6 +1,7 @@
 import type { WeftClient } from './client.js';
 import { requireClient } from './global.js';
 import { Ref } from './refs.js';
+import { deprecated } from './deprecation.js';
 import { toJson, type Publishable } from './serialize.js';
 
 /** Base class for versioned objects (published with `weft.publish`). */
@@ -143,13 +144,19 @@ export class Dataset<R extends Record<string, unknown> = Record<string, unknown>
     return this.rows.length;
   }
 
-  /** One row `{inputs, output}` per call (`self` dropped). */
-  static fromCalls(calls: Iterable<{ inputs: Record<string, unknown>; output: unknown }>, name?: string): Dataset {
-    const rows = [...calls].map((c) => {
+  /** One row `{inputs, output}` per span (`self` dropped). */
+  static fromSpans(spans: Iterable<{ inputs: Record<string, unknown>; output: unknown }>, name?: string): Dataset {
+    const rows = [...spans].map((c) => {
       const { self: _self, ...inputs } = c.inputs ?? {};
       return { inputs, output: c.output };
     });
     return new Dataset({ name, rows });
+  }
+
+  /** @deprecated Use `Dataset.fromSpans`. */
+  static fromCalls(calls: Iterable<{ inputs: Record<string, unknown>; output: unknown }>, name?: string): Dataset {
+    deprecated('Dataset.fromCalls()', 'Dataset.fromSpans()');
+    return Dataset.fromSpans(calls, name);
   }
 
   /** Ref to one row (`.../attr/rows/id/<row digest>`), available once published. */

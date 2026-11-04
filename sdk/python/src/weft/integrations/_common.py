@@ -140,14 +140,14 @@ def start_call(client: Any, spec: "LLMSpec", inputs: Dict[str, Any], args: Tuple
                     attrs["weft"].update(v)
                 else:
                     attrs[k] = v
-    call = client.create_call(op, inputs, attributes=attrs)
+    call = client.create_span(op, inputs, attributes=attrs)
     call._weft_op = op
     return call
 
 
 def finish_call(client: Any, call: Any, output: Any = None, exception: Optional[BaseException] = None) -> None:
     """Finish an integration call, applying the integration's ``postprocess_output``."""
-    client.finish_call(call, output=output, exception=exception, op=getattr(call, "_weft_op", None))
+    client.finish_span(call, output=output, exception=exception, op=getattr(call, "_weft_op", None))
 
 
 class _Enter:

@@ -78,7 +78,7 @@ class Op:
         fn: Callable[..., Any],
         *,
         name: Optional[str] = None,
-        call_display_name: Optional[Union[str, Callable[[Any], str]]] = None,
+        span_display_name: Optional[Union[str, Callable[[Any], str]]] = None,
         postprocess_inputs: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         postprocess_output: Optional[Callable[[Any], Any]] = None,
         tracing_sample_rate: float = 1.0,
@@ -87,14 +87,21 @@ class Op:
         kind: Optional[str] = None,
         color: Optional[str] = None,
         enable_code_capture: bool = True,
+        call_display_name: Optional[Union[str, Callable[[Any], str]]] = None,
     ):
+        if call_display_name is not None:
+            from ._deprecation import deprecated_call
+
+            deprecated_call("trace(call_display_name=...)", "trace(span_display_name=...)", stacklevel=4)
+            if span_display_name is None:
+                span_display_name = call_display_name
         if not callable(fn):
             raise TypeError("weft.trace requires a callable")
         if not 0.0 <= float(tracing_sample_rate) <= 1.0:
             raise ValueError("tracing_sample_rate must be between 0 and 1")
         self.resolve_fn = fn
         self.name = name or _default_name(fn)
-        self.call_display_name = call_display_name
+        self.span_display_name = span_display_name
         self.postprocess_inputs = postprocess_inputs
         self.postprocess_output = postprocess_output
         self.tracing_sample_rate = float(tracing_sample_rate)
@@ -126,8 +133,23 @@ class Op:
         return _execute(self, args, kwargs, return_call=False)
 
     def call(self, *args: Any, **kwargs: Any) -> Any:
-        """Run the op and return ``(result, Call)``. Exceptions are captured."""
+        """Run the op and return ``(result, Span)``. Exceptions are captured."""
         return _execute(self, args, kwargs, return_call=True)
+
+    @property
+    def call_display_name(self) -> Optional[Union[str, Callable[[Any], str]]]:
+        """Deprecated: ``Op.span_display_name``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("Op.call_display_name", "Op.span_display_name")
+        return self.span_display_name
+
+    @call_display_name.setter
+    def call_display_name(self, v: Optional[Union[str, Callable[[Any], str]]]) -> None:
+        from ._deprecation import deprecated_call
+
+        deprecated_call("Op.call_display_name", "Op.span_display_name")
+        self.span_display_name = v
 
     @property
     def ref(self) -> Any:
@@ -200,7 +222,7 @@ def trace(
     fn: None = None,
     *,
     name: Optional[str] = None,
-    call_display_name: Optional[Union[str, Callable[[Any], str]]] = None,
+    span_display_name: Optional[Union[str, Callable[[Any], str]]] = None,
     postprocess_inputs: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     postprocess_output: Optional[Callable[[Any], Any]] = None,
     tracing_sample_rate: float = 1.0,
@@ -221,7 +243,8 @@ def trace(fn: Any = None, **kwargs: Any) -> Any:
 
     ``kind`` (agent, llm, tool, chain, retriever, embedding, scorer, ...) and
     ``color`` are stored on every span as ``attributes.weft.span_kind`` /
-    ``attributes.weft.color``.
+    ``attributes.weft.color``. ``span_display_name`` (a string, or a function
+    of the span) sets each span's display name.
     """
     if fn is None:
         return lambda f: Op(f, **kwargs)
@@ -292,11 +315,11 @@ class _Tracer:
 
     def ok(self, output: Any) -> None:
         if self.call is not None:
-            self.client.finish_call(self.call, output=output, op=self.op)
+            self.client.finish_span(self.call, output=output, op=self.op)
 
     def err(self, exc: BaseException) -> None:
         if self.call is not None:
-            self.client.finish_call(self.call, exception=exc, op=self.op)
+            self.client.finish_span(self.call, exception=exc, op=self.op)
 
     def result(self, value: Any) -> Any:
         return (value, self.call) if self.return_call else value
@@ -313,7 +336,7 @@ def _make_tracer(op_: Op, args: Tuple[Any, ...], kwargs: Dict[str, Any], return_
         return _Tracer("suppress", None, op_, return_call)
     try:
         inputs = _bind_inputs(op_, args, kwargs)
-        call = client.create_call(op_, inputs, parent=parent, _from_op=True)
+        call = client.create_span(op_, inputs, parent=parent, _from_op=True)
     except Exception as e:  # never break user code because of tracing
         logger.warning("weft: failed to start call for %s: %s", op_.name, e)
         return _Tracer(None, None, op_, return_call)

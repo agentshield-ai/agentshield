@@ -1,4 +1,4 @@
-"""A nested agent with tool calls and a conversation thread.
+"""A nested agent with tool calls and a conversation session.
 
 Uses OpenAI when OPENAI_API_KEY is set (auto-patched by weft.init), otherwise
 the Weft server's offline ``mock/echo`` model through /completions/create.
@@ -38,7 +38,7 @@ def llm(messages: list) -> str:
         resp = OpenAI().chat.completions.create(model="gpt-4o-mini", messages=messages)
         return resp.choices[0].message.content
     # Offline: the server's mock model echoes the last user message and the
-    # usage is reported on this call (the server rolls it up to the root).
+    # usage is reported on this span (the server rolls it up to the root).
     resp = client.completions_create({"model": "mock/echo", "messages": messages})
     u = resp.get("usage") or {}
     weft.add_usage(weft.get_current_span(), resp.get("model", "mock/echo"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
@@ -56,7 +56,7 @@ def plan(question: str) -> list:
     return steps
 
 
-@weft.trace(kind="agent", color="purple", call_display_name=lambda call: f"turn: {call.inputs['question'][:30]}")
+@weft.trace(kind="agent", color="purple", span_display_name=lambda span: f"turn: {span.inputs['question'][:30]}")
 def agent_turn(question: str) -> str:
     observations = []
     for tool_name, args in plan(question):
@@ -72,10 +72,10 @@ def agent_turn(question: str) -> str:
 
 
 if __name__ == "__main__":
-    with weft.session() as t:  # each top-level call in the block is a turn
+    with weft.session() as s:  # each top-level span in the block is a turn
         print(agent_turn("What's the weather in Paris?"))
         print(agent_turn("And what is 21 * 2?"))
     weft.flush()
-    print("session:", t.session_id)
+    print("session:", s.session_id)
     root = next(iter(client.spans(filter={"names": ["agent_turn"]}, limit=1)))
     print("root usage (rolled up by the server):", root.summary.get("usage"))

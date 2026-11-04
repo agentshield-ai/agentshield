@@ -106,7 +106,7 @@ describe('TypeSafe', () => {
     await settle();
     const llms = fake.callsByOp('chat').sort((a, b) => a.started_at.localeCompare(b.started_at));
     expect(llms).toHaveLength(3);
-    expect(llms[0].parent_id).toBe(turn.callId);
+    expect(llms[0].parent_id).toBe(turn.spanId);
     expect(llms[0].attributes.gen_ai.conversation.id).toBe('conv-ts');
     expect(JSON.stringify(fake.callsByOp('chat'))).not.toMatch(/private|not traced/);
     expect(llms.every((c) => !c.attributes.weft?.parent_span && !c.attributes.weft?.parent_call)).toBe(true);
@@ -125,7 +125,7 @@ describe('TypeSafe', () => {
       await turn.run(async () => {
         await ts.systemOne({ state: msg, questions: ['q'] });
       });
-      helperTurn = turn.callId!;
+      helperTurn = turn.spanId!;
       conv.end();
     });
     await handle('turn inside an op');

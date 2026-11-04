@@ -86,13 +86,13 @@ export function wrapLLMMethod(orig: (...args: any[]) => any, spec: LLMSpec): (..
     } catch {
       /* ignore */
     }
-    const call = client.createCall(meta, inputs, { attributes: integrationAttributes(spec.integration, extra, spec.opSettings) });
+    const call = client.createSpan(meta, inputs, { attributes: integrationAttributes(spec.integration, extra, spec.opSettings) });
     const ctx = { ...currentContext(), stack: [...currentContext().stack, call] };
     let res: any;
     try {
       res = await storage.run(ctx, () => orig(body, ...rest));
     } catch (e) {
-      client.finishCall(call, undefined, e, meta);
+      client.finishSpan(call, undefined, e, meta);
       throw e;
     }
     const finish = (out: any, err?: unknown) => {
@@ -101,7 +101,7 @@ export function wrapLLMMethod(orig: (...args: any[]) => any, spec: LLMSpec): (..
       } catch {
         /* ignore */
       }
-      client.finishCall(call, out, err, meta);
+      client.finishSpan(call, out, err, meta);
     };
     const streaming = spec.isStream ? spec.isStream(body, res) : !!body.stream;
     if (streaming && isAsyncIterable(res)) return proxyStream(res, spec.accumulator(), finish);

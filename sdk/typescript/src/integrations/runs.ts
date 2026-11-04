@@ -48,7 +48,7 @@ export class RunTracker {
       if (parentRun) parentRun.children++;
       const parent = parentRun ? parentRun.call : getCurrentCall();
       const meta = integrationOp(this.integration, opName, opts.kind, opts.defaults, this.local);
-      const call = client.createCall(meta, inputs, {
+      const call = client.createSpan(meta, inputs, {
         parent: parent ?? null,
         displayName: opts.displayName,
         attributes: integrationAttributes(this.integration, opts.attributes, this.local),
@@ -99,7 +99,7 @@ export class RunTracker {
         const e = (r.call.summary.usage as any)?.[usage.model || 'unknown'];
         if (e && usage.reasoningTokens) e.reasoning_tokens = (e.reasoning_tokens ?? 0) + usage.reasoningTokens;
       }
-      client?.finishCall(r.call, output, error ?? undefined, r.meta, endedAt);
+      client?.finishSpan(r.call, output, error ?? undefined, r.meta, endedAt);
     } catch (e) {
       logger.warn(`weft: could not finish run: ${(e as Error).message}`);
     }

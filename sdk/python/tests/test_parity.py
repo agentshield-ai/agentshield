@@ -81,7 +81,7 @@ def test_load_op_runs_and_links_to_same_ref(client, fake):
 
 
 def test_load_async_op_and_decorated_with_args(client, fake):
-    @weft.trace(name="aop", call_display_name="x")
+    @weft.trace(name="aop", span_display_name="x")
     async def aop(x):
         return x * 3
 

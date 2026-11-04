@@ -274,16 +274,19 @@ class Dataset(Object):
     @classmethod
     def from_spans(cls, spans: Iterable[Any], name: Optional[str] = None) -> "Dataset":
         """Build a dataset from spans: one row ``{"inputs", "output"}`` per span (``self`` dropped)."""
-        return cls.from_calls(spans, name=name)
-
-    @classmethod
-    def from_calls(cls, calls: Iterable[Any], name: Optional[str] = None) -> "Dataset":
-        """Build a dataset from spans (``from_spans``): one row ``{"inputs", "output"}`` per span."""
         rows = []
-        for c in calls:
+        for c in spans:
             inputs = {k: v for k, v in (c.inputs or {}).items() if k != "self"}
             rows.append({"inputs": inputs, "output": c.output})
         return cls(name=name, rows=rows)
+
+    @classmethod
+    def from_calls(cls, calls: Iterable[Any], name: Optional[str] = None) -> "Dataset":
+        """Deprecated: use ``Dataset.from_spans``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("Dataset.from_calls()", "Dataset.from_spans()")
+        return cls.from_spans(calls, name=name)
 
     @classmethod
     def from_pandas(cls, df: Any, name: Optional[str] = None) -> "Dataset":

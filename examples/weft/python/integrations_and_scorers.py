@@ -48,7 +48,7 @@ client = weft.init(
     settings=settings,
     autopatch_settings={
         # every OpenAI call: inputs scrubbed, a fixed display name and a team attribute
-        "openai": {"op_settings": {"postprocess_inputs": hide_messages, "call_display_name": "chat",
+        "openai": {"op_settings": {"postprocess_inputs": hide_messages, "span_display_name": "chat",
                                    "attributes": {"team": "research"}}},
         "anthropic": {"op_settings": OpSettings(color="purple")},
         "crewai": {"enabled": False},  # or WEFT_DISABLED_INTEGRATIONS=crewai

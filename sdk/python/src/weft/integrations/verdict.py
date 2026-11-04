@@ -131,7 +131,7 @@ def _make_tracer_cls(Tracer: Any, VerdictCall: Any, current_trace_context: Any, 
                 kw["parent"] = parent
             call = None
             try:
-                call = client.create_call(op, {k: _plain(v) for k, v in (inputs or {}).items()}, **kw)
+                call = client.create_span(op, {k: _plain(v) for k, v in (inputs or {}).items()}, **kw)
             except Exception as e:  # pragma: no cover - never break the pipeline
                 logger.debug("weft: could not start verdict span %s: %s", name, e)
             vc = VerdictCall(name=name, inputs=inputs, trace_id=trace_id, parent_id=parent_id,
@@ -156,7 +156,7 @@ def _make_tracer_cls(Tracer: Any, VerdictCall: Any, current_trace_context: Any, 
                 if call is not None:
                     err = exc if exc is not None else (vc.exception if isinstance(vc.exception, BaseException) else None)
                     try:
-                        client.finish_call(call, output=_plain(vc.outputs), exception=err, op=op)
+                        client.finish_span(call, output=_plain(vc.outputs), exception=err, op=op)
                     except Exception as e:  # pragma: no cover
                         logger.debug("weft: could not end verdict span %s: %s", name, e)
                     self._release(trace_id, vc.call_id)

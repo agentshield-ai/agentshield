@@ -60,15 +60,15 @@ export function weftMiddleware(opts: WeftMiddlewareOptions = {}): Record<string,
       const client = integrationClient(INTEGRATION);
       if (!client) return doGenerate();
       const meta = integrationOp(INTEGRATION, `${prefix}.generate`, 'llm', {}, local);
-      const call = client.createCall(meta, inputsOf(params, model), { attributes: integrationAttributes(INTEGRATION, modelAttrs(model), local) });
+      const call = client.createSpan(meta, inputsOf(params, model), { attributes: integrationAttributes(INTEGRATION, modelAttrs(model), local) });
       try {
         const res = await withCall(call, () => doGenerate());
         recordUsage(call, model?.modelId, res?.usage);
         const { request: _r, response: _resp, rawCall: _rc, rawResponse: _rr, ...out } = res ?? {};
-        client.finishCall(call, out, undefined, meta);
+        client.finishSpan(call, out, undefined, meta);
         return res;
       } catch (e) {
-        client.finishCall(call, undefined, e, meta);
+        client.finishSpan(call, undefined, e, meta);
         throw e;
       }
     },
@@ -76,12 +76,12 @@ export function weftMiddleware(opts: WeftMiddlewareOptions = {}): Record<string,
       const client = integrationClient(INTEGRATION);
       if (!client) return doStream();
       const meta = integrationOp(INTEGRATION, `${prefix}.stream`, 'llm', {}, local);
-      const call = client.createCall(meta, inputsOf(params, model), { attributes: integrationAttributes(INTEGRATION, modelAttrs(model), local) });
+      const call = client.createSpan(meta, inputsOf(params, model), { attributes: integrationAttributes(INTEGRATION, modelAttrs(model), local) });
       let res: any;
       try {
         res = await withCall(call, () => doStream());
       } catch (e) {
-        client.finishCall(call, undefined, e, meta);
+        client.finishSpan(call, undefined, e, meta);
         throw e;
       }
       let text = '';
@@ -94,7 +94,7 @@ export function weftMiddleware(opts: WeftMiddlewareOptions = {}): Record<string,
         done = true;
         const out: Record<string, unknown> = { text, finishReason, toolCalls };
         if (reasoning) out.reasoning = reasoning;
-        client.finishCall(call, out, err, meta);
+        client.finishSpan(call, out, err, meta);
       };
       const transform = new TransformStream({
         transform(chunk: any, controller) {
@@ -128,16 +128,16 @@ function wrapExecute(name: string, execute: (...a: any[]) => any, local?: Integr
   const wrapped = function (this: unknown, args: any, options: any, ...rest: any[]) {
     const client = integrationClient(INTEGRATION);
     if (!client) return execute.call(this, args, options, ...rest);
-    const meta = integrationOp(INTEGRATION, `${INTEGRATION}.tool.${name}`, 'tool', { callDisplayName: `${name}${args && typeof args === 'object' ? ': ' + short(args, 40) : ''}` }, local);
+    const meta = integrationOp(INTEGRATION, `${INTEGRATION}.tool.${name}`, 'tool', { spanDisplayName: `${name}${args && typeof args === 'object' ? ': ' + short(args, 40) : ''}` }, local);
     const attrs: Record<string, unknown> = { 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': name };
     if (options?.toolCallId) attrs['gen_ai.tool.call.id'] = options.toolCallId;
     const inputs = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : { input: args };
-    const call = client.createCall(meta, inputs, { attributes: integrationAttributes(INTEGRATION, attrs, local) });
+    const call = client.createSpan(meta, inputs, { attributes: integrationAttributes(INTEGRATION, attrs, local) });
     let res: any;
     try {
       res = withCall(call, () => execute.call(this, args, options, ...rest));
     } catch (e) {
-      client.finishCall(call, undefined, e, meta);
+      client.finishSpan(call, undefined, e, meta);
       throw e;
     }
     if (res && typeof res[Symbol.asyncIterator] === 'function' && typeof res.then !== 'function') {
@@ -149,20 +149,20 @@ function wrapExecute(name: string, execute: (...a: any[]) => any, local?: Integr
             last = item;
             yield item;
           }
-          client.finishCall(call, last, undefined, meta);
+          client.finishSpan(call, last, undefined, meta);
         } catch (e) {
-          client.finishCall(call, last, e, meta);
+          client.finishSpan(call, last, e, meta);
           throw e;
         }
       })();
     }
     return Promise.resolve(res).then(
       (out) => {
-        client.finishCall(call, out, undefined, meta);
+        client.finishSpan(call, out, undefined, meta);
         return out;
       },
       (e) => {
-        client.finishCall(call, undefined, e, meta);
+        client.finishSpan(call, undefined, e, meta);
         throw e;
       },
     );
@@ -236,7 +236,7 @@ export function wrapAISDK<T extends Record<string, any>>(ai: T, opts: Integratio
       const client = integrationClient(INTEGRATION);
       if (!client) return orig.call(this, params, ...rest);
       const meta = integrationOp(INTEGRATION, `${INTEGRATION}.${fn}`, 'chain', {}, local);
-      const call = client.createCall(meta, topInputs(params), { attributes: integrationAttributes(INTEGRATION, undefined, local) });
+      const call = client.createSpan(meta, topInputs(params), { attributes: integrationAttributes(INTEGRATION, undefined, local) });
       const p: any = { ...(params ?? {}) };
       if (p.tools) p.tools = wrapAITools(p.tools, opts);
       if (!streaming) {
@@ -244,16 +244,16 @@ export function wrapAISDK<T extends Record<string, any>>(ai: T, opts: Integratio
         try {
           res = withCall(call, () => orig.call(this, p, ...rest));
         } catch (e) {
-          client.finishCall(call, undefined, e, meta);
+          client.finishSpan(call, undefined, e, meta);
           throw e;
         }
         return Promise.resolve(res).then(
           (r) => {
-            client.finishCall(call, topOutput(r), undefined, meta);
+            client.finishSpan(call, topOutput(r), undefined, meta);
             return r;
           },
           (e) => {
-            client.finishCall(call, undefined, e, meta);
+            client.finishSpan(call, undefined, e, meta);
             throw e;
           },
         );
@@ -262,7 +262,7 @@ export function wrapAISDK<T extends Record<string, any>>(ai: T, opts: Integratio
       const end = (o: unknown, e?: unknown) => {
         if (done) return;
         done = true;
-        client.finishCall(call, o, e, meta);
+        client.finishSpan(call, o, e, meta);
       };
       const userFinish = p.onFinish;
       const userError = p.onError;

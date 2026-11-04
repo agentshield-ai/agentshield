@@ -1,6 +1,6 @@
 /**
  * Bedrock Agents and OpenAI Realtime tracing, NER PII redaction, the prompt
- * registry and calls as records, with the TypeScript SDK.
+ * registry and spans as records, with the TypeScript SDK.
  *
  *   cd sdk/typescript && npm install && npm run build
  *   WEFT_SERVER_URL=http://localhost:6345 node examples/weft/typescript/agents_and_redaction.ts

@@ -83,7 +83,7 @@ export function wrapAnthropic<T>(client: T, opts: IntegrationOpSettings & { opSe
       const s = bound(body, ...rest);
       if (!wc || !s || typeof s.finalMessage !== 'function') return s;
       const meta = integrationOp('anthropic', 'anthropic.messages.stream', 'llm', {}, opSettings);
-      const call = wc.createCall(meta, toJson(body ?? {}) as Record<string, unknown>, {
+      const call = wc.createSpan(meta, toJson(body ?? {}) as Record<string, unknown>, {
         parent: currentContext().stack.at(-1) ?? null,
         attributes: integrationAttributes('anthropic', attributes(), opSettings),
       });
@@ -91,9 +91,9 @@ export function wrapAnthropic<T>(client: T, opts: IntegrationOpSettings & { opSe
         (m: any) => {
           const out = toJson(m);
           recordAnthropicUsage(call, out);
-          wc.finishCall(call, out, undefined, meta);
+          wc.finishSpan(call, out, undefined, meta);
         },
-        (e: unknown) => wc.finishCall(call, undefined, e, meta),
+        (e: unknown) => wc.finishSpan(call, undefined, e, meta),
       );
       return s;
     };

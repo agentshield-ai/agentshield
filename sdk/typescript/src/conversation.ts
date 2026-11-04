@@ -30,6 +30,7 @@
  * parent.
  */
 import { logger } from './log.js';
+import { deprecated } from './deprecation.js';
 import { randomUUID } from 'node:crypto';
 import { Call, type CallData } from './call.js';
 import { formatError, syntheticOp, type WeftClient } from './client.js';
@@ -307,8 +308,8 @@ type Payload = [Record<string, unknown>, unknown, Record<string, unknown>, Recor
 export abstract class SpanBase {
   startedAt: Date | null = null;
   endedAt: Date | null = null;
-  /** The Weft call recording this span (null until started, or when tracing is off). */
-  call: Call | null = null;
+  /** The Weft span recording this conversation span (null until started, or when tracing is off). */
+  span: Call | null = null;
   /** @internal */ client: WeftClient | null = null;
   /** @internal */ conv: ConvInfo | null = null;
   /** @internal */ explicitParent: SpanBase | null = null;
@@ -326,12 +327,25 @@ export abstract class SpanBase {
   protected abstract readonly opName: string;
   protected abstract readonly kind: string;
 
+  /** The id of `span` (null until started, or when tracing is off). */
+  get spanId(): string | null {
+    return this.span?.id ?? null;
+  }
+
+  /** @deprecated Use `span`. */
+  get call(): Call | null {
+    deprecated(`${this.constructor.name}.call`, `${this.constructor.name}.span`);
+    return this.span;
+  }
+
+  /** @deprecated Use `spanId`. */
   get callId(): string | null {
-    return this.call?.id ?? null;
+    deprecated(`${this.constructor.name}.callId`, `${this.constructor.name}.spanId`);
+    return this.span?.id ?? null;
   }
 
   get traceId(): string | null {
-    return this.call?.traceId ?? null;
+    return this.span?.traceId ?? null;
   }
 
   protected abstract displayName(): string;
@@ -364,12 +378,12 @@ export abstract class SpanBase {
     let parent: Call | null = null;
     if (this.explicitParent) {
       this.explicitParent.start();
-      parent = this.explicitParent.call;
+      parent = this.explicitParent.span;
     } else if (!this.newTrace) {
       parent = getCurrentCall();
       if (!parent && this.fallbackParent && !this.fallbackParent.ended) {
         this.fallbackParent.start();
-        parent = this.fallbackParent.call;
+        parent = this.fallbackParent.span;
       }
     }
     const id = uuid7();
@@ -384,11 +398,11 @@ export abstract class SpanBase {
       display_name: this.displayName(),
       started_at: iso(this.startedAt),
     };
-    this.call = new Call(data, client);
-    this.call.conversationSpan = true;
-    this.call.span = this;
-    this.call.sessionId = threadId;
-    this.call.turnId = turnId;
+    this.span = new Call(data, client);
+    this.span.conversationSpan = true;
+    this.span.span = this;
+    this.span.sessionId = threadId;
+    this.span.turnId = turnId;
     return this;
   }
 
@@ -407,7 +421,7 @@ export abstract class SpanBase {
   /** Context patch while `run` executes (current call, turn, llm). */
   protected runPatch(): Partial<WeftContext> {
     const ctx = currentContext();
-    return this.call ? { stack: [...ctx.stack, this.call] } : {};
+    return this.span ? { stack: [...ctx.stack, this.span] } : {};
   }
 
   /**
@@ -450,7 +464,7 @@ export abstract class SpanBase {
   /** @internal */
   emit(): void {
     const client = this.client;
-    const call = this.call;
+    const call = this.span;
     if (!client || !call) return;
     const conv = this.conv ?? { conversationId: '', conversationName: '', includeContent: true, attributes: {} };
     let inputs: Record<string, unknown>, output: unknown, gen: Record<string, unknown>, summary: Record<string, unknown>;
@@ -1179,7 +1193,7 @@ export class Conversation {
   startTurn(opts: { userMessage?: string; model?: string; agentName?: string; agentId?: string; agentDescription?: string; agentVersion?: string; systemInstructions?: string[] } = {}): Turn {
     const cur = this.currentTurn;
     if (cur && !cur.ended) {
-      const inside = !!cur.call && currentContext().stack.includes(cur.call);
+      const inside = !!cur.span && currentContext().stack.includes(cur.span);
       if (!(inside && (opts.agentName || this.agentName) !== cur.agentName)) cur.end();
     }
     const turn = new Turn({
@@ -1304,7 +1318,7 @@ function emitTurn(turn: Turn, info: ConvInfo, attributes?: Record<string, unknow
   return {
     conversationId: info.conversationId,
     traceIds: turn.traceId ? [turn.traceId] : [],
-    rootSpanIds: turn.callId ? [turn.callId] : [],
+    rootSpanIds: turn.spanId ? [turn.spanId] : [],
     spanCount: 1 + turn.spans.length,
   };
 }

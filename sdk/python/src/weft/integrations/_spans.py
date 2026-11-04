@@ -59,7 +59,7 @@ class RunTracker:
         else:
             op = _synthetic_op(op_name, kind)
         try:
-            call = client.create_call(
+            call = client.create_span(
                 op,
                 inputs,
                 parent=parent if parent is not None else _UNSET,
@@ -104,7 +104,7 @@ class RunTracker:
             extra = {k: usage[k] for k in ("reasoning_tokens",) if usage.get(k)}
             add_usage(call, usage.get("model"), usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, usage.get("total_tokens"), **extra)
         if call._client is not None:
-            call._client.finish_call(call, output=output, exception=error, op=getattr(call, "_weft_op", None))
+            call._client.finish_span(call, output=output, exception=error, op=getattr(call, "_weft_op", None))
         return call
 
 

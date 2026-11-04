@@ -77,7 +77,7 @@ def test_streaming_conversation_records_agent_calls(client, fake):
     assert tl["inputs"] == {"order_id": 7} and tl["output"] == {"status": "shipped"}
     assert _attr(tl, "gen_ai.tool.name") == "lookup" and _attr(tl, "gen_ai.tool.call.id") == "t1"
     # local handles
-    assert turn.call_id == t["id"] and turn.trace_id == t["trace_id"] and tool.duration_ms >= 0
+    assert turn.span_id == t["id"] and turn.trace_id == t["trace_id"] and tool.duration_ms >= 0
 
 
 def test_turns_are_separate_traces_and_start_turn_ends_previous(client, fake):
@@ -215,7 +215,7 @@ def test_log_turn_and_log_conversation_batch(client, fake):
     assert {c["session_id"] for c in later} == {res2.conversation_id}
     assert all(_attr(c, "gen_ai.agent.name") == "batcher" and _attr(c, "gen_ai.conversation.name") == "replayed" for c in later)
     # the caller's turns were not mutated
-    assert turns[0].agent_name == "" and turns[0].call is None
+    assert turns[0].agent_name == "" and turns[0].span is None
 
 
 def test_media_attachments_are_uploaded(client, fake):
@@ -243,7 +243,7 @@ def test_tracing_disabled_and_uninitialised_are_noops(client, fake):
             with conv.start_turn(user_message="hi") as turn:
                 with turn.start_llm(model="m") as llm:
                     llm.output("x")
-    assert turn.call is None
+    assert turn.span is None
     _flushed(fake, client)
     assert not _by_op(fake, "invoke_agent")
 

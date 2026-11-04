@@ -48,7 +48,7 @@ const answer = weft.trace(
     });
     return res.choices[0].message.content;
   },
-  { kind: 'agent', color: 'blue', callDisplayName: (call) => `answer: ${String(call.inputs.question).slice(0, 20)}` },
+  { kind: 'agent', color: 'blue', spanDisplayName: (span) => `answer: ${String(span.inputs.question).slice(0, 20)}` },
 );
 
 await weft.withSession('demo-conversation', async () => {
@@ -100,6 +100,6 @@ const attach = weft.trace(function attachNotes() {
 });
 attach();
 await client.addTags(dataset.ref!, ['reviewed']);
-console.log('latest answer call:', latest.id, 'usage:', JSON.stringify(latest.summary.usage));
+console.log('latest answer span:', latest.id, 'usage:', JSON.stringify(latest.summary.usage));
 
 await weft.finish();

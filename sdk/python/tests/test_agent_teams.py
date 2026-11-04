@@ -80,7 +80,7 @@ def test_handoff_records_attributes_and_from_agent(client, fake):
     h = _by_op(fake, "handoff")[0]
     assert _attr(h, "weft", "handoff") == {"to_agent": "billing", "kind": "handoff", "from_agent": "triage"}
     assert h["inputs"] == {"input": "refund order 7"}
-    assert h["parent_id"] == turn.call_id and h["display_name"] == "handoff to billing"
+    assert h["parent_id"] == turn.span_id and h["display_name"] == "handoff to billing"
     assert _attr(h, "gen_ai", "conversation", "id") == "s-1"
     assert _attr(h, "weft", "span_kind") == "handoff"
     # not an agent span: no gen_ai.operation.name, so the server does not count it as an agent
@@ -97,7 +97,7 @@ def test_delegate_handoff_block_nests_the_other_agent(client, fake):
                 h.output = "3 facts"
     weft.flush(5)
     hc = _by_op(fake, "handoff")[0]
-    rc = fake.calls[rt.call_id]
+    rc = fake.calls[rt.span_id]
     assert _attr(hc, "weft", "handoff", "kind") == "delegate" and hc["output"] == "3 facts"
     assert rc["parent_id"] == hc["id"] and rc["trace_id"] == turn.trace_id
     with pytest.raises(ValueError):
@@ -117,9 +117,9 @@ def test_turn_of_another_agent_nests_under_the_running_agent(client, fake):
             with same:
                 pass
     weft.flush(5)
-    assert fake.calls[inner.call_id]["parent_id"] == outer.call_id
-    assert fake.calls[inner.call_id]["trace_id"] == outer.trace_id
-    assert fake.calls[same.call_id]["parent_id"] is None
+    assert fake.calls[inner.span_id]["parent_id"] == outer.span_id
+    assert fake.calls[inner.span_id]["trace_id"] == outer.trace_id
+    assert fake.calls[same.span_id]["parent_id"] is None
 
 
 def test_subagent_and_turn_handoff_helpers(client, fake):
@@ -132,7 +132,7 @@ def test_subagent_and_turn_handoff_helpers(client, fake):
     weft.flush(5)
     hs = {(_attr(h, "weft", "handoff", "from_agent"), _attr(h, "weft", "handoff", "to_agent")): h for h in _by_op(fake, "handoff")}
     assert set(hs) == {("a", "b"), ("c", "d")}
-    assert hs[("c", "d")]["parent_id"] == sub.call_id
+    assert hs[("c", "d")]["parent_id"] == sub.span_id
 
 
 # ---------------------------------------------------------------- reasoning
@@ -146,7 +146,7 @@ def test_reasoning_on_conversation_span(client, fake):
             weft.reasoning("secret", kind="redacted")
             weft.reasoning("   ")  # blank: ignored
     weft.flush(5)
-    steps = _attr(fake.calls[turn.call_id], "weft", "reasoning")
+    steps = _attr(fake.calls[turn.span_id], "weft", "reasoning")
     assert [(s["kind"], s["text"]) for s in steps] == [("thinking", "The user wants facts; delegate."), ("summary", "short summary"), ("redacted", "")]
     assert steps[0]["tokens"] == 12 and steps[0]["time"].endswith("Z")
 
@@ -177,8 +177,8 @@ def test_reasoning_redacts_pii(fake, monkeypatch):
                     llm.think("call 555-123-4567 first")
                     llm.output("done")
         weft.flush(5)
-        assert _attr(fake.calls[turn.call_id], "weft", "reasoning")[0]["text"] == "mail <EMAIL_ADDRESS> about it"
-        out = fake.calls[llm.call_id]["output"]["choices"][0]["message"]["content"]
+        assert _attr(fake.calls[turn.span_id], "weft", "reasoning")[0]["text"] == "mail <EMAIL_ADDRESS> about it"
+        out = fake.calls[llm.span_id]["output"]["choices"][0]["message"]["content"]
         assert out[0] == {"type": "thinking", "thinking": "call <PHONE_NUMBER> first"}
     finally:
         weft.finish()
@@ -197,8 +197,8 @@ def test_capture_reasoning_off(fake, monkeypatch):
                     llm.think("hidden too")
                     llm.output("visible")
         weft.flush(5)
-        assert _attr(fake.calls[turn.call_id], "weft", "reasoning") is None
-        msg = fake.calls[llm.call_id]["output"]["choices"][0]["message"]
+        assert _attr(fake.calls[turn.span_id], "weft", "reasoning") is None
+        msg = fake.calls[llm.span_id]["output"]["choices"][0]["message"]
         assert "hidden" not in str(msg) and "visible" in str(msg)
     finally:
         weft.finish()
@@ -246,8 +246,8 @@ def test_framework_llm_call_does_not_repeat_nested_reasoning(client, fake):
 
     tracker = RunTracker()
     outer = tracker.start("r1", "framework.llm", {"q": 1}, kind="llm")
-    inner = client.create_call(weft._client._synthetic_op("anthropic.messages.create", "llm"), {"model": "m"})
-    client.finish_call(inner, {"content": [{"type": "thinking", "thinking": "deep"}, {"type": "text", "text": "a"}]})
+    inner = client.create_span(weft._client._synthetic_op("anthropic.messages.create", "llm"), {"model": "m"})
+    client.finish_span(inner, {"content": [{"type": "thinking", "thinking": "deep"}, {"type": "text", "text": "a"}]})
     tracker.end("r1", {"content": [{"type": "thinking", "thinking": "deep"}, {"type": "text", "text": "a"}]})
     weft.flush(5)
     assert fake.calls[inner.id]["output"]["content"][0]["type"] == "thinking"
@@ -255,9 +255,9 @@ def test_framework_llm_call_does_not_repeat_nested_reasoning(client, fake):
 
 
 def test_update_span_resends_start(client, fake):
-    call = client.create_call("thing", {"a": 1})
+    call = client.create_span("thing", {"a": 1})
     client.update_span(call, {"gen_ai": {"conversation": {"id": "sess"}}}, session_id="sess")
-    client.finish_call(call, 1)
+    client.finish_span(call, 1)
     weft.flush(5)
     c = fake.calls[call.id]
     assert c["session_id"] == "sess" and _attr(c, "gen_ai", "conversation", "id") == "sess" and c["inputs"] == {"a": 1}

@@ -10,10 +10,10 @@
  * ```
  *
  * Each value is `{ enabled?, opSettings? }` (or a boolean for `enabled`).
- * `opSettings` applies to every call the integration records: `name` (op
- * name override), `callDisplayName` (string or `(call) => string`),
+ * `opSettings` applies to every span the integration records: `name` (span
+ * name override), `spanDisplayName` (string or `(span) => string`),
  * `postprocessInputs(inputs) => inputs`, `postprocessOutput(output) => output`,
- * `kind`, `color` and `attributes` (merged into each call's attributes).
+ * `kind`, `color` and `attributes` (merged into each span's attributes).
  *
  * Wrappers also take the same `opSettings` per client
  * (`wrapOpenAI(client, { postprocessOutput })`); those run after the global ones.
@@ -26,17 +26,21 @@
 import type { Call } from '../call.js';
 import { syntheticOp, type WeftClient } from '../client.js';
 import { tracingClient } from '../global.js';
+import { deprecated } from '../deprecation.js';
 import type { OpMeta, OpOptions } from '../op.js';
 
 export interface IntegrationOpSettings {
-  /** Replace the op name of every call the integration records. */
+  /** Replace the name of every span the integration records. */
   name?: string;
+  /** Display name for each span, or a function of the span. */
+  spanDisplayName?: string | ((span: Call) => string);
+  /** @deprecated Use `spanDisplayName`. */
   callDisplayName?: string | ((call: Call) => string);
   postprocessInputs?: (inputs: Record<string, unknown>) => Record<string, unknown>;
   postprocessOutput?: (output: unknown) => unknown;
   kind?: string;
   color?: string;
-  /** Merged into each call's attributes. */
+  /** Merged into each span's attributes. */
   attributes?: Record<string, unknown>;
 }
 
@@ -151,7 +155,7 @@ function compose<T>(a?: (v: T) => T, b?: (v: T) => T, c?: (v: T) => T): ((v: T) 
 }
 
 export interface IntegrationOpDefaults {
-  callDisplayName?: string | ((call: Call) => string);
+  spanDisplayName?: string | ((span: Call) => string);
   postprocessInputs?: (inputs: Record<string, unknown>) => Record<string, unknown>;
   postprocessOutput?: (output: unknown) => unknown;
   color?: string;
@@ -177,11 +181,18 @@ export function integrationOp(
     ...base.options,
     kind: k,
     color: local?.color ?? g.color ?? defaults.color,
-    callDisplayName: local?.callDisplayName ?? g.callDisplayName ?? defaults.callDisplayName,
+    spanDisplayName: displayNameOf(local) ?? displayNameOf(g) ?? defaults.spanDisplayName,
     postprocessInputs: compose(defaults.postprocessInputs, g.postprocessInputs, local?.postprocessInputs),
     postprocessOutput: compose(defaults.postprocessOutput, g.postprocessOutput, local?.postprocessOutput),
   };
   return { ...base, options };
+}
+
+function displayNameOf(s: IntegrationOpSettings | undefined): IntegrationOpSettings['spanDisplayName'] {
+  if (!s) return undefined;
+  if (s.spanDisplayName !== undefined) return s.spanDisplayName;
+  if (s.callDisplayName !== undefined) deprecated('opSettings callDisplayName', 'spanDisplayName');
+  return s.callDisplayName;
 }
 
 function mergeAttrs(into: Record<string, any>, extra: Record<string, unknown> | undefined): void {
@@ -205,7 +216,7 @@ export function pickOpSettings(o: Record<string, any> | undefined): IntegrationO
   if (!o) return undefined;
   const out: IntegrationOpSettings = {};
   let any = false;
-  for (const k of ['callDisplayName', 'postprocessInputs', 'postprocessOutput', 'kind', 'color', 'attributes', 'opName'] as const) {
+  for (const k of ['spanDisplayName', 'callDisplayName', 'postprocessInputs', 'postprocessOutput', 'kind', 'color', 'attributes', 'opName'] as const) {
     if (o[k] !== undefined) {
       (out as any)[k === 'opName' ? 'name' : k] = o[k];
       any = true;

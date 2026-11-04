@@ -13,6 +13,7 @@ export {
   type InitOptions,
   type ClientSettings,
   type SpansOptions,
+  type GetSessionsOptions,
   type GetCallsOptions,
   type RegistryCollection,
   type RegistryVersion,
