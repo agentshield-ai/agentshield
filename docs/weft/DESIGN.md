@@ -108,9 +108,9 @@ body for POST). Lists take `limit`, `offset` and `sort_by`, and return
 | `GET /api/v1/scores` | scope-aware scores (§6): `scope`, `session_id`, `agent`, `handoff_id`, `scorer` |
 | `POST /api/v1/scores/run` | run scorers at a scope over chosen sessions |
 
-The trace, object, table, feedback, evaluation and LLM APIs that exist today
-remain Weft's lower-level API. The SDKs use them, and `docs/weft/API.md`
-documents them as Weft's own API.
+The trace, object, table, feedback, evaluation and model-call APIs are
+Weft's lower-level API, under `/api/v1` too (§10); `docs/weft/API.md`
+documents them.
 
 ## 4. Ingest additions
 
@@ -433,7 +433,10 @@ for clients of another tracing product:
 - its environment-variable names for the settings Weft shares.
 
 With the adapter off, those routes return 404, other ref schemes are plain
-strings, and Weft's own SDKs, UI and plugins still work fully. Databases
+strings, and Weft's own SDKs, UI and plugins still work fully. (Until the
+SDKs, UI and plugins use only §10's routes, a temporary server switch,
+`--legacy-routes`, on by default, also serves the older route shapes of §10
+with the adapter off; it is turned off by default once they have moved.) Databases
 written with the old names are migrated once when the server opens them,
 whether or not the adapter is on; saved queries (content-addressed objects)
 get a new version with Weft's names rather than being edited in place, so no
@@ -503,6 +506,12 @@ UTF-8). Existing digests stay valid and resolvable. The adapter computes the
 older digest form for its client's requests, because that client computes
 digests itself.
 
+Files get the same form: the lowercase hex SHA-256 of their bytes. A
+table's digest is the digest of the canonical JSON list of its row digests.
+Canonical JSON keeps a number's text as sent; strings escape only `"`, `\`
+and control characters (API.md, *Conventions*). The older routes (§8) write
+digests in the older form; both forms resolve.
+
 ### 10.4 SDK names
 
 - `@weft.trace` traces a function. `weft.save(obj, name)` saves a version
@@ -516,3 +525,29 @@ digests itself.
   - They are documented only in the SDK changelog.
 - The local scorers default to openly licensed models with neutral names.
   The model is configurable.
+
+### 10.5 Implementation notes
+
+- **Kind and class.** An object's `kind` is `function` for a versioned
+  function and otherwise the lowercase kind of its base class (`dataset`,
+  `model`, `evaluation`, `scorer`, `prompt`, `leaderboard`, `monitor`,
+  `annotation_spec`, `saved_view`, `provider`, `provider_model`,
+  `dashboard`, `automation`), or `object`. `class` is the most specific
+  known class (the stored leaf class: `StringPrompt`, `LLMAsAJudgeScorer`,
+  …), null for functions and plain values. Object queries filter by `kinds`
+  and `classes`.
+- **Refs.** `span` replaces `call` as the span ref kind, alongside
+  `function` for `op`. Columns that hold refs were rewritten once; values
+  are not, and both spellings are read everywhere.
+- **More routes.** Weft features that had only the older route shapes got
+  native paths: `POST /spans/names` (span counts by name), `POST
+  /spans/score` (run scorers on spans), `POST /spans/metrics` (chart
+  series), `POST /spans/sessions` (turn statistics by session id), `POST
+  /objects/tags` and `/objects/aliases` (project lists), `POST
+  /leaderboards/compute`, `GET /projects/stats`, `POST /registry/link|query`,
+  `PUT /runtimes/{name}` and `GET /runtimes`, `POST /exports` and `GET
+  /exports/{id}[/artifacts/{target}]`, and `POST
+  /dataset_sources/link|query|datasets|delete`, all under `/api/v1`.
+- **Queries.** `$expr` takes span names (`name`, `error`, `session_id`);
+  the stored column names (`op_name`, `exception`, `thread_id`) stay
+  accepted so queries saved earlier keep working.

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,7 +24,6 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
 )
 
 // routeExtensions let feature modules register authenticated routes from
@@ -42,7 +40,7 @@ var startExtensions []func(*Server) (stop func())
 // Store exposes the store to feature modules.
 func (s *Server) Store() *store.Store { return s.store }
 
-// Version is reported by /server_info.
+// Version is reported by GET /api/v1/server.
 const Version = "0.1.0"
 
 // Config configures the server.
@@ -59,6 +57,26 @@ type Config struct {
 	// Compat turns on the compatibility adapter for clients of another
 	// tracing product (package compat, docs/weft/COMPATIBILITY.md).
 	Compat bool
+	// LegacyRoutes serves the route shapes Weft had before its own API
+	// (/call/*, /obj/*, /table/*, ...; compat.Routes) even with the adapter
+	// off; nil means DefaultLegacyRoutes. It is a temporary migration aid
+	// while Weft's SDKs and UI move to the native /api/v1 routes; with it
+	// false and the adapter off, those routes return 404. cmd/weft sets it
+	// from --legacy-routes.
+	LegacyRoutes *bool
+}
+
+// DefaultLegacyRoutes is LegacyRoutes when unset. It is true until Weft's
+// SDKs, UI and plugins use only the native API.
+const DefaultLegacyRoutes = true
+
+// legacyRoutes reports whether the older route shapes are served without
+// the adapter.
+func (c Config) legacyRoutes() bool {
+	if c.LegacyRoutes == nil {
+		return DefaultLegacyRoutes
+	}
+	return *c.LegacyRoutes
 }
 
 // Server is the HTTP API.
@@ -72,6 +90,12 @@ type Server struct {
 	stops  []func()
 	// compat is the compatibility adapter; nil when it is off.
 	compat *compat.Adapter
+	// legacy serves the older route shapes (with the adapter or
+	// LegacyRoutes); nil otherwise.
+	legacy *compat.Routes
+	// native serves the /api/v1 routes without middleware, for the older
+	// routes, which forward to them after authentication.
+	native http.Handler
 }
 
 // New builds a server around a store.
@@ -89,6 +113,12 @@ func New(cfg Config, st *store.Store) *Server {
 	if cfg.Compat {
 		s.compat = compat.New(compatHost{s})
 	}
+	if cfg.Compat || cfg.legacyRoutes() {
+		s.legacy = compat.NewRoutes(compatHost{s}, s.compat)
+	}
+	nr := chi.NewRouter()
+	s.mountNative(nr)
+	s.native = nr
 	for _, start := range startExtensions {
 		s.stops = append(s.stops, start(s))
 	}
@@ -146,16 +176,12 @@ func (s *Server) Handler() http.Handler {
 	}
 	r.Use(s.cors)
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, map[string]any{"status": "ok"}) })
-	r.Get("/server_info", func(w http.ResponseWriter, _ *http.Request) {
-		info := map[string]any{"version": Version, "auth_required": s.authRequired(), "otel_endpoint": "/otel/v1/traces",
-			"trace_server_version": Version}
-		if s.compat != nil {
-			s.compat.ServerInfo(info)
-		}
-		writeJSON(w, info)
-	})
+	r.Get("/api/v1/server", s.v1Server)
 	if s.compat != nil {
 		s.compat.MountPublic(r)
+	}
+	if s.legacy != nil {
+		s.legacy.MountPublic(r)
 	}
 
 	for _, ext := range publicRouteExtensions {
@@ -173,66 +199,21 @@ func (s *Server) Handler() http.Handler {
 			writeJSON(w, map[string]any{"user_id": u, "auth_required": s.authRequired()})
 		})
 		r.Get("/projects", s.listProjects)
-		r.Post("/project/stats", handle(s.projectStats))
-
-		r.Post("/call/start", handle(s.callStart))
-		r.Post("/call/end", handle(s.callEnd))
-		r.Post("/call/upsert_batch", handle(s.callUpsertBatch))
-		r.Post("/call/read", handle(s.callRead))
-		r.Post("/call/update", handle(s.callUpdate))
-		r.Post("/calls/query", handle(s.callsQuery))
-		r.Post("/calls/stream_query", s.callsStreamQuery)
-		r.Post("/calls/query_stats", handle(s.callsQueryStats))
-		r.Post("/calls/delete", handle(s.callsDelete))
-		r.Post("/calls/stats", handle(s.callsStats))
-		r.Post("/calls/op_counts", handle(s.opCounts))
-		r.Post("/calls/score", handle(s.callsScore))
-		r.Post("/threads/query", handle(s.threadsQuery))
-
-		r.Post("/obj/create", handle(s.objCreate))
-		r.Post("/obj/read", handle(s.objRead))
-		r.Post("/objs/query", handle(s.objsQuery))
-		r.Post("/obj/delete", handle(s.objDelete))
-		r.Post("/obj/alias/set", handle(s.aliasSet))
-		r.Post("/obj/alias/remove", handle(s.aliasRemove))
-
-		r.Post("/table/create", handle(s.tableCreate))
-		r.Post("/table/update", handle(s.tableUpdate))
-		r.Post("/table/query", handle(s.tableQuery))
-		r.Post("/table/query_stats", handle(s.tableQueryStats))
-		r.Post("/refs/read_batch", handle(s.refsReadBatch))
-		r.Post("/file/create", s.fileCreate)
-		r.Post("/file/content", s.fileContent)
-		r.Get("/file/content", s.fileContent)
-
-		r.Post("/feedback/create", handle(s.feedbackCreate))
-		r.Post("/feedback/query", handle(s.feedbackQuery))
-		r.Post("/feedback/purge", handle(s.feedbackPurge))
-		r.Post("/feedback/replace", handle(s.feedbackReplace))
-
-		r.Post("/cost/create", handle(s.costCreate))
-		r.Post("/cost/query", handle(s.costQuery))
-		r.Post("/cost/purge", handle(s.costPurge))
-
+		s.mountNative(r)
 		r.Get("/llm/models", s.llmModels)
-		r.Post("/completions/create", handle(s.completionsCreate))
-		r.Post("/completions/create_stream", s.completionsStream)
 		r.Post("/secrets/set", handle(s.secretsSet))
 		r.Get("/secrets/list", s.secretsList)
 		r.Post("/secrets/delete", handle(s.secretsDelete))
-
-		r.Post("/evaluate_model", handle(s.evaluateModel))
-		r.Post("/evaluation_status", handle(s.evaluationStatus))
-		r.Post("/evaluations/compare", handle(s.evaluationsCompare))
-		r.Post("/leaderboard/compute", handle(s.leaderboardCompute))
 
 		r.Post("/otel/v1/traces", s.otelTraces)
 		for _, ext := range routeExtensions {
 			ext(s, r)
 		}
-		r.Post("/feedback/batch/create", handle(s.feedbackBatchCreate))
 		if s.compat != nil {
-			s.compat.MountAuthed(r)
+			s.compat.MountAuthed(r, s.legacy)
+		}
+		if s.legacy != nil {
+			s.legacy.Mount(r)
 		}
 	})
 
@@ -312,7 +293,7 @@ func presentedKey(r *http.Request) string {
 		return pass
 	}
 	// Browsers cannot set headers on <img src>; allow a query key for file reads only.
-	if r.Method == http.MethodGet && r.URL.Path == "/file/content" {
+	if r.Method == http.MethodGet && (r.URL.Path == "/file/content" || strings.HasPrefix(r.URL.Path, "/api/v1/files/")) {
 		return r.URL.Query().Get("api_key")
 	}
 	return ""
@@ -452,222 +433,7 @@ type projectReq struct {
 	ProjectID string `json:"project_id"`
 }
 
-func (s *Server) projectStats(ctx context.Context, _ *http.Request, req *projectReq) (any, error) {
-	return s.store.GetProjectStats(ctx, req.ProjectID)
-}
-
 // ---------------------------------------------------------------- calls
-
-func (s *Server) prepareStart(ctx context.Context, r *http.Request, st *store.CallStart) error {
-	if st.ID == "" {
-		st.ID = uuid.Must(uuid.NewV7()).String()
-	}
-	if st.StartedAt == "" {
-		st.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	st.UserID = userFrom(r, st.UserID)
-	if st.TraceID == "" && st.ParentID != nil && *st.ParentID != "" {
-		if pid, err := project(st.ProjectID); err == nil {
-			if p, err := s.store.GetCall(ctx, pid, *st.ParentID, false, false, false); err == nil {
-				st.TraceID = p.TraceID
-			}
-		}
-	}
-	if st.TraceID == "" && (st.ParentID == nil || *st.ParentID == "") {
-		st.TraceID = st.ID
-	}
-	if st.TraceID == "" {
-		return store.Invalidf("trace_id is required when the parent call is unknown")
-	}
-	return nil
-}
-
-type callStartReq struct {
-	Start store.CallStart `json:"start"`
-}
-
-func (s *Server) callStart(ctx context.Context, r *http.Request, req *callStartReq) (any, error) {
-	if err := s.prepareStart(ctx, r, &req.Start); err != nil {
-		return nil, err
-	}
-	if err := s.store.StartCall(ctx, req.Start); err != nil {
-		return nil, err
-	}
-	return map[string]any{"id": req.Start.ID, "trace_id": req.Start.TraceID}, nil
-}
-
-type callEndReq struct {
-	End store.CallEnd `json:"end"`
-}
-
-func (s *Server) callEnd(ctx context.Context, r *http.Request, req *callEndReq) (any, error) {
-	req.End.Cumulative = cumulativeSummaries(r)
-	if req.End.EndedAt == "" {
-		req.End.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	if err := s.store.EndCall(ctx, req.End); err != nil {
-		return nil, err
-	}
-	pid, _ := project(req.End.ProjectID)
-	s.engine.Notify([]store.EndedCall{{ProjectID: pid, ID: req.End.ID}})
-	return empty, nil
-}
-
-type batchReq struct {
-	Batch []struct {
-		Mode string `json:"mode"`
-		Req  struct {
-			Start *store.CallStart `json:"start"`
-			End   *store.CallEnd   `json:"end"`
-		} `json:"req"`
-	} `json:"batch"`
-}
-
-func (s *Server) callUpsertBatch(ctx context.Context, r *http.Request, req *batchReq) (any, error) {
-	if len(req.Batch) > 100000 {
-		return nil, store.Invalidf("batch too large")
-	}
-	items := make([]store.BatchItem, len(req.Batch))
-	res := make([]any, len(req.Batch))
-	for i, b := range req.Batch {
-		items[i] = store.BatchItem{Mode: b.Mode, Start: b.Req.Start, End: b.Req.End}
-		switch {
-		case b.Mode == "start" && b.Req.Start != nil:
-			if err := s.prepareStart(ctx, r, b.Req.Start); err != nil {
-				return nil, err
-			}
-			res[i] = map[string]any{"id": b.Req.Start.ID, "trace_id": b.Req.Start.TraceID}
-		case b.Mode == "end" && b.Req.End != nil:
-			b.Req.End.Cumulative = cumulativeSummaries(r)
-			if b.Req.End.EndedAt == "" {
-				b.Req.End.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			}
-			res[i] = empty
-		}
-	}
-	ended, err := s.store.UpsertBatch(ctx, items)
-	if err != nil {
-		return nil, err
-	}
-	s.engine.Notify(ended)
-	return map[string]any{"res": res}, nil
-}
-
-type callReadReq struct {
-	ProjectID          string `json:"project_id"`
-	ID                 string `json:"id"`
-	IncludeCosts       bool   `json:"include_costs"`
-	IncludeFeedback    bool   `json:"include_feedback"`
-	IncludeStorageSize bool   `json:"include_storage_size"`
-	// Optional fields (store/callfields.go).
-	IncludeTotalStorageSize bool `json:"include_total_storage_size"`
-	IncludeUsernames        bool `json:"include_usernames"`
-}
-
-func (s *Server) callRead(ctx context.Context, _ *http.Request, req *callReadReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	c, err := s.store.GetCallWith(ctx, store.CallsQuery{ProjectID: pid, IncludeCosts: req.IncludeCosts, IncludeFeedback: req.IncludeFeedback,
-		IncludeStorageSize: req.IncludeStorageSize, IncludeTotalStorageSize: req.IncludeTotalStorageSize, IncludeUsernames: req.IncludeUsernames}, req.ID)
-	if errors.Is(err, store.ErrNotFound) {
-		return map[string]any{"call": nil}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"call": c}, nil
-}
-
-type callUpdateReq struct {
-	ProjectID   string  `json:"project_id"`
-	CallID      string  `json:"call_id"`
-	DisplayName *string `json:"display_name"`
-}
-
-func (s *Server) callUpdate(ctx context.Context, _ *http.Request, req *callUpdateReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	if req.DisplayName == nil {
-		return nil, store.Invalidf("display_name is required")
-	}
-	return empty, s.store.UpdateCallDisplayName(ctx, pid, req.CallID, *req.DisplayName)
-}
-
-func (s *Server) callsQuery(ctx context.Context, _ *http.Request, req *store.CallsQuery) (any, error) {
-	if req.Limit == nil {
-		l := 1000
-		req.Limit = &l
-	}
-	calls, err := s.store.ListCalls(ctx, *req)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"calls": calls}, nil
-}
-
-func (s *Server) callsStreamQuery(w http.ResponseWriter, r *http.Request) {
-	var req store.CallsQuery
-	if err := decodeBody(r, &req); err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Run the query fully before writing so errors produce a proper status.
-	calls, err := s.store.ListCalls(r.Context(), req)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/jsonl")
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	flusher, _ := w.(http.Flusher)
-	for i, c := range calls {
-		if err := enc.Encode(c); err != nil {
-			return
-		}
-		if flusher != nil && i%200 == 199 {
-			flusher.Flush()
-		}
-	}
-}
-
-type queryStatsReq struct {
-	ProjectID string             `json:"project_id"`
-	Filter    *store.CallsFilter `json:"filter"`
-	Query     any                `json:"query"`
-	Search    string             `json:"search"`
-	Limit     *int64             `json:"limit"`
-}
-
-func (s *Server) callsQueryStats(ctx context.Context, _ *http.Request, req *queryStatsReq) (any, error) {
-	n, size, err := s.store.CountCalls(ctx, req.ProjectID, req.Filter, req.Query, req.Search)
-	if err != nil {
-		return nil, err
-	}
-	// With a limit, count stops at the limit and has_more says whether more match.
-	hasMore := false
-	if req.Limit != nil && *req.Limit >= 0 && n > *req.Limit {
-		n, hasMore = *req.Limit, true
-	}
-	return map[string]any{"count": n, "has_more": hasMore, "total_storage_size_bytes": size}, nil
-}
-
-type callsDeleteReq struct {
-	ProjectID string   `json:"project_id"`
-	CallIDs   []string `json:"call_ids"`
-}
-
-func (s *Server) callsDelete(ctx context.Context, _ *http.Request, req *callsDeleteReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	return empty, s.store.DeleteCalls(ctx, pid, req.CallIDs)
-}
 
 type callsStatsReq struct {
 	ProjectID     string             `json:"project_id"`
@@ -689,380 +455,13 @@ func (s *Server) callsStats(ctx context.Context, _ *http.Request, req *callsStat
 	return s.store.ComputeCallsStats(ctx, req.ProjectID, req.Filter, req.Query, req.Search, req.Start, req.End, req.BucketSeconds)
 }
 
-type callsScoreReq struct {
-	ProjectID  string   `json:"project_id"`
-	CallIDs    []string `json:"call_ids"`
-	ScorerRefs []string `json:"scorer_refs"`
-	UserID     *string  `json:"user_id"`
-}
-
-func (s *Server) callsScore(ctx context.Context, r *http.Request, req *callsScoreReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	res, err := s.engine.ScoreCalls(ctx, pid, req.CallIDs, req.ScorerRefs, userFrom(r, req.UserID))
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"results": res}, nil
-}
-
-type opCountsReq struct {
-	ProjectID      string `json:"project_id"`
-	TraceRootsOnly bool   `json:"trace_roots_only"`
-}
-
-func (s *Server) opCounts(ctx context.Context, _ *http.Request, req *opCountsReq) (any, error) {
-	ops, err := s.store.OpCounts(ctx, req.ProjectID, req.TraceRootsOnly)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"ops": ops}, nil
-}
-
-func (s *Server) threadsQuery(ctx context.Context, _ *http.Request, req *store.ThreadsQuery) (any, error) {
-	ts, err := s.store.QueryThreads(ctx, *req)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"threads": ts}, nil
-}
-
 // ---------------------------------------------------------------- objects
-
-type objCreateReq struct {
-	Obj struct {
-		ProjectID          string          `json:"project_id"`
-		ObjectID           string          `json:"object_id"`
-		Val                json.RawMessage `json:"val"`
-		BuiltinObjectClass string          `json:"builtin_object_class"`
-		UserID             *string         `json:"user_id"`
-	} `json:"obj"`
-}
-
-func (s *Server) objCreate(ctx context.Context, r *http.Request, req *objCreateReq) (any, error) {
-	o := req.Obj
-	pid, err := project(o.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	if len(o.Val) == 0 || string(o.Val) == "null" {
-		return nil, store.Invalidf("val is required")
-	}
-	d, v, err := s.store.CreateObjectRaw(ctx, pid, o.ObjectID, nil, o.Val, o.BuiltinObjectClass, userFrom(r, o.UserID))
-	if err != nil {
-		return nil, err
-	}
-	s.engine.InvalidateMonitors(pid)
-	return map[string]any{"digest": d, "object_id": o.ObjectID, "version_index": v}, nil
-}
-
-type objReadReq struct {
-	ProjectID string `json:"project_id"`
-	ObjectID  string `json:"object_id"`
-	Digest    string `json:"digest"`
-}
-
-func (s *Server) objRead(ctx context.Context, _ *http.Request, req *objReadReq) (any, error) {
-	o, err := s.store.ReadObject(ctx, req.ProjectID, req.ObjectID, req.Digest)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"obj": o}, nil
-}
-
-func (s *Server) objsQuery(ctx context.Context, _ *http.Request, req *store.ObjsQuery) (any, error) {
-	objs, err := s.store.QueryObjects(ctx, *req)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"objs": objs}, nil
-}
-
-type objDeleteReq struct {
-	ProjectID string   `json:"project_id"`
-	ObjectID  string   `json:"object_id"`
-	Digests   []string `json:"digests"`
-}
-
-func (s *Server) objDelete(ctx context.Context, _ *http.Request, req *objDeleteReq) (any, error) {
-	n, err := s.store.DeleteObject(ctx, req.ProjectID, req.ObjectID, req.Digests)
-	if err != nil {
-		return nil, err
-	}
-	pid, _ := project(req.ProjectID)
-	s.engine.InvalidateMonitors(pid)
-	return map[string]any{"num_deleted": n}, nil
-}
-
-type aliasReq struct {
-	ProjectID string `json:"project_id"`
-	ObjectID  string `json:"object_id"`
-	Digest    string `json:"digest"`
-	Alias     string `json:"alias"`
-}
-
-func (s *Server) aliasSet(ctx context.Context, _ *http.Request, req *aliasReq) (any, error) {
-	return empty, s.store.SetAlias(ctx, req.ProjectID, req.ObjectID, req.Digest, req.Alias)
-}
-
-func (s *Server) aliasRemove(ctx context.Context, _ *http.Request, req *aliasReq) (any, error) {
-	return empty, s.store.RemoveAlias(ctx, req.ProjectID, req.ObjectID, req.Alias)
-}
 
 // ---------------------------------------------------------------- tables, refs, files
 
-type tableCreateReq struct {
-	Table struct {
-		ProjectID string            `json:"project_id"`
-		Rows      []json.RawMessage `json:"rows"`
-	} `json:"table"`
-}
-
-func (s *Server) tableCreate(ctx context.Context, _ *http.Request, req *tableCreateReq) (any, error) {
-	d, rows, err := s.store.CreateTableRaw(ctx, req.Table.ProjectID, req.Table.Rows)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"digest": d, "row_digests": rows}, nil
-}
-
-type tableUpdateReq struct {
-	ProjectID  string              `json:"project_id"`
-	BaseDigest string              `json:"base_digest"`
-	Updates    []store.TableUpdate `json:"updates"`
-}
-
-func (s *Server) tableUpdate(ctx context.Context, _ *http.Request, req *tableUpdateReq) (any, error) {
-	d, rows, err := s.store.UpdateTable(ctx, req.ProjectID, req.BaseDigest, req.Updates)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"digest": d, "updated_row_digests": rows}, nil
-}
-
-func (s *Server) tableQuery(ctx context.Context, _ *http.Request, req *store.TableQuery) (any, error) {
-	rows, err := s.store.QueryTable(ctx, *req)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"rows": rows}, nil
-}
-
-type tableStatsReq struct {
-	ProjectID string `json:"project_id"`
-	Digest    string `json:"digest"`
-}
-
-func (s *Server) tableQueryStats(ctx context.Context, _ *http.Request, req *tableStatsReq) (any, error) {
-	n, err := s.store.TableCount(ctx, req.ProjectID, req.Digest)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"count": n}, nil
-}
-
-type refsReq struct {
-	Refs []string `json:"refs"`
-}
-
-func (s *Server) refsReadBatch(ctx context.Context, _ *http.Request, req *refsReq) (any, error) {
-	if len(req.Refs) > 1000 {
-		return nil, store.Invalidf("too many refs (max 1000)")
-	}
-	vals, err := s.store.ReadRefs(ctx, req.Refs)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"vals": vals}, nil
-}
-
-func (s *Server) fileCreate(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 65<<20)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "expected multipart form with project_id and file")
-		return
-	}
-	f, _, err := r.FormFile("file")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing file")
-		return
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "reading file")
-		return
-	}
-	d, err := s.store.CreateFile(r.Context(), r.FormValue("project_id"), b)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"digest": d})
-}
-
-func (s *Server) fileContent(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ProjectID string `json:"project_id"`
-		Digest    string `json:"digest"`
-	}
-	if r.Method == http.MethodGet {
-		req.ProjectID, req.Digest = r.URL.Query().Get("project_id"), r.URL.Query().Get("digest")
-	} else if err := decodeBody(r, &req); err != nil {
-		writeErr(w, err)
-		return
-	}
-	b, ctype, err := s.store.FileContent(r.Context(), req.ProjectID, req.Digest)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if r.Method == http.MethodPost {
-		ctype = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	_, _ = w.Write(b)
-}
-
 // ---------------------------------------------------------------- feedback
 
-func (s *Server) feedbackCreate(ctx context.Context, r *http.Request, req *store.FeedbackCreate) (any, error) {
-	req.UserID = userFrom(r, req.UserID)
-	f, err := s.store.CreateFeedback(ctx, *req)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload}, nil
-}
-
-// feedbackBatchReq is the body of /feedback/batch/create. The scorer_* and
-// span_* fields are normalised and kept in the payload (store/agents_signals.go).
-type feedbackBatchReq struct {
-	Batch []store.AgentFeedbackItem `json:"batch"`
-}
-
-func (s *Server) feedbackBatchCreate(ctx context.Context, r *http.Request, req *feedbackBatchReq) (any, error) {
-	if len(req.Batch) > 1000 {
-		return nil, store.Invalidf("batch too large (max 1000)")
-	}
-	res := make([]any, 0, len(req.Batch))
-	for _, b := range req.Batch {
-		b.UserID = userFrom(r, b.UserID)
-		f, err := s.store.CreateAgentFeedback(ctx, b)
-		if err != nil {
-			return nil, err
-		}
-		res = append(res, map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload})
-	}
-	return map[string]any{"res": res}, nil
-}
-
-type feedbackQueryReq struct {
-	ProjectID string         `json:"project_id"`
-	Query     any            `json:"query"`
-	SortBy    []store.SortBy `json:"sort_by"`
-	Limit     int            `json:"limit"`
-	Offset    int            `json:"offset"`
-}
-
-func (s *Server) feedbackQuery(ctx context.Context, _ *http.Request, req *feedbackQueryReq) (any, error) {
-	fs, err := s.store.QueryFeedback(ctx, req.ProjectID, req.Query, req.SortBy, req.Limit, req.Offset)
-	if err != nil {
-		return nil, err
-	}
-	total, err := s.store.CountFeedback(ctx, req.ProjectID, req.Query)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"result": fs, "total_count": total}, nil
-}
-
-type feedbackPurgeReq struct {
-	ProjectID string `json:"project_id"`
-	Query     any    `json:"query"`
-}
-
-func (s *Server) feedbackPurge(ctx context.Context, _ *http.Request, req *feedbackPurgeReq) (any, error) {
-	return empty, s.store.PurgeFeedback(ctx, req.ProjectID, req.Query)
-}
-
-type feedbackReplaceReq struct {
-	store.FeedbackCreate
-	FeedbackID string `json:"feedback_id"`
-}
-
-func (s *Server) feedbackReplace(ctx context.Context, r *http.Request, req *feedbackReplaceReq) (any, error) {
-	req.UserID = userFrom(r, req.UserID)
-	f, err := s.store.ReplaceFeedback(ctx, req.FeedbackID, req.FeedbackCreate)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload}, nil
-}
-
 // ---------------------------------------------------------------- costs
-
-type costCreateReq struct {
-	ProjectID string                     `json:"project_id"`
-	Costs     map[string]store.CostInput `json:"costs"`
-}
-
-func (s *Server) costCreate(ctx context.Context, _ *http.Request, req *costCreateReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	ids, err := s.store.CreateCosts(ctx, pid, req.Costs)
-	if err != nil {
-		return nil, err
-	}
-	if ids == nil {
-		ids = [][2]string{}
-	}
-	return map[string]any{"ids": ids}, nil
-}
-
-type costQueryReq struct {
-	ProjectID       string `json:"project_id"`
-	Query           any    `json:"query"`
-	Limit           int    `json:"limit"`
-	Offset          int    `json:"offset"`
-	IncludeDefaults bool   `json:"include_defaults"`
-}
-
-func (s *Server) costQuery(ctx context.Context, _ *http.Request, req *costQueryReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	ps, err := s.store.QueryCosts(ctx, pid, req.Query, req.Limit, req.Offset)
-	if err != nil {
-		return nil, err
-	}
-	if req.IncludeDefaults {
-		ps = append(ps, store.DefaultPriceList()...)
-	}
-	return map[string]any{"results": ps}, nil
-}
-
-type costPurgeReq struct {
-	ProjectID string   `json:"project_id"`
-	IDs       []string `json:"ids"`
-	Query     any      `json:"query"`
-}
-
-func (s *Server) costPurge(ctx context.Context, _ *http.Request, req *costPurgeReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	return empty, s.store.PurgeCosts(ctx, pid, req.IDs, req.Query)
-}
 
 // ---------------------------------------------------------------- llm
 
@@ -1129,49 +528,6 @@ func (s *Server) completionsCreate(ctx context.Context, _ *http.Request, req *co
 	return out, nil
 }
 
-func (s *Server) completionsStream(w http.ResponseWriter, r *http.Request) {
-	var req completionsReq
-	if err := decodeBody(r, &req); err != nil {
-		writeErr(w, err)
-		return
-	}
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/jsonl")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	flusher, _ := w.(http.Flusher)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	started := time.Now()
-	final, streamErr := s.llm.Stream(r.Context(), pid, req.Inputs, func(ch map[string]any) error {
-		if err := enc.Encode(ch); err != nil {
-			return err
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return nil
-	})
-	if streamErr != nil {
-		_ = enc.Encode(map[string]any{"error": streamErr.Error()})
-	}
-	meta := map[string]any{}
-	if req.TrackLLMCall == nil || *req.TrackLLMCall {
-		id, err := s.engine.RecordStreamedCompletion(context.WithoutCancel(r.Context()), pid, req.Inputs, started, final, streamErr)
-		if err == nil {
-			meta["call_id"] = id
-		}
-	}
-	_ = enc.Encode(map[string]any{"_meta": meta})
-	if flusher != nil {
-		flusher.Flush()
-	}
-}
-
 type secretReq struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -1215,57 +571,6 @@ func (s *Server) secretsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------- evaluations
-
-type evaluateReq struct {
-	ProjectID     string  `json:"project_id"`
-	EvaluationRef string  `json:"evaluation_ref"`
-	ModelRef      string  `json:"model_ref"`
-	UserID        *string `json:"user_id"`
-}
-
-func (s *Server) evaluateModel(ctx context.Context, r *http.Request, req *evaluateReq) (any, error) {
-	id, err := s.engine.EvaluateModel(ctx, req.ProjectID, req.EvaluationRef, req.ModelRef, userFrom(r, req.UserID))
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"call_id": id}, nil
-}
-
-type evalStatusReq struct {
-	ProjectID string `json:"project_id"`
-	CallID    string `json:"call_id"`
-}
-
-func (s *Server) evaluationStatus(ctx context.Context, _ *http.Request, req *evalStatusReq) (any, error) {
-	pid, err := project(req.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	st, err := s.engine.EvaluationStatus(ctx, pid, req.CallID)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"status": st}, nil
-}
-
-type compareReq struct {
-	ProjectID         string   `json:"project_id"`
-	EvaluationCallIDs []string `json:"evaluation_call_ids"`
-}
-
-func (s *Server) evaluationsCompare(ctx context.Context, _ *http.Request, req *compareReq) (any, error) {
-	return s.engine.Compare(ctx, req.ProjectID, req.EvaluationCallIDs)
-}
-
-type leaderboardReq struct {
-	ProjectID string `json:"project_id"`
-	ObjectID  string `json:"object_id"`
-	Digest    string `json:"digest"`
-}
-
-func (s *Server) leaderboardCompute(ctx context.Context, _ *http.Request, req *leaderboardReq) (any, error) {
-	return s.engine.ComputeLeaderboard(ctx, req.ProjectID, req.ObjectID, req.Digest)
-}
 
 // ---------------------------------------------------------------- OTLP
 
@@ -1315,9 +620,22 @@ func cumulativeSummaries(r *http.Request) bool {
 type compatHost struct{ s *Server }
 
 func (h compatHost) Store() *store.Store                { return h.s.store }
-func (h compatHost) CallStart() http.HandlerFunc        { return handle(h.s.callStart) }
-func (h compatHost) CallEnd() http.HandlerFunc          { return handle(h.s.callEnd) }
+func (h compatHost) Engine() *evals.Engine              { return h.s.engine }
+func (h compatHost) LLM() *llm.Client                   { return h.s.llm }
+func (h compatHost) Logger() *slog.Logger               { return h.s.log }
+func (h compatHost) Version() string                    { return Version }
+func (h compatHost) AuthRequired() bool                 { return h.s.authRequired() }
 func (h compatHost) CallsEnded(ended []store.EndedCall) { h.s.engine.Notify(ended) }
+func (h compatHost) Native() http.Handler               { return h.s.native }
 func (h compatHost) User(r *http.Request, explicit *string) *string {
 	return userFrom(r, explicit)
+}
+func (h compatHost) PrepareStart(ctx context.Context, r *http.Request, st *store.CallStart) error {
+	return h.s.PrepareStart(ctx, r, st)
+}
+func (h compatHost) AuthorizeProject(r *http.Request, pid string) (int, []byte) {
+	return h.s.authorizeProject(r, pid)
+}
+func (h compatHost) ExportCalls(w http.ResponseWriter, r *http.Request, q store.CallsQuery, format string, flatten *bool) {
+	h.s.exportCalls(w, r, callsExportReq{CallsQuery: q, Format: format, Flatten: flatten}, false)
 }

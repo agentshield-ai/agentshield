@@ -15,9 +15,9 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	now := time.Now().UTC().Add(-time.Minute)
 	ts := func(ms int) string { return now.Add(time.Duration(ms) * time.Millisecond).Format(time.RFC3339Nano) }
 	call := func(id, parent, trace, thread, op string, ms int, attrs, inputs map[string]any, out any) []any {
-		s := map[string]any{"project_id": pid, "id": id, "trace_id": trace, "op_name": op, "started_at": ts(ms), "attributes": attrs, "inputs": inputs}
+		s := map[string]any{"project_id": pid, "id": id, "trace_id": trace, "name": op, "started_at": ts(ms), "attributes": attrs, "inputs": inputs}
 		if thread != "" {
-			s["thread_id"] = thread
+			s["session_id"] = thread
 		}
 		if parent != "" {
 			s["parent_id"] = parent
@@ -25,8 +25,8 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 			s["turn_id"] = id
 		}
 		return []any{
-			map[string]any{"mode": "start", "req": map[string]any{"start": s}},
-			map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": id, "ended_at": ts(ms + 50), "output": out, "summary": map[string]any{}}}},
+			map[string]any{"start": s},
+			map[string]any{"end": map[string]any{"project_id": pid, "id": id, "ended_at": ts(ms + 50), "output": out, "summary": map[string]any{}}},
 		}
 	}
 	agent := func(name string, extra map[string]any) map[string]any {
@@ -66,7 +66,7 @@ func seedAgentEvals(t *testing.T, e *testEnv) time.Time {
 	add(call("run-2", "", "tr-run2", "", "Evaluation.evaluate", 500, nil, map[string]any{"self": evalRef, "model": modelRef}, map[string]any{"resolved": map[string]any{"true_fraction": 1.0}}))
 	add(call("pas-9", "run-2", "tr-run2", "", "Evaluation.predict_and_score", 510, map[string]any{"weft": map[string]any{"linked_calls": []any{"weft:///" + pid + "/call/a-turn"}}},
 		map[string]any{"example": map[string]any{"question": "reset password"}}, map[string]any{"output": "use the link", "scores": map[string]any{"resolved": true}}))
-	e.post("/call/upsert_batch", map[string]any{"batch": batch})
+	e.post("/api/v1/spans/batch", map[string]any{"items": batch})
 
 	// An OTel agent service tags only its root span; the child is linked as a descendant.
 	tr, root, child := hexID("evtr", 32), hexID("evroot", 16), hexID("evchild", 16)
@@ -207,7 +207,7 @@ func TestAgentEvalsFilterAndList(t *testing.T) {
 	}
 
 	// Deleting a prediction drops its links.
-	e.post("/calls/delete", map[string]any{"project_id": pid, "call_ids": []any{"pas-9"}})
+	e.post("/api/v1/spans/delete", map[string]any{"project_id": pid, "ids": []any{"pas-9"}})
 	if res = e.post("/agents/spans/query", map[string]any{"project_id": pid, "evaluation_run_id": "run-2"}); res["total_count"].(float64) != 0 {
 		t.Fatalf("run-2 spans after delete = %v", spanIDsOf(res))
 	}

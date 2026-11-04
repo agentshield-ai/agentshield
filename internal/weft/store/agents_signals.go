@@ -349,7 +349,7 @@ func (s *Store) CreateAgentFeedback(ctx context.Context, it AgentFeedbackItem) (
 	}
 	// Plain feedback (no scorer or span fields) is stored as given.
 	enrich := !it.SignalScores.Empty() || it.Payload["scorer_tags"] != nil || it.ScorerTags != nil || hasSpan
-	if r, err := refs.Parse(strings.TrimSpace(it.Ref)); enrich && err == nil && r.Kind == refs.KindCall {
+	if r, err := refs.Parse(strings.TrimSpace(it.Ref)); enrich && err == nil && r.Kind == refs.KindSpan {
 		var trace, conv, agent, version string
 		var exc sql.NullString
 		var ended sql.NullInt64
@@ -596,7 +596,7 @@ func (s *Store) SignalScoredTurns(ctx context.Context, projectID, signalID, vers
 	refList := make([]string, len(spanIDs))
 	byRef := map[string]string{}
 	for i, id := range spanIDs {
-		refList[i] = refs.CallRef(pid, id)
+		refList[i] = refs.SpanRef(pid, id)
 		byRef[refList[i]] = id
 	}
 	fbs, err := s.feedbackForRefs(ctx, pid, refList)
@@ -637,7 +637,7 @@ type turnFeedbackFilter struct {
 
 // loadTurnFeedback loads feedback on indexed calls, joined with the span.
 func (s *Store) loadTurnFeedback(ctx context.Context, pid string, f turnFeedbackFilter) ([]turnFeedback, error) {
-	prefix := strings.TrimSuffix(refs.CallRef(pid, "x"), "x")
+	prefix := strings.TrimSuffix(refs.SpanRef(pid, "x"), "x")
 	n := utf8.RuneCountInString(prefix)
 	where := []string{"f.project_id = ?", "substr(f.ref, 1, ?) = ?", "c.deleted_at IS NULL"}
 	args := []any{n + 1, pid, n, prefix}

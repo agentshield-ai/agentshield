@@ -100,7 +100,7 @@ func scoreFromFeedback(id, ref, ftype, payload string, creator sql.NullString, c
 	sc.Scope = str("scope")
 	if sc.Scope == "" && strings.HasPrefix(ftype, "weft.scorer.") {
 		sc.Scope, sc.Scorer = ScopeSpan, strings.TrimPrefix(ftype, "weft.scorer.")
-		if r, err := refs.Parse(ref); err == nil && r.Kind == refs.KindCall {
+		if r, err := refs.Parse(ref); err == nil && r.Kind == refs.KindSpan {
 			sc.SpanID = r.Name
 		}
 		sc.Output = p["output"]
@@ -179,7 +179,7 @@ func (s *Store) QueryScopeScores(ctx context.Context, q ScopeScoresQuery) ([]Sco
 		}
 		ids := make([]string, 0, len(spans))
 		for id := range spans {
-			ids = append(ids, refs.CallRef(pid, id))
+			ids = append(ids, refs.SpanRef(pid, id))
 		}
 		sort.Strings(ids)
 		for start := 0; start < len(ids); start += 400 {
@@ -354,7 +354,7 @@ func (s *Store) scoreAnchor(ctx context.Context, pid string, c *ScopeScoreCreate
 	if id == "" {
 		return "", Invalidf("a %s score needs its target id", c.Scope)
 	}
-	return refs.CallRef(pid, id), nil
+	return refs.SpanRef(pid, id), nil
 }
 
 // CreateScopeScore stores a scope score as feedback on its anchor span.

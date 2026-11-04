@@ -814,7 +814,7 @@ func (s *Store) ConversationSpanSequences(ctx context.Context, req AgentConversa
 	var refList []string
 	for conv, ss := range byConv {
 		for _, t := range conversationTurns(ss) {
-			r := refs.CallRef(pid, t.ID)
+			r := refs.SpanRef(pid, t.ID)
 			turnRef[r] = [2]string{conv, t.TraceID}
 			refList = append(refList, r)
 		}

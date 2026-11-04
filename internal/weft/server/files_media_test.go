@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -27,7 +29,7 @@ func newEnvWithStore(t *testing.T, setup func(*store.Store)) *testEnv {
 	if setup != nil {
 		setup(st)
 	}
-	s := New(Config{}, st)
+	s := New(nativeOnly(Config{}), st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()
@@ -45,7 +47,12 @@ func (e *testEnv) uploadFile(content []byte) string {
 	fw, _ := mw.CreateFormFile("file", "f.bin")
 	_, _ = fw.Write(content)
 	_ = mw.Close()
-	resp, err := http.Post(e.srv.URL+"/file/create", mw.FormDataContentType(), &buf)
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/api/v1/files/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if e.key != "" {
+		req.Header.Set("Authorization", "Bearer "+e.key)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -53,9 +60,14 @@ func (e *testEnv) uploadFile(content []byte) string {
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode != 200 {
-		e.t.Fatalf("file/create -> %d %v", resp.StatusCode, out)
+		e.t.Fatalf("files/upload -> %d %v", resp.StatusCode, out)
 	}
-	return out["digest"].(string)
+	d := out["digest"].(string)
+	sum := sha256.Sum256(content)
+	if d != hex.EncodeToString(sum[:]) || out["size_bytes"].(float64) != float64(len(content)) {
+		e.t.Fatalf("files/upload = %v, want the hex SHA-256 of the bytes", out)
+	}
+	return d
 }
 
 func httpGet(t *testing.T, u string) (int, []byte) {
@@ -72,22 +84,26 @@ func httpGet(t *testing.T, u string) (int, []byte) {
 func TestFilesResolveURLSQLite(t *testing.T) {
 	e := newEnv(t)
 	d := e.uploadFile([]byte("hello sqlite"))
-	res := e.post("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{d, "weft-file://" + d, "https://example.com/x.png"}})
+	res := e.post("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{d, "weft-file://" + d, "https://example.com/x.png"}})
 	urls := res["download_urls"].([]any)
 	if len(urls) != 3 || res["expires_at"] != nil || urls[2] != "https://example.com/x.png" {
 		t.Fatalf("resolve = %v", res)
 	}
 	u := urls[0].(string)
-	if !strings.HasPrefix(u, e.srv.URL+"/file/content?") || urls[1] != u {
-		t.Fatalf("expected a Weft /file/content URL, got %v", urls)
+	if u != e.srv.URL+"/api/v1/files/"+d+"?project_id=acme%2Fevals" || urls[1] != u {
+		t.Fatalf("expected a Weft /api/v1/files URL, got %v", urls)
 	}
 	if code, body := httpGet(t, u); code != 200 || string(body) != "hello sqlite" {
 		t.Fatalf("GET %s -> %d %s", u, code, body)
 	}
 	for _, bad := range []any{"nope", "s3://bucket/key", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"} {
-		if code, out := e.raw("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{bad}}, nil); code != 400 {
+		if code, out := e.raw("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{bad}}, nil); code != 400 {
 			t.Fatalf("resolve %v -> %d %s", bad, code, out)
 		}
+	}
+	// Files of another project are not served.
+	if code, _ := e.raw("/api/v1/files/"+d+"?project_id=acme/other", nil, nil); code != 404 {
+		t.Fatalf("other project's file -> %d", code)
 	}
 }
 
@@ -115,16 +131,15 @@ func TestFilesS3Backend(t *testing.T) {
 		t.Fatalf("duplicate upload re-sent: puts=%d", fake.Puts)
 	}
 	// Reads go through the backend.
-	code, body := httpGet(t, e.srv.URL+"/file/content?project_id="+pid+"&digest="+d)
+	code, body := httpGet(t, e.srv.URL+"/api/v1/files/"+d+"?project_id="+pid)
 	if code != 200 || !bytes.Equal(body, content) {
-		t.Fatalf("file/content -> %d %q", code, body)
+		t.Fatalf("GET /api/v1/files -> %d %q", code, body)
 	}
-	stats := e.post("/files/query_stats", map[string]any{"project_id": pid})
-	if stats["total_size_bytes"].(float64) != float64(len(content)) {
-		t.Fatalf("files stats = %v", stats)
+	if stats := e.getJSON("/api/v1/projects/stats?project_id=" + pid); stats["file_count"].(float64) != 1 {
+		t.Fatalf("project stats = %v", stats)
 	}
-	// resolve_url returns presigned URLs that the (verifying) fake accepts.
-	res := e.post("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{d, backend.URI("weft/" + pid + "/" + d)}, "expires_in": 600})
+	// Resolving returns presigned URLs that the (verifying) fake accepts.
+	res := e.post("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{d, backend.URI("weft/" + pid + "/" + d)}, "expires_in": 600})
 	urls := res["download_urls"].([]any)
 	if res["expires_at"] == nil || len(urls) != 2 {
 		t.Fatalf("resolve = %v", res)
@@ -139,7 +154,7 @@ func TestFilesS3Backend(t *testing.T) {
 	}
 	// Keys of other projects or buckets are refused.
 	for _, bad := range []string{"s3://byob/weft/other/proj/" + d, "s3://elsewhere/weft/" + pid + "/" + d} {
-		if code, out := e.raw("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{bad}}, nil); code != 400 {
+		if code, out := e.raw("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{bad}}, nil); code != 400 {
 			t.Fatalf("resolve %s -> %d %s", bad, code, out)
 		}
 	}
@@ -151,31 +166,31 @@ func TestFilesS3Backend(t *testing.T) {
 
 func TestImageCreateMock(t *testing.T) {
 	e := newEnv(t)
-	res := e.post("/image/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/image", "prompt": "a red fox", "n": 2}})
+	res := e.post("/api/v1/images", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/image", "prompt": "a red fox", "n": 2}})
 	resp := res["response"].(map[string]any)
 	data := resp["data"].([]any)
-	if len(data) != 2 || res["call_id"] == nil {
+	if len(data) != 2 || res["span_id"] == nil {
 		t.Fatalf("image/create = %v", res)
 	}
 	png, err := base64.StdEncoding.DecodeString(data[0].(map[string]any)["b64_json"].(string))
 	if err != nil || !bytes.HasPrefix(png, []byte("\x89PNG")) {
 		t.Fatalf("not a PNG: %v", err)
 	}
-	call := e.post("/call/read", map[string]any{"project_id": pid, "id": res["call_id"]})["call"].(map[string]any)
-	if !strings.Contains(call["op_name"].(string), "weft.images.generate") || call["inputs"].(map[string]any)["prompt"] != "a red fox" {
-		t.Fatalf("image call = %v", call)
+	call := e.span(res["span_id"].(string))
+	if !strings.Contains(call["name"].(string), "weft.images.generate") || call["inputs"].(map[string]any)["prompt"] != "a red fox" {
+		t.Fatalf("image span = %v", call)
 	}
-	untracked := e.post("/image/create", map[string]any{"project_id": pid, "track_llm_call": false,
+	untracked := e.post("/api/v1/images", map[string]any{"project_id": pid, "track": false,
 		"inputs": map[string]any{"model": "mock/image", "prompt": "x"}})
-	if untracked["call_id"] != nil || len(untracked["response"].(map[string]any)["data"].([]any)) != 1 {
+	if untracked["span_id"] != nil || len(untracked["response"].(map[string]any)["data"].([]any)) != 1 {
 		t.Fatalf("untracked = %v", untracked)
 	}
-	// Provider errors come back in the response, like /completions/create.
-	errRes := e.post("/image/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "anthropic/claude-x", "prompt": "x"}})
+	// Provider errors come back in the response, like /api/v1/completions.
+	errRes := e.post("/api/v1/images", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "anthropic/claude-x", "prompt": "x"}})
 	if errRes["response"].(map[string]any)["error"] == nil {
 		t.Fatalf("expected error response: %v", errRes)
 	}
-	if code, _ := e.raw("/image/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/image"}}, nil); code != 400 {
+	if code, _ := e.raw("/api/v1/images", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/image"}}, nil); code != 400 {
 		t.Fatalf("missing prompt -> %d", code)
 	}
 }
@@ -194,11 +209,11 @@ func TestImageCreateOpenAICompatible(t *testing.T) {
 	defer img.Close()
 	e.post("/secrets/set", map[string]any{"name": "IMG_KEY", "value": "img-key"})
 	publish(e, "imgprov", map[string]any{"_type": "Provider", "_class_name": "Provider", "base_url": img.URL + "/v1", "api_key_name": "IMG_KEY"})
-	res := e.post("/image/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "imgprov/gpt-image-1", "prompt": "a cat", "size": "256x256"}})
+	res := e.post("/api/v1/images", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "imgprov/gpt-image-1", "prompt": "a cat", "size": "256x256"}})
 	if res["response"].(map[string]any)["data"] == nil || got["model"] != "gpt-image-1" || got["size"] != "256x256" {
 		t.Fatalf("image via provider = %v (sent %v)", res, got)
 	}
-	call := e.post("/call/read", map[string]any{"project_id": pid, "id": res["call_id"]})["call"].(map[string]any)
+	call := e.span(res["span_id"].(string))
 	usage := call["summary"].(map[string]any)["usage"].(map[string]any)
 	if u, ok := usage["imgprov/gpt-image-1"].(map[string]any); !ok || u["total_tokens"].(float64) != 104 || u["images"].(float64) != 1 {
 		t.Fatalf("image usage = %v", usage)

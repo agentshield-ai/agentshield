@@ -91,7 +91,7 @@ func newModelServer(t *testing.T) (*modelServer, *httptest.Server) {
 func TestCustomRuntimeApply(t *testing.T) {
 	e := newEnv(t)
 	_, hs := newModelServer(t)
-	code, res := e.api2Do(http.MethodPut, "/v2/acme/evals/runtimes/my-vllm", map[string]any{
+	code, res := e.api2Do(http.MethodPut, "/api/v1/runtimes/my-vllm", map[string]any{"project_id": pid,
 		"base_url": hs.URL + "/v1/", "api_key_secret": "VLLM_KEY", "headers": map[string]any{"X-Team": "ml"},
 		"runtime_ids": []any{map[string]any{"id": "llama-3-8b"}, map[string]any{"id": "qwen/qwen2-7b", "max_tokens": 8192}},
 	})
@@ -117,14 +117,14 @@ func TestCustomRuntimeApply(t *testing.T) {
 	}
 	// /completions/create routes "<runtime>/<id>" to the endpoint with the secret and headers.
 	e.post("/secrets/set", map[string]any{"name": "VLLM_KEY", "value": "sk-vllm"})
-	resp := e.post("/completions/create", map[string]any{"project_id": pid, "inputs": map[string]any{
+	resp := e.post("/api/v1/completions", map[string]any{"project_id": pid, "inputs": map[string]any{
 		"model": "my-vllm/llama-3-8b", "messages": []any{map[string]any{"role": "user", "content": "HELLO"}}}})
 	if !strings.Contains(toJSON(resp), `"content":"hello"`) {
 		t.Fatalf("completion via runtime = %v", resp)
 	}
 
 	// Re-applying replaces the list: the omitted ID is removed.
-	code, res = e.api2Do(http.MethodPut, "/v2/acme/evals/runtimes/my-vllm", map[string]any{
+	code, res = e.api2Do(http.MethodPut, "/api/v1/runtimes/my-vllm", map[string]any{"project_id": pid,
 		"base_url": hs.URL + "/v1", "runtime_ids": []any{map[string]any{"id": "llama-3-8b"}}})
 	if code != 200 || res["api_key_secret"] != nil || len(res["runtime_ids"].([]any)) != 1 {
 		t.Fatalf("re-apply -> %d %v", code, res)
@@ -133,8 +133,8 @@ func TestCustomRuntimeApply(t *testing.T) {
 	if strings.Contains(toJSON(models), "qwen2-7b") {
 		t.Fatalf("removed runtime id still listed: %v", models)
 	}
-	_, list := e.api2Do(http.MethodGet, "/v2/acme/evals/runtimes", nil)
-	if rs := list["runtimes"].([]any); len(rs) != 1 || rs[0].(map[string]any)["kind"] != "openai" {
+	_, list := e.api2Do(http.MethodGet, "/api/v1/runtimes?project_id="+pid, nil)
+	if rs := list["items"].([]any); len(rs) != 1 || rs[0].(map[string]any)["kind"] != "openai" || list["total_count"].(float64) != 1 {
 		t.Fatalf("runtime list = %v", list)
 	}
 
@@ -150,7 +150,8 @@ func TestCustomRuntimeApply(t *testing.T) {
 		{"bad%20name", map[string]any{"base_url": hs.URL, "runtime_ids": []any{}}},
 		{"x", map[string]any{"base_url": hs.URL, "runtime_ids": []any{}, "kind": "grpc"}},
 	} {
-		if code, res := e.api2Do(http.MethodPut, "/v2/acme/evals/runtimes/"+bad.name, bad.body); code != 400 {
+		bad.body["project_id"] = pid
+		if code, res := e.api2Do(http.MethodPut, "/api/v1/runtimes/"+bad.name, bad.body); code != 400 {
 			t.Fatalf("bad runtime %s %v -> %d %v", bad.name, bad.body, code, res)
 		}
 	}
@@ -163,13 +164,13 @@ func toJSON(v any) string {
 
 // evalFixture publishes a 3-row dataset and an exact-match evaluation.
 func evalFixture(e *testEnv) string {
-	tbl := e.post("/table/create", map[string]any{"table": map[string]any{"project_id": pid, "rows": []any{
+	tbl := e.post("/api/v1/tables/create", map[string]any{"project_id": pid, "rows": []any{
 		map[string]any{"question": "paris", "expected": "PARIS"},
 		map[string]any{"question": "rome", "expected": "MADRID"},
 		map[string]any{"question": "oslo", "expected": "OSLO"},
-	}}})
+	}})
 	ds := publish(e, "caps", map[string]any{"_type": "Dataset", "_class_name": "Dataset", "_bases": []any{"Object", "BaseModel"},
-		"name": "caps", "rows": "weft:///" + pid + "/table/" + tbl["digest"].(string)})
+		"name": "caps", "rows": tbl["ref"]})
 	exact := publish(e, "exact", map[string]any{"_class_name": "ExactMatchScorer", "_bases": []any{"Scorer", "Object", "BaseModel"}, "target_column": "expected"})
 	return publish(e, "caps-eval", map[string]any{"_type": "Evaluation", "_class_name": "Evaluation", "_bases": []any{"Object", "BaseModel"},
 		"dataset": ds, "scorers": []any{exact}})
@@ -178,11 +179,11 @@ func evalFixture(e *testEnv) string {
 // predictCalls returns the <op>.predict calls under an evaluation.
 func predictCalls(t *testing.T, e *testEnv, evalID, op string) []map[string]any {
 	t.Helper()
-	calls := e.post("/calls/query", map[string]any{"project_id": pid, "filter": map[string]any{"trace_ids": []any{evalID}}})["calls"].([]any)
+	calls := e.spans(map[string]any{"filter": map[string]any{"trace_ids": []any{evalID}}})
 	var out []map[string]any
 	for _, c := range calls {
 		cm := c.(map[string]any)
-		if strings.Contains(cm["op_name"].(string), "/"+op+":") {
+		if strings.Contains(cm["name"].(string), "/"+op+":") {
 			out = append(out, cm)
 		}
 	}
@@ -196,9 +197,9 @@ func TestEvaluateModelWithPredictURL(t *testing.T) {
 	e.post("/secrets/set", map[string]any{"name": "MODEL_TOKEN", "value": "tok-123"})
 	model := publish(e, "upper-model", map[string]any{"_class_name": "UpperModel", "_bases": []any{"Model", "Object", "BaseModel"},
 		"predict_url": hs.URL + "/predict", "predict_api_key_secret": "MODEL_TOKEN", "predict_headers": map[string]any{"X-Team": "ml"}})
-	id := e.post("/evaluate_model", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": model})["call_id"].(string)
+	id := e.post("/api/v1/evaluations/run", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": model})["id"].(string)
 	waitEval(t, e, id)
-	root := e.post("/call/read", map[string]any{"project_id": pid, "id": id})["call"].(map[string]any)
+	root := e.span(id)
 	if frac := root["output"].(map[string]any)["exact"].(map[string]any)["true_fraction"].(float64); frac < 0.66 || frac > 0.67 {
 		t.Fatalf("exact fraction = %v (%v)", frac, root["output"])
 	}
@@ -227,11 +228,11 @@ func TestEvaluateModelBoundToRuntime(t *testing.T) {
 	ms, hs := newModelServer(t)
 	ev := evalFixture(e)
 	// An OpenAI-compatible runtime and a "predict" runtime.
-	if code, res := e.api2Do(http.MethodPut, "/v2/acme/evals/runtimes/chat-rt", map[string]any{
+	if code, res := e.api2Do(http.MethodPut, "/api/v1/runtimes/chat-rt", map[string]any{"project_id": pid,
 		"base_url": hs.URL + "/v1", "runtime_ids": []any{map[string]any{"id": "lower-1"}}}); code != 200 {
 		t.Fatalf("apply chat runtime -> %d %v", code, res)
 	}
-	if code, res := e.api2Do(http.MethodPut, "/v2/acme/evals/runtimes/predict-rt", map[string]any{
+	if code, res := e.api2Do(http.MethodPut, "/api/v1/runtimes/predict-rt", map[string]any{"project_id": pid,
 		"base_url": hs.URL + "/predict", "kind": "predict", "headers": map[string]any{"X-Team": "infra"},
 		"runtime_ids": []any{map[string]any{"id": "upper-v2"}}}); code != 200 {
 		t.Fatalf("apply predict runtime -> %d %v", code, res)
@@ -241,8 +242,8 @@ func TestEvaluateModelBoundToRuntime(t *testing.T) {
 	predModel := publish(e, "pred-model", map[string]any{"_class_name": "UpperModel", "_bases": []any{"Model", "Object", "BaseModel"},
 		"runtime": "predict-rt"})
 
-	id1 := e.post("/evaluate_model", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": chatModel})["call_id"].(string)
-	id2 := e.post("/evaluate_model", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": predModel})["call_id"].(string)
+	id1 := e.post("/api/v1/evaluations/run", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": chatModel})["id"].(string)
+	id2 := e.post("/api/v1/evaluations/run", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": predModel})["id"].(string)
 	waitEval(t, e, id1)
 	waitEval(t, e, id2)
 
@@ -265,7 +266,7 @@ func TestEvaluateModelBoundToRuntime(t *testing.T) {
 		t.Fatalf("predict requests = %v", ms.predicts)
 	}
 	ms.mu.Unlock()
-	root := e.post("/call/read", map[string]any{"project_id": pid, "id": id2})["call"].(map[string]any)
+	root := e.span(id2)
 	if frac := root["output"].(map[string]any)["exact"].(map[string]any)["true_fraction"].(float64); frac < 0.66 || frac > 0.67 {
 		t.Fatalf("predict runtime exact fraction = %v", frac)
 	}
@@ -280,7 +281,7 @@ func TestEvaluateModelRejectsUnrunnableModels(t *testing.T) {
 		{"_class_name": "PlainModel", "_bases": []any{"Model", "Object", "BaseModel"}, "predict_url": "file:///etc/passwd"},
 	} {
 		m := publish(e, "plain", val)
-		if code, out := e.raw("/evaluate_model", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": m}, nil); code != 400 {
+		if code, out := e.raw("/api/v1/evaluations/run", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": m}, nil); code != 400 {
 			t.Fatalf("%v -> %d %s", val, code, out)
 		}
 	}
@@ -289,15 +290,15 @@ func TestEvaluateModelRejectsUnrunnableModels(t *testing.T) {
 func TestEvaluateModelRecordsPredictErrors(t *testing.T) {
 	e := newEnv(t)
 	_, hs := newModelServer(t)
-	tbl := e.post("/table/create", map[string]any{"table": map[string]any{"project_id": pid, "rows": []any{
-		map[string]any{"question": "boom", "expected": "x"}}}})
-	ds := publish(e, "boom-ds", map[string]any{"_type": "Dataset", "_class_name": "Dataset", "rows": "weft:///" + pid + "/table/" + tbl["digest"].(string)})
+	tbl := e.post("/api/v1/tables/create", map[string]any{"project_id": pid, "rows": []any{
+		map[string]any{"question": "boom", "expected": "x"}}})
+	ds := publish(e, "boom-ds", map[string]any{"_type": "Dataset", "_class_name": "Dataset", "rows": tbl["ref"]})
 	ev := publish(e, "boom-eval", map[string]any{"_type": "Evaluation", "_class_name": "Evaluation", "dataset": ds, "scorers": []any{}})
 	model := publish(e, "boom-model", map[string]any{"_class_name": "UpperModel", "predict_url": hs.URL + "/predict"})
-	id := e.post("/evaluate_model", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": model})["call_id"].(string)
+	id := e.post("/api/v1/evaluations/run", map[string]any{"project_id": pid, "evaluation_ref": ev, "model_ref": model})["id"].(string)
 	waitEval(t, e, id)
 	preds := predictCalls(t, e, id, "UpperModel.predict")
-	if len(preds) != 1 || preds[0]["exception"] == nil || !strings.Contains(preds[0]["exception"].(string), "500") {
+	if len(preds) != 1 || preds[0]["error"] == nil || !strings.Contains(preds[0]["error"].(string), "500") {
 		t.Fatalf("failed predict call = %v", preds)
 	}
 }

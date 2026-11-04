@@ -56,7 +56,7 @@ func TestReferenceBucketsS3AndGCS(t *testing.T) {
 	}
 
 	// resolve_url presigns both, for the project.
-	res = e.post("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{
+	res = e.post("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{
 		"s3://cust-media/frames/000123.png", "gs://cust-gcs/shots/cat.png", "https://example.com/a.png"}})
 	urls := res["download_urls"].([]any)
 	if len(urls) != 3 || res["expires_at"] == nil || urls[2] != "https://example.com/a.png" {
@@ -77,13 +77,13 @@ func TestReferenceBucketsS3AndGCS(t *testing.T) {
 		{"acme/other", "gs://cust-gcs/shots/cat.png"},
 		{pid, "gs://unknown-bucket/a.png"},
 	} {
-		if code, b := e.raw("/files/resolve_url", map[string]any{"project_id": c.project, "uris": []any{c.uri}}, nil); code != 400 ||
+		if code, b := e.raw("/api/v1/files/resolve", map[string]any{"project_id": c.project, "uris": []any{c.uri}}, nil); code != 400 ||
 			!strings.Contains(string(b), "not registered") {
 			t.Fatalf("%s in %s -> %d %s", c.uri, c.project, code, b)
 		}
 	}
 	// per_uri_errors: one request, failures reported per URI, the rest resolved.
-	res = e.post("/files/resolve_url", map[string]any{"project_id": pid, "per_uri_errors": true, "uris": []any{
+	res = e.post("/api/v1/files/resolve", map[string]any{"project_id": pid, "per_uri_errors": true, "uris": []any{
 		"s3://cust-media/frames/000123.png", "gs://unknown-bucket/a.png", "s3://cust-media/private/x.png", "https://example.com/a.png",
 		"nope", "s3://", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}})
 	urls = res["download_urls"].([]any)
@@ -101,11 +101,11 @@ func TestReferenceBucketsS3AndGCS(t *testing.T) {
 		}
 	}
 	// Without it the response keeps the plain shape (no "errors").
-	if res = e.post("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{"https://example.com/a.png"}}); len(res) != 2 {
+	if res = e.post("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{"https://example.com/a.png"}}); len(res) != 2 {
 		t.Fatalf("plain resolve = %v", res)
 	}
 	// The team bucket also serves the team's other projects.
-	res = e.post("/files/resolve_url", map[string]any{"project_id": "acme/other", "uris": []any{"s3://cust-media/frames/000123.png"}})
+	res = e.post("/api/v1/files/resolve", map[string]any{"project_id": "acme/other", "uris": []any{"s3://cust-media/frames/000123.png"}})
 	if code, _ := httpGet(t, res["download_urls"].([]any)[0].(string)); code != 200 {
 		t.Fatalf("team bucket from acme/other -> %d", code)
 	}
@@ -126,7 +126,7 @@ func TestReferenceBucketsS3AndGCS(t *testing.T) {
 	}
 	// Delete.
 	e.post("/reference_buckets/delete", map[string]any{"id": s3b["id"]})
-	if code, _ := e.raw("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{"s3://cust-media/frames/000123.png"}}, nil); code != 400 {
+	if code, _ := e.raw("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{"s3://cust-media/frames/000123.png"}}, nil); code != 400 {
 		t.Fatalf("after delete -> %d", code)
 	}
 	if code, _ := e.raw("/reference_buckets/delete", map[string]any{"id": s3b["id"]}, nil); code != 404 {

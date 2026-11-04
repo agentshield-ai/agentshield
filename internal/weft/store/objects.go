@@ -88,6 +88,55 @@ var classHierarchy = map[string]string{
 	"Dashboard":                    "Dashboard",
 }
 
+// objectKinds are Weft's object kinds (docs/weft/DESIGN.md §10.2) of the
+// known base classes. A function (stored kind "op") is "function"; an object
+// of any other class is "object".
+var objectKinds = map[string]string{
+	"Dataset": "dataset", "Model": "model", "Evaluation": "evaluation", "Scorer": "scorer", "Prompt": "prompt",
+	"Leaderboard": "leaderboard", "Monitor": "monitor", "AnnotationSpec": "annotation_spec", "SavedView": "saved_view",
+	"Provider": "provider", "ProviderModel": "provider_model", "Dashboard": "dashboard", "Automation": "automation",
+}
+
+// ObjectKind is the object's kind in Weft's API: "function" for functions,
+// the kind of its base class ("dataset", "model", "prompt", "scorer", ...),
+// or "object".
+func ObjectKind(o *Obj) string {
+	if o.Kind == "op" {
+		return "function"
+	}
+	if o.BaseObjectClass != nil {
+		if k, ok := objectKinds[*o.BaseObjectClass]; ok {
+			return k
+		}
+	}
+	return "object"
+}
+
+// KindFilter turns object kinds into the filter that lists them: base
+// classes, and whether functions are listed. Unknown kinds are an error.
+func KindFilter(kinds []string) (bases []string, functions, objects bool, err error) {
+	for _, k := range kinds {
+		switch k {
+		case "function":
+			functions = true
+			continue
+		case "object":
+			objects = true
+			continue
+		}
+		found := false
+		for base, kind := range objectKinds {
+			if kind == k {
+				bases, found = append(bases, base), true
+			}
+		}
+		if !found {
+			return nil, false, false, Invalidf("unknown object kind %q", k)
+		}
+	}
+	return bases, functions, objects, nil
+}
+
 // classify returns kind, base class and leaf class of an object value.
 // isOp recognises ops in another client's encoding (IngestHooks.IsOp).
 func classify(val any, forced string, isOp func(map[string]any) bool) (kind string, base, leaf *string) {
@@ -175,14 +224,15 @@ func (s *Store) CreateObject(ctx context.Context, projectID, objectID string, va
 
 // prepValue normalises a value and returns it, its digest and the text to
 // store. When raw JSON is supplied its key order is preserved in storage;
-// the digest always uses canonical (sorted) JSON.
-func prepValue(val any, raw []byte) (any, string, string, error) {
+// the digest always uses canonical (sorted) JSON. d computes the digest
+// (refs.DigesterFrom: Weft's, or the compatibility adapter's).
+func prepValue(d refs.Digester, val any, raw []byte) (any, string, string, error) {
 	if raw != nil {
 		v, err := refs.Decode(raw)
 		if err != nil {
 			return nil, "", "", err
 		}
-		d, _, err := refs.Digest(v)
+		d, _, err := refs.DigestWith(d, v)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -192,11 +242,11 @@ func prepValue(val any, raw []byte) (any, string, string, error) {
 		}
 		return v, d, buf.String(), nil
 	}
-	d, canon, err := refs.Digest(val)
+	dg, canon, err := refs.DigestWith(d, val)
 	if err != nil {
 		return nil, "", "", err
 	}
-	return val, d, string(canon), nil
+	return val, dg, string(canon), nil
 }
 
 // CreateObjectRaw is CreateObject with the value's original JSON bytes.
@@ -208,7 +258,7 @@ func (s *Store) CreateObjectRaw(ctx context.Context, projectID, objectID string,
 	if !objectIDRe.MatchString(objectID) {
 		return "", 0, Invalidf("invalid object_id %q: use letters, digits, '_', '-', '.' (max 128)", objectID)
 	}
-	val, digest, canon, err := prepValue(val, raw)
+	val, digest, canon, err := prepValue(refs.DigesterFrom(ctx), val, raw)
 	if err != nil {
 		return "", 0, Invalidf("val is not JSON-serialisable: %v", err)
 	}
@@ -362,6 +412,8 @@ type ObjsFilter struct {
 	ObjectIDs         []string `json:"object_ids"`
 	IsOp              *bool    `json:"is_op"`
 	LatestOnly        bool     `json:"latest_only"`
+	// Kinds lists Weft object kinds (ObjectKind); the native API's filter.
+	Kinds []string `json:"-"`
 }
 
 // ObjsQuery is the body of /objs/query.
@@ -375,11 +427,11 @@ type ObjsQuery struct {
 	IncludeDeleted bool        `json:"include_deleted"`
 }
 
-// QueryObjects lists object versions.
-func (s *Store) QueryObjects(ctx context.Context, q ObjsQuery) ([]*Obj, error) {
+// objsWhere builds the WHERE conditions of an object query.
+func objsWhere(q ObjsQuery) (string, []string, []any, *ObjsFilter, error) {
 	pid, err := refs.NormalizeProject(q.ProjectID)
 	if err != nil {
-		return nil, &InvalidError{Msg: err.Error()}
+		return "", nil, nil, nil, &InvalidError{Msg: err.Error()}
 	}
 	conds := []string{"o.project_id = ?"}
 	args := []any{pid}
@@ -412,9 +464,55 @@ func (s *Store) QueryObjects(ctx context.Context, q ObjsQuery) ([]*Obj, error) {
 			conds = append(conds, "o.kind = 'object'")
 		}
 	}
+	if len(f.Kinds) > 0 {
+		bases, functions, objects, err := KindFilter(f.Kinds)
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		var ors []string
+		if functions {
+			ors = append(ors, "o.kind = 'op'")
+		}
+		if len(bases) > 0 {
+			c, a := inList("o.base_object_class", bases)
+			ors = append(ors, "(o.kind = 'object' AND "+c+")")
+			args = append(args, a...)
+		}
+		if objects {
+			known := make([]string, 0, len(objectKinds))
+			for b := range objectKinds {
+				known = append(known, b)
+			}
+			c, a := inList("o.base_object_class", known)
+			ors = append(ors, "(o.kind = 'object' AND (o.base_object_class IS NULL OR NOT "+c+"))")
+			args = append(args, a...)
+		}
+		conds = append(conds, "("+strings.Join(ors, " OR ")+")")
+	}
 	if f.LatestOnly {
 		conds = append(conds, `o.version_index = (SELECT MAX(o2.version_index) FROM objects o2 WHERE o2.project_id = o.project_id
 			AND o2.object_id = o.object_id AND o2.deleted_at IS NULL)`)
+	}
+	return pid, conds, args, f, nil
+}
+
+// CountObjects counts the object versions a query matches, ignoring its
+// limit and offset.
+func (s *Store) CountObjects(ctx context.Context, q ObjsQuery) (int64, error) {
+	_, conds, args, _, err := objsWhere(q)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	err = s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM objects o WHERE `+strings.Join(conds, " AND "), args...).Scan(&n)
+	return n, err
+}
+
+// QueryObjects lists object versions.
+func (s *Store) QueryObjects(ctx context.Context, q ObjsQuery) ([]*Obj, error) {
+	pid, conds, args, f, err := objsWhere(q)
+	if err != nil {
+		return nil, err
 	}
 	order := "o.created_at DESC, o.object_id, o.version_index DESC"
 	if len(q.SortBy) > 0 {

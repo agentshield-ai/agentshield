@@ -106,7 +106,7 @@ func (st *CallStart) normalize() error {
 	if st.ParentID != nil && (!validID(*st.ParentID) || *st.ParentID == st.ID) {
 		return Invalidf("invalid parent id")
 	}
-	st.OpName = strings.TrimSpace(st.OpName)
+	st.OpName = refs.Normalize(strings.TrimSpace(st.OpName))
 	if st.OpName == "" {
 		return Invalidf("op_name is required")
 	}
@@ -308,7 +308,7 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 	}
 	inputs := mustJSON(st.Inputs)
 	attrs := mustJSON(st.Attributes)
-	inRefs := mustJSON(nonNil(refs.CollectRefs(st.Inputs)))
+	inRefs := mustJSON(nonNil(normRefs(refs.CollectRefs(st.Inputs))))
 	_, err = tx.ExecContext(ctx, `INSERT INTO calls(project_id, id, op_name, op_base_name, display_name, trace_id, parent_id,
 			thread_id, turn_id, started_at, attributes, inputs, input_refs, user_id, run_id, has_start, storage_size)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
@@ -353,7 +353,7 @@ func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
 		output = outStr
 	}
 	summary := mustJSON(en.Summary)
-	outRefs := mustJSON(nonNil(refs.CollectRefs(en.Output)))
+	outRefs := mustJSON(nonNil(normRefs(refs.CollectRefs(en.Output))))
 	_, err = tx.ExecContext(ctx, `INSERT INTO calls(project_id, id, trace_id, ended_at, exception, output, summary, output_refs, storage_size, cumulative)
 		VALUES(?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(project_id, id) DO UPDATE SET
@@ -397,6 +397,14 @@ func runCallHooks(ctx context.Context, tx *sql.Tx, projectID, id string) error {
 // en is set). It may rewrite the call (redaction) or drop it (sampling).
 // projectadmin.go installs the real hook.
 var ingestHook = func(context.Context, *Store, *sql.Tx, *CallStart, *CallEnd) (drop bool, err error) { return false, nil }
+
+// normRefs writes refs with the current kind names (refs.Normalize).
+func normRefs(xs []string) []string {
+	for i, x := range xs {
+		xs[i] = refs.Normalize(x)
+	}
+	return xs
+}
 
 func nonNil(xs []string) []string {
 	if xs == nil {

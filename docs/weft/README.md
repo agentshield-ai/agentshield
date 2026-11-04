@@ -12,7 +12,7 @@ and the web UI, backed by a single SQLite file. Python and TypeScript SDKs
 live in `sdk/`.
 
 ```
- your app ──@weft.op / wrapOpenAI──▶ /call/upsert_batch ┐
+ your app ──@weft.op / wrapOpenAI──▶ /api/v1/spans/batch ┐
  any OTel / OpenInference / OpenLLMetry ──▶ /otel/v1/traces ┤──▶ weft (Go) ──▶ SQLite
  browser ──────────────────────────▶ web UI + JSON API ┘        │
                                                                 └─▶ LLM providers (playground, judges, monitors)
@@ -62,6 +62,7 @@ make weft         # build bin/weft
 | `--shield-url` | `WEFT_SHIELD_URL` | empty; replay against a running AgentShield engine instead (operator configuration: not subject to the egress guard, so loopback works) |
 | `--shield-token` | `WEFT_SHIELD_TOKEN` | the engine's bearer token for `--shield-url` (prefer the env var) |
 | `--shield-timeout` | `WEFT_SHIELD_TIMEOUT` | `10s` per remote evaluation |
+| `--legacy-routes` | `WEFT_LEGACY_ROUTES` | `true` for now: also serve the route shapes Weft had before its own `/api/v1` API (`/call/*`, `/obj/*`, `/table/*`, …) with the compatibility adapter off, while the SDKs, UI and plugins move to the native API. `false` serves only Weft's own API (the default once they have moved); the shapes are documented in [COMPATIBILITY.md](COMPATIBILITY.md#route-shapes) |
 | | `WEFT_SESSION_KEY` | session-cookie signing key (32+ chars); default is derived from the secret key |
 
 The optional compatibility adapter has a flag of its own, off by default; see
@@ -383,7 +384,7 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 | Datasets | Row tables with paging and editing; create from CSV/JSON or from selected calls. |
 | Evaluations | SDK-run evaluations (`weft.Evaluation`, `EvaluationLogger`) and server-run evaluations of prompt-based models with built-in scorers and LLM judges. Comparison view with metric deltas and per-example diffs. |
 | Leaderboards | Columns of evaluation × scorer × metric, computed from the latest run per model. |
-| Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a call from its Scores tab (`/calls/score`). |
+| Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a span from its Scores tab (`/api/v1/spans/score`). |
 | Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
 | Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
 | Access control | Users, teams (entities) and viewer/member/admin roles per team or project; API keys belong to users and carry their roles; OIDC single sign-on (PKCE) with auto-provisioning, domain and group-to-role mapping; an audit log of every write, admin action and refused request with query and CSV export. **Settings → Members / Audit log**, **Users & teams** page. |
@@ -399,13 +400,14 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 | `internal/weft/llm` | provider routing, Anthropic translation, streaming, mock models |
 | `internal/weft/evals` | scorers, server-side evaluation, comparison, leaderboards, monitors |
 | `internal/weft/shield` | AgentShield replay of recorded tool calls |
-| `internal/weft/server` | HTTP API, auth, UI serving, built-in guides (`/api/v1/help`) |
-| `internal/weft/compat` | optional compatibility adapter, off by default ([COMPATIBILITY.md](COMPATIBILITY.md)); `compat/legacy` holds the old names used by it and by the one-time database migration |
+| `internal/weft/server` | HTTP API (Weft's own `/api/v1` trace and object API in `native*.go`), auth, UI serving, built-in guides (`/api/v1/help`) |
+| `internal/weft/compat` | optional compatibility adapter, off by default ([COMPATIBILITY.md](COMPATIBILITY.md)), including every older route shape (`routes*.go`, `v2.go`, `extra.go`, `inference.go`); `compat/legacy` holds the old names and the older digest form used by it and by the one-time database migrations |
+| `internal/weft/refs` | refs (`weft:///…`), canonical JSON and Weft's digests |
 | `web/weft-ui` | React UI |
 | `sdk/python`, `sdk/typescript` | client SDKs |
 | `examples/weft` | runnable SDK examples |
 | `scripts/weft_seed_demo.py` | demo data seeding |
-| `docs/weft/API.md` | API contract |
+| `docs/weft/API.md` | API contract (Weft's own API; the adapter's route shapes are in COMPATIBILITY.md) |
 | `docs/weft/*.md`, `docs/weft/docs.go` | guides, embedded in the server and shown in the UI at `/help` |
 | `docs/weft/PROVENANCE.md`, `scripts/weft_provenance_scan.py` | provenance scan and attribution record |
 

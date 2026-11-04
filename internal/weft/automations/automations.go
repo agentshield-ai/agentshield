@@ -274,7 +274,7 @@ func (r *Runner) automations(ctx context.Context, projectID string) ([]*store.Ob
 }
 
 func feedbackCallID(f store.Feedback) string {
-	if rf, err := refs.Parse(f.Ref); err == nil && rf.Kind == refs.KindCall {
+	if rf, err := refs.Parse(f.Ref); err == nil && rf.Kind == refs.KindSpan {
 		return rf.Name
 	}
 	return ""

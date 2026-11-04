@@ -45,11 +45,13 @@ type FeedbackCreate struct {
 	QueueID *string `json:"queue_id"`
 }
 
+// normRefPtr drops empty refs and writes the current ref kind names
+// (refs.Normalize: "op" refs as "function", "call" refs as "span").
 func normRefPtr(p *string) *string {
 	if p == nil || *p == "" {
 		return nil
 	}
-	v := *p
+	v := refs.Normalize(*p)
 	return &v
 }
 
@@ -59,7 +61,7 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 	if err != nil {
 		return nil, &InvalidError{Msg: err.Error()}
 	}
-	f.Ref = strings.TrimSpace(f.Ref)
+	f.Ref = refs.Normalize(strings.TrimSpace(f.Ref))
 	if _, err := refs.Parse(f.Ref); err != nil {
 		return nil, Invalidf("ref: %v", err)
 	}
@@ -130,6 +132,9 @@ var feedbackColumns = map[string]bool{
 }
 
 func feedbackFieldResolver(path string) (string, []any, bool, error) {
+	if path == "span_ref" { // Weft's name for the scorer's own span (column call_ref)
+		return "f.call_ref", nil, false, nil
+	}
 	if feedbackColumns[path] {
 		return "f." + path, nil, false, nil
 	}

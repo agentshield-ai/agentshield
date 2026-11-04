@@ -3,7 +3,6 @@ package compat
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
@@ -92,7 +91,7 @@ func writeGraphQLError(w http.ResponseWriter, msg string) {
 const maxJSONBody = 64 << 20
 
 func decodeBody(r *http.Request, v any) error {
-	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxJSONBody))
+	body, err := readBody(r)
 	if err != nil {
 		return err
 	}
@@ -101,7 +100,10 @@ func decodeBody(r *http.Request, v any) error {
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return store.Invalidf("invalid JSON body: %v", err)
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -20,7 +20,7 @@ func scorerVal(cls string, fields map[string]any) map[string]any {
 
 func scoreResult(t *testing.T, e *testEnv, callID, scorerRef string) map[string]any {
 	t.Helper()
-	res := e.post("/calls/score", map[string]any{"project_id": pid, "call_ids": []any{callID}, "scorer_refs": []any{scorerRef}})["results"].([]any)
+	res := e.post("/api/v1/spans/score", map[string]any{"project_id": pid, "ids": []any{callID}, "scorer_refs": []any{scorerRef}})["items"].([]any)
 	return res[0].(map[string]any)
 }
 
@@ -40,13 +40,12 @@ func scoreOne(t *testing.T, e *testEnv, callID, scorerRef string) map[string]any
 }
 
 func endCall(e *testEnv, id string, inputs map[string]any, output any, exception string) {
-	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": id, "trace_id": id, "op_name": "bot",
-		"started_at": "2025-01-01T00:00:00Z", "inputs": inputs}})
-	end := map[string]any{"project_id": pid, "id": id, "ended_at": "2025-01-01T00:00:12Z", "output": output, "summary": map[string]any{}}
+	e.startSpan(map[string]any{"id": id, "trace_id": id, "name": "bot", "started_at": "2025-01-01T00:00:00Z", "inputs": inputs})
+	end := map[string]any{"id": id, "ended_at": "2025-01-01T00:00:12Z", "output": output, "summary": map[string]any{}}
 	if exception != "" {
-		end["exception"] = exception
+		end["error"] = exception
 	}
-	e.post("/call/end", map[string]any{"end": end})
+	e.endSpan(end)
 }
 
 func seedScorerCalls(e *testEnv) {
@@ -209,16 +208,16 @@ func TestSDKSerialisedScorers(t *testing.T) {
 
 func TestEmbeddingsCreate(t *testing.T) {
 	e := newEnv(t)
-	res := e.post("/embeddings/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/embed", "input": []any{"the cat", "the cat"}}})
+	res := e.post("/api/v1/embeddings", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/embed", "input": []any{"the cat", "the cat"}}})
 	data := res["response"].(map[string]any)["data"].([]any)
 	if len(data) != 2 || len(data[0].(map[string]any)["embedding"].([]any)) == 0 {
 		t.Fatalf("embeddings: %v", res)
 	}
-	res = e.post("/embeddings/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/embed", "input": "one"}})
+	res = e.post("/api/v1/embeddings", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "mock/embed", "input": "one"}})
 	if len(res["response"].(map[string]any)["data"].([]any)) != 1 {
 		t.Fatalf("single input: %v", res)
 	}
-	if code, _ := e.raw("/embeddings/create", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "anthropic/claude-x", "input": "x"}}, nil); code != 400 {
+	if code, _ := e.raw("/api/v1/embeddings", map[string]any{"project_id": pid, "inputs": map[string]any{"model": "anthropic/claude-x", "input": "x"}}, nil); code != 400 {
 		t.Fatalf("anthropic embeddings should fail with 400, got %d", code)
 	}
 }

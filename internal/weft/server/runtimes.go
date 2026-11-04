@@ -2,33 +2,22 @@ package server
 
 import (
 	"context"
-	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
-// Custom runtimes: PUT /v2/{entity}/{project}/runtimes/{runtime_name}
+// Custom runtimes: PUT /api/v1/runtimes/{runtime_name} (native_more.go)
 // registers an endpoint (an OpenAI-compatible base URL with model IDs, or
 // kind "predict" for an HTTP endpoint that serves a model's predict). The runtime is stored as a Provider object named after the
 // runtime plus one ProviderModel per runtime ID, so "<runtime>/<id>" works in
 // the playground, /completions/create, LLM judges and LLMStructuredCompletionModel,
 // and a Model with runtime=<name> can be evaluated by /evaluate_model.
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		const p = "/v2/{entity}/{project}"
-		r.Put(p+"/runtimes/{runtime_name}", s.runtimeApply)
-		r.Get(p+"/runtimes", s.runtimeList)
-	})
-}
 
 var runtimeNameRe = regexp.MustCompile(`^[^\s:]*(?::[^\s:]+)*:?$`)
 
@@ -55,25 +44,6 @@ func runtimeRes(rt *evals.Runtime) map[string]any {
 	}
 	return map[string]any{"name": rt.Name, "base_url": rt.BaseURL, "api_key_secret": rt.APIKeySecret, "headers": headers,
 		"runtime_ids": ids, "kind": rt.Kind, "ref": rt.Ref}
-}
-
-func (s *Server) runtimeApply(w http.ResponseWriter, r *http.Request) {
-	pid, err := v2Project(r)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	var body runtimeApplyBody
-	if err := decodeBody(r, &body); err != nil {
-		writeErr(w, err)
-		return
-	}
-	rt, err := s.applyRuntime(r.Context(), pid, pathParam(r, "runtime_name"), &body, userFrom(r, nil))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, runtimeRes(rt))
 }
 
 func (s *Server) applyRuntime(ctx context.Context, pid, name string, body *runtimeApplyBody, user *string) (*evals.Runtime, error) {
@@ -180,24 +150,3 @@ func (s *Server) applyRuntime(ctx context.Context, pid, name string, body *runti
 }
 
 // runtimeList is a Weft addition: GET /v2/{entity}/{project}/runtimes.
-func (s *Server) runtimeList(w http.ResponseWriter, r *http.Request) {
-	pid, err := v2Project(r)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	objs, err := s.store.QueryObjects(r.Context(), store.ObjsQuery{ProjectID: pid,
-		Filter: &store.ObjsFilter{BaseObjectClasses: []string{"Provider"}, LatestOnly: true}})
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	out := []map[string]any{}
-	for _, o := range objs {
-		if rt, ok := evals.RuntimeFromObject(o); ok {
-			out = append(out, runtimeRes(rt))
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
-	writeJSON(w, map[string]any{"runtimes": out})
-}

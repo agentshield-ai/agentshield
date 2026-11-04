@@ -1,4 +1,4 @@
-package server
+package compat
 
 import (
 	"context"
@@ -14,37 +14,11 @@ import (
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // Smaller trace API endpoints: feedback analytics, table and file stats,
 // usage roll-ups, thread streaming, evaluation aliases and rescoring, and
 // dataset lineage.
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Post("/feedback/stats", handle(s.feedbackStats))
-		r.Post("/feedback/aggregate", handle(s.feedbackAggregate))
-		r.Post("/feedback/payload_schema", handle(s.feedbackPayloadSchema))
-
-		r.Post("/table/create_from_digests", handle(s.tableCreateFromDigests))
-		r.Post("/table/query_stats_batch", handle(s.tableQueryStatsBatch))
-		r.Post("/files/query_stats", handle(s.filesQueryStats))
-
-		r.Post("/calls/usage", handle(s.callsUsage))
-		r.Post("/trace/usage", handle(s.traceUsage))
-		r.Post("/threads/stream_query", s.threadsStreamQuery)
-
-		r.Post("/evaluations/evaluate_model", handle(s.evaluateModel))
-		r.Post("/evaluations/status", handle(s.evaluationsStatus))
-		r.Post("/evaluations/rescore", handle(s.evaluationsRescore))
-
-		r.Post("/dataset_sources/link", handle(s.datasetSourcesLink))
-		r.Post("/dataset_sources/query", handle(s.datasetSourcesQuery))
-		r.Post("/dataset_sources/source_datasets_query", handle(s.sourceDatasetsQuery))
-		r.Post("/dataset_sources/link_delete", handle(s.datasetSourcesLinkDelete))
-	})
-}
 
 // ---------------------------------------------------------------- feedback analytics
 
@@ -221,7 +195,7 @@ func (a *metricAcc) results(m feedbackMetric) map[string]*float64 {
 	return out
 }
 
-func (s *Server) feedbackStats(ctx context.Context, _ *http.Request, req *feedbackStatsReq) (any, error) {
+func (s *Routes) feedbackStats(ctx context.Context, _ *http.Request, req *feedbackStatsReq) (any, error) {
 	start, end, err := parseRange(req.Start, req.End)
 	if err != nil {
 		return nil, err
@@ -391,7 +365,7 @@ func feedbackScores(payload any) (map[string]float64, []string) {
 	return ratings, tags
 }
 
-func (s *Server) feedbackAggregate(ctx context.Context, _ *http.Request, req *feedbackAggregateReq) (any, error) {
+func (s *Routes) feedbackAggregate(ctx context.Context, _ *http.Request, req *feedbackAggregateReq) (any, error) {
 	if req.AfterMS == nil || req.BeforeMS == nil || *req.BeforeMS <= *req.AfterMS {
 		return nil, store.Invalidf("after_ms and before_ms are required and before_ms must be later")
 	}
@@ -510,7 +484,7 @@ type feedbackPayloadSchemaReq struct {
 	TriggerRef   *string `json:"trigger_ref"`
 }
 
-func (s *Server) feedbackPayloadSchema(ctx context.Context, _ *http.Request, req *feedbackPayloadSchemaReq) (any, error) {
+func (s *Routes) feedbackPayloadSchema(ctx context.Context, _ *http.Request, req *feedbackPayloadSchemaReq) (any, error) {
 	start, end, err := parseRange(req.Start, req.End)
 	if err != nil {
 		return nil, err
@@ -592,7 +566,7 @@ type tableFromDigestsReq struct {
 	ExpectedDigest *string  `json:"expected_digest"`
 }
 
-func (s *Server) tableCreateFromDigests(ctx context.Context, _ *http.Request, req *tableFromDigestsReq) (any, error) {
+func (s *Routes) tableCreateFromDigests(ctx context.Context, _ *http.Request, req *tableFromDigestsReq) (any, error) {
 	if req.RowDigests == nil {
 		req.RowDigests = []string{}
 	}
@@ -612,7 +586,7 @@ type tableStatsBatchReq struct {
 	IncludeStorageSize *bool    `json:"include_storage_size"`
 }
 
-func (s *Server) tableQueryStatsBatch(ctx context.Context, _ *http.Request, req *tableStatsBatchReq) (any, error) {
+func (s *Routes) tableQueryStatsBatch(ctx context.Context, _ *http.Request, req *tableStatsBatchReq) (any, error) {
 	ts, err := s.store.TableStatsBatch(ctx, req.ProjectID, req.Digests, req.IncludeStorageSize != nil && *req.IncludeStorageSize)
 	if err != nil {
 		return nil, err
@@ -620,7 +594,7 @@ func (s *Server) tableQueryStatsBatch(ctx context.Context, _ *http.Request, req 
 	return map[string]any{"tables": ts}, nil
 }
 
-func (s *Server) filesQueryStats(ctx context.Context, _ *http.Request, req *projectReq) (any, error) {
+func (s *Routes) filesQueryStats(ctx context.Context, _ *http.Request, req *projectReq) (any, error) {
 	n, err := s.store.FilesTotalSize(ctx, req.ProjectID)
 	if err != nil {
 		return nil, err
@@ -667,7 +641,7 @@ type callsUsageReq struct {
 // callsUsage reports each call's usage including all descendants. Weft keeps
 // usage rolled up on every call, so this reads the calls directly; a call is
 // unfinished while it or a descendant is still running.
-func (s *Server) callsUsage(ctx context.Context, _ *http.Request, req *callsUsageReq) (any, error) {
+func (s *Routes) callsUsage(ctx context.Context, _ *http.Request, req *callsUsageReq) (any, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {
 		return nil, err
@@ -735,7 +709,7 @@ type traceUsageReq struct {
 	Limit        int                `json:"limit"`
 }
 
-func (s *Server) traceUsage(ctx context.Context, _ *http.Request, req *traceUsageReq) (any, error) {
+func (s *Routes) traceUsage(ctx context.Context, _ *http.Request, req *traceUsageReq) (any, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {
 		return nil, err
@@ -765,7 +739,7 @@ func (s *Server) traceUsage(ctx context.Context, _ *http.Request, req *traceUsag
 	return map[string]any{"call_usage": usage, "unfinished_call_ids": unfinished}, nil
 }
 
-func (s *Server) threadsStreamQuery(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) threadsStreamQuery(w http.ResponseWriter, r *http.Request) {
 	var req store.ThreadsQuery
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, err)
@@ -789,7 +763,7 @@ func (s *Server) threadsStreamQuery(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- evaluations
 
 // evaluationsStatus is /evaluation_status as a tagged union ({"status": {"code": ...}}).
-func (s *Server) evaluationsStatus(ctx context.Context, _ *http.Request, req *evalStatusReq) (any, error) {
+func (s *Routes) evaluationsStatus(ctx context.Context, _ *http.Request, req *evalStatusReq) (any, error) {
 	pid, err := project(req.ProjectID)
 	if err != nil {
 		return nil, err
@@ -825,8 +799,8 @@ type rescoreReq struct {
 	UserID                *string  `json:"user_id"`
 }
 
-func (s *Server) evaluationsRescore(ctx context.Context, r *http.Request, req *rescoreReq) (any, error) {
-	id, err := s.engine.Rescore(ctx, req.ProjectID, req.SourceEvaluationRunID, req.ScorerRefs, userFrom(r, req.UserID))
+func (s *Routes) evaluationsRescore(ctx context.Context, r *http.Request, req *rescoreReq) (any, error) {
+	id, err := s.engine.Rescore(ctx, req.ProjectID, req.SourceEvaluationRunID, req.ScorerRefs, s.host.User(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}
@@ -844,7 +818,7 @@ type datasetSourcesLinkReq struct {
 	UserID               *string                        `json:"user_id"`
 }
 
-func (s *Server) datasetSourcesLink(ctx context.Context, r *http.Request, req *datasetSourcesLinkReq) (any, error) {
+func (s *Routes) datasetSourcesLink(ctx context.Context, r *http.Request, req *datasetSourcesLinkReq) (any, error) {
 	// Resolve aliases and "latest" to a concrete version.
 	o, err := s.store.ReadObject(ctx, req.ProjectID, req.DatasetObjectID, req.DatasetDigest)
 	if errors.Is(err, store.ErrNotFound) {
@@ -853,14 +827,14 @@ func (s *Server) datasetSourcesLink(ctx context.Context, r *http.Request, req *d
 	if err != nil {
 		return nil, err
 	}
-	entries, err := s.store.LinkDatasetSources(ctx, req.ProjectID, o.ObjectID, o.Digest, req.Links, userFrom(r, req.UserID), req.IncludeCreatedStatus)
+	entries, err := s.store.LinkDatasetSources(ctx, req.ProjectID, o.ObjectID, o.Digest, req.Links, s.host.User(r, req.UserID), req.IncludeCreatedStatus)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"entries": entries}, nil
 }
 
-func (s *Server) datasetSourcesQuery(ctx context.Context, _ *http.Request, req *store.DatasetSourcesQuery) (any, error) {
+func (s *Routes) datasetSourcesQuery(ctx context.Context, _ *http.Request, req *store.DatasetSourcesQuery) (any, error) {
 	links, err := s.store.QueryDatasetSources(ctx, *req)
 	if err != nil {
 		return nil, err
@@ -874,7 +848,7 @@ type sourceDatasetsReq struct {
 	IncludeDeleted bool                  `json:"include_deleted"`
 }
 
-func (s *Server) sourceDatasetsQuery(ctx context.Context, _ *http.Request, req *sourceDatasetsReq) (any, error) {
+func (s *Routes) sourceDatasetsQuery(ctx context.Context, _ *http.Request, req *sourceDatasetsReq) (any, error) {
 	ms, err := s.store.SourceDatasets(ctx, req.ProjectID, req.Sources, req.IncludeDeleted)
 	if err != nil {
 		return nil, err
@@ -888,7 +862,7 @@ type linkDeleteReq struct {
 	IDs       []string `json:"ids"` // accepted as an alias of link_ids
 }
 
-func (s *Server) datasetSourcesLinkDelete(ctx context.Context, _ *http.Request, req *linkDeleteReq) (any, error) {
+func (s *Routes) datasetSourcesLinkDelete(ctx context.Context, _ *http.Request, req *linkDeleteReq) (any, error) {
 	req.LinkIDs = append(req.LinkIDs, req.IDs...)
 	if len(req.LinkIDs) > 10000 {
 		return nil, store.Invalidf("too many link_ids (max 10000)")

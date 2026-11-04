@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 )
 
 // The query language (see docs/weft/API.md) is a small Mongo-style
@@ -130,6 +132,9 @@ func (c *exprCompiler) op(v any) (string, []any, error) {
 			ph := make([]string, 0, len(items))
 			args := append([]any{}, la...)
 			for _, it := range items {
+				if refColumnSQL[lhs] {
+					it = normRefLiteral(it)
+				}
 				s, a, _, err := c.operand(it, isTime)
 				if err != nil {
 					return "", nil, err
@@ -181,9 +186,18 @@ func (c *exprCompiler) compare(op string, a, b any) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if refColumnSQL[ls] {
+		b = normRefLiteral(b)
+	}
 	rs, ra, _, err := c.operand(b, aTime)
 	if err != nil {
 		return "", nil, err
+	}
+	if refColumnSQL[rs] {
+		a = normRefLiteral(a)
+		if ls, la, _, err = c.operand(a, bTime); err != nil {
+			return "", nil, err
+		}
 	}
 	if op == "$eq" {
 		if isNullLiteral(b) {
@@ -194,6 +208,24 @@ func (c *exprCompiler) compare(op string, a, b any) (string, []any, error) {
 		}
 	}
 	return ls + " " + cmpOps[op] + " " + rs, append(la, ra...), nil
+}
+
+// refColumnSQL are columns holding refs, which are stored with the current
+// kind names; a literal compared with one is read the same way, so a query
+// may name a span or function ref with its old kind ("call", "op").
+var refColumnSQL = map[string]bool{"f.ref": true, "f.call_ref": true, "f.runnable_ref": true, "f.annotation_ref": true,
+	"f.trigger_ref": true, "c.op_name": true}
+
+func normRefLiteral(v any) any {
+	switch t := v.(type) {
+	case string:
+		return refs.Normalize(t)
+	case map[string]any:
+		if l, ok := t["$literal"].(string); ok && len(t) == 1 {
+			return map[string]any{"$literal": refs.Normalize(l)}
+		}
+	}
+	return v
 }
 
 func isNullLiteral(v any) bool {

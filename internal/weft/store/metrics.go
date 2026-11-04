@@ -154,11 +154,11 @@ func groupSQL(groupBy string) (string, []any, error) {
 	switch groupBy {
 	case "":
 		return "NULL", nil, nil
-	case "op_name", "op":
+	case "op_name", "op", "name":
 		return "c.op_base_name", nil, nil
 	case "status":
 		return statusSQL, nil, nil
-	case "thread", "thread_id":
+	case "thread", "thread_id", "session", "session_id":
 		return "c.thread_id", nil, nil
 	case "user", "user_id":
 		return "c.user_id", nil, nil

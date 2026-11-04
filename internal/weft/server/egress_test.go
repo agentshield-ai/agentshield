@@ -56,7 +56,7 @@ func TestRemoteScorerEgressBlocked(t *testing.T) {
 	if strings.Contains(msg, "dial") || strings.Contains(msg, "s3cr3t") {
 		t.Fatalf("error leaks details: %q", msg)
 	}
-	fb := e.post("/feedback/query", map[string]any{"project_id": pid})["result"].([]any)
+	fb := e.post("/api/v1/feedback/query", map[string]any{"project_id": pid})["items"].([]any)
 	for _, f := range fb {
 		b, _ := json.Marshal(f)
 		if strings.Contains(string(b), "s3cr3t") {
@@ -105,7 +105,7 @@ func TestProviderBaseURLEgressBlocked(t *testing.T) {
 	strictEgress(t)
 	publish(e, "intprov", map[string]any{"_type": "Provider", "_class_name": "Provider", "base_url": srv.URL + "/v1", "api_key_name": "NOPE"})
 	e.post("/secrets/set", map[string]any{"name": "NOPE", "value": "k"})
-	status, raw := e.raw("/completions/create", map[string]any{"project_id": pid,
+	status, raw := e.raw("/api/v1/completions", map[string]any{"project_id": pid,
 		"inputs": map[string]any{"model": "intprov/m", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}}, nil)
 	body := string(raw)
 	if hits.Load() != 0 {

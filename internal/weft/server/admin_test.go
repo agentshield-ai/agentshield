@@ -67,15 +67,16 @@ func jsonl(t *testing.T, b []byte) []map[string]any {
 	return out
 }
 
+// startEnd is a span's start and end as /api/v1/spans/batch items.
 func startEnd(project, id, trace string, parent *string, started time.Time, inputs, output any) []any {
-	st := map[string]any{"project_id": project, "id": id, "trace_id": trace, "op_name": "op", "started_at": started.UTC().Format(time.RFC3339Nano), "inputs": inputs}
+	st := map[string]any{"project_id": project, "id": id, "trace_id": trace, "name": "op", "started_at": started.UTC().Format(time.RFC3339Nano), "inputs": inputs}
 	if parent != nil {
 		st["parent_id"] = *parent
 	}
 	return []any{
-		map[string]any{"mode": "start", "req": map[string]any{"start": st}},
-		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": project, "id": id,
-			"ended_at": started.Add(time.Second).UTC().Format(time.RFC3339Nano), "output": output}}},
+		map[string]any{"start": st},
+		map[string]any{"end": map[string]any{"project_id": project, "id": id,
+			"ended_at": started.Add(time.Second).UTC().Format(time.RFC3339Nano), "output": output}},
 	}
 }
 
@@ -102,8 +103,8 @@ func TestAPIKeysScopes(t *testing.T) {
 	}
 
 	// Scoped key: writes to its project and sets the user.
-	e.admJSON("POST", "/call/upsert_batch", scoped, map[string]any{"batch": startEnd(pid, "c1", "c1", nil, time.Now(), map[string]any{}, 1)})
-	c := e.admJSON("POST", "/call/read", scoped, map[string]any{"project_id": pid, "id": "c1"})["call"].(map[string]any)
+	e.admJSON("POST", "/api/v1/spans/batch", scoped, map[string]any{"items": startEnd(pid, "c1", "c1", nil, time.Now(), map[string]any{}, 1)})
+	c := e.admJSON("GET", "/api/v1/spans/c1?project_id="+pid, scoped, nil)
 	if c["user_id"] != "ci-bot" {
 		t.Fatalf("user not set from key: %v", c["user_id"])
 	}
@@ -111,18 +112,24 @@ func TestAPIKeysScopes(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		{"POST", "/call/upsert_batch", map[string]any{"batch": startEnd(other, "c2", "c2", nil, time.Now(), map[string]any{}, 1)}},
-		{"POST", "/call/start", map[string]any{"start": map[string]any{"project_id": other, "op_name": "x"}}},
-		{"POST", "/calls/query", map[string]any{"project_id": other}},
-		{"POST", "/obj/create", map[string]any{"obj": map[string]any{"project_id": other, "object_id": "o", "val": 1}}},
-		{"POST", "/refs/read_batch", map[string]any{"refs": []any{"weft:///acme/other/object/o:abc"}}},
-		{"GET", "/v2/acme/other/datasets", nil},
-		{"POST", "/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": other}}}},
+		{"POST", "/api/v1/spans/batch", map[string]any{"items": startEnd(other, "c2", "c2", nil, time.Now(), map[string]any{}, 1)}},
+		{"POST", "/api/v1/spans/batch", map[string]any{"project_id": other, "items": []any{map[string]any{"start": map[string]any{"name": "x"}}}}},
+		{"POST", "/api/v1/spans/start", map[string]any{"project_id": other, "name": "x"}},
+		{"POST", "/api/v1/spans/query", map[string]any{"project_id": other}},
+		{"GET", "/api/v1/spans/c1?project_id=" + other, nil},
+		{"POST", "/api/v1/objects/save", map[string]any{"project_id": other, "name": "o", "value": 1}},
+		{"GET", "/api/v1/objects/o?project_id=" + other, nil},
+		{"POST", "/api/v1/refs/read", map[string]any{"refs": []any{"weft:///acme/other/object/o:abc"}}},
+		{"GET", "/api/v1/runtimes?project_id=" + other, nil},
+		{"POST", "/api/v1/feedback/batch", map[string]any{"items": []any{map[string]any{"project_id": other}}}},
+		{"POST", "/api/v1/feedback/batch", map[string]any{"project_id": other, "items": []any{}}},
+		{"POST", "/api/v1/registry/link", map[string]any{"ref": "weft:///" + pid + "/object/o:abc", "project_id": other, "collection": "c"}},
+		{"GET", "/api/v1/evaluations/x/status?project_id=" + other, nil},
 		{"POST", "/api_keys/create", map[string]any{"name": "x"}},
 		{"POST", "/secrets/set", map[string]any{"name": "X", "value": "y"}},
 		{"POST", "/project/delete", map[string]any{"project_id": pid}},
 		{"POST", "/otel/v1/traces", map[string]any{}},
-		{"POST", "/calls/query", map[string]any{}},
+		{"POST", "/api/v1/spans/query", map[string]any{}},
 	}
 	for _, f := range forbidden {
 		if code, out := e.admDo(f.method, f.path, scoped, f.body); code != 403 {
@@ -139,13 +146,18 @@ func TestAPIKeysScopes(t *testing.T) {
 	}
 
 	// Read-only key reads any project but cannot write.
-	e.admJSON("POST", "/calls/query", ro, map[string]any{"project_id": other})
-	e.admJSON("POST", "/project/ttl_settings/read", ro, map[string]any{"project_id": pid})
-	if code, _ := e.admDo("POST", "/call/start", ro, map[string]any{"start": map[string]any{"project_id": pid, "op_name": "x"}}); code != 403 {
-		t.Fatalf("read-only write -> %d", code)
+	e.admJSON("POST", "/api/v1/spans/query", ro, map[string]any{"project_id": other})
+	if code, out := e.admDo("POST", "/api/v1/spans/stream", ro, map[string]any{"project_id": other}); code != 200 {
+		t.Fatalf("read-only stream -> %d %s", code, out)
 	}
-	if code, _ := e.admDo("PUT", "/objs/o/versions/abc/tags", ro, map[string]any{"project_id": pid, "tags": []any{"x"}}); code != 403 {
-		t.Fatalf("read-only PUT -> %d", code)
+	e.admJSON("POST", "/api/v1/objects/tags", ro, map[string]any{"project_id": other})
+	e.admJSON("POST", "/project/ttl_settings/read", ro, map[string]any{"project_id": pid})
+	for _, w := range []struct{ method, path string }{{"POST", "/api/v1/spans/start"}, {"POST", "/api/v1/objects/o/aliases"},
+		{"POST", "/api/v1/objects/o/versions/abc/tags"}, {"POST", "/api/v1/completions/stream"}, {"PUT", "/api/v1/runtimes/rt"},
+		{"POST", "/api/v1/feedback/delete"}, {"POST", "/api/v1/spans/delete"}, {"POST", "/api/v1/prices/create"}} {
+		if code, _ := e.admDo(w.method, w.path, ro, map[string]any{"project_id": pid, "name": "x"}); code != 403 {
+			t.Fatalf("read-only %s %s -> %d", w.method, w.path, code)
+		}
 	}
 
 	// Managed admin key can manage keys; static keys keep working.
@@ -154,7 +166,7 @@ func TestAPIKeysScopes(t *testing.T) {
 
 	// Revocation takes effect immediately.
 	e.admJSON("POST", "/api_keys/revoke", admin, map[string]any{"id": k["id"]})
-	if code, _ := e.admDo("POST", "/calls/query", scoped, map[string]any{"project_id": pid}); code != 401 {
+	if code, _ := e.admDo("POST", "/api/v1/spans/query", scoped, map[string]any{"project_id": pid}); code != 401 {
 		t.Fatalf("revoked key -> %d, want 401", code)
 	}
 	if code, _ := e.admDo("GET", "/projects", "wrong", nil); code != 401 {
@@ -182,8 +194,8 @@ func TestAPIKeysOpenServer(t *testing.T) {
 	if code, _ := e.admDo("GET", "/projects", "", nil); code != 401 {
 		t.Fatalf("auth should be required once a key exists, got %d", code)
 	}
-	if info := e.admJSON("GET", "/server_info", "", nil); info["auth_required"] != true {
-		t.Fatalf("server_info = %v", info)
+	if info := e.admJSON("GET", "/api/v1/server", "", nil); info["auth_required"] != true {
+		t.Fatalf("server = %v", info)
 	}
 	ci, _ := createKey(e, admin, map[string]any{"name": "ci"})
 	e.admJSON("GET", "/projects", ci, nil)
@@ -199,8 +211,8 @@ func TestTTLPurge(t *testing.T) {
 	e, srv := newEnvWithServer(t)
 	old := time.Now().AddDate(0, 0, -10)
 	batch := append(startEnd(pid, "old", "old", nil, old, map[string]any{}, 1), startEnd(pid, "new", "new", nil, time.Now(), map[string]any{}, 1)...)
-	e.post("/call/upsert_batch", map[string]any{"batch": batch})
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/new", "feedback_type": "weft.note", "payload": map[string]any{"note": "x"}})
+	e.post("/api/v1/spans/batch", map[string]any{"items": batch})
+	e.feedback(map[string]any{"ref": spanRef("new"), "feedback_type": "weft.note", "payload": map[string]any{"note": "x"}})
 
 	if r := e.post("/project/ttl_settings/read", map[string]any{"project_id": pid}); r["retention_days"] != nil {
 		t.Fatalf("default ttl = %v", r)
@@ -221,11 +233,11 @@ func TestTTLPurge(t *testing.T) {
 	if res[pid].Calls != 1 {
 		t.Fatalf("purged %v", res)
 	}
-	calls := e.post("/calls/query", map[string]any{"project_id": pid})["calls"].([]any)
+	calls := e.spans(map[string]any{})
 	if len(calls) != 1 || calls[0].(map[string]any)["id"] != "new" {
 		t.Fatalf("calls after purge = %v", calls)
 	}
-	if fb := e.post("/feedback/query", map[string]any{"project_id": pid})["result"].([]any); len(fb) != 1 {
+	if fb := e.post("/api/v1/feedback/query", map[string]any{"project_id": pid})["items"].([]any); len(fb) != 1 {
 		t.Fatalf("recent feedback should be kept: %v", fb)
 	}
 	e.post("/project/ttl_settings/update", map[string]any{"project_id": pid, "retention_days": nil})
@@ -262,15 +274,16 @@ func TestIngestSampling(t *testing.T) {
 			want++
 		}
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": batch})
+	e.post("/api/v1/spans/batch", map[string]any{"items": batch})
 	// An end that arrives later for a dropped call stays dropped.
 	var late []any
 	for i := 0; i < n; i++ {
-		late = append(late, map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": fmt.Sprintf("t%04d", i),
-			"ended_at": time.Now().UTC().Format(time.RFC3339Nano), "output": 3}}})
+		late = append(late, map[string]any{"end": map[string]any{"project_id": pid, "id": fmt.Sprintf("t%04d", i),
+			"ended_at": time.Now().UTC().Format(time.RFC3339Nano), "output": 3}})
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": late})
-	calls := e.post("/calls/query", map[string]any{"project_id": pid, "limit": 10000})["calls"].([]any)
+	e.post("/api/v1/spans/batch", map[string]any{"items": late})
+	res := e.post("/api/v1/spans/query", map[string]any{"project_id": pid, "limit": 10000})
+	calls := res["items"].([]any)
 	byTrace := map[string]int{}
 	for _, c := range calls {
 		byTrace[c.(map[string]any)["trace_id"].(string)]++
@@ -283,15 +296,15 @@ func TestIngestSampling(t *testing.T) {
 			t.Fatalf("trace %s kept %d calls (root and child must share the decision)", tr, k)
 		}
 	}
-	if st := e.post("/calls/query_stats", map[string]any{"project_id": pid}); st["count"] != float64(2*want) {
-		t.Fatalf("stats = %v", st)
+	if res["total_count"] != float64(2*want) {
+		t.Fatalf("total_count = %v", res["total_count"])
 	}
 
 	// Dry run keeps everything and marks would-be drops.
 	p2 := "acme/dry"
 	e.post("/project/ingest_sampling_settings/update", map[string]any{"project_id": p2, "sample_rate": 0, "dry_run": true})
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(p2, "d1", "d1", nil, time.Now(), map[string]any{}, 1)})
-	c := e.post("/call/read", map[string]any{"project_id": p2, "id": "d1"})["call"].(map[string]any)
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(p2, "d1", "d1", nil, time.Now(), map[string]any{}, 1)})
+	c := e.getJSON("/api/v1/spans/d1?project_id=" + p2)
 	if c == nil || c["attributes"].(map[string]any)["weft_ingest_sampling"] == nil {
 		t.Fatalf("dry run call = %v", c)
 	}
@@ -314,9 +327,9 @@ func TestSensitiveDataRedaction(t *testing.T) {
 	text := "mail bob@example.com or call +1 415-555-0132; card 4111 1111 1111 1111; ssn 123-45-6789; ip 10.0.0.1; " +
 		"iban GB82 WEST 1234 5698 7654 32; key sk-proj-abcdefghijklmnopqrstuv123; ref ACME-4242; jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
 	ref := "weft:///" + pid + "/object/x:abc"
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "r1", "r1", nil, time.Now(),
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "r1", "r1", nil, time.Now(),
 		map[string]any{"q": text, "nested": []any{map[string]any{"email": "a@b.io"}}, "ref": ref, "count": 4111111111111111}, map[string]any{"answer": "reach me at bob@example.com"})})
-	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "r1"})["call"].(map[string]any)
+	c := e.span("r1")
 	q := c["inputs"].(map[string]any)["q"].(string)
 	for _, secret := range []string{"bob@example.com", "415-555-0132", "4111 1111 1111 1111", "123-45-6789", "10.0.0.1", "GB82 WEST", "sk-proj-", "ACME-4242", "eyJhbGci"} {
 		if strings.Contains(q, secret) {
@@ -342,7 +355,7 @@ func TestSensitiveDataRedaction(t *testing.T) {
 	if code, out := e.raw("/otel/v1/traces", body, map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("otel -> %d %s", code, out)
 	}
-	sp := e.post("/call/read", map[string]any{"project_id": pid, "id": "aaaaaaaaaaaaaaaa"})["call"].(map[string]any)
+	sp := e.span("aaaaaaaaaaaaaaaa")
 	raw, _ := json.Marshal(sp)
 	if bytes.Contains(raw, []byte("carol@example.org")) || bytes.Contains(raw, []byte("555-0199")) {
 		t.Fatalf("OTLP span not redacted: %s", raw)
@@ -353,8 +366,8 @@ func TestSensitiveDataRedaction(t *testing.T) {
 		t.Fatalf("preview = %v", pv)
 	}
 	e.post("/project/sensitive_data_settings/update", map[string]any{"project_id": pid, "policy": "off"})
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "r2", "r2", nil, time.Now(), map[string]any{"q": "bob@example.com"}, nil)})
-	if c := e.post("/call/read", map[string]any{"project_id": pid, "id": "r2"})["call"].(map[string]any); c["inputs"].(map[string]any)["q"] != "bob@example.com" {
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "r2", "r2", nil, time.Now(), map[string]any{"q": "bob@example.com"}, nil)})
+	if c := e.span("r2"); c["inputs"].(map[string]any)["q"] != "bob@example.com" {
 		t.Fatal("redaction should stop when the policy is off")
 	}
 }
@@ -363,10 +376,10 @@ func TestProjectDelete(t *testing.T) {
 	e := newEnv(t)
 	keep := "acme/keep"
 	for _, p := range []string{pid, keep} {
-		e.post("/call/upsert_batch", map[string]any{"batch": startEnd(p, "c", "c", nil, time.Now(), map[string]any{}, 1)})
-		e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": p, "object_id": "o", "val": map[string]any{"a": 1}}})
-		e.post("/table/create", map[string]any{"table": map[string]any{"project_id": p, "rows": []any{map[string]any{"x": 1}}}})
-		e.post("/feedback/create", map[string]any{"project_id": p, "ref": "weft:///" + p + "/call/c", "feedback_type": "weft.note", "payload": map[string]any{"note": "n"}})
+		e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(p, "c", "c", nil, time.Now(), map[string]any{}, 1)})
+		e.post("/api/v1/objects/save", map[string]any{"project_id": p, "name": "o", "value": map[string]any{"a": 1}})
+		e.post("/api/v1/tables/create", map[string]any{"project_id": p, "rows": []any{map[string]any{"x": 1}}})
+		e.feedback(map[string]any{"project_id": p, "ref": "weft:///" + p + "/span/c", "feedback_type": "weft.note", "payload": map[string]any{"note": "n"}})
 		e.post("/project/ttl_settings/update", map[string]any{"project_id": p, "retention_days": 3})
 	}
 	if code, _ := e.raw("/project/delete", map[string]any{"project_id": pid, "confirm": "acme/other"}, nil); code != 400 {
@@ -376,8 +389,8 @@ func TestProjectDelete(t *testing.T) {
 	if res["deleted"].(map[string]any)["calls"] != float64(1) {
 		t.Fatalf("delete = %v", res)
 	}
-	st := e.post("/project/stats", map[string]any{"project_id": pid})
-	for _, k := range []string{"call_count", "object_count", "table_count", "feedback_count"} {
+	st := e.getJSON("/api/v1/projects/stats?project_id=" + pid)
+	for _, k := range []string{"span_count", "object_count", "table_count", "feedback_count"} {
 		if st[k] != float64(0) {
 			t.Fatalf("%s left after delete: %v", k, st)
 		}
@@ -385,8 +398,8 @@ func TestProjectDelete(t *testing.T) {
 	if r := e.post("/project/ttl_settings/read", map[string]any{"project_id": pid}); r["retention_days"] != nil {
 		t.Fatalf("settings should be deleted: %v", r)
 	}
-	st = e.post("/project/stats", map[string]any{"project_id": keep})
-	if st["call_count"] != float64(1) || st["object_count"] != float64(1) || st["feedback_count"] != float64(1) {
+	st = e.getJSON("/api/v1/projects/stats?project_id=" + keep)
+	if st["span_count"] != float64(1) || st["object_count"] != float64(1) || st["feedback_count"] != float64(1) {
 		t.Fatalf("other project touched: %v", st)
 	}
 	for _, p := range e.post("/projects", nil)["projects"].([]any) {
@@ -403,7 +416,7 @@ func newEnvWithServer(t *testing.T) (*testEnv, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{}, st)
+	s := New(nativeOnly(Config{}), st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()

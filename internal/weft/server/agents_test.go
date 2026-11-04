@@ -433,9 +433,10 @@ func TestAgentConversationsAndChat(t *testing.T) {
 func TestAgentConversationFeedbackMarkers(t *testing.T) {
 	e := newEnv(t)
 	seedAgentData(t, e, time.Now().Add(-time.Hour))
-	ref := "weft:///" + pid + "/call/" + hexID("a1", 16)
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.helpful", "payload": map[string]any{"output": 0.8}})
+	ref := spanRef(hexID("a1", 16))
+	e.feedback(map[string]any{"ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
+	// A ref with the older kind name ("call") is read as a span ref.
+	e.feedback(map[string]any{"ref": "weft:///" + pid + "/call/" + hexID("a1", 16), "feedback_type": "weft.scorer.helpful", "payload": map[string]any{"output": 0.8}})
 	cs := e.post("/agents/conversations/spans", map[string]any{"project_id": pid, "conversation_ids": []any{"conv-1"}})
 	fb := cs["conversations"].([]any)[0].(map[string]any)["spans_feedback"].([]any)
 	if len(fb) != 2 {
@@ -498,24 +499,24 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 	ts := func(ms int) string { return now.Add(time.Duration(ms) * time.Millisecond).Format(time.RFC3339Nano) }
 	thread := "thread-sdk"
 	start := func(id, parent, op string, ms int, attrs, inputs map[string]any) map[string]any {
-		s := map[string]any{"project_id": pid, "id": id, "trace_id": "tr-" + id[:2], "op_name": op, "started_at": ts(ms), "attributes": attrs, "inputs": inputs,
-			"thread_id": thread}
+		s := map[string]any{"project_id": pid, "id": id, "trace_id": "tr-" + id[:2], "name": op, "started_at": ts(ms), "attributes": attrs, "inputs": inputs,
+			"session_id": thread}
 		if parent != "" {
 			s["parent_id"] = parent
 			s["trace_id"] = "tr-" + parent[:2]
 		} else {
 			s["turn_id"] = id
 		}
-		return map[string]any{"mode": "start", "req": map[string]any{"start": s}}
+		return map[string]any{"start": s}
 	}
 	end := func(id string, ms int, out any, usage map[string]any) map[string]any {
 		en := map[string]any{"project_id": pid, "id": id, "ended_at": ts(ms), "output": out, "summary": map[string]any{}}
 		if usage != nil {
 			en["summary"] = map[string]any{"usage": usage}
 		}
-		return map[string]any{"mode": "end", "req": map[string]any{"end": en}}
+		return map[string]any{"end": en}
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": []any{
+	e.post("/api/v1/spans/batch", map[string]any{"items": []any{
 		start("t1-root", "", "support_bot", 0, map[string]any{"weft": map[string]any{"span_kind": "agent", "color": "purple"}, "gen_ai.agent.version": "1.2"}, map[string]any{"question": "Reset my password"}),
 		start("t1-llm", "t1-root", "openai.chat.completions.create", 10, map[string]any{},
 			map[string]any{"model": "gpt-4o-mini", "messages": []any{map[string]any{"role": "user", "content": "Reset my password"}}}),
@@ -548,7 +549,7 @@ func TestAgentsFromSDKCalls(t *testing.T) {
 		t.Fatalf("sdk turn = %v", turn)
 	}
 	// Deleting the turn removes it from agent views.
-	e.post("/calls/delete", map[string]any{"project_id": pid, "call_ids": []any{"t1-root"}})
+	e.post("/api/v1/spans/delete", map[string]any{"project_id": pid, "ids": []any{"t1-root"}})
 	res = e.post("/agents/query", map[string]any{"project_id": pid})
 	if findAgent(res["agents"].([]any), "support_bot") != nil {
 		t.Fatalf("deleted agent still listed: %v", res)
@@ -593,9 +594,9 @@ func TestAgentSpansParentCallLink(t *testing.T) {
 		}
 	}
 	// An SDK-recorded span (nested attributes), as the Weft SDKs send it.
-	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "sdk-llm-weft", "trace_id": "sdk-trace-3",
-		"op_name": "chat", "started_at": now, "inputs": map[string]any{},
-		"attributes": map[string]any{"weft": map[string]any{"span_kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-3", "id": "op-call-3"}}}}})
+	e.startSpan(map[string]any{"id": "sdk-llm-weft", "trace_id": "sdk-trace-3",
+		"name": "chat", "started_at": now, "inputs": map[string]any{},
+		"attributes": map[string]any{"weft": map[string]any{"span_kind": "llm", "parent_call": map[string]any{"trace_id": "op-trace-3", "id": "op-call-3"}}}})
 	if s := query("weft.parent_call.id", "op-call-3"); len(s) != 1 || s[0].(map[string]any)["span_id"] != "sdk-llm-weft" ||
 		s[0].(map[string]any)["parent_call_trace_id"] != "op-trace-3" {
 		t.Fatalf("weft.parent_call link = %v", s)

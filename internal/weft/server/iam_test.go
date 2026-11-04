@@ -23,7 +23,7 @@ func newIAMEnv(t *testing.T, iam IAMConfig) (*testEnv, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{APIKeys: []string{"root"}, IAM: iam}, st)
+	s := New(nativeOnly(Config{APIKeys: []string{"root"}, IAM: iam}), st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()
@@ -42,9 +42,10 @@ func (e *testEnv) mustCode(want int, method, path, key string, body any) []byte 
 	return out
 }
 
+// callStart is the body of POST /api/v1/spans/start.
 func callStart(project, id string) map[string]any {
-	return map[string]any{"start": map[string]any{"project_id": project, "id": id, "trace_id": id, "op_name": "op",
-		"started_at": time.Now().UTC().Format(time.RFC3339Nano), "inputs": map[string]any{}}}
+	return map[string]any{"project_id": project, "id": id, "trace_id": id, "name": "op",
+		"started_at": time.Now().UTC().Format(time.RFC3339Nano), "inputs": map[string]any{}}
 }
 
 // rbacFixture: users alice (admin of team acme), bob (member of acme),
@@ -88,20 +89,22 @@ func TestRBACRoles(t *testing.T) {
 	f := newRBAC(t)
 	e := f.e
 	// Members write, viewers read.
-	e.mustCode(200, "POST", "/call/start", f.bob, callStart("acme/app", "b1"))
-	e.mustCode(200, "POST", "/calls/query", f.carol, map[string]any{"project_id": "acme/app"})
-	e.mustCode(403, "POST", "/call/start", f.carol, callStart("acme/app", "c1"))
-	e.mustCode(403, "POST", "/obj/create", f.carol, map[string]any{"obj": map[string]any{"project_id": "acme/app", "object_id": "o", "val": 1}})
-	e.mustCode(403, "POST", "/feedback/create", f.carol, map[string]any{"project_id": "acme/app", "ref": "weft:///acme/app/call/b1",
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.bob, callStart("acme/app", "b1"))
+	e.mustCode(200, "POST", "/api/v1/spans/query", f.carol, map[string]any{"project_id": "acme/app"})
+	e.mustCode(403, "POST", "/api/v1/spans/start", f.carol, callStart("acme/app", "c1"))
+	e.mustCode(403, "POST", "/api/v1/objects/save", f.carol, map[string]any{"project_id": "acme/app", "name": "o", "value": 1})
+	e.mustCode(403, "POST", "/api/v1/feedback/create", f.carol, map[string]any{"project_id": "acme/app", "ref": "weft:///acme/app/span/b1",
 		"feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
-	e.mustCode(403, "POST", "/calls/delete", f.carol, map[string]any{"project_id": "acme/app", "call_ids": []any{"b1"}})
+	e.mustCode(403, "POST", "/api/v1/spans/delete", f.carol, map[string]any{"project_id": "acme/app", "ids": []any{"b1"}})
+	e.mustCode(200, "GET", "/api/v1/spans/b1?project_id=acme/app", f.carol, nil)
 	// A direct project role is stronger than the team role.
-	e.mustCode(200, "POST", "/call/start", f.carol, callStart("acme/special", "c2"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.carol, callStart("acme/special", "c2"))
 	// No role: no access at all.
-	e.mustCode(403, "POST", "/calls/query", f.dave, map[string]any{"project_id": "acme/app"})
-	e.mustCode(403, "GET", "/v2/acme/app/datasets", f.dave, nil)
-	e.mustCode(403, "POST", "/refs/read_batch", f.dave, map[string]any{"refs": []any{"weft:///acme/app/object/o:abc"}})
-	e.mustCode(200, "POST", "/call/start", f.dave, callStart("beta/app", "d1"))
+	e.mustCode(403, "POST", "/api/v1/spans/query", f.dave, map[string]any{"project_id": "acme/app"})
+	e.mustCode(403, "GET", "/api/v1/objects/o?project_id=acme/app", f.dave, nil)
+	e.mustCode(403, "GET", "/api/v1/spans/b1?project_id=acme/app", f.dave, nil)
+	e.mustCode(403, "POST", "/api/v1/refs/read", f.dave, map[string]any{"refs": []any{"weft:///acme/app/object/o:abc"}})
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.dave, callStart("beta/app", "d1"))
 
 	// Members cannot use admin endpoints.
 	for _, x := range []struct {
@@ -128,23 +131,23 @@ func TestRBACRoles(t *testing.T) {
 	// The team admin manages its projects and team, but nothing else.
 	e.mustCode(200, "POST", "/project/ttl_settings/update", f.alice, map[string]any{"project_id": "acme/app", "retention_days": 30})
 	e.mustCode(200, "POST", "/project/members/set", f.alice, map[string]any{"project_id": "acme/app", "user_id": "dave", "role": "viewer"})
-	e.mustCode(200, "POST", "/calls/query", f.dave, map[string]any{"project_id": "acme/app"})
-	e.mustCode(403, "POST", "/call/start", f.dave, callStart("acme/app", "d2"))
+	e.mustCode(200, "POST", "/api/v1/spans/query", f.dave, map[string]any{"project_id": "acme/app"})
+	e.mustCode(403, "POST", "/api/v1/spans/start", f.dave, callStart("acme/app", "d2"))
 	e.mustCode(200, "POST", "/teams/members/set", f.alice, map[string]any{"team": "acme", "user_id": "dave", "role": "member"})
-	e.mustCode(200, "POST", "/call/start", f.dave, callStart("acme/app", "d3"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.dave, callStart("acme/app", "d3"))
 	e.mustCode(200, "POST", "/teams/members/remove", f.alice, map[string]any{"team": "acme", "user_id": "dave"})
-	e.mustCode(403, "POST", "/call/start", f.dave, callStart("acme/app", "d4"))
+	e.mustCode(403, "POST", "/api/v1/spans/start", f.dave, callStart("acme/app", "d4"))
 	e.mustCode(403, "POST", "/project/ttl_settings/update", f.alice, map[string]any{"project_id": "beta/app", "retention_days": 30})
 	e.mustCode(403, "POST", "/teams/members/set", f.alice, map[string]any{"team": "beta", "user_id": "alice", "role": "admin"})
 	e.mustCode(403, "POST", "/users/update", f.alice, map[string]any{"id": "alice", "admin": true})
 	e.mustCode(403, "POST", "/secrets/set", f.alice, map[string]any{"name": "X", "value": "y"})
 	e.mustCode(200, "GET", "/users/list", f.alice, nil)
 	// A request smuggling a second project is checked on every project.
-	e.mustCode(403, "POST", "/call/upsert_batch", f.bob, map[string]any{"batch": append(
+	e.mustCode(403, "POST", "/api/v1/spans/batch", f.bob, map[string]any{"items": append(
 		startEnd("acme/app", "s1", "s1", nil, time.Now(), map[string]any{}, 1),
 		startEnd("beta/app", "s2", "s2", nil, time.Now(), map[string]any{}, 1)...)})
 	// A non-admin request that names no project is refused.
-	e.mustCode(403, "POST", "/calls/query", f.bob, map[string]any{})
+	e.mustCode(403, "POST", "/api/v1/spans/query", f.bob, map[string]any{})
 
 	// /projects lists only projects the caller can see.
 	ps := e.admJSON("GET", "/projects", f.carol, nil)["projects"].([]any)
@@ -177,21 +180,21 @@ func TestRBACKeys(t *testing.T) {
 	e := f.e
 	// Cross-project key: dave is a member of beta/app, but this key is limited to it.
 	e.admJSON("POST", "/project/members/set", "root", map[string]any{"project_id": "beta/other", "user_id": "dave", "role": "member"})
-	e.mustCode(200, "POST", "/call/start", f.dave, callStart("beta/other", "x1"))
-	e.mustCode(403, "POST", "/call/start", f.daveApp, callStart("beta/other", "x2"))
-	e.mustCode(200, "POST", "/call/start", f.daveApp, callStart("beta/app", "x3"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.dave, callStart("beta/other", "x1"))
+	e.mustCode(403, "POST", "/api/v1/spans/start", f.daveApp, callStart("beta/other", "x2"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.daveApp, callStart("beta/app", "x3"))
 
 	// Read-only key of a member cannot write.
 	ro, _ := createKey(e, "root", map[string]any{"name": "bob-ro", "user_id": "bob", "read_only": true})
-	e.mustCode(200, "POST", "/calls/query", ro, map[string]any{"project_id": "acme/app"})
-	e.mustCode(403, "POST", "/call/start", ro, callStart("acme/app", "r1"))
+	e.mustCode(200, "POST", "/api/v1/spans/query", ro, map[string]any{"project_id": "acme/app"})
+	e.mustCode(403, "POST", "/api/v1/spans/start", ro, callStart("acme/app", "r1"))
 
 	// Self-service keys: for yourself only, never admin, never broader.
 	sec, k := createKey(e, f.bob, map[string]any{"name": "bob-ci"})
 	if k["user_id"] != "bob" || k["user_bound"] != true {
 		t.Fatalf("self key = %v", k)
 	}
-	e.mustCode(200, "POST", "/call/start", sec, callStart("acme/app", "b2"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", sec, callStart("acme/app", "b2"))
 	e.mustCode(403, "POST", "/api_keys/create", f.bob, map[string]any{"name": "x", "user_id": "alice"})
 	e.mustCode(403, "POST", "/api_keys/create", f.bob, map[string]any{"name": "x", "admin": true})
 	e.mustCode(403, "POST", "/api_keys/create", f.daveApp, map[string]any{"name": "x"})
@@ -216,14 +219,14 @@ func TestRBACKeys(t *testing.T) {
 
 	// Disabling a user turns their keys off at once; re-enabling restores them.
 	e.mustCode(200, "POST", "/users/update", "root", map[string]any{"id": "bob", "disabled": true})
-	e.mustCode(401, "POST", "/calls/query", f.bob, map[string]any{"project_id": "acme/app"})
+	e.mustCode(401, "POST", "/api/v1/spans/query", f.bob, map[string]any{"project_id": "acme/app"})
 	e.mustCode(200, "POST", "/users/update", "root", map[string]any{"id": "bob", "disabled": false})
-	e.mustCode(200, "POST", "/calls/query", f.bob, map[string]any{"project_id": "acme/app"})
+	e.mustCode(200, "POST", "/api/v1/spans/query", f.bob, map[string]any{"project_id": "acme/app"})
 
 	// A server-admin user's key is a server admin; its read-only key is not.
 	e.mustCode(200, "POST", "/users/update", "root", map[string]any{"id": "carol", "admin": true})
 	e.mustCode(200, "POST", "/secrets/set", f.carol, map[string]any{"name": "X", "value": "y"})
-	e.mustCode(200, "POST", "/call/start", f.carol, callStart("zeta/x", "z1"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.carol, callStart("zeta/x", "z1"))
 	cro, _ := createKey(e, "root", map[string]any{"name": "carol-ro", "user_id": "carol", "read_only": true})
 	e.mustCode(403, "POST", "/secrets/set", cro, map[string]any{"name": "X", "value": "y"})
 	// Admins cannot demote or disable themselves.
@@ -244,12 +247,12 @@ func TestRBACKeys(t *testing.T) {
 func TestAuditLog(t *testing.T) {
 	f := newRBAC(t)
 	e, s := f.e, f.s
-	e.mustCode(200, "POST", "/call/start", f.bob, callStart("acme/app", "call-1"))
-	e.mustCode(200, "POST", "/obj/create", f.bob, map[string]any{"obj": map[string]any{"project_id": "acme/app", "object_id": "my-ds", "val": 1}})
-	e.mustCode(403, "POST", "/call/start", f.carol, callStart("acme/app", "call-2"))
+	e.mustCode(200, "POST", "/api/v1/spans/start", f.bob, callStart("acme/app", "call-1"))
+	e.mustCode(200, "POST", "/api/v1/objects/save", f.bob, map[string]any{"project_id": "acme/app", "name": "my-ds", "value": 1})
+	e.mustCode(403, "POST", "/api/v1/spans/start", f.carol, callStart("acme/app", "call-2"))
 	e.mustCode(403, "POST", "/project/delete", f.bob, map[string]any{"project_id": "acme/app"})
-	e.mustCode(401, "POST", "/call/start", "bogus", callStart("acme/app", "call-3"))
-	e.mustCode(200, "POST", "/calls/query", f.bob, map[string]any{"project_id": "acme/app"}) // reads are not recorded
+	e.mustCode(401, "POST", "/api/v1/spans/start", "bogus", callStart("acme/app", "call-3"))
+	e.mustCode(200, "POST", "/api/v1/spans/query", f.bob, map[string]any{"project_id": "acme/app"}) // reads are not recorded
 	e.mustCode(200, "POST", "/secrets/set", "root", map[string]any{"name": "AUDIT_SECRET", "value": "hunter2-value"})
 
 	all := e.admJSON("POST", "/audit/query", "root", map[string]any{"limit": 100})
@@ -262,12 +265,12 @@ func TestAuditLog(t *testing.T) {
 		}
 		return nil
 	}
-	start := find(func(m map[string]any) bool { return m["path"] == "/call/start" && m["outcome"] == "success" })
+	start := find(func(m map[string]any) bool { return m["path"] == "/api/v1/spans/start" && m["outcome"] == "success" })
 	if start == nil || start["actor"] != "bob" || start["project_id"] != "acme/app" || start["auth_method"] != "api_key" ||
 		len(start["call_ids"].([]any)) != 1 || start["call_ids"].([]any)[0] != "call-1" || start["key_id"] == nil {
 		t.Fatalf("call start entry = %v", start)
 	}
-	if o := find(func(m map[string]any) bool { return m["path"] == "/obj/create" }); o == nil || o["object_ids"].([]any)[0] != "my-ds" {
+	if o := find(func(m map[string]any) bool { return m["path"] == "/api/v1/objects/save" }); o == nil || o["object_ids"].([]any)[0] != "my-ds" {
 		t.Fatalf("obj entry = %v", o)
 	}
 	if d := find(func(m map[string]any) bool { return m["actor"] == "carol" && m["outcome"] == "denied" }); d == nil || d["status"].(float64) != 403 {
@@ -279,7 +282,7 @@ func TestAuditLog(t *testing.T) {
 	if d := find(func(m map[string]any) bool { return m["outcome"] == "unauthenticated" }); d == nil || d["actor"] != "anonymous" {
 		t.Fatal("unauthenticated write not recorded")
 	}
-	if find(func(m map[string]any) bool { return m["path"] == "/calls/query" && m["outcome"] == "success" }) != nil {
+	if find(func(m map[string]any) bool { return m["path"] == "/api/v1/spans/query" && m["outcome"] == "success" }) != nil {
 		t.Fatal("reads should not be recorded")
 	}
 	if d := find(func(m map[string]any) bool {
@@ -305,7 +308,7 @@ func TestAuditLog(t *testing.T) {
 	}
 	e.mustCode(403, "POST", "/audit/query", f.alice, map[string]any{})
 	e.mustCode(403, "POST", "/audit/query", f.alice, map[string]any{"project_id": "beta/app"})
-	denied := e.admJSON("POST", "/audit/query", "root", map[string]any{"outcome": "denied", "method": "post", "path_prefix": "/call/"})
+	denied := e.admJSON("POST", "/audit/query", "root", map[string]any{"outcome": "denied", "method": "post", "path_prefix": "/api/v1/spans/"})
 	if denied["total_count"].(float64) != 1 {
 		t.Fatalf("denied filter = %v", denied["total_count"])
 	}
@@ -388,21 +391,21 @@ func TestSessionsAndCSRF(t *testing.T) {
 	if code, out := cookieDo(t, e, "GET", "/auth/me", nil, cs, nil); code != 200 || !bytes.Contains(out, []byte(`"auth_method":"session"`)) {
 		t.Fatalf("me -> %d %s", code, out)
 	}
-	if code, _ := cookieDo(t, e, "POST", "/calls/query", map[string]any{"project_id": "acme/app"}, cs, nil); code != 403 {
+	if code, _ := cookieDo(t, e, "POST", "/api/v1/spans/query", map[string]any{"project_id": "acme/app"}, cs, nil); code != 403 {
 		t.Fatalf("POST without CSRF header -> %d", code)
 	}
-	if code, _ := cookieDo(t, e, "POST", "/call/start", callStart("acme/app", "s1"), cs, map[string]string{csrfHeader: "wrong"}); code != 403 {
+	if code, _ := cookieDo(t, e, "POST", "/api/v1/spans/start", callStart("acme/app", "s1"), cs, map[string]string{csrfHeader: "wrong"}); code != 403 {
 		t.Fatalf("wrong CSRF -> %d", code)
 	}
 	s.FlushAudit()
-	if ents, _, _ := s.store.QueryAudit(t.Context(), store.AuditFilter{Outcome: "denied", PathPrefix: "/call/start"}); len(ents) != 1 ||
+	if ents, _, _ := s.store.QueryAudit(t.Context(), store.AuditFilter{Outcome: "denied", PathPrefix: "/api/v1/spans/start"}); len(ents) != 1 ||
 		ents[0].Actor != "bob" || ents[0].AuthMethod != "session" {
 		t.Fatalf("CSRF denial audit = %+v", ents)
 	}
-	if code, out := cookieDo(t, e, "POST", "/call/start", callStart("acme/app", "s1"), cs, ok); code != 200 {
+	if code, out := cookieDo(t, e, "POST", "/api/v1/spans/start", callStart("acme/app", "s1"), cs, ok); code != 200 {
 		t.Fatalf("session write -> %d %s", code, out)
 	}
-	if code, _ := cookieDo(t, e, "POST", "/call/start", callStart("acme/app", "s2"), cs,
+	if code, _ := cookieDo(t, e, "POST", "/api/v1/spans/start", callStart("acme/app", "s2"), cs,
 		map[string]string{csrfHeader: csrf.Value, "Origin": "https://evil.example"}); code != 403 {
 		t.Fatalf("foreign origin -> %d", code)
 	}
@@ -411,7 +414,7 @@ func TestSessionsAndCSRF(t *testing.T) {
 		t.Fatalf("member session deleting project -> %d", code)
 	}
 	// The call is attributed to the session's user.
-	c := e.admJSON("POST", "/call/read", "root", map[string]any{"project_id": "acme/app", "id": "s1"})["call"].(map[string]any)
+	c := e.admJSON("GET", "/api/v1/spans/s1?project_id=acme/app", "root", nil)
 	if c["user_id"] != "bob" {
 		t.Fatalf("user_id = %v", c["user_id"])
 	}
@@ -422,7 +425,7 @@ func TestSessionsAndCSRF(t *testing.T) {
 		t.Fatalf("tampered cookie -> %d", code)
 	}
 	// An API key in the request wins and needs no CSRF token.
-	if code, _ := cookieDo(t, e, "POST", "/call/start", callStart("acme/app", "s3"), cs, map[string]string{"Authorization": "Bearer " + f.bob}); code != 200 {
+	if code, _ := cookieDo(t, e, "POST", "/api/v1/spans/start", callStart("acme/app", "s3"), cs, map[string]string{"Authorization": "Bearer " + f.bob}); code != 200 {
 		t.Fatalf("key with cookie -> %d", code)
 	}
 	// Logout needs the CSRF token, then revokes the session.

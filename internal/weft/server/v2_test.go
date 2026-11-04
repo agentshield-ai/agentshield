@@ -7,7 +7,7 @@ import (
 )
 
 func TestV2ObjectsCRUD(t *testing.T) {
-	e := newEnv(t)
+	e := newLegacyEnv(t)
 	base := "/v2/acme/evals"
 	op := e.admJSON("POST", base+"/ops", "", map[string]any{"source_code": "def shout(x):\n    return x.upper()\n"})
 	if op["object_id"] != "shout" || op["version_index"] != float64(0) {
@@ -62,7 +62,7 @@ func TestV2ObjectsCRUD(t *testing.T) {
 }
 
 func TestV2EvaluationFlow(t *testing.T) {
-	e := newEnv(t)
+	e := newLegacyEnv(t)
 	base := "/v2/acme/evals"
 	ds := e.admJSON("POST", base+"/datasets", "", map[string]any{"name": "qa", "rows": []any{map[string]any{"q": "a", "expected": "A"}, map[string]any{"q": "b", "expected": "B"}}})
 	dsRef := "weft:///acme/evals/object/qa:" + ds["digest"].(string)

@@ -25,7 +25,7 @@ func TestHelpGuides(t *testing.T) {
 		t.Fatalf("sessions.md = %.200v", g)
 	}
 	g := e.doJSON("GET", "/api/v1/help/API.md", nil, "")
-	if !strings.Contains(g["markdown"].(string), "/call/start") || g["title"] == "" {
+	if !strings.Contains(g["markdown"].(string), "/api/v1/spans/start") || g["title"] == "" {
 		t.Fatalf("API.md = %.200v", g)
 	}
 	for _, bad := range []string{"PROVENANCE.md", "..%2Fgo.mod", "nope.md", "guides%2Fsessions.md"} {

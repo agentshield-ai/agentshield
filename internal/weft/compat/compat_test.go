@@ -8,13 +8,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/compat"
+	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
+	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/server"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/go-chi/chi/v5"
 )
 
 const pid = "acme/evals"
@@ -25,22 +30,37 @@ type env struct {
 	key string
 }
 
+var legacyOff = false
+
+// newEnv builds a server with the adapter on or off; with it off, the older
+// route shapes are off too (server.Config.LegacyRoutes false), as they will
+// be by default once Weft's SDKs and UI use only the native API.
 func newEnv(t *testing.T, compatOn bool, keys ...string) *env {
+	t.Helper()
+	e, _ := newEnvServer(t, compatOn, keys...)
+	return e
+}
+
+func newEnvServer(t *testing.T, compatOn bool, keys ...string) (*env, *server.Server) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "weft.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := server.New(server.Config{APIKeys: keys, Compat: compatOn, UI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cfg := server.Config{APIKeys: keys, Compat: compatOn, UI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ui"))
-	})}, st)
+	})}
+	if !compatOn {
+		cfg.LegacyRoutes = &legacyOff
+	}
+	s := server.New(cfg, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()
 		s.Close()
 		_ = st.Close()
 	})
-	return &env{t: t, srv: hs}
+	return &env{t: t, srv: hs}, s
 }
 
 func (e *env) raw(method, path string, body any, headers map[string]string) (int, []byte, http.Header) {
@@ -87,33 +107,103 @@ func (e *env) post(path string, body any, headers map[string]string) map[string]
 
 var weaveUA = map[string]string{"User-Agent": "WeaveTrace/Python 0.54.0"}
 
-// With the adapter off, its routes do not exist and legacy names get no
-// special treatment.
+// routeSet lists a handler's routes as "METHOD pattern".
+func routeSet(t *testing.T, h http.Handler) map[string]bool {
+	t.Helper()
+	rs, ok := h.(chi.Routes)
+	if !ok {
+		t.Fatalf("handler %T is not a chi router", h)
+	}
+	out := map[string]bool{}
+	if err := chi.Walk(rs, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		out[method+" "+route] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+var paramRe = regexp.MustCompile(`\{[^}]+\}`)
+
+// With the adapter off (and the older routes off), every route that only
+// the adapter serves returns 404, and legacy names get no special treatment.
 func TestOffByDefault(t *testing.T) {
-	e := newEnv(t, false)
-	for _, p := range []string{"/graphql", "/v2/acme/evals/calls/complete", "/v2/acme/evals/call/start", "/service/projects_info"} {
-		if code, out, _ := e.raw(http.MethodPost, p, map[string]any{}, nil); code != 404 {
-			t.Fatalf("%s with the adapter off -> %d %s", p, code, out)
+	e, off := newEnvServer(t, false)
+	_, on := newEnvServer(t, true)
+	offRoutes, onRoutes := routeSet(t, off.Handler()), routeSet(t, on.Handler())
+	var adapterOnly []string
+	for r := range onRoutes {
+		if !offRoutes[r] {
+			adapterOnly = append(adapterOnly, r)
 		}
 	}
-	_, si, _ := e.raw(http.MethodGet, "/server_info", nil, nil)
-	if strings.Contains(string(si), "weave") {
-		t.Fatalf("server_info names the adapter while it is off: %s", si)
+	sort.Strings(adapterOnly)
+	// The older route shapes are all among them.
+	for _, want := range []string{"POST /call/start", "POST /call/upsert_batch", "POST /calls/stream_query", "POST /obj/create",
+		"POST /objs/query", "POST /table/create", "POST /refs/read_batch", "POST /file/create", "GET /file/content",
+		"POST /files/resolve_url", "POST /feedback/create", "POST /cost/query", "POST /threads/query", "POST /trace/usage",
+		"POST /completions/create", "POST /evaluate_model", "POST /evaluation_status", "POST /evaluations/compare",
+		"POST /leaderboard/compute", "GET /server_info", "GET /version", "GET /geolocate", "GET /inference/catalog/models",
+		"GET /tags", "GET /aliases", "POST /link_to_registry", "POST /registry/query", "POST /dataset_sources/query",
+		"POST /embeddings/create", "POST /image/create", "POST /project/stats", "POST /calls/metrics", "POST /calls/export",
+		"PUT /v2/{entity}/{project}/runtimes/{runtime_name}", "POST /v2/{entity}/{project}/datasets",
+		"POST /v1/entities/{entity}/projects/{project}:export", "POST /graphql", "POST /service/projects_info",
+		"POST /v2/{entity}/{project}/calls/complete"} {
+		if !onRoutes[want] || offRoutes[want] {
+			t.Errorf("%s: on=%v off=%v; want only with the adapter", want, onRoutes[want], offRoutes[want])
+		}
+	}
+	if len(adapterOnly) < 90 {
+		t.Fatalf("only %d adapter routes: %v", len(adapterOnly), adapterOnly)
+	}
+	for _, r := range adapterOnly {
+		method, pattern, _ := strings.Cut(r, " ")
+		path := paramRe.ReplaceAllString(strings.TrimSuffix(pattern, "/*"), "x")
+		if strings.HasSuffix(pattern, "/*") {
+			path += "/y"
+		}
+		code, out, _ := e.raw(method, path, map[string]any{"project_id": pid}, nil)
+		// GET falls through to the UI for paths the server does not know;
+		// the UI's own pages show "not found" for them.
+		if method == http.MethodGet && code == 200 && string(out) == "ui" {
+			continue
+		}
+		if code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s with the adapter off -> %d %s, want 404", method, path, code, out)
+		}
+	}
+	// None of Weft's own routes is an adapter route.
+	for r := range offRoutes {
+		if strings.Contains(r, "/api/v1/") && !onRoutes[r] {
+			t.Errorf("native route %s missing with the adapter on", r)
+		}
+	}
+	_, si, _ := e.raw(http.MethodGet, "/api/v1/server", nil, nil)
+	if strings.Contains(string(si), "weave") || strings.Contains(string(si), "compat") {
+		t.Fatalf("server description names the adapter while it is off: %s", si)
 	}
 	// /e/p/weave/... is an ordinary UI path (the UI shows its not-found page).
 	if code, out, _ := e.raw(http.MethodGet, "/acme/evals/weave/calls/x", nil, nil); code != 200 || string(out) != "ui" {
 		t.Fatalf("weave link with the adapter off -> %d %s", code, out)
 	}
-	// Legacy refs are not refs.
-	code, out, _ := e.raw(http.MethodPost, "/feedback/create", map[string]any{"project_id": pid,
-		"weave_ref": "weave:///" + pid + "/call/c1", "feedback_type": "wandb.note.1", "payload": map[string]any{"note": "x"}}, nil)
-	if code != 400 {
-		t.Fatalf("legacy feedback with the adapter off -> %d %s", code, out)
+	// Legacy refs are not refs, and the legacy field name is unknown.
+	for _, body := range []map[string]any{
+		{"project_id": pid, "weave_ref": "weave:///" + pid + "/call/c1", "feedback_type": "weft.note", "payload": map[string]any{"note": "x"}},
+		{"project_id": pid, "ref": "weave:///" + pid + "/call/c1", "feedback_type": "weft.note", "payload": map[string]any{"note": "x"}},
+	} {
+		if code, out, _ := e.raw(http.MethodPost, "/api/v1/feedback/create", body, nil); code != 400 {
+			t.Fatalf("legacy feedback with the adapter off -> %d %s", code, out)
+		}
 	}
 	// Responses keep Weft's names even for the weave client's user agent.
-	start(t, e, "c1", nil)
-	_, body, _ := e.raw(http.MethodPost, "/calls/query", map[string]any{"project_id": pid}, weaveUA)
-	if strings.Contains(string(body), "weave:///") || !strings.Contains(string(body), `"weft":{`) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.post("/api/v1/spans/start", map[string]any{"project_id": pid, "id": "c1", "name": "op", "started_at": now}, nil)
+	e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/span/c1", "feedback_type": "weft.note",
+		"payload": map[string]any{"note": "x"}}, nil)
+	_, body, _ := e.raw(http.MethodPost, "/api/v1/spans/query", map[string]any{"project_id": pid, "include_feedback": true}, weaveUA)
+	if strings.Contains(string(body), "weave:///") || !strings.Contains(string(body), `"weft":{`) ||
+		!strings.Contains(string(body), `"weft:///`+pid+`/span/c1"`) || strings.Contains(string(body), "wandb.") {
 		t.Fatalf("adapter-off response rewritten: %s", body)
 	}
 }
@@ -393,5 +483,49 @@ func TestEnvAliases(t *testing.T) {
 	_ = fs2.Parse(nil)
 	if !compat.Enabled(fs2, *off) {
 		t.Fatal("env not honoured")
+	}
+}
+
+// The adapter computes digests in the client's form (the client computes
+// them itself and uses them in refs before the server answers), and names
+// function and span refs with the client's kinds, in its ref scheme.
+func TestAdapterDigestsAndRefKinds(t *testing.T) {
+	e := newEnv(t, true)
+	val := map[string]any{"_type": "Op", "name": "f", "code": "def f(): pass"}
+	raw, _ := json.Marshal(val)
+	dv, _ := refs.Decode(raw)
+	want, _ := legacy.Digester.Value(dv)
+	got := e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": pid, "object_id": "f", "val": val}}, weaveUA)
+	if got["digest"] != want {
+		t.Fatalf("adapter digest = %v, want the client's %s", got["digest"], want)
+	}
+	tbl := e.post("/table/create", map[string]any{"table": map[string]any{"project_id": pid, "rows": []any{map[string]any{"a": 1}}}}, weaveUA)
+	rowRaw, _ := refs.Decode([]byte(`{"a": 1}`))
+	row, _ := legacy.Digester.Value(rowRaw)
+	if tbl["row_digests"].([]any)[0] != row || tbl["digest"] != legacy.TableDigest([]string{row}) {
+		t.Fatalf("adapter table = %v", tbl)
+	}
+	// Weft's own API writes Weft's digests, and reads the client's.
+	native := e.post("/api/v1/objects/save", map[string]any{"project_id": pid, "name": "f", "value": val}, nil)
+	if wd, _, _ := refs.Digest(dv); native["digest"] != wd || native["ref"] != "weft:///"+pid+"/function/f:"+wd {
+		t.Fatalf("native save = %v", native)
+	}
+	vals := e.post("/api/v1/refs/read", map[string]any{"refs": []any{"weft:///" + pid + "/op/f:" + want}}, nil)["items"].([]any)
+	if vals[0] == nil {
+		t.Fatalf("client digest does not resolve: %v", vals)
+	}
+	// A span whose name is a function ref reaches the client as an op ref.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.post("/api/v1/spans/start", map[string]any{"project_id": pid, "id": "k1", "name": native["ref"], "started_at": now}, nil)
+	e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/span/k1", "feedback_type": "weft.note",
+		"payload": map[string]any{"note": "n"}}, nil)
+	_, body, _ := e.raw(http.MethodPost, "/call/read", map[string]any{"project_id": pid, "id": "k1", "include_feedback": true}, weaveUA)
+	for _, s := range []string{`"op_name":"weave:///` + pid + `/op/f:`, `"weave_ref":"weave:///` + pid + `/call/k1"`} {
+		if !strings.Contains(string(body), s) {
+			t.Fatalf("client response lacks %s: %s", s, body)
+		}
+	}
+	if strings.Contains(string(body), "/function/") || strings.Contains(string(body), "/span/") {
+		t.Fatalf("client response has Weft's ref kinds: %s", body)
 	}
 }

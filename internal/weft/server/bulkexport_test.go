@@ -29,7 +29,7 @@ func newEnvStore(t *testing.T, setup func(*store.Store)) (*testEnv, *store.Store
 	if setup != nil {
 		setup(st)
 	}
-	s := New(Config{}, st)
+	s := New(nativeOnly(Config{}), st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()
@@ -46,24 +46,20 @@ func seedExportProject(e *testEnv, n int) {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("call-%03d", i)
 		ts := time.Now().Add(-time.Duration(n-i) * time.Second).UTC().Format(time.RFC3339Nano)
-		batch = append(batch,
-			map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": id, "trace_id": id,
-				"op_name": "answer", "started_at": ts, "inputs": map[string]any{"q": i}}}},
-			map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": id, "ended_at": ts,
-				"output": map[string]any{"a": i}, "summary": map[string]any{}}}})
+		batch = append(batch, completeSpan(map[string]any{"id": id, "trace_id": id, "name": "answer", "started_at": ts,
+			"inputs": map[string]any{"q": i}, "ended_at": ts, "output": map[string]any{"a": i}, "summary": map[string]any{}}))
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": batch})
+	e.post("/api/v1/spans/batch", map[string]any{"project_id": pid, "items": batch})
 	publish(e, "ds", map[string]any{"rows": []any{1}})
 	publish(e, "ds", map[string]any{"rows": []any{1, 2}})
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/call-000",
-		"feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
+	e.feedback(map[string]any{"ref": spanRef("call-000"), "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}})
 }
 
 func waitExport(t *testing.T, e *testEnv, jobID string) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		code, b := e.raw("/v1/entities/acme/projects/evals/exports/"+jobID, nil, nil)
+		code, b := e.raw("/api/v1/exports/"+jobID+"?project_id="+pid, nil, nil)
 		if code != 200 {
 			t.Fatalf("status -> %d %s", code, b)
 		}
@@ -101,7 +97,7 @@ func gunzipLines(t *testing.T, b []byte) []map[string]any {
 func TestBulkExportSQLite(t *testing.T) {
 	e, st, _ := newEnvStore(t, nil)
 	seedExportProject(e, 1203) // more than two export pages
-	code, b := e.raw("/v1/entities/acme/projects/evals:export", map[string]any{"targets": []any{"calls", "objects", "feedback"}}, nil)
+	code, b := e.raw("/api/v1/exports", map[string]any{"project_id": pid, "targets": []any{"calls", "objects", "feedback"}}, nil)
 	if code != http.StatusAccepted {
 		t.Fatalf("start -> %d %s", code, b)
 	}
@@ -127,7 +123,7 @@ func TestBulkExportSQLite(t *testing.T) {
 			t.Fatalf("%s artifact = %v", target, am)
 		}
 		uri := am["uri"].(string)
-		if !strings.HasPrefix(uri, e.srv.URL+"/v1/entities/acme/projects/evals/exports/"+jobID+"/artifacts/") {
+		if !strings.HasPrefix(uri, e.srv.URL+"/api/v1/exports/"+jobID+"/artifacts/") || !strings.HasSuffix(uri, "?project_id=acme%2Fevals") {
 			t.Fatalf("uri = %s", uri)
 		}
 		code, body := httpGet(t, uri)
@@ -159,7 +155,7 @@ func TestBulkExportSQLite(t *testing.T) {
 	if err := st.CreateExportJob(t.Context(), busy); err != nil {
 		t.Fatal(err)
 	}
-	code, b = e.raw("/v1/entities/acme/projects/evals:export", map[string]any{"targets": []any{"calls"}}, nil)
+	code, b = e.raw("/api/v1/exports", map[string]any{"project_id": pid, "targets": []any{"calls"}}, nil)
 	if code != http.StatusConflict || !strings.Contains(string(b), `"code":"export_in_progress"`) {
 		t.Fatalf("second export -> %d %s", code, b)
 	}
@@ -179,14 +175,15 @@ func TestBulkExportValidation(t *testing.T) {
 		body any
 		code int
 	}{
-		{map[string]any{}, 422},
-		{map[string]any{"targets": []any{}}, 422},
-		{map[string]any{"targets": []any{"runs"}}, 422},
-		{map[string]any{"targets": []any{"calls"}, "format": "csv"}, 422},
-		{map[string]any{"targets": []any{"calls", "objects", "feedback", "calls"}}, 422},
-		{map[string]any{"targets": []any{"calls", "calls"}}, 400},
+		{map[string]any{"project_id": pid}, 422},
+		{map[string]any{"project_id": pid, "targets": []any{}}, 422},
+		{map[string]any{"project_id": pid, "targets": []any{"runs"}}, 422},
+		{map[string]any{"project_id": pid, "targets": []any{"calls"}, "format": "csv"}, 422},
+		{map[string]any{"project_id": pid, "targets": []any{"calls", "objects", "feedback", "calls"}}, 422},
+		{map[string]any{"project_id": pid, "targets": []any{"calls", "calls"}}, 400},
+		{map[string]any{"targets": []any{"calls"}}, 400}, // no project
 	} {
-		code, b := e.raw("/v1/entities/acme/projects/evals:export", c.body, nil)
+		code, b := e.raw("/api/v1/exports", c.body, nil)
 		if code != c.code {
 			t.Fatalf("%v -> %d %s, want %d", c.body, code, b, c.code)
 		}
@@ -194,10 +191,10 @@ func TestBulkExportValidation(t *testing.T) {
 			t.Fatalf("422 body = %s", b)
 		}
 	}
-	if code, b := e.raw("/v1/entities/acme/projects/evals/exports/not-a-uuid", nil, nil); code != 422 {
+	if code, b := e.raw("/api/v1/exports/not-a-uuid?project_id="+pid, nil, nil); code != 422 {
 		t.Fatalf("bad job id -> %d %s", code, b)
 	}
-	code, b := e.raw("/v1/entities/acme/projects/evals/exports/"+uuid.NewString(), nil, nil)
+	code, b := e.raw("/api/v1/exports/"+uuid.NewString()+"?project_id="+pid, nil, nil)
 	if code != 404 || !strings.Contains(string(b), `"detail":{"code":"not_found"`) {
 		t.Fatalf("unknown job -> %d %s", code, b)
 	}
@@ -214,7 +211,7 @@ func TestBulkExportS3AndRBAC(t *testing.T) {
 		st.SetFileBackend(b)
 	})
 	seedExportProject(e, 3)
-	code, b := e.raw("/v1/entities/acme/projects/evals:export", map[string]any{"targets": []any{"calls"}}, nil)
+	code, b := e.raw("/api/v1/exports", map[string]any{"project_id": pid, "targets": []any{"calls"}}, nil)
 	if code != 202 {
 		t.Fatalf("start -> %d %s", code, b)
 	}
@@ -230,30 +227,31 @@ func TestBulkExportS3AndRBAC(t *testing.T) {
 	if fake.Objects["/byob/weft/"+pid+"/exports/"+jobID+"/calls.jsonl.gz"] == nil {
 		t.Fatal("artifact not uploaded")
 	}
-	// Downloadable through /files/resolve_url (presigned) ...
-	r := e.post("/files/resolve_url", map[string]any{"project_id": pid, "uris": []any{uri}})
+	// Downloadable through /api/v1/files/resolve (presigned) ...
+	r := e.post("/api/v1/files/resolve", map[string]any{"project_id": pid, "uris": []any{uri}})
 	code, body := httpGet(t, r["download_urls"].([]any)[0].(string))
 	if code != 200 || len(gunzipLines(t, body)) != 3 {
 		t.Fatalf("presigned download -> %d", code)
 	}
 	// ... and through the download route, which redirects to S3.
-	code, body = httpGet(t, e.srv.URL+"/v1/entities/acme/projects/evals/exports/"+jobID+"/artifacts/calls")
+	code, body = httpGet(t, e.srv.URL+"/api/v1/exports/"+jobID+"/artifacts/calls?project_id="+pid)
 	if code != 200 || len(gunzipLines(t, body)) != 3 {
 		t.Fatalf("download route -> %d", code)
 	}
 
 	// RBAC: team admins export, members and viewers may not.
 	f := newRBAC(t)
-	f.e.mustCode(200, "POST", "/call/start", f.bob, callStart("acme/app", "c1"))
-	f.e.mustCode(http.StatusForbidden, "POST", "/v1/entities/acme/projects/app:export", f.bob, map[string]any{"targets": []any{"calls"}})
-	f.e.mustCode(http.StatusForbidden, "POST", "/v1/entities/acme/projects/app:export", f.dave, map[string]any{"targets": []any{"calls"}})
-	out := f.e.mustCode(http.StatusAccepted, "POST", "/v1/entities/acme/projects/app:export", f.alice, map[string]any{"targets": []any{"calls"}})
+	f.e.mustCode(200, "POST", "/api/v1/spans/start", f.bob, callStart("acme/app", "c1"))
+	exp := map[string]any{"project_id": "acme/app", "targets": []any{"calls"}}
+	f.e.mustCode(http.StatusForbidden, "POST", "/api/v1/exports", f.bob, exp)
+	f.e.mustCode(http.StatusForbidden, "POST", "/api/v1/exports", f.dave, exp)
+	out := f.e.mustCode(http.StatusAccepted, "POST", "/api/v1/exports", f.alice, exp)
 	var st map[string]any
 	_ = json.Unmarshal(out, &st)
-	f.e.mustCode(http.StatusForbidden, "GET", "/v1/entities/acme/projects/app/exports/"+st["job_id"].(string), f.carol, nil)
+	f.e.mustCode(http.StatusForbidden, "GET", "/api/v1/exports/"+st["job_id"].(string)+"?project_id=acme/app", f.carol, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		raw := f.e.mustCode(200, "GET", "/v1/entities/acme/projects/app/exports/"+st["job_id"].(string), f.alice, nil)
+		raw := f.e.mustCode(200, "GET", "/api/v1/exports/"+st["job_id"].(string)+"?project_id=acme/app", f.alice, nil)
 		if !bytes.Contains(raw, []byte(`"in_progress"`)) {
 			if !bytes.Contains(raw, []byte(`"succeeded"`)) {
 				t.Fatalf("rbac export = %s", raw)

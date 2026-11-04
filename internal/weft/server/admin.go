@@ -199,6 +199,9 @@ func isReadRequest(r *http.Request) bool {
 		return true
 	case http.MethodPost:
 		path := strings.TrimSuffix(r.URL.Path, "/")
+		if strings.HasPrefix(path, "/api/v1/") {
+			return nativeReadPaths[path] // native.go
+		}
 		return readSegments[path[strings.LastIndex(path, "/")+1:]]
 	}
 	return false
@@ -209,9 +212,11 @@ var projectFreePaths = map[string]bool{"/auth/check": true, "/auth/whoami": true
 	"/llm/models": true, "/graphql": true, "/secrets/list": true, "/server_info": true, "/health": true}
 
 // requestProjects finds every project a request names: the project_id query
-// parameter and headers, the /v2/{entity}/{project}/ path, and project_id
-// fields and refs at the top level of a JSON body (and inside the
-// start/end/obj/table wrappers and batch items). The body is restored.
+// parameter and headers, the /v2/{entity}/{project}/ and
+// /v1/entities/{entity}/projects/{project} paths of the adapter's routes,
+// and project_id fields and refs at the top level of a JSON body (and
+// inside the start/end/obj/table wrappers, batch items and the native
+// batches' items), or a multipart form's project_id. The body is restored.
 func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 	var raw []string
 	add := func(v string) {
@@ -288,6 +293,13 @@ type scopeProbe struct {
 			End   *projectHolder `json:"end"`
 		} `json:"req"`
 	} `json:"batch"`
+	// Items of the native batches (/api/v1/spans/batch, /api/v1/feedback/batch).
+	Items []struct {
+		ProjectID *string        `json:"project_id"`
+		Start     *projectHolder `json:"start"`
+		End       *projectHolder `json:"end"`
+		Span      *projectHolder `json:"span"`
+	} `json:"items"`
 	Refs      []string       `json:"refs"`
 	Variables map[string]any `json:"variables"`
 }
@@ -318,6 +330,14 @@ func probeBody(body []byte, add func(string)) {
 		}
 		holder(b.Req.Start)
 		holder(b.Req.End)
+	}
+	for _, it := range p.Items {
+		if it.ProjectID != nil {
+			add(*it.ProjectID)
+		}
+		holder(it.Start)
+		holder(it.End)
+		holder(it.Span)
 	}
 	addRef := func(v string) {
 		if refs.IsRef(v) {

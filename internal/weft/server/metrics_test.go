@@ -35,10 +35,10 @@ func seedMetricCalls(t *testing.T, e *testEnv, base time.Time) {
 	for i, s := range specs {
 		id := fmt.Sprintf("m%d", i)
 		start := base.Add(s.offset)
-		e.post("/call/start", map[string]any{"start": map[string]any{
-			"project_id": pid, "id": id, "trace_id": "t" + id, "op_name": s.op, "started_at": start.Format(time.RFC3339Nano),
+		e.startSpan(map[string]any{
+			"id": id, "trace_id": "t" + id, "name": s.op, "started_at": start.Format(time.RFC3339Nano),
 			"attributes": map[string]any{"env": s.env}, "inputs": map[string]any{"n": i + 1},
-		}})
+		})
 		end := map[string]any{"project_id": pid, "id": id, "ended_at": start.Add(time.Duration(s.latency) * time.Millisecond).Format(time.RFC3339Nano),
 			"output": map[string]any{"len": float64(10 * (i + 1))}}
 		if s.model != "" {
@@ -46,11 +46,11 @@ func seedMetricCalls(t *testing.T, e *testEnv, base time.Time) {
 				"requests": 1, "prompt_tokens": s.prompt, "completion_tokens": s.compl, "total_tokens": s.prompt + s.compl}}}
 		}
 		if s.fail {
-			end["exception"] = "boom"
+			end["error"] = "boom"
 		}
-		e.post("/call/end", map[string]any{"end": end})
+		e.endSpan(end)
 		if s.score != nil {
-			e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/" + id,
+			e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": spanRef(id),
 				"feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"correct": *s.score}}})
 		}
 	}
@@ -83,7 +83,7 @@ func TestCallsMetricsAggregations(t *testing.T) {
 	e := newEnv(t)
 	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	seedMetricCalls(t, e, base)
-	res := e.post("/calls/metrics", map[string]any{
+	res := e.post("/api/v1/spans/metrics", map[string]any{
 		"project_id": pid, "bucket_seconds": 3600,
 		"metrics": []any{
 			map[string]any{"name": "calls", "agg": "count"},
@@ -149,7 +149,7 @@ func TestCallsMetricsGroupBy(t *testing.T) {
 		map[string]any{"name": "tokens", "field": "total_tokens", "agg": "sum"},
 		map[string]any{"name": "err", "agg": "error_rate"},
 	}
-	byOp := groupsByName(t, e.post("/calls/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "op_name"}))
+	byOp := groupsByName(t, e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "name"}))
 	if len(byOp) != 2 || num(t, byOp["answer"]["count"]) != 3 || num(t, byOp["search"]["count"]) != 1 {
 		t.Fatalf("by op = %v", byOp)
 	}
@@ -160,30 +160,30 @@ func TestCallsMetricsGroupBy(t *testing.T) {
 		t.Fatalf("answer error rate = %v", e)
 	}
 
-	byModel := groupsByName(t, e.post("/calls/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "model"}))
+	byModel := groupsByName(t, e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "model"}))
 	if num(t, byModel["gpt-4o"]["count"]) != 2 || num(t, byModel["claude-3-5-sonnet"]["count"]) != 1 || num(t, byModel["<null>"]["count"]) != 1 {
 		t.Fatalf("by model = %v", byModel)
 	}
 
-	byEnv := groupsByName(t, e.post("/calls/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "attributes.env"}))
+	byEnv := groupsByName(t, e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "attributes.env"}))
 	if num(t, byEnv["prod"]["count"]) != 2 || num(t, byEnv["dev"]["count"]) != 2 {
 		t.Fatalf("by attributes.env = %v", byEnv)
 	}
 
-	byStatus := groupsByName(t, e.post("/calls/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "status"}))
+	byStatus := groupsByName(t, e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "status"}))
 	if num(t, byStatus["error"]["count"]) != 1 || num(t, byStatus["success"]["count"]) != 3 {
 		t.Fatalf("by status = %v", byStatus)
 	}
 
 	// max_groups folds the tail into an "other" group.
-	top := e.post("/calls/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "inputs.n", "max_groups": 2})
+	top := e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid, "metrics": metrics, "group_by": "inputs.n", "max_groups": 2})
 	gs := top["groups"].([]any)
 	if len(gs) != 3 || gs[2].(map[string]any)["other"] != true || num(t, gs[2].(map[string]any)["count"]) != 2 {
 		t.Fatalf("max_groups = %v", gs)
 	}
 
 	// Filters and time range apply.
-	filtered := e.post("/calls/metrics", map[string]any{"project_id": pid, "metrics": metrics, "filter": map[string]any{"op_names": []any{"answer"}},
+	filtered := e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid, "metrics": metrics, "filter": map[string]any{"names": []any{"answer"}},
 		"start": base.Add(time.Hour).Format(time.RFC3339), "end": base.Add(2 * time.Hour).Format(time.RFC3339)})
 	if num(t, filtered["totals"].(map[string]any)["calls"]) != 1 {
 		t.Fatalf("filtered totals = %v", filtered["totals"])
@@ -202,12 +202,12 @@ func TestCallsMetricsValidation(t *testing.T) {
 		{"project_id": pid, "group_by": "bogus"},
 		{"project_id": pid, "metrics": []any{map[string]any{"name": "a", "agg": "count"}, map[string]any{"name": "a", "agg": "count"}}},
 	} {
-		if code, out := e.raw("/calls/metrics", body, nil); code != 400 {
+		if code, out := e.raw("/api/v1/spans/metrics", body, nil); code != 400 {
 			t.Errorf("%v -> %d %s, want 400", body, code, out)
 		}
 	}
 	// Empty project: zero counts, no buckets.
-	res := e.post("/calls/metrics", map[string]any{"project_id": pid})
+	res := e.post("/api/v1/spans/metrics", map[string]any{"project_id": pid})
 	if num(t, res["totals"].(map[string]any)["count"]) != 0 || len(res["buckets"].([]any)) != 0 {
 		t.Fatalf("empty = %v", res)
 	}

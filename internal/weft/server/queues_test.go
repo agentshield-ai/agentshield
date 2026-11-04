@@ -51,10 +51,9 @@ func (e *testEnv) doJSON(method, path string, body any, user string) map[string]
 func makeCalls(t *testing.T, e *testEnv, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
-		e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": id, "trace_id": id, "op_name": "answer",
-			"started_at": "2025-01-01T00:00:00Z", "inputs": map[string]any{"question": "q-" + id}}})
-		e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": id, "ended_at": "2025-01-01T00:00:01Z",
-			"output": "a-" + id, "summary": map[string]any{}}})
+		e.startSpan(map[string]any{"id": id, "trace_id": id, "name": "answer",
+			"started_at": "2025-01-01T00:00:00Z", "inputs": map[string]any{"question": "q-" + id}})
+		e.endSpan(map[string]any{"id": id, "ended_at": "2025-01-01T00:00:01Z", "output": "a-" + id, "summary": map[string]any{}})
 	}
 }
 
@@ -156,10 +155,10 @@ func TestAnnotationQueues(t *testing.T) {
 	}
 
 	// feedback carries queue_id and is queryable by it
-	fb := e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/c1", "feedback_type": "weft.annotation.quality",
+	fb := e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": spanRef("c1"), "feedback_type": "weft.annotation.quality",
 		"payload": map[string]any{"value": 4}, "annotation_ref": spec, "queue_id": qid})
-	res := e.post("/feedback/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{"$eq": []any{
-		map[string]any{"$getField": "queue_id"}, map[string]any{"$literal": qid}}}}})["result"].([]any)
+	res := e.post("/api/v1/feedback/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{"$eq": []any{
+		map[string]any{"$getField": "queue_id"}, map[string]any{"$literal": qid}}}}})["items"].([]any)
 	if len(res) != 1 || res[0].(map[string]any)["id"] != fb["id"] || res[0].(map[string]any)["queue_id"] != qid {
 		t.Fatalf("feedback by queue: %v", res)
 	}

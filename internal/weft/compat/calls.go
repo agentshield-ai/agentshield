@@ -46,7 +46,7 @@ func (a *Adapter) callsComplete(w http.ResponseWriter, r *http.Request) {
 		Batch []completeCall `json:"batch"`
 	}
 	if err := decodeBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		writeErr(w, err)
 		return
 	}
 	pathProject := chi.URLParam(r, "entity") + "/" + chi.URLParam(r, "project")
@@ -79,7 +79,7 @@ func (a *Adapter) projectsInfo(w http.ResponseWriter, r *http.Request) {
 		ProjectIDs []string `json:"project_ids"`
 	}
 	if err := decodeBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		writeErr(w, err)
 		return
 	}
 	out := make([]map[string]string, 0, len(req.ProjectIDs))

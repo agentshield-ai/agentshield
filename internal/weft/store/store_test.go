@@ -217,7 +217,7 @@ func TestFeedbackFieldQuery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.CreateFeedback(ctx, FeedbackCreate{ProjectID: proj, Ref: refs.CallRef(proj, "f1"), FeedbackType: "weft.reaction",
+	if _, err := s.CreateFeedback(ctx, FeedbackCreate{ProjectID: proj, Ref: refs.SpanRef(proj, "f1"), FeedbackType: "weft.reaction",
 		Payload: map[string]any{"emoji": "👍"}}); err != nil {
 		t.Fatal(err)
 	}

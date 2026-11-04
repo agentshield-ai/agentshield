@@ -13,19 +13,12 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // /calls/export streams every call matching a CallsQuery as CSV, JSONL or a
 // JSON array. Rows are read page by page so memory stays bounded however many
 // calls match. CSV (and `flatten: true`) turns nested values into dotted
 // columns (inputs.question, output.answer, attributes.env, ...).
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Post("/calls/export", s.callsExport)
-	})
-}
 
 const (
 	exportPageSize   = 500
@@ -45,12 +38,31 @@ var exportBaseColumns = []string{
 	"prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "exception", "thread_id", "turn_id", "user_id", "run_id",
 }
 
-func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
-	var req callsExportReq
-	if err := decodeBody(r, &req); err != nil {
-		writeErr(w, err)
-		return
+// spanExportNames are the export columns that have other names in Weft's
+// span API (POST /api/v1/spans/export) than in the stored call.
+var spanExportNames = map[string]string{"op_name": "name", "exception": "error", "thread_id": "session_id"}
+
+// exportColumns are the base columns in the API's names.
+func exportColumns(native bool) []string {
+	if !native {
+		return exportBaseColumns
 	}
+	out := make([]string, len(exportBaseColumns))
+	for i, c := range exportBaseColumns {
+		if n, ok := spanExportNames[c]; ok {
+			c = n
+		}
+		out[i] = c
+	}
+	return out
+}
+
+// exportCalls streams the calls of req as CSV, JSONL or a JSON array; with
+// native, rows use Weft's span names (Span, spanExportNames).
+func (s *Server) exportCalls(w http.ResponseWriter, r *http.Request, req callsExportReq, native bool) {
+	baseColumns := exportColumns(native)
+	exportRow := func(c *store.Call, withFeedback bool) map[string]any { return exportRowAs(c, withFeedback, native) }
+	flattenCall := func(c *store.Call, withFeedback bool) map[string]any { return flattenCallAs(c, withFeedback, native) }
 	format := strings.ToLower(strings.TrimSpace(req.Format))
 	if format == "" {
 		format = "jsonl"
@@ -106,14 +118,14 @@ func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
 	if format == "csv" && len(columns) == 0 {
 		if flatten {
 			seen := map[string]bool{}
-			for _, c := range exportBaseColumns {
+			for _, c := range baseColumns {
 				seen[c] = true
 			}
 			var extra []string
 			err := pages(func(page []*store.Call) error {
 				for _, c := range page {
 					for k := range flattenCall(c, req.IncludeFeedback) {
-						if !seen[k] && len(extra) < maxExportColumns-len(exportBaseColumns) {
+						if !seen[k] && len(extra) < maxExportColumns-len(baseColumns) {
 							seen[k] = true
 							extra = append(extra, k)
 						}
@@ -126,9 +138,9 @@ func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			sortExportColumns(extra)
-			columns = append(append(columns, exportBaseColumns...), extra...)
+			columns = append(append(columns, baseColumns...), extra...)
 		} else {
-			columns = append(append(columns, exportBaseColumns...), "inputs", "output", "attributes")
+			columns = append(append(columns, baseColumns...), "inputs", "output", "attributes")
 			if req.IncludeFeedback {
 				columns = append(columns, "feedback")
 			}
@@ -186,6 +198,9 @@ func (s *Server) callsExport(w http.ResponseWriter, r *http.Request) {
 		err = pages(func(page []*store.Call) error {
 			for _, c := range page {
 				var v any = c
+				if native {
+					v = spanFrom(c, req.IncludeStorageSize)
+				}
 				switch {
 				case len(columns) > 0:
 					row := exportRow(c, req.IncludeFeedback)
@@ -287,9 +302,9 @@ func exportFilename(projectID, ext string) string {
 	return fmt.Sprintf("%s-calls-%s.%s", slug, time.Now().UTC().Format("20060102-150405"), ext)
 }
 
-// exportRow is the structured row: call fields plus computed status, latency,
-// tokens and cost.
-func exportRow(c *store.Call, withFeedback bool) map[string]any {
+// exportRowAs is the structured row: call fields plus computed status,
+// latency, tokens and cost; with native, in Weft's span names.
+func exportRowAs(c *store.Call, withFeedback, native bool) map[string]any {
 	u := c.TotalUsage()
 	var pr, co, tot float64
 	for _, m := range u.Usage {
@@ -323,21 +338,35 @@ func exportRow(c *store.Call, withFeedback bool) map[string]any {
 	if withFeedback {
 		row["feedback"] = c.Feedback
 	}
+	if native {
+		for old, n := range spanExportNames {
+			row[n] = row[old]
+			delete(row, old)
+		}
+		if withFeedback {
+			fb := make([]Feedback, len(c.Feedback))
+			for i := range c.Feedback {
+				fb[i] = feedbackFrom(c.Feedback[i])
+			}
+			row["feedback"] = fb
+		}
+	}
 	return row
 }
 
-// flattenCall returns base columns plus dotted inputs/output/attributes leaves.
-func flattenCall(c *store.Call, withFeedback bool) map[string]any {
-	row := exportRow(c, withFeedback)
+// flattenCallAs returns base columns plus dotted inputs/output/attributes
+// leaves.
+func flattenCallAs(c *store.Call, withFeedback, native bool) map[string]any {
+	row := exportRowAs(c, withFeedback, native)
 	out := make(map[string]any, 32)
-	for _, k := range exportBaseColumns {
+	for _, k := range exportColumns(native) {
 		out[k] = deref(row[k])
 	}
 	flattenInto(out, "inputs", c.Inputs, 0)
 	flattenInto(out, "output", c.Output, 0)
 	flattenInto(out, "attributes", c.Attributes, 0)
 	if withFeedback {
-		out["feedback"] = jsonString(c.Feedback)
+		out["feedback"] = jsonString(row["feedback"])
 	}
 	return out
 }

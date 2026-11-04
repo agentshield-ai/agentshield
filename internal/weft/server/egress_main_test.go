@@ -1,9 +1,10 @@
 package server
 
 import (
-	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 	"os"
 	"testing"
+
+	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 )

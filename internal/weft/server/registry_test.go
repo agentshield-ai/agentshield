@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -10,15 +9,14 @@ func TestLinkToRegistry(t *testing.T) {
 	e := newEnv(t)
 	m1 := publish(e, "classifier", map[string]any{"_class_name": "MyModel", "_bases": []any{"Model", "Object", "BaseModel"}, "v": 1})
 	m2 := publish(e, "classifier", map[string]any{"_class_name": "MyModel", "_bases": []any{"Model", "Object", "BaseModel"}, "v": 2})
-	target := map[string]any{"portfolio_name": "Fraud Models", "entity_name": "acme", "project_name": "registry-model"}
 	link := func(ref string, aliases ...string) float64 {
 		t.Helper()
 		al := []any{}
 		for _, a := range aliases {
 			al = append(al, a)
 		}
-		res := e.post("/link_to_registry", map[string]any{"ref": strings.Replace(ref, "weft:///", "weft:///", 1), "target": target, "aliases": al})
-		return res["version_index"].(float64)
+		res := e.post("/api/v1/registry/link", map[string]any{"ref": ref, "project_id": "acme/registry-model", "collection": "Fraud Models", "aliases": al})
+		return res["version"].(float64)
 	}
 	if v := link(m1, "production"); v != 0 {
 		t.Fatalf("first link = %v", v)
@@ -30,7 +28,7 @@ func TestLinkToRegistry(t *testing.T) {
 	if v := link(m2, "production"); v != 1 {
 		t.Fatalf("re-link = %v", v)
 	}
-	q := e.post("/registry/query", map[string]any{"project_id": "acme/registry-model"})
+	q := e.post("/api/v1/registry/query", map[string]any{"project_id": "acme/registry-model"})
 	cols := q["collections"].([]any)
 	if len(cols) != 1 {
 		t.Fatalf("collections = %v", q)
@@ -48,20 +46,29 @@ func TestLinkToRegistry(t *testing.T) {
 	if toJSON(vs[1].(map[string]any)["aliases"]) != `[]` {
 		t.Fatalf("production should have moved off v0: %v", vs[1])
 	}
-	one := e.post("/registry/query", map[string]any{"project_id": "acme/registry-model", "portfolio_name": "Fraud Models", "alias": "v0"})
+	one := e.post("/api/v1/registry/query", map[string]any{"project_id": "acme/registry-model", "portfolio_name": "Fraud Models", "alias": "v0"})
 	if got := one["collections"].([]any)[0].(map[string]any)["versions"].([]any); len(got) != 1 || got[0].(map[string]any)["ref"] != m1 {
 		t.Fatalf("v0 lookup = %v", one)
 	}
-	if code, _ := e.raw("/registry/query", map[string]any{"project_id": "acme/registry-model", "portfolio_name": "Fraud Models", "alias": "canary"}, nil); code != 404 {
+	if code, _ := e.raw("/api/v1/registry/query", map[string]any{"project_id": "acme/registry-model", "portfolio_name": "Fraud Models", "alias": "canary"}, nil); code != 404 {
 		t.Fatalf("unknown alias -> %d", code)
 	}
+	target := map[string]any{"project_id": "acme/registry-model", "collection": "Fraud Models"}
+	with := func(m map[string]any) map[string]any {
+		for k, v := range target {
+			if _, ok := m[k]; !ok {
+				m[k] = v
+			}
+		}
+		return m
+	}
 	for _, bad := range []map[string]any{
-		{"ref": "weft:///acme/evals/object/missing:abc", "target": target},
-		{"ref": m1, "target": target, "aliases": []any{"latest"}},
-		{"ref": m1, "target": map[string]any{"portfolio_name": "x"}},
-		{"ref": "weft:///acme/evals/call/abc", "target": target},
+		with(map[string]any{"ref": "weft:///acme/evals/object/missing:abc"}),
+		with(map[string]any{"ref": m1, "aliases": []any{"latest"}}),
+		{"ref": m1, "project_id": "acme/registry-model"},
+		with(map[string]any{"ref": "weft:///acme/evals/span/abc"}),
 	} {
-		if code, out := e.raw("/link_to_registry", bad, nil); code != 400 {
+		if code, out := e.raw("/api/v1/registry/link", bad, nil); code != 400 {
 			t.Fatalf("%v -> %d %s", bad, code, out)
 		}
 	}
@@ -75,6 +82,23 @@ func TestLinkToRegistryChecksTargetProject(t *testing.T) {
 	if scoped == "" {
 		t.Skipf("managed keys unavailable: %v", created)
 	}
+	native := map[string]any{"ref": m, "project_id": "other/registry", "collection": "p"}
+	if code, out := e.raw("/api/v1/registry/link", native, map[string]string{"Authorization": "Bearer " + scoped}); code != http.StatusForbidden {
+		t.Fatalf("scoped key linking into another project -> %d %s", code, out)
+	}
+	native["project_id"] = pid
+	if code, out := e.raw("/api/v1/registry/link", native, map[string]string{"Authorization": "Bearer " + scoped}); code != 200 {
+		t.Fatalf("scoped key linking into its project -> %d %s", code, out)
+	}
+}
+
+// The adapter's /link_to_registry names the registry project in a nested
+// target, so it checks that project itself.
+func TestLegacyLinkToRegistryChecksTargetProject(t *testing.T) {
+	e := newLegacyEnv(t, "admin-key")
+	m := publish(e, "m", map[string]any{"_class_name": "MyModel", "v": 1})
+	created := e.post("/api_keys/create", map[string]any{"name": "scoped", "projects": []any{pid}})
+	scoped, _ := created["secret"].(string)
 	body := map[string]any{"ref": m, "target": map[string]any{"portfolio_name": "p", "entity_name": "other", "project_name": "registry"}}
 	if code, out := e.raw("/link_to_registry", body, map[string]string{"Authorization": "Bearer " + scoped}); code != http.StatusForbidden {
 		t.Fatalf("scoped key linking into another project -> %d %s", code, out)
@@ -85,9 +109,10 @@ func TestLinkToRegistryChecksTargetProject(t *testing.T) {
 	}
 }
 
+// The model catalog and geolocation routes are the adapter's.
 func TestInferenceCatalogAndGeolocate(t *testing.T) {
-	e := newEnv(t)
-	code, res := e.api2Do(http.MethodPut, "/v2/acme/evals/runtimes/rt", map[string]any{"base_url": "http://127.0.0.1:1/v1",
+	e := newLegacyEnv(t)
+	code, res := e.api2Do(http.MethodPut, "/api/v1/runtimes/rt", map[string]any{"project_id": pid, "base_url": "http://127.0.0.1:1/v1",
 		"runtime_ids": []any{map[string]any{"id": "tiny-llm", "max_tokens": 2048}}})
 	if code != 200 {
 		t.Fatalf("runtime -> %d %v", code, res)

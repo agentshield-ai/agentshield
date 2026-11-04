@@ -129,7 +129,7 @@ func TestStoreMigration(t *testing.T) {
 	got := map[string]string{}
 	for _, f := range fbs {
 		got[f.ID] = f.FeedbackType
-		if f.Ref != "weft:///e/p/call/c1" {
+		if f.Ref != "weft:///e/p/span/c1" { // ref kinds are migrated too (store/refkinds.go)
 			t.Fatalf("ref = %q", f.Ref)
 		}
 	}

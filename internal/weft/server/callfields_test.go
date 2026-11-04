@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,26 +13,24 @@ func TestOptionalCallSchemaFields(t *testing.T) {
 	e := newEnv(t)
 	started := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	ts := started.Format(time.RFC3339Nano)
-	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "root", "trace_id": "t1", "op_name": "agent",
-		"started_at": ts, "inputs": map[string]any{"q": "hello"}, "user_id": "alice", "run_id": "run-1", "run_step": 5}})
-	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "child", "trace_id": "t1", "parent_id": "root",
-		"op_name": "llm", "started_at": ts, "inputs": map[string]any{"prompt": "a longer prompt"}, "user_id": "alice"}})
-	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "child", "ended_at": ts, "output": "x", "summary": map[string]any{}}})
-	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "root", "ended_at": ts, "output": "done",
-		"summary": map[string]any{}, "run_step_end": 9}})
+	e.startSpan(map[string]any{"id": "root", "trace_id": "t1", "name": "agent",
+		"started_at": ts, "inputs": map[string]any{"q": "hello"}, "user_id": "alice", "run_id": "run-1", "run_step": 5})
+	e.startSpan(map[string]any{"id": "child", "trace_id": "t1", "parent_id": "root",
+		"name": "llm", "started_at": ts, "inputs": map[string]any{"prompt": "a longer prompt"}, "user_id": "alice"})
+	e.endSpan(map[string]any{"id": "child", "ended_at": ts, "output": "x", "summary": map[string]any{}})
+	e.endSpan(map[string]any{"id": "root", "ended_at": ts, "output": "done", "summary": map[string]any{}, "run_step_end": 9})
 	// The batch path carries both steps.
-	e.post("/call/upsert_batch", map[string]any{"batch": []any{
-		map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": "c2", "op_name": "op",
-			"trace_id": "t2", "started_at": ts, "inputs": map[string]any{}, "run_id": "run-1", "run_step": 11, "user_id": "svc/robot"}}},
-		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": "c2", "ended_at": ts,
-			"summary": map[string]any{}, "run_step_end": 12}}}}})
+	e.spanBatch(
+		startItem(map[string]any{"id": "c2", "name": "op", "trace_id": "t2", "started_at": ts, "inputs": map[string]any{}, "run_id": "run-1",
+			"run_step": 11, "user_id": "svc/robot"}),
+		endItem(map[string]any{"id": "c2", "ended_at": ts, "summary": map[string]any{}, "run_step_end": 12}))
 
 	read := func(id string, extra map[string]any) map[string]any {
-		body := map[string]any{"project_id": pid, "id": id}
-		for k, v := range extra {
-			body[k] = v
+		var flags []string
+		for k := range extra {
+			flags = append(flags, strings.TrimPrefix(k, "include_"))
 		}
-		return e.post("/call/read", body)["call"].(map[string]any)
+		return e.span(id, flags...)
 	}
 	c := read("root", nil)
 	if c["run_step"] != float64(5) || c["run_step_end"] != float64(9) {
@@ -77,8 +76,8 @@ func TestOptionalCallSchemaFields(t *testing.T) {
 		t.Fatalf("expire_at = %v", c["expire_at"])
 	}
 
-	// calls/stream_query honours the same flags; an id that is not a handle has no username.
-	code, b := e.raw("/calls/stream_query", map[string]any{"project_id": pid, "include_usernames": true, "include_total_storage_size": true,
+	// /api/v1/spans/stream honours the same flags; an id that is not a handle has no username.
+	code, b := e.raw("/api/v1/spans/stream", map[string]any{"project_id": pid, "include_usernames": true, "include_total_storage_size": true,
 		"sort_by": []any{map[string]any{"field": "started_at", "direction": "asc"}}}, nil)
 	if code != 200 {
 		t.Fatalf("stream_query -> %d %s", code, b)

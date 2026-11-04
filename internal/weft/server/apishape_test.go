@@ -9,11 +9,11 @@ import (
 // with two LLM children (gpt-4o and claude), and a failed root in 11:00-12:00.
 func seedStatsCalls(e *testEnv) {
 	start := func(id, parent, at string) map[string]any {
-		s := map[string]any{"project_id": pid, "id": id, "op_name": "op-" + id, "started_at": at}
+		s := map[string]any{"project_id": pid, "id": id, "name": "op-" + id, "started_at": at}
 		if parent != "" {
 			s["parent_id"], s["trace_id"] = parent, "r1"
 		}
-		return map[string]any{"mode": "start", "req": map[string]any{"start": s}}
+		return map[string]any{"start": s}
 	}
 	end := func(id, at string, usage map[string]any, exc string) map[string]any {
 		en := map[string]any{"project_id": pid, "id": id, "ended_at": at}
@@ -21,11 +21,11 @@ func seedStatsCalls(e *testEnv) {
 			en["summary"] = map[string]any{"usage": usage}
 		}
 		if exc != "" {
-			en["exception"] = exc
+			en["error"] = exc
 		}
-		return map[string]any{"mode": "end", "req": map[string]any{"end": en}}
+		return map[string]any{"end": en}
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": []any{
+	e.post("/api/v1/spans/batch", map[string]any{"items": []any{
 		start("r1", "", "2026-01-01T10:00:00Z"),
 		start("c1", "r1", "2026-01-01T10:00:01Z"),
 		end("c1", "2026-01-01T10:00:02Z", map[string]any{"gpt-4o": map[string]any{"requests": 1, "prompt_tokens": 1000, "completion_tokens": 100}}, ""),
@@ -40,7 +40,7 @@ func seedStatsCalls(e *testEnv) {
 func TestCallsStatsMetricBuckets(t *testing.T) {
 	e := newEnv(t)
 	seedStatsCalls(e)
-	res := e.post("/calls/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z", "end": "2026-01-01T12:00:00Z",
+	res := e.post("/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z", "end": "2026-01-01T12:00:00Z",
 		"granularity": 3600,
 		"usage_metrics": []any{map[string]any{"metric": "input_tokens", "aggregations": []any{"sum"}},
 			map[string]any{"metric": "total_cost", "aggregations": []any{"sum"}},
@@ -100,52 +100,58 @@ func TestCallsStatsMetricBuckets(t *testing.T) {
 	}
 
 	// Timezone alignment and a validation error.
-	tz := e.post("/calls/stats", map[string]any{"project_id": pid, "start": "2026-01-01T00:00:00Z", "end": "2026-01-03T00:00:00Z",
+	tz := e.post("/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T00:00:00Z", "end": "2026-01-03T00:00:00Z",
 		"granularity": 86400, "timezone": "America/New_York", "call_metrics": []any{map[string]any{"metric": "call_count"}}})
 	first := tz["call_buckets"].([]any)[0].(map[string]any)["timestamp"]
 	if first != "2025-12-31T00:00:00-05:00" {
 		t.Fatalf("tz-aligned first bucket = %v", first)
 	}
-	if code, out := e.raw("/calls/stats", map[string]any{"project_id": pid, "start": "2026-01-01T00:00:00Z",
+	if code, out := e.raw("/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T00:00:00Z",
 		"call_metrics": []any{map[string]any{"metric": "tokens"}}}, nil); code != 400 {
 		t.Fatalf("unknown metric -> %d %s", code, out)
 	}
 
 	// Weft's own request keeps Weft's shape.
-	weft := e.post("/calls/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z", "end": "2026-01-01T12:00:00Z", "bucket_seconds": 3600})
+	weft := e.post("/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z", "end": "2026-01-01T12:00:00Z", "bucket_seconds": 3600})
 	if weft["buckets"] == nil || weft["usage_buckets"] != nil {
 		t.Fatalf("Weft-shape stats = %v", weft)
 	}
 }
 
-func TestQueryStatsHasMoreAndFeedbackTotalCount(t *testing.T) {
+func TestListTotalCountsAndPages(t *testing.T) {
 	e := newEnv(t)
 	seedStatsCalls(e)
-	all := e.post("/calls/query_stats", map[string]any{"project_id": pid})
-	if all["count"].(float64) != 4 || all["has_more"] != false {
-		t.Fatalf("query_stats = %v", all)
+	all := e.post("/api/v1/spans/query", map[string]any{"project_id": pid})
+	if len(all["items"].([]any)) != 4 || all["total_count"].(float64) != 4 {
+		t.Fatalf("spans query = %v", all)
 	}
-	lim := e.post("/calls/query_stats", map[string]any{"project_id": pid, "limit": 2})
-	if lim["count"].(float64) != 2 || lim["has_more"] != true {
-		t.Fatalf("limited query_stats = %v", lim)
+	page := e.post("/api/v1/spans/query", map[string]any{"project_id": pid, "limit": 2, "offset": 3, "sort_by": []any{
+		map[string]any{"field": "started_at", "direction": "asc"}}})
+	if items := page["items"].([]any); len(items) != 1 || page["total_count"].(float64) != 4 || items[0].(map[string]any)["id"] != "r2" {
+		t.Fatalf("page = %v", page)
+	}
+	if count := e.post("/api/v1/spans/query", map[string]any{"project_id": pid, "limit": 0}); len(count["items"].([]any)) != 0 || count["total_count"].(float64) != 4 {
+		t.Fatalf("count only = %v", count)
 	}
 	for i, id := range []string{"r1", "r1", "r2"} {
-		e.post("/feedback/create", map[string]any{"project_id": pid, "ref": "weft:///" + pid + "/call/" + id,
-			"feedback_type": "weft.reaction", "payload": map[string]any{"emoji": []string{"👍", "👎", "👍"}[i]}})
+		e.feedback(map[string]any{"ref": spanRef(id), "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": []string{"👍", "👎", "👍"}[i]}})
 	}
-	fq := e.post("/feedback/query", map[string]any{"project_id": pid, "limit": 1})
-	if len(fq["result"].([]any)) != 1 || fq["total_count"].(float64) != 3 {
+	fq := e.post("/api/v1/feedback/query", map[string]any{"project_id": pid, "limit": 1})
+	if len(fq["items"].([]any)) != 1 || fq["total_count"].(float64) != 3 {
 		t.Fatalf("feedback query = %v", fq)
 	}
-	filtered := e.post("/feedback/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{
-		"$eq": []any{map[string]any{"$getField": "ref"}, map[string]any{"$literal": "weft:///" + pid + "/call/r2"}}}}})
-	if filtered["total_count"].(float64) != 1 {
-		t.Fatalf("filtered feedback total = %v", filtered)
+	// A ref compared with the ref column may use the older kind name.
+	for _, ref := range []string{spanRef("r2"), "weft:///" + pid + "/call/r2"} {
+		filtered := e.post("/api/v1/feedback/query", map[string]any{"project_id": pid, "query": map[string]any{"$expr": map[string]any{
+			"$eq": []any{map[string]any{"$getField": "ref"}, map[string]any{"$literal": ref}}}}})
+		if filtered["total_count"].(float64) != 1 {
+			t.Fatalf("filtered feedback total (%s) = %v", ref, filtered)
+		}
 	}
 }
 
 func TestVersionIsPublicJSON(t *testing.T) {
-	e := newEnv(t, "k1")
+	e := newLegacyEnv(t, "k1") // GET /version is one of the adapter's routes
 	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/version", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

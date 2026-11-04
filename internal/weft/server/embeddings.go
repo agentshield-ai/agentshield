@@ -5,18 +5,11 @@ import (
 	"net/http"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // /embeddings/create: OpenAI-compatible embeddings through the server's
 // provider keys (used by the SDKs' EmbeddingSimilarityScorer when run
 // locally). mock/* models return offline bag-of-words embeddings.
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Post("/embeddings/create", handle(s.embeddingsCreate))
-	})
-}
 
 type embeddingsReq struct {
 	ProjectID string `json:"project_id"`

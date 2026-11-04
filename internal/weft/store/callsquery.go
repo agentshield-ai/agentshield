@@ -136,10 +136,15 @@ type CallsQuery struct {
 const statusSQL = `(CASE WHEN c.exception IS NOT NULL THEN 'error' WHEN c.ended_at IS NULL THEN 'running' WHEN COALESCE(json_extract(c.rollup, '$.status_counts.error'), 0) > 0 THEN 'descendant_error' ELSE 'success' END)`
 const latencySQL = `(CASE WHEN c.ended_at IS NULL THEN NULL ELSE (c.ended_at - c.started_at) / 1000.0 END)`
 
+// callColumns maps query fields to columns. Spans' own names (name,
+// base_name, error, session_id; docs/weft/DESIGN.md §10.2) and the column
+// names (op_name, op_base_name, exception, thread_id), which queries saved
+// before Weft's own API use, are both accepted.
 var callColumns = map[string]string{
 	"id": "c.id", "op_name": "c.op_name", "op_base_name": "c.op_base_name", "display_name": "c.display_name",
 	"trace_id": "c.trace_id", "parent_id": "c.parent_id", "thread_id": "c.thread_id", "turn_id": "c.turn_id",
 	"exception": "c.exception", "user_id": "c.user_id", "run_id": "c.run_id", "project_id": "c.project_id",
+	"name": "c.op_name", "base_name": "c.op_base_name", "error": "c.exception", "session_id": "c.thread_id",
 }
 
 // callField resolves a field path on the calls table (alias c).
@@ -221,7 +226,7 @@ func feedbackField(segs []string) (string, []any, bool, error) {
 		rest = rest[1:]
 	}
 	return `(SELECT json_extract(f.payload, ?) FROM feedback f WHERE f.project_id = c.project_id
-		AND f.ref = ('weft:///' || c.project_id || '/call/' || c.id) AND f.feedback_type = ?
+		AND f.ref = ('weft:///' || c.project_id || '/span/' || c.id) AND f.feedback_type = ?
 		ORDER BY f.created_at DESC LIMIT 1)`, []any{jsonPath(rest), ftype}, false, nil
 }
 
@@ -255,7 +260,7 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 						args = append(args, r.Name)
 					} else {
 						ors = append(ors, "c.op_name = ?")
-						args = append(args, r.Base().String())
+						args = append(args, r.Base().String()) // String writes the current kind names
 					}
 				} else {
 					ors = append(ors, "(c.op_base_name = ? OR c.op_name = ?)")
@@ -282,9 +287,11 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 			vals []string
 		}{{"c.input_refs", f.InputRefs}, {"c.output_refs", f.OutputRefs}} {
 			if len(x.vals) > 0 {
-				norm := make([]string, len(x.vals))
-				for i, v := range x.vals {
-					norm[i] = v
+				// Rows written before the current ref kind names hold
+				// the old spelling; match both.
+				var norm []string
+				for _, v := range x.vals {
+					norm = append(norm, refs.Variants(v)...)
 				}
 				s, a := inList("value", norm)
 				conds = append(conds, "EXISTS (SELECT 1 FROM json_each("+x.col+") WHERE "+s+")")
@@ -569,7 +576,7 @@ func (s *Store) enrichCalls(ctx context.Context, projectID string, calls []*Call
 		byRef := map[string]*Call{}
 		refList := make([]string, 0, len(calls))
 		for _, c := range calls {
-			r := refs.CallRef(projectID, c.ID)
+			r := refs.SpanRef(projectID, c.ID)
 			byRef[r] = c
 			refList = append(refList, r)
 			c.Feedback = []Feedback{}

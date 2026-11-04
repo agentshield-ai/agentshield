@@ -272,7 +272,7 @@ func (e *Engine) scoreTarget(ctx context.Context, pid string, t store.ScopeTarge
 	}
 	var callRef *string
 	if rec != nil {
-		r := refs.CallRef(pid, rec.id)
+		r := refs.SpanRef(pid, rec.id)
 		callRef = &r
 	}
 	fb, err := e.Store.CreateScopeScore(ctx, store.ScopeScoreCreate{ProjectID: pid, Scope: t.Scope, SessionID: t.SessionID, Agent: t.Agent,

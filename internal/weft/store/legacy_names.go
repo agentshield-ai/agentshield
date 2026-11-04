@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
+	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 )
 
 // Databases written before Weft had its own names (package compat/legacy)
@@ -168,7 +169,7 @@ func migrateLegacyObjects(db *sql.DB) error {
 			if string(raw) == v.val {
 				continue
 			}
-			_, digest, canon, err := prepValue(nil, raw)
+			_, digest, canon, err := prepValue(refs.Weft, nil, raw)
 			if err != nil {
 				continue // not valid JSON after all; leave it
 			}

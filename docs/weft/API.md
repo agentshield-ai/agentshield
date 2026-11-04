@@ -1,78 +1,135 @@
 # Weft trace server API
 
-Weft is an OpenTelemetry-native LLM tracing and evaluation server. This page
-documents its trace API, which Weft's own SDKs, UI and plugins use: calls,
-ops, objects, tables, feedback and evaluations, plus the native `/api/v1`
-API (sessions, agents, teams, detections). It also accepts OTLP spans
-directly. Clients of another tracing product can use the optional
-compatibility adapter described in [COMPATIBILITY.md](COMPATIBILITY.md); it is
-off by default and nothing on this page depends on it.
+Weft is an OpenTelemetry-native tracing, observability and evaluation server
+for agents and agent teams. This page documents its HTTP API, which Weft's
+own SDKs, UI and plugins use: the trace and object API (spans, objects,
+tables, feedback, files, refs, prices, model calls and evaluations;
+[DESIGN.md](DESIGN.md) §10), the agent API (sessions, agents, teams,
+hand-offs, scores; §3) and AgentShield detections (§5). It also accepts OTLP
+spans directly.
 
-Base URL defaults to `http://localhost:6345`. All endpoints are `POST` with a
-JSON body unless marked `GET`. Errors return a non-2xx status with
-`{"reason": "<message>"}`.
+Clients of another tracing product can use the optional compatibility
+adapter described in [COMPATIBILITY.md](COMPATIBILITY.md); it is off by
+default, the route shapes it serves are documented only there, and nothing
+on this page depends on it.
+
+Base URL defaults to `http://localhost:6345`. Errors return a non-2xx status
+with `{"reason": "<message>"}`.
 
 ## Conventions
 
-- **project_id** is `"<entity>/<project>"`. A bare `"<project>"` is normalised
-  to `"default/<project>"`. Projects are created implicitly on first write.
+- **Routes.** Weft's own API is under `/api/v1`. Every request names its
+  project: `project_id` in the query string for `GET` (and `PUT` paths), in
+  the JSON body for `POST` and `PUT`, or as a multipart field for uploads.
+- **project_id** is `"<entity>/<project>"`. A bare `"<project>"` is
+  normalised to `"default/<project>"`. Projects are created implicitly on
+  first write.
+- **Lists** take `limit` (default 100, at most 10,000; `0` returns only the
+  count), `offset` and, where sorting applies, `sort_by: [{"field",
+  "direction": "asc" | "desc"}]`. They return `{"items": [...],
+  "total_count": n}`, where `total_count` counts every match before paging.
+- **Streams** (`.../stream` routes) return `application/x-ndjson`: one JSON
+  item per line, no wrapper. They read the whole result first, so an invalid
+  request still gets a proper error status. They take the list's body and
+  have no default limit.
 - **Timestamps** are RFC 3339 strings with up to nanosecond precision, UTC.
-- **IDs**: SDK calls use UUIDv7 strings for `id` and `trace_id`. OTLP spans use
-  the hex span id (16 chars) and hex trace id (32 chars).
-- **Digests** are unpadded base64url SHA-256 of canonical JSON (keys sorted,
-  no whitespace). Identical values always produce identical digests.
-- **Refs**:
+- **IDs**: SDK spans use UUIDv7 strings for `id` and `trace_id`. OTLP spans
+  use the hex span id (16 chars) and hex trace id (32 chars).
+- **Digests** ([DESIGN.md](DESIGN.md) §10.3) are the lowercase hex SHA-256
+  of a value's canonical JSON:
+  - object keys sorted by Unicode code point (the byte order of their UTF-8);
+  - no insignificant whitespace (`,` and `:` separators);
+  - strings as UTF-8, escaping only `"`, `\` and U+0000–U+001F (`\b \f \n
+    \r \t`, otherwise `\u00xx` with lowercase hex);
+  - numbers exactly as the client sent them (`1.0` stays `1.0`);
+  - `true`, `false`, `null`.
+
+  That is what Python's `json.dumps(v, sort_keys=True, separators=(",",
+  ":"), ensure_ascii=False)` writes for the same JSON text. Objects and table
+  rows use the digest of their value; a table's digest is the digest of the
+  JSON list of its row digests; a file's is the hex SHA-256 of its bytes.
+  Identical values always get identical digests. Digests stored by earlier
+  versions (another form, 43 characters) stay valid: they are looked up as
+  stored and never recomputed. Re-saving such a value creates a new version
+  with a Weft digest.
+- **Refs** name stored things:
   - object: `weft:///<entity>/<project>/object/<name>:<digest>`
-  - op: `weft:///<entity>/<project>/op/<name>:<digest>`
+  - function (a versioned function, see [Objects](#objects)): `weft:///<entity>/<project>/function/<name>:<digest>`
   - table: `weft:///<entity>/<project>/table/<digest>`
-  - call: `weft:///<entity>/<project>/call/<call_id>`
+  - span: `weft:///<entity>/<project>/span/<span_id>`
+  - The digest may also be `latest`, `v<N>` or an alias.
   - A ref may carry an extra path that walks into the value:
     `/attr/<field>`, `/key/<dict key>`, `/index/<n>`, `/id/<row_digest>`
     (for tables). A string value that is itself a ref is followed when walking.
     Example dataset row: `weft:///e/p/object/my_ds:<d>/attr/rows/id/<row_digest>`.
+  - Refs written with the kind names of earlier versions, `op` for
+    `function` and `call` for `span`, are read as the current kinds
+    everywhere. Weft writes only the current kinds; columns holding refs
+    (feedback refs, span names, registry entries) were rewritten once when
+    the server opened the database. Values (object values, table rows, span
+    inputs and outputs) are never rewritten, and filters on the refs inside
+    them match both spellings.
 - **Auth**: when the server is started with API keys, every endpoint except
-  `GET /health`, `GET /server_info` and the static UI needs one of
+  `GET /health`, `GET /api/v1/server` and the static UI needs one of
   `Authorization: Bearer <key>`, `Authorization: Basic base64("api:<key>")`,
   or `X-Weft-Api-Key: <key>`, or (browsers) an SSO session cookie with
   `X-Weft-CSRF` on non-GET requests. `GET /auth/check` returns 200 or 401.
-  Access is role-checked; see [Users, teams and roles](#users-teams-and-roles).
-  Keys may be configured as `name=key`; requests with that key act as user
-  `name`, which becomes the default `user_id` of calls, objects and
-  feedback. Otherwise the `X-Weft-User` header is used, and feedback without
-  a user is stored as `"anonymous"`.
+  `GET /api/v1/files/{digest}` also accepts the key as the `api_key` query
+  parameter (for `<img src>`). Access is role-checked: reads need the viewer
+  role on every project a request names, writes the member role; see
+  [Users, teams and roles](#users-teams-and-roles). Keys may be configured
+  as `name=key`; requests with that key act as user `name`, which becomes
+  the default `user_id` of spans, objects and feedback. Otherwise the
+  `X-Weft-User` header is used, and feedback without a user is stored as
+  `"anonymous"`.
 
 ## Server
 
 | Endpoint | Response |
 |---|---|
 | `GET /health` | `{"status":"ok"}` |
-| `GET /server_info` | `{"version": "...", "auth_required": bool, "otel_endpoint": "/otel/v1/traces", "trace_server_version": "..."}` (with the compatibility adapter on, also the fields it adds; see COMPATIBILITY.md) |
+| `GET /api/v1/server` | `{"name": "weft", "version", "api_version": "v1", "auth_required": bool, "otel_endpoint": "/otel/v1/traces", "features": [...], "limits": {...}, "digest": {"algorithm": "sha256", "encoding": "hex", "canonical_json"}}`; no key needed |
 | `GET /auth/check` | `{"ok": true}` or 401 |
 | `GET /auth/whoami` | `{"user_id": "alice" \| "anonymous", "auth_required": bool}` |
-| `GET /projects` | `{"projects": [{"project_id","entity","project","call_count","trace_count","object_count","last_activity"}]}` |
-| `/project/stats` `{project_id}` | `{"call_count","trace_count","object_count","table_count","file_count","feedback_count","storage_size_bytes"}` |
+| `GET /projects` | `{"projects": [{"project_id","entity","project","call_count","trace_count","object_count","last_activity"}]}` (`call_count` counts spans) |
+| `GET /api/v1/projects/stats?project_id=` | `{"span_count","trace_count","object_count","table_count","file_count","feedback_count","storage_size_bytes"}` |
 
-## Calls
+`features` lists what the server supports (`spans`, `objects`, `tables`,
+`feedback`, `files`, `refs`, `prices`, `completions`, `embeddings`, `images`,
+`evaluations`, `sessions`, `agents`, `teams`, `handoffs`, `detections`,
+`scores`, `monitors`, `automations`, `annotation_queues`, `registry`,
+`runtimes`, `exports`, `dataset_sources`, `otlp`, plus `files_backend` with an
+S3 files backend and `compat_adapter` with the adapter on). `limits`:
+`max_request_bytes` (64 MiB), `max_file_bytes` (64 MiB), `max_span_batch`
+(100,000 items), `max_feedback_batch` (1,000), `max_refs_per_read` (1,000),
+`max_table_rows` (1,000,000), `default_page_size` (100), `max_page_size`
+(10,000), `max_compare_runs` (50), `max_scored_spans` (100),
+`max_scorers_per_score` (10).
 
-### Call schema
+## Spans
+
+A span is one traced function or model call ([DESIGN.md](DESIGN.md) §10.2).
+Spans come from the SDKs (start and end, or complete spans in batches) and
+from OTLP ([OpenTelemetry ingest](#opentelemetry-ingest)).
+
+### Span schema
 
 ```jsonc
 {
-  "id": "0190...", "project_id": "e/p",
-  "op_name": "weft:///e/p/op/my_fn:abc" /* or a plain span name for OTLP */,
-  "display_name": null, "trace_id": "...", "parent_id": null,
-  "thread_id": null, "turn_id": null,
+  "id": "0190...", "project_id": "e/p", "trace_id": "...", "parent_id": null,
+  "name": "weft:///e/p/function/my_fn:<digest>" /* a function ref, or a plain span name (OTLP) */,
+  "display_name": null,
   "started_at": "2026-01-01T00:00:00.000000Z", "ended_at": null,
-  "exception": null,                 // string when the call failed
-  "attributes": {},                  // free-form; OTLP spans put raw span data under attributes.otel
   "inputs": {}, "output": null,
+  "error": null,                     // string when the span failed
+  "attributes": {},                  // free-form; OTLP spans put raw span data under attributes.otel
   "summary": {
     "usage": {"gpt-4o-mini": {"requests":1,"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}},
     "status_counts": {"success": 3, "error": 0},   // descendants (rolled up)
     "weft": {                                      // computed on read
       "status": "success|error|running|descendant_error",
       "latency_ms": 1234, "trace_name": "my_fn", "display_name": null,
-      "run_status": "ok|error|failed_step|running|unknown",   // only with include_run_status (calls queries)
+      "run_status": "ok|error|failed_step|running|unknown",   // only with include_run_status (span queries)
       "costs": {"gpt-4o-mini": {"requests":1,"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,
                 "cache_read_input_tokens":0,"cache_creation_input_tokens":0,
                 "prompt_token_cost":1.5e-7,"completion_token_cost":6e-7,
@@ -83,74 +140,95 @@ JSON body unless marked `GET`. Errors return a non-2xx status with
                 "effective_date":"...","provider_id":"openai","pricing_level":"default|project"}}
     }
   },
-  "user_id": null, "run_id": null, "deleted_at": null,
+  "session_id": null, "turn_id": null,   // the conversation and turn
+  "user_id": null, "run_id": null, "run_step": null, "run_step_end": null,
+  "deleted_at": null,
+  "expire_at": null,                 // started_at + project retention_days, null without a TTL
   "feedback": [ /* Feedback, only with include_feedback */ ],
   "storage_size_bytes": 123,         // only with include_storage_size
   "total_storage_size_bytes": 456,   // trace roots, only with include_total_storage_size
-  "username": "alice",            // only with include_usernames
-  "run_step": 5, "run_step_end": 9,
-  "expire_at": null                  // started_at + project retention_days, null without a TTL
+  "username": "alice"                // only with include_usernames
 }
 ```
 
-The optional fields are described in [Optional call fields](#optional-call-fields).
+- **Usage roll-up.** Clients report only a span's *own* LLM usage in
+  `summary.usage` when it ends. The server sums usage and `status_counts`
+  from all descendants, so `summary.usage` on a root span is the total for
+  the trace, whatever order the spans arrive in. A client whose summaries
+  already include their descendants sends `X-Weft-Summary: cumulative`;
+  those summaries are stored as sent. `summary.weft` is computed on read;
+  `summary.weft.costs` is present with `include_costs` (see
+  [Cached tokens](#cached-tokens)).
+- **Optional fields.** `run_step` / `run_step_end` (the step of a linked
+  run when the span started and ended) are stored when sent and always
+  returned. `expire_at` follows the project's retention. With
+  `include_total_storage_size`, trace roots carry the summed
+  `storage_size_bytes` of their trace. With `include_usernames`, `username`
+  is the Weft user id (handle) when `user_id` names a user, or `user_id`
+  itself when it is a valid handle without a user row (static `user=key`
+  names); otherwise it is omitted.
+- **Functions.** A span recorded by an SDK function wrapper is named by the
+  function's ref; `summary.weft.trace_name` and the `names` filter use its
+  base name (`my_fn`).
 
-**Usage roll-up.** Clients report only a call's *own* LLM usage in
-`summary.usage` at call end. The server sums usage and `status_counts` from all
-descendants, so `summary.usage` on a root call is the total for the trace.
-A client whose summaries already include their descendants sends
-`X-Weft-Summary: cumulative` with `/call/end` and `/call/upsert_batch`; those
-summaries are stored as sent instead of being rolled up again.
-`summary.weft` is computed on read (status, latency, trace and display name).
-`summary.weft.costs` is present when `include_costs` is true; see
-[Cached tokens](#cached-tokens) for how cache reads and writes are priced.
+### Routes
 
-### Endpoints
-
-| Endpoint | Body | Response |
+| Route | Body | Response |
 |---|---|---|
-| `/call/start` | `{"start": {project_id, id?, op_name, display_name?, trace_id?, parent_id?, thread_id?, turn_id?, started_at, attributes?, inputs?, user_id?, run_id?}}` | `{"id","trace_id"}` (generated when absent) |
-| `/call/end` | `{"end": {project_id, id, ended_at, exception?, output?, summary?}}` | `{}` |
-| `/call/upsert_batch` | `{"batch": [{"mode":"start","req":{"start":{...}}}, {"mode":"end","req":{"end":{...}}}]}` | `{"res": [...]}` |
-| `/call/read` | `{project_id, id, include_costs?, include_feedback?, include_storage_size?}` | `{"call": Call\|null}` |
-| `/calls/stream_query` | CallsQuery | `application/jsonl`, one Call per line |
-| `/calls/query` | CallsQuery | `{"calls": [Call]}` |
-| `/calls/query_stats` | `{project_id, filter?, query?, search?}` | `{"count", "total_storage_size_bytes"}` |
-| `/calls/delete` | `{project_id, call_ids, user_id?}` | `{}` (soft delete, cascades to descendants) |
-| `/call/update` | `{project_id, call_id, display_name}` | `{}` |
-| `/calls/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | see below |
-| `/calls/score` | `{project_id, call_ids, scorer_refs}` (server-runnable scorers) | `{"results": [{"call_id","scorer","output","scorer_call_id","feedback_id","error"?}]}`; each result is also stored as `weft.scorer.<scorer>` feedback on the call |
-| `/calls/op_counts` | `{project_id, trace_roots_only?}` | `{"ops": [{"op_name","op_base_name","count","error_count","last_called"}]}` |
+| `POST /api/v1/spans/start` | `{project_id, name, id?, trace_id?, parent_id?, display_name?, started_at?, attributes?, inputs?, session_id?, turn_id?, user_id?, run_id?, run_step?}` | `{"id","trace_id"}`. `id` defaults to a UUIDv7, `started_at` to now, `trace_id` to the parent's (or the span's own id for a root) |
+| `POST /api/v1/spans/end` | `{project_id, id, ended_at?, output?, error?, summary?, run_step_end?}` | `{}` |
+| `POST /api/v1/spans/batch` | `{project_id, items: [{"start": {...}} \| {"end": {...}} \| {"span": {...start fields, ended_at, output, error, summary, run_step_end}}]}` — exactly one key per item; items without `project_id` use the top-level one; applied in order in one transaction | `{"items": [{"id","trace_id"} \| {"id"}]}` aligned with `items` |
+| `GET /api/v1/spans/{id}?project_id=&include_costs=&include_feedback=&include_storage_size=&include_total_storage_size=&include_usernames=` | | Span, or 404 |
+| `POST /api/v1/spans/query` | SpansQuery | `{"items": [Span], "total_count"}` |
+| `POST /api/v1/spans/stream` | SpansQuery | NDJSON of Span |
+| `POST /api/v1/spans/update` | `{project_id, id, display_name}` | `{}` |
+| `POST /api/v1/spans/delete` | `{project_id, ids}` | `{}`; soft delete, cascading to descendants (`include_deleted` lists them) |
+| `POST /api/v1/spans/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | time series, below; with any of `granularity`, `usage_metrics`, `call_metrics`, `timezone`: metric buckets, below |
+| `POST /api/v1/spans/export` | SpansQuery plus `format`, `flatten` | CSV, JSONL or JSON ([Export](#post-apiv1spansexport)) |
+| `POST /api/v1/spans/metrics` | MetricsQuery | chart series ([Metrics](#post-apiv1spansmetrics)) |
+| `POST /api/v1/spans/names` | `{project_id, trace_roots_only?}` | `{"items": [{"name","base_name","count","error_count","last_started_at"}], "total_count"}`, one per span name |
+| `POST /api/v1/spans/score` | `{project_id, ids, scorer_refs, user_id?}` (1–100 spans, 1–10 server-runnable scorers) | `{"items": [{"span_id","scorer","output","scorer_span_id","feedback_id","error"?}]}`; each result is also stored as `weft.scorer.<scorer>` feedback on the span |
+| `POST /api/v1/spans/sessions` | `{project_id, filter?: {started_after?, started_before?, session_ids?}, sort_by?: [{field: last_updated\|started_at\|turn_count\|span_count\|total_tokens, direction}], limit?, offset?}` | `{"items": [{"session_id","turn_count","span_count","started_at","last_updated","first_turn_id","last_turn_id","p50_turn_duration_ms","p99_turn_duration_ms","total_tokens","cost_usd"}], "total_count"}` |
 
-**CallsQuery**
+`/api/v1/spans/sessions` groups spans by `session_id` without the agent
+view's derivations; [`GET /api/v1/sessions`](#sessions) is the session view
+the UI shows. A *turn* is a span with `session_id` set and either
+`turn_id == id` or no parent in the same session. Default sort:
+`last_updated` descending.
+
+**SpansQuery**
 
 ```jsonc
 {
   "project_id": "e/p",
   "filter": {
-    "op_names": ["weft:///e/p/op/f:*", "f", "openai.chat"],  // ref, ref with :* wildcard, or base name
-    "input_refs": [], "output_refs": [], "parent_ids": [], "trace_ids": [],
-    "call_ids": [], "trace_roots_only": false, "user_ids": [], "run_ids": [],
-    "thread_ids": [], "turn_ids": []
+    "names": ["weft:///e/p/function/f:*", "f", "openai.chat"],  // ref, ref with :* wildcard, or base name
+    "ids": [], "trace_ids": [], "parent_ids": [], "session_ids": [], "turn_ids": [],
+    "user_ids": [], "run_ids": [], "input_refs": [], "output_refs": [],
+    "trace_roots_only": false
   },
   "query": {"$expr": Operation},
-  "search": "free text over op name, display name, inputs, output, exception and the span's indexed text; with trace_roots_only, a root matches when any span of its trace does",
+  "search": "free text over name, display name, inputs, output, error and the span's indexed text; with trace_roots_only, a root matches when any span of its trace does",
   "sort_by": [{"field": "started_at", "direction": "desc"}],  // default started_at desc
   "limit": 100, "offset": 0,
-  "columns": ["id", "inputs.x"],     // optional projection hint
+  "columns": ["id", "inputs.x"],     // optional projection hint (export)
   "expand_columns": ["inputs.example", "inputs.model"],  // resolve refs at these paths
   "include_costs": false, "include_feedback": false, "include_storage_size": false,
+  "include_total_storage_size": false, "include_usernames": false,
   "include_deleted": false,
-  "include_run_status": false        // adds summary.weft.run_status to every call (the UI's Traces list shows it)
+  "include_run_status": false        // adds summary.weft.run_status to every span (the Traces list shows it)
 }
 ```
 
-`trace_roots_only` keeps each trace's root, or, while a trace's root has not
-arrived (OTLP sends the top-level span last), its provisional root: the
-earliest-starting span whose parent has not arrived (*Run status* under
-`/api/v1/sessions`). `/calls/query_stats` and `/calls/op_counts` count the same rows.
+The filter rejects unknown keys (a misspelt filter would otherwise match
+everything). `trace_roots_only` keeps each trace's root, or, while a trace's
+root has not arrived (OTLP sends the top-level span last), its provisional
+root: the earliest-starting span whose parent has not arrived (*Run status*
+under `/api/v1/sessions`). `total_count`, `/api/v1/spans/names` and the stats
+count the same rows.
 
-**Operation language** (Mongo-style, used by calls, feedback and costs):
+**Operation language** (`$expr`, Mongo-style; used by spans, feedback and
+prices):
 
 - Logic: `{"$and": [op...]}`, `{"$or": [op...]}`, `{"$not": [op]}`
 - Comparison: `{"$eq": [a, b]}`, `{"$gt": [a, b]}`, `{"$gte": [a, b]}`, `{"$lt": [a, b]}`, `{"$lte": [a, b]}`, `{"$in": [a, [b, c]]}`
@@ -158,10 +236,29 @@ earliest-starting span whose parent has not arrived (*Run status* under
 - Operands: `{"$literal": v}`, `{"$getField": "inputs.question"}`,
   `{"$convert": {"input": a, "to": "double|int|string|bool|exists"}}`, or a nested operation.
 
-Gettable call fields: `id, op_name, display_name, trace_id, parent_id, thread_id, turn_id, started_at, ended_at, exception, user_id, run_id, deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`, `summary.`, plus the computed `summary.weft.status`, `summary.weft.run_status` (the status the shared status filter keeps: `ok`, `error`, `failed_step`, `running` or `unknown`, as `/api/v1/sessions` defines it under *Run status*; the UI's Traces list filters on it), `summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`, `summary.weft.replay` (`true` for every span of an AgentShield replay trace: one that holds an `evaluate` span of instrumentation scope `agentshield` for a replayed tool call and otherwise only, as its root, the engine's HTTP span (scope `github.com/riandyrn/otelchi`); a trace with any other span, agent activity or a live verdict, is never a replay trace, so a span claiming to be a replay cannot hide it; the UI's Traces list hides replay traces unless *Replay evaluations* is ticked), and feedback fields `feedback.<feedback_type>.<payload path>` (for example `feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
-Sort fields use the same paths.
+Span fields: `id, name, base_name, display_name, trace_id, parent_id,
+session_id, turn_id, started_at, ended_at, error, user_id, run_id,
+deleted_at`, any dotted path below `inputs.`, `output.`, `attributes.`,
+`summary.`, plus the computed `summary.weft.status`,
+`summary.weft.run_status` (the status the shared status filter keeps: `ok`,
+`error`, `failed_step`, `running` or `unknown`, as `/api/v1/sessions` defines
+it under *Run status*; the UI's Traces list filters on it),
+`summary.weft.latency_ms`, `summary.weft.trace_name`, `summary.total_tokens`,
+`summary.weft.replay` (`true` for every span of an AgentShield replay trace:
+one that holds an `evaluate` span of instrumentation scope `agentshield` for a
+replayed tool call and otherwise only, as its root, the engine's HTTP span
+(scope `github.com/riandyrn/otelchi`); a trace with any other span, agent
+activity or a live verdict, is never a replay trace, so a span claiming to be
+a replay cannot hide it; the UI's Traces list hides replay traces unless
+*Replay evaluations* is ticked), and feedback fields
+`feedback.<feedback_type>.<payload path>` (for example
+`feedback.weft.reaction.emoji`, `feedback.weft.scorer.my_judge.output.score`).
+Sort fields use the same paths. Queries saved before Weft's own API used the
+stored column names `op_name`, `op_base_name`, `exception` and `thread_id`;
+they are accepted as synonyms of `name`, `base_name`, `error` and
+`session_id`. A ref compared with `name` may use the older kind name.
 
-**`/calls/stats` response**
+**`/api/v1/spans/stats` time series**
 
 ```jsonc
 {"bucket_seconds": 3600,
@@ -170,60 +267,108 @@ Sort fields use the same paths.
               "prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150, "cost_usd": 0.001}],
  "totals": {"count", "error_count", "total_tokens", "cost_usd", "latency_ms_p50", "latency_ms_p95"}}
 ```
-`start`/`end` default to the span of matching calls; `bucket_seconds` is chosen to give about 60 buckets when absent.
+`start`/`end` default to the span of matching spans; `bucket_seconds` is
+chosen to give about 60 buckets when absent.
 
-## Threads
-
-| Endpoint | Body | Response |
-|---|---|---|
-| `/threads/query` | `{project_id, limit?, offset?, sort_by?, filter?: {after_datetime?, before_datetime?, thread_ids?}}` | `{"threads": [{"thread_id","turn_count","call_count","start_time","last_updated","first_turn_id","last_turn_id","p50_turn_duration_ms","p99_turn_duration_ms","total_tokens","cost_usd"}]}` |
-
-A *turn* is a call with `thread_id` set and either `turn_id == id` or no parent
-in the same thread. Sort fields: `last_updated` (default desc), `start_time`, `turn_count`.
+**`/api/v1/spans/stats` metric buckets**: `{project_id, start, end?,
+granularity?, usage_metrics?: [{metric, aggregations?, percentiles?}],
+call_metrics?: [...], filter?, timezone?}` → `{start, end, granularity,
+timezone, usage_buckets, call_buckets}`. Usage metrics (`input_tokens`,
+`output_tokens`, `total_tokens`, `cache_read_input_tokens`,
+`cache_creation_input_tokens`, `input_cost`, `output_cost`, `total_cost`) are
+grouped by bucket and model; span metrics (`latency_ms`, `call_count`,
+`error_count`) by bucket. Columns are `<agg>_<metric>` (`sum`, `avg`, `min`,
+`max`, `count`, `count_true`, `count_false`; default `sum`) and
+`p<pct>_<metric>`, plus `timestamp`, `count` and `model`. `sum`/`count`/`avg`
+are 0 in empty buckets, `min`/`max`/percentiles null; every bucket × model
+pair is listed. Granularity defaults to 5 min up to 2 h, 1 h up to 12 h, 6 h
+up to 3 d, 12 h up to 14 d, else 1 d, and is widened to keep at most 10,000
+buckets. Buckets align to the interval in `timezone`. Token usage is each
+span's own usage (the whole trace's with `filter.trace_roots_only`); costs
+use the project's price book, and unpriced models have null costs. At most
+200,000 spans are read.
 
 ## Objects
 
-ObjSchema:
+An object is one version of a versioned value: a dataset, model, prompt,
+scorer, evaluation, leaderboard, monitor, saved view, provider, dashboard,
+automation, a versioned function, or any JSON value
+([DESIGN.md](DESIGN.md) §10.2). Saving an identical value again returns the
+existing version.
+
+### Object schema
 
 ```jsonc
-{"project_id","object_id","created_at","deleted_at":null,"digest","version_index":0,"is_latest":true,
- "kind":"object|op","base_object_class":"Dataset|null","leaf_object_class":"Dataset|null",
- "val": {...}, "user_id":null, "aliases": ["latest","prod"], "size_bytes": 123,
- "version_count": 3   // only on latest_only queries
-}
+{"project_id": "e/p", "name": "qa", "digest": "<hex>", "version": 0,
+ "kind": "dataset", "class": "Dataset",
+ "value": {...},                   // omitted with metadata_only
+ "ref": "weft:///e/p/object/qa:<hex>",   // function refs for functions
+ "is_latest": true, "aliases": ["latest", "prod"], "tags": ["reviewed"],
+ "user_id": null, "created_at": "...", "deleted_at": null, "size_bytes": 123,
+ "version_count": 3}              // only with filter.latest_only
 ```
 
-`base_object_class` is the first of `_class_name`, then `_bases`, that is in
-the known list: `Dataset, Model, LLMStructuredCompletionModel, Evaluation,
-Scorer, LLMAsAJudgeScorer, Prompt, StringPrompt, MessagesPrompt, Leaderboard,
-Monitor, AnnotationSpec, SavedView, Provider, ProviderModel, Op, Dashboard`. Use the more
-general class for base (e.g. `StringPrompt` has base `Prompt`, leaf
-`StringPrompt`; `LLMAsAJudgeScorer` has base `Scorer`). `kind` is `op` when
-`val._type == "Op"`. `builtin_object_class` on create forces the class.
+**Kind and class.** `kind` is what the object is, `class` the most specific
+class Weft knows it by:
 
-| Endpoint | Body | Response |
+- `kind` is `function` for a versioned function (a value with
+  `"_type": "Op"`, as the SDKs' function wrappers save their functions;
+  `class` is then null); otherwise the kind of the value's base class:
+
+  | `kind` | base class | classes (`class`) |
+  |---|---|---|
+  | `dataset` | `Dataset` | `Dataset` |
+  | `model` | `Model` | `Model`, `LLMStructuredCompletionModel` |
+  | `evaluation` | `Evaluation` | `Evaluation` |
+  | `scorer` | `Scorer` | `Scorer`, `LLMAsAJudgeScorer`, `ExactMatchScorer`, `ContainsScorer`, `RegexScorer`, `JSONValidScorer`, `LevenshteinScorer`, `RemoteScorer`, `HallucinationFreeScorer`, `SummarizationScorer`, `RelevanceScorer`, `ValidXMLScorer`, `JSONSchemaScorer`, `OpenAIModerationScorer`, `EmbeddingSimilarityScorer`, `RuleScorer` |
+  | `prompt` | `Prompt` | `Prompt`, `StringPrompt`, `MessagesPrompt` |
+  | `leaderboard` | `Leaderboard` | `Leaderboard` |
+  | `monitor` | `Monitor` | `Monitor` |
+  | `annotation_spec` | `AnnotationSpec` | `AnnotationSpec` |
+  | `saved_view` | `SavedView` | `SavedView` |
+  | `provider` | `Provider` | `Provider` |
+  | `provider_model` | `ProviderModel` | `ProviderModel` |
+  | `dashboard` | `Dashboard` | `Dashboard` |
+  | `automation` | `Automation` | `Automation` |
+  | `object` | none of these | the class the publisher forced, else null |
+
+- The class comes from the value's `_class_name`, then its `_bases`, the
+  first that is known (a `MyModel` subclass of `Model` has `class` `Model`);
+  `class` on save forces it (an unknown forced class gives kind `object`).
+
+### Routes
+
+| Route | Body | Response |
 |---|---|---|
-| `/obj/create` | `{"obj": {project_id, object_id, val, builtin_object_class?, user_id?}}` | `{"digest","object_id","version_index"}` (re-publishing an identical val returns the existing version) |
-| `/obj/read` | `{project_id, object_id, digest}` — digest may be a digest, `latest`, `v<N>`, or an alias | `{"obj": ObjSchema}` |
-| `/objs/query` | `{project_id, filter?: {base_object_classes?, leaf_object_classes?, object_ids?, is_op?, latest_only?}, limit?, offset?, sort_by?: [{field: "created_at\|object_id", direction}], metadata_only?, include_deleted?}` | `{"objs": [ObjSchema]}` |
-| `/obj/delete` | `{project_id, object_id, digests?}` (all versions when absent) | `{"num_deleted"}` |
-| `/obj/alias/set` | `{project_id, object_id, digest, alias}` | `{}` (moves the alias if it existed) |
-| `/obj/alias/remove` | `{project_id, object_id, alias}` | `{}` |
+| `POST /api/v1/objects/save` | `{project_id, name, value, class?, user_id?}` — `name` matches `[A-Za-z0-9_.-]{1,128}` | `{"name","digest","version","kind","ref"}` |
+| `GET /api/v1/objects/{name}?project_id=` | | the latest version (Object with `value`) |
+| `GET /api/v1/objects/{name}/versions/{version}?project_id=` | | that version: `{version}` is a digest, `v<N>`, `latest` or an alias |
+| `POST /api/v1/objects/query` | `{project_id, filter?: {names?, kinds?, classes?, latest_only?}, sort_by?: [{field: created_at\|name\|version\|size_bytes, direction}], limit?, offset?, metadata_only?, include_deleted?}` (default sort: newest first) | `{"items": [Object], "total_count"}` |
+| `POST /api/v1/objects/delete` | `{project_id, name, digests?}` (every version when absent; `v<N>` and `latest` accepted) | `{"num_deleted"}`; soft delete |
+| `POST /api/v1/objects/{name}/aliases` | `{project_id, version, aliases}` (1–100) | `{}`; each alias moves to that version |
+| `POST /api/v1/objects/{name}/aliases/remove` | `{project_id, aliases}` | `{}` |
+| `POST /api/v1/objects/{name}/versions/{version}/tags` | `{project_id, tags}` | `{}` |
+| `POST /api/v1/objects/{name}/versions/{version}/tags/remove` | `{project_id, tags}` | `{}` |
+| `POST /api/v1/objects/tags` | `{project_id}` | `{"items": [tag], "total_count"}`: distinct tags on live versions |
+| `POST /api/v1/objects/aliases` | `{project_id}` | `{"items": [alias], "total_count"}`: distinct aliases (`latest` is virtual and not listed) |
+
+Aliases match `[A-Za-z0-9_.-]{1,64}` and may not be `latest` or `v<N>`; tags
+match `[A-Za-z0-9_.:/ -]{1,128}`. The filter rejects unknown keys.
 
 ### Object value conventions
 
 Objects are JSON. Class information lives in `_type`, `_class_name`, `_bases`.
-Nested objects, tables and ops are stored as ref strings.
+Nested objects, tables and functions are stored as ref strings.
 
 ```jsonc
-// Op
+// Function (kind "function")
 {"_type":"Op","name":"my_fn","code":"def my_fn(x):\n  ...","language":"python","signature":"(x)"}
 // Dataset
 {"_type":"Dataset","_class_name":"Dataset","_bases":["Object","BaseModel"],"name":"qa","description":null,
  "rows":"weft:///e/p/table/<digest>"}
 // Model (SDK subclass)
 {"_type":"MyModel","_class_name":"MyModel","_bases":["Model","Object","BaseModel"],"name":"m","prompt":"...",
- "predict":"weft:///e/p/op/MyModel.predict:<d>"}
+ "predict":"weft:///e/p/function/MyModel.predict:<d>"}
 // LLMStructuredCompletionModel (server-runnable model)
 {"_type":"LLMStructuredCompletionModel","_class_name":"LLMStructuredCompletionModel",
  "_bases":["Model","Object","BaseModel"],"name":"m","llm_model_id":"gpt-4o-mini",
@@ -270,68 +415,83 @@ Media values: `{"_type":"Image","file_digest":"<d>","mime_type":"image/png"}`,
 `{"_type":"Audio","file_digest":"<d>","mime_type":"audio/wav"}`, or a
 `data:<mime>;base64,...` string. The UI renders both forms.
 
+
 ## Tables
 
-| Endpoint | Body | Response |
+A table holds dataset rows (any JSON values), addressed by digest; a
+`Dataset` object's `rows` is a table ref. Updates produce a new table.
+
+| Route | Body | Response |
 |---|---|---|
-| `/table/create` | `{"table": {project_id, rows: [any]}}` | `{"digest","row_digests"}` |
-| `/table/update` | `{project_id, base_digest, updates: [{"append":{"row":...}} \| {"pop":{"index":n}} \| {"insert":{"index":n,"row":...}} \| {"replace":{"index":n,"row":...}}]}` | `{"digest","updated_row_digests"}` |
-| `/table/query` | `{project_id, digest, filter?: {row_digests?}, limit?, offset?, sort_by?: [{field: "val.x", direction}]}` | `{"rows": [{"digest","val","original_index"}]}` |
-| `/table/query_stats` | `{project_id, digest}` | `{"count"}` |
+| `POST /api/v1/tables/create` | `{project_id, rows: [any]}`, or `{project_id, row_digests: [digest]}` to build a table from rows already stored (all must exist) | `{"digest","row_digests","ref"}` |
+| `POST /api/v1/tables/update` | `{project_id, digest, updates: [{"append":{"row":...}} \| {"pop":{"index":n}} \| {"insert":{"index":n,"row":...}} \| {"replace":{"index":n,"row":...}}]}` | `{"digest","updated_row_digests","ref"}` |
+| `POST /api/v1/tables/query` | `{project_id, digest, filter?: {row_digests?}, sort_by?: [{field: "value.<path>", direction}], limit?, offset?}` (default order: row order) | `{"items": [{"digest","index","value"}], "total_count"}` |
+| `POST /api/v1/tables/stream` | as query (no default limit; at most 100,000 rows) | NDJSON of rows |
+| `POST /api/v1/tables/stats` | `{project_id, digest? \| digests?: [..] (1–1000), include_storage_size?}` | `{"items": [{"digest","count","storage_size_bytes"?}], "total_count"}`; unknown digests are left out (404 for a single unknown `digest`) |
+
+Row values keep the key order they were sent with.
 
 ## Refs and files
 
-| Endpoint | Body | Response |
+| Route | Body | Response |
 |---|---|---|
-| `/refs/read_batch` | `{"refs": [ref...]}` | `{"vals": [any\|null]}` |
-| `/file/create` | multipart form: `project_id`, `file` | `{"digest"}` |
-| `/file/content` | `{project_id, digest}` | raw bytes |
-| `GET /file/content?project_id=..&digest=..` | | raw bytes with sniffed content type (for `<img src>`) |
-| `/files/resolve_url` | `{project_id, uris, expires_in?, per_uri_errors?}` | `{"download_urls", "expires_at"}` (`errors` too with `per_uri_errors`); see [Files and media](#files-and-media) |
+| `POST /api/v1/refs/read` | `{"refs": [ref...]}` (at most 1000; any projects the caller can read) | `{"items": [value \| null]}` aligned with `refs`; unknown refs are null |
+| `POST /api/v1/files/upload` | multipart form: `project_id`, `file` (at most 64 MiB) | `{"digest","size_bytes"}`; `digest` is the hex SHA-256 of the bytes |
+| `GET /api/v1/files/{digest}?project_id=` | | the bytes, with the sniffed content type, `X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`; `api_key=` works as the key |
+| `POST /api/v1/files/resolve` | `{project_id, uris, expires_in?, per_uri_errors?}` | `{"download_urls", "expires_at"}` (`errors` too with `per_uri_errors`); see [Files and media](#files-and-media) |
 
 ## Feedback
 
+Feedback is a reaction, note, annotation or score attached to a ref (usually
+a span ref, `weft:///e/p/span/<id>`).
+
 Feedback schema:
-`{"id","project_id","ref","feedback_type","payload","creator","created_at","user_id","annotation_ref","runnable_ref","call_ref","trigger_ref"}`
+`{"id","project_id","ref","feedback_type","payload","creator","created_at","user_id","annotation_ref","runnable_ref","span_ref","trigger_ref","queue_id"}`
+(`span_ref` is the scorer's own span, for scorer results).
 
 Feedback types Weft gives meaning to (the `weft.` prefix is reserved for them):
 - `weft.reaction` payload `{"emoji": "👍"}`
 - `weft.note` payload `{"note": "text"}`
 - `weft.annotation.<spec name>` payload `{"value": ...}`, `annotation_ref` = AnnotationSpec ref
-- `weft.scorer.<scorer name>`: a scorer's result on one call, payload `{"output": <score>}`, `runnable_ref` = scorer ref, `call_ref` = the scorer's own call, `trigger_ref` = monitor ref when a monitor produced it
+- `weft.scorer.<scorer name>`: a scorer's result on one span, payload `{"output": <score>}`, `runnable_ref` = scorer ref, `span_ref` = the scorer's own span, `trigger_ref` = monitor ref when a monitor produced it
 - `weft.score.<scorer>`: a scoped score (session, agent, hand-off, turn, span; see [Scores](#scores))
 - `weft.signal`: an agent signal result on a turn (scorer fields in the payload, see [Agents](#agents))
 - `weft.user_feedback`: feedback on an agent turn given through `/agents/feedback/batch/create` without a type of its own
 - anything else: free-form
 
-`ref` targets the scored thing, usually `weft:///e/p/call/<id>`.
-
-Databases written by earlier versions are migrated when the server opens
-them: the `ref` column and the types above get these names, and queries saved
-in views, dashboards, monitors and automations with the earlier names keep
-working.
-
-| Endpoint | Body | Response |
+| Route | Body | Response |
 |---|---|---|
-| `/feedback/create` | `{project_id, ref, feedback_type, payload, creator?, user_id?, annotation_ref?, runnable_ref?, call_ref?, trigger_ref?}` | `{"id","created_at","user_id","payload"}` |
-| `/feedback/query` | `{project_id, query?, sort_by?, limit?, offset?}` | `{"result": [Feedback]}` |
-| `/feedback/replace` | create body plus `feedback_id` | same as create (new id) |
-| `/feedback/purge` | `{project_id, query}` (typically `$eq id`) | `{}` |
+| `POST /api/v1/feedback/create` | `{project_id, ref, feedback_type, payload, creator?, user_id?, annotation_ref?, runnable_ref?, span_ref?, trigger_ref?, queue_id?}` | `{"id","created_at","user_id","payload"}` |
+| `POST /api/v1/feedback/batch` | `{project_id, items: [create body, plus the scorer and span fields of the agent feedback schema]}` (at most 1000; items without `project_id` use the top-level one) | `{"items": [{"id","created_at","user_id","payload"}]}` |
+| `POST /api/v1/feedback/query` | `{project_id, query?, sort_by?, limit?, offset?}` | `{"items": [Feedback], "total_count"}` |
+| `POST /api/v1/feedback/replace` | create body plus `feedback_id` | same as create (a new id) |
+| `POST /api/v1/feedback/delete` | `{project_id, ids}` or `{project_id, query}` | `{}` |
 
-Feedback query fields: `id, ref, feedback_type, created_at, creator, user_id, annotation_ref, runnable_ref, call_ref, trigger_ref, payload.<path>`.
+The batch items' scorer fields (`scorer_ratings`, `scorer_rating_confidences`,
+`scorer_rating_reasons`, `scorer_tags`, `scorer_tag_confidences`,
+`scorer_tag_reasons`, `scorer_trace_id`) and span fields (`span_agent_name`,
+`span_agent_version`, `span_conversation_id`, `span_status_code`,
+`span_trace_id`) are normalised and kept in the payload, as for
+`/agents/feedback/batch/create` ([Agents](#agents)). Plain feedback is stored
+as sent.
 
-## Costs
+Feedback query fields: `id, ref, feedback_type, created_at, creator, user_id,
+annotation_ref, runnable_ref, span_ref, trigger_ref, queue_id,
+payload.<path>`. A ref literal compared with a ref field may use the older
+kind names.
+
+## Prices
 
 Built-in prices cover common OpenAI, Anthropic, Google, Mistral and DeepSeek
 models, including the providers' published cache-read and cache-write prices
 (`store/costs.go` `DefaultPrices` lists the sources). Project prices override
 them.
 
-| Endpoint | Body | Response |
+| Route | Body | Response |
 |---|---|---|
-| `/cost/create` | `{project_id, costs: {"<llm_id>": {prompt_token_cost, completion_token_cost, cache_read_input_token_cost?, cache_creation_input_token_cost?, prompt_token_cost_unit?, completion_token_cost_unit?, effective_date?, provider_id?}}}` (per-token USD) | `{"ids": [[id, llm_id]]}` |
-| `/cost/query` | `{project_id, query?, limit?, offset?, include_defaults?}` | `{"results": [{"id","llm_id","prompt_token_cost","completion_token_cost","cache_read_input_token_cost","cache_creation_input_token_cost","prompt_token_cost_unit","completion_token_cost_unit","effective_date","provider_id","pricing_level"}]}` |
-| `/cost/purge` | `{project_id, ids?: [], query?}` | `{}` |
+| `POST /api/v1/prices/create` | `{project_id, prices: {"<llm_id>": {prompt_token_cost, completion_token_cost, cache_read_input_token_cost?, cache_creation_input_token_cost?, prompt_token_cost_unit?, completion_token_cost_unit?, effective_date?, provider_id?}}}` (per-token USD) | `{"items": [{"id","llm_id"}]}` |
+| `POST /api/v1/prices/query` | `{project_id, query?, limit?, offset?, include_defaults?}` | `{"items": [{"id","llm_id","prompt_token_cost","completion_token_cost","cache_read_input_token_cost","cache_creation_input_token_cost","prompt_token_cost_unit","completion_token_cost_unit","effective_date","provider_id","pricing_level"}], "total_count"}` |
+| `POST /api/v1/prices/delete` | `{project_id, ids?: [], query?}` (one of them) | `{}` |
 
 `query` fields: `id, llm_id, provider_id, prompt_token_cost,
 completion_token_cost, cache_read_input_token_cost,
@@ -372,16 +532,16 @@ provider shapes all price correctly:
 | Langfuse `usage_details` | disjoint buckets: `input` excludes `input_cached_tokens` / `input_cache_read` / `input_cache_creation` | gross `prompt_tokens` plus the cache fields |
 
 Existing canonical fields always win over derived ones. Weft's own LLM calls
-(playground, judges, `evaluate_model`) record Anthropic usage in this form.
+(playground, judges, server-side evaluations) record Anthropic usage in this form.
 
 **Cost fields.** `cache_read_input_token_cost`,
 `cache_creation_input_token_cost` (prices), `cache_read_input_tokens`,
 `cache_creation_input_tokens` (counts) and
 `cache_read_input_tokens_total_cost`, `cache_creation_input_tokens_total_cost`
-(amounts, as in `/calls/usage`).
+(amounts).
 `prompt_tokens_total_cost` is the cost of **all** prompt tokens (uncached +
 cache reads + cache writes); the two cache totals are the parts of it spent on
-the cache. A call's cost is therefore always `prompt_tokens_total_cost +
+the cache. A span's cost is therefore always `prompt_tokens_total_cost +
 completion_tokens_total_cost`; do not add the cache totals again.
 
 **Missing cache prices.** An omitted (or `null`) cache price is stored as `null` and those
@@ -395,71 +555,89 @@ Anthropic's 1-hour cache writes (2× input) are priced at the built-in
 mostly use 1-hour caching.
 
 The same rates are used everywhere costs appear: `summary.weft.costs`,
-`/calls/usage` and `/trace/usage`, `/calls/stats` (`cost_usd`, and the metric buckets'
+`/api/v1/spans/stats` (`cost_usd`, and the metric buckets'
 `input_cost` / `output_cost` / `total_cost`, where `input_cost` includes the
-cache costs), `/calls/metrics` (`cost`), `/threads/query`, `/calls/export`,
+cache costs), `/api/v1/spans/metrics` (`cost`), `/api/v1/spans/sessions`, `/api/v1/spans/export`,
 evaluation summaries and the Agents views (`input_cost_usd` includes the cache
 costs, plus `cache_read_cost_usd`, `cache_creation_cost_usd` on spans). Roll-ups sum token counts per model and price
 the sum once, so nested calls are never double counted.
 
-## LLMs and playground
+## Model calls and playground
 
-| Endpoint | Body | Response |
+| Route | Body | Response |
 |---|---|---|
-| `GET /llm/models` | | `{"models": [{"id","provider","label","available","max_tokens"}]}` (`available` = key configured) |
-| `/completions/create` | `{project_id, inputs: {model, messages, temperature?, max_tokens?, top_p?, frequency_penalty?, presence_penalty?, stop?, n?, response_format?, tools?}, track_llm_call?: true}` | `{"response": OpenAIChatCompletion \| {"error": "..."}, "call_id": "..."}` |
-| `/completions/create_stream` | same | `application/jsonl` of OpenAI chunk objects, last line `{"_meta":{"call_id": "..."}}` |
-| `/secrets/set` | `{name, value}` | `{}` |
+| `GET /llm/models?project_id=` | | `{"models": [{"id","provider","label","available","max_tokens"}]}` (`available` = key configured; with `project_id`, the project's `ProviderModel` objects too) |
+| `POST /api/v1/completions` | `{project_id, inputs: {model, messages, temperature?, max_tokens?, top_p?, frequency_penalty?, presence_penalty?, stop?, n?, response_format?, tools?}, track?: true}` | `{"response": OpenAIChatCompletion \| {"error": "..."}, "span_id": "..." \| null}` |
+| `POST /api/v1/completions/stream` | same | NDJSON of OpenAI chunk objects (`{"error"}` on a provider failure), last line `{"_meta": {"span_id": "..." \| null}}` |
+| `POST /api/v1/embeddings` | `{project_id, inputs: {model, input: string \| [string]}}` | `{"response": {"object":"list","data":[{"object":"embedding","index","embedding":[...]}],"model","usage"}}` |
+| `POST /api/v1/images` | `{project_id, inputs: {model, prompt, n?, size?, quality?, style?, response_format?, background?, output_format?}, track?: true}` | `{"response": {...} \| {"error": "..."}, "span_id": "..." \| null}` |
+| `POST /secrets/set` | `{name, value}` | `{}` |
 | `GET /secrets/list` | | `{"secrets": [{"name","source":"env\|db"}]}` (never values) |
-| `/secrets/delete` | `{name}` | `{}` |
+| `POST /secrets/delete` | `{name}` | `{}` |
 
 Model ids: `gpt-*`, `o1*`, `o3*`, `o4*` → OpenAI; `claude-*` → Anthropic;
-`<provider>/<model>` where `<provider>` is `openai`, `anthropic`, or the
-`object_id` of a Provider object; `mock/echo` and `mock/json` are offline test
-models that echo the last user message. Responses are always OpenAI chat
-completion shaped. Tracked completions are recorded as calls with
-`op_name = "weft.completions.create"`.
+`<provider>/<model>` where `<provider>` is `openai`, `anthropic`, the `name`
+of a Provider object, or a [custom runtime](#custom-runtimes); `mock/echo`
+and `mock/json` are offline test models that echo the last user message.
+Responses are always OpenAI chat completion shaped; a provider failure is
+returned as `{"error"}` in `response` (status 200). With `track` (the
+default) the request is recorded as a span named `weft.completions.create`
+(`weft.images.generate` for images) whose id is `span_id`.
+
+Embeddings route like completions (`openai/…`, `text-embedding-…`, custom
+OpenAI-compatible `Provider` objects). `mock/*` models return deterministic
+64-dimension bag-of-words vectors offline. Anthropic models have no
+embeddings and return 400.
+
+Images: OpenAI-compatible providers, `Provider` objects and runtimes call
+`<base_url>/images/generations`. `mock/<anything>` returns deterministic
+64×64 PNGs (`data[].b64_json`) offline; Anthropic models are an error.
+Tracked image spans have the response as output and token usage (plus
+`images`) in the summary.
 
 ## Evaluations
 
-The SDKs run evaluations client side and record calls with these op names
-(the op ref's name part):
+The SDKs run evaluations client side and record spans with these names (the
+function ref's name part):
 
 - `Evaluation.evaluate` — inputs `{"self": <evaluation ref>, "model": <model ref>}`,
   output is the summary, e.g. `{"exact": {"true_count": 3, "true_fraction": 0.75}, "judge": {"score": {"mean": 4.2}}, "model_latency": {"mean": 0.8}}`.
   Bool scores summarise to `{true_count, true_fraction}`, numbers to `{mean}`, dicts recursively.
 - `Evaluation.predict_and_score` (children) — inputs `{"self", "model", "example": <row ref or dict>}`,
   output `{"output": <model output>, "scores": {"<scorer>": <score>}, "model_latency": <seconds>}`.
-- model predict and scorer calls are children of `predict_and_score`; `Evaluation.summarize` is a child of `evaluate`.
+- model predict and scorer spans are children of `predict_and_score`; `Evaluation.summarize` is a child of `evaluate`.
 
-| Endpoint | Body | Response |
+An *evaluation run* is an `Evaluation.evaluate` span; its id is the run id.
+
+| Route | Body | Response |
 |---|---|---|
-| `/evaluate_model` | `{project_id, evaluation_ref, model_ref, user_id?}` | `{"call_id"}` — runs server side in the background; the model must be an `LLMStructuredCompletionModel`, have a `predict_url`, or be bound to a runtime (see [Server-side evaluation of any model](#server-side-evaluation-of-any-model)); scorers must be server-runnable |
-| `/evaluation_status` | `{project_id, call_id}` | `{"status": {"code": "running\|complete\|failed\|unknown", "completed_rows", "total_rows", "error"?}}` |
-| `/evaluations/compare` | `{project_id, evaluation_call_ids}` | see below |
-| `/leaderboard/compute` | `{project_id, object_id, digest?}` | see below |
+| `POST /api/v1/evaluations/run` | `{project_id, evaluation_ref, model_ref, user_id?}` | `{"id"}` — the run's span; runs on the server in the background. The model must be an `LLMStructuredCompletionModel`, have a `predict_url`, or be bound to a runtime (see [Server-side evaluation of any model](#server-side-evaluation-of-any-model)); scorers must be server-runnable |
+| `GET /api/v1/evaluations/{id}/status?project_id=` | | `{"code": "running\|complete\|failed\|unknown", "completed_rows", "total_rows", "error"?}` |
+| `POST /api/v1/evaluations/compare` | `{project_id, ids}` (1–50 runs) | below |
+| `POST /api/v1/leaderboards/compute` | `{project_id, name, version?}` (a `Leaderboard` object; `version` as in `GET /api/v1/objects/{name}/versions/{version}`, default latest) | below |
 
-`/evaluations/compare` response:
+`/api/v1/evaluations/compare` response:
 
 ```jsonc
-{"evaluations": [{"call_id","display_name","evaluation_ref","evaluation_name","model_ref","model_name",
+{"evaluations": [{"id","display_name","evaluation_ref","evaluation_name","model_ref","model_name",
                   "started_at","ended_at","status","summary": {...}, "dataset_ref", "scorers": ["exact"],
                   "total_tokens", "cost_usd", "row_count"}],
  "metrics": [{"key": "exact.true_fraction", "scorer": "exact", "path": "true_fraction",
-              "kind": "fraction|mean|other", "values": {"<call_id>": 0.75}}],
- "rows": [{"row_key": "<row digest or input hash>", "inputs": {...},
-           "results": {"<call_id>": [{"call_id": "<predict_and_score id>", "output": ..., "scores": {...},
-                                      "model_latency": 0.5, "total_tokens": 10, "trial": 0}]}}]}
+              "kind": "fraction|mean|other", "values": {"<run id>": 0.75}}],
+ "rows": [{"row_key": "<row digest or input digest>", "inputs": {...},
+           "results": {"<run id>": [{"span_id": "<predict_and_score span>", "output": ..., "scores": {...},
+                                     "model_latency": 0.5, "total_tokens": 10, "trial": 0}]}}]}
 ```
 
-`/leaderboard/compute` response:
+`/api/v1/leaderboards/compute` response:
 
 ```jsonc
-{"leaderboard": ObjSchema,
+{"leaderboard": Object,
  "columns": [{"index": 0, "evaluation_object_ref","evaluation_name","scorer_name","summary_metric_path","should_minimize"}],
- "rows": [{"model_ref","model_name","values": {"0": {"value": 0.75, "evaluation_call_id": "...", "started_at": "..."}}}]}
+ "rows": [{"model_ref","model_name","values": {"0": {"value": 0.75, "evaluation_run_id": "...", "started_at": "..."}}}]}
 ```
-Each cell uses the most recent finished `Evaluation.evaluate` call for that evaluation object name and model.
+Each cell uses the most recent finished run of that evaluation (by name) and
+model.
 
 ## Monitors
 
@@ -561,8 +739,8 @@ Item: `{"id","project_id","queue_id","call_id","call_op_name","call_trace_id","c
 | `POST /annotation_queues/{queue_id}/items/{item_id}/progress` | `{project_id, queue_id, annotation_state}` | `{"item"}` |
 | `DELETE /annotation_queues/{queue_id}/items/{item_id}?project_id=` | | `{}`; removes the item (soft delete; its feedback stays, and the call can be added again). 404 when it is already gone. The UI delays this call to offer undo. |
 
-Feedback given while reviewing carries the queue: `/feedback/create`,
-`/feedback/replace` and `/feedback/batch/create` accept `queue_id`, Feedback
+Feedback given while reviewing carries the queue: `/api/v1/feedback/create`,
+`/api/v1/feedback/replace` and `/api/v1/feedback/batch` accept `queue_id`, Feedback
 rows return it, and `queue_id` is a feedback query field. The UI's "Export to
 dataset" builds a Dataset with one row per annotated call: its inputs, `output`,
 one column per spec (latest value given in the queue), `annotators` and `call_id`.
@@ -571,7 +749,7 @@ one column per spec (latest value given in the queue), `annotators` and `call_id
 
 An `Automation` object (base class `Automation`) sends a JSON webhook POST or
 a Slack incoming-webhook message when its trigger fires. Store it with
-`/obj/create`; the latest version of each enabled automation is active (changes
+`POST /api/v1/objects/save`; the latest version of each enabled automation is active (changes
 apply within 5 seconds).
 
 ```jsonc
@@ -594,7 +772,7 @@ apply within 5 seconds).
 ```
 
 Score and feedback triggers are evaluated when feedback is created (by
-monitors, `/calls/score`, the UI or the SDKs); error-rate triggers run in a
+monitors, `/api/v1/spans/score`, the UI or the SDKs); error-rate triggers run in a
 background loop. Slack receives `{"text": message}`. Webhooks receive:
 
 ```jsonc
@@ -619,7 +797,7 @@ objects: give API keys only to people you trust with that.
 
 ## More server-runnable scorers
 
-These classes run in `/evaluate_model`, monitors and `/calls/score`, and
+These classes run in server-side evaluations (`/api/v1/evaluations/run`), monitors and `/api/v1/spans/score`, and
 serialise exactly like the SDK classes of the same name. `{inputs}` in prompts
 is all input columns as JSON; `{output}` is the output text.
 
@@ -653,18 +831,7 @@ is all input columns as JSON; `{output}` is the output text.
 ```
 
 `exception`, `latency_gt` and `tool_error` read the scored call, so they need a
-call (monitors, `/calls/score`); in evaluations they report `flagged: false`.
-
-### Embeddings
-
-| Endpoint | Body | Response |
-|---|---|---|
-| `/embeddings/create` | `{project_id, inputs: {model, input: string \| [string]}}` | `{"response": {"object":"list","data":[{"object":"embedding","index","embedding":[...]}],"model","usage"}}` |
-
-Models route like completions (`openai/…`, `text-embedding-…`, custom
-OpenAI-compatible `Provider` objects). `mock/*` models return deterministic
-64-dimension bag-of-words vectors offline. Anthropic models have no embeddings
-and return 400.
+span (monitors, `/api/v1/spans/score`); in evaluations they report `flagged: false`.
 
 ### Signals (UI)
 
@@ -677,15 +844,15 @@ to get alerts.
 
 ## Custom charts, dashboards and export
 
-### `/calls/metrics`
+### `POST /api/v1/spans/metrics`
 
-Aggregates any call metric over time, optionally split by a group key. Used
+Aggregates any span metric over time, optionally split by a group key. Used
 by dashboards and the "Add chart to dashboard" builder.
 
 ```jsonc
 // request
 {"project_id": "e/p",
- "filter": CallsFilter, "query": {"$expr": ...}, "search": "...",   // as in CallsQuery
+ "filter": SpansFilter, "query": {"$expr": ...}, "search": "...",   // as in SpansQuery
  "metrics": [{"name": "p95", "field": "latency_ms", "agg": "p95"},
              {"name": "calls", "agg": "count"},
              {"name": "score", "field": "feedback.weft.scorer.judge.output.score", "agg": "avg"}],
@@ -705,19 +872,20 @@ by dashboards and the "Add chart to dashboard" builder.
 ```
 
 - **agg**: `count`, `sum`, `avg`, `min`, `max`, `p50`, `p90`, `p95`, `p99`,
-  `error_rate`. `count` without a field counts calls; with a field it counts
-  calls where the field is numeric. `error_rate` is the share of calls with an
-  exception. Empty buckets are `0` for `count` and `sum` and `null` otherwise.
+  `error_rate`. `count` without a field counts spans; with a field it counts
+  spans where the field is numeric. `error_rate` is the share of spans with an
+  error. Empty buckets are `0` for `count` and `sum` and `null` otherwise.
 - **field**: `latency_ms`, `total_tokens`, `prompt_tokens`,
   `completion_tokens`, `cost` (USD, from the price book), or any numeric path
   accepted by the query language (`inputs.*`, `output.*`, `attributes.*`,
   `summary.*`, `feedback.<type>.<path>`). Booleans count as 0/1, numeric
   strings are parsed, anything else is skipped. Token and cost fields use each
-  call's own usage, or the trace total when `filter.trace_roots_only` is set.
-- **group_by**: `op_name`, `model` (the model with the most tokens in the
-  call's usage; calls without usage group under `null`), `status`, `thread`,
-  `user`, or any field path (`attributes.env`, `inputs.lang`, …).
-- At most 20 metrics per request and 200,000 calls are read (`truncated`).
+  span's own usage, or the trace total when `filter.trace_roots_only` is set.
+- **group_by**: `name` (the base name), `model` (the model with the most
+  tokens in the span's usage; spans without usage group under `null`),
+  `status`, `session`, `user`, or any field path (`attributes.env`,
+  `inputs.lang`, …).
+- At most 20 metrics per request and 200,000 spans are read (`truncated`).
 
 ### Dashboard objects
 
@@ -741,29 +909,29 @@ version.
 Panel filter keys override the dashboard's; list keys present on both are
 intersected; queries are combined with `$and`.
 
-### `/calls/export`
+### `POST /api/v1/spans/export`
 
-Streams every call matching a CallsQuery. Pages are read 500 at a time, so
-memory stays flat for large exports; calls that start after the request are
-excluded so paging stays stable.
+Streams every span matching a SpansQuery. Pages are read 500 at a time, so
+memory stays flat for large exports; spans that start after the request are
+excluded so paging stays stable. There is no default limit.
 
 ```jsonc
-{...CallsQuery,                  // filter, query, search, sort_by, limit, offset, include_feedback
+{...SpansQuery,                  // filter, query, search, sort_by, limit, offset, include_feedback
  "format": "csv" | "jsonl" | "json",   // default jsonl
  "columns": ["id", "inputs.question", "output.answer"],   // optional projection
  "flatten": true}                // default true for csv, false otherwise
 ```
 
-- `jsonl` / `json` without `columns` or `flatten` emit full Call objects
-  (with costs) like `/calls/stream_query`; `json` is one array.
-- CSV starts with `id, trace_id, parent_id, op_name, display_name, status,
+- `jsonl` / `json` without `columns` or `flatten` emit full Span objects
+  (with costs) like `/api/v1/spans/stream`; `json` is one array.
+- CSV starts with `id, trace_id, parent_id, name, display_name, status,
   started_at, ended_at, latency_ms, prompt_tokens, completion_tokens,
-  total_tokens, cost_usd, exception, thread_id, turn_id, user_id,
+  total_tokens, cost_usd, error, session_id, turn_id, user_id,
   run_id`. With `flatten` the server reads the result twice: once to collect
   every dotted `inputs.*`, `output.*` and `attributes.*` leaf (up to 1000
   columns; lists are JSON), then to write the rows. Without `flatten`, `inputs`,
   `output` and `attributes` are JSON columns.
-- `columns` takes the computed names above or any dotted path into the call
+- `columns` takes the computed names above or any dotted path into the span
   (keys containing dots are matched too); structured values are JSON.
 - CSV cells that start with `=`, `+`, `-`, `@`, tab or CR and are not numbers
   get a leading `'` so spreadsheets do not run them as formulas.
@@ -809,17 +977,26 @@ read-write, `read_only`, or `admin` (all projects; manages keys, secrets and
 the project settings below). Static keys count as admin.
 
 - **Project scope.** The project is taken from the `project_id` query
-  parameter, the `/v2/{entity}/{project}/` path, the `project_id` (or
-  `X-Weft-Project`) header on `/otel/v1/traces` (required for scoped keys),
-  `project_id` in the JSON body (top level, inside `start`/`end`/`obj`/`table`
-  and in `batch` items), `project_ids`, and top-level ref values (`refs`,
-  `*_ref`, `evaluation`, `model` …). Any project outside the scope, or a request
+  parameter, the `project_id` (or `X-Weft-Project`) header on
+  `/otel/v1/traces` (required for scoped keys), `project_id` in the JSON body
+  (top level, in the `items` of `/api/v1/spans/batch` and
+  `/api/v1/feedback/batch` and in their `start`/`end`/`span` wrappers),
+  `project_ids`, a multipart form's `project_id`, and top-level ref values
+  (`refs`, `ref`, `*_ref`, `evaluation`, `model` …); with the compatibility
+  adapter, also its routes' paths and body wrappers (COMPATIBILITY.md). Any project outside the scope, or a request
   naming none (except `/auth/*`, `/projects`, `/llm/models`,
   `/secrets/list`), gets 403. `GET /projects` lists only the key's projects.
-- **Read-only.** `GET` requests and `POST` endpoints whose last path segment is
-  a read (`query`, `read`, `stream_query`, `stats`, `query_stats`, `read_batch`,
-  `content`, `compare`, `compute`, `status`, `usage`, `aggregate`,
-  `payload_schema`, `export`, …) are allowed; other writes get 403.
+- **Read-only.** `GET` requests and the `POST` routes that only read are
+  allowed; other writes get 403. Under `/api/v1` the reading `POST` routes
+  are `spans/query`, `spans/stream`, `spans/stats`, `spans/export`,
+  `spans/metrics`, `spans/names`, `spans/sessions`, `objects/query`,
+  `objects/tags`, `objects/aliases`, `tables/query`, `tables/stream`,
+  `tables/stats`, `feedback/query`, `files/resolve`, `refs/read`,
+  `prices/query`, `evaluations/compare`, `leaderboards/compute`,
+  `registry/query`, `dataset_sources/query` and `dataset_sources/datasets`
+  (`completions/stream` writes a span); elsewhere a `POST` whose last path
+  segment is a read (`query`, `read`, `stats`, `search`, `list`, `compare`,
+  `compute`, `status`, `export`, `metrics`, `preview`, `check`, …).
 - **Admin only:** `/secrets/set|delete`, `/project/delete`,
   `/project/*/update`, `/project/ttl_settings/purge`. Keys bound to a user
   (see [Users, teams and roles](#users-teams-and-roles)) take their access
@@ -853,8 +1030,8 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
   duration, overrides) hard-deletes calls that started before
   `now - retention_days`, and feedback on calls created before it. Objects,
   tables and files are versioned assets and are kept.
-- **Ingest sampling** is applied to every ingest path (`/call/start|end`,
-  `/call/upsert_batch`, OTLP). A trace is kept when
+- **Ingest sampling** is applied to every ingest path
+  (`/api/v1/spans/start|end|batch`, OTLP). A trace is kept when
   `SHA-256(trace_id)` (first 8 bytes, as a fraction of 2^64) is below
   `sample_rate`, so a root and all of its children share the decision on any
   server. Ends for dropped calls are dropped too (dropped ids are remembered
@@ -884,7 +1061,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
   read response says whether NER applies now (policy on, analyzer configured,
   enabled, at least one NER entity selected).
   - NER runs at ingest before the write transaction, on every ingest path
-    (`/call/start|end`, `/call/upsert_batch`, OTLP). The strings of a request (inputs, attributes, output, exception;
+    (`/api/v1/spans/start|end|batch`, OTLP). The strings of a request (inputs, attributes, output, exception;
     refs, numbers and short or lowercase-only Latin strings are skipped) are
     joined into chunks of up to 50,000 characters, one analyzer request per
     chunk, and each entity becomes `<ENTITY>`. The regex rules then run as
@@ -901,75 +1078,6 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
     every redacted string is sent to it.
 - **Project delete** removes the project's rows from every table with a
   `project_id` column, including settings, links and tags.
-
-### Tags and aliases
-
-| Endpoint | Body | Response |
-|---|---|---|
-| `GET /tags?project_id=` | | `{"tags": [..]}` distinct tags on live versions |
-| `GET /aliases?project_id=` | | `{"aliases": [..]}` distinct aliases (`latest` is virtual and not listed) |
-| `PUT /objs/{object_id}/aliases` (POST also accepted) | `{project_id, digest, aliases}` | `{}`; each alias moves to `digest` |
-| `/objs/{object_id}/aliases/remove` | `{project_id, aliases}` | `{}` |
-| `PUT /objs/{object_id}/versions/{digest}/tags` (POST also accepted) | `{project_id, tags}` | `{}`; `digest` may be `latest`, `v<N>` or an alias |
-| `/objs/{object_id}/versions/{digest}/tags/remove` | `{project_id, tags}` | `{}` |
-
-ObjSchema carries `tags` (always included, so `include_tags_and_aliases` is
-honoured). Tags match `[A-Za-z0-9_.:/ -]{1,128}`.
-
-### More trace endpoints
-
-| Endpoint | Notes |
-|---|---|
-| `/feedback/stats` | `{project_id, start, end?, feedback_type?, trigger_ref?, granularity?, timezone?, metrics: [{json_path, value_type: numeric\|boolean\|categorical, aggregations?, percentiles?}]}` → `{start, end, granularity, timezone, buckets: [{timestamp, count, "<agg>__<slug>"}], window_stats: {"<slug>": {"<agg>": v}}}`; slug = json_path with non-alphanumerics → `_`; percentiles are `p<N>`. A `trigger_ref` ending `*` matches by prefix. |
-| `/feedback/aggregate` | `{project_id, after_ms, before_ms, feedback_types? (prefixes), scorer_ids?, monitor_ids? (trigger refs), group_by?: ["scorer_id"], rating_min?, rating_max?, tags?, time_bucket_seconds?}` → `{buckets: [{group, time_bucket_start_ms, total_count, scored_count, rating_counts, rating_sums, tag_counts}]}`. Numbers in `payload.output` are ratings (`_rating_` for a bare number, else their path); `true` booleans and short strings are tags. Agent-span groups are always empty. |
-| `/feedback/payload_schema` | `{project_id, start, end?, feedback_type?, trigger_ref?, sample_limit?}` → `{paths: [{json_path, value_type}]}` from one payload per trigger ref / feedback type |
-| `/table/create_from_digests` | `{project_id, row_digests, expected_digest?}` → `{digest}`; rows must exist |
-| `/table/query_stats_batch` | `{project_id, digests, include_storage_size?}` → `{tables: [{digest, count, storage_size_bytes?}]}` |
-| `/files/query_stats` | `{project_id}` → `{total_size_bytes}` |
-| `/calls/usage` | `{project_id, call_ids, include_costs?}` → `{call_usage: {"<id>": {"<model>": {requests, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, *_total_cost?}}}, unfinished_call_ids}` including descendants |
-| `/trace/usage` | `{project_id, filter?, query?, include_costs?, limit?}` → same shape, one entry per matching call |
-| `/threads/stream_query` | `/threads/query` body; JSONL of threads |
-| `/evaluations/evaluate_model` | alias of `/evaluate_model` |
-| `/evaluations/status` | `{project_id, call_id}` → `{"status": {"code": "running", completed_rows, total_rows} \| {"code": "complete", output} \| {"code": "failed", error} \| {"code": "not_found"}}` |
-| `/evaluations/rescore` | `{project_id, source_evaluation_run_id, scorer_refs}` → `{call_id, evaluation_run_id}` (same id). Records a new `Evaluation.evaluate` call (`attributes.weft.source_evaluation_run_id`) whose `predict_and_score` children reuse the source run's examples and model outputs and run the given server-runnable scorers. Poll `/evaluations/status`. |
-| `/dataset_sources/link` | `{project_id, dataset_object_id, dataset_digest (digest, latest or alias), links: [{row_digest, sources: [{source_id, source_kind: call\|span\|conversation, source_trace_id}], link_metadata?}], include_created_status?}` → `{entries: [{link_id, created?}]}` one per (row, source); relinking returns the same id |
-| `/dataset_sources/query` | `{project_id, dataset_object_id, row_digests?, source_kinds?, include_deleted?, limit?, offset?}` → `{links: [{id, row_digest, source_kind, source_id, source_trace_id, source_display_name, source_started_at, link_metadata, added_by, created_at, updated_at, deleted_at, dataset_digest}]}` (call sources resolve display name and start time) |
-| `/dataset_sources/source_datasets_query` | `{project_id, sources, include_deleted?}` → `{memberships: [{dataset_object_id, source_id, source_kind, source_trace_id, first_seen_at, row_digests (≤100), row_digests_total_count, row_digests_truncated}]}` |
-| `/dataset_sources/link_delete` | `{project_id, link_ids}` → `{entries: [{link_id, deleted}]}` (soft delete) |
-
-### v2 REST (`/v2/{entity}/{project}/…`)
-
-Objects (`ops`, `datasets`, `models`, `scorers`, `evaluations`):
-`POST /{kind}` create → `{digest, object_id, version_index}`;
-`GET /{kind}?limit&offset` → JSONL of latest versions;
-`GET /{kind}/{object_id}` (latest) and `GET /{kind}/{object_id}/versions/{digest}` → one item;
-`DELETE /{kind}/{object_id}?digests=` → `{num_deleted}`.
-
-| Kind | Create body | Stored as | Item fields (plus `object_id, digest, version_index, created_at`) |
-|---|---|---|---|
-| ops | `{name?, source_code}` (name defaults to the first `def`) | `{"_type":"Op","name","code","language":"python"}` | `code` |
-| datasets | `{name, description?, rows: [{}]}` | `Dataset` with a new rows table | `name, description, rows` (table ref) |
-| models | `{name, source_code, description?, attributes?}` | `Model` object (`source_code`, `attributes`) | `name, description, source_code, attributes` |
-| scorers | `{name, op_source_code, description?}` | op `<name>.score` + `Scorer` object with `score` = op ref | `name, description, score_op` |
-| evaluations | `{name, dataset, scorers?, trials?, description?, evaluation_name?, eval_attributes?}` | `Evaluation` (`eval_attributes` → `metadata`) | `name, description, dataset, scorers, trials, evaluation_name, evaluate_op, predict_and_score_op, summarize_op` (ops null) |
-
-Evaluation runs, predictions and scores are calls, so they show up in
-`/evaluations/compare`, leaderboards and the UI:
-
-| Endpoint | Behaviour |
-|---|---|
-| `POST /evaluation_runs` `{evaluation, model, source_evaluation_run_id?}` | starts an `Evaluation.evaluate` call (inputs `self`, `model`; `attributes.weft.v2 = "evaluation_run"`) → `{evaluation_run_id}` (the call id) |
-| `GET /evaluation_runs?evaluation_run_ids&evaluations&models&limit&offset` | JSONL of `{evaluation_run_id, evaluation, model, status: running\|finished\|failed, started_at, finished_at, summary, source_evaluation_run_id}`; lists every `Evaluation.evaluate` call, including SDK and server runs |
-| `GET /evaluation_runs/{id}` | one run |
-| `POST /evaluation_runs/{id}/finish` `{summary?}` | ends the call; without a summary, one is computed from the finished predictions like the SDKs do → `{success}` |
-| `DELETE /evaluation_runs?evaluation_run_ids=` | soft-deletes the runs and their descendants → `{num_deleted}` |
-| `POST /predictions` `{model, inputs, output, evaluation_run_id?, genai_span_ref?}` | in a run: an `Evaluation.predict_and_score` child of the run (inputs `self`, `model`, `example` = inputs) with a finished `<model>.predict` child holding the output; outside a run: one finished `<model>.predict` call → `{prediction_id}` |
-| `GET /predictions/{id}`, `GET /predictions?evaluation_run_id` | `{prediction_id, model, inputs, output, evaluation_run_id, user_id}` (list is JSONL) |
-| `POST /predictions/{id}/finish` | ends the `predict_and_score` call with `{output, scores: {<scorer>: value}, model_latency}` from its score children → `{success}` |
-| `POST /scores` `{prediction_id, scorer, value, evaluation_run_id?}` | a finished `<scorer>.score` child of the prediction (inputs `self` = scorer, `output`, the prediction inputs) plus `weft.scorer.<scorer>` feedback on the prediction → `{score_id}`; `scorer` may be a ref or a plain name |
-| `GET /scores/{id}`, `GET /scores?evaluation_run_id` | `{score_id, scorer, value, evaluation_run_id, user_id}` |
-| `DELETE /predictions?prediction_ids=`, `DELETE /scores?score_ids=` | soft delete → `{num_deleted}` |
-| `POST /eval_results/query` | `{evaluation_call_ids \| evaluation_run_ids, include_rows?, include_summary?, include_raw_data_rows?, include_predict_and_score_children?, require_intersection?, sort_by?: [{field: "scores.<name>" \| "inputs.<path>" \| "outputs.<path>", direction, evaluation_call_id?}], limit?, offset?}` → `{rows: [{row_digest, raw_data_row, evaluations: [{evaluation_call_id, trials: [{predict_and_score_call_id, predict_call_id, scorer_call_ids, model_output, model_latency_seconds, scores, total_tokens}]}]}], summary: {row_count, evaluations: [{evaluation_call_id, display_name, evaluation_ref, model_ref, started_at, trial_count, predict_total_tokens, scorer_stats: [{scorer_key, path, value_type: binary\|continuous\|text, trial_count, pass_true_count, pass_known_count, pass_rate, pass_signal_coverage, numeric_count, numeric_mean}]}]}, total_rows, warnings}`. `include_*` default to true. `filters` are not supported and produce a warning; costs are not computed. |
 
 ## Agents
 
@@ -1027,7 +1135,7 @@ OpenInference `metadata` JSON flattens under `metadata.`.
 | *Weft*: `/agents/signals/presets` (GET or POST) | — | `{"presets": [{"id","name","kind": "tag"\|"rating","description"}]}` |
 | *Weft*: `/agents/signals/run` | `{project_id, model, signals: [{preset} \| {id, name?, kind, description}] (1–12), agent_name?, conversation_id?, trace_ids?, started_after?, started_before?, limit? (20 most recent turns, max 200), rescore?}` | `{"turns","scored","skipped","failed","results": [{"span_id","trace_id","signal","kind","score"?,"matched"?,"confidence"?,"reason"?,"feedback_id"?,"error"?}]}` |
 | *Weft*: `/agents/signals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, signal?, kind?, tag?, min_score?, max_score?, matched_only? (true), started_after?, started_before?, limit? (100), offset?}` | `{"results": [SignalResult], "summary": [{"signal","signal_name","kind","count","matched","avg","tag_counts"}], "total_count"}` |
-| *Weft*: `/agents/feedback/batch/create` (same as `/feedback/batch/create`) | `{batch: [{project_id, ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","user_id","payload"}]}` |
+| *Weft*: `/agents/feedback/batch/create` (as `/api/v1/feedback/batch`) | `{batch: [{project_id, ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","user_id","payload"}]}` |
 
 **Signals.** A signal scores one *turn* (a conversation turn, or an agent
 invocation at the top of its trace outside conversations) with an LLM judge
@@ -1184,26 +1292,26 @@ aggregate up to 200,000 spans in memory.
 
 ## More endpoints
 
-Custom runtimes, server-side evaluation of any model, files and media, image
-generation, alternative response shapes, the registry, the model catalog and
-geolocation.
+Custom runtimes, server-side evaluation of any model, files and media, the
+registry and dataset lineage.
 
 ### Custom runtimes
 
-`PUT /v2/{entity}/{project}/runtimes/{runtime_name}` (the SDKs'
+`PUT /api/v1/runtimes/{runtime_name}` (the SDKs'
 `client.register_custom_runtime`) creates or replaces a runtime:
 
 ```jsonc
 // body
-{"base_url": "https://vllm.internal/v1",       // OpenAI-compatible base URL
+{"project_id": "e/p",
+ "base_url": "https://vllm.internal/v1",       // OpenAI-compatible base URL
  "api_key_secret": "VLLM_KEY",                  // name of a secret (Settings → Secrets; never read from the server environment); sent as a bearer token
  "headers": {"X-Team": "ml"},                    // literal headers
  "runtime_ids": [{"id": "llama-3-8b", "max_tokens": 8192}, {"id": "qwen2-7b"}],  // complete list; max_tokens defaults to 4096
- "kind": "openai"}                               // Weft: "openai" (default) or "predict"
+ "kind": "openai"}                               // "openai" (default) or "predict"
 // response
 {"name", "base_url", "api_key_secret", "headers",
  "runtime_ids": [{"id", "max_tokens", "playground_id": "<runtime>/<id>"}],
- "kind", "ref"}                                  // kind and ref are Weft additions
+ "kind", "ref"}
 ```
 
 The name must match the runtime name pattern (no whitespace; `:` only between
@@ -1212,16 +1320,17 @@ segments) and must not be a built-in provider prefix (`openai`, `anthropic`,
 name with characters outside `[A-Za-z0-9_.-]` replaced by `-`) and one
 `ProviderModel` per runtime ID; IDs omitted on a later PUT are deleted. So
 `<runtime>/<id>` works everywhere a model id does: the playground,
-`/completions/create`, `/image/create`, LLM judges, `LLMStructuredCompletionModel`
-and `GET /llm/models?project_id=`. Updates apply immediately. *Weft*: `GET /v2/{entity}/{project}/runtimes` → `{"runtimes": [...]}`.
+`/api/v1/completions`, `/api/v1/images`, LLM judges, `LLMStructuredCompletionModel`
+and `GET /llm/models?project_id=`. Updates apply immediately.
+`GET /api/v1/runtimes?project_id=` → `{"items": [runtime], "total_count"}`.
 
 A `"kind": "predict"` runtime is an HTTP endpoint that serves a model's
 predict (below); it has no `ProviderModel` objects.
 
 ### Server-side evaluation of any model
 
-`/evaluate_model` runs these models on the server, recording one
-`<ModelClass>.predict` call per row (inputs `self` = model ref plus the row's
+`POST /api/v1/evaluations/run` runs these models on the server, recording one
+`<ModelClass>.predict` span per row (inputs `self` = model ref plus the row's
 columns) under each `Evaluation.predict_and_score`:
 
 | Model value | How it is predicted |
@@ -1233,7 +1342,7 @@ columns) under each `Evaluation.predict_and_score`:
 
 Other models are rejected with 400, as before. A Python `weft.Model`
 subclass works as long as its published attributes include `predict_url` or
-`runtime`; its own `predict` op is not executed by the server.
+`runtime`; its own `predict` function is not executed by the server.
 
 Predict protocol:
 
@@ -1244,16 +1353,16 @@ Predict protocol:
  "runtime_id": "upper-v2"}                                // predict runtimes only
 // response: any JSON. {"output": X, ...} predicts X; any other JSON value or
 // text body is the prediction. An OpenAI-style "usage" (with "model") is
-// recorded as the predict call's token usage. Non-2xx fails the row.
+// recorded as the predict span's token usage. Non-2xx fails the row.
 ```
 
 ### Files and media
 
-`POST /files/resolve_url` `{project_id, uris, expires_in?}` →
+`POST /api/v1/files/resolve` `{project_id, uris, expires_in?}` →
 `{"download_urls": [...], "expires_at": "<RFC 3339>" | null}`, one URL per uri:
 
-- a file digest from `/file/create` (also `weft-file://<digest>`): a presigned URL when the file is in the S3 backend,
-  otherwise this server's `GET /file/content?project_id=..&digest=..` URL
+- a file digest from `/api/v1/files/upload` (also `weft-file://<digest>`): a presigned URL when the file is in the S3 backend,
+  otherwise this server's `GET /api/v1/files/<digest>?project_id=..` URL
   (built from the request host, honouring `X-Forwarded-Proto/Host`);
 - `s3://<backend bucket>/<key>` where the key is under this project's prefix:
   a presigned URL; other buckets, projects and `..` are refused;
@@ -1264,11 +1373,11 @@ Predict protocol:
   (S3) or V4 signed (GCS) URL.
 
 `expires_at` is the earliest expiry of the presigned URLs (default lifetime 1 h;
-*Weft*: `expires_in` seconds, 1 s to 7 days). One unresolvable
+`expires_in` seconds, 1 s to 7 days). One unresolvable
 uri (unknown digest, unregistered bucket, other scheme) fails the request with
 a 400 naming it.
 
-*Weft*: `per_uri_errors: true` reports failures per URI instead, so one
+`per_uri_errors: true` reports failures per URI instead, so one
 request can resolve a mixed batch: the response keeps its shape and adds
 `errors`, aligned with `uris`, where each entry is `null` or
 `{"code", "message"}`; a failed URI's `download_urls` entry is `""`. Codes:
@@ -1282,8 +1391,8 @@ returned as the request's status. The SDKs do not send it; the UI does.
 **Bring your own bucket.** `--files-backend s3://bucket/prefix` (env
 `WEFT_FILES_BACKEND`) writes new file contents to an S3-compatible store
 instead of SQLite; the `files` table keeps the project, digest, size and the
-object key (`<prefix>/<project_id>/<digest>`). Reads (`/file/content`, the UI)
-go through the server, and `/files/resolve_url` returns presigned GET URLs.
+object key (`<prefix>/<project_id>/<digest>`). Reads (`GET /api/v1/files/<digest>`, the UI)
+go through the server, and `/api/v1/files/resolve` returns presigned GET URLs.
 Files stored before the backend was enabled stay in SQLite and remain
 readable. SQLite stays the default.
 
@@ -1299,75 +1408,34 @@ Requests are signed with AWS Signature Version 4 (stdlib only,
 `internal/weft/objstore`); only static credentials are supported (no instance
 profiles or SSO).
 
-`POST /image/create` `{project_id, inputs: {model, prompt, n?}, track_llm_call?}`
-→ `{"response": {...} | {"error": "..."}, "call_id": "..." | null}`.
-The model is routed like chat models; OpenAI-compatible providers, `Provider`
-objects and runtimes call `<base_url>/images/generations` (Weft also passes
-`size`, `quality`, `style`, `response_format`, `background`, `output_format`
-from `inputs`). `mock/<anything>` returns deterministic 64×64 PNGs
-(`data[].b64_json`) offline; Anthropic models are an error. Tracked requests
-are `weft.images.generate` calls with the response as output and token usage
-(plus `images`) in the summary.
+### Registry
 
-### Alternative response shapes
+`POST /api/v1/registry/link` `{ref, project_id, collection, aliases?}` →
+`{"version"}` links an object version (of any project) into the collection
+`collection` of the registry project `project_id`. Versions are numbered
+from 0 per collection; linking a ref that is already in the collection
+returns its number. Aliases move to the version they are last given to;
+`latest` (newest version) and `v<N>` are implicit and cannot be assigned. The
+key needs write access to both the ref's project and the registry project.
 
-- **`/calls/stats`**: a request with any of `granularity`, `usage_metrics`,
-  `call_metrics` or `timezone` gets metric buckets; otherwise the time series
-  (`bucket_seconds` → `buckets`/`totals`, used by the UI) is unchanged.
-  Metric buckets: `{project_id, start, end?, granularity?, usage_metrics?: [{metric, aggregations?, percentiles?}], call_metrics?: [...], filter?, timezone?}`
-  → `{start, end, granularity, timezone, usage_buckets, call_buckets}`.
-  Usage metrics (`input_tokens`, `output_tokens`, `total_tokens`,
-  `cache_read_input_tokens`, `cache_creation_input_tokens`, `input_cost`,
-  `output_cost`, `total_cost`) are grouped by bucket and model; call metrics
-  (`latency_ms`, `call_count`, `error_count`) by bucket. Columns are
-  `<agg>_<metric>` (`sum`, `avg`, `min`, `max`, `count`, `count_true`,
-  `count_false`; default `sum`) and `p<pct>_<metric>`, plus `timestamp`,
-  `count` and `model`. `sum`/`count`/`avg` are 0 in empty buckets,
-  `min`/`max`/percentiles null; every bucket × model pair is listed. Granularity
-  defaults to 5 min up to 2 h, 1 h up to 12 h, 6 h up to 3 d, 12 h up
-  to 14 d, else 1 d, and is widened to keep at most 10,000 buckets. Buckets
-  align to the interval in `timezone`. Token usage is each call's own usage
-  (the whole trace's with `filter.trace_roots_only`); costs use the project's
-  price book, and unpriced models have null costs. At most 200,000 calls are
-  read.
-- **`/calls/query_stats`** accepts `limit`: `count` stops at the limit and
-  `has_more` says whether more calls match (always present).
-- **`/feedback/query`** returns `total_count`: feedback matching `query`,
-  ignoring `limit` and `offset`.
-- **`GET /version`** → `{"version", "server": "weft", "trace_server_version"}`,
-  no API key needed.
-
-### Registry, model catalog and geolocation
-
-**Registry.** `POST /link_to_registry` `{ref, target: {portfolio_name, entity_name, project_name}, aliases?}`
-→ `{"version_index"}` links an object version (any project) into the
-collection `portfolio_name` of the registry project
-`<entity_name>/<project_name>`. Versions are numbered from 0 per collection;
-linking a ref that is already in the collection returns its index. Aliases
-move to the version they are last given to; `latest` (newest version) and
-`v<N>` are implicit and cannot be assigned. With auth, the key needs write access to
-both the ref's project and the registry project.
-*Weft*: `POST /registry/query` `{project_id (registry project), portfolio_name?, alias?, version_index?}`
+`POST /api/v1/registry/query` `{project_id (registry project), portfolio_name?, alias?, version_index?}`
 → `{"collections": [{"name", "versions": [{"version_index", "version", "ref", "source_project_id", "object_id", "digest", "base_object_class", "aliases", "created_at", "user_id"}]}]}`
-(newest first); `alias`/`version_index` need `portfolio_name` and give 404 when
-nothing matches.
+(newest first); `alias`/`version_index` need `portfolio_name` (the
+collection) and give 404 when nothing matches.
 
-**Inference catalog.** Weft's own model catalog: the built-in models of
-`/llm/models` with Weft's list prices, plus the project's `ProviderModel`
-objects (custom providers and runtimes) when `?project_id=` is given. These
-need an API key when auth is on.
+### Dataset lineage
 
-| Endpoint | Shape |
-|---|---|
-| `GET /inference/catalog/models` | `{"models": [LLMModelDetails]}`: `id`/`idPlayground` are Weft model ids; prices in cents per billion tokens; `status` is `unavailable` when no provider key is configured; fields Weft cannot know are empty, 0, `false` or `"bf16"` (quantization) |
-| `GET /inference/modelsdev/models` | models.dev `api.json`: `{"<provider>": {id, name, npm, env, doc, api, models: {"<model id>": {..., cost: {input, output, cache_read, cache_write} USD per million tokens, limit}}}}` |
-| `GET /inference/router/openrouter/models`, `GET /inference/analysis/artificialanalysis/models` | `{"data": [{id, name, context_length, max_output_length, pricing: {prompt, completion, input_cache_read} USD per token as strings, supported_features, ...}]}` |
-| `GET /inference/nvidia/v2/hardware?model=` | `{"hardware": [{"id": "weft-<provider>", "type": "serverless", "pricing": {cents_per_million_input_tokens, cents_per_million_output_tokens}, "specs"}]}` for catalog models whose name matches; `model` is required |
+Dataset rows can be linked to the spans, or sessions, they were made from.
 
-**Geolocation.** `GET /geolocate?ip=` (no API key needed) →
-`{"ip": <ip or the caller's address>, "location": null, "allowed": true}`.
-Weft has no GeoIP database and no regional restrictions; an invalid `ip` is
-a 400.
+| Route | Body | Response |
+|---|---|---|
+| `POST /api/v1/dataset_sources/link` | `{project_id, dataset (name), version? (digest, v<N>, alias; default latest), links: [{row_digest, sources: [{source_id, source_kind: call\|span\|conversation, source_trace_id?}], link_metadata?}], include_created_status?}` | `{"items": [{"id","created"?}], "dataset_digest"}`, one per (row, source); relinking returns the same id |
+| `POST /api/v1/dataset_sources/query` | `{project_id, dataset, row_digests?, source_kinds?, include_deleted?, limit?, offset?}` | `{"items": [{"id","dataset","dataset_digest","row_digest","source_kind","source_id","source_trace_id","source_display_name","source_started_at","link_metadata","added_by","created_at","updated_at","deleted_at"}], "total_count"}`; `call` sources resolve the span's display name and start time |
+| `POST /api/v1/dataset_sources/datasets` | `{project_id, sources: [{source_id, source_kind}], include_deleted?}` | `{"items": [{"dataset","source_id","source_kind","source_trace_id","first_seen_at","row_digests" (≤100),"row_digests_total_count","row_digests_truncated"}], "total_count"}` |
+| `POST /api/v1/dataset_sources/delete` | `{project_id, ids}` | `{"items": [{"id","deleted"}]}` (soft delete) |
+
+`source_kind` `call` names a span by its id (the name stored links have had
+from the start).
 
 ## Users, teams and roles
 
@@ -1399,8 +1467,8 @@ Weft has users, teams and three roles:
   (revoking another user's key is a 404).
 - **Enforcement.** Every authenticated request is checked against every
   project it names (same discovery as for scoped keys: `project_id` in the
-  query, body, wrappers, batch items and refs, the `/v2/{entity}/{project}/`
-  path, the OTLP `project_id` header). A non-admin request that names no
+  query, body, wrappers, batch items and refs, the OTLP `project_id` header,
+  and the compatibility adapter's paths). A non-admin request that names no
   project gets 403, except `/auth/*`, `/projects`, `/llm/models`,
   `/secrets/list`. `GET /projects` lists only projects where the
   caller has a role. Refusals are 403 with a `reason` such as
@@ -1481,8 +1549,10 @@ them.
 Without `project_id` only server admins may query; with it, admins of that
 project. AuditEntry:
 `{"id","ts","actor","auth_method": "static_key"|"api_key"|"session"|"sso"|"none"|"unauthenticated","key_id","method","path","project_id","object_ids","call_ids","status","outcome": "success"|"denied"|"unauthenticated"|"failed","ip","detail"}`.
-`object_ids` and `call_ids` (up to 50 each) come from `object_id`, `obj`,
-`call_id(s)`, `start`/`end`, batch items and object/call refs in the body.
+`object_ids` and `call_ids` (up to 50 each; `call_ids` are span ids) come
+from the body: object names (`/api/v1/objects/...`, also from the path),
+span `id`, `ids` and batch items (`/api/v1/spans/...`), and object, function
+and span refs.
 
 ### OAuth client credentials (RemoteScorer, predict_url)
 
@@ -1597,8 +1667,8 @@ actions on evaluations. A span belongs to evaluation run R and prediction P
   spans the SDKs record inside `EvaluationLogger.log_prediction()` get them.
   A span with only `predict_and_score_call_id` is linked to P's parent run;
 - P links it through `attributes.weft.linked_calls` or
-  `attributes.weft.genai_span_ref` (span or call id, `weft:///…/call/<id>`
-  ref, or `{call_id|span_id, trace_id}`), or links its conversation through
+  `attributes.weft.genai_span_ref` (span id, `weft:///…/span/<id>`
+  ref (the older `/call/<id>` too), or `{call_id|span_id, trace_id}`), or links its conversation through
   `attributes.weft.linked_conversation_ids` (v2 `POST /predictions` with
   `genai_span_ref` and `evaluation_run_id` too);
 - or it descends from such a span (OTel attributes do not propagate, and
@@ -1646,11 +1716,12 @@ prediction.
 
 The bulk export API exports a whole project as files.
 
-`POST /v1/entities/{entity}/projects/{project}:export` `{"targets": ["calls", "objects", "feedback"]}`
+`POST /api/v1/exports` `{"project_id": "e/p", "targets": ["calls", "objects", "feedback"]}`
 (1 to 3 distinct targets; no other fields) → **202**
-`{"name": "entities/{entity}/projects/{project}/exports/{job_id}", "job_id": "<uuid>", "created_at": "<RFC 3339>"}`.
+`{"name": "entities/{entity}/projects/{project}/exports/{job_id}", "job_id": "<uuid>", "created_at": "<RFC 3339>"}`,
+with `Location: /api/v1/exports/<job_id>?project_id=e%2Fp`.
 
-`GET /v1/entities/{entity}/projects/{project}/exports/{job_id}` →
+`GET /api/v1/exports/{job_id}?project_id=e/p` →
 
 ```jsonc
 {"name": "...", "job_id": "...", "created_at": "...", "updated_at": "...",
@@ -1658,25 +1729,28 @@ The bulk export API exports a whole project as files.
  "artifacts": [                                   // empty until succeeded: partial output is never returned
    {"target": "calls", "uri": "s3://bucket/prefix/e/p/exports/<job_id>/calls.jsonl.gz",
     "expected_rows": 1203, "written_rows": 1203,
-    "size_bytes": 48211, "format": "jsonl.gz"}],  // size_bytes and format are Weft extensions
+    "size_bytes": 48211, "format": "jsonl.gz"}],
  "failure": null | {"code": "export_failed" | "interrupted", "message": "..."},
- "targets": ["calls"]}                            // Weft extension
+ "targets": ["calls"]}
 ```
 
 - The job runs in the background. Each target is one gzip-compressed JSON
-  Lines file with one row per line: calls as `/calls/stream_query` returns
-  them (with `summary.weft.costs` and `storage_size_bytes`), object versions
-  as `/objs/query` returns them (with `val`), feedback as `/feedback/query`
-  returns it. Rows created after the job started are left out, so
-  `expected_rows` (counted at the start) and `written_rows` differ only if rows
-  are deleted while the job runs. The spec names no file format; JSON Lines
-  was chosen because it streams and needs no library (no Parquet).
+  Lines file with one row per line: `calls` holds the project's spans in the
+  form they are stored in (`op_name`, `exception` and `thread_id` are the
+  stored names of `name`, `error` and `session_id`; with
+  `summary.weft.costs` and `storage_size_bytes`), `objects` the object
+  versions as stored (`object_id`, `val`, `version_index`,
+  `base_object_class`, `leaf_object_class`) and `feedback` the feedback rows
+  (`call_ref` is `span_ref`). Rows created after the job started are left
+  out, so `expected_rows` (counted at the start) and `written_rows` differ
+  only if rows are deleted while the job runs. JSON Lines was chosen because
+  it streams and needs no library.
 - **Where artifacts go.** With an S3 `--files-backend`, artifacts are uploaded
   (streamed from a temporary file) to `<prefix>/<project_id>/exports/<job_id>/<target>.jsonl.gz`
-  and `uri` is that `s3://` URI, which `/files/resolve_url` presigns.
+  and `uri` is that `s3://` URI, which `/api/v1/files/resolve` presigns.
   Without one, they are stored in SQLite (1 MiB chunks) and `uri` is this
   server's download URL.
-- *Weft*: `GET /v1/entities/{entity}/projects/{project}/exports/{job_id}/artifacts/{target}`
+- `GET /api/v1/exports/{job_id}/artifacts/{target}?project_id=e/p`
   downloads an artifact (`application/gzip`); for S3 artifacts it redirects to
   a presigned URL.
 - One job runs at a time per server: starting another while one is running is
@@ -1689,7 +1763,7 @@ The bulk export API exports a whole project as files.
   `{"detail": "<reason>"}`. Errors: 400/404/409/503
   `{"detail": {"code", "message"}}` and 422 `{"detail": [{"loc", "msg", "type"}]}`
   (missing or empty `targets`, unknown targets, extra fields, a job id that is
-  not a UUID).
+  not a UUID); a request without `project_id` is a 400.
 
 ## Reference buckets (bring your own bucket)
 
@@ -1698,7 +1772,7 @@ Media that already lives in a customer bucket can be logged by URI
 bytes. A bucket must be
 registered first, for a team (entity: every project of the team may use it)
 or for one project, in **Settings → Buckets** or with the endpoints below.
-`/files/resolve_url` then presigns any URI in a registered bucket that the
+`/api/v1/files/resolve` then presigns any URI in a registered bucket that the
 request's project may use. URIs in buckets that are not registered (or
 outside a registration's `prefix`) are a 400, and one such URI fails the
 whole `uris` batch unless `per_uri_errors` is set (see
@@ -1789,23 +1863,6 @@ Credentials are never returned.
   keep the files-backend rule (only keys under the project's prefix).
 - Presigned URLs last 1 hour by default (`expires_in`, 1 s to 7 days);
   `expires_at` is the earliest expiry in the batch.
-
-## Optional call fields
-
-Calls have optional fields that Weft accepts, stores and
-returns (`/call/read`, `/calls/query`, `/calls/stream_query`):
-
-| Field | Written by | Returned |
-|---|---|---|
-| `run_step` | `/call/start` (`start.run_step`), `/call/upsert_batch` | always (null when not sent) |
-| `run_step_end` | `/call/end` (`end.run_step_end`), `/call/upsert_batch` | always (null when not sent) |
-| `expire_at` | derived: `started_at` + the project's `retention_days` (`/project/ttl_settings/update`) | always; null when the project keeps calls forever. It moves with the TTL, matching the purge, which deletes calls by `started_at` |
-| `total_storage_size_bytes` | derived: sum of `storage_size_bytes` over the trace | on trace roots, with `include_total_storage_size: true` (`/call/read`, `/calls/query`, `/calls/stream_query`) |
-| `username` | derived from `user_id` | with `include_usernames: true`: the Weft user id (handle) when `user_id` names a user, the `user_id` itself when it is a valid handle without a user row (static `user=key` names), otherwise omitted |
-
-`/calls/query_stats` already returns `total_storage_size_bytes` for the
-matching calls. The run steps are stored in two new `calls` columns, added by
-a migration on start.
 
 ## OpenTelemetry: Langfuse, OpenLit, Koog and verl
 
@@ -2215,7 +2272,7 @@ Scope scores are feedback rows whose payload carries `scope` (`session`,
 are 1 or 0), `reason`, and optionally `output` and `model`. The server's
 scorers write them with `feedback_type` `weft.score.<scorer>`, attached
 (`ref`) to the target's first span; SDKs can write their own with
-`/feedback/create` and any feedback type, as long as the payload has a valid
+`/api/v1/feedback/create` and any feedback type, as long as the payload has a valid
 `scope`.
 
 `GET /api/v1/scores` lists them, newest first. Filters: `scope`,
@@ -2228,7 +2285,7 @@ included as `span` scores.
   {"id": "01a1a0b1-ae46-78b2-b0ee-9baf12ebad2e", "scope": "handoff", "session_id": "trip-42", "handoff_id": "459997d98657e7e6c51106885dd22d25",
    "scorer": "HandoffQualityJudge", "value": 0.75, "reason": "…", "model": "mock/json",
    "output": {"appropriate": true, "result_used": true, "score": 0.75, "reasoning": "…"},
-   "ref": "weft:///demo/agents/call/00000000000000a4", "feedback_type": "weft.score.HandoffQualityJudge",
+   "ref": "weft:///demo/agents/span/00000000000000a4", "feedback_type": "weft.score.HandoffQualityJudge",
    "creator": null, "created_at": "2026-11-03T09:16:07.478592Z"}
 ]}
 ```
@@ -2624,7 +2681,7 @@ A server-runnable scorer class (`_class_name: "ToolSafetyScorer"`). Fields:
 `scope` (`session` / `agent`), `session_id`, `agent`, `source` (`engine` /
 `replay`), `ruleset`, `replay` (run a replay first), `label`. The session and
 agent also come from the example row (`session_id` / `conversation_id`,
-`agent` / `agent_name`) or, on `/calls/score` and monitors, from the scored
+`agent` / `agent_name`) or, on `/api/v1/spans/score` and monitors, from the scored
 call's session. Result: `{scope, session_id, agent?, source, ruleset?,
 tool_calls, detections, blocked, approvals_required, logged, overridden,
 max_severity, max_severity_score (0..1), safe}`.

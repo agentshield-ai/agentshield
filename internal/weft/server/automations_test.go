@@ -69,19 +69,19 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 	publish(e, "low-score", automationVal("low-score",
 		map[string]any{"type": "score_threshold", "scorer": "judge", "path": "score", "operator": "lt", "threshold": 3},
 		map[string]any{"type": "webhook", "url": sink.srv.URL, "headers": map[string]any{"X-Test": "1"}}))
-	if err := e.post("/obj/read", map[string]any{"project_id": pid, "object_id": "low-score", "digest": "latest"}); err["obj"].(map[string]any)["base_object_class"] != "Automation" {
-		t.Fatalf("base class: %v", err["obj"])
+	if o := e.getJSON("/api/v1/objects/low-score?project_id=" + pid); o["kind"] != "automation" || o["class"] != "Automation" {
+		t.Fatalf("kind and class: %v", o)
 	}
 	e.post("/secrets/set", map[string]any{"name": "SLACK_HOOK", "value": slack.srv.URL})
 	publish(e, "thumbs", automationVal("thumbs",
 		map[string]any{"type": "feedback_created", "feedback_types": []any{"weft.reaction"}},
 		map[string]any{"type": "slack", "url_secret": "SLACK_HOOK", "message": "{automation}: {feedback_type} on {call_id}"}))
 
-	ref := "weft:///" + pid + "/call/c1"
+	ref := spanRef("c1")
 	// Above threshold: no fire.
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"score": 4}}})
+	e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"score": 4}}})
 	// Below threshold: fires.
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"score": 1}}})
+	e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.scorer.judge", "payload": map[string]any{"output": map[string]any{"score": 1}}})
 	waitFor(t, "score webhook", func() bool { return sink.count() == 1 })
 	body := sink.last()
 	ev := body["event"].(map[string]any)
@@ -89,7 +89,7 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 		t.Fatalf("webhook body: %v", body)
 	}
 
-	e.post("/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👎"}})
+	e.post("/api/v1/feedback/create", map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👎"}})
 	waitFor(t, "slack message", func() bool { return slack.count() == 1 })
 	if txt := slack.last()["text"]; txt != "thumbs: weft.reaction on c1" {
 		t.Fatalf("slack text: %v", txt)
@@ -133,13 +133,13 @@ func TestAutomationErrorRate(t *testing.T) {
 	now := time.Now().UTC()
 	for i, fail := range []bool{true, true, false} {
 		id := []string{"e1", "e2", "e3"}[i]
-		e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": id, "trace_id": id, "op_name": "agent",
-			"started_at": now.Format(time.RFC3339Nano), "inputs": map[string]any{}}})
-		end := map[string]any{"project_id": pid, "id": id, "ended_at": now.Add(time.Second).Format(time.RFC3339Nano), "output": "x", "summary": map[string]any{}}
+		e.startSpan(map[string]any{"id": id, "trace_id": id, "name": "agent",
+			"started_at": now.Format(time.RFC3339Nano), "inputs": map[string]any{}})
+		end := map[string]any{"id": id, "ended_at": now.Add(time.Second).Format(time.RFC3339Nano), "output": "x", "summary": map[string]any{}}
 		if fail {
-			end["exception"] = "boom"
+			end["error"] = "boom"
 		}
-		e.post("/call/end", map[string]any{"end": end})
+		e.endSpan(end)
 	}
 	publish(e, "errors", automationVal("errors",
 		map[string]any{"type": "error_rate", "op_names": []any{"agent"}, "window_minutes": 10, "threshold": 0.5, "min_calls": 3},

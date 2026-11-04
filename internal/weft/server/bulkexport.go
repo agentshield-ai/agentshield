@@ -23,8 +23,8 @@ import (
 
 // Bulk Export API:
 //
-//	POST /v1/entities/{entity}/projects/{project}:export      start a job (202)
-//	GET  /v1/entities/{entity}/projects/{project}/exports/{id} job status
+//	POST /api/v1/exports {project_id, targets}          start a job (202)
+//	GET  /api/v1/exports/{id}?project_id=                job status
 //
 // A job writes each requested target (calls, objects, feedback) as one
 // gzip-compressed JSON Lines artifact, one row per line: calls as
@@ -33,20 +33,18 @@ import (
 // /feedback/query returns it. Rows created after the job started are left
 // out. Artifacts go to the S3 files backend when one is configured
 // (s3://… URIs, presignable through /files/resolve_url) and otherwise into
-// SQLite, served by the Weft download route
+// SQLite, served by the download route
 //
-//	GET /v1/entities/{entity}/projects/{project}/exports/{id}/artifacts/{target}
+//	GET /api/v1/exports/{id}/artifacts/{target}?project_id=
 //
 // which redirects to a presigned URL for S3 artifacts. One job runs at a time
 // per server (409 otherwise). Starting and reading jobs needs the admin role
 // on the project, or member on a personal project (entity = caller).
 
+// The routes are POST /api/v1/exports, GET /api/v1/exports/{job_id} and
+// GET /api/v1/exports/{job_id}/artifacts/{target} (native.go).
+
 func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Post("/v1/entities/{entity}/projects/{project}:export", s.bulkExportStart)
-		r.Get("/v1/entities/{entity}/projects/{project}/exports/{job_id}", s.bulkExportStatus)
-		r.Get("/v1/entities/{entity}/projects/{project}/exports/{job_id}/artifacts/{target}", s.bulkExportDownload)
-	})
 	startExtensions = append(startExtensions, startBulkExport)
 }
 
@@ -199,7 +197,7 @@ func (s *Server) bulkExportStart(w http.ResponseWriter, r *http.Request) {
 		s.runBulkExport(st.ctx, job, base)
 	}()
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", "/v1/"+exportName(pid, job.JobID))
+	w.Header().Set("Location", "/api/v1/exports/"+job.JobID+"?"+url.Values{"project_id": {pid}}.Encode())
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"name": exportName(pid, job.JobID), "job_id": job.JobID, "created_at": job.CreatedAt.Format(time.RFC3339Nano),
@@ -459,7 +457,6 @@ func (s *Server) exportTarget(ctx context.Context, job *store.ExportJob, target 
 			return nil, rerr
 		}
 	}
-	ent, proj, _ := strings.Cut(pid, "/")
-	art.URI = base + "/v1/entities/" + url.PathEscape(ent) + "/projects/" + url.PathEscape(proj) + "/exports/" + job.JobID + "/artifacts/" + target
+	art.URI = base + "/api/v1/exports/" + job.JobID + "/artifacts/" + target + "?" + url.Values{"project_id": {job.ProjectID}}.Encode()
 	return art, nil
 }

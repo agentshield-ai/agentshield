@@ -47,7 +47,7 @@ func newShieldEnv(t *testing.T, rulesDir string) *shieldEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{APIKeys: []string{"k1"}}, st)
+	s := New(nativeOnly(Config{APIKeys: []string{"k1"}}), st)
 	if rulesDir != "" {
 		svc, err := shield.New(shield.Config{RulesDir: rulesDir}, st)
 		if err != nil {

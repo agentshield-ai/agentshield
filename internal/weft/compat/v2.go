@@ -1,4 +1,4 @@
-package server
+package compat
 
 import (
 	"context"
@@ -31,9 +31,9 @@ import (
 //
 // so v2 runs appear in /evaluations/compare, leaderboards and the UI.
 
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		// Full patterns (no sub-router mount) so other modules can add /v2 routes too.
+// mountV2 registers the v2 routes.
+func (s *Routes) mountV2(r chi.Router) {
+	{
 		const p = "/v2/{entity}/{project}"
 		for _, k := range v2Kinds {
 			r.Post(p+"/"+k.path, s.v2ObjCreate(k))
@@ -57,7 +57,7 @@ func init() {
 		r.Delete(p+"/scores", s.v2CallsDelete("score_ids"))
 		r.Get(p+"/scores/{id}", s.v2ScoreRead)
 		r.Post(p+"/eval_results/query", s.v2EvalResults)
-	})
+	}
 }
 
 func v2Project(r *http.Request) (string, error) {
@@ -126,7 +126,7 @@ type v2Kind struct {
 	class string // base_object_class filter ("" with op)
 	op    bool
 	// build turns a create body into an object id and value.
-	build func(ctx context.Context, s *Server, pid string, body map[string]any) (string, map[string]any, error)
+	build func(ctx context.Context, s *Routes, pid string, body map[string]any) (string, map[string]any, error)
 	// view renders an object version.
 	view func(o *store.Obj, val map[string]any) map[string]any
 }
@@ -156,7 +156,7 @@ func requireName(body map[string]any) (string, error) {
 
 var v2Kinds = []v2Kind{
 	{path: "ops", op: true,
-		build: func(_ context.Context, _ *Server, _ string, b map[string]any) (string, map[string]any, error) {
+		build: func(_ context.Context, _ *Routes, _ string, b map[string]any) (string, map[string]any, error) {
 			code := str(b, "source_code")
 			name := strings.TrimSpace(str(b, "name"))
 			if name == "" {
@@ -174,7 +174,7 @@ var v2Kinds = []v2Kind{
 			return out
 		}},
 	{path: "datasets", class: "Dataset",
-		build: func(ctx context.Context, s *Server, pid string, b map[string]any) (string, map[string]any, error) {
+		build: func(ctx context.Context, s *Routes, pid string, b map[string]any) (string, map[string]any, error) {
 			name, err := requireName(b)
 			if err != nil {
 				return "", nil, err
@@ -196,7 +196,7 @@ var v2Kinds = []v2Kind{
 			return out
 		}},
 	{path: "models", class: "Model",
-		build: func(_ context.Context, _ *Server, _ string, b map[string]any) (string, map[string]any, error) {
+		build: func(_ context.Context, _ *Routes, _ string, b map[string]any) (string, map[string]any, error) {
 			name, err := requireName(b)
 			if err != nil {
 				return "", nil, err
@@ -215,7 +215,7 @@ var v2Kinds = []v2Kind{
 			return out
 		}},
 	{path: "scorers", class: "Scorer",
-		build: func(ctx context.Context, s *Server, pid string, b map[string]any) (string, map[string]any, error) {
+		build: func(ctx context.Context, s *Routes, pid string, b map[string]any) (string, map[string]any, error) {
 			name, err := requireName(b)
 			if err != nil {
 				return "", nil, err
@@ -240,7 +240,7 @@ var v2Kinds = []v2Kind{
 			return out
 		}},
 	{path: "evaluations", class: "Evaluation",
-		build: func(_ context.Context, _ *Server, _ string, b map[string]any) (string, map[string]any, error) {
+		build: func(_ context.Context, _ *Routes, _ string, b map[string]any) (string, map[string]any, error) {
 			name, err := requireName(b)
 			if err != nil {
 				return "", nil, err
@@ -296,7 +296,7 @@ func nameOf(o *store.Obj, v map[string]any) string {
 	return o.ObjectID
 }
 
-func (s *Server) v2ObjCreate(k v2Kind) http.HandlerFunc {
+func (s *Routes) v2ObjCreate(k v2Kind) http.HandlerFunc {
 	return v2Handle(func(ctx context.Context, r *http.Request, pid string, body *map[string]any) (any, error) {
 		if *body == nil {
 			*body = map[string]any{}
@@ -305,7 +305,7 @@ func (s *Server) v2ObjCreate(k v2Kind) http.HandlerFunc {
 		if err != nil {
 			return nil, err
 		}
-		d, v, err := s.store.CreateObject(ctx, pid, oid, val, "", userFrom(r, nil))
+		d, v, err := s.store.CreateObject(ctx, pid, oid, val, "", s.host.User(r, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -314,7 +314,7 @@ func (s *Server) v2ObjCreate(k v2Kind) http.HandlerFunc {
 	})
 }
 
-func (s *Server) v2Objects(ctx context.Context, pid string, k v2Kind, oid string, limit, offset int) ([]*store.Obj, error) {
+func (s *Routes) v2Objects(ctx context.Context, pid string, k v2Kind, oid string, limit, offset int) ([]*store.Obj, error) {
 	f := &store.ObjsFilter{LatestOnly: oid == ""}
 	if k.op {
 		t := true
@@ -328,7 +328,7 @@ func (s *Server) v2Objects(ctx context.Context, pid string, k v2Kind, oid string
 	return s.store.QueryObjects(ctx, store.ObjsQuery{ProjectID: pid, Filter: f, Limit: limit, Offset: offset})
 }
 
-func (s *Server) v2ObjList(k v2Kind) http.HandlerFunc {
+func (s *Routes) v2ObjList(k v2Kind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pid, err := v2Project(r)
 		if err != nil {
@@ -349,7 +349,7 @@ func (s *Server) v2ObjList(k v2Kind) http.HandlerFunc {
 	}
 }
 
-func (s *Server) v2ObjRead(k v2Kind) http.HandlerFunc {
+func (s *Routes) v2ObjRead(k v2Kind) http.HandlerFunc {
 	return v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		digest := pathParam(r, "digest")
 		if digest == "" {
@@ -367,7 +367,7 @@ func (s *Server) v2ObjRead(k v2Kind) http.HandlerFunc {
 	})
 }
 
-func (s *Server) v2ObjDelete(k v2Kind) http.HandlerFunc {
+func (s *Routes) v2ObjDelete(k v2Kind) http.HandlerFunc {
 	return v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		oid := pathParam(r, "object_id")
 		objs, err := s.v2Objects(ctx, pid, k, oid, 1, 0)
@@ -401,7 +401,7 @@ func v2Attr(c *store.Call, key string) any {
 	return w[key]
 }
 
-func (s *Server) v2Call(ctx context.Context, pid, id, kind string) (*store.Call, error) {
+func (s *Routes) v2Call(ctx context.Context, pid, id, kind string) (*store.Call, error) {
 	c, err := s.store.GetCall(ctx, pid, id, false, false, false)
 	if err != nil {
 		return nil, err
@@ -435,7 +435,7 @@ type v2RunCreateReq struct {
 	SourceEvaluationRunID *string `json:"source_evaluation_run_id"`
 }
 
-func (s *Server) v2RunCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2RunCreate(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, req *v2RunCreateReq) (any, error) {
 		if !refs.IsRef(req.Evaluation) || !refs.IsRef(req.Model) {
 			return nil, store.Invalidf("evaluation and model must be weft:/// refs")
@@ -448,7 +448,7 @@ func (s *Server) v2RunCreate(w http.ResponseWriter, r *http.Request) {
 		id := uuid.Must(uuid.NewV7()).String()
 		display := refBaseName(modelRef) + " · " + refBaseName(evalRef)
 		st := store.CallStart{ProjectID: pid, ID: id, TraceID: id, OpName: opEvaluate, StartedAt: now(), DisplayName: &display,
-			Inputs: map[string]any{"self": evalRef, "model": modelRef}, Attributes: map[string]any{"weft": weft}, UserID: userFrom(r, nil)}
+			Inputs: map[string]any{"self": evalRef, "model": modelRef}, Attributes: map[string]any{"weft": weft}, UserID: s.host.User(r, nil)}
 		if err := s.store.StartCall(ctx, st); err != nil {
 			return nil, err
 		}
@@ -472,7 +472,7 @@ func runView(c *store.Call) map[string]any {
 		"started_at": c.StartedAt, "finished_at": c.EndedAt, "summary": summary, "source_evaluation_run_id": v2Attr(c, "source_evaluation_run_id")}
 }
 
-func (s *Server) v2RunRead(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2RunRead(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		c, err := s.v2Call(ctx, pid, pathParam(r, "id"), "evaluation_run")
 		if err != nil {
@@ -482,7 +482,7 @@ func (s *Server) v2RunRead(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
-func (s *Server) v2RunList(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2RunList(w http.ResponseWriter, r *http.Request) {
 	pid, err := v2Project(r)
 	if err != nil {
 		writeErr(w, err)
@@ -523,7 +523,7 @@ type v2RunFinishReq struct {
 	Summary map[string]any `json:"summary"`
 }
 
-func (s *Server) v2RunFinish(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2RunFinish(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, req *v2RunFinishReq) (any, error) {
 		c, err := s.v2Call(ctx, pid, pathParam(r, "id"), "evaluation_run")
 		if err != nil {
@@ -544,7 +544,7 @@ func (s *Server) v2RunFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 // v2Summarize aggregates the scores of a run's finished predictions the way the SDKs do.
-func (s *Server) v2Summarize(ctx context.Context, pid, runID string) (map[string]any, error) {
+func (s *Routes) v2Summarize(ctx context.Context, pid, runID string) (map[string]any, error) {
 	children, err := s.store.ListCalls(ctx, store.CallsQuery{ProjectID: pid,
 		Filter: &store.CallsFilter{ParentIDs: []string{runID}, OpNames: []string{opPredictAndScore}}})
 	if err != nil {
@@ -588,7 +588,7 @@ type v2PredictionCreateReq struct {
 	GenAISpanRef    []map[string]any `json:"genai_span_ref"`
 }
 
-func (s *Server) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, req *v2PredictionCreateReq) (any, error) {
 		if req.Model == "" {
 			return nil, store.Invalidf("model is required")
@@ -597,7 +597,7 @@ func (s *Server) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
 			return nil, store.Invalidf("inputs is required")
 		}
 		model := req.Model
-		user := userFrom(r, nil)
+		user := s.host.User(r, nil)
 		ts := now()
 		predictOp := refBaseName(model) + ".predict"
 		predictInputs := map[string]any{"self": model}
@@ -655,7 +655,7 @@ func (s *Server) v2PredictionCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // predictionParts returns a prediction's inputs, output and model call.
-func (s *Server) predictionParts(ctx context.Context, pid string, c *store.Call) (map[string]any, any, *store.Call, error) {
+func (s *Routes) predictionParts(ctx context.Context, pid string, c *store.Call) (map[string]any, any, *store.Call, error) {
 	if c.OpBaseName() != opPredictAndScore {
 		in := map[string]any{}
 		for k, v := range c.Inputs {
@@ -678,7 +678,7 @@ func (s *Server) predictionParts(ctx context.Context, pid string, c *store.Call)
 	return in, nil, nil, nil
 }
 
-func (s *Server) predictionView(ctx context.Context, pid string, c *store.Call) (map[string]any, error) {
+func (s *Routes) predictionView(ctx context.Context, pid string, c *store.Call) (map[string]any, error) {
 	in, out, _, err := s.predictionParts(ctx, pid, c)
 	if err != nil {
 		return nil, err
@@ -694,7 +694,7 @@ func (s *Server) predictionView(ctx context.Context, pid string, c *store.Call) 
 		"evaluation_run_id": v2Attr(c, "evaluation_run_id"), "user_id": c.UserID}, nil
 }
 
-func (s *Server) v2PredictionRead(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2PredictionRead(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		c, err := s.v2Call(ctx, pid, pathParam(r, "id"), "prediction")
 		if err != nil {
@@ -704,7 +704,7 @@ func (s *Server) v2PredictionRead(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
-func (s *Server) v2KindQuery(r *http.Request, pid, kind string) ([]*store.Call, error) {
+func (s *Routes) v2KindQuery(r *http.Request, pid, kind string) ([]*store.Call, error) {
 	conds := []any{map[string]any{"$eq": []any{map[string]any{"$getField": "attributes.weft.v2"}, map[string]any{"$literal": kind}}}}
 	if run := r.URL.Query().Get("evaluation_run_id"); run != "" {
 		conds = append(conds, map[string]any{"$eq": []any{map[string]any{"$getField": "attributes.weft.evaluation_run_id"}, map[string]any{"$literal": run}}})
@@ -714,7 +714,7 @@ func (s *Server) v2KindQuery(r *http.Request, pid, kind string) ([]*store.Call, 
 		SortBy: []store.SortBy{{Field: "started_at", Direction: "asc"}}, Limit: &limit, Offset: queryInt(r, "offset", 0)})
 }
 
-func (s *Server) v2PredictionList(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2PredictionList(w http.ResponseWriter, r *http.Request) {
 	pid, err := v2Project(r)
 	if err != nil {
 		writeErr(w, err)
@@ -737,7 +737,7 @@ func (s *Server) v2PredictionList(w http.ResponseWriter, r *http.Request) {
 	writeJSONL(w, out)
 }
 
-func (s *Server) v2PredictionFinish(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2PredictionFinish(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		c, err := s.v2Call(ctx, pid, pathParam(r, "id"), "prediction")
 		if err != nil {
@@ -785,7 +785,7 @@ type v2ScoreCreateReq struct {
 	EvaluationRunID *string `json:"evaluation_run_id"`
 }
 
-func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, req *v2ScoreCreateReq) (any, error) {
 		if req.Scorer == "" || req.PredictionID == "" {
 			return nil, store.Invalidf("prediction_id and scorer are required")
@@ -820,7 +820,7 @@ func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 		if runID != nil {
 			weft["evaluation_run_id"] = runID
 		}
-		user := userFrom(r, nil)
+		user := s.host.User(r, nil)
 		_, err = s.store.UpsertComplete(ctx, []store.CompleteCall{{
 			Start: store.CallStart{ProjectID: pid, ID: id, TraceID: pred.TraceID, ParentID: &parent, OpName: name + ".score", StartedAt: ts,
 				Inputs: inputs, Attributes: map[string]any{"weft": weft}, UserID: user},
@@ -828,9 +828,9 @@ func (s *Server) v2ScoreCreate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		fb := store.FeedbackCreate{ProjectID: pid, Ref: refs.CallRef(pid, pred.ID), FeedbackType: "weft.scorer." + name,
+		fb := store.FeedbackCreate{ProjectID: pid, Ref: refs.SpanRef(pid, pred.ID), FeedbackType: "weft.scorer." + name,
 			Payload: map[string]any{"output": req.Value}, UserID: user}
-		callRef := refs.CallRef(pid, id)
+		callRef := refs.SpanRef(pid, id)
 		fb.CallRef = &callRef
 		if refs.IsRef(scorer) {
 			fb.RunnableRef = &scorer
@@ -847,7 +847,7 @@ func scoreView(c *store.Call) map[string]any {
 		"evaluation_run_id": v2Attr(c, "evaluation_run_id"), "user_id": c.UserID}
 }
 
-func (s *Server) v2ScoreRead(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2ScoreRead(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		c, err := s.v2Call(ctx, pid, pathParam(r, "id"), "score")
 		if err != nil {
@@ -857,7 +857,7 @@ func (s *Server) v2ScoreRead(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
-func (s *Server) v2ScoreList(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2ScoreList(w http.ResponseWriter, r *http.Request) {
 	pid, err := v2Project(r)
 	if err != nil {
 		writeErr(w, err)
@@ -876,7 +876,7 @@ func (s *Server) v2ScoreList(w http.ResponseWriter, r *http.Request) {
 }
 
 // v2CallsDelete soft-deletes runs, predictions or scores named in a query parameter.
-func (s *Server) v2CallsDelete(param string) http.HandlerFunc {
+func (s *Routes) v2CallsDelete(param string) http.HandlerFunc {
 	return v2Handle(func(ctx context.Context, r *http.Request, pid string, _ *struct{}) (any, error) {
 		ids := queryList(r, param)
 		if len(ids) == 0 {
@@ -926,7 +926,7 @@ type v2Trial struct {
 	TotalCost             *float64          `json:"total_cost"`
 }
 
-func (s *Server) v2EvalResults(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) v2EvalResults(w http.ResponseWriter, r *http.Request) {
 	v2Handle(func(ctx context.Context, r *http.Request, pid string, req *v2EvalResultsReq) (any, error) {
 		ids := append(append([]string{}, req.EvaluationCallIDs...), req.EvaluationRunIDs...)
 		cmp, err := s.engine.Compare(ctx, pid, ids)

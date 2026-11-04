@@ -207,9 +207,9 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 				continue
 			}
 			res.Output = jsonSafe(score)
-			callRef := refs.CallRef(projectID, rec.id)
+			callRef := refs.SpanRef(projectID, rec.id)
 			fb, err := e.Store.CreateFeedback(ctx, store.FeedbackCreate{
-				ProjectID: projectID, Ref: refs.CallRef(projectID, id), FeedbackType: "weft.scorer." + sc.Name,
+				ProjectID: projectID, Ref: refs.SpanRef(projectID, id), FeedbackType: "weft.scorer." + sc.Name,
 				Payload: map[string]any{"output": res.Output}, UserID: user, RunnableRef: &sc.Ref, CallRef: &callRef,
 			})
 			if err != nil {
@@ -233,10 +233,10 @@ func (e *Engine) scoreForMonitor(ctx context.Context, monitor *store.Obj, sc *Sc
 	if err != nil {
 		return err
 	}
-	callRef := refs.CallRef(call.ProjectID, rec.id)
+	callRef := refs.SpanRef(call.ProjectID, rec.id)
 	creator := "monitor:" + monitor.ObjectID
 	_, err = e.Store.CreateFeedback(ctx, store.FeedbackCreate{
-		ProjectID: call.ProjectID, Ref: refs.CallRef(call.ProjectID, call.ID), FeedbackType: "weft.scorer." + sc.Name,
+		ProjectID: call.ProjectID, Ref: refs.SpanRef(call.ProjectID, call.ID), FeedbackType: "weft.scorer." + sc.Name,
 		Payload: map[string]any{"output": jsonSafe(score)}, Creator: &creator,
 		RunnableRef: &sc.Ref, CallRef: &callRef, TriggerRef: &monitorRef,
 	})

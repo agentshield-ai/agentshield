@@ -92,7 +92,7 @@ func (s *Store) LinkToRegistry(ctx context.Context, ref, registryPID, collection
 	if err != nil {
 		return 0, &InvalidError{Msg: err.Error()}
 	}
-	if (r.Kind != refs.KindObject && r.Kind != refs.KindOp) || len(r.Extra) > 0 {
+	if (r.Kind != refs.KindObject && r.Kind != refs.KindFunction) || len(r.Extra) > 0 {
 		return 0, Invalidf("ref must name an object version, got %q", ref)
 	}
 	o, err := s.ReadObject(ctx, r.ProjectID(), r.Name, r.Digest)

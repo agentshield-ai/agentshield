@@ -7,6 +7,10 @@
 //   - answers the W&B GraphQL login calls weave.init() makes (/graphql);
 //   - serves the client's v2 call routes (/v2/{entity}/{project}/calls/complete,
 //     .../call/start, .../call/end) and /service/projects_info;
+//   - serves the route shapes Weft had before its own API (/call/*,
+//     /calls/*, /obj/*, /table/*, /feedback/*, ...; routes.go), computing
+//     digests in the client's form and naming function and span refs with
+//     its kinds ("op", "call");
 //   - accepts weave:/// refs and weave-file:// URIs in requests, the legacy
 //     feedback names (weave_ref, wandb.reaction.1, wandb.runnable.<scorer>,
 //     ...), the client's user and run field names (wb_user_id, wb_run_id,
@@ -20,7 +24,8 @@
 //     wb_username, wb_run_id, wb_run_step, wb_run_step_end);
 //   - redirects /{entity}/{project}/weave/... and /{entity}/{project}/r/call/{id}
 //     links to the matching UI pages;
-//   - reports the client's version fields in /server_info;
+//   - reports the client's version fields in /server_info (served by
+//     routes.go, like GET /version, /geolocate and /inference/*);
 //   - reads WF_* environment variables as aliases of Weft's settings.
 //
 // With it off, none of this is registered: the routes return 404 and
@@ -46,19 +51,6 @@ const (
 	FlagName = "weave-compat"
 	EnvName  = "WEFT_WEAVE_COMPAT"
 )
-
-// Host is what the adapter needs from the server.
-type Host interface {
-	Store() *store.Store
-	// CallStart and CallEnd are the handlers of /call/start and /call/end.
-	CallStart() http.HandlerFunc
-	CallEnd() http.HandlerFunc
-	// CallsEnded runs the post-ingest work (monitors, automations) for calls
-	// that ended.
-	CallsEnded([]store.EndedCall)
-	// User returns explicit when set, else the authenticated user (or nil).
-	User(r *http.Request, explicit *string) *string
-}
 
 // Adapter is the compatibility adapter for one server.
 type Adapter struct {
@@ -97,12 +89,16 @@ func (a *Adapter) MountPublic(r chi.Router) {
 	r.Get("/{entity}/{project}/r/call/{callID}", a.callRedirect)
 }
 
-// MountAuthed registers the authenticated routes.
-func (a *Adapter) MountAuthed(r chi.Router) {
+// MountAuthed registers the authenticated routes: the client's login and
+// call routes, and the older route shapes (Routes).
+func (a *Adapter) MountAuthed(r chi.Router, routes *Routes) {
 	r.Post("/graphql", a.graphql)
-	r.Post("/v2/{entity}/{project}/calls/complete", a.callsComplete)
-	r.Post("/v2/{entity}/{project}/call/start", a.host.CallStart())
-	r.Post("/v2/{entity}/{project}/call/end", a.host.CallEnd())
+	r.Group(func(r chi.Router) {
+		r.Use(legacyResponses)
+		r.Post("/v2/{entity}/{project}/calls/complete", a.callsComplete)
+		r.Post("/v2/{entity}/{project}/call/start", handle(routes.callStart))
+		r.Post("/v2/{entity}/{project}/call/end", handle(routes.callEnd))
+	})
 	r.Post("/service/projects_info", a.projectsInfo)
 }
 
@@ -319,6 +315,7 @@ func recordPath(p string) bool {
 
 // rewriteResponse translates a JSON response to the weave client.
 func rewriteResponse(path string, body []byte) []byte {
+	body = legacy.RefKindsOut(body) // the client knows only its own ref kinds
 	body = bytes.ReplaceAll(body, []byte("weft:///"), []byte(legacy.RefScheme))
 	if recordPath(path) {
 		body = legacy.JSONRewrite{Key: legacy.FieldNameOut, Skip: func(k string) bool { return dataKeys[k] }}.Apply(body)

@@ -98,10 +98,10 @@ func TestSensitiveDataNERRedaction(t *testing.T) {
 	}
 
 	text := "Alice Smith (alice@example.com) met Zoë Durand in Paris at Acme Corp; both are Buddhist."
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "n1", "n1", nil, time.Now(),
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "n1", "n1", nil, time.Now(),
 		map[string]any{"q": text, "nested": []any{"ask Zoë Durand", map[string]any{"who": "Alice Smith"}}, "n": 3},
 		"Paris, said Alice Smith")})
-	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "n1"})["call"].(map[string]any)
+	c := e.span("n1")
 	q := c["inputs"].(map[string]any)["q"].(string)
 	wantQ := "<PERSON> (<EMAIL_ADDRESS>) met <PERSON> in <LOCATION> at <ORGANIZATION>; both are Buddhist."
 	if q != wantQ {
@@ -125,7 +125,7 @@ func TestSensitiveDataNERRedaction(t *testing.T) {
 	if code, out := e.raw("/otel/v1/traces", body, map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("otel -> %d %s", code, out)
 	}
-	raw, _ := json.Marshal(e.post("/call/read", map[string]any{"project_id": pid, "id": "bbbbbbbbbbbbbbbb"}))
+	raw, _ := json.Marshal(e.span("bbbbbbbbbbbbbbbb"))
 	if strings.Contains(string(raw), "Alice Smith") || strings.Contains(string(raw), "Paris") {
 		t.Fatalf("OTLP span not NER-redacted: %s", raw)
 	}
@@ -133,8 +133,8 @@ func TestSensitiveDataNERRedaction(t *testing.T) {
 	// Opt-in NRP and a stricter threshold via explicit entities and ner settings.
 	e.post("/project/sensitive_data_settings/update", map[string]any{"project_id": pid, "policy": "pii-v1",
 		"entities": []any{"PERSON", "NRP"}, "ner": map[string]any{"score_threshold": 0.8, "language": "en"}})
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "n2", "n2", nil, time.Now(), map[string]any{"q": text}, nil)})
-	c = e.post("/call/read", map[string]any{"project_id": pid, "id": "n2"})["call"].(map[string]any)
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "n2", "n2", nil, time.Now(), map[string]any{"q": text}, nil)})
+	c = e.span("n2")
 	if q := c["inputs"].(map[string]any)["q"].(string); q != "<PERSON> (alice@example.com) met <PERSON> in Paris at Acme Corp; both are <NRP>." {
 		t.Fatalf("entity selection: %q", q)
 	}
@@ -143,8 +143,8 @@ func TestSensitiveDataNERRedaction(t *testing.T) {
 	off := false
 	e.post("/project/sensitive_data_settings/update", map[string]any{"project_id": pid, "policy": "pii-v1", "ner": map[string]any{"enabled": off}})
 	before := fp.calls.Load()
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "n3", "n3", nil, time.Now(), map[string]any{"q": text}, nil)})
-	c = e.post("/call/read", map[string]any{"project_id": pid, "id": "n3"})["call"].(map[string]any)
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "n3", "n3", nil, time.Now(), map[string]any{"q": text}, nil)})
+	c = e.span("n3")
 	if q := c["inputs"].(map[string]any)["q"].(string); !strings.Contains(q, "Alice Smith") || !strings.Contains(q, "<EMAIL_ADDRESS>") {
 		t.Fatalf("ner disabled: %q", q)
 	}
@@ -152,7 +152,7 @@ func TestSensitiveDataNERRedaction(t *testing.T) {
 		t.Fatal("analyzer called for a project with NER disabled")
 	}
 	// Another project without a policy is never sent to the analyzer.
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd("acme/plain", "p1", "p1", nil, time.Now(), map[string]any{"q": text}, nil)})
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd("acme/plain", "p1", "p1", nil, time.Now(), map[string]any{"q": text}, nil)})
 	if fp.calls.Load() != before {
 		t.Fatal("analyzer called for a project without a policy")
 	}
@@ -168,13 +168,13 @@ func TestSensitiveDataNERRedaction(t *testing.T) {
 	e.post("/project/sensitive_data_settings/update", map[string]any{"project_id": pid, "policy": "pii-v1"})
 	fp.fail.Store(true)
 	start := time.Now()
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "n4", "n4", nil, time.Now(), map[string]any{"q": text}, nil)})
-	c = e.post("/call/read", map[string]any{"project_id": pid, "id": "n4"})["call"].(map[string]any)
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "n4", "n4", nil, time.Now(), map[string]any{"q": text}, nil)})
+	c = e.span("n4")
 	if q := c["inputs"].(map[string]any)["q"].(string); !strings.Contains(q, "Alice Smith") || !strings.Contains(q, "<EMAIL_ADDRESS>") {
 		t.Fatalf("fallback: %q", q)
 	}
 	failedCalls := fp.calls.Load()
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "n5", "n5", nil, time.Now(), map[string]any{"q": text}, nil)})
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "n5", "n5", nil, time.Now(), map[string]any{"q": text}, nil)})
 	if fp.calls.Load() != failedCalls {
 		t.Fatal("analyzer should be skipped during back-off")
 	}
@@ -192,11 +192,11 @@ func TestSensitiveDataNERTimeout(t *testing.T) {
 	})
 	e.post("/project/sensitive_data_settings/update", map[string]any{"project_id": pid, "policy": "pii-v1"})
 	start := time.Now()
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "t1", "t1", nil, time.Now(), map[string]any{"q": "Alice Smith at bob@example.com"}, nil)})
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "t1", "t1", nil, time.Now(), map[string]any{"q": "Alice Smith at bob@example.com"}, nil)})
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("ingest waited %v for a slow analyzer", d)
 	}
-	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "t1"})["call"].(map[string]any)
+	c := e.span("t1")
 	if q := c["inputs"].(map[string]any)["q"]; q != "Alice Smith at <EMAIL_ADDRESS>" {
 		t.Fatalf("timeout fallback: %v", q)
 	}
@@ -208,8 +208,8 @@ func TestSensitiveDataNoAnalyzer(t *testing.T) {
 	if r["ner_available"] != false || r["ner_active"] != false {
 		t.Fatalf("no analyzer: %v", r)
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": startEnd(pid, "x1", "x1", nil, time.Now(), map[string]any{"q": "Alice Smith a@b.io"}, nil)})
-	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "x1"})["call"].(map[string]any)
+	e.post("/api/v1/spans/batch", map[string]any{"items": startEnd(pid, "x1", "x1", nil, time.Now(), map[string]any{"q": "Alice Smith a@b.io"}, nil)})
+	c := e.span("x1")
 	if q := c["inputs"].(map[string]any)["q"]; q != "Alice Smith <EMAIL_ADDRESS>" {
 		t.Fatalf("regex only: %v", q)
 	}

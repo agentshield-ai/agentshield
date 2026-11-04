@@ -173,7 +173,7 @@ func newSSOEnv(t *testing.T, alg string, tweak func(*OIDCConfig)) *ssoEnv {
 	if tweak != nil {
 		tweak(oc)
 	}
-	s := New(Config{IAM: IAMConfig{OIDC: oc}}, st)
+	s := New(nativeOnly(Config{IAM: IAMConfig{OIDC: oc}}), st)
 	hs.Config.Handler = s.Handler()
 	t.Cleanup(func() {
 		hs.Close()
@@ -370,7 +370,7 @@ func TestOIDCES256AndLinking(t *testing.T) {
 			csrf = c.Value
 		}
 	}
-	req, _ := http.NewRequest("POST", e.srv.URL+"/call/start", strings.NewReader(`{"start":{"project_id":"acme/app","op_name":"x"}}`))
+	req, _ := http.NewRequest("POST", e.srv.URL+"/api/v1/spans/start", strings.NewReader(`{"project_id":"acme/app","name":"x"}`))
 	req.Header.Set(csrfHeader, csrf)
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -404,11 +404,11 @@ func TestParseGroupRoles(t *testing.T) {
 func ptr(s string) *string { return &s }
 func ptrBool(b bool) *bool { return &b }
 
-// TestPublicRoutesStayPublic: routes registered through publicRouteExtensions
-// (SSO, /version, /geolocate) need no key or session even with keys and SSO on.
+// TestPublicRoutesStayPublic: the public routes (SSO, /health, GET
+// /api/v1/server) need no key or session even with keys and SSO on.
 func TestPublicRoutesStayPublic(t *testing.T) {
 	e := newSSOEnv(t, "RS256", nil)
-	for _, p := range []string{"/version", "/geolocate", "/auth/sso", "/health", "/server_info"} {
+	for _, p := range []string{"/api/v1/server", "/auth/sso", "/health"} {
 		if code, out := e.admDo("GET", p, "", nil); code != 200 {
 			t.Errorf("GET %s without credentials -> %d %s", p, code, out)
 		}
@@ -417,7 +417,7 @@ func TestPublicRoutesStayPublic(t *testing.T) {
 		t.Fatalf("/projects should need auth: %d", code)
 	}
 	e2, _ := newIAMEnv(t, IAMConfig{})
-	if code, _ := e2.admDo("GET", "/version", "", nil); code != 200 {
-		t.Fatalf("/version with static keys -> %d", code)
+	if code, _ := e2.admDo("GET", "/api/v1/server", "", nil); code != 200 {
+		t.Fatalf("/api/v1/server with static keys -> %d", code)
 	}
 }

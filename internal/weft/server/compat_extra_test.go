@@ -8,24 +8,26 @@ import (
 
 func TestTagsAndAliases(t *testing.T) {
 	e := newEnv(t)
-	v1 := e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": pid, "object_id": "prompt", "val": map[string]any{"v": 1}}})["digest"].(string)
-	v2 := e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": pid, "object_id": "prompt", "val": map[string]any{"v": 2}}})["digest"].(string)
-
-	e.admJSON("PUT", "/objs/prompt/versions/"+v1+"/tags", "", map[string]any{"project_id": pid, "tags": []any{"reviewed", "team:search"}})
-	e.admJSON("PUT", "/objs/prompt/versions/latest/tags", "", map[string]any{"project_id": pid, "tags": []any{"candidate"}})
-	if code, _ := e.admDo("PUT", "/objs/prompt/versions/"+v1+"/tags", "", map[string]any{"project_id": pid, "tags": []any{"bad\ntag"}}); code != 400 {
+	save := func(v int) string {
+		return e.post("/api/v1/objects/save", map[string]any{"project_id": pid, "name": "prompt", "value": map[string]any{"v": v}})["digest"].(string)
+	}
+	v1, v2 := save(1), save(2)
+	base := "/api/v1/objects/prompt"
+	e.post(base+"/versions/"+v1+"/tags", map[string]any{"project_id": pid, "tags": []any{"reviewed", "team:search"}})
+	e.post(base+"/versions/latest/tags", map[string]any{"project_id": pid, "tags": []any{"candidate"}})
+	if code, _ := e.raw(base+"/versions/"+v1+"/tags", map[string]any{"project_id": pid, "tags": []any{"bad\ntag"}}, nil); code != 400 {
 		t.Fatalf("invalid tag -> %d", code)
 	}
-	o := e.post("/obj/read", map[string]any{"project_id": pid, "object_id": "prompt", "digest": v1})["obj"].(map[string]any)
+	o := e.getJSON(base + "/versions/" + v1 + "?project_id=" + url.QueryEscape(pid))
 	if tags := o["tags"].([]any); len(tags) != 2 || tags[0] != "reviewed" {
 		t.Fatalf("tags = %v", o["tags"])
 	}
-	tags := e.admJSON("GET", "/tags?project_id="+url.QueryEscape(pid), "", nil)["tags"].([]any)
-	if len(tags) != 3 {
+	tags := e.post("/api/v1/objects/tags", map[string]any{"project_id": pid})
+	if len(tags["items"].([]any)) != 3 || tags["total_count"].(float64) != 3 {
 		t.Fatalf("project tags = %v", tags)
 	}
-	e.post("/objs/prompt/versions/"+v1+"/tags/remove", map[string]any{"project_id": pid, "tags": []any{"reviewed"}})
-	objs := e.post("/objs/query", map[string]any{"project_id": pid})["objs"].([]any)
+	e.post(base+"/versions/"+v1+"/tags/remove", map[string]any{"project_id": pid, "tags": []any{"reviewed"}})
+	objs := e.post("/api/v1/objects/query", map[string]any{"project_id": pid})["items"].([]any)
 	for _, x := range objs {
 		m := x.(map[string]any)
 		if m["digest"] == v1 && len(m["tags"].([]any)) != 1 {
@@ -36,25 +38,31 @@ func TestTagsAndAliases(t *testing.T) {
 		}
 	}
 
-	e.admJSON("PUT", "/objs/prompt/aliases", "", map[string]any{"project_id": pid, "digest": v1, "aliases": []any{"prod", "stable"}})
-	if o := e.post("/obj/read", map[string]any{"project_id": pid, "object_id": "prompt", "digest": "prod"})["obj"].(map[string]any); o["digest"] != v1 {
-		t.Fatalf("alias resolves to %v", o["digest"])
+	e.post(base+"/aliases", map[string]any{"project_id": pid, "version": v1, "aliases": []any{"prod", "stable"}})
+	if o := e.getJSON(base + "/versions/prod?project_id=" + url.QueryEscape(pid)); o["digest"] != v1 || o["version"].(float64) != 0 {
+		t.Fatalf("alias resolves to %v", o)
 	}
-	al := e.admJSON("GET", "/aliases?project_id="+url.QueryEscape(pid), "", nil)["aliases"].([]any)
+	al := e.post("/api/v1/objects/aliases", map[string]any{"project_id": pid})["items"].([]any)
 	if len(al) != 2 || al[0] != "prod" {
 		t.Fatalf("aliases = %v", al)
 	}
-	e.post("/objs/prompt/aliases/remove", map[string]any{"project_id": pid, "aliases": []any{"stable"}})
-	if al := e.admJSON("GET", "/aliases?project_id="+url.QueryEscape(pid), "", nil)["aliases"].([]any); len(al) != 1 {
+	e.post(base+"/aliases/remove", map[string]any{"project_id": pid, "aliases": []any{"stable"}})
+	if al := e.post("/api/v1/objects/aliases", map[string]any{"project_id": pid})["items"].([]any); len(al) != 1 {
 		t.Fatalf("aliases after remove = %v", al)
 	}
-	if code, _ := e.admDo("PUT", "/objs/prompt/aliases", "", map[string]any{"project_id": pid, "digest": v1, "aliases": []any{"latest"}}); code != 400 {
+	if code, _ := e.raw(base+"/aliases", map[string]any{"project_id": pid, "version": v1, "aliases": []any{"latest"}}, nil); code != 400 {
 		t.Fatalf("reserved alias -> %d", code)
+	}
+	// "v<N>" names a version too.
+	if o := e.getJSON(base + "/versions/v1?project_id=" + url.QueryEscape(pid)); o["digest"] != v2 {
+		t.Fatalf("v1 = %v", o)
 	}
 }
 
+// The adapter's extra routes (feedback analytics, table and file stats,
+// usage roll-ups, thread streams, evaluation aliases, dataset lineage).
 func TestCompatExtraEndpoints(t *testing.T) {
-	e := newEnv(t)
+	e := newLegacyEnv(t)
 	start := time.Now().Add(-time.Hour)
 	// Calls with usage: root -> child (LLM).
 	root := "u1"
@@ -204,14 +212,14 @@ func TestCompatExtraEndpoints(t *testing.T) {
 // Costs on a call with descendants must count the roll-up once.
 func TestRootCostsNotDoubled(t *testing.T) {
 	e := newEnv(t)
-	e.post("/call/upsert_batch", map[string]any{"batch": []any{
-		map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": "r", "op_name": "agent", "started_at": "2026-01-01T00:00:00Z"}}},
-		map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": "c", "trace_id": "r", "parent_id": "r", "op_name": "llm", "started_at": "2026-01-01T00:00:00Z"}}},
-		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": "c", "ended_at": "2026-01-01T00:00:01Z",
-			"summary": map[string]any{"usage": map[string]any{"gpt-4o": map[string]any{"requests": 1, "prompt_tokens": 1000, "completion_tokens": 0}}}}}},
-		map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": "r", "ended_at": "2026-01-01T00:00:02Z"}}},
-	}})
-	c := e.post("/call/read", map[string]any{"project_id": pid, "id": "r", "include_costs": true})["call"].(map[string]any)
+	e.spanBatch(
+		startItem(map[string]any{"id": "r", "name": "agent", "started_at": "2026-01-01T00:00:00Z"}),
+		startItem(map[string]any{"id": "c", "trace_id": "r", "parent_id": "r", "name": "llm", "started_at": "2026-01-01T00:00:00Z"}),
+		endItem(map[string]any{"id": "c", "ended_at": "2026-01-01T00:00:01Z",
+			"summary": map[string]any{"usage": map[string]any{"gpt-4o": map[string]any{"requests": 1, "prompt_tokens": 1000, "completion_tokens": 0}}}}),
+		endItem(map[string]any{"id": "r", "ended_at": "2026-01-01T00:00:02Z"}),
+	)
+	c := e.span("r", "costs")
 	cost := c["summary"].(map[string]any)["weft"].(map[string]any)["costs"].(map[string]any)["gpt-4o"].(map[string]any)
 	if cost["prompt_tokens"] != float64(1000) || cost["requests"] != float64(1) {
 		t.Fatalf("root costs double-count the roll-up: %v", cost)

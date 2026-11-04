@@ -62,16 +62,15 @@ type evalLink struct {
 	kind, target, runID, pasID, traceID string
 }
 
-// linkedCallID reads a call id from an id, a weft:/// call ref,
+// linkedCallID reads a call id from an id, a weft:/// span ref,
 // or {call_id|span_id|id, trace_id?}.
 func linkedCallID(v any) (id, trace string) {
 	switch t := v.(type) {
 	case string:
 		s := strings.TrimSpace(t)
-		if i := strings.Index(s, "/call/"); i >= 0 && strings.HasPrefix(s, "weft:///") {
-			s = s[i+len("/call/"):]
-			if j := strings.IndexAny(s, "/?#"); j >= 0 {
-				s = s[:j]
+		if strings.HasPrefix(s, "weft:///") {
+			if r, err := refs.Parse(s); err == nil && r.Kind == refs.KindSpan {
+				return r.Name, ""
 			}
 		}
 		return s, ""

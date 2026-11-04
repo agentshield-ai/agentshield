@@ -1,4 +1,4 @@
-package server
+package compat
 
 import (
 	"math"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // Model catalog endpoints, served from Weft's own model
@@ -18,19 +17,6 @@ import (
 // the project's ProviderModel objects (custom providers and runtimes) when
 // ?project_id= is given. GET /geolocate answers locally: Weft has no GeoIP
 // database and no regional restrictions.
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Get("/inference/catalog/models", s.inferenceCatalog)
-		r.Get("/inference/modelsdev/models", s.inferenceModelsDev)
-		r.Get("/inference/router/openrouter/models", s.inferenceOpenRouter)
-		r.Get("/inference/analysis/artificialanalysis/models", s.inferenceOpenRouter)
-		r.Get("/inference/nvidia/v2/hardware", s.inferenceNvidiaHardware)
-	})
-	publicRouteExtensions = append(publicRouteExtensions, func(s *Server, r chi.Router) {
-		r.Get("/geolocate", s.geolocate)
-	})
-}
 
 type catalogEntry struct {
 	ID         string // playground id, e.g. openai/gpt-4o or myruntime/llama
@@ -52,7 +38,7 @@ type catalogEntry struct {
 var providerKeyNames = map[string]string{"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "google": "GEMINI_API_KEY",
 	"gemini": "GEMINI_API_KEY", "mistral": "MISTRAL_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "xai": "XAI_API_KEY", "groq": "GROQ_API_KEY"}
 
-func (s *Server) catalogEntries(r *http.Request) []catalogEntry {
+func (s *Routes) catalogEntries(r *http.Request) []catalogEntry {
 	ctx := r.Context()
 	var out []catalogEntry
 	for _, m := range s.llm.Models(ctx) {
@@ -114,7 +100,7 @@ func (s *Server) catalogEntries(r *http.Request) []catalogEntry {
 
 func centsPerBillion(usdPerToken float64) int64 { return int64(math.Round(usdPerToken * 1e11)) }
 
-func (s *Server) inferenceCatalog(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) inferenceCatalog(w http.ResponseWriter, r *http.Request) {
 	models := []map[string]any{}
 	for _, e := range s.catalogEntries(r) {
 		status := "available"
@@ -141,7 +127,7 @@ func (s *Server) inferenceCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"models": models})
 }
 
-func (s *Server) inferenceModelsDev(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) inferenceModelsDev(w http.ResponseWriter, r *http.Request) {
 	out := map[string]map[string]any{}
 	for _, e := range s.catalogEntries(r) {
 		p := out[e.Provider]
@@ -169,7 +155,7 @@ func (s *Server) inferenceModelsDev(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-func (s *Server) inferenceOpenRouter(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) inferenceOpenRouter(w http.ResponseWriter, r *http.Request) {
 	data := []map[string]any{}
 	price := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 	for _, e := range s.catalogEntries(r) {
@@ -193,7 +179,7 @@ func (s *Server) inferenceOpenRouter(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"data": data})
 }
 
-func (s *Server) inferenceNvidiaHardware(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) inferenceNvidiaHardware(w http.ResponseWriter, r *http.Request) {
 	model := strings.TrimSpace(r.URL.Query().Get("model"))
 	if model == "" {
 		writeError(w, http.StatusBadRequest, "model is required")
@@ -211,7 +197,7 @@ func (s *Server) inferenceNvidiaHardware(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]any{"hardware": hw})
 }
 
-func (s *Server) geolocate(w http.ResponseWriter, r *http.Request) {
+func (s *Routes) geolocate(w http.ResponseWriter, r *http.Request) {
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if ip == "" {
 		ip = r.RemoteAddr

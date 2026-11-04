@@ -48,7 +48,7 @@ func (s *Store) insertRows(ctx context.Context, tx *sql.Tx, projectID string, ro
 		} else {
 			row = rows[i]
 		}
-		_, d, canon, err := prepValue(row, raw)
+		_, d, canon, err := prepValue(refs.DigesterFrom(ctx), row, raw)
 		if err != nil {
 			return nil, Invalidf("row %d is not JSON-serialisable", i)
 		}
@@ -64,7 +64,7 @@ func (s *Store) insertTable(ctx context.Context, tx *sql.Tx, projectID string, r
 	if rowDigests == nil {
 		rowDigests = []string{}
 	}
-	d := refs.TableDigest(rowDigests)
+	d := refs.DigesterFrom(ctx).Table(rowDigests)
 	canon, err := refs.CanonicalJSON(rowDigests)
 	if err != nil {
 		return "", err
@@ -317,7 +317,7 @@ func (s *Store) CreateFile(ctx context.Context, projectID string, content []byte
 	if len(content) > maxFileSize {
 		return "", Invalidf("file too large")
 	}
-	d := refs.DigestBytes(content)
+	d := refs.DigesterFrom(ctx).Bytes(content)
 	return d, s.createFile(ctx, pid, d, content) // filebackend.go
 }
 
@@ -358,7 +358,7 @@ func (s *Store) ReadRef(ctx context.Context, ref string) (any, error) {
 	pid := r.ProjectID()
 	var cur any
 	switch r.Kind {
-	case refs.KindObject, refs.KindOp:
+	case refs.KindObject, refs.KindFunction:
 		o, err := s.ReadObject(ctx, pid, r.Name, r.Digest)
 		if err != nil {
 			return nil, err
@@ -366,7 +366,7 @@ func (s *Store) ReadRef(ctx context.Context, ref string) (any, error) {
 		cur = o.Val
 	case refs.KindTable:
 		cur = tableHandle{pid, r.Name}
-	case refs.KindCall:
+	case refs.KindSpan:
 		c, err := s.GetCall(ctx, pid, r.Name, false, false, false)
 		if err != nil {
 			return nil, err

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,15 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/webui"
 )
+
+// envDefault reads a boolean environment variable, def when unset or invalid.
+func envDefault(name string, def bool) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(name)))
+	if err != nil {
+		return def
+	}
+	return v
+}
 
 func envOr(name, def string) string {
 	if v := os.Getenv(name); v != "" {
@@ -64,6 +74,10 @@ func main() {
 	shieldCfg := registerShieldFlags() // shield.go
 	compatFlag := flag.Bool(compat.FlagName, false,
 		"turn on the compatibility adapter for the official weave client, see docs/weft/COMPATIBILITY.md (env "+compat.EnvName+"=true)")
+
+	legacyRoutes := flag.Bool("legacy-routes", envDefault("WEFT_LEGACY_ROUTES", server.DefaultLegacyRoutes),
+		"also serve the route shapes Weft had before its own /api/v1 API (/call/*, /obj/*, ...) with the compatibility "+
+			"adapter off; a temporary migration aid, to be turned off by default (env WEFT_LEGACY_ROUTES)")
 
 	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
 	flag.Parse()
@@ -134,7 +148,8 @@ func main() {
 		log.Warn(permMsg, "problem", w)
 	}
 
-	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log, Compat: compatOn}
+	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log, Compat: compatOn,
+		LegacyRoutes: legacyRoutes}
 	if err := iamCfg.apply(&cfg, *dbPath, log); err != nil {
 		log.Error("configuring SSO and sessions", "err", err)
 		os.Exit(2)
@@ -167,7 +182,7 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode, "compat_adapter", compatOn)
+	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode, "compat_adapter", compatOn, "legacy_routes", *legacyRoutes && !compatOn)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

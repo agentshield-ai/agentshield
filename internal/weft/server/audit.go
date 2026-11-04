@@ -221,9 +221,9 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 			return
 		}
 		switch rr.Kind {
-		case refs.KindCall:
+		case refs.KindSpan:
 			addC(rr.Name)
-		case refs.KindObject, refs.KindOp:
+		case refs.KindObject, refs.KindFunction:
 			addO(rr.Name)
 		}
 	}
@@ -265,6 +265,34 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 	addO(str(top, "object_id"))
 	if o, ok := top["obj"].(map[string]any); ok {
 		addO(str(o, "object_id"))
+	}
+	// Weft's own API: spans by id, ids and batch items; objects by name.
+	if strings.HasPrefix(path, "/api/v1/spans/") {
+		addC(str(top, "id"))
+		if ids, ok := top["ids"].([]any); ok {
+			for _, x := range ids {
+				if v, ok := x.(string); ok {
+					addC(v)
+				}
+			}
+		}
+		if items, ok := top["items"].([]any); ok {
+			for _, it := range items {
+				m, _ := it.(map[string]any)
+				for _, k := range []string{"start", "end", "span"} {
+					if x, ok := m[k].(map[string]any); ok {
+						addC(str(x, "id"))
+					}
+				}
+			}
+		}
+	}
+	if rest, ok := strings.CutPrefix(path, "/api/v1/objects/"); ok {
+		addO(str(top, "name"))
+		if name, _, _ := strings.Cut(rest, "/"); name != "" && name != "save" && name != "query" && name != "delete" &&
+			name != "tags" && name != "aliases" {
+			addO(name)
+		}
 	}
 	for k, v := range top {
 		switch x := v.(type) {

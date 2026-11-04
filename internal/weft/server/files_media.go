@@ -11,18 +11,10 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // POST /files/resolve_url turns file references into download URLs, and
 // POST /image/create generates images (playground image generation).
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Post("/files/resolve_url", handle(s.filesResolveURL))
-		r.Post("/image/create", handle(s.imageCreate))
-	})
-}
 
 const (
 	defaultPresignTTL = time.Hour
@@ -71,7 +63,8 @@ func resolveErrf(code, format string, a ...any) *resolveError {
 // filesResolveURL resolves each uri to a download URL:
 //   - a file digest (as returned by /file/create; "weft-file://<digest>" is
 //     accepted too): a presigned URL when the file
-//     lives in a presigning backend (S3), otherwise this server's /file/content URL;
+//     lives in a presigning backend (S3), otherwise this server's
+//     GET /api/v1/files/{digest} URL;
 //   - s3://<backend bucket>/<key> under this project's prefix: a presigned URL;
 //   - s3:// and gs:// URIs in a reference bucket registered for the project
 //     or its team (refbuckets.go): a presigned (S3) or V4 signed (GCS) URL;
@@ -159,8 +152,7 @@ func (s *Server) filesResolveURL(ctx context.Context, r *http.Request, req *file
 		if fi.Location != "" && presigner != nil {
 			return presign(fi.Location)
 		}
-		q := url.Values{"project_id": {pid}, "digest": {digest}}
-		return base + "/file/content?" + q.Encode(), nil
+		return nativeFileURL(base, pid, digest), nil
 	}
 	out := make([]string, 0, len(req.URIs))
 	var perURI []*resolveError

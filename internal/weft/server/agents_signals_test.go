@@ -238,15 +238,15 @@ func TestFeedbackBatchCreateScorerFields(t *testing.T) {
 	e := newEnv(t)
 	seedAgentData(t, e, time.Now().Add(-time.Hour))
 	turn := convTurns(t, e)[0]
-	ref := "weft:///" + pid + "/call/" + turn["span_id"].(string)
-	res := e.post("/feedback/batch/create", map[string]any{"batch": []any{
+	ref := spanRef(turn["span_id"].(string))
+	res := e.post("/api/v1/feedback/batch", map[string]any{"items": []any{
 		map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.signal", "payload": map[string]any{"note": "x"},
 			"scorer_ratings": map[string]any{"quality": 0.7}, "scorer_rating_confidences": map[string]any{"quality": 3},
 			"scorer_rating_reasons": map[string]any{"quality": "ok\u0007 <i>fine</i>"}, "scorer_tags": []any{"NSFW", "nsfw"},
 			"scorer_tag_reasons": map[string]any{"NSFW": "explicit"}, "scorer_trace_id": "judge-trace", "span_agent_name": "given-agent"},
 		map[string]any{"project_id": pid, "ref": ref, "feedback_type": "weft.reaction", "payload": map[string]any{"emoji": "👍"}},
 	}})
-	items := res["res"].([]any)
+	items := res["items"].([]any)
 	p := items[0].(map[string]any)["payload"].(map[string]any)
 	if p["note"] != "x" || p["scorer_ratings"].(map[string]any)["quality"].(float64) != 0.7 ||
 		p["scorer_rating_confidences"].(map[string]any)["quality"].(float64) != 1 ||
@@ -260,7 +260,7 @@ func TestFeedbackBatchCreateScorerFields(t *testing.T) {
 	if plain := items[1].(map[string]any)["payload"].(map[string]any); len(plain) != 1 || plain["emoji"] != "👍" {
 		t.Fatalf("plain feedback changed: %v", plain)
 	}
-	if code, _ := e.raw("/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "ref": ref,
+	if code, _ := e.raw("/api/v1/feedback/batch", map[string]any{"items": []any{map[string]any{"project_id": pid, "ref": ref,
 		"feedback_type": "x", "payload": map[string]any{}, "scorer_tags": []any{strings.Repeat("t", 40)}}}}, nil); code != 400 {
 		t.Fatalf("long tag accepted: %d", code)
 	}
@@ -276,12 +276,12 @@ func TestFeedbackBatchCreateScorerFields(t *testing.T) {
 func TestAutoSignalsScoreEndedTurns(t *testing.T) {
 	e := newEnv(t)
 	rate0 := 0.0
-	e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": pid, "object_id": "agent-signals", "val": map[string]any{
+	e.post("/api/v1/objects/save", map[string]any{"project_id": pid, "name": "agent-signals", "value": map[string]any{
 		"_class_name": "AgentSignals", "model": "mock/json", "signals": []any{
 			map[string]any{"id": "task_success", "preset": "task_success", "kind": "rating", "name": "Task Success", "description": "Did the agent finish the task?", "enabled": true},
 			map[string]any{"id": "nsfw", "preset": "nsfw", "kind": "tag", "name": "NSFW", "description": "Explicit content", "enabled": true, "sample_rate": rate0},
 			map[string]any{"id": "off", "kind": "tag", "name": "Off", "description": "disabled", "enabled": false},
-		}}}})
+		}}})
 	seedAgentData(t, e, time.Now().Add(-time.Hour))
 	results := func() []any {
 		var rs []any

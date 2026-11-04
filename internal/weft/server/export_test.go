@@ -15,7 +15,7 @@ import (
 func exportRaw(t *testing.T, e *testEnv, body map[string]any) (*http.Response, []byte) {
 	t.Helper()
 	b, _ := json.Marshal(body)
-	resp, err := http.Post(e.srv.URL+"/calls/export", "application/json", bytes.NewReader(b))
+	resp, err := http.Post(e.srv.URL+"/api/v1/spans/export", "application/json", bytes.NewReader(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +43,12 @@ func TestCallsExportCSVFlatten(t *testing.T) {
 	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	seedMetricCalls(t, e, base)
 	// A call with nested inputs, a list, a key containing a dot and a formula-looking string.
-	e.post("/call/start", map[string]any{"start": map[string]any{
-		"project_id": pid, "id": "nested", "op_name": "agent", "started_at": base.Add(2 * time.Hour).Format(time.RFC3339Nano),
+	e.startSpan(map[string]any{
+		"id": "nested", "name": "agent", "started_at": base.Add(2 * time.Hour).Format(time.RFC3339Nano),
 		"inputs":     map[string]any{"q": map[string]any{"text": "hi, \"there\"\nbye", "lang": "en"}, "tags": []any{"a", "b"}},
 		"attributes": map[string]any{"gen_ai.system": "openai"},
-	}})
-	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "nested",
-		"ended_at": base.Add(2*time.Hour + time.Second).Format(time.RFC3339Nano), "output": "=HYPERLINK(\"x\")"}})
+	})
+	e.endSpan(map[string]any{"id": "nested", "ended_at": base.Add(2*time.Hour + time.Second).Format(time.RFC3339Nano), "output": "=HYPERLINK(\"x\")"})
 
 	resp, body := exportRaw(t, e, map[string]any{"project_id": pid, "format": "csv", "sort_by": []any{map[string]any{"field": "started_at", "direction": "asc"}}})
 	if resp.StatusCode != 200 {
@@ -62,7 +61,7 @@ func TestCallsExportCSVFlatten(t *testing.T) {
 	if len(rows) != 5 {
 		t.Fatalf("want 5 rows, got %d", len(rows))
 	}
-	for _, col := range []string{"id", "status", "latency_ms", "total_tokens", "cost_usd", "inputs.n", "inputs.q.text", "inputs.q.lang", "inputs.tags", "output", "output.len", "attributes.env", "attributes.gen_ai.system"} {
+	for _, col := range []string{"id", "name", "error", "session_id", "status", "latency_ms", "total_tokens", "cost_usd", "inputs.n", "inputs.q.text", "inputs.q.lang", "inputs.tags", "output", "output.len", "attributes.env", "attributes.gen_ai.system"} {
 		if _, ok := idx[col]; !ok {
 			t.Errorf("missing column %q in %v", col, rows)
 		}
@@ -74,7 +73,10 @@ func TestCallsExportCSVFlatten(t *testing.T) {
 	if first[idx["id"]] != "m0" || first[idx["latency_ms"]] != "100" || first[idx["total_tokens"]] != "15" || first[idx["output.len"]] != "10" || first[idx["attributes.env"]] != "prod" {
 		t.Errorf("first row = %v", first)
 	}
-	if rows[1][idx["status"]] != "error" || rows[1][idx["exception"]] != "boom" {
+	if _, old := idx["op_name"]; old {
+		t.Errorf("span export uses Weft's names: %v", idx)
+	}
+	if rows[1][idx["status"]] != "error" || rows[1][idx["error"]] != "boom" {
 		t.Errorf("error row = %v", rows[1])
 	}
 	if last[idx["inputs.q.text"]] != "hi, \"there\"\nbye" || last[idx["inputs.tags"]] != `["a","b"]` || last[idx["attributes.gen_ai.system"]] != "openai" {
@@ -85,7 +87,7 @@ func TestCallsExportCSVFlatten(t *testing.T) {
 	}
 
 	// Explicit columns, filtered.
-	_, body = exportRaw(t, e, map[string]any{"project_id": pid, "format": "csv", "filter": map[string]any{"op_names": []any{"answer"}},
+	_, body = exportRaw(t, e, map[string]any{"project_id": pid, "format": "csv", "filter": map[string]any{"names": []any{"answer"}},
 		"columns": []any{"id", "inputs.n", "attributes.gen_ai.system", "summary.usage", "feedback.x"}})
 	idx, rows = readCSV(t, body)
 	if len(idx) != 5 || len(rows) != 3 {
@@ -115,13 +117,11 @@ func TestCallsExportStreamingFormats(t *testing.T) {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("c%05d", i)
 		st := base.Add(time.Duration(i) * time.Second)
-		batch = append(batch,
-			map[string]any{"mode": "start", "req": map[string]any{"start": map[string]any{"project_id": pid, "id": id, "trace_id": id, "op_name": "f",
-				"started_at": st.Format(time.RFC3339Nano), "inputs": map[string]any{"i": i}}}},
-			map[string]any{"mode": "end", "req": map[string]any{"end": map[string]any{"project_id": pid, "id": id,
-				"ended_at": st.Add(time.Millisecond).Format(time.RFC3339Nano), "output": i * 2}}})
+		batch = append(batch, completeSpan(map[string]any{"id": id, "trace_id": id, "name": "f",
+			"started_at": st.Format(time.RFC3339Nano), "inputs": map[string]any{"i": i},
+			"ended_at": st.Add(time.Millisecond).Format(time.RFC3339Nano), "output": i * 2}))
 	}
-	e.post("/call/upsert_batch", map[string]any{"batch": batch})
+	e.post("/api/v1/spans/batch", map[string]any{"project_id": pid, "items": batch})
 
 	resp, body := exportRaw(t, e, map[string]any{"project_id": pid, "format": "jsonl"})
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/jsonl" {
@@ -140,8 +140,8 @@ func TestCallsExportStreamingFormats(t *testing.T) {
 			t.Fatalf("duplicate %s", id)
 		}
 		seen[id] = true
-		if c["summary"] == nil || c["inputs"] == nil {
-			t.Fatalf("full call expected: %v", c)
+		if c["summary"] == nil || c["inputs"] == nil || c["name"] != "f" || c["op_name"] != nil {
+			t.Fatalf("full span expected: %v", c)
 		}
 	}
 	if len(seen) != n {
@@ -160,7 +160,7 @@ func TestCallsExportStreamingFormats(t *testing.T) {
 	}
 
 	// Empty result is a valid empty array; bad requests fail before streaming.
-	_, body = exportRaw(t, e, map[string]any{"project_id": pid, "format": "json", "filter": map[string]any{"op_names": []any{"none"}}})
+	_, body = exportRaw(t, e, map[string]any{"project_id": pid, "format": "json", "filter": map[string]any{"names": []any{"none"}}})
 	if strings.TrimSpace(string(body)) != "[\n]" && strings.TrimSpace(string(body)) != "[]" {
 		var x []any
 		if err := json.Unmarshal(body, &x); err != nil || len(x) != 0 {

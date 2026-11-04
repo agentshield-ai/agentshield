@@ -9,60 +9,11 @@ import (
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/go-chi/chi/v5"
 )
 
-// POST /link_to_registry links an object version into a registry collection
-// (a "portfolio") of a target project; POST /registry/query reads
-// collections, versions and aliases back.
-
-func init() {
-	routeExtensions = append(routeExtensions, func(s *Server, r chi.Router) {
-		r.Post("/link_to_registry", s.linkToRegistry)
-		r.Post("/registry/query", handle(s.registryQuery))
-	})
-}
-
-type linkToRegistryReq struct {
-	Ref    string `json:"ref"`
-	Target struct {
-		PortfolioName string `json:"portfolio_name"`
-		EntityName    string `json:"entity_name"`
-		ProjectName   string `json:"project_name"`
-	} `json:"target"`
-	Aliases []string `json:"aliases"`
-}
-
-func (s *Server) linkToRegistry(w http.ResponseWriter, r *http.Request) {
-	var req linkToRegistryReq
-	if err := decodeBody(r, &req); err != nil {
-		writeErr(w, err)
-		return
-	}
-	t := req.Target
-	if req.Ref == "" || t.PortfolioName == "" || t.EntityName == "" || t.ProjectName == "" {
-		writeErr(w, store.Invalidf("ref and target.portfolio_name, target.entity_name and target.project_name are required"))
-		return
-	}
-	pid, err := project(t.EntityName + "/" + t.ProjectName)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// The middleware checked the ref's project; check the registry project too.
-	if code, msg := s.authorizeProject(r, pid); code != 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		_, _ = w.Write(msg)
-		return
-	}
-	v, err := s.store.LinkToRegistry(r.Context(), req.Ref, pid, t.PortfolioName, req.Aliases, userFrom(r, nil))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"version_index": v})
-}
+// POST /api/v1/registry/link links an object version into a registry
+// collection of a target project (native_more.go); POST
+// /api/v1/registry/query reads collections, versions and aliases back.
 
 func (s *Server) registryQuery(ctx context.Context, _ *http.Request, req *store.RegistryQuery) (any, error) {
 	cs, err := s.store.QueryRegistry(ctx, *req)
