@@ -25,12 +25,25 @@ adapter still serves the official weave client.
 - Span filters use `names`, `ids`, `session_ids` (the earlier `op_names`,
   `call_ids`, `thread_ids` are translated).
 - `Dataset.from_spans(...)`, `SavedView.spans()` / `to_spans_query()`.
+- `client.create_span(...)` / `client.finish_span(span, ...)` start and end a
+  span explicitly; `@weft.trace(span_display_name=...)` (also in an
+  integration's `op_settings`) sets each span's display name.
+- `client.sessions_query(...)` / `sessions_query_stream(...)` list sessions
+  (`POST /api/v1/spans/sessions`) with `weft.api_types.SessionsQueryReq`,
+  `SessionsQueryFilter`, `SessionsQueryRes` (`.sessions`) and `SessionSchema`
+  (`session_id`, `span_count`, ...).
+- `EvaluationLogger.log_prediction(span=...)` links a prediction to existing
+  spans; `ScoreLogger.predict_and_score_span` / `predict_span` and
+  `EvaluationLogger.span` are its spans.
+- Conversation spans (`Turn`, `LLM`, `Tool`, ...) expose their recorded span
+  as `.span` / `.span_id`.
+- `weft.urls.redirect_span(entity, project, span_id)`.
+- `WEFT_MAX_SPANS_QUEUE_SIZE` sets the send queue size.
 - `ApplyScorerResult.score_span`; feedback takes `span_ref`.
 - `client.evaluate_model(...)` returns `{"id", "status", "summary"}`;
   `client.compare_evaluations(run_ids)`; `client.leaderboard(name, version)`;
   `client.link_to_registry(...)` returns `version`; `client.add_cost(...)`
-  returns `[{"id", "llm_id"}]`; `client.threads_query(...)` items carry
-  `session_id` and `span_count`.
+  returns `[{"id", "llm_id"}]`.
 
 ### Platform objects and UI links
 
@@ -95,9 +108,24 @@ These earlier names still work and emit a `DeprecationWarning`:
 | `client.update_call(span, attrs, thread_id=...)` | `client.update_span(span, attrs, session_id=...)` |
 | setting `print_call_link`, `client.print_call_link` | `print_span_link`, `client.print_span_link` |
 | module `weft.trace_server_interface` (warns on import) | `weft.api_types` (the same classes) |
+| `client.threads_query(...)`, `client.threads_query_stream(...)` | `client.sessions_query(...)`, `client.sessions_query_stream(...)` |
+| `weft.api_types.ThreadsQueryReq`, `ThreadsQueryFilter`, `ThreadsQueryRes`, `ThreadSchema`, `threads_query_body`, `thread_from_session` | `SessionsQueryReq`, `SessionsQueryFilter`, `SessionsQueryRes`, `SessionSchema`, `sessions_query_body`, `session_from_item` |
+| `SessionsQueryRes.threads` (and `ThreadsQueryRes(threads=...)`), `SessionSchema.thread_id` | `SessionsQueryRes.sessions`, `SessionSchema.session_id` |
+| `client.create_call(...)`, `client.finish_call(...)` | `client.create_span(...)`, `client.finish_span(...)` |
+| `ev.log_prediction(..., call=...)` | `ev.log_prediction(..., span=...)` |
+| `ScoreLogger.predict_and_score_call`, `ScoreLogger.predict_call`, `ScoreLogger(predict_call=...)` | `ScoreLogger.predict_and_score_span`, `ScoreLogger.predict_span`, `ScoreLogger(predict_span=...)` |
+| `EvaluationLogger.call` | `EvaluationLogger.span` |
+| conversation spans' `.call`, `.call_id` (`turn.call`, `llm.call_id`, ...) | `.span`, `.span_id` |
+| `Dataset.from_calls(spans)` | `Dataset.from_spans(spans)` |
+| `weft.urls.redirect_call(...)` | `weft.urls.redirect_span(...)` |
+| `@weft.trace(call_display_name=...)`, `Op.call_display_name` | `@weft.trace(span_display_name=...)`, `Op.span_display_name` |
+| `op_settings={"call_display_name": ...}`, `OpSettings(call_display_name=...)`, `OpSettings.call_display_name` | `"span_display_name"`, `OpSettings(span_display_name=...)`, `OpSettings.span_display_name` |
 
 `WEFT_PRINT_CALL_LINK` is read when `WEFT_PRINT_SPAN_LINK` is unset, with one
-logged warning. A saved view's default pinned column is `name` (was
+logged warning; likewise `WEFT_MAX_CALLS_QUEUE_SIZE` when
+`WEFT_MAX_SPANS_QUEUE_SIZE` is unset (it still wins over the generic
+`WEFT_MAX_QUEUE_SIZE`). `SessionsQueryFilter(thread_ids=...)` is still read
+as `session_ids`. A saved view's default pinned column is `name` (was
 `op_name`); `pin_column_left/right` and `unpin_column` take the earlier
 column names (`op_name`, `exception`, `thread_id`), and pins saved with them
 are read as `name`, `error`, `session_id`. `KNOWN_COLUMNS` has Weft's names
@@ -114,7 +142,7 @@ The SDK writes Weft's renamed span attribute keys (docs/weft/API.md, *Span
 attributes*): `weft.parent_span.{id, trace_id}` (was `weft.parent_call.*`,
 the TypeSafe integration's link to the running traced function),
 `weft.linked_spans` with `{"span_id", "trace_id"}` items (was
-`weft.linked_calls` with `{"call_id"}`, on `log_prediction(call=...)`
+`weft.linked_calls` with `{"call_id"}`, on `log_prediction(span=...)`
 predictions) and `weft.eval.prediction_span_id` (was
 `weft.eval.predict_and_score_call_id`, on spans recorded inside a
 prediction). The server still reads the old keys, so spans sent by earlier

@@ -36,7 +36,7 @@ make weft         # build bin/weft
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
 | `--pii-analyzer-url` | `WEFT_PII_ANALYZER_URL` | empty (regex PII redaction only); a Presidio Analyzer REST URL adds PERSON, LOCATION and ORGANIZATION redaction at ingest for projects with sensitive-data redaction on, see [API.md](API.md#project-settings) |
-| `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error calls are stored with regex redaction only |
+| `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error spans are stored with regex redaction only |
 | `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |
 | `--egress-allow-private` | `WEFT_EGRESS_ALLOW_PRIVATE` | `false`; `true` allows loopback, private, link-local and CGNAT destinations (cloud metadata addresses stay blocked) |
 | `--remote-scorer-allow-insecure-http` | `WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP` | `false`; `true` allows `http://` RemoteScorer URLs, which otherwise must be `https://` |
@@ -121,7 +121,7 @@ def answer(question: str) -> str:
         messages=[{"role": "user", "content": question}]).choices[0].message.content
 ```
 
-OpenAI and Anthropic clients are patched automatically, so their calls appear
+OpenAI and Anthropic clients are patched automatically, so their requests appear
 as child spans with token usage and cost. Versioned values are saved with
 `weft.save(obj, name)` and read back with `weft.get(ref)`; spans are queried
 with `client.spans(...)` and `client.span(id)`.
@@ -135,7 +135,7 @@ export OTEL_EXPORTER_OTLP_TRACES_HEADERS="project_id=my-team/my-app,authorizatio
 ```
 
 Spans that follow the GenAI semantic conventions, OpenInference or
-OpenLLMetry become calls with chat-formatted inputs and outputs, token usage
+OpenLLMetry become spans with chat-formatted inputs and outputs, token usage
 and costs. The full mapping is in [API.md](API.md#opentelemetry-ingest).
 
 Datasets, models, scorers and evaluations follow the same pattern:
@@ -182,8 +182,8 @@ TypeScript via `weft.patchRealtimeSession()`, which finds
 SDK's and patches both its ESM and CommonJS builds). The Python SDK also patches raw
 `websockets`, `websocket-client` and `aiohttp` Realtime clients. Lower-level
 client methods are there too:
-`register_custom_runtime` / `registerCustomRuntime`, `threads_query`,
-`require_current_call`, the module-level tag and alias functions
+`register_custom_runtime` / `registerCustomRuntime`, `sessions_query` / `getSessions`,
+`require_current_span`, the module-level tag and alias functions
 (`weft.add_tags`, `weft.list_aliases`, `weft.get_tags_and_aliases`, …),
 `weft.urls.agent_conversation_path` (TypeScript:
 `agentConversationPath`, `client.conversationUrl`), and the
@@ -229,8 +229,8 @@ harness's tool-use id as `gen_ai.tool.call.id`, the same values the
 AgentShield plugins send as `session_id` and `tool_call_id`, so AgentShield
 verdicts attach to the exact tool call ([DESIGN.md](DESIGN.md) §5.3).
 
-Both SDKs also support guardrails (`call.apply_scorer` / `call.applyScorer`
-score a finished call and attach the result as feedback), loading published
+Both SDKs also support guardrails (`span.apply_scorer` / `span.applyScorer`
+score a finished span and attach the result as feedback), loading published
 ops back as runnable functions (this executes the stored code), object classes
 for annotation specs, monitors, leaderboards and saved views, and redaction of
 credential-like keys (`api_key`, `password`, `token`, …) before data leaves
@@ -389,7 +389,7 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 | Evaluations | SDK-run evaluations (`weft.Evaluation`, `EvaluationLogger`) and server-run evaluations of prompt-based models with built-in scorers and LLM judges. Comparison view with metric deltas and per-example diffs. |
 | Leaderboards | Columns of evaluation × scorer × metric, computed from the latest run per model. |
 | Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a span from its Scores tab (`/api/v1/spans/score`). |
-| Monitors | Online evaluation: active monitors score sampled calls of chosen ops as they finish and attach the scores as feedback. |
+| Monitors | Online evaluation: active monitors score sampled spans of chosen span names as they finish and attach the scores as feedback. |
 | Playground | Chat with OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, OpenRouter, Ollama or a custom OpenAI-compatible provider. Streaming, side-by-side models, `{variable}` placeholders with inputs, load from a call or saved prompt, save as prompt or as an evaluable model. |
 | Access control | Users, teams (entities) and viewer/member/admin roles per team or project; API keys belong to users and carry their roles; OIDC single sign-on (PKCE) with auto-provisioning, domain and group-to-role mapping; an audit log of every write, admin action and refused request with query and CSV export. **Settings → Members / Audit log**, **Users & teams** page. |
 | Administration | Managed API keys (hashed, per-project scope, read-only, admin), data retention TTL with a background purge, deterministic per-trace ingest sampling, server-side PII redaction at ingest (regex entities and custom patterns, plus PERSON/LOCATION/ORGANIZATION through an optional Presidio analyzer, configurable per project), project delete. Settings tabs for each (`/project/ttl_settings/*`, …). |
@@ -471,15 +471,15 @@ the same Argon2id derivation as the VFS's own `textkey` URI parameter, so
 any go-sqlite3 based tool can open the file with
 `file:weft.db?vfs=adiantum&textkey=<passphrase>`.
 
-Costs, measured on 10,000 calls (4 vCPUs, same workload on both drivers):
+Costs, measured on 10,000 spans (4 vCPUs, same workload on both drivers):
 
 | | plaintext (modernc) | encrypted |
 |---|---|---|
 | ingest, one transaction per start/end | 9.2 s | 16.1 s (+74%) |
-| ingest, batches of 100 calls | 5.4 s | 7.2 s (+33%) |
-| 50 call-list pages (100 roots, sorted) | 0.37 s | 0.77 s |
-| 1,000 single-call reads | 0.15 s | 0.18 s |
-| 10 JSON-filter scans of all calls | 0.62 s | 0.72 s |
+| ingest, batches of 100 spans | 5.4 s | 7.2 s (+33%) |
+| 50 span-list pages (100 roots, sorted) | 0.37 s | 0.77 s |
+| 1,000 single-span reads | 0.15 s | 0.18 s |
+| 10 JSON-filter scans of all spans | 0.62 s | 0.72 s |
 | 10 searches / 10 project stats | 0.47 s / 0.31 s | 0.76 s / 0.88 s |
 | binary size (stripped) | 22.3 MB | 29.8 MB (the second SQLite is linked into every build) |
 
@@ -493,7 +493,7 @@ one-off Argon2id run plus a Wasm heap per connection).
   warning on other addresses.
 - **Access model.** Static `--api-keys` keys and managed admin keys are
   server admins. Users (**Users & teams**) hold roles: `viewer` (read),
-  `member` (also write calls, objects, feedback, run evaluations) and
+  `member` (also write spans, objects, feedback, run evaluations) and
   `admin` (also manage members, keys, project settings and delete the
   project), granted per team (an entity: every `team/*` project) or per
   project; the stronger applies. Server admins (a user flag) are admin
@@ -519,7 +519,7 @@ one-off Argon2id run plus a Wasm heap per connection).
   no access until granted a role.
 - **Audit log.** Writes, admin actions, sign-ins and refused requests are
   recorded (actor, auth method, key id, method, path, project, object and
-  call ids, status, outcome, client IP); bodies and secret values are not.
+  span ids, status, outcome, client IP); bodies and secret values are not.
   Entries survive project deletion and are purged after
   `--audit-retention-days`. Unauthenticated writes are recorded too, so a
   flood of them grows the table until retention removes it; rate-limit at a
@@ -541,7 +541,7 @@ one-off Argon2id run plus a Wasm heap per connection).
   key is not sent when a project stores its own base URL for the provider.
 - The guard also refuses the Weft host's own interface addresses (a service
   bound to `0.0.0.0` is reachable on them) and documentation ranges.
-- Remote scorer requests carry call inputs and outputs and often credentials,
+- Remote scorer requests carry span inputs and outputs and often credentials,
   so their URLs must be `https://` unless `--remote-scorer-allow-insecure-http`
   is set.
 - Any key that can write to a project can use the stored provider secrets

@@ -25,10 +25,22 @@ the older route shapes are no longer used.
   `call_ids`, `thread_ids` are translated).
 - `SavedView.spans()` / `toSpansQuery()`; `ApplyScorerResult.scoreSpan`;
   feedback takes `span_ref`.
+- `client.createSpan(...)` / `client.finishSpan(span, ...)` start and end a
+  span explicitly; `weft.trace(fn, { spanDisplayName })` (also in an
+  integration's `opSettings`) sets each span's display name.
+- `client.getSessions({ sessionIds, ... })` lists sessions
+  (`POST /api/v1/spans/sessions`); items carry `session_id` and `span_count`.
+- `ev.logPrediction(inputs, output, { span })` links a prediction to existing
+  spans; `ScoreLogger.predictAndScoreSpan` / `predictSpan` and
+  `EvaluationLogger.span` are its spans.
+- Conversation spans (`Turn`, `LLM`, `Tool`, ...) expose their recorded span
+  as `.span` / `.spanId`.
+- `Dataset.fromSpans(spans)`; `client.spanUrl(span)`.
+- `WEFT_MAX_SPANS_QUEUE_SIZE` sets the send queue size.
 - `client.evaluateModel(...)` resolves to `{ id, status, summary }`;
   `client.compareEvaluations(runIds)`; `client.leaderboard(name, version)`;
   `linkToRegistry` resolves to `{ version, ... }`; `client.addCost` resolves
-  to `[{ id, llm_id }]`; `client.getThreads` items carry `session_id`.
+  to `[{ id, llm_id }]`.
 
 ### Platform objects and UI links
 
@@ -72,12 +84,22 @@ time it is used:
 | `weft.getCurrentCall()` | `weft.getCurrentSpan()` |
 | `span.opName`, `span.opBaseName`, `span.exception`, `span.threadId` | `span.name`, `span.baseName`, `span.error`, `span.sessionId` |
 | `ApplyScorerResult.scoreCall` | `ApplyScorerResult.scoreSpan` |
-| `SavedView.getCalls()`, `SavedView.toCallsQuery()` | `SavedView.spans()`, `SavedView.toSpansQuery()` |
+| `SavedView.getCalls()`, `SavedView.toCallsQuery()` (and the `SavedViewGetCallsOptions` type) | `SavedView.spans()`, `SavedView.toSpansQuery()` (`SavedViewSpansOptions`) |
 | `new weft.Monitor({ opNames })`, `monitor.opNames` | `new weft.Monitor({ names })`, `monitor.names` |
 | `new weft.AnnotationSpec({ opScope })`, `spec.opScope` | `new weft.AnnotationSpec({ names })`, `spec.names` |
 | `weft.withThread(threadId, fn)` (and the `ThreadContext` type) | `weft.withSession(sessionId, fn)` (`SessionContext`) |
 | `client.updateCall(span, attrs, { threadId })` | `client.updateSpan(span, attrs, { sessionId })` |
 | setting `printCallLink`, env `WEFT_PRINT_CALL_LINK`, `client.printCallLink` | `printSpanLink`, `WEFT_PRINT_SPAN_LINK`, `client.printSpanLink` |
+| `client.getThreads({ threadIds })` (items also carry `thread_id`), `getSessions({ threadIds })` | `client.getSessions({ sessionIds })` |
+| `client.createCall(...)`, `client.finishCall(...)` | `client.createSpan(...)`, `client.finishSpan(...)` |
+| `ev.logPrediction(inputs, output, { call })` | `ev.logPrediction(inputs, output, { span })` |
+| `ScoreLogger.predictAndScoreCall`, `ScoreLogger.predictCall` | `ScoreLogger.predictAndScoreSpan`, `ScoreLogger.predictSpan` |
+| `EvaluationLogger.call` | `EvaluationLogger.span` |
+| conversation spans' `.call`, `.callId` (`turn.call`, `llm.callId`, ...) | `.span`, `.spanId` |
+| `Dataset.fromCalls(spans)` | `Dataset.fromSpans(spans)` |
+| `client.callUrl(span)` | `client.spanUrl(span)` |
+| `weft.trace(fn, { callDisplayName })`, `opSettings: { callDisplayName }` | `{ spanDisplayName }` |
+| env `WEFT_MAX_CALLS_QUEUE_SIZE` (still wins over `WEFT_MAX_QUEUE_SIZE`) | `WEFT_MAX_SPANS_QUEUE_SIZE` |
 
 A saved view's default pinned column is `name` (was `op_name`); pins saved
 with the earlier column names (`op_name`, `exception`, `thread_id`) are
@@ -94,7 +116,7 @@ The SDK writes Weft's renamed span attribute keys (docs/weft/API.md, *Span
 attributes*): `weft.parent_span.{id, trace_id}` (was `weft.parent_call.*`,
 the TypeSafe integration's link to the running traced function),
 `weft.linked_spans` with `{span_id, trace_id}` items (was
-`weft.linked_calls` with `{call_id}`, on `logPrediction({ call })`
+`weft.linked_calls` with `{call_id}`, on `logPrediction(..., { span })`
 predictions) and `weft.eval.prediction_span_id` (was
 `weft.eval.predict_and_score_call_id`, on spans recorded inside a
 prediction). The server still reads the old keys, so spans sent by earlier

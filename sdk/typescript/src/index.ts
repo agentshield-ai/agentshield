@@ -64,7 +64,7 @@ export {
   type ScoreArgs,
 } from './scorers.js';
 export { AnnotationSpec, Leaderboard, Monitor, SavedView, type LeaderboardColumn } from './platform.js';
-export { filterToClause, filtersToQuery, queryToFilters, toSeconds, OPERATOR_MAP, type ViewFilter, type SavedViewGetCallsOptions } from './savedView.js';
+export { filterToClause, filtersToQuery, queryToFilters, toSeconds, OPERATOR_MAP, type ViewFilter, type SavedViewSpansOptions, type SavedViewGetCallsOptions } from './savedView.js';
 export {
   Conversation,
   Turn,

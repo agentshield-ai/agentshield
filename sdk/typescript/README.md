@@ -77,11 +77,11 @@ await weft.init('my-project', {
 | `redactPiiFields`, `redactPiiExcludeFields` | `WEFT_REDACT_PII_FIELDS`, `WEFT_REDACT_PII_EXCLUDE_FIELDS` (comma-separated) | `weft.DEFAULT_PII_ENTITIES` (same list as Python) |
 | `redactPiiScoreThreshold`, `redactPiiLanguage` | | 0, `en` |
 
-Regex entities are always applied when the call is recorded; the analyzer
+Regex entities are always applied when the span is recorded; the analyzer
 handles the rest (Presidio is asked only for the entities regex does not
 cover; a custom analyzer gets all of them). If the analyzer fails, a warning is
 logged once, regex redaction stands and NER is skipped for that client. The
-locally visible `call.inputs`/`call.output` keep the regex-only version; what
+locally visible `span.inputs`/`span.output` keep the regex-only version; what
 is sent and stored is fully redacted. The server can also apply NER
 (sensitive-data settings).
 
@@ -90,13 +90,13 @@ is sent and stored is fully redacted. The server can also apply NER
 ```ts
 await weft.init('my-project', {
   settings: {
-    globalAttributes: { app: 'support-bot' },   // added to every call
+    globalAttributes: { app: 'support-bot' },   // added to every span
     printSpanLink: true,                         // "weft: <server>/<entity>/<project>/spans/<id>" per root span (WEFT_PRINT_SPAN_LINK)
     captureCode: true,                           // store traced functions' source (WEFT_CAPTURE_CODE)
     captureReasoning: true,                      // model reasoning: thinking, summaries, weft.reasoning() (WEFT_CAPTURE_REASONING)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
     disableWalSender: false,                     // with the WAL on: write everything to it, send nothing (WEFT_DISABLE_WAL_SENDER)
-    maxQueueSize: 10_000, batchSize: 100,      // WEFT_MAX_CALLS_QUEUE_SIZE (0 = unbounded)
+    maxQueueSize: 10_000, batchSize: 100,      // WEFT_MAX_SPANS_QUEUE_SIZE (0 = unbounded)
     retryMaxAttempts: 3,                       // WEFT_RETRY_MAX_ATTEMPTS
     retryBackoffMs: 250, retryMaxBackoffMs: 4000,   // WEFT_RETRY_BACKOFF, WEFT_RETRY_MAX_INTERVAL (seconds)
     httpTimeoutMs: 30_000,                     // WEFT_HTTP_TIMEOUT (seconds)
@@ -125,7 +125,7 @@ stderr.
 
 ## Tracing
 
-- `weft.trace(fn, { name, kind, color, tracingSampleRate, enableCodeCapture, callDisplayName, parameterNames, postprocessInputs, postprocessOutput, accumulator })`
+- `weft.trace(fn, { name, kind, color, tracingSampleRate, enableCodeCapture, spanDisplayName, parameterNames, postprocessInputs, postprocessOutput, accumulator })`
   traces sync and async functions, generators, async generators and functions
   returning async iterables. Streamed items are accumulated into the output (an
   array by default).
@@ -176,7 +176,7 @@ import { wrapLanguageModel } from 'ai';
 const model = wrapLanguageModel({ model: openai('gpt-4o-mini'), middleware: weft.weftMiddleware() });
 ```
 
-Each request becomes a call with `kind: 'llm'` (for example
+Each request becomes a span with `kind: 'llm'` (for example
 `openai.chat.completions.create`, `google.genai.models.generate_content`,
 `vercel_ai.generate` or `vercel_ai.stream`). `wrapOpenAICompatible` does not
 add `stream_options`; Groq's `x_groq.usage` is picked up automatically.
@@ -192,7 +192,7 @@ set `stream_options` yourself. The wrapped methods return plain promises, so
 the OpenAI-specific `APIPromise` helpers such as `.withResponse()` are not
 available on wrapped calls.
 
-More providers (each request is an `llm` call with usage; streams are accumulated):
+More providers (each request is an `llm` span with usage; streams are accumulated):
 
 ```ts
 weft.wrapGroq(new Groq()); weft.wrapTogether(new Together()); weft.wrapCerebras(new Cerebras());   // OpenAI-compatible
@@ -209,24 +209,24 @@ const vertex = weft.wrapVertexAI(new VertexAI({ project, location }));   // mode
 ```
 
 **AWS Bedrock Agents.** `InvokeAgentCommand` and `InvokeInlineAgentCommand`
-become an `invoke_agent` call (`bedrock_agent.invoke_agent`), a turn of the
+become an `invoke_agent` span (`bedrock_agent.invoke_agent`), a turn of the
 conversation `sessionId`. While you iterate `response.completion`, the trace
-events (`enableTrace: true`) become child calls, as in the Python SDK:
+events (`enableTrace: true`) become child spans, as in the Python SDK:
 `bedrock_agent.model_invocation` (llm: prompt, raw/parsed response, usage per
 foundation model), `bedrock_agent.action_group` and `.code_interpreter`
 (tool), `.knowledge_base` (retriever), `.guardrail`, `.return_control`, and
 `.collaborator` (agent; the collaborator's own trace nests under it). A
-`failureTrace` fails the open steps and the agent call. For events you get
+`failureTrace` fails the open steps and the agent span. For events you get
 some other way, use `new weft.BedrockAgentTraceProcessor(...)`.
 
 **OpenAI Realtime.** `wrapOpenAIRealtime(rt)` (or
 `instrumentOpenAIRealtime(OpenAIRealtimeWS, OpenAIRealtimeWebSocket)`) mirrors
 the Python integration: the connection is an `openai.realtime.session` (agent)
-call; every `response.created` → `response.done` is an
-`openai.realtime.response` (llm) call whose inputs are the items added since
+span; every `response.created` → `response.done` is an
+`openai.realtime.response` (llm) span whose inputs are the items added since
 the previous response (text, input audio transcripts, function outputs) plus
 instructions and voice, with usage including cached and audio tokens; function
-calls are `openai.realtime.tool.<name>` (tool) calls that end at your
+calls are `openai.realtime.tool.<name>` (tool) spans that end at your
 `function_call_output`. The model comes from the connection URL.
 
 Audio is saved as WAV files (`weft.Audio`): the user's audio
@@ -250,20 +250,20 @@ and the CommonJS build (what `require` loads). It resolves to `false` only
 when no copy is found. The session's `transport_event`s
 (every raw server event) and its transport's `sendEvent` (which `sendAudio`,
 `sendMessage` and tool outputs go through) feed the same tracer, so a session
-records the same calls and audio as above. A disconnect or `close()` ends the
-session call; a later `connect()` starts a new one.
+records the same spans and audio as above. A disconnect or `close()` ends the
+session span; a later `connect()` starts a new one.
 `weft.wrapRealtimeSession(session)` traces one session. For any other
 websocket client, feed a `new weft.RealtimeTracer()` with `onClientEvent(e)`,
 `onServerEvent(e)` and `close()`.
 
 **TypeSafe.** `wrapTypeSafe(client, { captureContent? })` or
 `patchTypeSafeModule(mod)` / `instrumentTypeSafe(mod)`
-record each `systemOne({ state, questions, model? })` as an LLM (`chat`) call
+record each `systemOne({ state, questions, model? })` as an LLM (`chat`) span
 of provider `typesafe`: the state as the user message, the questions as the
 `typesafe.questions` attribute, the answers, response model, usage and request
 id, inside the running turn or its own `typesafe SDK` turn. That turn is a
-trace of its own even inside an op; when an op is running, the turn
-and the LLM call carry a link to it, `attributes.weft.parent_span.id` and
+trace of its own even inside a traced function; when one is running, the turn
+and the LLM span carry a link to it, `attributes.weft.parent_span.id` and
 `.trace_id`, which the server exposes as the agent span fields
 `linked_parent_span_id` / `linked_parent_trace_id`. Errors keep their
 type and HTTP status but not TypeSafe's message (it holds the response body).
@@ -307,7 +307,7 @@ weft.instrumentOpenAIAgents(await import('@openai/agents'));   // or addTracePro
 | Claude Agent SDK | `claude_agent_sdk.query` (an agent turn; conversation = the SDK session id), `claude_agent_sdk.llm` per assistant message (usage once per message id, cache tokens included, thinking blocks), `claude_agent_sdk.tool.<name>` ending at its result (`gen_ai.tool.call.id`); `Task`/`Agent` calls are sub-agents named by `subagent_type`, with their messages nested |
 | OpenAI Agents JS | `openai_agents.trace` (workflow; session = `groupId`, else the trace id), `agent.<name>` (`gen_ai.agent.name`), `tool.<name>`, `openai_agents.generation` / `.response` (usage, reasoning items and tokens), `openai_agents.handoff` (`weft.handoff.*`, the target set when it ends), `guardrail.<name>`, with the SDK's start and end times |
 
-Every integration's calls carry `gen_ai.*` attributes (operation, model,
+Every integration's spans carry `gen_ai.*` attributes (operation, model,
 provider, tool name and call id, agent name), so they also appear in
 **Agents**.
 
@@ -320,14 +320,14 @@ await weft.init('proj', {
   autopatchSettings: {
     openai: { opSettings: { postprocessInputs: (i) => ({ ...i, messages: '[hidden]' }), postprocessOutput: scrub } },
     langchain: { enabled: false },
-    mcp: { opSettings: { callDisplayName: (call) => `mcp ${call.inputs.name}`, attributes: { team: 'tools' }, color: 'purple' } },
+    mcp: { opSettings: { spanDisplayName: (span) => `mcp ${span.inputs.name}`, attributes: { team: 'tools' }, color: 'purple' } },
   },
 });
 weft.updateIntegration('bedrock', { opSettings: { kind: 'llm', name: 'bedrock' } });
 const groq = weft.wrapGroq(client, { postprocessOutput: scrub });   // per client, after the global hooks
 ```
 
-`opSettings` fields: `name` (op name), `callDisplayName`, `postprocessInputs`,
+`opSettings` fields: `name` (span name), `spanDisplayName`, `postprocessInputs`,
 `postprocessOutput`, `kind`, `color`, `attributes`. Names: `openai`,
 `anthropic`, `google_genai`, `vercel_ai`, `langchain`, `llamaindex`, `mcp`,
 `claude_agent_sdk`, `openai_agents`, `mistral`, `cohere`, `groq`, `together`,
@@ -381,7 +381,7 @@ await client.evaluateModel(evaluation, m);     // server-side evaluation (POST /
 ```
 
 Dataset helpers: `ds.select([0, 2])`, `ds.columnNames`, `ds.numRows`,
-`weft.Dataset.fromCalls(spans)` (one row per span).
+`weft.Dataset.fromSpans(spans)` (one row per span).
 
 Object versions:
 
@@ -412,7 +412,7 @@ await span.feedback.addAnnotation(spec, 4);
 await weft.save(new weft.Leaderboard({ name: 'qa-board', columns: [
   { evaluationObjectRef: evaluation, scorerName: 'exact', summaryMetricPath: 'true_fraction' },
 ] }));
-await weft.save(new weft.Monitor({ name: 'judge-chats', opNames: ['openai.chat.completions.create'], samplingRate: 0.2, scorers: [judge] }));
+await weft.save(new weft.Monitor({ name: 'judge-chats', names: ['openai.chat.completions.create'], samplingRate: 0.2, scorers: [judge] }));
 ```
 
 `SavedView` has a fluent query API; views open in the UI and UI views load here:
@@ -437,7 +437,7 @@ Operators: `contains`, `does not contain`, `equals`, `does not equal`, `in`,
 
 ## Agents: conversations, turns, LLM calls and tools
 
-`weft.startConversation()` and friends. Turns, LLM calls, tools and
+`weft.startConversation()` and friends. Turns, LLM spans, tools and
 sub-agents are recorded as spans the agents index understands, so they show
 up in **Agents** (`/agents/*`), Threads and Traces (see the Python README for
 the span shapes). `span.run(fn)` is Python's `with`: the span is current while
@@ -487,7 +487,7 @@ Agents `groupId`, else the trace id; LangGraph `thread_id`; the Claude Agent
 SDK session id; Bedrock Agents `sessionId`).
 
 **Teams.** `weft.withTeam({ id, name }, fn)` (or an id, or `[id, name]`)
-stamps `weft.team.id` / `weft.team.name` on every call and span started in
+stamps `weft.team.id` / `weft.team.name` on every span started in
 `fn`; `startConversation({ team })`, `logTurn({ team })` and
 `logConversation({ team })` set it for one conversation (inside
 `conv.run(fn)`, ops get it too). `weft.getCurrentTeam()` returns the active
@@ -601,7 +601,7 @@ More built-ins serialise exactly like their Python counterparts:
 
 `LLMAsAJudgeScorer` runs through the server's `POST /api/v1/completions` with
 `track_llm_call: false`, so provider keys stay on the server and usage is
-recorded on the scorer call. For a custom scorer object, subclass
+recorded on the scorer span. For a custom scorer object, subclass
 `weft.Scorer` and implement `score({ modelOutput, datasetRow })`.
 
 ### EvaluationLogger
@@ -612,7 +612,7 @@ const pred = ev.logPrediction({ question: '2+2' }, '4');
 pred.logScore('correct', true);
 pred.finish();
 ev.logExample({ question: '3+3' }, '6', { correct: true });   // prediction + scores in one call
-const summary = await ev.logSummary();     // same call structure as Evaluation
+const summary = await ev.logSummary();     // same span structure as Evaluation
 ```
 
 Without an output the predict span stays open: `await pred.run(async (p) => { p.output = await agent(q); })`
@@ -620,13 +620,13 @@ records spans made inside as its children (and stamps `weft.eval.*` on
 conversation spans started there), then finishes the prediction.
 
 **Linking existing traces (agent evals):** the third argument may be options,
-including `call` (a Span, span id or URI, a Turn or other conversation span, a `LogResult`,
+including `span` (a Span, span id or URI, a Turn or other conversation span, a `LogResult`,
 a `Conversation`, or an array):
 
 ```ts
-const [, call] = await agent.call('2+2');
-ev.logPrediction({ q: '2+2' }, undefined, { call });          // output and latency from the span
-ev.logPrediction({ q: 'hi' }, 'hello', { call: turn, exampleId: 'ex-1' });
+const [, span] = await agent.call('2+2');
+ev.logPrediction({ q: '2+2' }, undefined, { span });          // output and latency from the span
+ev.logPrediction({ q: 'hi' }, 'hello', { span: turn, exampleId: 'ex-1' });
 ```
 
 Links are stored as `attributes.weft.linked_spans` (`[{span_id, trace_id}]`), `attributes.weft.genai_span_ref`
@@ -671,7 +671,7 @@ await client.deleteSpans([id]);
 await client.getFeedback({ query: { $eq: [{ $getField: 'feedback_type' }, { $literal: 'weft.note' }] } });
 await span!.feedback.list(); await span!.feedback.purge(feedbackId);
 await span!.children(); span!.status; span!.uiUrl;
-await client.getThreads({ limit: 20 });      // sessions (POST /api/v1/spans/sessions)
+await client.getSessions({ limit: 20 });     // sessions (POST /api/v1/spans/sessions); sessionIds: [...] for some
 await client.registerCustomRuntime({        // an OpenAI-compatible endpoint; resolves to { data, error: null }
   name: 'my-vllm', baseUrl: 'https://vllm.internal/v1',
   runtimeIds: ['llama-3-8b', { id: 'qwen2-7b', maxTokens: 8192 }],   // the complete list
@@ -722,8 +722,8 @@ follows:
 |---|---|---|
 | `setWbRun(runId, step)`, `client.setWbRun(...)` | `setRun(runId, step)`, `client.setRun(...)` | rename the call |
 | `init({ wbRunId, wbRunStep })` | `init({ runId, runStep })` | rename the options |
-| `call.wbUserId`, `call.wbUsername` | `call.userId`, `call.username` | rename the property |
-| `call.wbRunId`, `call.wbRunStep`, `call.wbRunStepEnd` | `call.runId`, `call.runStep`, `call.runStepEnd` | rename the property |
+| `call.wbUserId`, `call.wbUsername` | `span.userId`, `span.username` | rename the property |
+| `call.wbRunId`, `call.wbRunStep`, `call.wbRunStepEnd` | `span.runId`, `span.runStep`, `span.runStepEnd` | rename the property |
 | wire fields `wb_user_id`, `wb_username`, `wb_run_id`, `wb_run_step`, `wb_run_step_end` | `user_id`, `username`, `run_id`, `run_step`, `run_step_end` | rename in queries, sorts and raw API use |
 | `CallsFilter` / `SavedView.setFilter` keys `wb_user_ids`, `wb_run_ids` | `user_ids`, `run_ids` | rename the keys |
 | feedback field `weave_ref` (payloads, `$getField`) | `ref` | rename the field |

@@ -558,8 +558,23 @@ digests in the older form; both forms resolve.
   with the earlier column names are read as Weft's) and the module
   `weft.api_types` (was `weft.trace_server_interface`, kept as a
   re-export); TypeScript `withSession`, `client.updateSpan(span, …,
-  { sessionId })` and `printSpanLink`. The earlier names are deprecated
-  aliases on the same terms.
+  { sessionId })` and `printSpanLink`. Likewise (Python, then TypeScript
+  in parentheses): `client.sessions_query` / `sessions_query_stream` with
+  `SessionsQueryReq`, `SessionSchema` and `SessionsQueryRes.sessions` (were
+  `threads_query`, `ThreadsQueryReq`, `ThreadSchema`, `.threads`;
+  `client.getSessions({ sessionIds })`, was `getThreads({ threadIds })`);
+  `create_span` / `finish_span` (`createSpan` / `finishSpan`; were
+  `create_call` / `finish_call`); `log_prediction(span=)` (`{ span }`),
+  `ScoreLogger.predict_and_score_span` / `predict_span`
+  (`predictAndScoreSpan` / `predictSpan`) and `EvaluationLogger.span`
+  (were `call=`, `predict_and_score_call`, `predict_call`, `.call`);
+  conversation spans' `.span` / `.span_id` (`spanId`; were `.call` /
+  `.call_id`); `Dataset.from_spans` (`fromSpans`); `weft.urls.redirect_span`
+  and TypeScript `client.spanUrl`; the `span_display_name` option
+  (`spanDisplayName`, also in integration `op_settings`; was
+  `call_display_name`); and `WEFT_MAX_SPANS_QUEUE_SIZE` (was
+  `WEFT_MAX_CALLS_QUEUE_SIZE`; the new name wins when both are set). The
+  earlier names are deprecated aliases on the same terms.
   - They emit a `DeprecationWarning`.
   - They are documented only in the SDK changelog.
 - The local scorers default to openly licensed models with neutral names.

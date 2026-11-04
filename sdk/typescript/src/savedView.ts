@@ -238,7 +238,8 @@ function checkColumn(path: string): void {
   if (!KNOWN_COLUMNS.includes(String(pathParts(path)[0]))) throw new Error(`unknown column ${JSON.stringify(path)}: the first path segment must be one of KNOWN_COLUMNS`);
 }
 
-export interface SavedViewGetCallsOptions {
+/** Options of `SavedView.spans()` and `toSpansQuery()`. */
+export interface SavedViewSpansOptions {
   limit?: number;
   offset?: number;
   includeCosts?: boolean;
@@ -246,7 +247,10 @@ export interface SavedViewGetCallsOptions {
   allColumns?: boolean;
 }
 
-/** A saved traces/evaluations view: build it fluently, `save()`, `load()`, and run it with `getCalls()`. */
+/** @deprecated Use `SavedViewSpansOptions`. */
+export type SavedViewGetCallsOptions = SavedViewSpansOptions;
+
+/** A saved traces/evaluations view: build it fluently, `save()`, `load()`, and run it with `spans()`. */
 export class SavedView extends WeftObject {
   viewType: string;
   label: string | null;
@@ -560,7 +564,7 @@ export class SavedView extends WeftObject {
    * before the rename name filter fields the earlier way (`op_names`,
    * `thread_ids`, ...); they are given Weft's span names here.
    */
-  toSpansQuery(opts: SavedViewGetCallsOptions = {}): Record<string, unknown> {
+  toSpansQuery(opts: SavedViewSpansOptions = {}): Record<string, unknown> {
     const d = this.definition;
     const body: Record<string, unknown> = {};
     const p = this.projectRef;
@@ -594,7 +598,7 @@ export class SavedView extends WeftObject {
   }
 
   /** Spans matching the view's filter, query, search and sort. */
-  spans(opts: SavedViewGetCallsOptions = {}): Promise<Call[]> {
+  spans(opts: SavedViewSpansOptions = {}): Promise<Call[]> {
     const b = this.toSpansQuery(opts) as any;
     return requireClient().spans({
       filter: b.filter,
