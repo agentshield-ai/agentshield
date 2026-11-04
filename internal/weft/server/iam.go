@@ -373,6 +373,20 @@ func (p *principal) roleFor(pid string) store.Role {
 	return r
 }
 
+// refAccess is r's context with the caller's read access as its ref scope
+// (store/refscope.go): refs nested in values, expanded columns and
+// evaluation inputs resolve only in projects the caller may read. Open
+// servers and static keys read every project.
+func (s *Server) refAccess(r *http.Request) context.Context {
+	p := principalFrom(r)
+	if p == nil {
+		return store.WithRefAccess(r.Context(), func(string) bool { return true })
+	}
+	return store.WithRefAccess(r.Context(), func(pid string) bool {
+		return p.roleFor(pid).Rank() >= store.RoleViewer.Rank()
+	})
+}
+
 // isAdmin reports server-admin powers: a static or admin key, or an
 // unrestricted key or session of an admin user.
 func (p *principal) isAdmin() bool {

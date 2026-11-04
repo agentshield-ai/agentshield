@@ -235,6 +235,9 @@ func (e *Engine) loadObject(ctx context.Context, ref string) (*store.Obj, map[st
 	if r.Kind != refs.KindObject && r.Kind != refs.KindFunction {
 		return nil, nil, store.Invalidf("%q is not an object ref", ref)
 	}
+	if err := store.CheckRefProject(ctx, ref, r.ProjectID()); err != nil {
+		return nil, nil, err
+	}
 	o, err := e.Store.ReadObject(ctx, r.ProjectID(), r.Name, r.Digest)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

@@ -115,6 +115,12 @@ func (a *Adapter) Middleware(next http.Handler) http.Handler {
 		if k := r.Header.Get("Wandb-Api-Key"); k != "" && r.Header.Get("X-Weft-Api-Key") == "" {
 			r.Header.Set("X-Weft-Api-Key", k)
 		}
+		if NativePath(r.URL.Path) {
+			// Weft's own API keeps its contract whatever the client: only
+			// the adapter's routes are translated.
+			next.ServeHTTP(w, r)
+			return
+		}
 		rewriteQuery(r)
 		if err := rewriteRequestBody(r); err != nil {
 			http.Error(w, "reading body: "+err.Error(), http.StatusBadRequest)
@@ -137,6 +143,10 @@ func (a *Adapter) Middleware(next http.Handler) http.Handler {
 		_, _ = w.Write(body)
 	})
 }
+
+// NativePath reports paths of Weft's own API (/api/...), which the adapter
+// never translates.
+func NativePath(p string) bool { return p == "/api" || strings.HasPrefix(p, "/api/") }
 
 // IsWeaveClient reports whether the caller is the official weave client,
 // which only understands weave:/// refs and its own feedback names.

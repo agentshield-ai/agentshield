@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -104,6 +105,12 @@ var nativeReadPaths = map[string]bool{
 	"/api/v1/feedback/query": true, "/api/v1/files/resolve": true, "/api/v1/refs/read": true, "/api/v1/prices/query": true,
 	"/api/v1/evaluations/compare": true, "/api/v1/leaderboards/compute": true, "/api/v1/registry/query": true,
 	"/api/v1/dataset_sources/query": true, "/api/v1/dataset_sources/datasets": true,
+}
+
+// nativeRefs is ctx with spans reached through refs (refs/read, a ref's
+// path, expand_columns) in the Span schema.
+func nativeRefs(ctx context.Context) context.Context {
+	return store.WithSpanEncoder(ctx, func(c *store.Call) any { return spanFrom(c, false) })
 }
 
 // page is the shape of every native list response.

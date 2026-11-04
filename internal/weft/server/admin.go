@@ -185,12 +185,14 @@ func (s *Server) touchKey(id string) {
 }
 
 // readSegments are final path segments of POST endpoints that only read.
+// Nothing here may write or have side effects (POST /automations/check
+// fires webhooks and records runs, so it needs write).
 var readSegments = map[string]bool{
 	"query": true, "read": true, "stream_query": true, "query_stats": true, "stats": true, "read_batch": true,
 	"content": true, "compare": true, "compute": true, "status": true, "usage": true, "aggregate": true,
 	"payload_schema": true, "query_stats_batch": true, "op_counts": true, "source_datasets_query": true,
 	"search": true, "list": true, "projects_info": true, "export": true, "metrics": true, "graphql": true,
-	"evaluation_status": true, "preview": true, "check": true, "whoami": true, "principal": true,
+	"evaluation_status": true, "preview": true, "whoami": true, "principal": true,
 }
 
 func isReadRequest(r *http.Request) bool {

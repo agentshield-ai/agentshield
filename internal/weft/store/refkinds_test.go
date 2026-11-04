@@ -90,3 +90,71 @@ func TestRefKindsMigration(t *testing.T) {
 		t.Fatalf("new feedback = %+v %v", fb, err)
 	}
 }
+
+// Annotation queue items copy the span's name when added; items added
+// before Weft's own ref kinds keep "op" refs there until ref-kinds-2, which
+// also runs on databases that already ran ref-kinds-1, and the span_name
+// filter matches either spelling.
+func TestRefKindsMigrationQueueItems(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "weft.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const p = "e/p"
+	d, _, err := s.CreateObject(ctx, p, "f", map[string]any{"_type": "Op", "name": "f"}, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn, op := "weft:///e/p/function/f:"+d, "weft:///e/p/op/f:"+d
+	for _, id := range []string{"c1", "c2"} {
+		if err := s.StartCall(ctx, CallStart{ProjectID: p, ID: id, OpName: fn, StartedAt: "2026-01-01T00:00:00Z"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q, err := s.CreateAnnotationQueue(ctx, p, "q", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddAnnotationQueueItems(ctx, p, q.ID, []string{"c1", "c2"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// c1's item as an earlier version wrote it, on a database that ran
+	// ref-kinds-1 (as every database opened since has).
+	if _, err := s.DB().Exec(`UPDATE annotation_queue_items SET call_op_name = ? WHERE call_id = 'c1'`, op); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM weft_migrations WHERE name = 'ref-kinds-2'`); err != nil {
+		t.Fatal(err)
+	}
+	// Before the migration runs, the filter matches both spellings.
+	for _, name := range []string{fn, op} {
+		items, err := s.QueryAnnotationQueueItems(ctx, p, q.ID, &QueueItemsFilter{SpanName: &name}, nil, 0, 0, false, nil)
+		if err != nil || len(items) != 2 {
+			t.Fatalf("span_name %s before the migration: %d items, %v", name, len(items), err)
+		}
+	}
+	_ = s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	items, err := s.QueryAnnotationQueueItems(ctx, p, q.ID, nil, nil, 0, 0, false, nil)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("items = %d %v", len(items), err)
+	}
+	for _, it := range items {
+		if it.SpanName != fn {
+			t.Fatalf("item %s span_name = %q, want %q", it.SpanID, it.SpanName, fn)
+		}
+	}
+	for _, name := range []string{fn, op} {
+		items, err := s.QueryAnnotationQueueItems(ctx, p, q.ID, &QueueItemsFilter{SpanName: &name}, nil, 0, 0, false, nil)
+		if err != nil || len(items) != 2 {
+			t.Fatalf("span_name %s: %d items, %v", name, len(items), err)
+		}
+	}
+}

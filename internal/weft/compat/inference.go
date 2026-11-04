@@ -78,7 +78,7 @@ func (s *Routes) catalogEntries(r *http.Request) []catalogEntry {
 				prov := provRef
 				if pr, err := refs.Parse(provRef); err == nil {
 					prov = pr.Name
-					if _, seen := keyOf[prov]; !seen {
+					if _, seen := keyOf[prov]; !seen && store.CanReadProject(ctx, pr.ProjectID()) {
 						if po, err := s.store.ReadObject(ctx, pr.ProjectID(), pr.Name, "latest"); err == nil {
 							pv, _ := po.Val.(map[string]any)
 							keyOf[prov], _ = pv["api_key_name"].(string)

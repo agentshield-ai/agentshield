@@ -386,6 +386,7 @@ func (e *Engine) invalidateSignals(projectID string) {
 // internal calls and turns already scored by the same signal version are
 // skipped.
 func (e *Engine) runAutoSignals(ctx context.Context, ended store.EndedCall) error {
+	ctx = store.WithRefHome(ctx, ended.ProjectID)
 	cfg, err := e.signalsConfig(ctx, ended.ProjectID)
 	if err != nil || !cfg.Auto || cfg.Model == "" || len(cfg.Signals) == 0 {
 		return err

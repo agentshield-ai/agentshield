@@ -198,20 +198,36 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		if s.cfg.UI != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+		if s.cfg.UI != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) && !s.apiPath(req) {
 			s.cfg.UI.ServeHTTP(w, req)
 			return
 		}
 		writeError(w, http.StatusNotFound, "not found")
 	})
 	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
-		if s.cfg.UI != nil && req.Method == http.MethodGet {
+		if s.cfg.UI != nil && req.Method == http.MethodGet && !s.apiPath(req) {
 			s.cfg.UI.ServeHTTP(w, req)
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 	return r
+}
+
+// apiPath reports requests that the UI must not answer: /api/..., OTLP
+// ingest, and the adapter's routes (404 while it is off, 405 for another
+// method while it is on), unless a browser navigates there:
+// /{entity}/{project} is a UI path, and an entity may share a name with an
+// old route's first segment.
+func (s *Server) apiPath(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case p == "/api" || strings.HasPrefix(p, "/api/"), strings.HasPrefix(p, "/otel/"), strings.HasPrefix(p, "/agents/otel/"):
+		return true
+	case compat.IsAdapterRoute(p):
+		return !strings.Contains(r.Header.Get("Accept"), "text/html")
+	}
+	return false
 }
 
 // ---------------------------------------------------------------- middleware
@@ -310,7 +326,7 @@ type ctxKey struct{}
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r = s.authenticate(w, r); r != nil {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(s.refAccess(r)))
 		}
 	})
 }
@@ -366,9 +382,12 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	var inv *store.InvalidError
+	var fe *store.ForbiddenError
 	switch {
 	case errors.As(err, &inv):
 		writeError(w, http.StatusBadRequest, inv.Msg)
+	case errors.As(err, &fe):
+		writeError(w, http.StatusForbidden, fe.Msg)
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, context.Canceled):

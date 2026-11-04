@@ -167,6 +167,9 @@ func (e *Engine) EvaluateModel(ctx context.Context, projectID, evaluationRef, mo
 	if err != nil || rr.Kind != refs.KindTable {
 		return "", store.Invalidf("dataset rows must be a table ref")
 	}
+	if err := store.CheckRefProject(ctx, rowsRef, rr.ProjectID()); err != nil {
+		return "", err
+	}
 	plan.rows, err = e.Store.QueryTable(ctx, store.TableQuery{ProjectID: rr.ProjectID(), Digest: rr.Name, Limit: 100000})
 	if err != nil {
 		return "", err
@@ -192,12 +195,13 @@ func (e *Engine) EvaluateModel(ctx context.Context, projectID, evaluationRef, mo
 	}
 	_ = userID
 	e.setStatus(root.id, func(s *Status) { s.TotalRows = len(plan.rows) * plan.trials })
-	go e.runEvaluation(plan, root)
+	// The run keeps the request's ref scope (store/refscope.go).
+	go e.runEvaluation(store.WithRefScopeOf(context.Background(), ctx), plan, root)
 	return root.id, nil
 }
 
-func (e *Engine) runEvaluation(plan *evalPlan, root *callRec) {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+func (e *Engine) runEvaluation(base context.Context, plan *evalPlan, root *callRec) {
+	ctx, cancel := context.WithTimeout(base, 6*time.Hour)
 	defer cancel()
 	type job struct {
 		row   store.TableRow

@@ -460,7 +460,12 @@ func (s *Store) QueryAnnotationQueueItems(ctx context.Context, projectID, queueI
 		eq("i.id", f.ID)
 		eq("i.added_by", f.AddedBy)
 		eq("i.call_id", f.SpanID)
-		eq("i.call_op_name", f.SpanName)
+		if f.SpanName != nil {
+			// A span name that is a function ref matches either kind spelling.
+			in, a := inList("i.call_op_name", refs.Variants(*f.SpanName))
+			where += " AND " + in
+			args = append(args, a...)
+		}
 		eq("i.call_trace_id", f.TraceID)
 		if len(f.AnnotationStates) > 0 {
 			for _, st := range f.AnnotationStates {

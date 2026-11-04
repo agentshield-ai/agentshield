@@ -435,9 +435,12 @@ func handle[T any](fn func(context.Context, *http.Request, *T) (any, error)) htt
 
 func writeErr(w http.ResponseWriter, err error) {
 	var inv *store.InvalidError
+	var fe *store.ForbiddenError
 	switch {
 	case errors.As(err, &inv):
 		writeError(w, http.StatusBadRequest, inv.Msg)
+	case errors.As(err, &fe):
+		writeError(w, http.StatusForbidden, fe.Msg)
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, context.Canceled):

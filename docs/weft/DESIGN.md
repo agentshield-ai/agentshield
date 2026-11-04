@@ -536,8 +536,10 @@ digests itself.
 
 Files get the same form: the lowercase hex SHA-256 of their bytes. A
 table's digest is the digest of the canonical JSON list of its row digests.
-Canonical JSON keeps a number's text as sent; strings escape only `"`, `\`
-and control characters (API.md, *Conventions*). The older routes (§8) write
+Canonical JSON keeps a number's text as sent (it is not re-rendered, so it
+differs from Python's `json.dumps` for numbers Python writes otherwise,
+such as `1.50`); strings escape only `"`, `\` and control characters, and
+invalid UTF-8 and lone surrogates become U+FFFD (API.md, *Conventions*). The older routes (§8) write
 digests in the older form; both forms resolve.
 
 ### 10.4 SDK names
@@ -597,7 +599,10 @@ digests in the older form; both forms resolve.
   and `classes`.
 - **Refs.** `span` replaces `call` as the span ref kind, alongside
   `function` for `op`. Columns that hold refs were rewritten once; values
-  are not, and both spellings are read everywhere.
+  are not, and both spellings are read everywhere. A ref found inside a
+  value resolves only in projects the caller may read
+  (`store/refscope.go`); a span ref reads as the span schema of §10.2, and
+  objects and rows keep their stored key order.
 - **More routes.** Weft features that had only the older route shapes got
   native paths: `POST /spans/names` (span counts by name), `POST
   /spans/score` (run scorers on spans), `POST /spans/metrics` (chart

@@ -190,6 +190,7 @@ func (e *Engine) checkPendingSessions(ctx context.Context, now time.Time) {
 // condition the session meets. It reports whether no monitor is still
 // waiting for the session.
 func (e *Engine) scoreSessionIfComplete(ctx context.Context, k pendingKey, idle time.Duration) (bool, error) {
+	ctx = store.WithRefHome(ctx, k.projectID) // monitors resolve refs in their own project
 	monitors, err := e.activeMonitors(ctx, k.projectID)
 	if err != nil {
 		return false, err

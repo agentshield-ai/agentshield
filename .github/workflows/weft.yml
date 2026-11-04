@@ -181,6 +181,11 @@ jobs:
           for p in /graphql /call/start /calls/query /obj/create; do
             test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345$p)" = 404 || { echo "$p is served"; exit 1; }
           done
+          # GET too: unknown API paths and the adapter's routes are a JSON 404, not the UI.
+          for p in /server_info /obj/read /calls/stream_query /api/v1/nonexistent; do
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6345$p)" = 404 || { echo "GET $p is served"; exit 1; }
+            curl -s http://127.0.0.1:6345$p | grep -q '"reason"' || { echo "GET $p is not a JSON error"; exit 1; }
+          done
       - name: Official weave client against Weft (compatibility adapter on)
         run: |
           ./bin/weft --addr 127.0.0.1:6346 --db "$RUNNER_TEMP/weft-compat.db" --weave-compat &

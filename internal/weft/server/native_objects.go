@@ -473,7 +473,9 @@ func (s *Server) v1RefsRead(ctx context.Context, _ *http.Request, req *refsReadR
 	if len(req.Refs) > 1000 {
 		return nil, store.Invalidf("too many refs (max 1000)")
 	}
-	vals, err := s.store.ReadRefs(ctx, req.Refs)
+	// Stored JSON as published (key order, number text); spans in the Span
+	// schema.
+	vals, err := s.store.ReadRefsRaw(nativeRefs(ctx), req.Refs)
 	if err != nil {
 		return nil, err
 	}

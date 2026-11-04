@@ -475,7 +475,7 @@ func (s *Routes) refsReadBatch(ctx context.Context, _ *http.Request, req *refsRe
 	if len(req.Refs) > 1000 {
 		return nil, store.Invalidf("too many refs (max 1000)")
 	}
-	vals, err := s.store.ReadRefs(ctx, req.Refs)
+	vals, err := s.store.ReadRefsRaw(ctx, req.Refs) // spans as stored call rows
 	if err != nil {
 		return nil, err
 	}

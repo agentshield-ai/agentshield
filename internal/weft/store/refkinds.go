@@ -27,23 +27,34 @@ var refColumns = []struct{ table, key, col string }{
 	{"feedback", "id", "trigger_ref"},
 	{"calls", "rowid", "op_name"},
 	{"registry_versions", "rowid", "ref"},
+	{"annotation_queue_items", "id", "call_op_name"},
 }
 
+// refColumnsAdded were added to refColumns after ref-kinds-1 ran on
+// existing databases; ref-kinds-2 rewrites them there (on a new database
+// ref-kinds-1 already did, and ref-kinds-2 finds nothing to change).
+var refColumnsAdded = refColumns[len(refColumns)-1:]
+
 func migrateRefKinds(db *sql.DB) error {
-	return runOnce(db, "ref-kinds-1", func(tx *sql.Tx) error {
-		for _, c := range refColumns {
-			if ok, err := hasColumnTx(tx, c.table, c.col); err != nil || !ok {
-				if err != nil {
-					return err
-				}
-				continue
+	if err := runOnce(db, "ref-kinds-1", func(tx *sql.Tx) error { return rewriteRefColumns(tx, refColumns) }); err != nil {
+		return err
+	}
+	return runOnce(db, "ref-kinds-2", func(tx *sql.Tx) error { return rewriteRefColumns(tx, refColumnsAdded) })
+}
+
+func rewriteRefColumns(tx *sql.Tx, cols []struct{ table, key, col string }) error {
+	for _, c := range cols {
+		if ok, err := hasColumnTx(tx, c.table, c.col); err != nil || !ok {
+			if err != nil {
+				return err
 			}
-			if err := rewriteRefColumn(tx, c.table, c.key, c.col); err != nil {
-				return fmt.Errorf("%s.%s: %w", c.table, c.col, err)
-			}
+			continue
 		}
-		return nil
-	})
+		if err := rewriteRefColumn(tx, c.table, c.key, c.col); err != nil {
+			return fmt.Errorf("%s.%s: %w", c.table, c.col, err)
+		}
+	}
+	return nil
 }
 
 func hasColumnTx(tx *sql.Tx, table, column string) (bool, error) {

@@ -340,14 +340,14 @@ func (s *Server) v1SpansQuery(ctx context.Context, _ *http.Request, req *spansQu
 		return nil, err
 	}
 	q.ProjectID = pid
-	total, _, err := s.store.CountCalls(ctx, pid, q.Filter, q.Query, q.Search)
+	total, _, err := s.store.CountCallsDeleted(ctx, pid, q.Filter, q.Query, q.Search, q.IncludeDeleted)
 	if err != nil {
 		return nil, err
 	}
 	spans := []*Span{}
 	if limit > 0 {
 		q.Limit = &limit
-		calls, err := s.store.ListCalls(ctx, q)
+		calls, err := s.store.ListCalls(nativeRefs(ctx), q)
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +370,7 @@ func (s *Server) v1SpansStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Run the query fully before writing so errors produce a proper status.
-	calls, err := s.store.ListCalls(r.Context(), req.store())
+	calls, err := s.store.ListCalls(nativeRefs(r.Context()), req.store())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -609,7 +609,7 @@ func (s *Server) v1SpansExport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	s.exportCalls(w, r, callsExportReq{CallsQuery: req.spansQuery.store(), Format: req.Format, Flatten: req.Flatten}, true)
+	s.exportCalls(w, r.WithContext(nativeRefs(r.Context())), callsExportReq{CallsQuery: req.spansQuery.store(), Format: req.Format, Flatten: req.Flatten}, true)
 }
 
 // ---------------------------------------------------------------- request plumbing

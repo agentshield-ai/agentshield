@@ -549,13 +549,19 @@ func (s *Store) GetCall(ctx context.Context, projectID, id string, includeCosts,
 	return calls[0], nil
 }
 
-// CountCalls returns the number of matching calls and their storage size.
+// CountCalls returns the number of matching live calls and their storage size.
 func (s *Store) CountCalls(ctx context.Context, projectID string, f *CallsFilter, query any, search string) (int64, int64, error) {
+	return s.CountCallsDeleted(ctx, projectID, f, query, search, false)
+}
+
+// CountCallsDeleted is CountCalls that also counts deleted calls when
+// includeDeleted is set (as ListCalls with IncludeDeleted lists them).
+func (s *Store) CountCallsDeleted(ctx context.Context, projectID string, f *CallsFilter, query any, search string, includeDeleted bool) (int64, int64, error) {
 	pid, err := refs.NormalizeProject(projectID)
 	if err != nil {
 		return 0, 0, &InvalidError{Msg: err.Error()}
 	}
-	where, args, err := whereCalls(pid, f, query, search, false)
+	where, args, err := whereCalls(pid, f, query, search, includeDeleted)
 	if err != nil {
 		return 0, 0, err
 	}

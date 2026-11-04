@@ -14,7 +14,10 @@ default, the route shapes it serves are documented only there, and nothing
 on this page depends on it.
 
 Base URL defaults to `http://localhost:6345`. Errors return a non-2xx status
-with `{"reason": "<message>"}`.
+with `{"reason": "<message>"}`. An unknown path under `/api/` or `/otel/`
+is a JSON 404 (405 for a known path with another method), as are the
+adapter's route shapes while the adapter is off; other `GET` paths serve
+the UI.
 
 ## Conventions
 
@@ -40,12 +43,21 @@ with `{"reason": "<message>"}`.
   - object keys sorted by Unicode code point (the byte order of their UTF-8);
   - no insignificant whitespace (`,` and `:` separators);
   - strings as UTF-8, escaping only `"`, `\` and U+0000–U+001F (`\b \f \n
-    \r \t`, otherwise `\u00xx` with lowercase hex);
-  - numbers exactly as the client sent them (`1.0` stays `1.0`);
-  - `true`, `false`, `null`.
+    \r \t`, otherwise `\u00xx` with lowercase hex); every other character
+    is written as itself, also when it was sent as a `\uXXXX` escape
+    (`"\u00e9"` is written `"é"`); invalid UTF-8 and escaped lone surrogates
+    (`"\ud800"` without its pair) become U+FFFD;
+  - numbers exactly as the client sent them: the number's text is never
+    re-rendered (`1.0`, `1.50` and `1e2` keep their text and so their
+    digest);
+  - `true`, `false`, `null`; of duplicate object keys the last one counts.
 
-  That is what Python's `json.dumps(v, sort_keys=True, separators=(",",
-  ":"), ensure_ascii=False)` writes for the same JSON text. Objects and table
+  This equals Python's `json.dumps(v, sort_keys=True, separators=(",",
+  ":"), ensure_ascii=False)` of the decoded value only when the value's
+  numbers were sent as Python writes them (integers in decimal, floats as
+  `repr` writes them: `1.0`, `1.5`, `1e-07`) and its strings hold no lone
+  surrogates; for `1.50` or `1e2` Python writes `1.5` and `100.0` where Weft
+  keeps the text as sent, and Python keeps a lone surrogate. Objects and table
   rows use the digest of their value; a table's digest is the digest of the
   JSON list of its row digests; a file's is the hex SHA-256 of its bytes.
   Identical values always get identical digests. Digests stored by earlier
@@ -62,11 +74,18 @@ with `{"reason": "<message>"}`.
     `/attr/<field>`, `/key/<dict key>`, `/index/<n>`, `/id/<row_digest>`
     (for tables). A string value that is itself a ref is followed when walking.
     Example dataset row: `weft:///e/p/object/my_ds:<d>/attr/rows/id/<row_digest>`.
+  - A ref held in a value (followed while walking, expanded with
+    `expand_columns`, or used by an evaluation, monitor or scorer) resolves
+    only in projects the caller may read: a ref into any other project reads
+    as `null` (refs/read, expansions, compare rows), and an evaluation that
+    names a dataset, rows, model or scorer there is refused with 403.
+    Background jobs (monitors, signals) resolve refs only in their own
+    project.
   - Refs written with the kind names of earlier versions, `op` for
     `function` and `call` for `span`, are read as the current kinds
     everywhere. Weft writes only the current kinds; columns holding refs
-    (feedback refs, span names, registry entries) were rewritten once when
-    the server opened the database. Values (object values, table rows, span
+    (feedback refs, span names, registry entries, review-queue items' span
+    names) were rewritten once when the server opened the database. Values (object values, table rows, span
     inputs and outputs) are never rewritten, and filters on the refs inside
     them match both spellings.
 - **Auth**: when the server is started with API keys, every endpoint except
@@ -175,14 +194,14 @@ from OTLP ([OpenTelemetry ingest](#opentelemetry-ingest)).
 
 | Route | Body | Response |
 |---|---|---|
-| `POST /api/v1/spans/start` | `{project_id, name, id?, trace_id?, parent_id?, display_name?, started_at?, attributes?, inputs?, session_id?, turn_id?, user_id?, run_id?, run_step?}` | `{"id","trace_id"}`. `id` defaults to a UUIDv7, `started_at` to now, `trace_id` to the parent's (or the span's own id for a root) |
-| `POST /api/v1/spans/end` | `{project_id, id, ended_at?, output?, error?, summary?, run_step_end?}` | `{}` |
+| `POST /api/v1/spans/start` | `{project_id, name, id?, trace_id?, parent_id?, display_name?, started_at?, attributes?, inputs?, session_id?, turn_id?, user_id?, run_id?, run_step?}` | `{"id","trace_id"}`. `id` defaults to a UUIDv7, `started_at` to now, `trace_id` to the parent's (or the span's own id for a root), `session_id` to the `weft.session_id` attribute (nested or flat, [Span attributes](#span-attributes)); an explicit `session_id` wins. `spans/batch` and OTLP ingest do the same |
+| `POST /api/v1/spans/end` | `{project_id, id, ended_at?, output?, error?, summary?, run_step_end?}` | `{}`; an end may arrive before its start (batched clients, OTLP children first): an end for an id not yet started is stored and the start fills in the rest |
 | `POST /api/v1/spans/batch` | `{project_id, items: [{"start": {...}} \| {"end": {...}} \| {"span": {...start fields, ended_at, output, error, summary, run_step_end}}]}` — exactly one key per item; items without `project_id` use the top-level one; applied in order in one transaction | `{"items": [{"id","trace_id"} \| {"id"}]}` aligned with `items` |
 | `GET /api/v1/spans/{id}?project_id=&include_costs=&include_feedback=&include_storage_size=&include_total_storage_size=&include_usernames=` | | Span, or 404 |
 | `POST /api/v1/spans/query` | SpansQuery | `{"items": [Span], "total_count"}` |
 | `POST /api/v1/spans/stream` | SpansQuery | NDJSON of Span |
-| `POST /api/v1/spans/update` | `{project_id, id, display_name}` | `{}` |
-| `POST /api/v1/spans/delete` | `{project_id, ids}` | `{}`; soft delete, cascading to descendants (`include_deleted` lists them) |
+| `POST /api/v1/spans/update` | `{project_id, id, display_name}` | `{}`, or 404 when the project has no span with that id |
+| `POST /api/v1/spans/delete` | `{project_id, ids}` (at most 1000) | `{}`; soft delete, cascading to descendants (`include_deleted` lists them and counts them in `total_count`); ids that name no span, or a deleted one, are ignored |
 | `POST /api/v1/spans/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | time series, below; with any of `granularity`, `usage_metrics`, `span_metrics`, `timezone`: metric buckets, below |
 | `POST /api/v1/spans/export` | SpansQuery plus `format`, `flatten` | CSV, JSONL or JSON ([Export](#post-apiv1spansexport)) |
 | `POST /api/v1/spans/metrics` | MetricsQuery | chart series ([Metrics](#post-apiv1spansmetrics)) |
@@ -435,7 +454,7 @@ Row values keep the key order they were sent with.
 
 | Route | Body | Response |
 |---|---|---|
-| `POST /api/v1/refs/read` | `{"refs": [ref...]}` (at most 1000; any projects the caller can read) | `{"items": [value \| null]}` aligned with `refs`; unknown refs are null |
+| `POST /api/v1/refs/read` | `{"refs": [ref...]}` (at most 1000; any projects the caller can read, 403 for a ref into another) | `{"items": [value \| null]}` aligned with `refs`; unknown refs, paths that do not exist and refs nested in a value that lead into a project the caller cannot read are null. Objects and rows keep the key order and number text they were saved with, also through a path; a span ref returns the [Span schema](#span-schema) |
 | `POST /api/v1/files/upload` | multipart form: `project_id`, `file` (at most 64 MiB) | `{"digest","size_bytes"}`; `digest` is the hex SHA-256 of the bytes |
 | `GET /api/v1/files/{digest}?project_id=` | | the bytes, with the sniffed content type, `X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`; `api_key=` works as the key |
 | `POST /api/v1/files/resolve` | `{project_id, uris, expires_in?, per_uri_errors?}` | `{"download_urls", "expires_at"}` (`errors` too with `per_uri_errors`); see [Files and media](#files-and-media) |
@@ -726,7 +745,7 @@ plugins write them nested; OTel instrumentation writes them flat.
 |---|---|
 | `weft.span.name` | the stored span `name` of an OTLP span (else the OTel span name) |
 | `weft.display_name` | the span's `display_name` |
-| `weft.session_id` | the span's `session_id` (the session, or conversation) |
+| `weft.session_id` | the span's `session_id` (the session, or conversation) when the span has none of its own: an explicit `session_id` in `spans/start` or `spans/batch` wins |
 | `weft.turn_id`, `weft.is_turn` | the span's `turn_id`; `weft.is_turn: true` makes the span its own turn |
 | `weft.span_kind` | the span kind the Agents index uses (`llm`, `agent`, `tool`, …) |
 | `weft.parent_span.id`, `weft.parent_span.trace_id` | the span this span was emitted from, when it started its own trace inside it (the caller); the Agents API's `linked_parent_span_id` / `linked_parent_trace_id`, and a linked trace's failure is a failed step of the caller's run |
@@ -841,7 +860,7 @@ AutomationRun: `{"id","project_id","automation_id","automation_ref","trigger_typ
 |---|---|---|
 | `/automations/runs/query` | `{project_id, automation_id?, limit?, offset?}` | `{"runs": [AutomationRun]}` newest first |
 | `/automations/test` | `{project_id, automation_id?, digest?, val?, event?}` — fire a saved automation or an unsaved `val` with a sample (or the given) event; ignores `enabled` and cooldowns | `{"run"}` |
-| `/automations/check` | `{project_id}` | `{"runs"}` — evaluate error-rate triggers now |
+| `/automations/check` | `{project_id}` | `{"runs"}` — evaluate error-rate triggers now (fires their webhooks and records the runs, so it needs write access) |
 | `/automations/validate` | `{val}` | `{"valid": true}` or 400 with the reason |
 
 The server delivers to any http(s) URL an automation names, like `Provider`
@@ -1048,7 +1067,8 @@ the project settings below). Static keys count as admin.
   `registry/query`, `dataset_sources/query` and `dataset_sources/datasets`
   (`completions/stream` writes a span); elsewhere a `POST` whose last path
   segment is a read (`query`, `read`, `stats`, `search`, `list`, `compare`,
-  `compute`, `status`, `export`, `metrics`, `preview`, `check`, …).
+  `compute`, `status`, `export`, `metrics`, `preview`, …).
+  `/automations/check` is a write: it fires webhooks and records runs.
 - **Admin only:** `/secrets/set|delete`, `/project/delete`,
   `/project/*/update`, `/project/ttl_settings/purge`. Keys bound to a user
   (see [Users, teams and roles](#users-teams-and-roles)) take their access

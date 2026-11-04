@@ -109,8 +109,9 @@ func TableDigest(rowDigests []string) string { return Weft.Table(rowDigests) }
 //   - object keys sorted by Unicode code point (byte order of their UTF-8);
 //   - no insignificant whitespace (separators "," and ":");
 //   - strings as UTF-8, escaping only '"', '\' and U+0000..U+001F (as \b,
-//     \f, \n, \r, \t, or \u00xx with lowercase hex); invalid UTF-8 becomes
-//     U+FFFD;
+//     \f, \n, \r, \t, or \u00xx with lowercase hex); invalid UTF-8 (and a
+//     lone surrogate escape, which decoding already turned into U+FFFD)
+//     becomes U+FFFD;
 //   - numbers keep the text they were sent with (values decoded with
 //     UseNumber); Go floats use the shortest representation that round-trips
 //     (strconv 'g' style, as encoding/json writes them), integers are
@@ -118,10 +119,12 @@ func TableDigest(rowDigests []string) string { return Weft.Table(rowDigests) }
 //   - true, false and null.
 //
 // This is what Python's json.dumps(v, sort_keys=True, separators=(",", ":"),
-// ensure_ascii=False) writes for the same text, and what JavaScript's
-// JSON.stringify writes for a value whose object keys are sorted (except
-// for keys outside the Basic Multilingual Plane, which JavaScript orders by
-// UTF-16 code unit).
+// ensure_ascii=False) writes for the decoded value when its numbers were
+// sent as Python writes them and its strings hold no lone surrogates
+// (numbers are not re-rendered: "1.50" stays "1.50" where Python writes
+// 1.5), and what JavaScript's JSON.stringify writes for a value whose object
+// keys are sorted (except for keys outside the Basic Multilingual Plane,
+// which JavaScript orders by UTF-16 code unit).
 func WeftJSON(v any) ([]byte, error) {
 	var b strings.Builder
 	if err := weftEncode(&b, v, 0); err != nil {

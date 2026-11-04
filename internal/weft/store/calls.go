@@ -124,6 +124,13 @@ func (st *CallStart) normalize() error {
 	if st.Attributes == nil {
 		st.Attributes = map[string]any{}
 	}
+	// An explicit session_id wins; else the weft.session_id attribute (or
+	// its deprecated name), nested or flat, as OTLP ingest reads it.
+	if st.ThreadID == nil {
+		if v := newSpanAttrs(st.Attributes).str(AttrKeys(AttrSessionID)...); v != "" {
+			st.ThreadID = &v
+		}
+	}
 	return nil
 }
 

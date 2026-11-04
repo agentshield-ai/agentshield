@@ -158,9 +158,13 @@ func TestOffByDefault(t *testing.T) {
 			path += "/y"
 		}
 		code, out, _ := e.raw(method, path, map[string]any{"project_id": pid}, nil)
-		// GET falls through to the UI for paths the server does not know;
-		// the UI's own pages show "not found" for them.
-		if method == http.MethodGet && code == 200 && string(out) == "ui" {
+		// The UI link redirects are UI paths without the adapter (the UI's
+		// own pages show "not found" for them); every other adapter route
+		// answers a JSON 404, also for GET.
+		if strings.HasPrefix(pattern, "/{entity}/") {
+			if method != http.MethodGet || code != 200 || string(out) != "ui" {
+				t.Errorf("%s %s with the adapter off -> %d %s, want the UI", method, path, code, out)
+			}
 			continue
 		}
 		if code != http.StatusNotFound && code != http.StatusMethodNotAllowed {

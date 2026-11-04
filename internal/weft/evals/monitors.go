@@ -88,6 +88,7 @@ func isInternal(c *store.Call) bool {
 }
 
 func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
+	ctx = store.WithRefHome(ctx, ended.ProjectID) // monitors resolve refs in their own project
 	monitors, err := e.activeMonitors(ctx, ended.ProjectID)
 	if err != nil || len(monitors) == 0 {
 		return err

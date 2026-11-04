@@ -60,12 +60,12 @@ func (e *Engine) Rescore(ctx context.Context, projectID, sourceRunID string, sco
 	}
 	_ = userID
 	e.setStatus(root.id, func(s *Status) { s.TotalRows = len(children) })
-	go e.runRescore(pid, root, src, children, scorers)
+	go e.runRescore(store.WithRefScopeOf(context.Background(), ctx), pid, root, src, children, scorers)
 	return root.id, nil
 }
 
-func (e *Engine) runRescore(pid string, root *callRec, src *store.Call, children []*store.Call, scorers []*Scorer) {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+func (e *Engine) runRescore(base context.Context, pid string, root *callRec, src *store.Call, children []*store.Call, scorers []*Scorer) {
+	ctx, cancel := context.WithTimeout(base, 6*time.Hour)
 	defer cancel()
 	// Resolve example refs once.
 	var exRefs []string
