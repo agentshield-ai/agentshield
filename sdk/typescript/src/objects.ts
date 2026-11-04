@@ -104,8 +104,8 @@ export class Dataset<R extends Record<string, unknown> = Record<string, unknown>
 
   /**
    * A new dataset version with `rows` appended. When this dataset is
-   * published the rows are appended server side (/table/update) and the new
-   * version is published under the same name.
+   * saved the rows are appended server side (`POST /api/v1/tables/update`)
+   * and the new version is saved under the same name.
    */
   async addRows(rows: R[]): Promise<Dataset<R>> {
     const next = new Dataset<R>({ name: this.name, description: this.description, rows: [...this.rows, ...rows] });
@@ -119,7 +119,7 @@ export class Dataset<R extends Record<string, unknown> = Record<string, unknown>
     const { ref, appended } = await client.appendTable(this.tableRef, rows);
     next.tableRef = ref;
     next.rowDigests = [...this.rowDigests, ...appended];
-    await client.publish(next, this.__weftRef.name);
+    await client.save(next, this.__weftRef.name);
     return next;
   }
 
@@ -252,7 +252,7 @@ export class MessagesPrompt extends Prompt {
 
 /**
  * A server-runnable chat model: `defaultParams.messages_template` formatted with
- * the row's columns. `predict` calls the Weft server's `/completions/create`;
+ * the row's columns. `predict` calls the Weft server's `POST /api/v1/completions`;
  * the model can also be evaluated server side with `client.evaluateModel`.
  */
 export class LLMStructuredCompletionModel extends Model {
@@ -277,7 +277,7 @@ export class LLMStructuredCompletionModel extends Model {
     return { llm_model_id: this.llmModelId, default_params: this.defaultParams };
   }
 
-  /** Format the template with `inputs`, call `/completions/create`, return the message content (parsed for json_object). */
+  /** Format the template with `inputs`, call `POST /api/v1/completions`, return the message content (parsed for json_object). */
   async predict(inputs: Record<string, unknown>): Promise<unknown> {
     const client = requireClient();
     const { messages_template, response_format, ...params } = this.defaultParams;

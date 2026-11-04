@@ -26,12 +26,12 @@ class CapitalModel(weft.Model):
 
     knowledge: dict = {"France": "Paris", "Japan": "Tokyo", "Australia": "Sydney", "Canada": "Ottawa"}
 
-    @weft.op
+    @weft.trace
     async def predict(self, country: str) -> str:
         return self.knowledge.get(country, "unknown")
 
 
-@weft.op
+@weft.trace
 def exact(expected: str, output: str) -> bool:
     """Plain function scorer: argument names are matched to dataset columns."""
     return expected == output
@@ -40,7 +40,7 @@ def exact(expected: str, output: str) -> bool:
 class LengthScorer(weft.Scorer):
     """Class scorer with a column_map: score(target=...) reads the 'expected' column."""
 
-    @weft.op
+    @weft.trace
     def score(self, *, output: str, target: str) -> dict:
         return {"length_delta": abs(len(output) - len(target)), "non_empty": bool(output)}
 

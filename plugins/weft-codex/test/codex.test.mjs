@@ -37,10 +37,10 @@ test('a Stop hook sends one conversation with turn, LLM and tool calls', async (
   assert.equal(res.sent, 2);
   const calls = [...rec.calls().values()];
   for (const c of calls) {
-    assert.equal(c.thread_id, sid);
+    assert.equal(c.session_id, sid);
     assert.equal(c.attributes['gen_ai.conversation.id'], sid);
   }
-  const turns = calls.filter((c) => c.op_name === 'codex.turn').sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const turns = calls.filter((c) => c.name === 'codex.turn').sort((a, b) => a.started_at.localeCompare(b.started_at));
   const [t1, t2] = turns;
   assert.equal(t1.turn_id, t1.id);
   assert.equal(t1.attributes['gen_ai.agent.name'], 'codex');
@@ -52,7 +52,7 @@ test('a Stop hook sends one conversation with turn, LLM and tool calls', async (
   assert.equal(t1.started_at, '2026-11-02T11:00:01.010Z');
   assert.equal(t1.ended_at, '2026-11-02T11:00:10.200Z');
 
-  const llms = calls.filter((c) => c.op_name === 'codex.llm' && c.parent_id === t1.id).sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const llms = calls.filter((c) => c.name === 'codex.llm' && c.parent_id === t1.id).sort((a, b) => a.started_at.localeCompare(b.started_at));
   assert.equal(llms.length, 4);
   assert.deepEqual(llms[0].summary.usage['gpt-5-codex'], { requests: 1, prompt_tokens: 5000, completion_tokens: 120, total_tokens: 5120, cache_read_input_tokens: 4096, reasoning_tokens: 64 });
   const blocks = llms[0].output.choices[0].message.content;
@@ -65,7 +65,7 @@ test('a Stop hook sends one conversation with turn, LLM and tool calls', async (
   assert.equal(llms[3].output.choices[0].message.content[0].text, 'Fixed the off-by-one in utils.js; the test passes now.');
 
   const shell = calls.find((c) => c.attributes['gen_ai.tool.call.id'] === 'call_A1');
-  assert.equal(shell.op_name, 'codex.tool.shell');
+  assert.equal(shell.name, 'codex.tool.shell');
   assert.equal(shell.parent_id, t1.id);
   assert.equal(shell.display_name, 'shell: bash -lc npm test -- utils');
   assert.equal(shell.output.metadata.exit_code, 1);
@@ -81,7 +81,7 @@ test('a Stop hook sends one conversation with turn, LLM and tool calls', async (
   assert.equal(mcp.output, 'see vitest.config.ts');
   const commit = calls.find((c) => c.attributes['gen_ai.tool.call.id'] === 'call_B1');
   assert.equal(commit.parent_id, t2.id);
-  assert.match(commit.exception, /sandbox denied/);
+  assert.match(commit.error, /sandbox denied/);
 });
 
 test('incremental flushes: a turn is re-sent with the same ids until the next one starts', async () => {
@@ -89,7 +89,7 @@ test('incremental flushes: a turn is re-sent with the same ids until the next on
   const r1 = recorder();
   await flushRollout(cfg, rollout, { fetchImpl: r1.fetchImpl });
   const first = r1.calls();
-  assert.equal([...first.values()].filter((c) => c.op_name === 'codex.turn').length, 1);
+  assert.equal([...first.values()].filter((c) => c.name === 'codex.turn').length, 1);
   appendFileSync(rollout, `${all.slice(split).join('\n')}\n`);
   const r2 = recorder();
   const res = await flushRollout(cfg, rollout, { fetchImpl: r2.fetchImpl });
@@ -98,7 +98,7 @@ test('incremental flushes: a turn is re-sent with the same ids until the next on
   for (const id of first.keys()) assert.ok(second.has(id), 'same ids for the re-sent turn');
   const r3 = recorder();
   await flushRollout(cfg, rollout, { fetchImpl: r3.fetchImpl });
-  assert.equal([...r3.calls().values()].filter((c) => c.op_name === 'codex.turn').length, 1, 'only the last turn is re-sent');
+  assert.equal([...r3.calls().values()].filter((c) => c.name === 'codex.turn').length, 1, 'only the last turn is re-sent');
 });
 
 test('a failed send is retried by the next run', async () => {

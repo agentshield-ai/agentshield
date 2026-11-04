@@ -19,10 +19,10 @@ export function ServerExportModal({ spec, columns, onClose }: { spec: QuerySpec;
   const [bytes, setBytes] = useState(0)
   const abort = useRef<AbortController | null>(null)
   const count = useQuery({
-    queryKey: ['calls', spec.projectId, 'count', { filter: spec.filter, query: spec.query, search: spec.search }],
-    queryFn: () => api.callsQueryStats({ project_id: spec.projectId, filter: spec.filter, query: spec.query, search: spec.search }),
+    queryKey: ['spans', spec.projectId, 'count', { filter: spec.filter, query: spec.query, search: spec.search }],
+    queryFn: () => api.spansCount({ project_id: spec.projectId, filter: spec.filter, query: spec.query, search: spec.search }),
   })
-  const baseCols = ['id', 'op_name', 'status', 'started_at', 'latency_ms', 'total_tokens', 'cost_usd']
+  const baseCols = ['id', 'name', 'status', 'started_at', 'latency_ms', 'total_tokens', 'cost_usd']
   const run = useMutation({
     mutationFn: async () => {
       abort.current = new AbortController()
@@ -32,13 +32,13 @@ export function ServerExportModal({ spec, columns, onClose }: { spec: QuerySpec;
         include_feedback: feedback || undefined,
         columns: onlyCols && columns.length ? [...baseCols, ...columns] : undefined,
       })
-      return dashboardsApi.exportCalls(body as never, setBytes, abort.current.signal)
+      return dashboardsApi.exportSpans(body as never, setBytes, abort.current.signal)
     },
   })
-  const n = count.data?.count
+  const n = count.data
   return (
     <Modal
-      title="Export all matching calls"
+      title="Export all matching spans"
       onClose={() => {
         abort.current?.abort()
         onClose()
@@ -65,7 +65,7 @@ export function ServerExportModal({ spec, columns, onClose }: { spec: QuerySpec;
     >
       <div className="col" style={{ gap: 12 }}>
         <div className="small muted">
-          The server streams every call that matches the current filters, search and sort, not only the loaded page. Large exports may take a while.
+          The server streams every span that matches the current filters, search and sort, not only the loaded page. Large exports may take a while.
         </div>
         <div className="field dash-field">
           Format
@@ -79,7 +79,7 @@ export function ServerExportModal({ spec, columns, onClose }: { spec: QuerySpec;
         </div>
         <label className="checkbox">
           <input type="checkbox" checked={flatten} onChange={(e) => setFlatten(e.target.checked)} />
-          {format === 'csv' ? 'Flatten nested values into dotted columns (inputs.question, output.answer, …)' : 'Flatten each call into dotted keys'}
+          {format === 'csv' ? 'Flatten nested values into dotted columns (inputs.question, output.answer, …)' : 'Flatten each span into dotted keys'}
         </label>
         <label className="checkbox">
           <input type="checkbox" checked={feedback} onChange={(e) => setFeedback(e.target.checked)} /> Include feedback
@@ -100,7 +100,7 @@ export function CopyAsCodeModal({ spec, authRequired, onClose }: { spec: QuerySp
   const [tab, setTab] = useState<'python' | 'curl'>('python')
   const origin = serverOrigin()
   return (
-    <Modal title="Query these calls from code" onClose={onClose} wide>
+    <Modal title="Query these spans from code" onClose={onClose} wide>
       <div className="col" style={{ gap: 10 }}>
         <Tabs
           tabs={[
@@ -117,7 +117,7 @@ export function CopyAsCodeModal({ spec, authRequired, onClose }: { spec: QuerySp
           </>
         ) : (
           <>
-            <div className="small muted">Downloads all matching calls as CSV. Change format to jsonl or json for full call objects.</div>
+            <div className="small muted">Downloads all matching spans as CSV. Change format to jsonl or json for full span objects.</div>
             <CodeSnippet code={curlSnippet(spec, origin, 'csv', authRequired)} lang="bash" />
           </>
         )}

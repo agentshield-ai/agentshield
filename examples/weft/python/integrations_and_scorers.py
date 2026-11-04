@@ -56,7 +56,7 @@ client = weft.init(
 )
 
 
-@weft.op
+@weft.trace
 def write_bio(name: str) -> str:
     # PERSON, LOCATION and ORGANIZATION are redacted by the NER engine; e-mail by regex
     return f"{name} worked in London with Analytical Engines Ltd (ada@example.com)."

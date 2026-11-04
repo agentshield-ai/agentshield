@@ -14,15 +14,16 @@ import traceback
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 from . import _context
-from ._call import Call
-from ._canonical import b64digest, digest, table_digest
+from ._call import Span
+from ._canonical import digest, file_digest, table_digest
+from ._deprecation import deprecated_call
 from ._http import HTTPClient, WeftHTTPError, env_flag
 from ._ids import uuid7
 from ._object import Object, Table, WeftObject, registered_class, resolve_ref_value, _is_obj_or_table_ref
 from . import _reasoning
 from ._op import BoundOp, Op
 from ._redact import Redactor
-from ._refs import CallRef, ObjectRef, OpRef, Ref, TableRef, is_ref_uri, parse_name_version, parse_uri, split_project
+from ._refs import FunctionRef, ObjectRef, Ref, SpanRef, TableRef, is_ref_uri, parse_name_version, parse_uri, split_project
 from ._sender import Sender
 from ._serialize import object_val, to_json
 from ._version import __version__
@@ -140,41 +141,51 @@ def tracing_client() -> Optional["WeftClient"]:
     return c
 
 
-class CallsIter:
-    """Lazy iterator over ``/calls/stream_query`` results."""
+# Span filter keys of earlier versions, mapped to Weft's (docs/weft/API.md, SpansQuery).
+_LEGACY_FILTER_KEYS = {"op_names": "names", "call_ids": "ids", "thread_ids": "session_ids"}
+
+
+def _span_filter(flt: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not flt:
+        return None
+    return {_LEGACY_FILTER_KEYS.get(k, k): v for k, v in flt.items()}
+
+
+class SpansIter:
+    """Lazy iterator over ``POST /api/v1/spans/stream`` results."""
 
     def __init__(self, client: "WeftClient", body: Dict[str, Any]):
         self._client = client
         self._body = body
 
-    def __iter__(self) -> Iterator[Call]:
+    def __iter__(self) -> Iterator[Span]:
         self._client.flush()
-        for d in self._client._http.post_jsonl("/calls/stream_query", self._body):
-            yield Call.from_server(d, self._client)
+        for d in self._client._http.post_jsonl("/api/v1/spans/stream", self._body):
+            yield Span.from_server(d, self._client)
 
     def __len__(self) -> int:
         self._client.flush()
-        body = {k: self._body[k] for k in ("project_id", "filter", "query", "search") if k in self._body}
-        n = int(self._client._http.post("/calls/query_stats", body).get("count", 0))
+        body = {k: self._body[k] for k in ("project_id", "filter", "query", "search", "include_deleted") if k in self._body}
+        n = int(self._client._http.post("/api/v1/spans/query", {**body, "limit": 0}).get("total_count", 0))
         off = int(self._body.get("offset") or 0)
         n = max(0, n - off)
         lim = self._body.get("limit")
         return min(n, lim) if lim is not None else n
 
-    def __getitem__(self, i: int) -> Call:
+    def __getitem__(self, i: int) -> Span:
         return self.to_list()[i]
 
-    def to_list(self) -> List[Call]:
+    def to_list(self) -> List[Span]:
         return list(self)
 
     def to_records(self) -> List[Dict[str, Any]]:
-        """Every matching call as a plain dict (``Call.to_dict()``)."""
+        """Every matching span as a plain dict (``Span.to_dict()``)."""
         return [c.to_dict() for c in self]
 
     def to_pandas(self, flatten: bool = False) -> Any:
-        """The matching calls as a pandas DataFrame, one row per call.
+        """The matching spans as a pandas DataFrame, one row per span.
 
-        Columns are the call fields (``id``, ``op_name``, ``inputs``, ``output``,
+        Columns are the span fields (``id``, ``name``, ``inputs``, ``output``,
         ``summary``, ``status``, ...). With ``flatten=True`` nested dicts become
         dotted columns (``inputs.x``, ``summary.usage...``) via
         ``pandas.json_normalize``. Fetches every page, so use ``limit`` or a
@@ -183,11 +194,15 @@ class CallsIter:
         try:
             import pandas as pd  # type: ignore
         except ImportError:
-            raise ImportError("CallsIter.to_pandas() needs pandas: pip install pandas") from None
+            raise ImportError("SpansIter.to_pandas() needs pandas: pip install pandas") from None
         records = self.to_records()
         if flatten:
             return pd.json_normalize(records)
         return pd.DataFrame(records)
+
+
+# Earlier name of SpansIter.
+CallsIter = SpansIter
 
 
 class WeftClient:
@@ -312,7 +327,8 @@ class WeftClient:
         self._sender.stop(timeout)
 
     def server_info(self) -> Dict[str, Any]:
-        return self._http.get("/server_info")
+        """``GET /api/v1/server``: version, features, limits and the digest scheme."""
+        return self._http.get("/api/v1/server")
 
     # ------------------------------------------------------------------ server-response cache
     def cache_stats(self) -> Dict[str, int]:
@@ -334,8 +350,8 @@ class WeftClient:
         display_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
         **_: Any,
-    ) -> Call:
-        """Start a call explicitly (``finish_call`` ends it). Used by ``@op`` and loggers."""
+    ) -> Span:
+        """Start a span explicitly (``finish_call`` ends it). Used by ``@weft.trace`` and loggers."""
         if isinstance(op, str):
             op = _synthetic_op(op)
         elif isinstance(op, BoundOp):
@@ -348,12 +364,12 @@ class WeftClient:
         tctx = _context.current_thread_context()
         if tctx is not None:
             thread_id = tctx.thread_id
-            if parent is None or parent.id == tctx.entry_parent_id or parent.thread_id != thread_id:
+            if parent is None or parent.id == tctx.entry_parent_id or parent.session_id != thread_id:
                 turn_id = call_id
             else:
                 turn_id = parent.turn_id
-        elif parent is not None and parent.thread_id:
-            thread_id, turn_id = parent.thread_id, parent.turn_id
+        elif parent is not None and parent.session_id:
+            thread_id, turn_id = parent.session_id, parent.turn_id
 
         raw_inputs = dict(inputs)
         if op.postprocess_inputs is not None:
@@ -390,14 +406,14 @@ class WeftClient:
             weft_attrs["color"] = color
         attrs["weft"] = weft_attrs
 
-        call = Call(
+        call = Span(
             id=call_id,
             project_id=self.project_id,
-            op_name=self._op_ref(op).uri(),
+            name=self._op_ref(op).uri(),
             trace_id=trace_id,
             parent_id=parent.id if parent is not None else None,
             display_name=display_name,
-            thread_id=thread_id,
+            session_id=thread_id,
             turn_id=turn_id,
             started_at=now_iso(),
             inputs=ser_inputs,
@@ -422,23 +438,23 @@ class WeftClient:
         link = self._run_now()
         if link is not None:
             call.run_id, call.run_step = link
-        self._sender.enqueue("call_start", self._start_payload(call))
+        self._sender.enqueue("span_start", self._start_payload(call))
         if parent is None and self.print_call_link:
             print(f"weft: {call.ui_url}", file=sys.stderr)
         return call
 
-    def _start_payload(self, call: Call) -> Dict[str, Any]:
+    def _start_payload(self, call: Span) -> Dict[str, Any]:
         start: Dict[str, Any] = {
             "project_id": call.project_id,
             "id": call.id,
-            "op_name": call.op_name,
+            "name": call.name,
             "trace_id": call.trace_id,
             "parent_id": call.parent_id,
             "started_at": call.started_at,
             "attributes": call.attributes,
             "inputs": call.inputs,
         }
-        for k in ("display_name", "thread_id", "turn_id"):
+        for k in ("display_name", "session_id", "turn_id"):
             if getattr(call, k) is not None:
                 start[k] = getattr(call, k)
         if call.run_id is not None:
@@ -453,16 +469,16 @@ class WeftClient:
 
     def update_call(
         self,
-        call: Call,
+        call: Span,
         attributes: Optional[Dict[str, Any]] = None,
         *,
         thread_id: Optional[str] = None,
         turn_id: Optional[str] = None,
         display_name: Optional[str] = None,
     ) -> None:
-        """Change a running call's attributes (deep-merged), thread or display name.
+        """Change a running span's attributes (deep-merged), session (``thread_id``) or display name.
 
-        The call's start is sent again, with the new values, before its end
+        The span's start is sent again, with the new values, before its end
         (the server upserts it), so this works after the start went out."""
         if call._ended:
             logger.debug("weft: update_call ignored: call %s already ended", call.id)
@@ -470,15 +486,15 @@ class WeftClient:
         if attributes:
             call.attributes = _deep_merge(dict(call.attributes or {}), to_json(attributes, self))
         if thread_id is not None:
-            call.thread_id = thread_id
+            call.session_id = thread_id
         if turn_id is not None:
             call.turn_id = turn_id
         if display_name is not None:
             call.display_name = display_name
         call._resend_start = True
 
-    def add_reasoning(self, call: Call, steps: List[Dict[str, Any]]) -> None:
-        """Record reasoning steps (``weft.reasoning`` attribute entries) on a running call."""
+    def add_reasoning(self, call: Span, steps: List[Dict[str, Any]]) -> None:
+        """Record reasoning steps (``weft.reasoning`` attribute entries) on a running span."""
         if not self.capture_reasoning or call._ended or not steps:
             return
         if call._weft_reasoning is None:
@@ -495,7 +511,7 @@ class WeftClient:
 
     def finish_call(
         self,
-        call: Call,
+        call: Span,
         output: Any = None,
         exception: Optional[BaseException] = None,
         op: Optional[Union[Op, str]] = None,
@@ -529,11 +545,11 @@ class WeftClient:
             call._resend_start = True
         if call._resend_start:
             call._resend_start = False
-            self._sender.enqueue("call_start", self._start_payload(call))
+            self._sender.enqueue("span_start", self._start_payload(call))
         end: Dict[str, Any] = {"project_id": call.project_id, "id": call.id, "ended_at": call.ended_at, "output": call.output}
         if exception is not None:
-            call.exception = format_exception(exception)
-            end["exception"] = call.exception
+            call.error = format_exception(exception)
+            end["error"] = call.error
         if call.summary:
             end["summary"] = to_json(call.summary, self)
         if call.run_id is not None:
@@ -541,7 +557,7 @@ class WeftClient:
             if link is not None and link[1] is not None:
                 call.run_step_end = link[1]
                 end["run_step_end"] = link[1]
-        self._sender.enqueue("call_end", end)
+        self._sender.enqueue("span_end", end)
 
     def _serialize_self(self, v: Any) -> Any:
         ref = getattr(v, "_weft_ref", None)
@@ -554,7 +570,7 @@ class WeftClient:
         except Exception:  # pragma: no cover
             return f"<{type(v).__name__}>"
 
-    def get_calls(
+    def spans(
         self,
         filter: Optional[Dict[str, Any]] = None,
         query: Optional[Dict[str, Any]] = None,
@@ -570,11 +586,19 @@ class WeftClient:
         include_usernames: bool = False,
         include_storage_size: bool = False,
         include_run_status: bool = False,
-    ) -> CallsIter:
-        """Query calls. ``filter`` follows the CallsQuery filter (op_names, trace_ids, ...)."""
+        include_deleted: bool = False,
+    ) -> SpansIter:
+        """Query spans (``POST /api/v1/spans/stream``).
+
+        ``filter`` is the SpansQuery filter (``names``, ``ids``, ``trace_ids``,
+        ``parent_ids``, ``session_ids``, ``trace_roots_only``, ...); ``query``
+        an ``$expr`` over span fields (``name``, ``error``, ``session_id``,
+        ``inputs.x``, ...). Returns a lazy ``SpansIter``.
+        """
         body: Dict[str, Any] = {"project_id": self.project_id}
-        if filter:
-            body["filter"] = dict(filter)
+        flt = _span_filter(filter)
+        if flt:
+            body["filter"] = flt
         if query:
             body["query"] = query if "$expr" in query else {"$expr": query}
         if search:
@@ -585,66 +609,105 @@ class WeftClient:
             body["limit"] = limit
         if offset is not None:
             body["offset"] = offset
-        if include_costs:
-            body["include_costs"] = True
-        if include_feedback:
-            body["include_feedback"] = True
+        for flag, on in (
+            ("include_costs", include_costs),
+            ("include_feedback", include_feedback),
+            ("include_usernames", include_usernames),
+            ("include_storage_size", include_storage_size),
+            # summary.weft.run_status: the status the shared status filter reads
+            ("include_run_status", include_run_status),
+            ("include_deleted", include_deleted),
+        ):
+            if on:
+                body[flag] = True
         if columns:
             body["columns"] = columns
         if expand_columns:
             body["expand_columns"] = expand_columns
-        if include_usernames:
-            body["include_usernames"] = True
-        if include_storage_size:
-            body["include_storage_size"] = True
-        if include_run_status:
-            # summary.weft.run_status: the status the shared status filter reads
-            body["include_run_status"] = True
-        return CallsIter(self, body)
+        return SpansIter(self, body)
 
-    def get_call(
+    def span(
         self,
-        call_id: str,
+        span_id: str,
         *,
         include_costs: bool = False,
         include_feedback: bool = False,
         include_usernames: bool = False,
         include_storage_size: bool = False,
-    ) -> Optional[Call]:
+    ) -> Optional[Span]:
+        """One span by id (``GET /api/v1/spans/{id}``), or None when there is none."""
+        from urllib.parse import quote
+
         self.flush()
-        body: Dict[str, Any] = {"project_id": self.project_id, "id": call_id, "include_costs": include_costs, "include_feedback": include_feedback}
-        if include_usernames:
-            body["include_usernames"] = True
-        if include_storage_size:
-            body["include_storage_size"] = True
-        res = self._http.post("/call/read", body)
-        d = res.get("call")
-        return Call.from_server(d, self) if d else None
+        q = {"project_id": self.project_id}
+        for flag, on in (
+            ("include_costs", include_costs),
+            ("include_feedback", include_feedback),
+            ("include_usernames", include_usernames),
+            ("include_storage_size", include_storage_size),
+        ):
+            if on:
+                q[flag] = "true"
+        try:
+            d = self._http.get(f"/api/v1/spans/{quote(span_id, safe='')}", query=q)
+        except WeftHTTPError as e:
+            if e.status == 404:
+                return None
+            raise
+        return Span.from_server(d, self) if d else None
+
+    def delete_spans(self, span_ids: List[str]) -> None:
+        """Soft-delete spans (and their descendants)."""
+        self.flush()
+        self._http.post("/api/v1/spans/delete", {"project_id": self.project_id, "ids": list(span_ids)})
+
+    # ---- earlier names (deprecated) -------------------------------------------
+    def get_calls(self, *args: Any, **kwargs: Any) -> SpansIter:
+        """Deprecated: use ``client.spans(...)``."""
+        deprecated_call("WeftClient.get_calls()", "WeftClient.spans()")
+        return self.spans(*args, **kwargs)
+
+    def get_call(self, call_id: str, **kwargs: Any) -> Optional[Span]:
+        """Deprecated: use ``client.span(id)``."""
+        deprecated_call("WeftClient.get_call()", "WeftClient.span()")
+        return self.span(call_id, **kwargs)
 
     def delete_calls(self, call_ids: List[str]) -> None:
-        self.flush()
-        self._http.post("/calls/delete", {"project_id": self.project_id, "call_ids": list(call_ids)})
+        """Deprecated: use ``client.delete_spans(ids)``."""
+        deprecated_call("WeftClient.delete_calls()", "WeftClient.delete_spans()")
+        self.delete_spans(call_ids)
+
+    def get_evaluation_calls(self, limit: Optional[int] = None) -> SpansIter:
+        """Deprecated: use ``client.evaluation_runs()``."""
+        deprecated_call("WeftClient.get_evaluation_calls()", "WeftClient.evaluation_runs()")
+        return self.evaluation_runs(limit=limit)
+
+    def evaluation_runs(self, limit: Optional[int] = None) -> SpansIter:
+        """Evaluation runs: the ``Evaluation.evaluate`` spans of the project."""
+        return self.spans(filter={"names": ["Evaluation.evaluate"]}, limit=limit)
 
     def get_feedback(self, query: Optional[Dict[str, Any]] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Feedback of the project (``POST /api/v1/feedback/query``), optionally filtered by an ``$expr``."""
         self.flush()
-        body: Dict[str, Any] = {"project_id": self.project_id}
+        body: Dict[str, Any] = {"project_id": self.project_id, "limit": 10000 if limit is None else limit}
         if query:
             body["query"] = query if "$expr" in query else {"$expr": query}
-        if limit is not None:
-            body["limit"] = limit
-        return list(self._http.post("/feedback/query", body).get("result") or [])
+        return list(self._http.post("/api/v1/feedback/query", body).get("items") or [])
+
+    def _objects_query(self, kinds: List[str]) -> List[Dict[str, Any]]:
+        res = self._http.post(
+            "/api/v1/objects/query",
+            {"project_id": self.project_id, "filter": {"kinds": kinds, "latest_only": True}, "limit": 10000},
+        )
+        return list(res.get("items") or [])
 
     def get_evaluations(self) -> List[Any]:
         """Latest version of every Evaluation object in the project."""
         self.flush()
-        res = self._http.post(
-            "/objs/query",
-            {"project_id": self.project_id, "filter": {"base_object_classes": ["Evaluation"], "latest_only": True}},
-        )
         out = []
-        for o in res.get("objs") or []:
-            ref = ObjectRef(self.entity, self.project, o["object_id"], o["digest"])
-            out.append(from_val(o.get("val"), self, ref))
+        for o in self._objects_query(["evaluation"]):
+            ref = ObjectRef(self.entity, self.project, o["name"], o["digest"])
+            out.append(from_val(o.get("value"), self, ref))
         return out
 
     def get_saved_views(self, view_type: Optional[str] = None) -> List[Any]:
@@ -652,19 +715,15 @@ class WeftClient:
         from ._saved_view import SavedView
 
         self.flush()
-        res = self._http.post(
-            "/objs/query",
-            {"project_id": self.project_id, "filter": {"base_object_classes": ["SavedView"], "latest_only": True}},
-        )
         out = []
-        for o in res.get("objs") or []:
-            val = o.get("val") or {}
+        for o in self._objects_query(["saved_view"]):
+            val = o.get("value") or {}
             if view_type and val.get("view_type") != view_type:
                 continue
-            ref = ObjectRef(self.entity, self.project, o["object_id"], o["digest"])
+            ref = ObjectRef(self.entity, self.project, o["name"], o["digest"])
             v = from_val(val, self, ref)
             if not isinstance(v, SavedView):
-                v = SavedView(view_type=val.get("view_type") or "traces", label=val.get("label"), name=val.get("name") or o["object_id"],
+                v = SavedView(view_type=val.get("view_type") or "traces", label=val.get("label"), name=val.get("name") or o["name"],
                               definition=val.get("definition") or {})
                 v._weft_ref = ref
             out.append(v)
@@ -676,17 +735,15 @@ class WeftClient:
 
         return SavedView.load(name)
 
-    def get_evaluation_calls(self, limit: Optional[int] = None) -> CallsIter:
-        return self.get_calls(filter={"op_names": ["Evaluation.evaluate"]}, limit=limit)
-
     def whoami(self) -> Dict[str, Any]:
         """``GET /auth/whoami``: the user the API key acts as."""
         return self._http.get("/auth/whoami")
 
-    # ------------------------------------------------------------------ threads, custom runtimes
+    # ------------------------------------------------------------------ sessions, custom runtimes
     def threads_query(self, req: Any = None, **kwargs: Any) -> Any:
-        """``client.threads_query(ThreadsQueryReq(...))``: threads (calls grouped by
-        ``thread_id``) with turn counts, times and turn-duration percentiles.
+        """``client.threads_query(ThreadsQueryReq(...))``: sessions (spans grouped by
+        ``session_id``) with turn counts, times and turn-duration percentiles
+        (``POST /api/v1/spans/sessions``).
 
         ``req`` is a ``weft.trace_server_interface.ThreadsQueryReq`` or a dict; keyword
         arguments build one (``client.threads_query(limit=20, sort_by=[...])``).
@@ -696,8 +753,8 @@ class WeftClient:
         return ThreadsQueryRes(threads=list(self.threads_query_stream(req, **kwargs)))
 
     def threads_query_stream(self, req: Any = None, **kwargs: Any) -> Iterator[Any]:
-        """``threads_query`` as an iterator of ``ThreadSchema`` (``/threads/stream_query``)."""
-        from .trace_server_interface import ThreadSchema, ThreadsQueryReq, threads_query_body
+        """``threads_query`` as an iterator of ``ThreadSchema`` (every page of ``/api/v1/spans/sessions``)."""
+        from .trace_server_interface import ThreadSchema, ThreadsQueryReq, thread_from_session, threads_query_body
 
         if req is None:
             req = ThreadsQueryReq(**kwargs)
@@ -706,8 +763,20 @@ class WeftClient:
         elif kwargs:
             req = req.model_copy(update=kwargs)
         body = threads_query_body(req, self.project_id, self.entity)
-        for t in self._http.post_jsonl("/threads/stream_query", body):
-            yield ThreadSchema.model_validate(t)
+        want = body.pop("limit", None)
+        offset = int(body.pop("offset", 0) or 0)
+        page = 1000
+        seen = 0
+        while want is None or seen < want:
+            n = page if want is None else min(page, want - seen)
+            res = self._http.post("/api/v1/spans/sessions", {**body, "limit": n, "offset": offset})
+            items = list(res.get("items") or [])
+            for t in items:
+                yield ThreadSchema.model_validate(thread_from_session(t))
+            seen += len(items)
+            offset += len(items)
+            if len(items) < n:
+                break
 
     def register_custom_runtime(
         self,
@@ -719,7 +788,7 @@ class WeftClient:
         headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         """Register a custom runtime (an OpenAI-compatible endpoint), replacing its
-        configuration if it exists.
+        configuration if it exists (``PUT /api/v1/runtimes/{name}``).
 
         ``runtime_ids`` is the complete list: IDs left out are removed. A string ID
         gets the default ``max_tokens`` (4096); pass ``weft.CustomRuntimeID(id=...,
@@ -744,7 +813,6 @@ class WeftClient:
                 ids.append(CustomRuntimeID(**rid).model_dump())
             else:
                 raise TypeError(f"runtime_ids entries must be str or CustomRuntimeID, got {type(rid).__name__}")
-        path = f"/v2/{quote(self.entity, safe='')}/{quote(self.project, safe='')}/runtimes/{quote(name, safe='')}"
         body = {
             "project_id": self.project_id,
             "runtime_name": name,
@@ -753,9 +821,29 @@ class WeftClient:
             "headers": dict(headers or {}),
             "runtime_ids": ids,
         }
-        return CustomRuntimeApplyRes.model_validate(self._http.request("PUT", path, body))
+        return CustomRuntimeApplyRes.model_validate(self._http.request("PUT", f"/api/v1/runtimes/{quote(name, safe='')}", body))
 
     # ------------------------------------------------------------------ object management
+    def _object_path(self, name: str, version: Optional[str] = None) -> str:
+        from urllib.parse import quote
+
+        p = f"/api/v1/objects/{quote(name, safe='')}"
+        if version is not None:
+            p += f"/versions/{quote(version, safe='')}"
+        return p
+
+    def _read_object(self, project_id: str, name: str, version: str, fresh: bool = False) -> Optional[Dict[str, Any]]:
+        """One object version (``GET /api/v1/objects/{name}/versions/{version}``), or None.
+
+        ``fresh`` skips the client-side cache (whose copies carry no tags or aliases)."""
+        get = (lambda *a, **k: HTTPClient.get(self._http, *a, **k)) if fresh else self._http.get
+        try:
+            return get(self._object_path(name, version or "latest"), query={"project_id": project_id})
+        except WeftHTTPError as e:
+            if e.status == 404:
+                return None
+            raise
+
     def _obj_ref(self, obj_ref: Any) -> ObjectRef:
         if isinstance(obj_ref, ObjectRef):
             r = obj_ref
@@ -766,37 +854,33 @@ class WeftClient:
         if not isinstance(r, ObjectRef):
             raise TypeError(f"expected an object ref, got {obj_ref!r}")
         if r.digest in ("latest",) or re.fullmatch(r"v\d+", r.digest or ""):
-            res = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest})
-            r = type(r)(r.entity, r.project, r.name, res["obj"]["digest"])
+            obj = self._read_object(r.project_id, r.name, r.digest)
+            if obj is None:
+                raise LookupError(f"object not found: {r.uri()}")
+            r = type(r)(r.entity, r.project, r.name, obj["digest"])
         return r
 
+    def _delete_object(self, project_id: str, name: str, digests: Optional[List[str]] = None) -> int:
+        body: Dict[str, Any] = {"project_id": project_id, "name": name}
+        if digests is not None:
+            body["digests"] = list(digests)
+        return int(self._http.post("/api/v1/objects/delete", body).get("num_deleted", 0))
+
     def delete_object_version(self, obj_ref: Any) -> int:
-        """Delete one object version (ref, URI, ``"name:v1"`` or a published object)."""
+        """Delete one object version (ref, URI, ``"name:v1"`` or a saved object)."""
         r = self._obj_ref(obj_ref)
-        return int(self._http.post("/obj/delete", {"project_id": r.project_id, "object_id": r.name, "digests": [r.digest]}).get("num_deleted", 0))
+        return self._delete_object(r.project_id, r.name, [r.digest])
 
     def delete_object_versions(self, obj: Any, digests: Optional[List[str]] = None) -> int:
         """Delete versions: ``(name, [digests or "v0"/"latest"...])``, or a single ref."""
         if digests is None:
             return self.delete_object_version(obj)
         name = obj if isinstance(obj, str) else self._obj_ref(obj).name
-        return int(self._http.post("/obj/delete", {"project_id": self.project_id, "object_id": name, "digests": list(digests)}).get("num_deleted", 0))
+        return self._delete_object(self.project_id, name, list(digests))
 
     def delete_all_object_versions(self, name: str) -> int:
         """Delete every version of an object; returns the number deleted."""
-        return int(self._http.post("/obj/delete", {"project_id": self.project_id, "object_id": name}).get("num_deleted", 0))
-
-    def _with_fallback(self, attempts: List[Any]) -> Any:
-        last: Optional[Exception] = None
-        for fn in attempts:
-            try:
-                return fn()
-            except WeftHTTPError as e:
-                if e.status not in (404, 405, 501):
-                    raise
-                last = e
-        assert last is not None
-        raise last
+        return self._delete_object(self.project_id, name)
 
     def set_aliases(self, obj_ref: Any, alias: Union[str, List[str]]) -> None:
         """Point alias(es) (e.g. ``"production"``) at an object version."""
@@ -804,14 +888,7 @@ class WeftClient:
         aliases = [alias] if isinstance(alias, str) else list(alias)
         if not aliases:
             return
-        body = {"project_id": r.project_id, "digest": r.digest, "aliases": aliases}
-        path = f"/objs/{r.name}/aliases"
-
-        def legacy() -> Any:
-            for a in aliases:
-                self._http.post("/obj/alias/set", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "alias": a})
-
-        self._with_fallback([lambda: self._http.request("PUT", path, body), lambda: self._http.post(path, body), legacy])
+        self._http.post(self._object_path(r.name) + "/aliases", {"project_id": r.project_id, "version": r.digest, "aliases": aliases})
 
     set_alias = set_aliases
 
@@ -821,49 +898,43 @@ class WeftClient:
         aliases = [alias] if isinstance(alias, str) else list(alias)
         if not aliases:
             return
-        body = {"project_id": self.project_id, "aliases": aliases}
-
-        def legacy() -> Any:
-            for a in aliases:
-                self._http.post("/obj/alias/remove", {"project_id": self.project_id, "object_id": name, "alias": a})
-
-        self._with_fallback([lambda: self._http.post(f"/objs/{name}/aliases/remove", body), legacy])
+        self._http.post(self._object_path(name) + "/aliases/remove", {"project_id": self.project_id, "aliases": aliases})
 
     remove_alias = remove_aliases
 
-    def get_aliases(self, obj_ref: Any) -> List[str]:
+    def _object_meta(self, obj_ref: Any) -> Dict[str, Any]:
         r = self._obj_ref(obj_ref)
-        obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
-        return list(obj.get("aliases") or [])
+        obj = self._read_object(r.project_id, r.name, r.digest, fresh=True)
+        if obj is None:
+            raise LookupError(f"object not found: {r.uri()}")
+        return obj
+
+    def get_aliases(self, obj_ref: Any) -> List[str]:
+        return list(self._object_meta(obj_ref).get("aliases") or [])
 
     def add_tags(self, obj_ref: Any, tags: List[str]) -> None:
         """Tag an object version."""
         r = self._obj_ref(obj_ref)
-        path = f"/objs/{r.name}/versions/{r.digest}/tags"
-        body = {"project_id": r.project_id, "tags": list(tags)}
-        self._with_fallback([lambda: self._http.request("PUT", path, body), lambda: self._http.post(path, body)])
+        self._http.post(self._object_path(r.name, r.digest) + "/tags", {"project_id": r.project_id, "tags": list(tags)})
 
     def remove_tags(self, obj_ref: Any, tags: List[str]) -> None:
         r = self._obj_ref(obj_ref)
-        self._http.post(f"/objs/{r.name}/versions/{r.digest}/tags/remove", {"project_id": r.project_id, "tags": list(tags)})
+        self._http.post(self._object_path(r.name, r.digest) + "/tags/remove", {"project_id": r.project_id, "tags": list(tags)})
 
     def get_tags(self, obj_ref: Any) -> List[str]:
-        r = self._obj_ref(obj_ref)
-        obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
-        return list(obj.get("tags") or [])
+        return list(self._object_meta(obj_ref).get("tags") or [])
 
     def list_tags(self) -> List[str]:
         """All tags used in the project."""
-        return list(self._http.request("GET", "/tags", query={"project_id": self.project_id}).get("tags") or [])
+        return list(self._http.post("/api/v1/objects/tags", {"project_id": self.project_id}).get("items") or [])
 
     def list_aliases(self) -> List[str]:
         """All distinct aliases in the project."""
-        return list(self._http.request("GET", "/aliases", query={"project_id": self.project_id}).get("aliases") or [])
+        return list(self._http.post("/api/v1/objects/aliases", {"project_id": self.project_id}).get("items") or [])
 
     def get_tags_and_aliases(self, obj_ref: Any) -> "tuple[List[str], List[str]]":
         """``(tags, aliases)`` of an object version in one request."""
-        r = self._obj_ref(obj_ref)
-        obj = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest, "include_tags_and_aliases": True})["obj"]
+        obj = self._object_meta(obj_ref)
         return list(obj.get("tags") or []), list(obj.get("aliases") or [])
 
     # ------------------------------------------------------------------ registry
@@ -880,15 +951,16 @@ class WeftClient:
         )
 
     def link_to_registry(self, obj: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Link a published object version into a registry collection (``POST /link_to_registry``).
+        """Link a saved object version into a registry collection (``POST /api/v1/registry/link``).
 
-        ``obj`` is a published object (or one to publish now), a ref, a
+        ``obj`` is a saved object (or one to save now), a ref, a
         ``weft:///`` URI or ``"name:version"``. ``target_path`` is
         ``<registry_project>/<collection>`` (the registry project is in this
         client's entity) or ``<entity>/<registry_project>/<collection>``.
         ``aliases`` move to the new registry version (``latest`` and ``v<N>``
-        are implicit). Returns ``{"version_index", "ref", "target_path"}``;
-        linking a version already in the collection returns its index.
+        are implicit). Returns ``{"version", "version_index", "ref", "target_path"}``
+        (``version_index`` is the earlier name of ``version``); linking a version
+        already in the collection returns its index.
         """
         entity, reg_project, collection = self._registry_target(target_path)
         if isinstance(obj, str) and not is_ref_uri(obj):
@@ -898,22 +970,19 @@ class WeftClient:
         else:
             r = getattr(obj, "_weft_ref", None) or getattr(obj, "ref", None)
             if not isinstance(r, Ref):
-                r = self.publish(obj)
+                r = self.save(obj)
         if isinstance(r, ObjectRef) and (r.digest == "latest" or re.fullmatch(r"v\d+", r.digest or "")):
             r = self._obj_ref(r)
-        if not isinstance(r, (ObjectRef, OpRef)):
+        if not isinstance(r, ObjectRef):
             raise TypeError(f"only object versions can be linked to a registry, got {r!r}")
         self.flush()
-        body = {
-            "ref": r.uri(),
-            "target": {"portfolio_name": collection, "entity_name": entity, "project_name": reg_project},
-            "aliases": list(aliases or []),
-        }
-        res = self._http.post("/link_to_registry", body)
-        return {"version_index": res.get("version_index"), "ref": r.uri(), "target_path": f"{entity}/{reg_project}/{collection}"}
+        body = {"ref": r.uri(), "project_id": f"{entity}/{reg_project}", "collection": collection, "aliases": list(aliases or [])}
+        res = self._http.post("/api/v1/registry/link", body)
+        v = res.get("version")
+        return {"version": v, "version_index": v, "ref": r.uri(), "target_path": f"{entity}/{reg_project}/{collection}"}
 
     def link_prompt_to_registry(self, prompt: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Link a published prompt version into a registry collection."""
+        """Link a saved prompt version into a registry collection."""
         return self.link_to_registry(prompt, target_path=target_path, aliases=aliases)
 
     def query_registry(
@@ -924,7 +993,7 @@ class WeftClient:
         alias: Optional[str] = None,
         version_index: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Collections of a registry project and their versions (``POST /registry/query``), newest first.
+        """Collections of a registry project and their versions (``POST /api/v1/registry/query``), newest first.
 
         ``registry_project`` is a project name in this entity or
         ``entity/project``; ``alias``/``version_index`` need ``collection``.
@@ -937,7 +1006,7 @@ class WeftClient:
             body["alias"] = alias
         if version_index is not None:
             body["version_index"] = int(version_index)
-        return list(self._http.post("/registry/query", body).get("collections") or [])
+        return list(self._http.post("/api/v1/registry/query", body).get("collections") or [])
 
     def get_from_registry(self, target_path: str, version: Union[str, int] = "latest") -> Any:
         """Load the object a registry version points to (``version``: ``"latest"``, ``"v2"``, ``2`` or an alias)."""
@@ -954,17 +1023,19 @@ class WeftClient:
         return self.get(versions[0]["ref"])
 
     def read_file(self, file_digest: str) -> bytes:
-        """Raw bytes of an uploaded file (``Content``/media ``file_digest``)."""
+        """Raw bytes of an uploaded file (``Content``/media ``file_digest``; ``GET /api/v1/files/{digest}``)."""
+        from urllib.parse import quote, urlencode
+
         self.flush()
-        return self._http.request_raw("POST", "/file/content", {"project_id": self.project_id, "digest": file_digest})
+        return self._http.request_raw("GET", f"/api/v1/files/{quote(file_digest, safe='')}?" + urlencode({"project_id": self.project_id}))
 
     def resolve_url(self, target: Any, expires_in: Optional[int] = None) -> Any:
-        """Download URL(s) via ``/files/resolve_url``.
+        """Download URL(s) via ``POST /api/v1/files/resolve``.
 
         ``target`` is a file digest, a ``weft-file://<digest>``/``s3://bucket/key``/``https://`` URI,
         a ``Content`` value, or a list of these (then a list is returned). Files in the server's S3
         backend and ``s3://`` references in its bucket get presigned URLs; other files get this
-        server's ``/file/content`` URL; HTTP(S) URLs come back unchanged.
+        server's ``/api/v1/files/{digest}`` URL; HTTP(S) URLs come back unchanged.
         """
         from ._content import Content
 
@@ -981,7 +1052,7 @@ class WeftClient:
         body: Dict[str, Any] = {"project_id": self.project_id, "uris": uris}
         if expires_in is not None:
             body["expires_in"] = int(expires_in)
-        urls = list(self._http.post("/files/resolve_url", body).get("download_urls") or [])
+        urls = list(self._http.post("/api/v1/files/resolve", body).get("download_urls") or [])
         return urls if isinstance(target, (list, tuple)) else (urls[0] if urls else None)
 
     # ------------------------------------------------------------------ evaluations (server side)
@@ -990,7 +1061,7 @@ class WeftClient:
             return obj if is_ref_uri(obj) else self.ref(obj).uri()
         if isinstance(obj, Ref):
             return obj.uri()
-        return self.publish(obj).uri()
+        return self.save(obj).uri()
 
     def evaluate_model(
         self,
@@ -1001,55 +1072,62 @@ class WeftClient:
         timeout: float = 600.0,
         poll_interval: float = 0.5,
     ) -> Dict[str, Any]:
-        """Run an evaluation server side (``/evaluate_model``).
+        """Run an evaluation server side (``POST /api/v1/evaluations/run``).
 
-        ``evaluation`` and ``model`` may be objects (published first), refs or
+        ``evaluation`` and ``model`` may be objects (saved first), refs or
         names. The model must be an ``LLMStructuredCompletionModel`` and the
         scorers server-runnable. With ``wait`` the status is polled until the
-        run finishes; returns ``{"call_id", "status", "summary"}``.
+        run finishes; returns ``{"id", "status", "summary"}`` where ``id`` is
+        the run (its ``Evaluation.evaluate`` span; ``call_id`` is the earlier
+        name of the same value).
         """
         import time
 
         body = {"project_id": self.project_id, "evaluation_ref": self._uri_of(evaluation), "model_ref": self._uri_of(model)}
-        call_id = self._http.post("/evaluate_model", body)["call_id"]
-        result: Dict[str, Any] = {"call_id": call_id, "status": {"code": "running"}, "summary": None}
+        self.flush()
+        run_id = self._http.post("/api/v1/evaluations/run", body)["id"]
+        result: Dict[str, Any] = {"id": run_id, "call_id": run_id, "status": {"code": "running"}, "summary": None}
         if not wait:
             return result
         deadline = time.monotonic() + timeout
         while True:
-            st = self._http.post("/evaluation_status", {"project_id": self.project_id, "call_id": call_id}).get("status") or {}
+            st = self.evaluation_status(run_id)
             result["status"] = st
             if st.get("code") in ("complete", "failed"):
                 break
             if time.monotonic() > deadline:
-                raise TimeoutError(f"evaluation {call_id} still running after {timeout}s")
+                raise TimeoutError(f"evaluation {run_id} still running after {timeout}s")
             time.sleep(poll_interval)
         if st.get("code") == "failed":
-            raise RuntimeError(f"server evaluation {call_id} failed: {st.get('error')}")
-        call = self.get_call(call_id)
-        result["summary"] = call.output if call is not None else None
+            raise RuntimeError(f"server evaluation {run_id} failed: {st.get('error')}")
+        sp = self.span(run_id)
+        result["summary"] = sp.output if sp is not None else None
         return result
 
-    def evaluation_status(self, call_id: str) -> Dict[str, Any]:
-        return self._http.post("/evaluation_status", {"project_id": self.project_id, "call_id": call_id}).get("status") or {}
+    def evaluation_status(self, run_id: str) -> Dict[str, Any]:
+        """``GET /api/v1/evaluations/{id}/status``: ``{"code": "running|complete|failed|unknown", ...}``."""
+        from urllib.parse import quote
 
-    def compare_evaluations(self, call_ids: List[str]) -> Dict[str, Any]:
-        """``/evaluations/compare`` for ``Evaluation.evaluate`` call ids."""
+        return self._http.get(f"/api/v1/evaluations/{quote(run_id, safe='')}/status", query={"project_id": self.project_id}) or {}
+
+    def compare_evaluations(self, run_ids: List[str]) -> Dict[str, Any]:
+        """``POST /api/v1/evaluations/compare`` for evaluation run ids (``Evaluation.evaluate`` spans)."""
         self.flush()
-        return self._http.post("/evaluations/compare", {"project_id": self.project_id, "evaluation_call_ids": list(call_ids)})
+        return self._http.post("/api/v1/evaluations/compare", {"project_id": self.project_id, "ids": list(run_ids)})
 
-    def leaderboard(self, object_id: Any, digest: Optional[str] = None) -> Dict[str, Any]:
-        """Compute a leaderboard (``/leaderboard/compute``) by name, ref or Leaderboard object."""
-        if not isinstance(object_id, str) or is_ref_uri(object_id):
-            r = parse_uri(object_id) if isinstance(object_id, str) else (object_id if isinstance(object_id, Ref) else getattr(object_id, "_weft_ref", None))
+    def leaderboard(self, name: Any, version: Optional[str] = None, *, digest: Optional[str] = None) -> Dict[str, Any]:
+        """Compute a leaderboard (``POST /api/v1/leaderboards/compute``) by name, ref or Leaderboard object."""
+        version = version or digest
+        if not isinstance(name, str) or is_ref_uri(name):
+            r = parse_uri(name) if isinstance(name, str) else (name if isinstance(name, Ref) else getattr(name, "_weft_ref", None))
             if r is None:
-                r = self.publish(object_id)
-            object_id, digest = r.name, digest or r.digest
-        body: Dict[str, Any] = {"project_id": self.project_id, "object_id": object_id}
-        if digest:
-            body["digest"] = digest
+                r = self.save(name)
+            name, version = r.name, version or r.digest
+        body: Dict[str, Any] = {"project_id": self.project_id, "name": name}
+        if version:
+            body["version"] = version
         self.flush()
-        return self._http.post("/leaderboard/compute", body)
+        return self._http.post("/api/v1/leaderboards/compute", body)
 
     # ------------------------------------------------------------------ costs
     def add_cost(
@@ -1063,7 +1141,9 @@ class WeftClient:
         completion_token_cost_unit: str = "USD",
         provider_id: Optional[str] = None,
     ) -> List[Any]:
-        """Set a project-level per-token price for ``llm_id``."""
+        """Set a project-level per-token price for ``llm_id`` (``POST /api/v1/prices/create``).
+
+        Returns the created prices as ``[{"id", "llm_id"}]``."""
         cost: Dict[str, Any] = {
             "prompt_token_cost": prompt_token_cost,
             "completion_token_cost": completion_token_cost,
@@ -1074,22 +1154,27 @@ class WeftClient:
             cost["effective_date"] = to_json(effective_date)
         if provider_id is not None:
             cost["provider_id"] = provider_id
-        res = self._http.post("/cost/create", {"project_id": self.project_id, "costs": {llm_id: cost}})
-        return res.get("ids") or []
+        res = self._http.post("/api/v1/prices/create", {"project_id": self.project_id, "prices": {llm_id: cost}})
+        return list(res.get("items") or [])
 
     def query_costs(self, llm_ids: Optional[List[str]] = None, include_defaults: bool = False) -> List[Dict[str, Any]]:
-        body: Dict[str, Any] = {"project_id": self.project_id, "include_defaults": include_defaults}
+        """Prices (``POST /api/v1/prices/query``), optionally only for ``llm_ids``."""
+        body: Dict[str, Any] = {"project_id": self.project_id, "include_defaults": include_defaults, "limit": 10000}
         if llm_ids:
             body["query"] = {"$expr": {"$in": [{"$getField": "llm_id"}, [{"$literal": x} for x in llm_ids]]}}
-        return list(self._http.post("/cost/query", body).get("results") or [])
+        return list(self._http.post("/api/v1/prices/query", body).get("items") or [])
 
     def purge_costs(self, ids: List[Any]) -> None:
-        """Delete project prices by id (``query_costs`` rows or ``add_cost`` ``[id, llm_id]`` pairs)."""
+        """Delete project prices by id (``query_costs`` rows, ``add_cost`` results or ids)."""
         flat = [i[0] if isinstance(i, (list, tuple)) else (i.get("id") if isinstance(i, dict) else i) for i in ids]
-        self._http.post("/cost/purge", {"project_id": self.project_id, "ids": flat})
+        self._http.post("/api/v1/prices/delete", {"project_id": self.project_id, "ids": flat})
 
     # ------------------------------------------------------------------ objects
-    def _op_ref(self, op: Op) -> OpRef:
+    def _op_ref(self, op: Op) -> FunctionRef:
+        """The ref of a traced function's current version, saved in the background.
+
+        The digest is computed locally (docs/weft/DESIGN.md §10.3), so spans can
+        name the function before the server has answered."""
         key = (self.server_url, self.project_id)
         ref = op._refs.get(key)
         if ref is not None:
@@ -1097,15 +1182,15 @@ class WeftClient:
         val = op.op_val(capture_code=self.capture_code)
         d = digest(val)
         name = sanitize_name(op.name)
-        ref = OpRef(self.entity, self.project, name, d)
+        ref = FunctionRef(self.entity, self.project, name, d)
         op._refs[key] = ref
 
         def check(res: Any) -> None:
             got = (res or {}).get("digest")
             if got and got != d:
-                self._digest_mismatch("op " + name, d, got)
+                self._digest_mismatch("function " + name, d, got)
 
-        self._sender.enqueue("post", ("/obj/create", {"obj": {"project_id": self.project_id, "object_id": name, "val": val}}), check)
+        self._sender.enqueue("post", ("/api/v1/objects/save", {"project_id": self.project_id, "name": name, "value": val}), check)
         return ref
 
     def _digest_mismatch(self, what: str, local: str, server: str) -> None:
@@ -1113,20 +1198,26 @@ class WeftClient:
             self._warned_digest = True
             logger.warning("weft: server digest for %s (%s) differs from local digest (%s); refs may not resolve", what, server, local)
 
-    def _create_obj(self, name: str, val: Any, kind: str = "object") -> ObjectRef:
+    def _create_obj(self, name: str, val: Any) -> ObjectRef:
         name = sanitize_name(name)
-        body = {"obj": {"project_id": self.project_id, "object_id": name, "val": val}}
+        body = {"project_id": self.project_id, "name": name, "value": val}
+        kind = None
         try:
-            res = self._http.post("/obj/create", body)
+            res = self._http.post("/api/v1/objects/save", body)
             d = res["digest"]
+            kind = res.get("kind")
         except (WeftHTTPError, KeyError) as e:
-            logger.warning("weft: could not publish %s (%s); using a local digest", name, e)
+            logger.warning("weft: could not save %s (%s); using a local digest", name, e)
             d = digest(val)
-        cls = OpRef if kind == "op" else ObjectRef
+        cls = FunctionRef if kind == "function" else ObjectRef
         return cls(self.entity, self.project, name, d)
 
-    def publish(self, obj: Any, name: Optional[str] = None) -> Any:
-        """Publish an object (content-addressed) and return its ref."""
+    def save(self, obj: Any, name: Optional[str] = None) -> Any:
+        """Save a version of ``obj`` (content-addressed) and return its ref.
+
+        ``obj`` is a ``weft.Object`` (``Dataset``, ``Model``, ``Prompt``,
+        scorers, ...), a traced function, a ``Table`` or any JSON value; saving
+        an identical value again returns the existing version."""
         if isinstance(obj, (Op, BoundOp)):
             op = obj if isinstance(obj, Op) else obj.op
             return self._op_ref(op)
@@ -1146,6 +1237,11 @@ class WeftClient:
         val = to_json(obj, self, publish_nested=True)
         return self._create_obj(name or type(obj).__name__, val)
 
+    def publish(self, obj: Any, name: Optional[str] = None) -> Any:
+        """Deprecated: use ``client.save(obj, name)``."""
+        deprecated_call("WeftClient.publish()", "WeftClient.save()")
+        return self.save(obj, name=name)
+
     def _publish_table(self, table: Table) -> TableRef:
         if table.ref is not None and table.ref.project_id == self.project_id and table.row_digests is not None:
             return table.ref
@@ -1154,16 +1250,16 @@ class WeftClient:
         rows = [to_json(r, self) for r in table.rows]
         chunk = Table.PAGE
         try:
-            res = self._http.post("/table/create", {"table": {"project_id": self.project_id, "rows": rows[:chunk]}})
+            res = self._http.post("/api/v1/tables/create", {"project_id": self.project_id, "rows": rows[:chunk]})
             tdigest = res["digest"]
             row_digests = list(res.get("row_digests") or [])
             for i in range(chunk, len(rows), chunk):
                 updates = [{"append": {"row": r}} for r in rows[i : i + chunk]]
-                res = self._http.post("/table/update", {"project_id": self.project_id, "base_digest": tdigest, "updates": updates})
+                res = self._http.post("/api/v1/tables/update", {"project_id": self.project_id, "digest": tdigest, "updates": updates})
                 tdigest = res["digest"]
                 row_digests.extend(res.get("updated_row_digests") or [])
         except (WeftHTTPError, KeyError) as e:
-            logger.warning("weft: could not publish table (%s); using local digests", e)
+            logger.warning("weft: could not save table (%s); using local digests", e)
             row_digests = [digest(r) for r in rows]
             tdigest = table_digest(row_digests)
         table.ref = TableRef(self.entity, self.project, tdigest)
@@ -1171,19 +1267,19 @@ class WeftClient:
         return table.ref
 
     def _append_table(self, base: TableRef, rows: List[Any]) -> "tuple[TableRef, List[str]]":
-        """Append rows to a published table with /table/update; returns (new ref, appended row digests)."""
+        """Append rows to a saved table (``POST /api/v1/tables/update``); returns (new ref, appended row digests)."""
         tdigest = base.digest
         appended: List[str] = []
         json_rows = [to_json(r, self) for r in rows]
         for i in range(0, len(json_rows), Table.PAGE):
             updates = [{"append": {"row": r}} for r in json_rows[i : i + Table.PAGE]]
-            res = self._http.post("/table/update", {"project_id": self.project_id, "base_digest": tdigest, "updates": updates})
+            res = self._http.post("/api/v1/tables/update", {"project_id": self.project_id, "digest": tdigest, "updates": updates})
             tdigest = res["digest"]
             appended.extend(res.get("updated_row_digests") or [])
         return TableRef(self.entity, self.project, tdigest), appended
 
     def _upload_file(self, data: bytes, mime: str) -> str:
-        d = b64digest(data)
+        d = file_digest(data)
         if d in self._uploaded:
             return d
         self._uploaded.add(d)
@@ -1194,15 +1290,14 @@ class WeftClient:
             if got and got != d:
                 self._digest_mismatch("file", d, got)
 
-        self._sender.enqueue("multipart", ("/file/create", {"project_id": self.project_id}, {"file": (f"file.{ext}", data, mime)}), check)
+        self._sender.enqueue("multipart", ("/api/v1/files/upload", {"project_id": self.project_id}, {"file": (f"file.{ext}", data, mime)}), check)
         return d
 
     def _read_obj_val(self, r: ObjectRef) -> Any:
-        res = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest})
-        obj = res.get("obj")
+        obj = self._read_object(r.project_id, r.name, r.digest)
         if obj is None:
             raise LookupError(f"object not found: {r.uri()}")
-        return obj.get("val")
+        return obj.get("value")
 
     def ref(self, s: Union[str, Ref]) -> Ref:
         if isinstance(s, Ref):
@@ -1213,31 +1308,33 @@ class WeftClient:
         return ObjectRef(self.entity, self.project, name, version or "latest")
 
     def get(self, ref: Union[str, Ref]) -> Any:
-        """Load the value a ref points to (objects, datasets, tables, calls, paths)."""
+        """Read what a ref points to (objects, functions, datasets, tables, spans, paths).
+
+        ``ref`` is a ``Ref``, a ``weft:///`` URI or ``"name"``, ``"name:v3"``,
+        ``"name:latest"``, ``"name:<alias>"`` or ``"name:<digest>"``."""
         r = self.ref(ref)
         self.flush()
-        if isinstance(r, CallRef) and not r.extra:
-            return self.get_call(r.id)
+        if isinstance(r, SpanRef) and not r.extra:
+            return self.span(r.id)
         if isinstance(r, TableRef) and not r.extra:
             return Table(ref=r, client=self)
         if isinstance(r, ObjectRef) and not r.extra:
-            res = self._http.post("/obj/read", {"project_id": r.project_id, "object_id": r.name, "digest": r.digest})
-            obj = res.get("obj")
+            obj = self._read_object(r.project_id, r.name, r.digest)
             if obj is None:
                 raise LookupError(f"object not found: {r.uri()}")
-            cls = OpRef if obj.get("kind") == "op" else ObjectRef
+            cls = FunctionRef if obj.get("kind") == "function" else ObjectRef
             real = cls(r.entity, r.project, r.name, obj.get("digest", r.digest))
-            return from_val(obj.get("val"), self, real)
-        res = self._http.post("/refs/read_batch", {"refs": [r.uri()]})
-        vals = res.get("vals") or [None]
+            return from_val(obj.get("value"), self, real)
+        res = self._http.post("/api/v1/refs/read", {"refs": [r.uri()]})
+        vals = res.get("items") or [None]
         return from_val(vals[0], self, None)
 
     # ------------------------------------------------------------------ LLM
     def completions_create(self, inputs: Dict[str, Any], track_llm_call: bool = False) -> Dict[str, Any]:
-        """Run a chat completion through the server's ``/completions/create``."""
+        """Run a chat completion through the server (``POST /api/v1/completions``)."""
         res = self._http.post(
-            "/completions/create",
-            {"project_id": self.project_id, "inputs": inputs, "track_llm_call": track_llm_call},
+            "/api/v1/completions",
+            {"project_id": self.project_id, "inputs": inputs, "track": track_llm_call},
             timeout=300,
         )
         resp = res.get("response") or {}
@@ -1384,8 +1481,16 @@ def flush(timeout: Optional[float] = None) -> bool:
     return c.flush(timeout) if c is not None else True
 
 
+def save(obj: Any, name: Optional[str] = None) -> Any:
+    """Save a version of ``obj`` (an object, dataset, model, prompt, scorer, traced
+    function or JSON value) under ``name`` and return its ref."""
+    return require_client().save(obj, name=name)
+
+
 def publish(obj: Any, name: Optional[str] = None) -> Any:
-    return require_client().publish(obj, name=name)
+    """Deprecated: use ``weft.save(obj, name)``."""
+    deprecated_call("weft.publish()", "weft.save()")
+    return require_client().save(obj, name=name)
 
 
 def ref(s: Union[str, Ref]) -> Ref:
@@ -1394,16 +1499,17 @@ def ref(s: Union[str, Ref]) -> Ref:
 
 
 def get(s: Union[str, Ref]) -> Any:
+    """Read what a ref points to: ``weft.get(ref)``, ``weft.get("name:v3")``, ``weft.get(uri)``."""
     return require_client().get(s)
 
 
 def link_to_registry(obj: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Link any published object version into a registry collection; see ``WeftClient.link_to_registry``."""
+    """Link any saved object version into a registry collection; see ``WeftClient.link_to_registry``."""
     return require_client().link_to_registry(obj, target_path=target_path, aliases=aliases)
 
 
 def link_prompt_to_registry(prompt: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Link a published prompt version into a registry collection (global client)."""
+    """Link a saved prompt version into a registry collection (global client)."""
     return require_client().link_prompt_to_registry(prompt, target_path=target_path, aliases=aliases)
 
 
@@ -1454,6 +1560,6 @@ def list_aliases() -> List[str]:
 
 
 def set_run(run_id: Optional[str], step: Any = None) -> None:
-    """Link calls of the global client to a run; see ``WeftClient.set_run``."""
+    """Link spans of the global client to a run; see ``WeftClient.set_run``."""
     require_client().set_run(run_id, step)
 

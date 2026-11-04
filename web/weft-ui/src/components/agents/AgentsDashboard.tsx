@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { agentsApi, agentUrl, conversationUrl, signalsApi, type SpanGroup } from '../../api/agents'
 import type { Query } from '../../api/types'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { ErrorBox, Section, Spinner } from '../common'
 import { AgentCharts } from './AgentCharts'
 import { compact, errorRate, fmtPct, windowStart } from './agentUtils'
@@ -201,7 +201,7 @@ export function AgentsDashboard({ projectId, range, setRange, onFilterSpans }: {
           ) : (
             <div className="recent-list">
               {(recentSpans.data?.spans ?? []).map((s) => (
-                <Link key={s.span_id} to={callUrl(projectId, s.span_id)} className="recent-item">
+                <Link key={s.span_id} to={spanUrl(projectId, s.span_id)} className="recent-item">
                   <div className="row small">
                     <span className={`kind-dot kind-${s.status_code === 'ERROR' ? 'error' : s.operation_name === 'chat' ? 'llm' : s.operation_name === 'execute_tool' ? 'tool' : s.operation_name === 'invoke_agent' ? 'agent' : 'other'}`} />
                     <span className="mono truncate grow">{s.display_name}</span>

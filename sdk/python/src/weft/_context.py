@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional, Tuple
 from ._ids import uuid7
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ._call import Call
+    from ._call import Span as Call
 
 _call_stack: contextvars.ContextVar[Tuple["Call", ...]] = contextvars.ContextVar("weft_call_stack", default=())
 _attributes: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("weft_attributes", default={})
@@ -30,6 +30,11 @@ class ThreadContext:
     # created whose parent is this call are turns.
     entry_parent_id: Optional[str]
     turn_id: Optional[str] = None
+
+    @property
+    def session_id(self) -> str:
+        """The session (conversation) id the block's spans get."""
+        return self.thread_id
 
 
 _thread: contextvars.ContextVar[Optional[ThreadContext]] = contextvars.ContextVar("weft_thread", default=None)
@@ -68,25 +73,39 @@ def reset_team(token: contextvars.Token) -> None:
         _team.set(None)
 
 
-def get_current_call() -> Optional["Call"]:
-    """Return the innermost call being traced in this context, if any."""
+def get_current_span() -> Optional["Call"]:
+    """Return the innermost span being recorded in this context, if any."""
     stack = _call_stack.get()
     return stack[-1] if stack else None
 
 
-class NoCurrentCallError(Exception):
-    """Raised by ``require_current_call`` outside a traced op."""
+# Earlier name of get_current_span (used throughout the SDK).
+get_current_call = get_current_span
 
 
-def require_current_call() -> "Call":
-    """The call of the op that is running now.
+class NoCurrentSpanError(Exception):
+    """Raised by ``require_current_span`` outside a traced function."""
 
-    Raises ``NoCurrentCallError`` when called outside an op (or before
-    ``weft.init``)."""
+
+# Earlier name of NoCurrentSpanError.
+NoCurrentCallError = NoCurrentSpanError
+
+
+def require_current_span() -> "Call":
+    """The span of the traced function that is running now.
+
+    Raises ``NoCurrentSpanError`` when called outside a traced function (or
+    before ``weft.init``)."""
     call = get_current_call()
     if call is None:
-        raise NoCurrentCallError("no op is running: call require_current_call() from inside a @weft.op function, after weft.init()")
+        raise NoCurrentSpanError(
+            "no traced function is running: call require_current_span() from inside a @weft.trace function, after weft.init()"
+        )
     return call
+
+
+# Earlier name of require_current_span.
+require_current_call = require_current_span
 
 
 def push_call(call: "Call") -> contextvars.Token:
@@ -150,11 +169,12 @@ def attributes(attrs: Dict[str, Any]) -> Iterator[None]:
 
 @contextlib.contextmanager
 def thread(thread_id: Optional[str] = None) -> Iterator[ThreadContext]:
-    """Group calls into a conversation thread.
+    """Group spans into a conversation (session).
 
-    Every call started inside the block gets ``thread_id``. Calls started
-    directly inside the block (not nested in another call from the block) are
-    *turns*: their ``turn_id`` is their own id; descendants inherit it.
+    Every span started inside the block gets ``session_id`` = ``thread_id``.
+    Spans started directly inside the block (not nested in another span from
+    the block) are *turns*: their ``turn_id`` is their own id; descendants
+    inherit it.
     """
     parent = get_current_call()
     ctx = ThreadContext(thread_id=thread_id or uuid7(), entry_parent_id=parent.id if parent else None)

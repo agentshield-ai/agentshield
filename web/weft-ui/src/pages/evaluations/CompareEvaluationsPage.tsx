@@ -16,7 +16,7 @@ import { DELTA_FORMATS, fmtDeltaAs, parseDeltaFormat, type DeltaFormat } from '.
 import { decodeLb, encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
-import { callUrl, evaluationsUrl, refUrl } from '../../lib/urls'
+import { spanUrl, evaluationsUrl, refUrl } from '../../lib/urls'
 
 const tooltipStyle = {
   contentStyle: { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text)' },
@@ -30,7 +30,7 @@ function useLabels(evals: CompareEvaluation[]) {
   return useMemo(() => {
     const counts: Record<string, number> = {}
     evals.forEach((e) => (counts[e.model_name] = (counts[e.model_name] ?? 0) + 1))
-    return Object.fromEntries(evals.map((e) => [e.call_id, counts[e.model_name] > 1 ? `${e.model_name} · ${e.call_id.slice(-4)}` : e.model_name || e.call_id.slice(-8)]))
+    return Object.fromEntries(evals.map((e) => [e.id, counts[e.model_name] > 1 ? `${e.model_name} · ${e.id.slice(-4)}` : e.model_name || e.id.slice(-8)]))
   }, [evals])
 }
 
@@ -162,10 +162,10 @@ function CompareBody({
   const labels = useLabels(evals)
   const agentRuns = useAgentEvalRuns(
     projectId,
-    useMemo(() => evals.map((e) => e.call_id), [evals]),
+    useMemo(() => evals.map((e) => e.id), [evals]),
   ).data
-  const colorOf = useMemo(() => Object.fromEntries(evals.map((e, i) => [e.call_id, seriesColor(i)])), [evals])
-  const baseline = evals.find((e) => e.call_id === baselineId) ?? evals[0]
+  const colorOf = useMemo(() => Object.fromEntries(evals.map((e, i) => [e.id, seriesColor(i)])), [evals])
+  const baseline = evals.find((e) => e.id === baselineId) ?? evals[0]
   const [lowerOverrides, setLowerOverrides] = useState<Record<string, boolean>>({})
   const lowerBetter = (key: string) => lowerOverrides[key] ?? defaultLowerIsBetter(key)
   const metrics = useMemo(() => {
@@ -190,19 +190,19 @@ function CompareBody({
       )}
       <div className="card-grid">
         {evals.map((e) => {
-          const isBase = e.call_id === baseline?.call_id
+          const isBase = e.id === baseline?.id
           const modelUrl = e.model_ref ? refUrl(e.model_ref) : null
           const evalUrl = e.evaluation_ref ? refUrl(e.evaluation_ref) : null
           const ml = toNum((e.summary as Any)?.model_latency?.mean)
           return (
-            <div key={e.call_id} className={`eval-card ${isBase ? 'baseline' : ''}`}>
+            <div key={e.id} className={`eval-card ${isBase ? 'baseline' : ''}`}>
               <div className="row" style={{ minWidth: 0 }}>
-                <span className="swatch" style={{ background: colorOf[e.call_id] }} />
-                <b className="truncate grow" title={labels[e.call_id]}>
-                  {modelUrl ? <Link to={modelUrl}>{labels[e.call_id]}</Link> : labels[e.call_id]}
+                <span className="swatch" style={{ background: colorOf[e.id] }} />
+                <b className="truncate grow" title={labels[e.id]}>
+                  {modelUrl ? <Link to={modelUrl}>{labels[e.id]}</Link> : labels[e.id]}
                 </b>
                 {evals.length > 1 && (
-                  <button className="btn ghost sm icon" title="Remove from comparison" onClick={() => onRemove(e.call_id)}>
+                  <button className="btn ghost sm icon" title="Remove from comparison" onClick={() => onRemove(e.id)}>
                     ✕
                   </button>
                 )}
@@ -220,17 +220,17 @@ function CompareBody({
                 <span className="muted">Duration {fmtDuration(evalDurationMs(e))}</span>
                 {ml != null && <span className="muted">Model latency {fmtDuration(ml * 1000)}</span>}
               </div>
-              {agentRuns?.get(e.call_id) && <AgentActivity projectId={projectId} run={agentRuns.get(e.call_id)!} />}
+              {agentRuns?.get(e.id) && <AgentActivity projectId={projectId} run={agentRuns.get(e.id)!} />}
               <div className="row">
                 {isBase ? (
                   <span className="badge accent">Baseline</span>
                 ) : (
-                  <button className="btn sm" onClick={() => setBaseline(e.call_id)}>
+                  <button className="btn sm" onClick={() => setBaseline(e.id)}>
                     Set as baseline
                   </button>
                 )}
                 <span className="grow" />
-                <Link className="btn sm ghost" to={callUrl(projectId, e.call_id)}>
+                <Link className="btn sm ghost" to={spanUrl(projectId, e.id)}>
                   Open run →
                 </Link>
               </div>
@@ -244,12 +244,12 @@ function CompareBody({
         metrics={metrics}
         labels={labels}
         colorOf={colorOf}
-        baselineId={baseline.call_id}
+        baselineId={baseline.id}
         lowerBetter={lowerBetter}
         toggleLower={(k) => setLowerOverrides((o) => ({ ...o, [k]: !lowerBetter(k) }))}
       />
-      {data.rows.length > 0 && <ScatterSection data={data} labels={labels} colorOf={colorOf} baselineId={baseline.call_id} />}
-      <RowsSection data={data} projectId={projectId} labels={labels} colorOf={colorOf} baselineId={baseline.call_id} metrics={metrics} lowerBetter={lowerBetter} agentRuns={agentRuns} />
+      {data.rows.length > 0 && <ScatterSection data={data} labels={labels} colorOf={colorOf} baselineId={baseline.id} />}
+      <RowsSection data={data} projectId={projectId} labels={labels} colorOf={colorOf} baselineId={baseline.id} metrics={metrics} lowerBetter={lowerBetter} agentRuns={agentRuns} />
     </>
   )
 }
@@ -365,7 +365,7 @@ function MetricsSection({
         {showCharts && (
           <div className="card-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
             {numeric.slice(0, 12).map((m) => {
-              const rows = evals.map((e) => ({ id: e.call_id, name: labels[e.call_id], value: toNum(m.values[e.call_id]) }))
+              const rows = evals.map((e) => ({ id: e.id, name: labels[e.id], value: toNum(m.values[e.id]) }))
               const best = rows.reduce<number | null>((b, r) => (r.value == null ? b : b == null ? r.value : lowerBetter(m.key) ? Math.min(b, r.value) : Math.max(b, r.value)), null)
               return (
                 <div key={m.key} className="eval-card" style={{ gap: 2 }}>
@@ -402,13 +402,13 @@ function MetricsSection({
                 <th>Metric</th>
                 <th title="Click to flip whether lower values are better">Better</th>
                 {evals.map((e) => (
-                  <th key={e.call_id} className="num">
+                  <th key={e.id} className="num">
                     <span className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
-                      <span className="swatch" style={{ background: colorOf[e.call_id] }} />
+                      <span className="swatch" style={{ background: colorOf[e.id] }} />
                       <span className="truncate" style={{ maxWidth: 160 }}>
-                        {labels[e.call_id]}
+                        {labels[e.id]}
                       </span>
-                      {e.call_id === baselineId && <span className="badge accent">base</span>}
+                      {e.id === baselineId && <span className="badge accent">base</span>}
                     </span>
                   </th>
                 ))}
@@ -418,7 +418,7 @@ function MetricsSection({
               {metrics.map((m) => {
                 const base = toNum(m.values[baselineId])
                 const lower = lowerBetter(m.key)
-                const nums = evals.map((e) => toNum(m.values[e.call_id])).filter((x): x is number => x != null)
+                const nums = evals.map((e) => toNum(m.values[e.id])).filter((x): x is number => x != null)
                 const best = nums.length > 1 ? (lower ? Math.min(...nums) : Math.max(...nums)) : null
                 return (
                   <tr key={m.key}>
@@ -429,12 +429,12 @@ function MetricsSection({
                       </button>
                     </td>
                     {evals.map((e) => {
-                      const raw = m.values[e.call_id]
+                      const raw = m.values[e.id]
                       const v = toNum(raw)
                       return (
-                        <td key={e.call_id} className={`num ${best != null && v === best ? 'best' : ''}`}>
+                        <td key={e.id} className={`num ${best != null && v === best ? 'best' : ''}`}>
                           <div className="mono">{fmtMetricValue(raw, m.kind)}</div>
-                          {e.call_id !== baselineId && <Delta v={v} base={base} lower={lower} kind={m.kind} dfmt={dfmt} />}
+                          {e.id !== baselineId && <Delta v={v} base={base} lower={lower} kind={m.kind} dfmt={dfmt} />}
                         </td>
                       )
                     })}
@@ -463,7 +463,7 @@ function ScatterSection({
   baselineId: string
 }) {
   const evals = data.evaluations
-  const aggs = useMemo(() => data.rows.map((r) => Object.fromEntries(evals.map((e) => [e.call_id, rowAgg(r.results[e.call_id])]))), [data.rows, evals])
+  const aggs = useMemo(() => data.rows.map((r) => Object.fromEntries(evals.map((e) => [e.id, rowAgg(r.results[e.id])]))), [data.rows, evals])
   const keys = useMemo(() => {
     const s = new Set<string>()
     aggs.forEach((a) => Object.values(a).forEach((x) => Object.keys(x).forEach((k) => s.add(k))))
@@ -479,9 +479,9 @@ function ScatterSection({
   const [mode, setMode] = useState<'metrics' | 'models'>(evals.length > 1 ? 'models' : 'metrics')
   const [xKey, setXKey] = useState<string>(scoreKeys[0] ?? keys[0] ?? '')
   const [yKey, setYKey] = useState<string>(scoreKeys[1] ?? (keys.includes('model_latency') ? 'model_latency' : (keys[1] ?? keys[0] ?? '')))
-  const [challenger, setChallenger] = useState<string>(evals.find((e) => e.call_id !== baselineId)?.call_id ?? '')
+  const [challenger, setChallenger] = useState<string>(evals.find((e) => e.id !== baselineId)?.id ?? '')
   if (!keys.length) return null
-  const challengerId = evals.some((e) => e.call_id === challenger && e.call_id !== baselineId) ? challenger : (evals.find((e) => e.call_id !== baselineId)?.call_id ?? '')
+  const challengerId = evals.some((e) => e.id === challenger && e.id !== baselineId) ? challenger : (evals.find((e) => e.id !== baselineId)?.id ?? '')
 
   const keySelect = (v: string, set: (s: string) => void) => (
     <select className="input" value={v} onChange={(e) => set(e.target.value)} style={{ height: 26, fontSize: 12 }}>
@@ -503,11 +503,11 @@ function ScatterSection({
   let yLabel = yKey
   if (mode === 'metrics' || !challengerId) {
     series = evals.map((e) => ({
-      id: e.call_id,
-      name: labels[e.call_id],
-      color: colorOf[e.call_id],
+      id: e.id,
+      name: labels[e.id],
+      color: colorOf[e.id],
       points: aggs
-        .map((a, i) => ({ x: jitter(a[e.call_id]?.[xKey], i), y: jitter(a[e.call_id]?.[yKey], i + 31), row: i }))
+        .map((a, i) => ({ x: jitter(a[e.id]?.[xKey], i), y: jitter(a[e.id]?.[yKey], i + 31), row: i }))
         .filter((p): p is { x: number; y: number; row: number } => p.x != null && p.y != null),
     }))
   } else {
@@ -567,10 +567,10 @@ function ScatterSection({
             <span className="muted">Challenger</span>
             <select className="input" value={challengerId} onChange={(e) => setChallenger(e.target.value)} style={{ height: 26, fontSize: 12 }}>
               {evals
-                .filter((e) => e.call_id !== baselineId)
+                .filter((e) => e.id !== baselineId)
                 .map((e) => (
-                  <option key={e.call_id} value={e.call_id}>
-                    {labels[e.call_id]}
+                  <option key={e.id} value={e.id}>
+                    {labels[e.id]}
                   </option>
                 ))}
             </select>
@@ -652,19 +652,19 @@ function RowsSection({
   const enriched = useMemo(
     () =>
       data.rows.map((r, idx) => {
-        const aggs = Object.fromEntries(evals.map((e) => [e.call_id, rowAgg(r.results[e.call_id])]))
-        const outputs = evals.map((e) => JSON.stringify(r.results[e.call_id]?.[0]?.output ?? null))
+        const aggs = Object.fromEntries(evals.map((e) => [e.id, rowAgg(r.results[e.id])]))
+        const outputs = evals.map((e) => JSON.stringify(r.results[e.id]?.[0]?.output ?? null))
         const keys = new Set<string>()
         Object.values(aggs).forEach((a) => Object.keys(a).forEach((k) => !NON_SCORE_KEYS.has(k) && keys.add(k)))
         const scoreKeys = sortMetricKeys([...keys])
-        const scoreDiffer = scoreKeys.some((k) => new Set(evals.map((e) => JSON.stringify(aggs[e.call_id]?.[k] ?? null))).size > 1)
+        const scoreDiffer = scoreKeys.some((k) => new Set(evals.map((e) => JSON.stringify(aggs[e.id]?.[k] ?? null))).size > 1)
         let regressed = false
         let improved = false
         for (const e of evals) {
-          if (e.call_id === baselineId) continue
+          if (e.id === baselineId) continue
           for (const k of scoreKeys) {
             const b = toNum(aggs[baselineId]?.[k])
-            const v = toNum(aggs[e.call_id]?.[k])
+            const v = toNum(aggs[e.id]?.[k])
             if (b == null || v == null || Math.abs(v - b) < 1e-12) continue
             const better = lowerFor(k) ? v < b : v > b
             if (better) improved = true
@@ -731,13 +731,13 @@ function RowsSection({
                   </th>
                   <th style={{ minWidth: 200 }}>Inputs</th>
                   {evals.map((e) => (
-                    <th key={e.call_id} style={{ minWidth: 220 }}>
+                    <th key={e.id} style={{ minWidth: 220 }}>
                       <span className="row" style={{ gap: 6 }}>
-                        <span className="swatch" style={{ background: colorOf[e.call_id] }} />
+                        <span className="swatch" style={{ background: colorOf[e.id] }} />
                         <span className="truncate" style={{ maxWidth: 200 }}>
-                          {labels[e.call_id]}
+                          {labels[e.id]}
                         </span>
-                        {e.call_id === baselineId && <span className="badge accent">base</span>}
+                        {e.id === baselineId && <span className="badge accent">base</span>}
                       </span>
                     </th>
                   ))}
@@ -751,9 +751,9 @@ function RowsSection({
                       <InputsPreview inputs={x.r.inputs} />
                     </td>
                     {evals.map((e) => {
-                      const res = x.r.results[e.call_id]
+                      const res = x.r.results[e.id]
                       return (
-                        <td key={e.call_id}>
+                        <td key={e.id}>
                           {!res?.length ? (
                             <span className="faint small">no result</span>
                           ) : (
@@ -761,7 +761,7 @@ function RowsSection({
                               <span className="small" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
                                 {preview(res[0].output, 240) || <span className="faint">empty</span>}
                               </span>
-                              <ScoreChips aggs={x.aggs} id={e.call_id} baselineId={baselineId} keys={x.scoreKeys} lowerFor={lowerFor} />
+                              <ScoreChips aggs={x.aggs} id={e.id} baselineId={baselineId} keys={x.scoreKeys} lowerFor={lowerFor} />
                               {res.length > 1 && <span className="hint">{res.length} trials (mean)</span>}
                             </div>
                           )}
@@ -796,34 +796,34 @@ function RowsSection({
             <ValueView value={opened.r.inputs} projectId={projectId} />
           </div>
           {evals.map((e) => {
-            const res = opened.r.results[e.call_id] ?? []
+            const res = opened.r.results[e.id] ?? []
             return (
-              <div key={e.call_id} className="card">
+              <div key={e.id} className="card">
                 <div className="card-header">
-                  <span className="swatch" style={{ background: colorOf[e.call_id] }} />
-                  <b className="grow truncate">{labels[e.call_id]}</b>
-                  {e.call_id === baselineId && <span className="badge accent">baseline</span>}
+                  <span className="swatch" style={{ background: colorOf[e.id] }} />
+                  <b className="grow truncate">{labels[e.id]}</b>
+                  {e.id === baselineId && <span className="badge accent">baseline</span>}
                 </div>
                 <div className="card-body col" style={{ gap: 10 }}>
                   {res.length === 0 && <span className="faint">No result for this example.</span>}
                   {res.map((t, ti) => (
-                    <div key={t.call_id || ti} className="col" style={{ gap: 6 }}>
+                    <div key={t.span_id || ti} className="col" style={{ gap: 6 }}>
                       <div className="row small muted wrap">
                         {res.length > 1 && <span className="badge">trial {t.trial}</span>}
                         <span>latency {t.model_latency != null ? fmtDuration(t.model_latency * 1000) : '—'}</span>
                         <span>{fmtNumber(t.total_tokens)} tokens</span>
                         <span className="grow" />
-                        {t.call_id && <Link to={callUrl(projectId, t.call_id)}>predict_and_score call →</Link>}
+                        {t.span_id && <Link to={spanUrl(projectId, t.span_id)}>predict_and_score span →</Link>}
                       </div>
-                      {t.call_id && <LinkedCallsFor projectId={projectId} callId={t.call_id} />}
-                      {t.call_id && agentRuns?.has(e.call_id) && <PredictionAgentLinks projectId={projectId} runId={e.call_id} pasId={t.call_id} />}
+                      {t.span_id && <LinkedCallsFor projectId={projectId} callId={t.span_id} />}
+                      {t.span_id && agentRuns?.has(e.id) && <PredictionAgentLinks projectId={projectId} runId={e.id} pasId={t.span_id} />}
                       <div>
                         <div className="small muted">Output</div>
                         <ValueView value={t.output} projectId={projectId} markdown />
                       </div>
                       <div>
                         <div className="small muted">Scores</div>
-                        <ScoreChips aggs={{ [e.call_id]: rowAgg([t]), [baselineId]: opened.aggs[baselineId] }} id={e.call_id} baselineId={baselineId} keys={opened.scoreKeys} lowerFor={lowerFor} />
+                        <ScoreChips aggs={{ [e.id]: rowAgg([t]), [baselineId]: opened.aggs[baselineId] }} id={e.id} baselineId={baselineId} keys={opened.scoreKeys} lowerFor={lowerFor} />
                         <details style={{ marginTop: 4 }}>
                           <summary className="small faint" style={{ cursor: 'pointer' }}>
                             Raw scores

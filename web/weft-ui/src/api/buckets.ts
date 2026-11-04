@@ -1,5 +1,5 @@
 // Reference buckets ("bring your own bucket"): customer S3 / GCS buckets whose
-// objects /files/resolve_url presigns. See docs/weft/API.md "Reference buckets".
+// objects /api/v1/files/resolve presigns. See docs/weft/API.md "Reference buckets".
 import { get, post } from './client'
 
 export type BucketProvider = 's3' | 'gcs'

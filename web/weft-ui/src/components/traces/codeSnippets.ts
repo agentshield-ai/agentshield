@@ -1,5 +1,5 @@
 // Code snippets that reproduce the current traces query (unit tested).
-import type { CallsFilter, Query, SortBy } from '../../api/types'
+import type { SpansFilter, Query, SortBy } from '../../api/types'
 
 /** Render a JSON value as a Python literal (True/False/None, repr-style strings). */
 export function toPython(v: unknown, indent = 0): string {
@@ -26,20 +26,20 @@ export function toPython(v: unknown, indent = 0): string {
 
 export interface QuerySpec {
   projectId: string
-  filter?: CallsFilter
+  filter?: SpansFilter
   query?: Query
   search?: string
   sortBy?: SortBy[]
 }
 
-function cleanFilter(f?: CallsFilter): CallsFilter | undefined {
+function cleanFilter(f?: SpansFilter): SpansFilter | undefined {
   if (!f) return undefined
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(f)) {
     if (v === undefined || v === false || (Array.isArray(v) && !v.length)) continue
     out[k] = v
   }
-  return Object.keys(out).length ? (out as CallsFilter) : undefined
+  return Object.keys(out).length ? (out as SpansFilter) : undefined
 }
 
 function isDefaultSort(s?: SortBy[]) {
@@ -57,14 +57,14 @@ export function pythonSnippet(q: QuerySpec, origin: string): string {
   return `import weft
 
 client = weft.init(${JSON.stringify(q.projectId)}, server_url=${JSON.stringify(origin)})
-calls = client.get_calls(
+spans = client.spans(
 ${args.map((a) => `    ${a},`).join('\n')}
 )
-for call in calls:
-    print(call.id, call.op_name, call.output)`
+for span in spans:
+    print(span.id, span.name, span.output)`
 }
 
-/** JSON body of /calls/export for this query. */
+/** JSON body of /api/v1/spans/export for this query. */
 export function exportBody(q: QuerySpec, format: 'csv' | 'jsonl' | 'json', extra: Record<string, unknown> = {}): Record<string, unknown> {
   const body: Record<string, unknown> = { project_id: q.projectId }
   const filter = cleanFilter(q.filter)
@@ -83,8 +83,8 @@ export function shQuote(s: string): string {
 
 export function curlSnippet(q: QuerySpec, origin: string, format: 'csv' | 'jsonl' | 'json', auth: boolean): string {
   const body = JSON.stringify(exportBody(q, format), null, 2)
-  const out = `calls.${format}`
-  return `curl -sS -X POST ${origin}/calls/export \\
+  const out = `spans.${format}`
+  return `curl -sS -X POST ${origin}/api/v1/spans/export \\
   -H 'Content-Type: application/json'${auth ? ` \\\n  -H "Authorization: Bearer $WEFT_API_KEY"` : ''} \\
   -d ${shQuote(body)} \\
   -o ${out}`

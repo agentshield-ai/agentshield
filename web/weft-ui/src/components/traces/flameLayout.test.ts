@@ -1,24 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import { buildTree } from './callUtils'
 import { composeOps, flameLayout, flattenComposed } from './flameLayout'
 
 const T0 = Date.parse('2026-01-01T00:00:00Z')
-function call(id: string, parent: string | null, op: string, startMs: number, endMs: number | null, err = false): Call {
+function call(id: string, parent: string | null, op: string, startMs: number, endMs: number | null, err = false): Span {
   return {
     id,
     parent_id: parent,
     trace_id: 't',
     project_id: 'e/p',
-    op_name: `weft:///e/p/op/${op}:abc`,
+    name: `weft:///e/p/function/${op}:abc`,
     started_at: new Date(T0 + startMs).toISOString(),
     ended_at: endMs == null ? null : new Date(T0 + endMs).toISOString(),
-    exception: err ? 'boom' : null,
+    error: err ? 'boom' : null,
     inputs: {},
     output: null,
     attributes: {},
     summary: {},
-  } as unknown as Call
+  } as unknown as Span
 }
 
 const calls = [
@@ -61,7 +61,7 @@ describe('flame layout', () => {
 
 describe('code composition', () => {
   it('merges repeated sibling ops and their children', () => {
-    const label = (c: Call) => c.op_name.split('/op/')[1].split(':')[0]
+    const label = (c: Span) => c.name.split('/function/')[1].split(':')[0]
     const ops = composeOps(buildTree(calls), label, T0 + 5000)
     expect(ops).toHaveLength(1)
     const kids = ops[0].children

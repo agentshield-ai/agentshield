@@ -11,7 +11,7 @@ import { mergeHooks } from '../install.mjs';
 import { loadFixture, recorder, replay } from './replay.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const opBase = (c) => c.op_name;
+const opBase = (c) => c.name;
 
 test('a recorded session becomes one conversation with turns, LLM, tool and sub-agent calls', async () => {
   const fx = loadFixture();
@@ -24,11 +24,11 @@ test('a recorded session becomes one conversation with turns, LLM, tool and sub-
   const calls = [...rec.calls().values()];
   for (const c of calls) {
     assert.equal(c.project_id, 'test/claude-code');
-    assert.equal(c.thread_id, sid, `${c.op_name} thread`);
-    assert.ok(c.started_at && c.ended_at, `${c.op_name} times`);
+    assert.equal(c.session_id, sid, `${c.name} thread`);
+    assert.ok(c.started_at && c.ended_at, `${c.name} times`);
     assert.equal(c.attributes['gen_ai.conversation.id'], sid);
   }
-  const turns = calls.filter((c) => c.op_name === 'claude_code.turn').sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const turns = calls.filter((c) => c.name === 'claude_code.turn').sort((a, b) => a.started_at.localeCompare(b.started_at));
   assert.equal(turns.length, 2);
   const [t1, t2] = turns;
   assert.equal(t1.turn_id, t1.id);
@@ -43,10 +43,10 @@ test('a recorded session becomes one conversation with turns, LLM, tool and sub-
   assert.equal(t1.output.messages[0].content, 'Done: there are two files and a.txt looks fine.');
   assert.equal(t1.started_at, '2026-11-02T10:00:01.000Z');
   assert.equal(t1.ended_at, '2026-11-02T10:00:06.600Z');
-  assert.equal(t1.exception, undefined);
+  assert.equal(t1.error, undefined);
 
   const inT1 = calls.filter((c) => c.trace_id === t1.id);
-  const llm = inT1.filter((c) => c.op_name === 'claude_code.llm');
+  const llm = inT1.filter((c) => c.name === 'claude_code.llm');
   assert.equal(llm.length, 5, 'msg_01, msg_02, msg_03 and the sub-agent msg_s1, msg_s2');
   const m1 = llm.find((c) => c.attributes['gen_ai.response.id'] === 'msg_01');
   assert.equal(m1.parent_id, t1.id);
@@ -54,7 +54,7 @@ test('a recorded session becomes one conversation with turns, LLM, tool and sub-
   assert.deepEqual(m1.output.choices[0].message.content.map((b) => b.type), ['text', 'tool_use'], 'both transcript lines of one message');
   assert.equal(m1.inputs.messages[0].content, 'List the files and review a.txt');
 
-  const bash = inT1.find((c) => c.op_name === 'claude_code.tool.Bash');
+  const bash = inT1.find((c) => c.name === 'claude_code.tool.Bash');
   assert.equal(bash.parent_id, t1.id);
   assert.equal(bash.display_name, 'Bash: ls');
   assert.equal(bash.attributes['gen_ai.tool.name'], 'Bash');
@@ -63,20 +63,20 @@ test('a recorded session becomes one conversation with turns, LLM, tool and sub-
   assert.equal(bash.ended_at, '2026-11-02T10:00:02.500Z');
   assert.equal(bash.output.stdout, 'a.txt\nb.txt');
 
-  const sub = inT1.find((c) => c.op_name === 'claude_code.subagent');
+  const sub = inT1.find((c) => c.name === 'claude_code.subagent');
   assert.equal(sub.parent_id, t1.id);
   assert.equal(sub.attributes['gen_ai.agent.name'], 'code-reviewer');
   assert.equal(sub.attributes['gen_ai.operation.name'], 'invoke_agent');
   assert.equal(sub.output.messages[0].content, 'a.txt looks fine.');
-  const read = inT1.find((c) => c.op_name === 'claude_code.tool.Read');
+  const read = inT1.find((c) => c.name === 'claude_code.tool.Read');
   assert.equal(read.parent_id, sub.id, 'sub-agent tool nests under the sub-agent');
   const subLLM = llm.filter((c) => c.parent_id === sub.id);
   assert.equal(subLLM.length, 2);
   assert.equal(subLLM[0].attributes['gen_ai.request.model'], 'claude-haiku-4-5');
 
-  const failed = calls.find((c) => c.op_name === 'claude_code.tool.Bash' && c.trace_id === t2.id);
-  assert.match(failed.exception, /Permission denied/);
-  assert.equal(t2.exception, undefined);
+  const failed = calls.find((c) => c.name === 'claude_code.tool.Bash' && c.trace_id === t2.id);
+  assert.match(failed.error, /Permission denied/);
+  assert.equal(t2.error, undefined);
   assert.equal(t2.output.messages[0].content, 'I could not delete b.txt: permission denied.');
 
   // SessionEnd: the session's local files are removed once everything is sent.
@@ -112,9 +112,9 @@ test('an unfinished turn is closed as interrupted when the next prompt arrives',
   const { cfg, sid } = replay(fx);
   const rec = recorder();
   await flushSession(cfg, sid, { fetchImpl: rec.fetchImpl });
-  const turns = [...rec.calls().values()].filter((c) => c.op_name === 'claude_code.turn').sort((a, b) => a.started_at.localeCompare(b.started_at));
-  assert.match(turns[0].exception, /interrupted/);
-  assert.equal(turns[1].exception, undefined);
+  const turns = [...rec.calls().values()].filter((c) => c.name === 'claude_code.turn').sort((a, b) => a.started_at.localeCompare(b.started_at));
+  assert.match(turns[0].error, /interrupted/);
+  assert.equal(turns[1].error, undefined);
 });
 
 test('content capture can be turned off; usage and names are kept', async () => {
@@ -123,7 +123,7 @@ test('content capture can be turned off; usage and names are kept', async () => 
   await flushSession(cfg, sid, { fetchImpl: rec.fetchImpl });
   const calls = [...rec.calls().values()];
   assert.ok(calls.every((c) => Object.keys(c.inputs).length === 0 && c.output === null));
-  const turn = calls.find((c) => c.op_name === 'claude_code.turn');
+  const turn = calls.find((c) => c.name === 'claude_code.turn');
   assert.equal(turn.attributes['gen_ai.agent.name'], 'my-claude');
   assert.ok(calls.some((c) => c.summary?.usage));
 });

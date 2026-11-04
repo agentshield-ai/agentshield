@@ -122,16 +122,16 @@ def test_op_based_agents_with_team_handoff_and_reasoning(live):
     """Plain ops with agent attributes: nested runs of another agent are delegations."""
     sid = f"ops-{uuid.uuid4().hex[:8]}"
 
-    @weft.op(kind="agent")
+    @weft.trace(kind="agent")
     def researcher(q):
         weft.reasoning("Only one source is needed.")
         return lookup(q)
 
-    @weft.op(kind="tool")
+    @weft.trace(kind="tool")
     def lookup(q):
         return f"facts about {q}"
 
-    @weft.op(kind="agent")
+    @weft.trace(kind="agent")
     def planner(q):
         weft.reasoning("Ask the researcher.")
         with weft.attributes({"gen_ai.agent.name": "researcher"}):

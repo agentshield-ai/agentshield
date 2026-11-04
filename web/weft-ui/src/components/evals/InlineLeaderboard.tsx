@@ -34,12 +34,12 @@ function SaveLeaderboardModal({
       if (!id) throw new Error('Enter a name')
       const val = {
         ...classVal('Leaderboard', [], { name: id, description, columns }),
-        weft_dynamic: { evaluation_call_ids: evals.map((e) => e.call_id), metrics: selected },
+        weft_dynamic: { evaluation_run_ids: evals.map((e) => e.id), metrics: selected },
       }
       await leaderboardsApi.save(projectId, id, val as Parameters<typeof leaderboardsApi.save>[2])
       return id
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objs', projectId] }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objects', projectId] }),
   })
   return (
     <Modal
@@ -120,16 +120,16 @@ export function InlineLeaderboard({
 }) {
   const [configuring, setConfiguring] = useState(false)
   const [saving, setSaving] = useState(false)
-  const numeric = useMemo(() => metrics.filter((m) => evals.some((e) => toNum(m.values[e.call_id]) != null)), [metrics, evals])
+  const numeric = useMemo(() => metrics.filter((m) => evals.some((e) => toNum(m.values[e.id]) != null)), [metrics, evals])
   const defaults = useMemo<LbMetric[]>(() => {
     const scores = numeric.filter((m) => m.scorer && !/latency|tokens/.test(m.key) && !m.key.endsWith('.true_count'))
     return (scores.length ? scores : numeric).slice(0, 4).map((m) => ({ key: m.key, weight: 1, lowerBetter: lowerBetter(m.key) }))
   }, [numeric, lowerBetter])
   const selected = (value.length ? value : defaults).filter((s) => numeric.some((m) => m.key === s.key))
   const byKey = Object.fromEntries(numeric.map((m) => [m.key, m]))
-  const values = Object.fromEntries(numeric.map((m) => [m.key, Object.fromEntries(evals.map((e) => [e.call_id, toNum(m.values[e.call_id])]))]))
+  const values = Object.fromEntries(numeric.map((m) => [m.key, Object.fromEntries(evals.map((e) => [e.id, toNum(m.values[e.id])]))]))
   const ranked = rankRuns(
-    evals.map((e) => e.call_id),
+    evals.map((e) => e.id),
     values,
     selected,
   )

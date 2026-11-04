@@ -58,7 +58,7 @@ export function PanelChart({
 }) {
   const q = useQuery({
     queryKey: ['calls-metrics', projectId, panel, dash?.filter, dash?.query, dash?.time_range],
-    queryFn: () => dashboardsApi.callsMetrics(panelRequest(projectId, panel, dash)),
+    queryFn: () => dashboardsApi.spansMetrics(panelRequest(projectId, panel, dash)),
     refetchInterval: refreshMs || false,
     placeholderData: (prev) => prev,
     enabled: panel.chart !== 'scatter',

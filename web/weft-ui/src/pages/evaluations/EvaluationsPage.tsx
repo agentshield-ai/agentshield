@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { ObjSchema } from '../../api/types'
+import type { WeftObject } from '../../api/types'
 import { Empty, ErrorBox, Loading, Modal, Spinner } from '../../components/common'
 import { Dropdown, MenuItem } from '../../components/traces/Menu'
 import { slugify } from '../../components/traces/callUtils'
@@ -39,12 +39,12 @@ export function EvaluationsPage() {
   const setSearch = (v: string) => setParam('q', v)
   const [saving, setSaving] = useState(false)
   const views = useQuery({
-    queryKey: ['objs', projectId, 'SavedView', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['SavedView'], latest_only: true }, limit: 200 }),
+    queryKey: ['objects', projectId, 'SavedView', 'latest'],
+    queryFn: () => api.objectsQuery({ project_id: projectId, filter: { kinds: ['saved_view'], latest_only: true }, limit: 200 }),
   })
-  const evalViews = (views.data?.objs ?? []).filter((o) => !o.deleted_at && o.val?.view_type === 'evaluations')
-  const activeView = evalViews.find((v) => v.object_id === params.get('view'))
-  const loadView = (o: ObjSchema) => setParams(new URLSearchParams({ ...(o.val?.definition?.ui_params ?? {}), view: o.object_id }))
+  const evalViews = (views.data?.items ?? []).filter((o) => !o.deleted_at && o.value?.view_type === 'evaluations')
+  const activeView = evalViews.find((v) => v.name === params.get('view'))
+  const loadView = (o: WeftObject) => setParams(new URLSearchParams({ ...(o.value?.definition?.ui_params ?? {}), view: o.name }))
   const uiParams = () => {
     const ui: Record<string, string> = {}
     params.forEach((v, k) => {
@@ -81,20 +81,20 @@ export function EvaluationsPage() {
           <h1>Evaluations</h1>
           <span className="muted small">Runs of an evaluation (dataset + scorers) against a model. Select runs to compare them.</span>
         </div>
-        <Dropdown label={<>{activeView ? (activeView.val?.label ?? activeView.object_id) : 'Saved views'} ▾</>} className="btn sm">
+        <Dropdown label={<>{activeView ? (activeView.value?.label ?? activeView.name) : 'Saved views'} ▾</>} className="btn sm">
           {(close) => (
             <>
               {evalViews.length === 0 && <div className="dd-note">No saved views yet.</div>}
               {evalViews.map((v) => (
                 <MenuItem
-                  key={v.object_id}
+                  key={v.name}
                   onClick={() => {
                     loadView(v)
                     close()
                   }}
                 >
-                  <span className="grow">{v.val?.label ?? v.object_id}</span>
-                  {v.object_id === activeView?.object_id && <span className="faint">✓</span>}
+                  <span className="grow">{v.value?.label ?? v.name}</span>
+                  {v.name === activeView?.name && <span className="faint">✓</span>}
                 </MenuItem>
               ))}
               <div className="dd-sep" />
@@ -207,7 +207,7 @@ function SaveEvalViewModal({ projectId, uiParams, onClose, onSaved }: { projectI
     mutationFn: async () => {
       const id = slugify(label)
       if (!id) throw new Error('Enter a name')
-      await api.objCreate(
+      await api.objectSave(
         projectId,
         id,
         {
@@ -227,7 +227,7 @@ function SaveEvalViewModal({ projectId, uiParams, onClose, onSaved }: { projectI
       return id
     },
     onSuccess: (id) => {
-      void qc.invalidateQueries({ queryKey: ['objs', projectId, 'SavedView'] })
+      void qc.invalidateQueries({ queryKey: ['objects', projectId, 'SavedView'] })
       onSaved(id)
     },
   })

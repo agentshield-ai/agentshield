@@ -27,7 +27,7 @@ export function ObjectVersionsPage() {
     if (!versions.data || sel.length !== 2) return
     const [a, b] = sel
       .map((d) => versions.data!.find((v) => v.digest === d)!)
-      .sort((x, y) => x.version_index - y.version_index)
+      .sort((x, y) => x.version - y.version)
     nav(objectDiffUrl(projectId, objectId, a.digest, b.digest))
   }
 
@@ -57,8 +57,8 @@ export function ObjectVersionsPage() {
           title={`Delete ${objectId}?`}
           body={`All ${versions.data?.length ?? ''} versions will be deleted.`}
           onConfirm={async () => {
-            await api.objDelete(projectId, objectId)
-            await qc.invalidateQueries({ queryKey: ['objs', projectId] })
+            await api.objectDelete(projectId, objectId)
+            await qc.invalidateQueries({ queryKey: ['objects', projectId] })
             nav(listUrl)
           }}
         >
@@ -91,11 +91,11 @@ export function ObjectVersionsPage() {
               {versions.data.map((v) => (
                 <tr key={v.digest} className={`clickable ${sel.includes(v.digest) ? 'selected' : ''}`} onClick={() => nav(objectUrl(projectId, objectId, v.digest))}>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={sel.includes(v.digest)} onChange={() => toggle(v.digest)} aria-label={`Select v${v.version_index}`} />
+                    <input type="checkbox" checked={sel.includes(v.digest)} onChange={() => toggle(v.digest)} aria-label={`Select v${v.version}`} />
                   </td>
                   <td>
                     <Link to={objectUrl(projectId, objectId, v.digest)} onClick={(e) => e.stopPropagation()} style={{ fontWeight: 500 }}>
-                      v{v.version_index}
+                      v{v.version}
                     </Link>
                     {v.is_latest && <span className="badge accent" style={{ marginLeft: 6 }}>latest</span>}
                   </td>
@@ -113,12 +113,12 @@ export function ObjectVersionsPage() {
                   <td onClick={(e) => e.stopPropagation()}>
                     <ConfirmButton
                       className="btn ghost sm icon danger"
-                      title={`Delete ${objectId}:v${v.version_index}?`}
+                      title={`Delete ${objectId}:v${v.version}?`}
                       body="Only this version is deleted. Other versions are kept."
                       onConfirm={async () => {
-                        await api.objDelete(projectId, objectId, [v.digest])
+                        await api.objectDelete(projectId, objectId, [v.digest])
                         await qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
-                        await qc.invalidateQueries({ queryKey: ['objs', projectId] })
+                        await qc.invalidateQueries({ queryKey: ['objects', projectId] })
                       }}
                     >
                       ✕

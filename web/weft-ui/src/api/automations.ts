@@ -1,4 +1,4 @@
-// Automations: Automation objects (stored with /obj/create) and their runs.
+// Automations: Automation objects (stored with /api/v1/objects/save) and their runs.
 import { post } from './client'
 import type { Any } from './types'
 

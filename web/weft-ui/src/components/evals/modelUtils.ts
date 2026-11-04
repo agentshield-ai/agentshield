@@ -1,4 +1,4 @@
-// Which models the server can run in /evaluate_model (unit tested in evals.test.ts).
+// Which models the server can run in /api/v1/evaluations/run (unit tested in evals.test.ts).
 import type { Any } from '../../api/types'
 
 export type ServerModelKind = 'llm' | 'remote' | 'runtime'
@@ -7,8 +7,8 @@ export type ServerModelKind = 'llm' | 'remote' | 'runtime'
  * The server runs LLMStructuredCompletionModel models, models with a
  * `predict_url`, and models bound to a runtime (`runtime` = name or ref).
  */
-export function serverModelKind(o: { val?: Any } | null | undefined): ServerModelKind | null {
-  const v = o?.val
+export function serverModelKind(o: { value?: Any } | null | undefined): ServerModelKind | null {
+  const v = o?.value
   if (!v || typeof v !== 'object') return null
   const cls = [v._class_name, ...(Array.isArray(v._bases) ? v._bases : [])]
   if (cls.includes('LLMStructuredCompletionModel')) return 'llm'
@@ -18,8 +18,8 @@ export function serverModelKind(o: { val?: Any } | null | undefined): ServerMode
 }
 
 /** One-line description of how a model runs. */
-export function serverModelSummary(o: { val?: Any }): string {
-  const v = o.val ?? {}
+export function serverModelSummary(o: { value?: Any }): string {
+  const v = o.value ?? {}
   switch (serverModelKind(o)) {
     case 'llm':
       return String(v.llm_model_id ?? 'LLM')

@@ -1,7 +1,7 @@
 // Playground run history (unit tested in playground.test.ts). Runs in this
 // browser are kept in localStorage per project; tracked runs come from the
 // server as weft.completions.create / weft.images.generate calls.
-import type { Any, Call } from '../../api/types'
+import type { Any, Span } from '../../api/types'
 
 export interface PlaygroundRun {
   id: string
@@ -78,10 +78,10 @@ export function runPrompt(r: Pick<PlaygroundRun, 'inputs'>): string {
 }
 
 /** A tracked playground call as a history run. */
-export function callToRun(c: Call): PlaygroundRun | null {
+export function callToRun(c: Span): PlaygroundRun | null {
   const inputs = (c.inputs ?? {}) as Record<string, Any>
   if (typeof inputs.model !== 'string') return null
-  const image = c.op_name.includes('weft.images.generate')
+  const image = c.name.includes('weft.images.generate')
   const out = (c.output ?? {}) as Any
   let output = ''
   let images: number | undefined
@@ -106,7 +106,7 @@ export function callToRun(c: Call): PlaygroundRun | null {
     callId: c.id,
     latencyMs: Number.isFinite(ended) ? ended - started : undefined,
     tokens: tokens || undefined,
-    error: c.exception ?? undefined,
+    error: c.error ?? undefined,
     images,
     source: 'server',
   }

@@ -1,7 +1,7 @@
 """Scorers: the ``Scorer`` base class and built-in, server-runnable scorers.
 
 Built-in scorers serialise exactly as the server expects (see API.md), so an
-Evaluation that uses them can also be run server side via ``/evaluate_model``
+Evaluation that uses them can also be run server side via ``POST /api/v1/evaluations/run``
 and used in Monitors. They also run locally.
 """
 
@@ -136,7 +136,7 @@ class LevenshteinScorer(_BuiltinScorer):
 
 
 def _run_judge(model: Any, scoring_prompt: str, response_format: Optional[str], output: Any, kwargs: Dict[str, Any]) -> Any:
-    """Format ``scoring_prompt`` and run it through the server's /completions/create."""
+    """Format ``scoring_prompt`` and run it through the server (POST /api/v1/completions)."""
     from ._client import require_client
 
     client = require_client()
@@ -182,7 +182,7 @@ class LLMAsAJudgeScorer(_BuiltinScorer):
 
     ``model`` is a model id (``"gpt-4o-mini"``, ``"mock/json"``...) or an
     ``LLMStructuredCompletionModel``. Locally the completion runs through the
-    Weft server's ``/completions/create`` (which holds the provider keys).
+    Weft server's ``POST /api/v1/completions`` (which holds the provider keys).
     """
 
     model: Any = "gpt-4o-mini"
@@ -352,7 +352,7 @@ class OpenAIModerationScorer(_BuiltinScorer):
         except ImportError:
             raise RuntimeError(
                 "OpenAIModerationScorer runs locally only with the openai package installed; "
-                "publish it and let the server run it (monitors, /evaluate_model)"
+                "save it and let the server run it (monitors, POST /api/v1/evaluations/run)"
             ) from None
         res = openai.OpenAI().moderations.create(input=_as_text(output))
         r = res.results[0]
@@ -364,7 +364,7 @@ class EmbeddingSimilarityScorer(_BuiltinScorer):
     """Cosine similarity between embeddings of the output and ``row[target_column]``.
 
     Locally this needs an embeddings endpoint on the Weft server
-    (``/embeddings/create``); otherwise publish it and let the server run it.
+    (``POST /api/v1/embeddings``); otherwise save it and let the server run it.
     """
 
     target_column: str = "expected"
@@ -380,12 +380,12 @@ class EmbeddingSimilarityScorer(_BuiltinScorer):
         client = require_client()
         texts = [_as_text(output), _as_text(kwargs.get(self.target_column))]
         try:
-            res = client._http.post("/embeddings/create", {"project_id": client.project_id, "inputs": {"model": self.model, "input": texts}})
+            res = client._http.post("/api/v1/embeddings", {"project_id": client.project_id, "inputs": {"model": self.model, "input": texts}})
         except WeftHTTPError as e:
             if e.status in (404, 405, 501):
                 raise RuntimeError(
-                    "EmbeddingSimilarityScorer cannot run locally: this Weft server has no /embeddings/create endpoint. "
-                    "Publish the scorer and run it server side (monitors, /evaluate_model)."
+                    "EmbeddingSimilarityScorer cannot run locally: this Weft server has no embeddings route. "
+                    "Save the scorer and run it server side (monitors, POST /api/v1/evaluations/run)."
                 ) from None
             raise
         data = (res.get("response") or res).get("data") or []

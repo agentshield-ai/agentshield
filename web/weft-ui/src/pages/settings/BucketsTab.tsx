@@ -1,6 +1,6 @@
 // Settings → Buckets: reference buckets ("bring your own bucket"). Media whose
 // URI points into a registered S3 or GCS bucket renders inline in traces and
-// agent conversations, presigned by /files/resolve_url. Registering, testing
+// agent conversations, presigned by /api/v1/files/resolve. Registering, testing
 // and deleting need a server admin (the endpoints enforce it); everyone with
 // access to the project can see what is registered.
 import { useState } from 'react'

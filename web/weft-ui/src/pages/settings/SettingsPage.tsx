@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, getApiKey, setApiKey } from '../../api/client'
 import { parseRef } from '../../api/refs'
-import type { Any, CostEntry, ObjSchema } from '../../api/types'
+import type { Any, PriceEntry, WeftObject } from '../../api/types'
 import { Empty, ErrorBox, Loading, Modal, Section, Spinner, Tabs } from '../../components/common'
 import { CodeBlock, ConfirmButton, Stat } from '../../components/objects/bits'
 import { NameField, usePublish } from '../../components/objects/ObjectForms'
@@ -72,7 +72,7 @@ export function SettingsPage() {
 
 function GeneralTab({ projectId }: { projectId: string }) {
   const stats = useQuery({ queryKey: ['project-stats', projectId], queryFn: () => api.projectStats(projectId) })
-  const info = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo })
+  const info = useQuery({ queryKey: ['server-info'], queryFn: api.server })
   const s = stats.data
   return (
     <div className="col" style={{ gap: 16 }}>
@@ -82,7 +82,7 @@ function GeneralTab({ projectId }: { projectId: string }) {
           <Spinner />
         ) : s ? (
           <div className="stat-grid">
-            <Stat label="Calls" value={fmtNumber(s.call_count)} />
+            <Stat label="Spans" value={fmtNumber(s.span_count)} />
             <Stat label="Traces" value={fmtNumber(s.trace_count)} />
             <Stat label="Objects" value={fmtNumber(s.object_count)} />
             <Stat label="Tables" value={fmtNumber(s.table_count)} />
@@ -124,10 +124,10 @@ const fmtPerM = (perToken: number) => {
 
 function CostsTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient()
-  const costs = useQuery({ queryKey: ['costs', projectId], queryFn: () => api.costQuery(projectId, true).then((r) => r.results) })
+  const costs = useQuery({ queryKey: ['costs', projectId], queryFn: () => api.pricesQuery(projectId, true).then((r) => r.items) })
   const [search, setSearch] = useState('')
   const [level, setLevel] = useState<'' | 'project' | 'default'>('')
-  const [editing, setEditing] = useState<{ entry?: CostEntry; llmId?: string } | null>(null)
+  const [editing, setEditing] = useState<{ entry?: PriceEntry; llmId?: string } | null>(null)
   const rows = useMemo(() => {
     const q = search.toLowerCase()
     return (costs.data ?? [])
@@ -209,7 +209,7 @@ function CostsTab({ projectId }: { projectId: string }) {
                             title={`Delete project price for ${c.llm_id}?`}
                             body="Costs fall back to the built-in price, if there is one."
                             onConfirm={async () => {
-                              await api.costPurge(projectId, [c.id])
+                              await api.pricesDelete(projectId, [c.id])
                               await qc.invalidateQueries({ queryKey: ['costs', projectId] })
                             }}
                           >
@@ -245,7 +245,7 @@ function CostsTab({ projectId }: { projectId: string }) {
   )
 }
 
-function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId: string; entry?: CostEntry; override: boolean; onClose: () => void; onSaved: () => void }) {
+function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId: string; entry?: PriceEntry; override: boolean; onClose: () => void; onSaved: () => void }) {
   const models = useQuery({ queryKey: ['llm-models'], queryFn: () => api.llmModels().then((r) => r.models) })
   const [llmId, setLlmId] = useState(entry?.llm_id ?? '')
   const [provider, setProvider] = useState(entry?.provider_id ?? '')
@@ -278,7 +278,7 @@ function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId
               setBusy(true)
               setErr(null)
               try {
-                await api.costCreate(projectId, {
+                await api.pricesCreate(projectId, {
                   [llmId.trim()]: {
                     prompt_token_cost: Number(inPrice) / PER_M,
                     completion_token_cost: Number(outPrice) / PER_M,
@@ -288,7 +288,7 @@ function CostModal({ projectId, entry, override, onClose, onSaved }: { projectId
                     effective_date: new Date(date + 'T00:00:00Z').toISOString(),
                   },
                 })
-                if (isEdit) await api.costPurge(projectId, [entry!.id])
+                if (isEdit) await api.pricesDelete(projectId, [entry!.id])
                 onSaved()
               } catch (e) {
                 setErr(e)
@@ -363,16 +363,16 @@ const KNOWN_SECRETS = [
 function SecretsTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient()
   const secrets = useQuery({ queryKey: ['secrets'], queryFn: () => api.secretsList().then((r) => r.secrets) })
-  const providers = useObjects(projectId, { base_object_classes: ['Provider'] })
-  const providerModels = useObjects(projectId, { base_object_classes: ['ProviderModel'] })
+  const providers = useObjects(projectId, { kinds: ['provider'] })
+  const providerModels = useObjects(projectId, { kinds: ['provider_model'] })
   const [setting, setSetting] = useState<string | null>(null)
-  const [providerEdit, setProviderEdit] = useState<{ initial?: ObjSchema } | null>(null)
-  const [pmEdit, setPmEdit] = useState<{ initial?: ObjSchema } | null>(null)
+  const [providerEdit, setProviderEdit] = useState<{ initial?: WeftObject } | null>(null)
+  const [pmEdit, setPmEdit] = useState<{ initial?: WeftObject } | null>(null)
   const byName = new Map((secrets.data ?? []).map((s) => [s.name, s]))
-  const providerKeyNames = (providers.data ?? []).map((p) => p.val?.api_key_name).filter(Boolean) as string[]
+  const providerKeyNames = (providers.data ?? []).map((p) => p.value?.api_key_name).filter(Boolean) as string[]
   const names = [...new Set([...KNOWN_SECRETS.map((k) => k.name), ...providerKeyNames, ...(secrets.data ?? []).map((s) => s.name)])]
   const refresh = () => qc.invalidateQueries({ queryKey: ['secrets'] }).then(() => qc.invalidateQueries({ queryKey: ['llm-models'] }))
-  const qcObjs = () => qc.invalidateQueries({ queryKey: ['objs', projectId] })
+  const qcObjs = () => qc.invalidateQueries({ queryKey: ['objects', projectId] })
   return (
     <div className="col" style={{ gap: 16 }}>
       <Section
@@ -470,23 +470,23 @@ function SecretsTab({ projectId }: { projectId: string }) {
               </thead>
               <tbody>
                 {providers.data.map((p) => {
-                  const pms = (providerModels.data ?? []).filter((m) => parseRef(m.val?.provider ?? '')?.name === p.object_id)
+                  const pms = (providerModels.data ?? []).filter((m) => parseRef(m.value?.provider ?? '')?.name === p.name)
                   return (
-                    <tr key={p.object_id}>
+                    <tr key={p.name}>
                       <td>
-                        <Link to={objectUrl(projectId, p.object_id, p.digest)} className="mono">
-                          {p.object_id}
+                        <Link to={objectUrl(projectId, p.name, p.digest)} className="mono">
+                          {p.name}
                         </Link>
                       </td>
-                      <td className="mono small">{p.val?.base_url}</td>
+                      <td className="mono small">{p.value?.base_url}</td>
                       <td className="mono small">
-                        {p.val?.api_key_name || '—'} {p.val?.api_key_name && !byName.has(p.val.api_key_name) && <span className="badge warn">missing</span>}
+                        {p.value?.api_key_name || '—'} {p.value?.api_key_name && !byName.has(p.value.api_key_name) && <span className="badge warn">missing</span>}
                       </td>
                       <td>
                         <span className="chips">
                           {pms.map((m) => (
-                            <button key={m.object_id} className="chip selectable mono" onClick={() => setPmEdit({ initial: m })}>
-                              {p.object_id}/{m.val?.name ?? m.object_id}
+                            <button key={m.name} className="chip selectable mono" onClick={() => setPmEdit({ initial: m })}>
+                              {p.name}/{m.value?.name ?? m.name}
                             </button>
                           ))}
                         </span>
@@ -498,10 +498,10 @@ function SecretsTab({ projectId }: { projectId: string }) {
                           </button>
                           <ConfirmButton
                             className="btn sm ghost danger"
-                            title={`Delete provider ${p.object_id}?`}
+                            title={`Delete provider ${p.name}?`}
                             body="Models that reference it will stop working."
                             onConfirm={async () => {
-                              await api.objDelete(projectId, p.object_id)
+                              await api.objectDelete(projectId, p.name)
                               await qcObjs()
                             }}
                           >
@@ -593,10 +593,10 @@ function SecretModal({ name: initialName, onClose, onSaved }: { name: string; on
   )
 }
 
-function ProviderModal({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: ObjSchema; onClose: () => void; onSaved: () => void }) {
+function ProviderModal({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: WeftObject; onClose: () => void; onSaved: () => void }) {
   const publish = usePublish(projectId)
-  const v = initial?.val ?? {}
-  const [name, setName] = useState(initial?.object_id ?? '')
+  const v = initial?.value ?? {}
+  const [name, setName] = useState(initial?.name ?? '')
   const [baseUrl, setBaseUrl] = useState<string>(v.base_url ?? 'http://localhost:11434/v1')
   const [keyName, setKeyName] = useState<string>(v.api_key_name ?? '')
   const [headers, setHeaders] = useState<string>(v.extra_headers && Object.keys(v.extra_headers).length ? JSON.stringify(v.extra_headers, null, 2) : '')
@@ -613,7 +613,7 @@ function ProviderModal({ projectId, initial, onClose, onSaved }: { projectId: st
   }
   return (
     <Modal
-      title={initial ? `Edit provider ${initial.object_id}` : 'Add OpenAI-compatible provider'}
+      title={initial ? `Edit provider ${initial.name}` : 'Add OpenAI-compatible provider'}
       onClose={onClose}
       footer={
         <>
@@ -671,14 +671,14 @@ function ProviderModelModal({
   onSaved,
 }: {
   projectId: string
-  providers: ObjSchema[]
-  initial?: ObjSchema
+  providers: WeftObject[]
+  initial?: WeftObject
   onClose: () => void
   onSaved: () => void
 }) {
   const publish = usePublish(projectId)
-  const v = initial?.val ?? {}
-  const [objectId, setObjectId] = useState(initial?.object_id ?? '')
+  const v = initial?.value ?? {}
+  const [objectId, setObjectId] = useState(initial?.name ?? '')
   const [modelName, setModelName] = useState<string>(v.name ?? '')
   const [provider, setProvider] = useState<string>(v.provider ?? (providers[0] ? refOf(providers[0]) : ''))
   const [maxTokens, setMaxTokens] = useState<number>(v.max_tokens ?? 4096)
@@ -687,17 +687,17 @@ function ProviderModelModal({
   const providerName = parseRef(provider)?.name
   return (
     <Modal
-      title={initial ? `Edit provider model ${initial.object_id}` : 'Add provider model'}
+      title={initial ? `Edit provider model ${initial.name}` : 'Add provider model'}
       onClose={onClose}
       footer={
         <>
           {initial && (
             <ConfirmButton
               className="btn danger"
-              title={`Delete ${initial.object_id}?`}
+              title={`Delete ${initial.name}?`}
               body="The model will no longer be listed."
               onConfirm={async () => {
-                await api.objDelete(projectId, initial.object_id)
+                await api.objectDelete(projectId, initial.name)
                 onSaved()
               }}
             >
@@ -733,8 +733,8 @@ function ProviderModelModal({
           Provider
           <select className="input" value={provider} onChange={(e) => setProvider(e.target.value)}>
             {providers.map((p) => (
-              <option key={p.object_id} value={refOf(p)}>
-                {p.object_id}
+              <option key={p.name} value={refOf(p)}>
+                {p.name}
               </option>
             ))}
           </select>
@@ -817,12 +817,12 @@ function describeSchema(fs: Any): string {
 
 function AnnotationsTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient()
-  const specs = useObjects(projectId, { base_object_classes: ['AnnotationSpec'] })
-  const [edit, setEdit] = useState<{ initial?: ObjSchema } | null>(null)
+  const specs = useObjects(projectId, { kinds: ['annotation_spec'] })
+  const [edit, setEdit] = useState<{ initial?: WeftObject } | null>(null)
   return (
     <div className="col" style={{ gap: 12 }}>
       <div className="toolbar">
-        <span className="muted small grow">Annotation fields appear in the feedback panel of every call, so reviewers can label traces consistently.</span>
+        <span className="muted small grow">Annotation fields appear in the feedback panel of every span, so reviewers can label traces consistently.</span>
         <button className="btn primary" onClick={() => setEdit({})}>
           + New annotation field
         </button>
@@ -849,17 +849,17 @@ function AnnotationsTab({ projectId }: { projectId: string }) {
             </thead>
             <tbody>
               {specs.data.map((s) => (
-                <tr key={s.object_id}>
+                <tr key={s.name}>
                   <td>
-                    <Link to={objectUrl(projectId, s.object_id, s.digest)} style={{ fontWeight: 500 }}>
-                      {s.val?.name ?? s.object_id}
+                    <Link to={objectUrl(projectId, s.name, s.digest)} style={{ fontWeight: 500 }}>
+                      {s.value?.name ?? s.name}
                     </Link>
                   </td>
-                  <td>{describeSchema(s.val?.field_schema)}</td>
-                  <td className="muted small">{s.val?.description || '—'}</td>
+                  <td>{describeSchema(s.value?.field_schema)}</td>
+                  <td className="muted small">{s.value?.description || '—'}</td>
                   <td className="small">
-                    {Array.isArray(s.val?.op_scope) && s.val.op_scope.length ? s.val.op_scope.join(', ') : <span className="faint">all calls</span>}
-                    {s.val?.unique_among_creators && <div className="faint">one per reviewer</div>}
+                    {Array.isArray(s.value?.op_scope) && s.value.op_scope.length ? s.value.op_scope.join(', ') : <span className="faint">all spans</span>}
+                    {s.value?.unique_among_creators && <div className="faint">one per reviewer</div>}
                   </td>
                   <td className="muted">{fmtRelative(s.created_at)}</td>
                   <td>
@@ -869,11 +869,11 @@ function AnnotationsTab({ projectId }: { projectId: string }) {
                       </button>
                       <ConfirmButton
                         className="btn sm ghost danger"
-                        title={`Delete ${s.object_id}?`}
+                        title={`Delete ${s.name}?`}
                         body="Existing annotations are kept but the field is no longer offered."
                         onConfirm={async () => {
-                          await api.objDelete(projectId, s.object_id)
-                          await qc.invalidateQueries({ queryKey: ['objs', projectId] })
+                          await api.objectDelete(projectId, s.name)
+                          await qc.invalidateQueries({ queryKey: ['objects', projectId] })
                         }}
                       >
                         ✕
@@ -891,10 +891,10 @@ function AnnotationsTab({ projectId }: { projectId: string }) {
   )
 }
 
-function AnnotationSpecModal({ projectId, initial, onClose }: { projectId: string; initial?: ObjSchema; onClose: () => void }) {
+function AnnotationSpecModal({ projectId, initial, onClose }: { projectId: string; initial?: WeftObject; onClose: () => void }) {
   const publish = usePublish(projectId)
-  const v = initial?.val ?? {}
-  const [name, setName] = useState(initial?.object_id ?? '')
+  const v = initial?.value ?? {}
+  const [name, setName] = useState(initial?.name ?? '')
   const [description, setDescription] = useState<string>(v.description ?? '')
   const [draft, setDraft] = useState<SpecDraft>(draftFromSchema(v.field_schema))
   const [unique, setUnique] = useState<boolean>(v.unique_among_creators ?? true)
@@ -906,7 +906,7 @@ function AnnotationSpecModal({ projectId, initial, onClose }: { projectId: strin
   const valid = name && (draft.kind !== 'enum' || schema.enum.length >= 2) && (draft.kind === 'integer' || draft.kind === 'number' ? draft.min === '' || draft.max === '' || Number(draft.min) <= Number(draft.max) : true)
   return (
     <Modal
-      title={initial ? `Edit annotation field ${initial.object_id}` : 'New annotation field'}
+      title={initial ? `Edit annotation field ${initial.name}` : 'New annotation field'}
       onClose={onClose}
       footer={
         <>
@@ -1053,7 +1053,7 @@ function SpecPreview({ schema }: { schema: Any }) {
 // ================================================================ integrations
 
 function IntegrationsTab({ projectId }: { projectId: string }) {
-  const info = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo })
+  const info = useQuery({ queryKey: ['server-info'], queryFn: api.server })
   const base = window.location.origin
   const otel = `${base}${info.data?.otel_endpoint ?? '/otel/v1/traces'}`
   const auth = info.data?.auth_required
@@ -1068,7 +1068,7 @@ import weft
 
 weft.init("${projectId}")
 
-@weft.op
+@weft.trace
 def answer(question: str) -> str:
     return llm(question)   # nested calls and LLM usage are traced
 
@@ -1083,7 +1083,7 @@ import * as weft from 'weft'
 
 await weft.init('${projectId}')
 
-const answer = weft.op(async (question: string) => {
+const answer = weft.trace(async (question: string) => {
   return await llm(question)
 }, { name: 'answer' })
 
@@ -1134,15 +1134,15 @@ export OTEL_EXPORTER_OTLP_TRACES_HEADERS="project_id=${projectId}${auth ? ',Auth
     },
     curl: {
       language: 'bash',
-      title: 'Record a call with the HTTP API',
-      code: `curl -s ${base}/call/start \\
+      title: 'Record a span with the HTTP API',
+      code: `curl -s ${base}/api/v1/spans/start \\
   -H 'Content-Type: application/json'${auth ? " \\\n  -H 'Authorization: Bearer <your api key>'" : ''} \\
-  -d '{"start": {"project_id": "${projectId}", "op_name": "hello", "started_at": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "inputs": {"name": "world"}}}'
-# => {"id": "<call id>", "trace_id": "..."}
+  -d '{"project_id": "${projectId}", "name": "hello", "inputs": {"name": "world"}}'
+# => {"id": "<span id>", "trace_id": "..."}
 
-curl -s ${base}/call/end \\
+curl -s ${base}/api/v1/spans/end \\
   -H 'Content-Type: application/json'${auth ? " \\\n  -H 'Authorization: Bearer <your api key>'" : ''} \\
-  -d '{"end": {"project_id": "${projectId}", "id": "<call id>", "ended_at": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "output": "Hello, world"}}'
+  -d '{"project_id": "${projectId}", "id": "<span id>", "output": "Hello, world"}'
 `,
     },
   }
@@ -1189,7 +1189,7 @@ function ApiKeyTab() {
   const qc = useQueryClient()
   const [stored, setStored] = useState<string | null>(getApiKey())
   const [value, setValue] = useState('')
-  const info = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo })
+  const info = useQuery({ queryKey: ['server-info'], queryFn: api.server })
   const check = useQuery({ queryKey: ['auth-check-settings', stored], queryFn: api.authCheck, retry: false })
   const ok = check.isSuccess
   const unauthorized = check.error instanceof ApiError && check.error.status === 401

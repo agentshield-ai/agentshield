@@ -18,7 +18,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callItems, chatOutput, loadConfig, makeLogger, parseMaybeJson, readJsonl, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
+import { spanItems, chatOutput, loadConfig, makeLogger, parseMaybeJson, readJsonl, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
 
 export const PLUGIN = 'weft-codex';
 export const PLUGIN_VERSION = '0.1.0';
@@ -272,22 +272,22 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
   const items = [];
   const turnId = stableId(sid, 'turn', turn.codexTurnId ?? turn.offset ?? turn.startedAt);
   const traceId = turnId;
-  const base = { traceId, threadId: sid, turnId, pluginVersion: PLUGIN_VERSION };
+  const base = { traceId, sessionId: sid, turnId, pluginVersion: PLUGIN_VERSION };
   const conv = { 'gen_ai.conversation.id': sid, 'gen_ai.conversation.name': session.firstPrompt };
   const model = turn.model ?? turn.llms.find((l) => l.model)?.model;
   items.push(
-    ...callItems(cfg, {
+    ...spanItems(cfg, {
       ...base,
       id: turnId,
       parentId: null,
-      opName: 'codex.turn',
+      name: 'codex.turn',
       kind: 'agent',
       displayName: `invoke_agent ${cfg.agentName}`,
       startedAt: turn.startedAt,
       endedAt: turn.endedAt,
       inputs: { messages: [{ role: 'user', content: turn.prompt ?? '' }] },
       output: turn.final ? { messages: [{ role: 'assistant', content: turn.final }] } : null,
-      exception: turn.aborted ? `turn aborted: ${turn.aborted}` : undefined,
+      error: turn.aborted ? `turn aborted: ${turn.aborted}` : undefined,
       genai: { ...conv, 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': cfg.agentName, 'gen_ai.agent.version': session.cliVersion, 'gen_ai.request.model': model, 'gen_ai.provider.name': 'openai' },
       attributes: { codex: { cwd: session.cwd, originator: session.originator, approval_policy: session.approvalPolicy, reasoning_effort: turn.effort, turn_id: turn.codexTurnId } },
     }),
@@ -297,11 +297,11 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
     const uses = l.blocks.filter((b) => b.type === 'tool_use');
     const m = l.model ?? model;
     items.push(
-      ...callItems(cfg, {
+      ...spanItems(cfg, {
         ...base,
         id: stableId(sid, 'llm', turn.codexTurnId ?? turn.offset ?? turn.startedAt, i),
         parentId: turnId,
-        opName: 'codex.llm',
+        name: 'codex.llm',
         kind: 'llm',
         displayName: text ? shortText(text) : uses.length ? `→ ${uses.map((b) => b.name).join(', ')}` : `chat ${m ?? ''}`.trim(),
         startedAt: l.startedAt,
@@ -322,18 +322,18 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
     const input = t.input && typeof t.input === 'object' && !Array.isArray(t.input) ? t.input : { input: t.input };
     const exit = t.exitCode ?? t.output?.metadata?.exit_code;
     items.push(
-      ...callItems(cfg, {
+      ...spanItems(cfg, {
         ...base,
         id: stableId(sid, 'tool', t.id),
         parentId: turnId,
-        opName: `codex.tool.${t.name}`,
+        name: `codex.tool.${t.name}`,
         kind: 'tool',
         displayName: toolDisplay(t.name, input),
         startedAt: t.startedAt,
         endedAt: t.endedAt ?? turn.endedAt,
         inputs: input,
         output: t.output ?? null,
-        exception,
+        error: exception,
         genai,
         attributes: exit !== undefined ? { codex: { exit_code: exit } } : undefined,
       }),

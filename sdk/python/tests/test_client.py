@@ -6,31 +6,31 @@ import weft
 
 
 def test_get_calls_and_get_call(client, fake):
-    @weft.op
+    @weft.trace
     def f(x):
         return x
 
     for i in range(3):
         f(i)
-    calls = client.get_calls(filter={"op_names": ["f"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
+    calls = client.spans(filter={"names": ["f"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
     lst = list(calls)
     assert [c.inputs["x"] for c in lst] == [0, 1, 2]
-    assert all(isinstance(c, weft.Call) for c in lst)
+    assert all(isinstance(c, weft.Span) for c in lst)
     assert len(calls) == 3
-    assert len(client.get_calls(limit=2)) == 2
-    body = [r for r in fake.requests if r["path"] == "/calls/stream_query"][0]["body"]
+    assert len(client.spans(limit=2)) == 2
+    body = [r for r in fake.requests if r["path"] == "/api/v1/spans/stream"][0]["body"]
     assert body["project_id"] == "test-entity/test-proj"
-    assert body["filter"] == {"op_names": ["f"]}
-    c = client.get_call(lst[0].id)
-    assert c.output == 0 and c.op_base_name == "f" and c.status == "success"
-    q = list(client.get_calls(query={"$eq": [{"$getField": "inputs.x"}, {"$literal": 1}]}))
-    sent = [r for r in fake.requests if r["path"] == "/calls/stream_query"][-1]["body"]
+    assert body["filter"] == {"names": ["f"]}
+    c = client.span(lst[0].id)
+    assert c.output == 0 and c.base_name == "f" and c.status == "success"
+    q = list(client.spans(query={"$eq": [{"$getField": "inputs.x"}, {"$literal": 1}]}))
+    sent = [r for r in fake.requests if r["path"] == "/api/v1/spans/stream"][-1]["body"]
     assert sent["query"] == {"$expr": {"$eq": [{"$getField": "inputs.x"}, {"$literal": 1}]}}
     assert q  # fake server ignores query
 
 
 def test_feedback_display_name_delete(client, fake):
-    @weft.op
+    @weft.trace
     def f():
         return 1
 
@@ -41,7 +41,7 @@ def test_feedback_display_name_delete(client, fake):
     fbs = list(call.feedback)
     assert [fb["feedback_type"] for fb in fbs] == ["weft.reaction", "weft.note", "custom.score"]
     assert fbs[0]["payload"] == {"emoji": "👍"}
-    assert fbs[0]["ref"] == f"weft:///test-entity/test-proj/call/{call.id}"
+    assert fbs[0]["ref"] == f"weft:///test-entity/test-proj/span/{call.id}"
     call.feedback.purge(fbs[2]["id"])
     assert len(call.feedback) == 2
     call.set_display_name("renamed")
@@ -55,7 +55,7 @@ def test_costs_server_info_evaluations(client, fake):
     assert fake.costs["my-llm"]["prompt_token_cost"] == 1e-6
     assert client.server_info()["version"] == "fake"
     ds = weft.Dataset(name="d", rows=[{"a": 1}])
-    weft.publish(weft.Evaluation(name="e1", dataset=ds, scorers=[weft.scorers.ExactMatchScorer()]))
+    weft.save(weft.Evaluation(name="e1", dataset=ds, scorers=[weft.scorers.ExactMatchScorer()]))
     evs = client.get_evaluations()
     assert len(evs) == 1 and isinstance(evs[0], weft.Evaluation)
     assert evs[0].name == "e1" and list(evs[0].dataset.rows) == [{"a": 1}]
@@ -67,15 +67,15 @@ def test_auth_header_and_project_normalisation(fake):
     try:
         assert c.project_id == "default/bare"
 
-        @weft.op
+        @weft.trace
         def f():
             return 1
 
         f()
         c.flush()
-        r = [r for r in fake.requests if r["path"] == "/call/upsert_batch"][0]
+        r = [r for r in fake.requests if r["path"] == "/api/v1/spans/batch"][0]
         assert r["headers"]["Authorization"] == "Bearer sekret"
-        assert r["body"]["batch"][0]["req"]["start"]["project_id"] == "default/bare"
+        assert r["body"]["items"][0]["start"]["project_id"] == "default/bare"
     finally:
         weft.finish()
 
@@ -97,7 +97,7 @@ def test_sender_resilience_server_down(monkeypatch):
     c._sender.backoff = 0.01
     try:
 
-        @weft.op
+        @weft.trace
         def f(x):
             return x + 1
 
@@ -107,7 +107,7 @@ def test_sender_resilience_server_down(monkeypatch):
         assert c.flush(timeout=10)
         assert c._sender.failed_requests >= 1
         # explicit publish degrades to a local digest instead of raising
-        ref = weft.publish(weft.Dataset(name="d", rows=[{"a": 1}]))
+        ref = weft.save(weft.Dataset(name="d", rows=[{"a": 1}]))
         assert ref.digest
     finally:
         weft.finish()
@@ -115,16 +115,16 @@ def test_sender_resilience_server_down(monkeypatch):
 
 def test_sender_retries_then_succeeds(client, fake):
     client._sender.backoff = 0.01
-    fake.fail_paths["/call/upsert_batch"] = 2
+    fake.fail_paths["/api/v1/spans/batch"] = 2
 
-    @weft.op
+    @weft.trace
     def f():
         return 1
 
     f()
     client.flush(5)
     assert len(fake.calls_by_op("f")) == 1
-    assert len([r for r in fake.requests if r["path"] == "/call/upsert_batch"]) == 3
+    assert len([r for r in fake.requests if r["path"] == "/api/v1/spans/batch"]) == 3
 
 
 def test_bounded_queue_drops(fake):
@@ -132,7 +132,7 @@ def test_bounded_queue_drops(fake):
     c._sender.backoff = 0.2
     try:
 
-        @weft.op
+        @weft.trace
         def f():
             return 1
 
@@ -147,13 +147,13 @@ def test_bounded_queue_drops(fake):
 def test_upsert_batch_coalesces(client, fake):
     client._sender.flush_interval = 0.05
 
-    @weft.op
+    @weft.trace
     def f():
         return 1
 
     for _ in range(20):
         f()
     client.flush()
-    batches = [r["body"]["batch"] for r in fake.requests if r["path"] == "/call/upsert_batch"]
+    batches = [r["body"]["items"] for r in fake.requests if r["path"] == "/api/v1/spans/batch"]
     assert sum(len(b) for b in batches) == 40
     assert len(batches) < 10

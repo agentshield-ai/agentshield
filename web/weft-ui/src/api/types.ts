@@ -4,7 +4,7 @@ export type Json = null | boolean | number | string | Json[] | { [k: string]: Js
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Any = any
 
-export type CallStatus = 'success' | 'error' | 'running' | 'descendant_error'
+export type SpanStatus = 'success' | 'error' | 'running' | 'descendant_error'
 
 export interface UsageEntry {
   requests?: number
@@ -23,7 +23,7 @@ export interface LLMCost {
   total_tokens?: number
   prompt_token_cost?: number
   completion_token_cost?: number
-  /** All prompt tokens, cache reads and writes included; the call's cost is this plus completion_tokens_total_cost. */
+  /** All prompt tokens, cache reads and writes included; the span's cost is this plus completion_tokens_total_cost. */
   prompt_tokens_total_cost?: number
   completion_tokens_total_cost?: number
   cache_read_input_tokens?: number
@@ -41,12 +41,12 @@ export interface LLMCost {
   pricing_level?: 'default' | 'project'
 }
 
-export interface CallSummary {
+export interface SpanSummary {
   usage?: Record<string, UsageEntry>
   status_counts?: { success?: number; error?: number }
   /** Computed on read. */
   weft?: {
-    status: CallStatus
+    status: SpanStatus
     latency_ms: number | null
     trace_name: string
     display_name: string | null
@@ -68,28 +68,33 @@ export interface Feedback {
   user_id: string | null
   annotation_ref?: string | null
   runnable_ref?: string | null
-  call_ref?: string | null
+  /** The scorer's own span, for scorer results. */
+  span_ref?: string | null
   trigger_ref?: string | null
   /** Annotation queue the feedback was given in. */
   queue_id?: string | null
 }
 
-export interface Call {
+/** One traced function or model call (docs/weft/API.md "Spans"). */
+export interface Span {
   id: string
   project_id: string
-  op_name: string
+  /** A function ref, or a plain span name (OTLP). */
+  name: string
   display_name: string | null
   trace_id: string
   parent_id: string | null
-  thread_id: string | null
+  /** The conversation the span belongs to. */
+  session_id: string | null
   turn_id: string | null
   started_at: string
   ended_at: string | null
-  exception: string | null
+  /** The error text when the span failed. */
+  error: string | null
   attributes: Record<string, Any>
   inputs: Record<string, Any>
   output: Any
-  summary: CallSummary
+  summary: SpanSummary
   user_id: string | null
   run_id: string | null
   deleted_at: string | null
@@ -124,26 +129,28 @@ export interface SortBy {
   direction: 'asc' | 'desc'
 }
 
-export interface CallsFilter {
-  op_names?: string[]
+export interface SpansFilter {
+  /** Span names: a function ref, a ref with a :* wildcard, or a base name. */
+  names?: string[]
   input_refs?: string[]
   output_refs?: string[]
   parent_ids?: string[]
   trace_ids?: string[]
-  call_ids?: string[]
+  ids?: string[]
   trace_roots_only?: boolean
   user_ids?: string[]
   run_ids?: string[]
-  thread_ids?: string[]
+  session_ids?: string[]
   turn_ids?: string[]
 }
 
-export interface CallsQueryReq {
+export interface SpansQueryReq {
   project_id: string
-  filter?: CallsFilter
+  filter?: SpansFilter
   query?: Query
   search?: string
   sort_by?: SortBy[]
+  /** Default 100, at most 10,000; 0 returns only total_count. */
   limit?: number
   offset?: number
   columns?: string[]
@@ -152,11 +159,17 @@ export interface CallsQueryReq {
   include_feedback?: boolean
   include_storage_size?: boolean
   include_deleted?: boolean
-  /** Adds summary.weft.run_status to every call. */
+  /** Adds summary.weft.run_status to every span. */
   include_run_status?: boolean
 }
 
-export interface CallsStatsBucket {
+/** A native list response. */
+export interface ListRes<T> {
+  items: T[]
+  total_count: number
+}
+
+export interface SpansStatsBucket {
   start: string
   count: number
   error_count: number
@@ -170,9 +183,9 @@ export interface CallsStatsBucket {
   cost_usd: number
 }
 
-export interface CallsStatsRes {
+export interface SpansStatsRes {
   bucket_seconds: number
-  buckets: CallsStatsBucket[]
+  buckets: SpansStatsBucket[]
   totals: {
     count: number
     error_count: number
@@ -183,19 +196,21 @@ export interface CallsStatsRes {
   }
 }
 
-export interface OpCount {
-  op_name: string
-  op_base_name: string
+/** Span counts by name (/api/v1/spans/names). */
+export interface SpanName {
+  name: string
+  base_name: string
   count: number
   error_count: number
-  last_called: string
+  last_started_at: string
 }
 
-export interface Thread {
-  thread_id: string
+/** Turn statistics of one session id (/api/v1/spans/sessions). */
+export interface SpanSession {
+  session_id: string
   turn_count: number
-  call_count: number
-  start_time: string
+  span_count: number
+  started_at: string
   last_updated: string
   first_turn_id: string | null
   last_turn_id: string | null
@@ -209,6 +224,7 @@ export interface Project {
   project_id: string
   entity: string
   project: string
+  /** Spans in the project (GET /projects keeps this name). */
   call_count: number
   trace_count: number
   object_count: number
@@ -216,7 +232,7 @@ export interface Project {
 }
 
 export interface ProjectStats {
-  call_count: number
+  span_count: number
   trace_count: number
   object_count: number
   table_count: number
@@ -225,38 +241,58 @@ export interface ProjectStats {
   storage_size_bytes: number
 }
 
-export interface ObjSchema {
+/** What an object is: function for a versioned function, else the kind of its base class. */
+export type ObjectKind =
+  | 'function'
+  | 'dataset'
+  | 'model'
+  | 'evaluation'
+  | 'scorer'
+  | 'prompt'
+  | 'leaderboard'
+  | 'monitor'
+  | 'annotation_spec'
+  | 'saved_view'
+  | 'provider'
+  | 'provider_model'
+  | 'dashboard'
+  | 'automation'
+  | 'object'
+
+/** One version of a versioned value (docs/weft/API.md "Objects"). */
+export interface WeftObject {
   project_id: string
-  object_id: string
+  name: string
+  digest: string
+  version: number
+  kind: ObjectKind
+  /** The most specific class Weft knows the value by; null for functions and plain values. */
+  class: string | null
+  /** Omitted with metadata_only. */
+  value: Any
+  ref: string
+  is_latest: boolean
+  aliases: string[]
+  tags: string[]
+  user_id: string | null
   created_at: string
   deleted_at: string | null
-  digest: string
-  version_index: number
-  is_latest: boolean
-  kind: 'object' | 'op'
-  base_object_class: string | null
-  leaf_object_class: string | null
-  val: Any
-  user_id: string | null
-  aliases: string[]
-  /** Version tags (/objs/{id}/versions/{digest}/tags). */
-  tags?: string[]
   size_bytes: number
+  /** Only with filter.latest_only. */
   version_count?: number
 }
 
-export interface ObjsFilter {
-  base_object_classes?: string[]
-  leaf_object_classes?: string[]
-  object_ids?: string[]
-  is_op?: boolean
+export interface ObjectsFilter {
+  names?: string[]
+  kinds?: ObjectKind[]
+  classes?: string[]
   latest_only?: boolean
 }
 
 export interface TableRow {
   digest: string
-  val: Any
-  original_index: number
+  index: number
+  value: Any
 }
 
 export type TableUpdate =
@@ -265,7 +301,7 @@ export type TableUpdate =
   | { insert: { index: number; row: Any } }
   | { replace: { index: number; row: Any } }
 
-export interface CostEntry {
+export interface PriceEntry {
   id: string
   llm_id: string
   prompt_token_cost: number
@@ -327,7 +363,8 @@ export interface EvalStatus {
 }
 
 export interface CompareEvaluation {
-  call_id: string
+  /** The run's Evaluation.evaluate span. */
+  id: string
   display_name: string | null
   evaluation_ref: string
   evaluation_name: string
@@ -335,7 +372,7 @@ export interface CompareEvaluation {
   model_name: string
   started_at: string
   ended_at: string | null
-  status: CallStatus
+  status: SpanStatus
   summary: Any
   dataset_ref: string | null
   scorers: string[]
@@ -353,7 +390,8 @@ export interface CompareMetric {
 }
 
 export interface CompareRowResult {
-  call_id: string
+  /** The predict_and_score span. */
+  span_id: string
   output: Any
   scores: Record<string, Any>
   model_latency: number | null
@@ -383,17 +421,21 @@ export interface LeaderboardColumn {
 }
 
 export interface LeaderboardComputeRes {
-  leaderboard: ObjSchema
+  leaderboard: WeftObject
   columns: LeaderboardColumn[]
   rows: {
     model_ref: string
     model_name: string
-    values: Record<string, { value: number | boolean | null; evaluation_call_id: string; started_at: string }>
+    values: Record<string, { value: number | boolean | null; evaluation_run_id: string; started_at: string }>
   }[]
 }
 
 export interface ServerInfo {
+  name: string
   version: string
+  api_version: string
   auth_required: boolean
   otel_endpoint: string
+  features: string[]
+  limits: Record<string, number>
 }

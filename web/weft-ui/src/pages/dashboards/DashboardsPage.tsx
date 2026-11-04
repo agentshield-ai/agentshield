@@ -20,12 +20,12 @@ function NewDashboardModal({ projectId, onClose }: { projectId: string; onClose:
       const id = slugify(name)
       if (!id) throw new Error('Enter a name')
       const existing = await dashboardsApi.list(projectId)
-      if (existing.some((o) => o.object_id === id)) throw new Error(`A dashboard called “${id}” already exists`)
+      if (existing.some((o) => o.name === id)) throw new Error(`A dashboard called “${id}” already exists`)
       await dashboardsApi.save(projectId, id, newDashboard(name.trim(), template))
       return id
     },
     onSuccess: (id) => {
-      void qc.invalidateQueries({ queryKey: ['objs', projectId, 'Dashboard'] })
+      void qc.invalidateQueries({ queryKey: ['objects', projectId, 'Dashboard'] })
       nav(dashboardUrl(projectId, id))
     },
   })
@@ -61,7 +61,7 @@ function NewDashboardModal({ projectId, onClose }: { projectId: string; onClose:
           <div className="dash-template" role="radiogroup">
             {(
               [
-                ['overview', 'Overview', 'Calls, errors, latency, tokens and cost by model, and an ops table.'],
+                ['overview', 'Overview', 'Spans, errors, latency, tokens and cost by model, and a span-name table.'],
                 ['blank', 'Blank', 'An empty dashboard to add your own charts to.'],
               ] as const
             ).map(([id, label, desc]) => (
@@ -82,19 +82,19 @@ export function DashboardsPage() {
   const projectId = useProjectId()
   const [creating, setCreating] = useState(false)
   const [q, setQ] = useState('')
-  const list = useQuery({ queryKey: ['objs', projectId, 'Dashboard'], queryFn: () => dashboardsApi.list(projectId) })
+  const list = useQuery({ queryKey: ['objects', projectId, 'Dashboard'], queryFn: () => dashboardsApi.list(projectId) })
   const all = list.data ?? []
   const shown = all.filter((o) => {
     const s = q.trim().toLowerCase()
-    const v = o.val as DashboardVal
-    return !s || o.object_id.toLowerCase().includes(s) || (v?.name ?? '').toLowerCase().includes(s) || (v?.description ?? '').toLowerCase().includes(s)
+    const v = o.value as DashboardVal
+    return !s || o.name.toLowerCase().includes(s) || (v?.name ?? '').toLowerCase().includes(s) || (v?.description ?? '').toLowerCase().includes(s)
   })
   return (
     <div className="page">
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Dashboards</h1>
-          <span className="muted small">Custom charts of any call metric: latency percentiles, tokens, cost, scores, grouped by op, model or attribute.</span>
+          <span className="muted small">Custom charts of any span metric: latency percentiles, tokens, cost, scores, grouped by name, model or attribute.</span>
         </div>
         <span className="spacer" />
         <button className="btn primary" onClick={() => setCreating(true)}>
@@ -125,11 +125,11 @@ export function DashboardsPage() {
       ) : (
         <div className="dash-card-list">
           {shown.map((o) => {
-            const v = o.val as DashboardVal
+            const v = o.value as DashboardVal
             const panels = v?.panels ?? []
             return (
-              <Link key={o.object_id} to={dashboardUrl(projectId, o.object_id)} className="dash-card">
-                <b className="truncate">{v?.name || o.object_id}</b>
+              <Link key={o.name} to={dashboardUrl(projectId, o.name)} className="dash-card">
+                <b className="truncate">{v?.name || o.name}</b>
                 {v?.description && <span className="small muted truncate">{v.description}</span>}
                 <span className="small faint truncate">{panels.length ? panels.slice(0, 4).map(panelTitle).join(' · ') : 'No charts yet'}</span>
                 <span className="row small muted" style={{ gap: 10 }}>
@@ -139,7 +139,7 @@ export function DashboardsPage() {
                   <span>{timeRangeLabel(v?.time_range ?? 'all')}</span>
                   <span className="grow" />
                   <span title={o.created_at}>
-                    v{o.version_index} · {fmtRelative(o.created_at)}
+                    v{o.version} · {fmtRelative(o.created_at)}
                   </span>
                 </span>
               </Link>

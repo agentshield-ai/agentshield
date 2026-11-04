@@ -15,10 +15,10 @@ export function LeaderboardsPage() {
   const projectId = useProjectId()
   const nav = useNavigate()
   const qc = useQueryClient()
-  const lbs = useObjects(projectId, { base_object_classes: ['Leaderboard'] })
+  const lbs = useObjects(projectId, { kinds: ['leaderboard'] })
   const [creating, setCreating] = useState(false)
   const [search, setSearch] = useState('')
-  const rows = (lbs.data ?? []).filter((o) => !search || o.object_id.toLowerCase().includes(search.toLowerCase()))
+  const rows = (lbs.data ?? []).filter((o) => !search || o.name.toLowerCase().includes(search.toLowerCase()))
   return (
     <div className="page">
       <div className="page-header">
@@ -61,15 +61,15 @@ export function LeaderboardsPage() {
             </thead>
             <tbody>
               {rows.map((o) => {
-                const cols: Any[] = Array.isArray(o.val?.columns) ? o.val.columns : []
+                const cols: Any[] = Array.isArray(o.value?.columns) ? o.value.columns : []
                 const evals = [...new Set(cols.map((c) => refName(c.evaluation_object_ref)))]
                 return (
-                  <tr key={o.object_id} className="clickable" onClick={() => nav(leaderboardUrl(projectId, o.object_id))}>
+                  <tr key={o.name} className="clickable" onClick={() => nav(leaderboardUrl(projectId, o.name))}>
                     <td>
-                      <Link to={leaderboardUrl(projectId, o.object_id)} style={{ fontWeight: 500 }} onClick={(e) => e.stopPropagation()}>
-                        {o.object_id}
+                      <Link to={leaderboardUrl(projectId, o.name)} style={{ fontWeight: 500 }} onClick={(e) => e.stopPropagation()}>
+                        {o.name}
                       </Link>
-                      {o.val?.description && <div className="faint small cell-preview">{o.val.description}</div>}
+                      {o.value?.description && <div className="faint small cell-preview">{o.value.description}</div>}
                     </td>
                     <td>
                       <span className="chips">
@@ -86,18 +86,18 @@ export function LeaderboardsPage() {
                       {fmtRelative(o.created_at)}
                     </td>
                     <td className="num">
-                      <Link to={objectVersionsUrl(projectId, o.object_id)} onClick={(e) => e.stopPropagation()}>
-                        {o.version_count ?? o.version_index + 1}
+                      <Link to={objectVersionsUrl(projectId, o.name)} onClick={(e) => e.stopPropagation()}>
+                        {o.version_count ?? o.version + 1}
                       </Link>
                     </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <ConfirmButton
                         className="btn ghost sm icon danger"
-                        title={`Delete leaderboard ${o.object_id}?`}
+                        title={`Delete leaderboard ${o.name}?`}
                         body="Evaluation runs are not affected."
                         onConfirm={async () => {
-                          await api.objDelete(projectId, o.object_id)
-                          await qc.invalidateQueries({ queryKey: ['objs', projectId] })
+                          await api.objectDelete(projectId, o.name)
+                          await qc.invalidateQueries({ queryKey: ['objects', projectId] })
                         }}
                       >
                         ✕
@@ -116,7 +116,7 @@ export function LeaderboardsPage() {
           onClose={() => setCreating(false)}
           onSaved={(c) => {
             setCreating(false)
-            nav(leaderboardUrl(projectId, c.objectId))
+            nav(leaderboardUrl(projectId, c.name))
           }}
         />
       )}

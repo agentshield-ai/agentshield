@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, appendFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callItems, chatOutput, iso, loadConfig, makeLogger, parseMaybeJson, readJsonl, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
+import { spanItems, chatOutput, iso, loadConfig, makeLogger, parseMaybeJson, readJsonl, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
 
 export const PLUGIN = 'weft-claude-code';
 export const PLUGIN_VERSION = '0.1.0';
@@ -246,7 +246,7 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
   const prompt = turn.prompt;
   const turnId = stableId(sid, 'turn', prompt.ts, prompt.prompt ?? '');
   const traceId = turnId;
-  const thread = { threadId: sid, turnId };
+  const thread = { sessionId: sid, turnId };
   const startedAt = prompt.ts;
   const stopEv = turn.stop ?? turn.events.findLast?.((e) => e.ev === 'SessionEnd') ?? turn.events[turn.events.length - 1];
   const endedAt = stopEv?.ts ?? ctx.endTs ?? prompt.ts;
@@ -304,19 +304,19 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
   // Turn.
   const finalText = turn.stop?.last_assistant_message ?? lastText(mainMsgs.flatMap((m) => m.blocks));
   items.push(
-    ...callItems(cfg, {
+    ...spanItems(cfg, {
       id: turnId,
       traceId,
       parentId: null,
       ...thread,
-      opName: 'claude_code.turn',
+      name: 'claude_code.turn',
       kind: 'agent',
       displayName: `invoke_agent ${cfg.agentName}`,
       startedAt,
       endedAt,
       inputs: { messages: [{ role: 'user', content: prompt.prompt ?? '' }] },
       output: finalText ? { messages: [{ role: 'assistant', content: finalText }] } : null,
-      exception: turn.stop ? undefined : turn.closed === 'session_end' ? 'session ended before the turn finished' : turn.closed === 'next_prompt' ? 'interrupted: a new prompt was submitted' : undefined,
+      error: turn.stop ? undefined : turn.closed === 'session_end' ? 'session ended before the turn finished' : turn.closed === 'next_prompt' ? 'interrupted: a new prompt was submitted' : undefined,
       genai: common({ 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': cfg.agentName, 'gen_ai.request.model': model, 'gen_ai.provider.name': 'anthropic' }),
       attributes: { claude_code: { cwd: prompt.cwd, permission_mode: prompt.permission_mode, session_source: ctx.session?.source, transcript_path: prompt.transcript_path } },
       pluginVersion: PLUGIN_VERSION,
@@ -334,19 +334,19 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
     if (isAgent) {
       const subType = t.input?.subagent_type ?? t.name;
       items.push(
-        ...callItems(cfg, {
+        ...spanItems(cfg, {
           id,
           traceId,
           parentId,
           ...thread,
-          opName: 'claude_code.subagent',
+          name: 'claude_code.subagent',
           kind: 'agent',
           displayName: `invoke_agent ${subType}`,
           startedAt: t.start,
           endedAt: t.end ?? endedAt,
           inputs: { messages: [{ role: 'user', content: t.input?.prompt ?? '' }], description: t.input?.description },
           output: result != null ? { messages: [{ role: 'assistant', content: typeof result === 'string' ? result : Array.isArray(result?.content) ? result.content.map((b) => b?.text ?? '').join('') : JSON.stringify(result) }] } : null,
-          exception,
+          error: exception,
           genai: common({ 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': subType, 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.id }),
           pluginVersion: PLUGIN_VERSION,
         }),
@@ -358,19 +358,19 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
         genai['mcp.server.name'] = String(t.name).split('__')[1];
       }
       items.push(
-        ...callItems(cfg, {
+        ...spanItems(cfg, {
           id,
           traceId,
           parentId,
           ...thread,
-          opName: `claude_code.tool.${t.name}`,
+          name: `claude_code.tool.${t.name}`,
           kind: 'tool',
           displayName: toolDisplay(t.name, t.input),
           startedAt: t.start,
           endedAt: t.end ?? endedAt,
           inputs: t.input && typeof t.input === 'object' && !Array.isArray(t.input) ? t.input : { input: t.input },
           output: result ?? null,
-          exception,
+          error: exception,
           genai,
           pluginVersion: PLUGIN_VERSION,
         }),
@@ -384,12 +384,12 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
     const text = lastText(m.blocks);
     const uses = m.blocks.filter((b) => b?.type === 'tool_use');
     items.push(
-      ...callItems(cfg, {
+      ...spanItems(cfg, {
         id: stableId(sid, 'llm', m.id),
         traceId,
         parentId,
         ...thread,
-        opName: 'claude_code.llm',
+        name: 'claude_code.llm',
         kind: 'llm',
         displayName: text ? shortText(text) : uses.length ? `→ ${uses.map((b) => b.name).join(', ')}` : `chat ${m.model ?? ''}`.trim(),
         startedAt: m.startedAt ?? m.endedAt,

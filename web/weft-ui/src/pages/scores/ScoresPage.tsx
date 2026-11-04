@@ -58,7 +58,7 @@ export function ScoresPage() {
           return n
         }),
       commit: async () => {
-        await api.feedbackPurge(pid, x.id)
+        await api.feedbackDelete(pid, x.id)
         await qc.invalidateQueries({ queryKey: ['v1', pid] })
       },
     })

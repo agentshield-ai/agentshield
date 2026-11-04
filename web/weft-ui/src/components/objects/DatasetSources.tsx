@@ -1,4 +1,4 @@
-// Dataset lineage (/dataset_sources/*): the calls, spans or
+// Dataset lineage (/api/v1/dataset_sources/*): the calls, spans or
 // conversations that rows of this dataset were built from.
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -6,11 +6,11 @@ import { adminApi } from '../../api/admin'
 import { ErrorBox, Section, Spinner } from '../common'
 import { ConfirmButton } from './bits'
 import { fmtRelative } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 
 export function DatasetSources({ projectId, objectId }: { projectId: string; objectId: string }) {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: ['dataset-sources', projectId, objectId], queryFn: () => adminApi.datasetSources(projectId, objectId).then((r) => r.links) })
+  const q = useQuery({ queryKey: ['dataset-sources', projectId, objectId], queryFn: () => adminApi.datasetSources(projectId, objectId).then((r) => r.items) })
   if (q.isSuccess && q.data.length === 0) return null
   const rows = new Set(q.data?.map((l) => l.row_digest)).size
   return (
@@ -37,7 +37,7 @@ export function DatasetSources({ projectId, objectId }: { projectId: string; obj
                   <td className="mono small" title={l.row_digest}>
                     {l.row_digest.slice(0, 10)}
                   </td>
-                  <td>{l.source_kind === 'call' ? <Link to={callUrl(projectId, l.source_id)}>{l.source_display_name}</Link> : <span className="mono small">{l.source_display_name}</span>}</td>
+                  <td>{l.source_kind === 'call' || l.source_kind === 'span' ? <Link to={spanUrl(projectId, l.source_id)}>{l.source_display_name}</Link> : <span className="mono small">{l.source_display_name}</span>}</td>
                   <td>
                     <span className="badge">{l.source_kind}</span>
                   </td>

@@ -133,7 +133,7 @@ class _Stream:
             except Exception:  # pragma: no cover
                 pass
         if first and not self.root._ended:
-            own_thread = self.root.thread_id is None or self.root.thread_id == self.root.id
+            own_thread = self.root.session_id is None or self.root.session_id == self.root.id
             self.client.update_call(self.root, {"gen_ai": {"conversation": {"id": sid}}},
                                     thread_id=sid if own_thread else None, turn_id=self.root.id if own_thread else None)
 

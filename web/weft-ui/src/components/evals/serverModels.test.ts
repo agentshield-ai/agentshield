@@ -4,13 +4,13 @@ import { predictUrlError, promptColumns, serverModelKind, serverModelSummary } f
 
 describe('server-runnable models', () => {
   it('classifies models', () => {
-    expect(serverModelKind({ val: { _class_name: 'LLMStructuredCompletionModel', llm_model_id: 'gpt-4o' } })).toBe('llm')
-    expect(serverModelKind({ val: { _class_name: 'RemoteModel', _bases: ['Model'], predict_url: 'https://x/predict' } })).toBe('remote')
-    expect(serverModelKind({ val: { _class_name: 'RuntimeModel', runtime: 'vllm' } })).toBe('runtime')
-    expect(serverModelKind({ val: { _class_name: 'Model', predict_url: 'ftp://x' } })).toBeNull()
-    expect(serverModelKind({ val: { _class_name: 'Model' } })).toBeNull()
-    expect(serverModelSummary({ val: { runtime: 'weft:///e/p/object/vllm:abc', runtime_id: 'llama' } })).toBe('runtime vllm:abc / llama')
-    expect(serverModelSummary({ val: { predict_url: 'https://x/p' } })).toBe('POST https://x/p')
+    expect(serverModelKind({ value: { _class_name: 'LLMStructuredCompletionModel', llm_model_id: 'gpt-4o' } })).toBe('llm')
+    expect(serverModelKind({ value: { _class_name: 'RemoteModel', _bases: ['Model'], predict_url: 'https://x/predict' } })).toBe('remote')
+    expect(serverModelKind({ value: { _class_name: 'RuntimeModel', runtime: 'vllm' } })).toBe('runtime')
+    expect(serverModelKind({ value: { _class_name: 'Model', predict_url: 'ftp://x' } })).toBeNull()
+    expect(serverModelKind({ value: { _class_name: 'Model' } })).toBeNull()
+    expect(serverModelSummary({ value: { runtime: 'weft:///e/p/object/vllm:abc', runtime_id: 'llama' } })).toBe('runtime vllm:abc / llama')
+    expect(serverModelSummary({ value: { predict_url: 'https://x/p' } })).toBe('POST https://x/p')
   })
   it('validates predict URLs and finds template columns', () => {
     expect(predictUrlError('https://x/predict')).toBeNull()

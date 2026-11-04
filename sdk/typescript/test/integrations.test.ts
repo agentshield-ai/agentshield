@@ -65,7 +65,7 @@ function fakeOpenAI() {
 describe('integrations', () => {
   it('wrapOpenAI traces chat completions, streaming and responses', async () => {
     const oai = weft.wrapOpenAI(weft.wrapOpenAI(fakeOpenAI()));
-    const agent = weft.op(async function agent(q: string) {
+    const agent = weft.trace(async function agent(q: string) {
       const r = await oai.chat.completions.create({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: q }] });
       return (r as any).choices[0].message.content;
     });

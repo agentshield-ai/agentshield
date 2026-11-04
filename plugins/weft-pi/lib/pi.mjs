@@ -12,7 +12,7 @@
 //   │                          with the context messages, the response and token usage
 //   └─ execute_tool <tool>     tool_execution_start .. tool_execution_end
 
-import { callItems, chatOutput, loadConfig, makeLogger, newId, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
+import { spanItems, chatOutput, loadConfig, makeLogger, newId, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
 
 export const PLUGIN = 'weft-pi';
 export const PLUGIN_VERSION = '0.1.0';
@@ -288,7 +288,7 @@ export class WeftPiTracer {
     const endedAt = this.now();
     const agentName = cfg.agentName || 'pi';
     const conv = this.session.id;
-    const base = { traceId: run.id, threadId: conv, turnId: run.id, pluginVersion: PLUGIN_VERSION };
+    const base = { traceId: run.id, sessionId: conv, turnId: run.id, pluginVersion: PLUGIN_VERSION };
     const common = { 'gen_ai.conversation.id': conv, 'gen_ai.conversation.name': this.session.name || this.session.firstPrompt || undefined };
     const items = [];
     const assistants = run.llms.map((l) => l.message).filter(Boolean);
@@ -306,18 +306,18 @@ export class WeftPiTracer {
     }
     const userContent = run.images ? [{ type: 'text', text: run.prompt ?? '' }, { type: 'text', text: `[${run.images} image(s)]` }] : run.prompt ?? '';
     items.push(
-      ...callItems(cfg, {
+      ...spanItems(cfg, {
         ...base,
         id: run.id,
         parentId: null,
-        opName: 'pi.agent_run',
+        name: 'pi.agent_run',
         kind: 'agent',
         displayName: `invoke_agent ${agentName}`,
         startedAt: run.startedAt,
         endedAt,
         inputs: { messages: [...(run.systemPrompt ? [{ role: 'system', content: run.systemPrompt }] : []), { role: 'user', content: userContent }] },
         output: finalText ? { messages: [{ role: 'assistant', content: finalText }], stop_reason: last?.stopReason ?? null } : last ? { stop_reason: last.stopReason } : null,
-        exception,
+        error: exception,
         genai: {
           ...common,
           'gen_ai.operation.name': 'invoke_agent',
@@ -357,11 +357,11 @@ export class WeftPiTracer {
       if (out && tc.length) out.choices[0].message.tool_calls = tc;
       const llmErr = m && (m.stopReason === 'error' || m.stopReason === 'aborted') ? m.errorMessage ?? `LLM call ${m.stopReason}` : m ? undefined : 'no response before the run ended';
       items.push(
-        ...callItems(cfg, {
+        ...spanItems(cfg, {
           ...base,
           id: stableId('pi', run.id, 'llm', l.key),
           parentId: run.id,
-          opName: 'pi.llm',
+          name: 'pi.llm',
           kind: 'llm',
           displayName: text ? shortText(text) : `chat ${model ?? ''}`.trim(),
           startedAt: l.startedAt,
@@ -369,7 +369,7 @@ export class WeftPiTracer {
           inputs: { model, messages, ...(l.droppedMessages ? { earlier_messages_omitted: l.droppedMessages } : {}) },
           output: out,
           summary: usageSummary(model, usage),
-          exception: llmErr,
+          error: llmErr,
           genai: { ...common, 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': model, 'gen_ai.response.model': m?.model, 'gen_ai.provider.name': provider },
           attributes: u?.cost?.total ? { pi: { cost_usd: u.cost.total } } : undefined,
         }),
@@ -380,18 +380,18 @@ export class WeftPiTracer {
       const t = run.tools.get(key);
       const args = t.args && typeof t.args === 'object' && !Array.isArray(t.args) ? t.args : { input: t.args };
       items.push(
-        ...callItems(cfg, {
+        ...spanItems(cfg, {
           ...base,
           id: stableId('pi', run.id, 'tool', t.id ?? i),
           parentId: run.id,
-          opName: `pi.tool.${t.name}`,
+          name: `pi.tool.${t.name}`,
           kind: 'tool',
           displayName: toolDisplay(t.name, args),
           startedAt: t.startedAt,
           endedAt: t.endedAt ?? endedAt,
           inputs: args,
           output: resultValue(t.result),
-          exception: t.isError ? contentText(t.result?.content) || 'tool failed' : t.endedAt ? undefined : 'tool did not finish before the run ended',
+          error: t.isError ? contentText(t.result?.content) || 'tool failed' : t.endedAt ? undefined : 'tool did not finish before the run ended',
           genai: { ...common, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.id },
         }),
       );

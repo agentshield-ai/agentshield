@@ -18,10 +18,10 @@ afterEach(async () => {
 
 describe('op tracing', () => {
   it('records nested sync and async calls with parent/trace ids', async () => {
-    const inner = weft.op(function inner(x: number) {
+    const inner = weft.trace(function inner(x: number) {
       return x * 2;
     });
-    const outer = weft.op(async function outer(x: number, y = 3) {
+    const outer = weft.trace(async function outer(x: number, y = 3) {
       await new Promise((r) => setTimeout(r, 5));
       const [a, b] = await Promise.all([Promise.resolve(inner(x)), Promise.resolve(inner(y))]);
       return a + b;
@@ -38,21 +38,21 @@ describe('op tracing', () => {
       expect(k.parent_id).toBe(o.id);
       expect(k.trace_id).toBe(o.trace_id);
     }
-    expect(o.op_name).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/op\/outer:/);
+    expect(o.name).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/function\/outer:/);
     expect(o.id[14]).toBe('7'); // uuidv7
     const opVal = fake.objs.get('outer')![0];
-    expect(opVal.val._type).toBe('Op');
-    expect(opVal.val.code).toContain('function outer');
-    expect(o.op_name.endsWith(':' + opVal.digest)).toBe(true); // local digest == server digest
-    expect(fake.requests.some((r) => r.path === '/call/upsert_batch')).toBe(true);
+    expect(opVal.value._type).toBe('Op');
+    expect(opVal.value.code).toContain('function outer');
+    expect(o.name.endsWith(':' + opVal.digest)).toBe(true); // local digest == server digest
+    expect(fake.requests.some((r) => r.path === '/api/v1/spans/batch')).toBe(true);
   });
 
   it('keeps parents across concurrent async work', async () => {
-    const leaf = weft.op(async function leaf(i: number) {
+    const leaf = weft.trace(async function leaf(i: number) {
       await new Promise((r) => setTimeout(r, Math.random() * 10));
       return i;
     });
-    const root = weft.op(async function root(n: number) {
+    const root = weft.trace(async function root(n: number) {
       return (await Promise.all(Array.from({ length: n }, (_, i) => leaf(i)))).length;
     });
     await Promise.all([root(3), root(4)]);
@@ -62,27 +62,27 @@ describe('op tracing', () => {
   });
 
   it('records and rethrows errors (sync and async)', async () => {
-    const bad = weft.op(function bad() {
+    const bad = weft.trace(function bad() {
       throw new TypeError('nope');
     });
-    const abad = weft.op(async function abad() {
+    const abad = weft.trace(async function abad() {
       throw new RangeError('async nope');
     });
     expect(() => bad()).toThrow('nope');
     await expect(abad()).rejects.toThrow('async nope');
     await client.flush();
-    expect(fake.callsByOp('bad')[0].exception).toMatch(/^TypeError: nope/);
-    expect(fake.callsByOp('abad')[0].exception).toMatch(/^RangeError: async nope/);
+    expect(fake.callsByOp('bad')[0].error).toMatch(/^TypeError: nope/);
+    expect(fake.callsByOp('abad')[0].error).toMatch(/^RangeError: async nope/);
   });
 
   it('accumulates async generators and sync generators', async () => {
-    const child = weft.op(function child(i: number) {
+    const child = weft.trace(function child(i: number) {
       return i;
     });
-    const agen = weft.op(async function* agen(n: number) {
+    const agen = weft.trace(async function* agen(n: number) {
       for (let i = 0; i < n; i++) yield child(i);
     });
-    const sgen = weft.op(function* sgen() {
+    const sgen = weft.trace(function* sgen() {
       yield 'a';
       yield 'b';
     }, { accumulator: (acc: string | undefined, x) => (acc ?? '') + x });
@@ -98,7 +98,7 @@ describe('op tracing', () => {
   });
 
   it('supports .call(), display names and postprocessing', async () => {
-    const f = weft.op(
+    const f = weft.trace(
       function f(q: string, secret: string) {
         return `hi ${q}`;
       },
@@ -112,12 +112,12 @@ describe('op tracing', () => {
     const [res, call] = await f.call('x', 's3cret');
     expect(res).toBe('hi x');
     expect(call!.id).toBeTruthy();
-    const failing = weft.op(function failing() {
+    const failing = weft.trace(function failing() {
       throw new Error('captured');
     });
     const [r2, c2] = await failing.call();
     expect(r2).toBeUndefined();
-    expect(c2!.exception).toMatch(/^Error: captured/);
+    expect(c2!.error).toMatch(/^Error: captured/);
     await client.flush();
     const [c] = fake.callsByOp('renamed');
     expect(c.display_name).toBe('q=x');
@@ -126,7 +126,7 @@ describe('op tracing', () => {
   });
 
   it('destructured single-object params become named inputs', async () => {
-    const m = weft.op(async ({ datasetRow }: { datasetRow: { q: string } }) => datasetRow.q, { name: 'model' });
+    const m = weft.trace(async ({ datasetRow }: { datasetRow: { q: string } }) => datasetRow.q, { name: 'model' });
     await m({ datasetRow: { q: 'z' } });
     await client.flush();
     expect(fake.callsByOp('model')[0].inputs).toEqual({ datasetRow: { q: 'z' } });
@@ -135,11 +135,11 @@ describe('op tracing', () => {
   });
 
   it('applies attributes, threads and usage', async () => {
-    const tool = weft.op(function tool() {
-      weft.addUsage(weft.getCurrentCall(), 'gpt-4o-mini', 10, 5);
+    const tool = weft.trace(function tool() {
+      weft.addUsage(weft.getCurrentSpan(), 'gpt-4o-mini', 10, 5);
       return 1;
     });
-    const turn = weft.op(async function turn(i: number) {
+    const turn = weft.trace(async function turn(i: number) {
       tool();
       return i;
     });
@@ -152,7 +152,7 @@ describe('op tracing', () => {
     await client.flush();
     const turns = fake.callsByOp('turn');
     for (const t of turns) {
-      expect(t.thread_id).toBe('conv-1');
+      expect(t.session_id).toBe('conv-1');
       expect(t.turn_id).toBe(t.id);
       expect(t.attributes.env).toBe('test');
     }
@@ -165,7 +165,7 @@ describe('op tracing', () => {
   it('binds methods with op(this, fn)', async () => {
     class Agent {
       prefix = '>';
-      run = weft.op(this, async function run(this: Agent, q: string) {
+      run = weft.trace(this, async function run(this: Agent, q: string) {
         return this.prefix + q;
       });
     }
@@ -177,7 +177,7 @@ describe('op tracing', () => {
 
   it('uploads binary data as files', async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-    const f = weft.op(function img(data: Uint8Array) {
+    const f = weft.trace(function img(data: Uint8Array) {
       return data.length;
     });
     f(png);
@@ -190,7 +190,7 @@ describe('op tracing', () => {
 
   it('is a no-op without init and never blocks when the server is down', async () => {
     await weft.finish();
-    const f = weft.op(function f(x: number) {
+    const f = weft.trace(function f(x: number) {
       return x + 1;
     });
     expect(f(1)).toBe(2);
@@ -203,26 +203,26 @@ describe('op tracing', () => {
   });
 
   it('retries failed batches', async () => {
-    fake.failPaths.set('/call/upsert_batch', 2);
-    const f = weft.op(function f() {
+    fake.failPaths.set('/api/v1/spans/batch', 2);
+    const f = weft.trace(function f() {
       return 1;
     });
     f();
     await client.flush();
     expect(fake.callsByOp('f')).toHaveLength(1);
-    expect(fake.requests.filter((r) => r.path === '/call/upsert_batch')).toHaveLength(3);
+    expect(fake.requests.filter((r) => r.path === '/api/v1/spans/batch')).toHaveLength(3);
   });
 
   it('queries calls and manages feedback', async () => {
-    const f = weft.op(function f(x: number) {
+    const f = weft.trace(function f(x: number) {
       return x;
     });
     f(1);
     f(2);
-    const calls = await client.getCalls({ filter: { op_names: ['f'] } });
+    const calls = await client.spans({ filter: { names: ['f'] } });
     expect(calls.map((c) => c.inputs.x)).toEqual([1, 2]);
-    expect(calls[0].opBaseName).toBe('f');
-    const call = (await client.getCall(calls[0].id))!;
+    expect(calls[0].baseName).toBe('f');
+    const call = (await client.span(calls[0].id))!;
     await call.feedback.addReaction('👍');
     await call.feedback.addNote('good');
     expect((await call.feedback.list()).map((x) => x.feedback_type)).toEqual(['weft.reaction', 'weft.note']);
@@ -231,15 +231,15 @@ describe('op tracing', () => {
     await call.delete();
     expect(fake.calls.get(call.id).deleted_at).toBe('now');
     expect((await client.serverInfo()).version).toBe('fake');
-    expect(await client.addCost('m', 1e-6, 2e-6)).toEqual([['c0', 'm']]);
+    expect(await client.addCost('m', 1e-6, 2e-6)).toEqual([{ id: 'c0', llm_id: 'm' }]);
   });
 
   it('sends the API key', async () => {
     await weft.init('keyed', { serverUrl: fake.url, apiKey: 'k1', sender: { flushIntervalMs: 1 } });
-    weft.op(function g() {})();
+    weft.trace(function g() {})();
     await weft.flush();
-    const r = fake.requests.find((x) => x.path === '/call/upsert_batch')!;
+    const r = fake.requests.find((x) => x.path === '/api/v1/spans/batch')!;
     expect(r.headers.authorization).toBe('Bearer k1');
-    expect(r.body.batch[0].req.start.project_id).toBe('default/keyed');
+    expect(r.body.items[0].start.project_id).toBe('default/keyed');
   });
 });

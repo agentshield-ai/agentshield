@@ -18,10 +18,10 @@ test('a recorded Pi session becomes one conversation with turns, LLM calls and t
   assert.ok(returns.every((r) => r === undefined), 'handlers never return a value (no blocking, no rewriting)');
   await settle(tracer);
   const calls = [...rec.calls().values()];
-  const runs = calls.filter((c) => c.op_name === 'pi.agent_run').sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const runs = calls.filter((c) => c.name === 'pi.agent_run').sort((a, b) => a.started_at.localeCompare(b.started_at));
   assert.equal(runs.length, 2);
   const [r1, r2] = runs;
-  assert.equal(r1.thread_id, SESSION_ID);
+  assert.equal(r1.session_id, SESSION_ID);
   assert.equal(r1.turn_id, r1.id);
   assert.equal(r1.parent_id, null);
   assert.equal(r1.display_name, 'invoke_agent pi');
@@ -42,9 +42,9 @@ test('a recorded Pi session becomes one conversation with turns, LLM calls and t
   assert.equal(r1.output.messages[0].content, 'Fixed: add() subtracted instead of adding.');
   assert.equal(r1.started_at, '2026-11-02T12:00:00.100Z');
   assert.equal(r1.ended_at, '2026-11-02T12:00:02.700Z');
-  assert.equal(r1.exception, undefined);
+  assert.equal(r1.error, undefined);
 
-  const llms = calls.filter((c) => c.op_name === 'pi.llm' && c.parent_id === r1.id).sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const llms = calls.filter((c) => c.name === 'pi.llm' && c.parent_id === r1.id).sort((a, b) => a.started_at.localeCompare(b.started_at));
   assert.equal(llms.length, 3, 'one per LLM response');
   assert.equal(llms[0].started_at, '2026-11-02T12:00:00.130Z');
   assert.equal(llms[0].ended_at, '2026-11-02T12:00:00.900Z');
@@ -63,22 +63,22 @@ test('a recorded Pi session becomes one conversation with turns, LLM calls and t
   assert.equal(llms[2].display_name, 'Fixed: add() subtracted instead of adding.');
 
   const tools = calls.filter((c) => c.attributes.weft.span_kind === 'tool');
-  assert.deepEqual(tools.map((t) => t.op_name).sort(), ['pi.tool.bash', 'pi.tool.edit', 'pi.tool.read']);
-  const bash = tools.find((t) => t.op_name === 'pi.tool.bash');
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['pi.tool.bash', 'pi.tool.edit', 'pi.tool.read']);
+  const bash = tools.find((t) => t.name === 'pi.tool.bash');
   assert.equal(bash.parent_id, r1.id);
   assert.equal(bash.display_name, 'bash: npm test');
-  assert.equal(bash.exception, '1 failing');
+  assert.equal(bash.error, '1 failing');
   assert.equal(bash.attributes['gen_ai.tool.call.id'], 'tc-bash');
   assert.equal(bash.started_at, '2026-11-02T12:00:00.920Z');
   assert.equal(bash.ended_at, '2026-11-02T12:00:01.500Z');
-  const read = tools.find((t) => t.op_name === 'pi.tool.read');
+  const read = tools.find((t) => t.name === 'pi.tool.read');
   assert.deepEqual(read.output, { text: 'export const add = (a, b) => a - b;', details: { lines: 1 } });
   assert.deepEqual(read.inputs, { path: 'math.js' });
 
   assert.equal(r2.inputs.messages.at(-1).content, 'Now delete node_modules');
-  assert.equal(r2.exception, '429 rate limited');
-  const [failedLlm] = calls.filter((c) => c.op_name === 'pi.llm' && c.parent_id === r2.id);
-  assert.equal(failedLlm.exception, '429 rate limited');
+  assert.equal(r2.error, '429 rate limited');
+  const [failedLlm] = calls.filter((c) => c.name === 'pi.llm' && c.parent_id === r2.id);
+  assert.equal(failedLlm.error, '429 rate limited');
   assert.equal(calls.length, 2 + 4 + 3);
 });
 
@@ -108,9 +108,9 @@ test('ids are stable, failed sends are retried, and shutdown closes an open run'
   await pi.emit('tool_execution_start', { toolCallId: 'x', toolName: 'bash', args: { command: 'sleep 100' } }, ctx);
   await pi.emit('session_shutdown', { reason: 'quit' }, ctx);
   const c3 = [...rec3.calls().values()];
-  const run = c3.find((c) => c.op_name === 'pi.agent_run');
-  assert.match(run.exception, /run closed without agent_end \(session quit\)/);
-  assert.equal(c3.find((c) => c.op_name === 'pi.tool.bash').exception, 'tool did not finish before the run ended');
+  const run = c3.find((c) => c.name === 'pi.agent_run');
+  assert.match(run.error, /run closed without agent_end \(session quit\)/);
+  assert.equal(c3.find((c) => c.name === 'pi.tool.bash').error, 'tool did not finish before the run ended');
 });
 
 function registerForTest(pi, fetchImpl) {
@@ -126,9 +126,9 @@ test('content capture off keeps structure, usage and names only', async () => {
   await settle(tracer);
   const calls = [...rec.calls().values()];
   assert.ok(calls.every((c) => Object.keys(c.inputs).length === 0 && c.output === null));
-  const llm = calls.find((c) => c.op_name === 'pi.llm');
+  const llm = calls.find((c) => c.name === 'pi.llm');
   assert.equal(llm.summary.usage['claude-sonnet-4-5'].completion_tokens, 80);
-  assert.equal(calls.find((c) => c.op_name === 'pi.agent_run').attributes['gen_ai.agent.name'], 'my-pi');
+  assert.equal(calls.find((c) => c.name === 'pi.agent_run').attributes['gen_ai.agent.name'], 'my-pi');
 });
 
 test('configuration: disabled without a project; environment and options; the /weft command', async () => {

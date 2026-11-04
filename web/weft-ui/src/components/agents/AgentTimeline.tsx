@@ -7,7 +7,7 @@ import { api } from '../../api/client'
 import type { ChatMessage, TraceChat } from '../../api/agents'
 import type { Any } from '../../api/types'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../common'
 import { MediaView, ValueView, isMedia } from '../ValueView'
 import { CallChatView, ChatMessageView, extractChat, normaliseMessage } from '../traces/ChatView'
@@ -22,11 +22,11 @@ function Status({ code }: { code: string | null | undefined }) {
 
 /** The full call behind an LLM span: every input message and the output. */
 function CallDetail({ projectId, callId }: { projectId: string; callId: string }) {
-  const q = useQuery({ queryKey: ['call', projectId, callId, 'agent-detail'], queryFn: () => api.callRead(projectId, callId, { include_costs: true }) })
-  if (q.isLoading) return <Spinner label="Loading call…" />
+  const q = useQuery({ queryKey: ['span', projectId, callId, 'agent-detail'], queryFn: () => api.spanFind(projectId, callId, { include_costs: true }) })
+  if (q.isLoading) return <Spinner label="Loading span…" />
   if (q.error) return <ErrorBox error={q.error} />
-  const call = q.data?.call
-  if (!call) return <span className="faint small">Call not found.</span>
+  const call = q.data
+  if (!call) return <span className="faint small">Span not found.</span>
   const chat = extractChat(call)
   return chat ? (
     <CallChatView chat={chat} projectId={projectId} />
@@ -47,7 +47,7 @@ function CallDetail({ projectId, callId }: { projectId: string; callId: string }
 function SpanLink({ projectId, id }: { projectId: string; id: string | null }) {
   if (!id) return null
   return (
-    <Link to={callUrl(projectId, id)} className="small" onClick={(e) => e.stopPropagation()}>
+    <Link to={spanUrl(projectId, id)} className="small" onClick={(e) => e.stopPropagation()}>
       open call ↗
     </Link>
   )
@@ -209,7 +209,7 @@ export function TurnView({ turn, index, projectId, badges }: { turn: TraceChat; 
     <section className="agent-turn" id={`turn-${index + 1}`}>
       <div className="agent-turn-head">
         <span className="badge">Turn {index + 1}</span>
-        <Link to={callUrl(projectId, turn.root_span_id)} className="mono small">
+        <Link to={spanUrl(projectId, turn.root_span_id)} className="mono small">
           {turn.root_span_name ?? turn.root_span_id}
         </Link>
         <Status code={turn.status_code} />

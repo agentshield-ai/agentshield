@@ -39,7 +39,7 @@ const HELP: Record<string, { title: string; body: string; doc: string }> = {
   models: { title: 'Models', body: 'Versioned model and agent configurations (prompt, model, parameters) that evaluations can run.', doc: 'evaluations.md#datasets-models-prompts-and-scorers' },
   prompts: { title: 'Prompts', body: 'Versioned prompts. Each change is kept, so you can compare versions and roll back.', doc: 'evaluations.md#datasets-models-prompts-and-scorers' },
   scorers: { title: 'Scorers', body: 'Saved scorers (LLM judges, rules, code) that evaluations and monitors use to score outputs.', doc: 'evaluations.md#datasets-models-prompts-and-scorers' },
-  functions: { title: 'Functions', body: 'The traced functions (ops) of your code, versioned by their source. Each run of a function is a span in Traces.', doc: 'evaluations.md#datasets-models-prompts-and-scorers' },
+  functions: { title: 'Functions', body: 'The traced functions of your code, versioned by their source. Each run of a function is a span in Traces.', doc: 'evaluations.md#datasets-models-prompts-and-scorers' },
   objects: { title: 'All objects', body: 'Everything versioned in this project: datasets, models, prompts, scorers, functions and more.', doc: 'evaluations.md#datasets-models-prompts-and-scorers' },
   automations: {
     title: 'Automations',

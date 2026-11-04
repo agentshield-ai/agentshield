@@ -35,11 +35,14 @@ export function currentContext(): WeftContext {
   return storage.getStore() ?? EMPTY;
 }
 
-/** The innermost call being traced in the current async context. */
-export function getCurrentCall(): Call | null {
+/** The innermost span being recorded in this context, if any. */
+export function getCurrentSpan(): Call | null {
   const s = currentContext().stack;
   return s.length ? s[s.length - 1] : null;
 }
+
+/** Earlier name of getCurrentSpan (used throughout the SDK). */
+export const getCurrentCall = getCurrentSpan;
 
 export function runWith<T>(patch: Partial<WeftContext>, fn: () => T): T {
   return storage.run({ ...currentContext(), ...patch }, fn);

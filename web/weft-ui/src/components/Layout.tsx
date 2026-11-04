@@ -37,7 +37,7 @@ export const NAV: { section: string; items: { to: string; label: string; icon: I
       { to: 'models', label: 'Models', icon: 'models' },
       { to: 'prompts', label: 'Prompts', icon: 'prompts' },
       { to: 'scorers', label: 'Scorers', icon: 'scorers' },
-      { to: 'functions', label: 'Functions', icon: 'functions', hint: 'Traced functions (ops) and their versions' },
+      { to: 'functions', label: 'Functions', icon: 'functions', hint: 'Traced functions and their versions' },
       { to: 'objects', label: 'All objects', icon: 'objects' },
     ],
   },

@@ -57,10 +57,10 @@ def _unpatch():
     unpatch_all()
 
 
-@weft.op(name="openai.chat.completions.create", kind="llm")
+@weft.trace(name="openai.chat.completions.create", kind="llm")
 def provider_call(model="gpt-4o-mini", p=10, c=5):
     """Stands in for a provider SDK call traced by another integration."""
-    weft.add_usage(weft.get_current_call(), model, p, c)
+    weft.add_usage(weft.get_current_span(), model, p, c)
     return "ok"
 
 
@@ -139,7 +139,7 @@ def test_llamaindex_span_handler(client, fake, monkeypatch):
     h.new_span(bad, bound(query, None, "x"), instance=object(), parent_span_id=q)
     h.prepare_to_drop_span(bad, None, err=ValueError("tool failed"))
     h.prepare_to_exit_span(q, None, result="weft is a tracer")
-    assert weft.get_current_call() is None
+    assert weft.get_current_span() is None
     client.flush()
     [root] = by_op(fake, "llama_index.RetrieverQueryEngine.query")
     assert root["parent_id"] is None and root["output"] == "weft is a tracer" and root["inputs"] == {"str_or_query_bundle": "what is weft?"}
@@ -153,7 +153,7 @@ def test_llamaindex_span_handler(client, fake, monkeypatch):
     assert usage(l_calls[1]) is None
     assert by_op(fake, "openai.chat.completions.create")[0]["parent_id"] == l_calls[1]["id"]
     [t] = by_op(fake, "llama_index.FunctionTool.call")
-    assert kind(t) == "tool" and t["exception"].startswith("ValueError: tool failed")
+    assert kind(t) == "tool" and t["error"].startswith("ValueError: tool failed")
     li.unpatch_llamaindex()
     assert disp.span_handlers == []
 
@@ -384,7 +384,7 @@ def test_instructor(client, fake, monkeypatch):
 
 # ---------------------------------------------------------------- MCP
 def test_mcp_client_and_server(client, fake, monkeypatch):
-    @weft.op
+    @weft.trace
     def add(a, b):
         return a + b
 
@@ -578,7 +578,7 @@ def test_claude_agent_sdk_query(client, fake, fake_claude_sdk):
     assert root["output"]["result"] == "There is a README and src." and root["output"]["total_cost_usd"] == 0.0123
     assert root["output"]["session_id"] == "sess-1" and root["display_name"] == "What is in this repo?"
     # the Claude session is the Weft session (learned from the init message; the start is re-sent)
-    assert root["thread_id"] == "sess-1" and root["turn_id"] == root["id"]
+    assert root["session_id"] == "sess-1" and root["turn_id"] == root["id"]
     assert root["attributes"]["gen_ai"]["conversation"]["id"] == "sess-1"
     assert root["attributes"]["gen_ai"]["agent"]["name"] == "claude-agent-sdk"
     u = usage(root)[MODEL]
@@ -589,10 +589,10 @@ def test_claude_agent_sdk_query(client, fake, fake_claude_sdk):
     assert llms[0]["display_name"] == "Let me look."
     [bash] = by_op(fake, "claude_agent_sdk.tool.Bash")
     assert kind(bash) == "tool" and bash["inputs"] == {"command": "ls -la"} and bash["display_name"] == "Bash: ls -la"
-    assert bash["output"]["content"] == "README.md\nsrc" and not bash.get("exception") and bash["parent_id"] == root["id"]
-    assert bash["attributes"]["gen_ai"]["tool"] == {"name": "Bash", "call": {"id": "t1"}} and bash["thread_id"] == "sess-1"
+    assert bash["output"]["content"] == "README.md\nsrc" and not bash.get("error") and bash["parent_id"] == root["id"]
+    assert bash["attributes"]["gen_ai"]["tool"] == {"name": "Bash", "call": {"id": "t1"}} and bash["session_id"] == "sess-1"
     [read] = by_op(fake, "claude_agent_sdk.tool.Read")
-    assert read["exception"].startswith("RuntimeError: File does not exist")
+    assert read["error"].startswith("RuntimeError: File does not exist")
     [task] = by_op(fake, "claude_agent_sdk.tool.Task")
     assert kind(task) == "agent" and task["attributes"]["gen_ai"]["agent"]["name"] == "explorer"
     assert task["attributes"]["gen_ai"]["operation"]["name"] == "invoke_agent" and task["attributes"]["gen_ai"]["tool"]["call"]["id"] == "t3"
@@ -614,12 +614,12 @@ def test_claude_agent_sdk_client_turns(client, fake, fake_claude_sdk):
     client.flush()
     turns = by_op(fake, "claude_agent_sdk.turn")
     assert [t["inputs"]["prompt"] for t in turns] == ["first question", "second question"]
-    assert turns[0]["thread_id"] == "sess-1" and turns[0]["thread_id"] == turns[1]["thread_id"]
+    assert turns[0]["session_id"] == "sess-1" and turns[0]["session_id"] == turns[1]["session_id"]
     assert all(t["attributes"]["gen_ai"]["conversation"]["id"] == "sess-1" for t in turns)
     assert turns[0]["turn_id"] == turns[0]["id"] and kind(turns[0]) == "agent"
     assert usage(turns[1])[MODEL]["requests"] == 1
     llm = [c for c in by_op(fake, "claude_agent_sdk.llm") if c["parent_id"] == turns[0]["id"]]
-    assert llm and llm[0]["thread_id"] == turns[0]["thread_id"]
+    assert llm and llm[0]["session_id"] == turns[0]["session_id"]
 
 
 # ---------------------------------------------------------------- Haystack
@@ -675,7 +675,7 @@ def test_haystack_tracer(client, fake, monkeypatch):
     [loc] = by_op(fake, "haystack.HuggingFaceLocalGenerator")
     assert usage(loc) == {"gpt-4o-mini": {"requests": 1, "prompt_tokens": 12, "completion_tokens": 2, "total_tokens": 14}}
     [broken] = by_op(fake, "haystack.Broken")
-    assert broken["exception"].startswith("RuntimeError: component failed")
+    assert broken["error"].startswith("RuntimeError: component failed")
     hs.unpatch_haystack()
     assert proxy.actual_tracer is None
 
@@ -889,7 +889,7 @@ def test_openai_realtime(client, fake, monkeypatch):
     client.flush()
     [sess] = by_op(fake, "openai.realtime.session")
     assert kind(sess) == "agent" and sess["inputs"]["model"] == "gpt-realtime"
-    assert sess["output"]["responses"] == 2 and sess["output"]["server_events"] == 9 and not sess.get("exception")
+    assert sess["output"]["responses"] == 2 and sess["output"]["server_events"] == 9 and not sess.get("error")
     r1, r2 = by_op(fake, "openai.realtime.response")
     assert r1["parent_id"] == sess["id"] and kind(r1) == "llm"
     assert r1["inputs"]["input"][0]["content"][0]["text"] == "Weather in Paris?" and r1["inputs"]["input_audio_bytes"] == 600
@@ -901,7 +901,7 @@ def test_openai_realtime(client, fake, monkeypatch):
     u = usage(r1)["gpt-realtime"]
     assert u["prompt_tokens"] == 100 and u["completion_tokens"] == 50 and u["cached_tokens"] == 20 and u["input_audio_tokens"] == 60
     assert usage(sess) is None
-    assert r2["exception"].startswith("RuntimeError: rate limited")
+    assert r2["error"].startswith("RuntimeError: rate limited")
     assert r2["inputs"]["input"][0]["type"] == "function_call_output"
     [tool] = by_op(fake, "openai.realtime.tool.get_weather")
     assert kind(tool) == "tool" and tool["inputs"] == {"city": "Paris"} and tool["output"] == {"temp": 21} and tool["parent_id"] == sess["id"]

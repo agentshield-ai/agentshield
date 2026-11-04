@@ -28,7 +28,7 @@ The plugin registers observation hooks: `session_start`, `llm_input`,
 `session_end` and `gateway_stop`. Handlers only update in-memory state and
 return immediately; they never return a decision, so they cannot block or
 change a tool call (they are registered at the lowest priority). Finished runs
-are queued and sent to `/call/upsert_batch` by a background timer
+are queued and sent to `/api/v1/spans/batch` by a background timer
 (`flushIntervalMs`) with a short timeout; on failure the batch stays queued
 (bounded) and a warning is logged at most every 30 s. `gateway_stop` closes
 open runs and sends what is left (bounded wait).

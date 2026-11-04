@@ -97,15 +97,15 @@ export function AliasEditor({
   const [err, setErr] = useState<string | null>(null)
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
-    void qc.invalidateQueries({ queryKey: ['obj', projectId, objectId] })
-    void qc.invalidateQueries({ queryKey: ['objs', projectId] })
+    void qc.invalidateQueries({ queryKey: ['object', projectId, objectId] })
+    void qc.invalidateQueries({ queryKey: ['objects', projectId] })
   }
   const add = async () => {
     const a = val.trim()
     if (!a) return setAdding(false)
     if (a === 'latest' || /^v\d+$/.test(a)) return setErr(`"${a}" is reserved`)
     try {
-      await api.objAliasSet(projectId, objectId, digest, a)
+      await api.objectAliasSet(projectId, objectId, digest, a)
       setVal('')
       setAdding(false)
       setErr(null)
@@ -125,7 +125,7 @@ export function AliasEditor({
               title={`Remove alias ${a}`}
               onClick={async () => {
                 try {
-                  await api.objAliasRemove(projectId, objectId, a)
+                  await api.objectAliasRemove(projectId, objectId, a)
                   refresh()
                 } catch (e) {
                   setErr(errMsg(e))
@@ -284,24 +284,24 @@ export function Stat({ label, value, title }: { label: ReactNode; value: ReactNo
 }
 
 /** Small "Use this object" panel with SDK snippets. */
-export function UsePanel({ refUri, name, version, kind }: { refUri: string; name: string; version: string; kind: 'dataset' | 'model' | 'prompt' | 'op' | 'other' }) {
+export function UsePanel({ refUri, name, version, kind }: { refUri: string; name: string; version: string; kind: 'dataset' | 'model' | 'prompt' | 'function' | 'other' }) {
   const [lang, setLang] = useState<'python' | 'typescript' | 'ref'>('python')
   const short = `${name}:${version}`
   const py =
     `import weft\n\nweft.init("${refUri.split('/').slice(3, 5).join('/')}")\n` +
-    `${kind === 'op' ? 'fn' : 'obj'} = weft.ref("${short}").get()\n` +
+    `${kind === 'function' ? 'fn' : 'obj'} = weft.get("${short}")\n` +
     (kind === 'dataset'
       ? `\nfor row in obj.rows:\n    print(row)\n`
       : kind === 'prompt'
         ? `\nmessages = obj.format(question="What is Weft?")\n`
         : kind === 'model'
           ? `\nresult = obj.predict(question="What is Weft?")\n`
-          : kind === 'op'
-            ? `\nresult = fn(...)  # calls are traced\n`
+          : kind === 'function'
+            ? `\nresult = fn(...)  # traced\n`
             : '')
   const ts =
     `import * as weft from 'weft'\n\nawait weft.init('${refUri.split('/').slice(3, 5).join('/')}')\n` +
-    `const obj = await weft.ref('${short}').get()\n`
+    `const obj = await weft.get('${short}')\n`
   return (
     <div className="col">
       <div className="row">

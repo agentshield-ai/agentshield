@@ -105,9 +105,13 @@ with a reason. In summary:
   stored operator values such as `(string): contains`), `urls.py`, custom
   runtimes, tags and aliases. The method bodies are Weft's own; copied
   docstrings and messages were rewritten (above).
-- **Local scorers**: the Hugging Face model ids, thresholds and input formats
-  of the `wandb/Weave*ScorerV1` models are the models' contract, needed to
-  get the same scores.
+- **Local scorers**: the thresholds and result formats of the local model
+  scorers. Their default models are openly licensed models by other authors
+  (`PleIAs/celadon`, `maximuspowers/bias-type-classifier`,
+  `cross-encoder/nli-deberta-v3-xsmall`,
+  `pszemraj/electra-small-discriminator-CoLA`,
+  `vectara/hallucination_evaluation_model`,
+  `cross-encoder/ms-marco-MiniLM-L6-v2`; licences in sdk/python/README.md).
 - **Standard vocabularies**: OpenTelemetry GenAI semantic-convention
   attribute names (OTLP mapping and its test vectors), Presidio entity names,
   common e-mail and SSN regular expressions, provider API-key environment

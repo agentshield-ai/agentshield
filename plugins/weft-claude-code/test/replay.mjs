@@ -30,7 +30,7 @@ export function replay(fx, env = {}, { upTo } = {}) {
   return { cfg, dir, sid: fx.session_id, results, files, env: fullEnv };
 }
 
-/** A fetch stub that records /call/upsert_batch items. */
+/** A fetch stub that records /api/v1/spans/batch items. */
 export function recorder({ fail = 0, status = 200 } = {}) {
   const items = [];
   let failures = fail;
@@ -41,8 +41,8 @@ export function recorder({ fail = 0, status = 200 } = {}) {
     }
     if (status !== 200) return new Response('{"reason":"nope"}', { status });
     const body = JSON.parse(init.body);
-    items.push(...body.batch);
-    return new Response(JSON.stringify({ res: [] }), { status: 200 });
+    items.push(...body.items);
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
   };
   return { items, fetchImpl, calls: () => byId(items) };
 }
@@ -51,7 +51,7 @@ export function recorder({ fail = 0, status = 200 } = {}) {
 export function byId(items) {
   const m = new Map();
   for (const it of items) {
-    const r = it.req[it.mode];
+    const r = it.span ?? it.start ?? it.end;
     m.set(r.id, { ...(m.get(r.id) ?? {}), ...r });
   }
   return m;

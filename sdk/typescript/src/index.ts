@@ -12,15 +12,16 @@ export {
   senderOptionsFromEnv,
   type InitOptions,
   type ClientSettings,
+  type SpansOptions,
   type GetCallsOptions,
   type RegistryCollection,
   type RegistryVersion,
 } from './client.js';
 export { logger, setLogLevel, getLogLevel, parseLogLevel, type LogLevel } from './log.js';
 export { getClient, requireClient } from './global.js';
-export { op, isOp, type Op, type OpOptions } from './op.js';
-export { Call, CallFeedback, type CallData, type ApplyScorerResult } from './call.js';
-export { attributes, withThread, getCurrentCall, withTracingDisabled, withTeam, getCurrentTeam, type TeamInfo } from './context.js';
+export { trace, isOp, type Op, type OpOptions, type TraceOptions } from './op.js';
+export { Span, SpanFeedback, type SpanData, type CallData, type ApplyScorerResult } from './call.js';
+export { attributes, withThread, getCurrentSpan, withTracingDisabled, withTeam, getCurrentTeam, type TeamInfo } from './context.js';
 export { scrubReasoning, hasReasoning, reasoningStep, normReasoningKind, reasoningDigest, type ReasoningKind, type ReasoningStep } from './reasoning.js';
 export { Content, Image, Audio, Video, PDF, Html, Markdown } from './content.js';
 export { Ref, isRefUri } from './refs.js';
@@ -158,43 +159,87 @@ export {
   type IntegrationSettings,
   type IntegrationOpSettings,
 } from './integrations/settings.js';
-export { canonicalJson, digestJson, digest, tableDigest } from './canonical.js';
+export { canonicalJson, digestJson, digest, tableDigest, fileDigest } from './canonical.js';
 
 import { requireClient } from './global.js';
 import { Ref as RefClass, type Ref } from './refs.js';
+import { Span as SpanClass, SpanFeedback as SpanFeedbackClass } from './call.js';
+import { getCurrentSpan as currentSpan } from './context.js';
+import { trace as traceFn, type Op, type OpOptions } from './op.js';
+import { deprecated, deprecatedClass } from './deprecation.js';
 
-/** Publish an object (Dataset, Evaluation, op, or any JSON value) and return its ref. */
-export function publish(obj: unknown, name?: string): Promise<Ref> {
-  return requireClient().publish(obj, name);
+/**
+ * Save a version of `obj` (a Dataset, Model, Prompt, Evaluation, scorer,
+ * traced function or any JSON value) under `name` and return its ref.
+ */
+export function save(obj: unknown, name?: string): Promise<Ref> {
+  return requireClient().save(obj, name);
 }
 
-/** A ref from "name", "name:v3", "name:latest", a digest or a full URI; load it with `.get()`. */
+/** A ref from "name", "name:v3", "name:latest", a digest or a full URI; read it with `get(ref)`. */
 export function ref(s: string): Ref & { get: () => Promise<any> } {
   const client = requireClient();
   const r = client.ref(s) as Ref & { get: () => Promise<any> };
-  Object.defineProperty(r, 'get', { value: () => client.get(r), enumerable: false });
+  Object.defineProperty(r, 'get', {
+    value: () => {
+      deprecated('ref(...).get()', 'get(ref)');
+      return client.get(r);
+    },
+    enumerable: false,
+  });
   return r;
 }
 
-/** Load what a ref (or "name", "name:v3") points to. */
+/** Read what a ref (or "name", "name:v3", "name:latest", a URI) points to. */
 export function get(s: string | Ref): Promise<any> {
   return requireClient().get(s);
 }
 
 /**
- * Link any published object version into a registry collection
+ * Link any saved object version into a registry collection
  * (`targetPath`: `<registry_project>/<collection>` or `<entity>/<registry_project>/<collection>`).
  */
-export function linkToRegistry(obj: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
+export function linkToRegistry(obj: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ version: number; versionIndex: number; ref: string; targetPath: string }> {
   return requireClient().linkToRegistry(obj, opts);
 }
 
-/** Link a published prompt version into a registry collection (global client). */
-export function linkPromptToRegistry(prompt: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ versionIndex: number; ref: string; targetPath: string }> {
+/** Link a saved prompt version into a registry collection (global client). */
+export function linkPromptToRegistry(prompt: unknown, opts: { targetPath: string; aliases?: string[] }): Promise<{ version: number; versionIndex: number; ref: string; targetPath: string }> {
   return requireClient().linkPromptToRegistry(prompt, opts);
 }
 
-/** Link calls of the global client to a run (`run_id`, `run_step`); `null` clears it. */
+// ---------------------------------------------------------------- earlier names (deprecated; CHANGELOG.md)
+
+/** @deprecated use `save` */
+export function publish(obj: unknown, name?: string): Promise<Ref> {
+  deprecated('publish()', 'save()');
+  return requireClient().save(obj, name);
+}
+
+/** @deprecated use `trace` */
+export function op<F extends (...args: any[]) => any>(fn: F, options?: OpOptions): Op<F>;
+export function op<F extends (...args: any[]) => any>(thisArg: object, fn: F, options?: OpOptions): Op<F>;
+export function op(a: any, b?: any, c?: any): any {
+  deprecated('op()', 'trace()');
+  return (traceFn as any)(a, b, c);
+}
+
+/** @deprecated use `getCurrentSpan` */
+export function getCurrentCall(): SpanClass | null {
+  deprecated('getCurrentCall()', 'getCurrentSpan()');
+  return currentSpan();
+}
+
+/** @deprecated use `Span` */
+export const Call = deprecatedClass(SpanClass, 'Call', 'Span');
+/** @deprecated use `Span` */
+export type Call = SpanClass;
+/** @deprecated use `SpanFeedback` */
+export const CallFeedback = deprecatedClass(SpanFeedbackClass, 'CallFeedback', 'SpanFeedback');
+/** @deprecated use `SpanFeedback` */
+export type CallFeedback = SpanFeedbackClass;
+
+/** Link spans of the global client to a run (`run_id`, `run_step`); `null` clears it. */
 export function setRun(runId: string | null, step?: number | (() => number | undefined)): void {
   requireClient().setRun(runId, step);
 }

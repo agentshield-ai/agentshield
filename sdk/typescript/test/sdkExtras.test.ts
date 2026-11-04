@@ -8,15 +8,6 @@ let client: weft.WeftClient;
 beforeEach(async () => {
   fake = await new FakeWeft().start();
   client = await weft.init('ts-entity/ts-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 5, backoffMs: 1 }, settings: { printCallLink: false } });
-  fake.routes.set('/objs/query', (body) => {
-    const out: any[] = [];
-    for (const [id, versions] of fake.objs) {
-      const v = versions.at(-1);
-      const cls = v?.val?._class_name;
-      if (v && (!body.filter?.base_object_classes || body.filter.base_object_classes.includes(cls))) out.push({ ...v, object_id: id });
-    }
-    return { objs: out };
-  });
 });
 
 afterEach(async () => {
@@ -28,7 +19,7 @@ const last = (path: string) => fake.requests.filter((r) => r.path === path).at(-
 
 describe('SavedView', () => {
   it('builds, saves, loads, lists and applies a view', async () => {
-    const answer = weft.op(function answer(q: string) {
+    const answer = weft.trace(function answer(q: string) {
       return q.toUpperCase();
     });
     await answer('a');
@@ -46,18 +37,18 @@ describe('SavedView', () => {
     expect(() => view.addFilter('output', 'is empty', 'x')).toThrow();
     const body: any = view.toCallsQuery({ limit: 5 });
     expect(body.project_id).toBe('ts-entity/ts-proj');
-    expect(body.filter).toEqual({ op_names: ['weft:///ts-entity/ts-proj/op/answer:*'] });
+    expect(body.filter).toEqual({ names: ['weft:///ts-entity/ts-proj/function/answer:*'] });
     expect(body.query.$expr.$and[0]).toEqual({ $contains: { input: { $getField: 'output' }, substr: { $literal: 'B' } } });
     expect(body.query.$expr.$and[1]).toEqual({ $gte: [{ $getField: 'summary.weft.latency_ms' }, { $literal: 0 }] });
     expect(view.filters.map((f) => f.operator)).toEqual(['(string): contains', '(number): >=', '(any): isNotEmpty']);
     expect(view.getTableColumns()).toEqual([{ path: 'inputs.q', label: 'Question' }]);
     await view.save();
     expect(view.name).toBe('Long-answers');
-    const stored = fake.objs.get('Long-answers')![0].val;
+    const stored = fake.objs.get('Long-answers')![0].value;
     expect(stored._class_name).toBe('SavedView');
     expect(stored.definition.cols).toEqual(['inputs.q']);
-    await view.getCalls();
-    const q = last('/calls/stream_query');
+    await view.spans();
+    const q = last('/api/v1/spans/stream');
     expect(q.filter.op_names).toEqual(body.filter.op_names);
     expect(q.sort_by).toEqual([{ field: 'started_at', direction: 'asc' }]);
     const loaded = await weft.SavedView.load('Long-answers');
@@ -88,7 +79,7 @@ describe('SavedView', () => {
     for (const f of fs) expect(weft.queryToFilters({ $expr: { $and: [weft.filterToClause(f)] } })).toEqual([f]);
     expect(weft.filterToClause({ field: 'started_at', operator: '(date): after', value: '2024-01-01T00:00:00Z' })).toEqual({ $gt: [{ $getField: 'started_at' }, { $literal: 1704067200 }] });
     const v = new weft.SavedView({ viewType: 'evaluations', definition: { ui_params: { op: 'x' } } });
-    expect((v.toCallsQuery() as any).filter).toEqual({ op_names: ['Evaluation.evaluate'] });
+    expect((v.toCallsQuery() as any).filter).toEqual({ names: ['Evaluation.evaluate'] });
     v.search('foo').setFilter({ trace_roots_only: true });
     expect(v.definition.ui_params).toBeUndefined();
     expect(() => v.setFilter({ bogus: 1 })).toThrow();
@@ -97,7 +88,7 @@ describe('SavedView', () => {
 
 describe('EvaluationLogger links', () => {
   it('links existing calls, turns and batch results', async () => {
-    const agent = weft.op(function agent(q: string) {
+    const agent = weft.trace(function agent(q: string) {
       return `answer:${q}`;
     });
     const [, c1] = await agent.call('one');
@@ -130,7 +121,7 @@ describe('EvaluationLogger links', () => {
   });
 
   it('pred.run nests calls under the predict call and stamps agent spans', async () => {
-    const retrieve = weft.op(function retrieve(q: string) {
+    const retrieve = weft.trace(function retrieve(q: string) {
       return [q];
     });
     const ev = new weft.EvaluationLogger({ model: 'm', dataset: [{ q: 'hi' }], name: 'ctx eval' });
@@ -171,9 +162,9 @@ describe('objects, client queries and media references', () => {
       defaultParams: { messages_template: [{ role: 'user', content: '{q}' }], response_format: 'json_object', temperature: 0 },
     });
     expect(await model.predict({ q: 'hi' })).toEqual({ correct: true, echo: 'hi' });
-    expect(last('/completions/create').inputs).toMatchObject({ model: 'mock/json', temperature: 0, response_format: { type: 'json_object' } });
-    for (const o of [sp, mp, model]) await weft.publish(o);
-    expect(fake.objs.get('judge')![0].val).toMatchObject({ _class_name: 'LLMStructuredCompletionModel', llm_model_id: 'mock/json', _bases: ['Model', 'Object', 'BaseModel'] });
+    expect(last('/api/v1/completions').inputs).toMatchObject({ model: 'mock/json', temperature: 0, response_format: { type: 'json_object' } });
+    for (const o of [sp, mp, model]) await weft.save(o);
+    expect(fake.objs.get('judge')![0].value).toMatchObject({ _class_name: 'LLMStructuredCompletionModel', llm_model_id: 'mock/json', _bases: ['Model', 'Object', 'BaseModel'] });
     const loadedPrompt = await weft.get('greet');
     expect(loadedPrompt).toBeInstanceOf(weft.StringPrompt);
     expect(loadedPrompt.format({ name: 'x' })).toBe('Hello x, {unknown}');
@@ -190,57 +181,60 @@ describe('objects, client queries and media references', () => {
   });
 
   it('client query APIs and call helpers', async () => {
-    fake.routes.set('/calls/query_stats', () => ({ count: 7 }));
-    fake.routes.set('/threads/query', (b) => ({ threads: [{ thread_id: 't1', turn_count: 2, echo: b }] }));
-    fake.routes.set('/cost/query', (b) => ({ results: [{ id: 'c0', llm_id: 'gpt-x', echo: b }] }));
-    fake.routes.set('/cost/purge', () => ({}));
-    fake.routes.set('/feedback/purge', () => ({}));
-    fake.routes.set('/evaluations/compare', (b) => ({ evaluations: b.evaluation_call_ids.map((id: string) => ({ call_id: id })) }));
-    fake.routes.set('/leaderboard/compute', (b) => ({ leaderboard: { object_id: b.object_id }, columns: [], rows: [], req: b }));
+    fake.routes.set('/api/v1/spans/query', (b) => ({ items: [], total_count: 7, echo: b }));
+    fake.routes.set('/api/v1/spans/sessions', (b) => ({ items: [{ session_id: 't1', turn_count: 2, echo: b }], total_count: 1 }));
+    fake.routes.set('/api/v1/prices/query', (b) => ({ items: [{ id: 'c0', llm_id: 'gpt-x', echo: b }], total_count: 1 }));
+    fake.routes.set('/api/v1/prices/delete', () => ({}));
+    fake.routes.set('/api/v1/evaluations/compare', (b) => ({ evaluations: b.ids.map((id: string) => ({ id })) }));
+    fake.routes.set('/api/v1/leaderboards/compute', (b) => ({ leaderboard: { name: b.name }, columns: [], rows: [], req: b }));
     let polls = 0;
-    fake.routes.set('/evaluate_model', () => {
-      fake.calls.set('srv', { id: 'srv', project_id: 'ts-entity/ts-proj', op_name: 'Evaluation.evaluate', trace_id: 't', output: { ok: 1 } });
-      return { call_id: 'srv' };
+    fake.routes.set('/api/v1/evaluations/run', () => {
+      fake.calls.set('srv', { id: 'srv', project_id: 'ts-entity/ts-proj', name: 'Evaluation.evaluate', trace_id: 't', output: { ok: 1 } });
+      return { id: 'srv' };
     });
-    fake.routes.set('/evaluation_status', () => ({ status: { code: ++polls >= 2 ? 'complete' : 'running' } }));
-    const parent = weft.op(async function parent() {
+    fake.routes.set('/api/v1/evaluations/srv/status', () => ({ code: ++polls >= 2 ? 'complete' : 'running' }));
+    const parent = weft.trace(async function parent() {
       await child();
       return 1;
     });
-    const child = weft.op(function child() {
+    const child = weft.trace(function child() {
       return 2;
     });
     const [, call] = await parent.call();
     expect(call!.status).toBe('success');
     expect(call!.uiUrl).toBe(`${fake.url}/ts-entity/ts-proj/calls/${call!.id}`);
     expect(call!.ref.uri()).toBe(call!.uri());
-    expect((await call!.children()).map((c) => c.opBaseName)).toEqual(['child']);
-    expect(await client.countCalls({ filter: { op_names: ['parent'] } })).toBe(7);
-    await client.deleteCalls([call!.id]);
+    expect((await call!.children()).map((c) => c.baseName)).toEqual(['child']);
+    expect(await client.countSpans({ filter: { names: ['parent'] } })).toBe(7);
+    await client.deleteSpans([call!.id]);
     expect(fake.calls.get(call!.id).deleted_at).toBe('now');
     const fid = await call!.feedback.addNote('hi');
     expect((await client.getFeedback({ query: { $eq: [{ $getField: 'ref' }, { $literal: call!.uri() }] } }))[0].id).toBe(fid);
     await call!.feedback.purge(fid);
-    expect(last('/feedback/purge').query.$expr.$eq[1].$literal).toBe(fid);
-    expect((await client.getThreads({ threadIds: ['t1'], limit: 5 }))[0].echo).toMatchObject({ filter: { thread_ids: ['t1'] }, limit: 5 });
+    expect(last('/api/v1/feedback/delete').ids).toEqual([fid]);
+    const [t] = await client.getThreads({ threadIds: ['t1'], limit: 5 });
+    expect(t).toMatchObject({ session_id: 't1', thread_id: 't1' });
+    expect(t.echo).toMatchObject({ filter: { session_ids: ['t1'] }, limit: 5 });
     expect((await client.queryCosts({ llmIds: ['gpt-x'] }))[0].echo.query.$expr.$in[1]).toEqual([{ $literal: 'gpt-x' }]);
     await client.purgeCosts([['c0', 'gpt-x'], { id: 'c1' }, 'c2']);
-    expect(last('/cost/purge').ids).toEqual(['c0', 'c1', 'c2']);
+    expect(last('/api/v1/prices/delete').ids).toEqual(['c0', 'c1', 'c2']);
     expect((await client.compareEvaluations(['a', 'b'])).evaluations.length).toBe(2);
-    expect((await client.leaderboard('lb')).req).toEqual({ project_id: 'ts-entity/ts-proj', object_id: 'lb' });
+    expect(last('/api/v1/evaluations/compare').ids).toEqual(['a', 'b']);
+    expect((await client.leaderboard('lb')).req).toEqual({ project_id: 'ts-entity/ts-proj', name: 'lb' });
     const res = await client.evaluateModel('weft:///ts-entity/ts-proj/object/ev:abc', 'weft:///ts-entity/ts-proj/object/m:def', { pollIntervalMs: 1 });
-    expect(res).toEqual({ callId: 'srv', status: { code: 'complete' }, summary: { ok: 1 } });
-    expect((await client.getEvaluationCalls()).map((c) => c.id)).toContain('srv');
-    await weft.publish(new weft.Evaluation({ name: 'e1', dataset: [{ q: 1 }], scorers: [] }), 'e1');
+    expect(res).toEqual({ id: 'srv', callId: 'srv', status: { code: 'complete' }, summary: { ok: 1 } });
+    expect(polls).toBeGreaterThanOrEqual(2);
+    expect((await client.evaluationRuns()).map((c) => c.id)).toContain('srv');
+    await weft.save(new weft.Evaluation({ name: 'e1', dataset: [{ q: 1 }], scorers: [] }), 'e1');
     expect((await client.getEvaluations()).length).toBe(1);
     expect(weft.otel.otlpEndpoint('http://h:1/')).toBe('http://h:1/otel/v1/traces');
     expect(weft.otel.otlpHeaders('proj', 'k')).toEqual({ project_id: 'default/proj', Authorization: 'Bearer k' });
   });
 
   it('logs media by reference (bring your own bucket) and resolves URLs', async () => {
-    fake.routes.set('/files/resolve_url', (b) => ({
+    fake.routes.set('/api/v1/files/resolve', (b) => ({
       download_urls: b.uris.map((u: string) =>
-        u.startsWith('http') ? u : u.startsWith('s3://') ? `https://s3.fake/${u.slice(5)}?sig=1` : `${fake.url}/file/content?project_id=${b.project_id}&digest=${u.split('://').at(-1)}`,
+        u.startsWith('http') ? u : u.startsWith('s3://') ? `https://s3.fake/${u.slice(5)}?sig=1` : `${fake.url}/api/v1/files/${u.split('://').at(-1)}?project_id=${b.project_id}`,
       ),
       expires_at: null,
     }));
@@ -253,7 +247,7 @@ describe('objects, client queries and media references', () => {
     expect(() => img.data).toThrow(/reference/);
     expect(() => weft.Content.fromUri('nope')).toThrow();
     const local = new weft.Content('stored bytes', { mimetype: 'text/plain' });
-    const look = weft.op(function look(image: unknown, d: unknown, l: unknown) {
+    const look = weft.trace(function look(image: unknown, d: unknown, l: unknown) {
       return 'ok';
     });
     await look(img, doc, local);
@@ -262,9 +256,9 @@ describe('objects, client queries and media references', () => {
     expect(c.inputs.image).toEqual({ _type: 'Image', uri: 's3://bucket/photos/cat.png', mime_type: 'image/png', filename: 'cat.png' });
     expect(c.inputs.d).toEqual({ _type: 'Content', mimetype: 'application/pdf', filename: 'report.pdf', uri: 'https://example.com/report.pdf', size: 1234 });
     expect(fake.files.size).toBe(1); // only the local content was uploaded
-    expect(await client.resolveUrl(local)).toBe(`${fake.url}/file/content?project_id=ts-entity/ts-proj&digest=${local.digest}`);
+    expect(await client.resolveUrl(local)).toBe(`${fake.url}/api/v1/files/${local.digest}?project_id=ts-entity/ts-proj`);
     expect(await client.resolveUrl(['s3://bucket/k', 'https://x.test/a'], { expiresIn: 60 })).toEqual(['https://s3.fake/bucket/k?sig=1', 'https://x.test/a']);
-    expect(last('/files/resolve_url').expires_in).toBe(60);
+    expect(last('/api/v1/files/resolve').expires_in).toBe(60);
     const ref = weft.Content.fromUri(`weft-file://${local.digest}`, { mimetype: 'text/plain' });
     expect(Buffer.from(await ref.load()).toString()).toBe('stored bytes');
     expect(ref.asText()).toBe('stored bytes');

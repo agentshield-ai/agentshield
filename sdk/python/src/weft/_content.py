@@ -1,6 +1,6 @@
 """File-like values: ``Content`` plus Image/Audio/Video/PDF/Html/Markdown media types.
 
-Values are uploaded with ``/file/create`` when a call or object is serialised:
+Values are uploaded with ``POST /api/v1/files/upload`` when a span or object is serialised:
 
 - ``Content`` → ``{"_type": "Content", "mimetype", "filename", "file_digest"}``
 - ``Image``/``Audio``/``Video``/``PDF``/``Html``/``Markdown`` → ``{"_type": "<Type>", "file_digest", "mime_type", "filename"}``
@@ -11,7 +11,7 @@ uploading (bring your own bucket): ``weft.Content.from_uri("s3://bucket/key")``
 ``{"_type": "<Type>", "uri": "s3://bucket/key", "mimetype"/"mime_type", "filename"}``.
 ``https://`` URLs and Weft file digests (``weft-file://<digest>``) work too.
 ``client.resolve_url(uri)`` turns a reference or file digest into a download URL
-(``/files/resolve_url``: presigned for the server's S3 backend).
+(``POST /api/v1/files/resolve``: presigned for the server's S3 backend).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import mimetypes
 import os
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
-from ._canonical import b64digest
+from ._canonical import file_digest
 
 if TYPE_CHECKING:  # pragma: no cover
     from ._client import WeftClient
@@ -86,7 +86,11 @@ class Content:
         if not url.startswith(("http://", "https://")):
             from ._client import require_client
 
-            url = require_client().resolve_url(url)
+            client = require_client()
+            url = client.resolve_url(url)
+            if url and url.startswith(client.server_url + "/api/v1/files/"):
+                # this server's file: read it with the client's credentials
+                return client._http.request_raw("GET", url[len(client.server_url):])
         with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - user-provided media URL
             return resp.read()
 
@@ -121,7 +125,7 @@ class Content:
 
     @property
     def digest(self) -> str:
-        return b64digest(self.data)
+        return file_digest(self.data)
 
     def as_text(self, encoding: str = "utf-8") -> str:
         return self.data.decode(encoding)

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * Runs against a real Weft server when WEFT_TEST_SERVER_URL is set:
  *   WEFT_TEST_SERVER_URL=http://127.0.0.1:6348 npx vitest run test/server.integration.test.ts
@@ -17,32 +18,32 @@ describe.skipIf(!URL)('real server', () => {
   afterAll(() => weft.finish());
 
   it('traces, rolls up usage and agrees on digests', async () => {
-    const llm = weft.op(function llm(prompt: string) {
-      weft.addUsage(weft.getCurrentCall(), 'gpt-4o-mini', 100, 20);
+    const llm = weft.trace(function llm(prompt: string) {
+      weft.addUsage(weft.getCurrentSpan(), 'gpt-4o-mini', 100, 20);
       return prompt.split('').reverse().join('');
     });
-    const agent = weft.op(async function agent(q: string) {
+    const agent = weft.trace(async function agent(q: string) {
       return llm(llm(q));
     });
     expect(await weft.withThread('ts-thread', () => agent('hello <&> é'))).toBe('hello <&> é');
-    const [root] = await client.getCalls({ filter: { op_names: ['agent'] } });
+    const [root] = await client.spans({ filter: { names: ['agent'] } });
     expect(root.summary.usage['gpt-4o-mini'].requests).toBe(2);
     expect(root.summary.usage['gpt-4o-mini'].total_tokens).toBe(240);
-    expect(root.threadId).toBe('ts-thread');
+    expect(root.sessionId).toBe('ts-thread');
     expect(root.turnId).toBe(root.id);
     const meta = (agent as any).__weftOp;
-    const obj = (await client.http.post('/obj/read', { project_id: client.projectId, object_id: 'agent', digest: 'latest' })).obj;
+    const obj = (await client.readObject(client.projectId, 'agent'));
     expect(obj.digest).toBe(client.opRef(meta).digest);
     expect(obj.digest).toBe(digest({ _type: 'Op', name: 'agent', code: meta.code, language: 'javascript', signature: meta.signature }));
-    const kids = await client.getCalls({ filter: { parent_ids: [root.id] } });
-    expect(kids.map((k) => k.opBaseName)).toEqual(['llm', 'llm']);
+    const kids = await client.spans({ filter: { parent_ids: [root.id] } });
+    expect(kids.map((k) => k.baseName)).toEqual(['llm', 'llm']);
   });
 
   it('runs an evaluation whose rows resolve server side', async () => {
-    const model = weft.op(async function upper({ datasetRow }: any) {
+    const model = weft.trace(async function upper({ datasetRow }: any) {
       return String(datasetRow.q).toUpperCase();
     });
-    const exact = weft.op(function exact({ modelOutput, datasetRow }: any) {
+    const exact = weft.trace(function exact({ modelOutput, datasetRow }: any) {
       return modelOutput === datasetRow.expected;
     });
     const ev = new weft.Evaluation({
@@ -53,12 +54,12 @@ describe.skipIf(!URL)('real server', () => {
     const summary = await ev.evaluate({ model });
     expect(summary.exact).toEqual({ true_count: 1, true_fraction: 0.5 });
     await client.flush();
-    const [root] = await client.getCalls({ filter: { op_names: ['Evaluation.evaluate'] } });
+    const [root] = await client.spans({ filter: { names: ['Evaluation.evaluate'] } });
     expect(root.output).toEqual(summary);
-    const pas = await client.getCalls({ filter: { op_names: ['Evaluation.predict_and_score'] } });
-    const vals = (await client.http.post('/refs/read_batch', { refs: pas.map((p) => p.inputs.example) })).vals;
+    const pas = await client.spans({ filter: { names: ['Evaluation.predict_and_score'] } });
+    const vals = (await client.http.post('/api/v1/refs/read', { refs: pas.map((p) => p.inputs.example) })).items;
     expect(vals.map((v: any) => v.q).sort()).toEqual(['a', 'b']);
-    const cmp = await client.http.post('/evaluations/compare', { project_id: client.projectId, evaluation_call_ids: [root.id] });
+    const cmp = await client.compareEvaluations([root.id]);
     expect(cmp.rows).toHaveLength(2);
     const ds = await weft.ref('ts-ds').get();
     expect(ds.rows).toHaveLength(2);
@@ -66,41 +67,41 @@ describe.skipIf(!URL)('real server', () => {
 
   it('uploads files and attaches feedback', async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9]);
-    const f = weft.op(function img(data: Uint8Array) {
+    const f = weft.trace(function img(data: Uint8Array) {
       return data.length;
     });
     const [, call] = await f.call(png);
     await call!.feedback.addReaction('👍');
-    const got = (await client.getCall(call!.id, { includeFeedback: true }))!;
+    const got = (await client.span(call!.id, { includeFeedback: true }))!;
     expect(got.raw.feedback).toHaveLength(1);
     const media = got.inputs.data as any;
-    const res = await client.http.raw('POST', '/file/content', JSON.stringify({ project_id: client.projectId, digest: media.file_digest }));
-    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([...png]);
+    expect(media.file_digest).toBe(createHash('sha256').update(png).digest('hex'));
+    expect([...(await client.readFile(media.file_digest))]).toEqual([...png]);
   });
 
   it('parity features against the real server', async () => {
     // redaction
-    const login = weft.op(function login(user: string, password: string) {
+    const login = weft.trace(function login(user: string, password: string) {
       return { ok: true, token: 't-1' };
     });
     login('bob', 'hunter2');
-    const [lc] = await client.getCalls({ filter: { op_names: ['login'] } });
+    const [lc] = await client.spans({ filter: { names: ['login'] } });
     expect(lc.inputs.password).toBe('REDACTED');
     expect(lc.output).toEqual({ ok: true, token: 'REDACTED' });
 
     // op loading
-    const triple = weft.op(function triple(x: number) {
+    const triple = weft.trace(function triple(x: number) {
       return 3 * x;
     });
-    const tref = await weft.publish(triple);
+    const tref = await weft.save(triple);
     await client.flush();
     const loaded = await weft.ref('triple').get();
     const [res, call] = await loaded.call(3);
     expect(res).toBe(9);
-    expect(call.opName).toBe(tref.uri());
+    expect(call.name).toBe(tref.uri());
 
     // built-in scorer classes + EvaluationLogger + server-side compare
-    const model = weft.op(async function upper({ datasetRow }: any) {
+    const model = weft.trace(async function upper({ datasetRow }: any) {
       return String(datasetRow.q).toUpperCase();
     });
     const ev = new weft.Evaluation({
@@ -120,28 +121,28 @@ describe.skipIf(!URL)('real server', () => {
     const ls = await logger.logSummary();
     expect(ls.even).toEqual({ true_count: 2, true_fraction: 2 / 3 });
     await client.flush();
-    const roots = await client.getCalls({ filter: { op_names: ['Evaluation.evaluate'] } });
+    const roots = await client.spans({ filter: { names: ['Evaluation.evaluate'] } });
     const loggerRoot = roots.find((r) => r.displayName === 'ts-logger')!;
     expect(loggerRoot.output).toEqual(ls);
-    const evObj = (await client.http.post('/obj/read', { project_id: client.projectId, object_id: 'ts-logger', digest: 'latest' })).obj;
+    const evObj = (await client.readObject(client.projectId, 'ts-logger'));
     expect(loggerRoot.inputs.self).toBe(`weft:///${client.projectId}/object/ts-logger:${evObj.digest}`);
-    const cmp = await client.http.post('/evaluations/compare', { project_id: client.projectId, evaluation_call_ids: [loggerRoot.id] });
+    const cmp = await client.compareEvaluations([loggerRoot.id]);
     expect(cmp.evaluations[0].model_name).toBe('ts-logged');
 
     // addRows
     const ds = new weft.Dataset({ name: 'ts-grow', rows: [{ i: 0 }] });
-    await weft.publish(ds);
+    await weft.save(ds);
     const ds2 = await ds.addRows([{ i: 1 }]);
     const back = await weft.ref('ts-grow:latest').get();
     expect(back.rows).toEqual([{ i: 0 }, { i: 1 }]);
     expect(back.rowDigests).toEqual(ds2.rowDigests);
 
     // applyScorer + annotations
-    const reply = weft.op(function reply(prompt: string) {
+    const reply = weft.trace(function reply(prompt: string) {
       return 'no way';
     });
     const [, rc] = await reply.call('hi');
-    const polite = weft.op(function polite({ modelOutput }: any) {
+    const polite = weft.trace(function polite({ modelOutput }: any) {
       return String(modelOutput).includes('please');
     });
     const r = await rc!.applyScorer(polite);
@@ -151,35 +152,34 @@ describe.skipIf(!URL)('real server', () => {
     const fb = await rc!.feedback.list();
     expect(fb.map((f) => f.feedback_type).sort()).toEqual(['weft.annotation.ts-stars', 'weft.scorer.polite']);
     const runnable = fb.find((f) => f.feedback_type === 'weft.scorer.polite');
-    expect(runnable.call_ref).toBe(r.scoreCall!.uri());
-    await weft.publish(new weft.Leaderboard({ name: 'ts-lb', columns: [{ evaluationObjectRef: ev, scorerName: 'exact', summaryMetricPath: 'true_fraction' }] }));
-    const lb = await client.http.post('/leaderboard/compute', { project_id: client.projectId, object_id: 'ts-lb' });
+    expect(runnable.span_ref).toBe(r.scoreSpan!.uri());
+    await weft.save(new weft.Leaderboard({ name: 'ts-lb', columns: [{ evaluationObjectRef: ev, scorerName: 'exact', summaryMetricPath: 'true_fraction' }] }));
+    const lb = await client.leaderboard('ts-lb');
     expect(lb.rows[0].values['0'].value).toBe(0.5);
     expect((await client.whoami()).user_id).toBeTruthy();
   });
 
   it('batch 3 features against the real server', async () => {
-    const planner = weft.op(function planner(q: string) {
+    const planner = weft.trace(function planner(q: string) {
       return q;
     }, { kind: 'agent', color: 'green' });
     planner('x');
-    const [p] = await client.getCalls({ filter: { op_names: ['planner'] } });
+    const [p] = await client.spans({ filter: { names: ['planner'] } });
     expect(p.attributes.weft).toMatchObject({ span_kind: 'agent', color: 'green' });
-    const q = await client.getCalls({ query: { $eq: [{ $getField: 'attributes.weft.span_kind' }, { $literal: 'agent' }] } });
+    const q = await client.spans({ query: { $eq: [{ $getField: 'attributes.weft.span_kind' }, { $literal: 'agent' }] } });
     expect(q.map((c) => c.id)).toEqual([p.id]);
 
-    const report = weft.op(function report() {
+    const report = weft.trace(function report() {
       return { doc: weft.Content.fromText('hello', { filename: 'a.txt' }), md: new weft.Markdown('# T') };
     });
     report();
-    const [r] = await client.getCalls({ filter: { op_names: ['report'] } });
+    const [r] = await client.spans({ filter: { names: ['report'] } });
     const doc = r.output as any;
     expect(doc.doc._type).toBe('Content');
-    const content = await client.http.raw('POST', '/file/content', JSON.stringify({ project_id: client.projectId, digest: doc.doc.file_digest }));
-    expect(await content.text()).toBe('hello');
+    expect(Buffer.from(await client.readFile(doc.doc.file_digest)).toString()).toBe('hello');
 
-    const r0 = await weft.publish({ v: 0 }, 'ts-mgmt');
-    const r1 = await weft.publish({ v: 1 }, 'ts-mgmt');
+    const r0 = await weft.save({ v: 0 }, 'ts-mgmt');
+    const r1 = await weft.save({ v: 1 }, 'ts-mgmt');
     await client.setAliases(r1, 'production');
     expect(await client.getAliases(r1)).toContain('production');
     expect(await weft.ref('ts-mgmt:production').get()).toEqual({ v: 1 });
@@ -196,14 +196,14 @@ describe.skipIf(!URL)('real server', () => {
     const ev = new weft.EvaluationLogger({ model: 'm', dataset: ds, name: 'ts-linked-eval' });
     ev.logExample({ q: 'b' }, 'B', { ok: true });
     await ev.logSummary();
-    const [pas] = await client.getCalls({ filter: { op_names: ['Evaluation.predict_and_score'] }, sortBy: [{ field: 'started_at', direction: 'desc' }], limit: 1 });
-    const vals = (await client.http.post('/refs/read_batch', { refs: [pas.inputs.example] })).vals;
+    const [pas] = await client.spans({ filter: { names: ['Evaluation.predict_and_score'] }, sortBy: [{ field: 'started_at', direction: 'desc' }], limit: 1 });
+    const vals = (await client.http.post('/api/v1/refs/read', { refs: [pas.inputs.example] })).items;
     expect(vals).toEqual([{ q: 'b' }]);
 
     for (const sc of [new weft.ValidXMLScorer({ name: 'ts-xml' }), new weft.RuleScorer({ name: 'ts-rule', rule: { $eq: [1, 1] } }), new weft.HallucinationFreeScorer({ name: 'ts-hall' })]) {
-      await weft.publish(sc);
-      const obj = (await client.http.post('/obj/read', { project_id: client.projectId, object_id: sc.name, digest: 'latest' })).obj;
-      expect(obj.val._class_name).toBe(sc.className);
+      await weft.save(sc);
+      const obj = (await client.readObject(client.projectId, sc.name!));
+      expect(obj.value._class_name).toBe(sc.className);
       expect(obj.digest).toBe(sc.ref!.digest);
     }
     const hall: any = await new weft.HallucinationFreeScorer({ model: 'mock/json' }).scoreOp({ modelOutput: 'x', datasetRow: { q: 'y' } });

@@ -19,12 +19,12 @@ describe('time ranges', () => {
 describe('panel requests', () => {
   it('merges dashboard and panel filters', () => {
     expect(mergeFilters({ trace_roots_only: true }, { trace_roots_only: false })).toEqual({ trace_roots_only: false })
-    expect(mergeFilters({ op_names: ['a', 'b'] }, { op_names: ['b', 'c'] })).toEqual({ op_names: ['b'] })
-    expect(mergeFilters({ op_names: ['a'] }, { op_names: ['c'] })?.op_names).toEqual(['\u0000none'])
-    expect(mergeFilters(undefined, { op_names: ['x'] })).toEqual({ op_names: ['x'] })
+    expect(mergeFilters({ names: ['a', 'b'] }, { names: ['b', 'c'] })).toEqual({ names: ['b'] })
+    expect(mergeFilters({ names: ['a'] }, { names: ['c'] })?.names).toEqual(['\u0000none'])
+    expect(mergeFilters(undefined, { names: ['x'] })).toEqual({ names: ['x'] })
   })
   it('ands query expressions', () => {
-    const a: Query = { $expr: { $eq: [{ $getField: 'op_name' }, { $literal: 'x' }] } }
+    const a: Query = { $expr: { $eq: [{ $getField: 'name' }, { $literal: 'x' }] } }
     const b: Query = { $expr: { $gt: [{ $getField: 'summary.weft.latency_ms' }, { $literal: 5 }] } }
     expect(mergeQueries(a, undefined)).toEqual(a)
     expect(mergeQueries(a, b)).toEqual({ $expr: { $and: [a.$expr, b.$expr] } })
@@ -72,7 +72,7 @@ describe('chart data', () => {
     expect(fmtValue(null, 'number')).toBe('—')
     expect(valueKind({ agg: 'sum', field: 'cost' })).toBe('cost')
     expect(metricLabel({ agg: 'p95', field: 'latency_ms' })).toBe('p95 latency (ms)')
-    expect(metricLabel({ agg: 'count' })).toBe('Calls')
+    expect(metricLabel({ agg: 'count' })).toBe('Spans')
   })
   it('moves panels', () => {
     const ps = ['a', 'b', 'c'].map((id) => ({ id, title: '', chart: 'line' as const, metrics: [] }))
@@ -84,7 +84,7 @@ describe('chart data', () => {
 describe('code snippets', () => {
   const spec = {
     projectId: 'e/p',
-    filter: { trace_roots_only: true, op_names: [] },
+    filter: { trace_roots_only: true, names: [] },
     query: { $expr: { $eq: [{ $getField: 'summary.weft.status' }, { $literal: 'error' }] } } as never,
     search: "it's",
     sortBy: [{ field: 'started_at', direction: 'desc' as const }],
@@ -92,7 +92,7 @@ describe('code snippets', () => {
   it('renders python literals', () => {
     expect(toPython({ a: true, b: null, c: [1, 'x'] })).toBe('{"a": True, "b": None, "c": [1, "x"]}')
   })
-  it('builds a python get_calls snippet with the filters', () => {
+  it('builds a python spans snippet with the filters', () => {
     const py = pythonSnippet(spec, 'http://h')
     expect(py).toContain('weft.init("e/p", server_url="http://h")')
     expect(py).toContain('filter={"trace_roots_only": True}')
@@ -104,7 +104,7 @@ describe('code snippets', () => {
     expect(exportBody(spec, 'csv')).toEqual({ project_id: 'e/p', filter: { trace_roots_only: true }, query: spec.query, search: "it's", format: 'csv' })
     expect(shQuote("a'b")).toBe(`'a'\\''b'`)
     const c = curlSnippet(spec, 'http://h', 'csv', true)
-    expect(c).toContain('/calls/export')
+    expect(c).toContain('/api/v1/spans/export')
     expect(c).toContain('$WEFT_API_KEY')
     expect(c).toContain(`it'\\''s`)
   })

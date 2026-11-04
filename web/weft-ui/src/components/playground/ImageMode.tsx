@@ -4,14 +4,14 @@ import { useMutation } from '@tanstack/react-query'
 import { playgroundApi, type ImageInputs, type ImageResponse } from '../../api/playground'
 import type { LLMModelInfo } from '../../api/types'
 import { fmtDuration } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { ErrorBox } from '../common'
 import { imageSrc } from './imageUtils'
 import './playground.css'
 
 export const IMAGE_SIZES = ['256x256', '512x512', '1024x1024', '1024x1536', '1536x1024']
 
-/** Image generation through /image/create; each run is a tracked weft.images.generate call. */
+/** Image generation through /api/v1/images; each run is a tracked weft.images.generate span. */
 export function ImageMode({
   projectId,
   models,
@@ -42,8 +42,8 @@ export function ImageMode({
     mutationFn: async () => {
       const inputs: ImageInputs = { model: chosen, prompt, n, size }
       const t0 = performance.now()
-      const r = await playgroundApi.imageCreate(projectId, inputs)
-      const out = { response: r.response, callId: r.call_id ?? undefined, latencyMs: performance.now() - t0 }
+      const r = await playgroundApi.images(projectId, inputs)
+      const out = { response: r.response, callId: r.span_id ?? undefined, latencyMs: performance.now() - t0 }
       onRun(inputs, { ...out, error: r.response?.error })
       return out
     },
@@ -104,7 +104,7 @@ export function ImageMode({
               {images.length} image{images.length === 1 ? '' : 's'} · {fmtDuration(result.latencyMs)}
             </span>
             <span className="grow" />
-            {result.callId && <Link to={callUrl(projectId, result.callId)}>Open weft.images.generate call ↗</Link>}
+            {result.callId && <Link to={spanUrl(projectId, result.callId)}>Open weft.images.generate span ↗</Link>}
           </div>
         )}
         {images.length > 0 && (

@@ -1,5 +1,5 @@
 // Resolves media URIs (s3://, gs://, weft-file://, https://) to download URLs
-// through POST /files/resolve_url, with batching, caching and expiry.
+// through POST /api/v1/files/resolve, with batching, caching and expiry.
 //
 // - URIs of one bucket requested in the same tick (per project) go out as one
 //   request, with `per_uri_errors` so the server reports each unresolvable URI
@@ -63,7 +63,7 @@ export function shortReason(e: unknown): { reason: string; status?: number } {
   return { reason: first.length > 120 ? first.slice(0, 117) + '…' : first || 'could not resolve', status }
 }
 
-/** A short reason for one per-URI error from /files/resolve_url. */
+/** A short reason for one per-URI error from /api/v1/files/resolve. */
 export function uriErrorReason(e: { code: string; message: string }): string {
   switch (e.code) {
     case 'bucket_not_registered':
@@ -95,7 +95,7 @@ export class UriResolver {
   private refreshMarginMs: number
   private maxBatch: number
   private generation = 0
-  /** Number of /files/resolve_url requests made (for tests and debugging). */
+  /** Number of /api/v1/files/resolve requests made (for tests and debugging). */
   requests = 0
 
   constructor(

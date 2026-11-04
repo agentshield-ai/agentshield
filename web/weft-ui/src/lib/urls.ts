@@ -8,16 +8,17 @@ export function splitProject(projectId: string): [string, string] {
 export const projectBase = (projectId: string) => `/${projectId}`
 export const tracesUrl = (projectId: string, params?: Record<string, string>) =>
   `/${projectId}/traces${params ? '?' + new URLSearchParams(params).toString() : ''}`
-export const callUrl = (projectId: string, callId: string, tab?: string) =>
-  `/${projectId}/calls/${encodeURIComponent(callId)}${tab ? `?tab=${tab}` : ''}`
-export const threadsUrl = (projectId: string) => `/${projectId}/threads`
-export const threadUrl = (projectId: string, threadId: string) => `/${projectId}/threads/${encodeURIComponent(threadId)}`
-export const playgroundUrl = (projectId: string, callId?: string) =>
-  `/${projectId}/playground${callId ? `?call=${encodeURIComponent(callId)}` : ''}`
-export const compareCallsUrl = (projectId: string, ids: string[]) => `/${projectId}/compare-calls?ids=${ids.join(',')}`
+export const spanUrl = (projectId: string, spanId: string, tab?: string) =>
+  `/${projectId}/spans/${encodeURIComponent(spanId)}${tab ? `?tab=${tab}` : ''}`
+/** Spans grouped by session id (the raw view under Sessions). */
+export const spanSessionsUrl = (projectId: string) => `/${projectId}/traces/sessions`
+export const spanSessionUrl = (projectId: string, sessionId: string) => `/${projectId}/traces/sessions/${encodeURIComponent(sessionId)}`
+export const playgroundUrl = (projectId: string, spanId?: string) =>
+  `/${projectId}/playground${spanId ? `?span=${encodeURIComponent(spanId)}` : ''}`
+export const compareSpansUrl = (projectId: string, ids: string[]) => `/${projectId}/compare-spans?ids=${ids.join(',')}`
 export const evaluationsUrl = (projectId: string) => `/${projectId}/evaluations`
-export const compareEvaluationsUrl = (projectId: string, callIds: string[]) =>
-  `/${projectId}/evaluations/compare?ids=${callIds.join(',')}`
+export const compareEvaluationsUrl = (projectId: string, runIds: string[]) =>
+  `/${projectId}/evaluations/compare?ids=${runIds.join(',')}`
 export const newEvaluationUrl = (projectId: string) => `/${projectId}/evaluations/new`
 export const objectVersionsUrl = (projectId: string, objectId: string) => `/${projectId}/objects/${encodeURIComponent(objectId)}`
 export const objectUrl = (projectId: string, objectId: string, digest = 'latest') =>
@@ -33,10 +34,10 @@ export function refUrl(ref: string): string | null {
   const p = parseRef(ref)
   if (!p) return null
   switch (p.kind) {
-    case 'call':
-      return callUrl(p.projectId, p.name)
+    case 'span':
+      return spanUrl(p.projectId, p.name)
     case 'object':
-    case 'op':
+    case 'function':
       return objectUrl(p.projectId, p.name, p.digest ?? 'latest')
     case 'table':
       return null

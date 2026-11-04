@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Call } from '../../api/types'
-import { opDisplayName } from '../../api/refs'
+import type { Span } from '../../api/types'
+import { spanDisplayName } from '../../api/refs'
 import { callLatencyMs, callStatus, callTokens, fmtDuration, fmtNumber } from '../../lib/format'
 import { StatusDot } from '../common'
 import { OpKind } from './OpKind'
 import { callLabel, flattenTree, type TreeNode } from './callUtils'
 
-function matches(c: Call, q: string) {
+function matches(c: Span, q: string) {
   const s = q.toLowerCase()
   return (
     callLabel(c).toLowerCase().includes(s) ||
-    opDisplayName(c.op_name).toLowerCase().includes(s) ||
+    spanDisplayName(c.name).toLowerCase().includes(s) ||
     c.id.toLowerCase().startsWith(s) ||
-    (!!c.exception && c.exception.toLowerCase().includes(s))
+    (!!c.error && c.error.toLowerCase().includes(s))
   )
 }
 
@@ -122,7 +122,7 @@ export function TraceTree({
   return (
     <div className="col" style={{ gap: 0, minHeight: 0 }}>
       <div className="row tree-toolbar">
-        <input className="input grow" placeholder="Search calls in trace…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search trace" />
+        <input className="input grow" placeholder="Search spans in trace…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search trace" />
         <button className="btn ghost sm icon" title="Expand all" onClick={() => setCollapsed(new Set())}>
           ⊞
         </button>
@@ -158,7 +158,7 @@ export function TraceTree({
                 {n.children.length ? (open ? '▾' : '▸') : ''}
               </span>
               <StatusDot status={st} />
-              <span className="tree-label" title={c.op_name}>
+              <span className="tree-label" title={c.name}>
                 {callLabel(c)}
                 <OpKind call={c} />
                 {!open && n.children.length > 0 && <span className="faint small"> ({n.children.length})</span>}

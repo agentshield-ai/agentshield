@@ -11,7 +11,14 @@ from weft._saved_view import Filter, filter_to_clause, query_to_filters
 
 
 def _count(fake, path):
+    """Requests to ``path``; ``"GET <prefix>"`` counts GET requests whose path starts with the prefix."""
+    if path.startswith("GET "):
+        return sum(1 for r in fake.requests if r["method"] == "GET" and r["path"].startswith(path[4:]))
     return sum(1 for r in fake.requests if r["path"] == path)
+
+
+OBJ_READ = "GET /api/v1/objects/"
+FILE_READ = "GET /api/v1/files/"
 
 
 # ---------------------------------------------------------------- server cache
@@ -19,61 +26,61 @@ def _count(fake, path):
 
 def test_cache_serves_immutable_reads(client, fake):
     ds = weft.Dataset(name="qa", rows=[{"q": "a"}, {"q": "b"}])
-    ref = weft.publish(ds)
+    ref = weft.save(ds)
     data = weft.Content(b"hello file", mimetype="text/plain")
     fd = client._upload_file(data.data, data.mimetype)
     client.flush()
 
     first = client.get(ref)
     assert [r["q"] for r in first.rows] == ["a", "b"]
-    n_obj, n_tab = _count(fake, "/obj/read"), _count(fake, "/table/query")
+    n_obj, n_tab = _count(fake, OBJ_READ), _count(fake, "/api/v1/tables/query")
     again = client.get(ref)
     assert [r["q"] for r in again.rows] == ["a", "b"]
-    assert _count(fake, "/obj/read") == n_obj and _count(fake, "/table/query") == n_tab
+    assert _count(fake, OBJ_READ) == n_obj and _count(fake, "/api/v1/tables/query") == n_tab
     assert client.read_file(fd) == b"hello file"
-    n_file = _count(fake, "/file/content")
-    assert client.read_file(fd) == b"hello file" and _count(fake, "/file/content") == n_file
+    n_file = _count(fake, FILE_READ)
+    assert client.read_file(fd) == b"hello file" and _count(fake, FILE_READ) == n_file
     stats = client.cache_stats()
     assert stats["hits"] >= 3 and stats["misses"] >= 3
 
     # refs/read_batch is cached per ref
     row_ref = ref.with_extra("attr", "name").uri()
-    call_ref = f"weft:///{client.project_id}/call/some-call"
-    assert client._http.post("/refs/read_batch", {"refs": [row_ref, call_ref]})["vals"] == ["qa", None]
-    n_refs = _count(fake, "/refs/read_batch")
-    assert client._http.post("/refs/read_batch", {"refs": [row_ref]})["vals"] == ["qa"]
-    assert _count(fake, "/refs/read_batch") == n_refs
-    client._http.post("/refs/read_batch", {"refs": [row_ref, call_ref]})  # call refs are always fetched
-    assert _count(fake, "/refs/read_batch") == n_refs + 1
-    assert [r["body"]["refs"] for r in fake.requests if r["path"] == "/refs/read_batch"][-1] == [call_ref]
+    call_ref = f"weft:///{client.project_id}/span/some-span"
+    assert client._http.post("/api/v1/refs/read", {"refs": [row_ref, call_ref]})["items"] == ["qa", None]
+    n_refs = _count(fake, "/api/v1/refs/read")
+    assert client._http.post("/api/v1/refs/read", {"refs": [row_ref]})["items"] == ["qa"]
+    assert _count(fake, "/api/v1/refs/read") == n_refs
+    client._http.post("/api/v1/refs/read", {"refs": [row_ref, call_ref]})  # span refs are always fetched
+    assert _count(fake, "/api/v1/refs/read") == n_refs + 1
+    assert [r["body"]["refs"] for r in fake.requests if r["path"] == "/api/v1/refs/read"][-1] == [call_ref]
 
     # "latest" and aliases are never cached
-    n_obj = _count(fake, "/obj/read")
+    n_obj = _count(fake, OBJ_READ)
     client.get("qa:latest")
     client.get("qa:latest")
-    assert _count(fake, "/obj/read") == n_obj + 2
+    assert _count(fake, OBJ_READ) == n_obj + 2
 
 
 def test_cache_persists_on_disk_across_clients(fake, tmp_path, monkeypatch):
     monkeypatch.setenv("WEFT_SERVER_CACHE_DIR", str(tmp_path / "c"))
     c1 = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
-    ref = weft.publish(weft.Dataset(name="d", rows=[{"x": 1}]))
+    ref = weft.save(weft.Dataset(name="d", rows=[{"x": 1}]))
     c1.get(ref)
     weft.finish()
-    before = _count(fake, "/obj/read")
+    before = _count(fake, OBJ_READ)
     c2 = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
     assert [r["x"] for r in c2.get(ref).rows] == [1]
-    assert _count(fake, "/obj/read") == before
+    assert _count(fake, OBJ_READ) == before
     assert (tmp_path / "c" / "server_cache.sqlite").exists()
     c2.clear_server_cache()
     c2.get(ref)
-    assert _count(fake, "/obj/read") == before + 1
+    assert _count(fake, OBJ_READ) == before + 1
     weft.finish()
 
 
 def test_cache_invalidated_on_delete_and_can_be_disabled(fake, monkeypatch):
     c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
-    ref = weft.publish(weft.Dataset(name="gone", rows=[{"x": 1}]))
+    ref = weft.save(weft.Dataset(name="gone", rows=[{"x": 1}]))
     c.get(ref)
     assert c.delete_object_version(ref) == 1
     with pytest.raises(Exception):
@@ -81,11 +88,11 @@ def test_cache_invalidated_on_delete_and_can_be_disabled(fake, monkeypatch):
     weft.finish()
 
     c = weft.init("e/p", server_url=fake.url, autopatch=False, settings={"use_server_cache": False, "print_call_link": False})
-    ref = weft.publish(weft.Dataset(name="nocache", rows=[{"x": 1}]))
-    before = _count(fake, "/obj/read")
+    ref = weft.save(weft.Dataset(name="nocache", rows=[{"x": 1}]))
+    before = _count(fake, OBJ_READ)
     c.get(ref)
     c.get(ref)
-    assert _count(fake, "/obj/read") == before + 2
+    assert _count(fake, OBJ_READ) == before + 2
     assert c.cache_stats()["hits"] == 0
     weft.finish()
 
@@ -113,7 +120,7 @@ def test_server_cache_lru_and_size_limit(tmp_path):
 
 
 def test_saved_view_fluent_api_save_load_and_apply(client, fake):
-    @weft.op
+    @weft.trace
     def answer(q: str) -> str:
         return q.upper()
 
@@ -136,9 +143,9 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
         view.add_filter("output", "~=", 1)
     with pytest.raises(ValueError):
         view.add_filter("output", "is empty", "x")
-    body = view.to_calls_query(limit=5)
+    body = view.to_spans_query(limit=5)
     assert body["project_id"] == "test-entity/test-proj"
-    assert body["filter"] == {"op_names": ["weft:///test-entity/test-proj/op/answer:*"]}
+    assert body["filter"] == {"names": ["weft:///test-entity/test-proj/function/answer:*"]}
     assert body["sort_by"] == [{"field": "started_at", "direction": "asc"}] and body["limit"] == 5
     clauses = body["query"]["$expr"]["$and"]
     assert clauses[0] == {"$contains": {"input": {"$getField": "output"}, "substr": {"$literal": "B"}}}
@@ -148,12 +155,12 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
 
     view.save()
     assert view.name == "Long-answers" and view.ref is not None
-    stored = fake.objs["Long-answers"][-1]["val"]
+    stored = fake.objs["Long-answers"][-1]["value"]
     assert stored["_class_name"] == "SavedView" and stored["label"] == "Long answers" and stored["definition"]["cols"] == ["inputs.q"]
 
-    list(view.get_calls())  # the fake server does not evaluate the query; check what was sent
-    q = [r for r in fake.requests if r["path"] == "/calls/stream_query"][-1]["body"]
-    assert q["filter"]["op_names"] == body["filter"]["op_names"] and q["query"] == body["query"]
+    list(view.spans())  # the fake server does not evaluate the query; check what was sent
+    q = [r for r in fake.requests if r["path"] == "/api/v1/spans/stream"][-1]["body"]
+    assert q["filter"]["names"] == body["filter"]["names"] and q["query"] == body["query"]
 
     loaded = weft.SavedView.load("Long-answers")
     assert isinstance(loaded, weft.SavedView) and loaded.label == "Long answers" and loaded.ref.name == "Long-answers"
@@ -170,13 +177,13 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
 
 def test_saved_view_ui_params_dropped_and_evaluations_view(client, fake):
     v = weft.SavedView(view_type="evaluations", label="evals", definition={"ui_params": {"op": "x"}, "search": "foo"})
-    assert v.to_calls_query()["filter"] == {"op_names": ["Evaluation.evaluate"]}
+    assert v.to_spans_query()["filter"] == {"names": ["Evaluation.evaluate"]}
     v.add_sort("started_at", "desc")
     assert "ui_params" not in v.definition and v.definition["search"] == "foo"
     with pytest.raises(ValueError):
         v.add_sort("x", "up")
     v.set_filter(trace_roots_only=True, user_ids=["u"])
-    assert v.to_calls_query()["filter"]["trace_roots_only"] is True
+    assert v.to_spans_query()["filter"]["trace_roots_only"] is True
     with pytest.raises(ValueError):
         v.set_filter(bogus=1)
 
@@ -213,7 +220,7 @@ def test_date_filters_accept_iso_strings():
 
 
 def test_log_prediction_links_existing_calls_and_turns(client, fake):
-    @weft.op
+    @weft.trace
     def agent(q: str) -> str:
         return "answer:" + q
 
@@ -256,7 +263,7 @@ def test_log_prediction_links_existing_calls_and_turns(client, fake):
 
 
 def test_log_prediction_context_manager_nests_and_links_agent_spans(client, fake):
-    @weft.op
+    @weft.trace
     def retrieve(q: str) -> list:
         return [q]
 
@@ -355,11 +362,11 @@ def test_dataset_hf_and_pandas_missing_dependency(monkeypatch):
 
 def test_dataset_select_after_publish(client, fake):
     ds = weft.Dataset(name="sel", rows=[{"i": i} for i in range(5)])
-    weft.publish(ds)
+    weft.save(ds)
     loaded = client.get("sel:latest")
     sub = loaded.select(range(1, 3))
     assert [r["i"] for r in sub.rows] == [1, 2]
-    ref = weft.publish(sub, name="sel-small")
+    ref = weft.save(sub, name="sel-small")
     assert client.get(ref).rows[1]["i"] == 2
 
 
@@ -376,7 +383,7 @@ def test_content_from_uri_is_logged_by_reference(client, fake):
     with pytest.raises(ValueError):
         weft.Content.from_uri("not-a-uri")
 
-    @weft.op
+    @weft.trace
     def describe(image, doc, clip) -> str:
         return "a cat"
 
@@ -387,22 +394,22 @@ def test_content_from_uri_is_logged_by_reference(client, fake):
     assert c["inputs"]["doc"] == {"_type": "Content", "mimetype": "application/pdf", "filename": "report.pdf", "uri": "https://example.com/report.pdf", "size": 1234}
     assert c["inputs"]["clip"]["_type"] == "Video" and c["inputs"]["clip"]["uri"] == "s3://my-bucket/clip.mp4"
     assert not fake.files  # nothing was uploaded
-    assert not [r for r in fake.requests if r["path"] == "/file/create"]
+    assert not [r for r in fake.requests if r["path"] == "/api/v1/files/upload"]
 
 
 def test_resolve_url_and_reading_referenced_content(client, fake):
     data = weft.Content(b"bytes in weft", mimetype="text/plain")
 
-    @weft.op
+    @weft.trace
     def keep(x) -> None:
         return None
 
     keep(data)  # uploads the file
-    assert client.resolve_url(data) == f"{fake.url}/file/content?project_id=test-entity/test-proj&digest={data.digest}"
+    assert client.resolve_url(data) == f"{fake.url}/api/v1/files/{data.digest}?project_id=test-entity/test-proj"
     urls = client.resolve_url(["s3://bucket/k.png", "https://x.test/a.png", f"weft-file://{data.digest}"], expires_in=60)
-    assert urls[0].startswith("https://s3.fake/bucket/k.png") and urls[1] == "https://x.test/a.png" and urls[2].endswith(data.digest)
-    body = [r["body"] for r in fake.requests if r["path"] == "/files/resolve_url"][-1]
+    assert urls[0].startswith("https://s3.fake/bucket/k.png") and urls[1] == "https://x.test/a.png" and data.digest in urls[2]
+    body = [r["body"] for r in fake.requests if r["path"] == "/api/v1/files/resolve"][-1]
     assert body["expires_in"] == 60 and body["project_id"] == "test-entity/test-proj"
     ref = weft.Content.from_uri(f"weft-file://{data.digest}", mimetype="text/plain")
     assert ref.as_text() == "bytes in weft"  # resolved, then downloaded
-    assert ref.resolve_url().endswith(data.digest)
+    assert data.digest in ref.resolve_url()

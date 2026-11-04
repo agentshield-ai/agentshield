@@ -121,19 +121,19 @@ function useSavedViews(pid: string, page: FilterPage, legacy?: (o: Any) => Recor
   const qc = useQueryClient()
   const viewType = `filters.${page}`
   const remote = useQuery({
-    queryKey: ['objs', pid, 'SavedView', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: pid, filter: { base_object_classes: ['SavedView'], latest_only: true }, limit: 200 }),
+    queryKey: ['objects', pid, 'SavedView', 'latest'],
+    queryFn: () => api.objectsQuery({ project_id: pid, filter: { kinds: ['saved_view'], latest_only: true }, limit: 200 }),
     staleTime: 30_000,
   })
   const [local, setLocal] = useState<SavedView[]>(() => readLocalViews(pid, page))
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const views: SavedView[] = [
-    ...(remote.data?.objs ?? []).flatMap((o: Any): SavedView[] => {
+    ...(remote.data?.items ?? []).flatMap((o: Any): SavedView[] => {
       if (o.deleted_at) return []
-      const label = (o.val?.label as string) ?? o.object_id
-      if (o.val?.view_type === viewType) return [{ id: o.object_id as string, label, params: (o.val?.definition?.ui_params ?? {}) as Record<string, string> }]
+      const label = (o.value?.label as string) ?? o.name
+      if (o.value?.view_type === viewType) return [{ id: o.name as string, label, params: (o.value?.definition?.ui_params ?? {}) as Record<string, string> }]
       const params = legacy?.(o)
-      return params ? [{ id: o.object_id as string, label, params }] : []
+      return params ? [{ id: o.name as string, label, params }] : []
     }),
     ...local,
   ].filter((v) => !hidden.has(v.id))
@@ -141,13 +141,13 @@ function useSavedViews(pid: string, page: FilterPage, legacy?: (o: Any) => Recor
   const save = async (label: string, params: Record<string, string>, extra: Record<string, unknown> = {}) => {
     const id = `${page}-${slug(label)}`
     try {
-      await api.objCreate(
+      await api.objectSave(
         pid,
         id,
         { _class_name: 'SavedView', _bases: ['Object', 'BaseModel'], name: id, view_type: viewType, label, definition: { ...extra, ui_params: params } },
         'SavedView',
       )
-      await qc.invalidateQueries({ queryKey: ['objs', pid, 'SavedView'] })
+      await qc.invalidateQueries({ queryKey: ['objects', pid, 'SavedView'] })
       notify(`Saved view “${label}”`, 'ok')
     } catch {
       const next = [...local.filter((v) => v.id !== id), { id, label, params, local: true }]
@@ -174,8 +174,8 @@ function useSavedViews(pid: string, page: FilterPage, legacy?: (o: Any) => Recor
           setLocal(next)
           writeLocalViews(pid, page, next)
         } else {
-          await api.objDelete(pid, v.id)
-          await qc.invalidateQueries({ queryKey: ['objs', pid, 'SavedView'] })
+          await api.objectDelete(pid, v.id)
+          await qc.invalidateQueries({ queryKey: ['objects', pid, 'SavedView'] })
         }
       },
     })

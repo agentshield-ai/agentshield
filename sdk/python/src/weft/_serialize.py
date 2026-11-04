@@ -132,7 +132,7 @@ def to_json(
 
     if isinstance(value, Object):
         if publish_nested and client is not None:
-            return client.publish(value).uri()
+            return client.save(value).uri()
         seen.add(oid)
         try:
             return object_val(value, client, publish_nested=False, _depth=_depth + 1, _seen=seen)

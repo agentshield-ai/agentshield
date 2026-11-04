@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { automationsApi, type AutomationRun, type AutomationVal, type Operator, type TriggerType } from '../../api/automations'
-import type { ObjSchema } from '../../api/types'
+import type { WeftObject } from '../../api/types'
 import { settingsUrl } from '../../lib/urls'
 import { ErrorBox, Modal } from '../common'
 import { NameField, usePublish, type Created } from '../objects/ObjectForms'
@@ -15,20 +15,20 @@ const FEEDBACK_PRESETS = ['weft.reaction', 'weft.note', 'weft.annotation.*', 'we
 
 const MESSAGE_HELP = 'Placeholders: {automation} {project_id} {summary} {call_id} {value} {threshold} {feedback_type} {error_rate} {total_calls} {error_calls}'
 
-function toVal(initial?: ObjSchema): AutomationVal {
-  const base = emptyAutomation(initial?.object_id ?? '')
+function toVal(initial?: WeftObject): AutomationVal {
+  const base = emptyAutomation(initial?.name ?? '')
   if (!initial) return base
-  const v = initial.val ?? {}
+  const v = initial.value ?? {}
   return {
     ...base,
     ...v,
-    name: initial.object_id,
+    name: initial.name,
     trigger: { ...base.trigger, ...(v.trigger ?? {}) },
     action: { ...base.action, ...(v.action ?? {}) },
   }
 }
 
-export function AutomationEditor({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: ObjSchema; onClose: () => void; onSaved: (c: Created) => void }) {
+export function AutomationEditor({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: WeftObject; onClose: () => void; onSaved: (c: Created) => void }) {
   const publish = usePublish(projectId)
   const [v, setV] = useState<AutomationVal>(() => toVal(initial))
   const [urlMode, setUrlMode] = useState<'url' | 'secret'>(v.action.url_secret ? 'secret' : 'url')
@@ -40,9 +40,9 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
   const [testRun, setTestRun] = useState<AutomationRun | null>(null)
 
   const scorers = useObjects(projectId, KIND_META.scorers.filter)
-  const monitors = useObjects(projectId, { base_object_classes: ['Monitor'] })
+  const monitors = useObjects(projectId, { kinds: ['monitor'] })
   const secrets = useQuery({ queryKey: ['secrets'], queryFn: () => api.secretsList().then((r) => r.secrets) })
-  const ops = useQuery({ queryKey: ['op-counts', projectId], queryFn: () => api.opCounts(projectId).then((r) => r.ops) })
+  const ops = useQuery({ queryKey: ['span-names', projectId], queryFn: () => api.spanNames(projectId).then((r) => r.items) })
 
   const setT = (p: Partial<AutomationVal['trigger']>) => setV((x) => ({ ...x, trigger: { ...x.trigger, ...p } }))
   const setA = (p: Partial<AutomationVal['action']>) => setV((x) => ({ ...x, action: { ...x.action, ...p } }))
@@ -86,7 +86,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
   const t = v.trigger
   return (
     <Modal
-      title={initial ? `Edit automation ${initial.object_id}` : 'New automation'}
+      title={initial ? `Edit automation ${initial.name}` : 'New automation'}
       wide
       onClose={onClose}
       footer={
@@ -136,7 +136,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
               <input className="input mono" list="automation-scorers" value={t.scorer ?? ''} onChange={(e) => setT({ scorer: e.target.value })} placeholder="judge" />
               <datalist id="automation-scorers">
                 {(scorers.data ?? []).map((o) => (
-                  <option key={o.object_id} value={o.object_id} />
+                  <option key={o.name} value={o.name} />
                 ))}
               </datalist>
               <span className="hint">Scorer name (results written by monitors or Run scorer), or a full feedback type such as weft.annotation.quality.</span>
@@ -168,8 +168,8 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
             <select className="input" value={t.monitor_ref ?? ''} onChange={(e) => setT({ monitor_ref: e.target.value || null })}>
               <option value="">Any source</option>
               {(monitors.data ?? []).map((m) => (
-                <option key={m.object_id} value={refOf(m)}>
-                  {m.object_id}
+                <option key={m.name} value={refOf(m)}>
+                  {m.name}
                 </option>
               ))}
             </select>
@@ -183,7 +183,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
             <input className="input mono" list="automation-ops" value={opsText} onChange={(e) => setOpsText(e.target.value)} placeholder="Comma-separated; empty means all root calls" />
             <datalist id="automation-ops">
               {(ops.data ?? []).map((o) => (
-                <option key={o.op_base_name} value={o.op_base_name} />
+                <option key={o.base_name} value={o.base_name} />
               ))}
             </datalist>
           </label>

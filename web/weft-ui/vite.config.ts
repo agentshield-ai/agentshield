@@ -1,16 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// The API lives at the server root (/call/, /calls/, /api/v1/, /otel/, ...).
+// The API lives at the server root (/api/v1/, /otel/, /agents/, ...).
 // In dev, proxy them to a locally running `weft` server.
 const target = process.env.WEFT_SERVER_URL ?? 'http://localhost:6345'
 const apiPrefixes = [
-  '/call/', '/calls/', '/obj/', '/objs/', '/table/', '/refs/', '/file/', '/feedback/',
-  '/cost/', '/completions/', '/llm/', '/secrets/', '/evaluate_model', '/evaluation_status',
-  '/evaluations/', '/leaderboard/', '/threads/', '/project/', '/projects', '/server_info',
-  '/health', '/auth/', '/otel/', '/agents/', '/image/',
-  '/annotation_queues', '/api/', '/automations/', '/embeddings/',
-  '/api_keys/', '/users/', '/teams/', '/audit/', '/dataset_sources/', '/files/', '/reference_buckets/', '/trace/', '/v2/', '^/(tags|aliases)(\\?.*)?$',
+  '/api/', '/llm/', '/secrets/', '/project/', '/projects', '/health', '/auth/', '/otel/', '/agents/',
+  '/annotation_queues', '/automations/', '/api_keys/', '/users/', '/teams/', '/audit/', '/reference_buckets/',
 ]
 
 export default defineConfig({

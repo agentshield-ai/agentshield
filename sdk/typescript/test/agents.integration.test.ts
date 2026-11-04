@@ -27,7 +27,7 @@ describe.skipIf(!URL)('real server: agents and SDK extras', () => {
   afterAll(() => weft.finish());
 
   it('conversations show in /agents/query and /agents/conversations/chat', async () => {
-    const lookup = weft.op(function lookup(id: number) {
+    const lookup = weft.trace(function lookup(id: number) {
       return { id, status: 'shipped' };
     });
     const conv = weft.startConversation({ agentName: 'ts-support', conversationName: 'TS order' });
@@ -78,15 +78,15 @@ describe.skipIf(!URL)('real server: agents and SDK extras', () => {
   });
 
   it('applies saved views, links eval predictions and resolves media URLs', async () => {
-    const answer = weft.op(function answer(q: string) {
+    const answer = weft.trace(function answer(q: string) {
       return q.toUpperCase();
     });
     for (const q of ['a', 'bb', 'ccc']) await answer(q);
     await client.flush();
     const view = await new weft.SavedView({ label: 'TS long answers' }).filterOp('answer').addFilter('output', 'contains', 'B').sortBy('started_at', 'asc').save();
-    expect((await view.getCalls()).map((c) => c.inputs.q)).toEqual(['bb']);
+    expect((await view.spans()).map((c) => c.inputs.q)).toEqual(['bb']);
     const loaded = await weft.SavedView.load(view.name!);
-    expect((await loaded.getCalls()).map((c) => c.inputs.q)).toEqual(['bb']);
+    expect((await loaded.spans()).map((c) => c.inputs.q)).toEqual(['bb']);
     expect((await client.getSavedViews('traces')).map((v) => v.name)).toEqual([view.name]);
 
     const turn = weft.startTurn({ userMessage: '2+2', agentName: 'calc' });
@@ -97,16 +97,16 @@ describe.skipIf(!URL)('real server: agents and SDK extras', () => {
     p.logScore('correct', true);
     await ev.logSummary();
     await client.flush();
-    const [pas] = await client.getCalls({ filter: { op_names: ['Evaluation.predict_and_score'] } });
+    const [pas] = await client.spans({ filter: { names: ['Evaluation.predict_and_score'] } });
     expect((pas.attributes as any).weft.linked_calls).toEqual([{ call_id: turn.callId, trace_id: turn.traceId }]);
 
     const local = new weft.Content('ts stored', { mimetype: 'text/plain' });
-    const look = weft.op(function look(img: unknown, l: unknown) {
+    const look = weft.trace(function look(img: unknown, l: unknown) {
       return 'ok';
     });
     await look(weft.Image.fromUri('s3://customer-bucket/a.png'), local);
     await client.flush();
-    const [c] = await client.getCalls({ filter: { op_names: ['look'] } });
+    const [c] = await client.spans({ filter: { names: ['look'] } });
     expect((c.inputs as any).img).toEqual({ _type: 'Image', uri: 's3://customer-bucket/a.png', mime_type: 'image/png', filename: 'a.png' });
     const url = (await client.resolveUrl(local)) as string;
     expect(url).toContain(local.digest);

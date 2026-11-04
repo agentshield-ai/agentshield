@@ -44,7 +44,7 @@ function langgraphInfo(md: any): Record<string, unknown> | null {
 function agentNodeAttrs(call: any): Record<string, unknown> | null {
   if (!call?.llmDescendant) return null;
   const node = call.attributes?.langgraph?.node;
-  if (!node || !String(call.opName ?? '').includes('langgraph.node.')) return null;
+  if (!node || !String(call.name ?? '').includes('langgraph.node.')) return null;
   return { gen_ai: { operation: { name: 'invoke_agent' }, agent: { name: String(node) } } };
 }
 

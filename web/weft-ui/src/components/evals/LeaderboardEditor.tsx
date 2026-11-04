@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { parseRef } from '../../api/refs'
-import type { Any, ObjSchema } from '../../api/types'
+import type { Any, WeftObject } from '../../api/types'
 import { ErrorBox, Modal } from '../common'
 import { NameField, usePublish, type Created } from '../objects/ObjectForms'
 import { classVal, refOf, useObjects } from '../objects/objectUtils'
@@ -131,17 +131,17 @@ export function LeaderboardEditor({
   onSaved,
 }: {
   projectId: string
-  initial?: ObjSchema
+  initial?: WeftObject
   onClose: () => void
   onSaved: (c: Created) => void
 }) {
   const publish = usePublish(projectId)
-  const evals = useObjects(projectId, { base_object_classes: ['Evaluation'] })
-  const [name, setName] = useState(initial?.object_id ?? '')
-  const [description, setDescription] = useState<string>(initial?.val?.description ?? '')
+  const evals = useObjects(projectId, { kinds: ['evaluation'] })
+  const [name, setName] = useState(initial?.name ?? '')
+  const [description, setDescription] = useState<string>(initial?.value?.description ?? '')
   const [columns, setColumns] = useState<LBColumn[]>(
-    Array.isArray(initial?.val?.columns)
-      ? initial!.val.columns.map((c: Any) => ({
+    Array.isArray(initial?.value?.columns)
+      ? initial!.value.columns.map((c: Any) => ({
           evaluation_object_ref: c.evaluation_object_ref ?? '',
           scorer_name: c.scorer_name ?? '',
           summary_metric_path: c.summary_metric_path ?? '',
@@ -152,7 +152,7 @@ export function LeaderboardEditor({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
   const evalOptions = useMemo(() => {
-    const opts = (evals.data ?? []).map((o) => ({ ref: refOf(o), label: `${o.object_id} (latest v${o.version_index})` }))
+    const opts = (evals.data ?? []).map((o) => ({ ref: refOf(o), label: `${o.name} (latest v${o.version})` }))
     for (const c of columns)
       if (c.evaluation_object_ref && !opts.some((o) => o.ref === c.evaluation_object_ref))
         opts.push({ ref: c.evaluation_object_ref, label: `${parseRef(c.evaluation_object_ref)?.name ?? c.evaluation_object_ref} (${parseRef(c.evaluation_object_ref)?.digest?.slice(0, 6) ?? ''})` })
@@ -161,7 +161,7 @@ export function LeaderboardEditor({
   const valid = name && columns.length > 0 && columns.every((c) => c.evaluation_object_ref && c.scorer_name)
   return (
     <Modal
-      title={initial ? `Edit leaderboard ${initial.object_id}` : 'New leaderboard'}
+      title={initial ? `Edit leaderboard ${initial.name}` : 'New leaderboard'}
       wide
       onClose={onClose}
       footer={
@@ -176,7 +176,7 @@ export function LeaderboardEditor({
               setBusy(true)
               setErr(null)
               try {
-                onSaved(await publish(name, { ...(initial?.val ?? {}), ...classVal('Leaderboard', [], { name, description, columns }) }))
+                onSaved(await publish(name, { ...(initial?.value ?? {}), ...classVal('Leaderboard', [], { name, description, columns }) }))
               } catch (e) {
                 setErr(e)
               } finally {

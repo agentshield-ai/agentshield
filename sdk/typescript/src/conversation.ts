@@ -373,12 +373,12 @@ export abstract class SpanBase {
       }
     }
     const id = uuid7();
-    const threadId = this.conv.conversationId || parent?.threadId || null;
+    const threadId = this.conv.conversationId || parent?.sessionId || null;
     const turnId = this instanceof Turn ? id : (parent?.turnId ?? null);
     const data: CallData = {
       id,
       project_id: client.projectId,
-      op_name: client.opRef(syntheticOp(this.opName, this.kind)).uri(),
+      name: client.opRef(syntheticOp(this.opName, this.kind)).uri(),
       trace_id: parent ? parent.traceId : uuid7(),
       parent_id: parent ? parent.id : null,
       display_name: this.displayName(),
@@ -387,7 +387,7 @@ export abstract class SpanBase {
     this.call = new Call(data, client);
     this.call.conversationSpan = true;
     this.call.span = this;
-    this.call.threadId = threadId;
+    this.call.sessionId = threadId;
     this.call.turnId = turnId;
     return this;
   }
@@ -486,13 +486,13 @@ export abstract class SpanBase {
     call.inputs = serInputs;
     call.output = serOutput;
     call.endedAt = iso(this.endedAt ?? new Date());
-    call.exception = this.exception;
+    call.error = this.exception;
     call.summary = summary;
     call.ended = true;
     const start: Record<string, unknown> = {
       project_id: call.projectId,
       id: call.id,
-      op_name: call.opName,
+      name: call.name,
       trace_id: call.traceId,
       parent_id: call.parentId,
       started_at: call.startedAt,
@@ -500,13 +500,13 @@ export abstract class SpanBase {
       inputs: serInputs,
       display_name: call.displayName,
     };
-    if (call.threadId) start.thread_id = call.threadId;
+    if (call.sessionId) start.session_id = call.sessionId;
     if (call.turnId) start.turn_id = call.turnId;
     const end: Record<string, unknown> = { project_id: call.projectId, id: call.id, ended_at: call.endedAt, output: serOutput };
-    if (this.exception) end.exception = this.exception;
+    if (this.exception) end.error = this.exception;
     if (Object.keys(summary).length) end.summary = toJson(summary, client);
-    client.sender.enqueue({ kind: 'call_start', payload: start });
-    client.sender.enqueue({ kind: 'call_end', payload: end });
+    client.sender.enqueue({ kind: 'span_start', payload: start });
+    client.sender.enqueue({ kind: 'span_end', payload: end });
   }
 }
 

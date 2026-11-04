@@ -11,8 +11,6 @@ export interface Runtime {
   ref?: string
 }
 
-const projectPath = (projectId: string) => projectId.split('/').map(encodeURIComponent).join('/')
-
 export const runtimesApi = {
-  list: (projectId: string) => get<{ runtimes: Runtime[] }>(`/v2/${projectPath(projectId)}/runtimes`),
+  list: (projectId: string) => get<{ items: Runtime[]; total_count: number }>(`/api/v1/runtimes?project_id=${encodeURIComponent(projectId)}`),
 }

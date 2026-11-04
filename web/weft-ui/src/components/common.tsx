@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { CallStatus } from '../api/types'
+import type { SpanStatus } from '../api/types'
 
 export function Spinner({ label }: { label?: string }) {
   return (
@@ -98,24 +98,24 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   )
 }
 
-const STATUS_CLASS: Record<CallStatus, string> = {
+const STATUS_CLASS: Record<SpanStatus, string> = {
   success: 'success',
   error: 'error',
   running: 'running',
   descendant_error: 'warn',
 }
-const STATUS_LABEL: Record<CallStatus, string> = {
+const STATUS_LABEL: Record<SpanStatus, string> = {
   success: 'Success',
   error: 'Error',
   running: 'Running',
   descendant_error: 'Child error',
 }
 
-export function StatusBadge({ status }: { status: CallStatus }) {
+export function StatusBadge({ status }: { status: SpanStatus }) {
   return <span className={`badge ${STATUS_CLASS[status]}`}>{STATUS_LABEL[status]}</span>
 }
 
-export function StatusDot({ status }: { status: CallStatus }) {
+export function StatusDot({ status }: { status: SpanStatus }) {
   const color =
     status === 'success' ? 'var(--success)' : status === 'error' ? 'var(--error)' : status === 'running' ? 'var(--running)' : 'var(--warn)'
   return <span className="dot" style={{ background: color }} title={STATUS_LABEL[status]} />

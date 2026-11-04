@@ -14,7 +14,7 @@ from weft.conversation import ToolCallPart
 client = weft.init("agent-conversation-demo")
 
 
-@weft.op(kind="tool")
+@weft.trace(kind="tool")
 def lookup_order(order_id: int) -> dict:
     return {"order_id": order_id, "status": "shipped", "eta": "Friday"}
 
@@ -69,10 +69,10 @@ view = (weft.SavedView(label="Support tool calls")
         .save())
 client.flush()
 time.sleep(0.2)
-print("view", view.name, "matches", len(list(view.get_calls())), "calls")
+print("view", view.name, "matches", len(list(view.spans())), "spans")
 
 # --- media that lives in your bucket, logged by reference ---------------------
-@weft.op
+@weft.trace
 def caption(image) -> str:
     return "a parcel on a doorstep"
 

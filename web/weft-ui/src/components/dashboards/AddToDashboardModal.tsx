@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dashboardsApi, type DashboardPanel, type DashboardVal } from '../../api/dashboards'
-import type { CallsFilter, Query } from '../../api/types'
+import type { SpansFilter, Query } from '../../api/types'
 import { slugify } from '../traces/callUtils'
 import { Modal } from '../common'
 import { PanelEditor } from './PanelEditor'
@@ -20,18 +20,18 @@ export function AddToDashboardModal({
   onClose,
 }: {
   projectId: string
-  filter?: CallsFilter
+  filter?: SpansFilter
   query?: Query
   search?: string
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const list = useQuery({ queryKey: ['objs', projectId, 'Dashboard'], queryFn: () => dashboardsApi.list(projectId) })
+  const list = useQuery({ queryKey: ['objects', projectId, 'Dashboard'], queryFn: () => dashboardsApi.list(projectId) })
   const [target, setTarget] = useState<string>('')
   const [newName, setNewName] = useState('')
   const [done, setDone] = useState<{ id: string; label: string } | null>(null)
   const dashboards = list.data ?? []
-  const chosen = target || (dashboards[0]?.object_id ?? '__new')
+  const chosen = target || (dashboards[0]?.name ?? '__new')
   const initial: DashboardPanel = { ...blankPanel(), filter, query, search, chart: 'line', metrics: [{ agg: 'count' }] }
 
   const save = useMutation({
@@ -46,14 +46,14 @@ export function AddToDashboardModal({
       } else {
         id = chosen
         const cur = await dashboardsApi.read(projectId, id)
-        val = cur.val
+        val = cur.value
       }
       val = { ...val, panels: [...(val.panels ?? []), panel] }
       await dashboardsApi.save(projectId, id, val)
       return { id, label: val.name }
     },
     onSuccess: (r) => {
-      void qc.invalidateQueries({ queryKey: ['objs', projectId, 'Dashboard'] })
+      void qc.invalidateQueries({ queryKey: ['objects', projectId, 'Dashboard'] })
       void qc.invalidateQueries({ queryKey: ['dashboard', projectId, r.id] })
       setDone(r)
     },
@@ -95,8 +95,8 @@ export function AddToDashboardModal({
             Dashboard
             <select className="input" value={chosen} onChange={(e) => setTarget(e.target.value)}>
               {dashboards.map((d) => (
-                <option key={d.object_id} value={d.object_id}>
-                  {d.val?.name ?? d.object_id}
+                <option key={d.name} value={d.name}>
+                  {d.value?.name ?? d.name}
                 </option>
               ))}
               <option value="__new">+ New dashboard…</option>

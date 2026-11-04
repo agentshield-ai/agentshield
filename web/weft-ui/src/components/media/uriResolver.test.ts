@@ -139,12 +139,12 @@ describe('UriResolver', () => {
       if (uris.some((u) => u.includes('bad'))) throw new HttpError(400, `uri "${uris[0]}" is not a file of project e/p in the configured bucket`)
       return { download_urls: uris.map((u) => 'https://ok/' + u.slice(5)), expires_at: null }
     })
-    const good = r.resolve('e/p', 's3://files/a.png')
-    const bad = r.resolve('e/p', 's3://files/bad.png')
+    const good = r.resolve('e/p', 's3://bkt/a.png')
+    const bad = r.resolve('e/p', 's3://bkt/bad.png')
     await vi.advanceTimersByTimeAsync(10)
-    expect(await good).toEqual({ ok: true, url: 'https://ok/files/a.png', expiresAt: null })
+    expect(await good).toEqual({ ok: true, url: 'https://ok/bkt/a.png', expiresAt: null })
     expect(await bad).toEqual({ ok: false, reason: 'outside this project’s files', status: 400 })
-    expect(calls.map((c) => c.uris.join(' '))).toEqual(['s3://files/a.png s3://files/bad.png', 's3://files/a.png', 's3://files/bad.png'])
+    expect(calls.map((c) => c.uris.join(' '))).toEqual(['s3://bkt/a.png s3://bkt/bad.png', 's3://bkt/a.png', 's3://bkt/bad.png'])
   })
 
   it('does not retry per URI when the whole request is refused', async () => {
@@ -221,7 +221,7 @@ describe('mediaApi.resolveUrls', () => {
     vi.stubGlobal('fetch', fn)
     const { mediaApi } = await import('../../api/media')
     expect(await mediaApi.resolveUrls('e/p', ['s3://u/a.png', 'https://x'])).toEqual(body)
-    expect(fn.mock.calls[0][0]).toBe('/files/resolve_url')
+    expect(fn.mock.calls[0][0]).toBe('/api/v1/files/resolve')
     expect(JSON.parse(String(fn.mock.calls[0][1]?.body))).toEqual({ project_id: 'e/p', uris: ['s3://u/a.png', 'https://x'], per_uri_errors: true })
   })
 })

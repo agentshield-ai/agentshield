@@ -63,14 +63,14 @@ def test_bedrock_agent_conversation_in_agents_view(live, monkeypatch):
                                                                 "inputText": "Weather in Oslo?", "enableTrace": True})
     assert sum(1 for _ in res["completion"]) == len(events)
     live.flush()
-    [root] = live.get_calls(filter={"op_names": ["bedrock_agent.invoke_agent"]}).to_list()
-    assert root.thread_id == sid and root.output["completion"] == "It is 12°C in Oslo; rain tomorrow."
+    [root] = live.spans(filter={"names": ["bedrock_agent.invoke_agent"]}).to_list()
+    assert root.session_id == sid and root.output["completion"] == "It is 12°C in Oslo; rain tomorrow."
     kids = root.children()
-    names = sorted({c.op_base_name for c in kids})
+    names = sorted({c.base_name for c in kids})
     assert names == ["bedrock_agent.action_group", "bedrock_agent.collaborator", "bedrock_agent.guardrail",
                      "bedrock_agent.knowledge_base", "bedrock_agent.model_invocation"]
     # usage rolls up from the LLM spans (900 input tokens across 5 model invocations)
-    root2 = live.get_call(root.id)
+    root2 = live.span(root.id)
     assert root2.summary["usage"][MODEL]["prompt_tokens"] == 900
 
     chat = _wait(lambda: (lambda r: r if r.get("total_turns") == 1 else None)(
@@ -91,7 +91,7 @@ def test_verdict_pipeline_live(live, monkeypatch):
     out = (vp.Pipeline("Judge") >> vp.JudgeUnit(lambda x: 3) >> vp.JudgeUnit(lambda x: 4)).run("an answer")
     assert out == {"scores": [3, 4]}
     live.flush()
-    [pipe] = live.get_calls(filter={"op_names": ["verdict.Judge"]}).to_list()
+    [pipe] = live.spans(filter={"names": ["verdict.Judge"]}).to_list()
     units = pipe.children()
     assert sorted(u.output["score"] for u in units) == [3, 4]
     assert all(u.attributes["weft"]["span_kind"] == "scorer" for u in units)
@@ -100,7 +100,7 @@ def test_verdict_pipeline_live(live, monkeypatch):
 def test_to_pandas_registry_and_run_live(live):
     pd = pytest.importorskip("pandas")
 
-    @weft.op
+    @weft.trace
     def step_fn(x: int) -> int:
         return x * 2
 
@@ -109,20 +109,20 @@ def test_to_pandas_registry_and_run_live(live):
         step_fn(i)
     weft.set_run(None)
     live.flush()
-    df = live.get_calls(filter={"op_names": ["step_fn"]}, sort_by=[{"field": "started_at", "direction": "asc"}]).to_pandas()
+    df = live.spans(filter={"names": ["step_fn"]}, sort_by=[{"field": "started_at", "direction": "asc"}]).to_pandas()
     assert isinstance(df, pd.DataFrame) and len(df) == 3
     assert list(df["output"]) == [0, 2, 4] and set(df["status"]) == {"success"}
     assert set(df["run_id"]) == {f"{live.project_id}/run-live"}
-    flat = live.get_calls(filter={"op_names": ["step_fn"]}).to_pandas(flatten=True)
+    flat = live.spans(filter={"names": ["step_fn"]}).to_pandas(flatten=True)
     assert "inputs.x" in flat.columns
 
     prompt = weft.MessagesPrompt([{"role": "system", "content": "You are {persona}."}])
-    weft.publish(prompt, name="persona-prompt")
+    weft.save(prompt, name="persona-prompt")
     reg = f"registry-{uuid.uuid4().hex[:6]}"
     r = weft.link_prompt_to_registry(prompt, target_path=f"{reg}/personas", aliases=["staging"])
-    assert r["version_index"] == 0
+    assert r["version"] == 0
     ds = weft.Dataset(name="eval-set", rows=[{"q": "hi"}])
-    assert weft.link_to_registry(ds, target_path=f"{reg}/datasets")["version_index"] == 0
+    assert weft.link_to_registry(ds, target_path=f"{reg}/datasets")["version"] == 0
     cols = {c["name"]: c for c in live.query_registry(reg)}
     assert set(cols) == {"personas", "datasets"}
     v = cols["personas"]["versions"][0]

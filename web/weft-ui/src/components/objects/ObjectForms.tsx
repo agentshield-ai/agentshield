@@ -1,10 +1,10 @@
 // Create / edit forms for prompts, LLM completion models and server-runnable scorers.
-// Each form publishes a new object version via /obj/create.
+// Each form publishes a new object version via /api/v1/objects/save.
 import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { objectRef } from '../../api/refs'
-import type { Any, ChatMessage, ObjSchema } from '../../api/types'
+import type { Any, ChatMessage, WeftObject } from '../../api/types'
 import { ErrorBox, Modal } from '../common'
 import {
   classVal,
@@ -19,21 +19,21 @@ import {
 } from './objectUtils'
 
 export interface Created {
-  objectId: string
+  name: string
   digest: string
   ref: string
-  versionIndex: number
+  version: number
 }
 
 /** Publish an object and refresh object queries. */
 export function usePublish(projectId: string) {
   const qc = useQueryClient()
   return async (objectId: string, val: Any): Promise<Created> => {
-    const r = await api.objCreate(projectId, objectId, val)
-    void qc.invalidateQueries({ queryKey: ['objs', projectId] })
+    const r = await api.objectSave(projectId, objectId, val)
+    void qc.invalidateQueries({ queryKey: ['objects', projectId] })
     void qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
-    void qc.invalidateQueries({ queryKey: ['obj', projectId, objectId] })
-    return { objectId: r.object_id, digest: r.digest, ref: objectRef(projectId, r.object_id, r.digest), versionIndex: r.version_index }
+    void qc.invalidateQueries({ queryKey: ['object', projectId, objectId] })
+    return { name: r.name, digest: r.digest, ref: objectRef(projectId, r.name, r.digest), version: r.version }
   }
 }
 
@@ -222,25 +222,25 @@ export function PromptFormModal({
   onCreated,
 }: {
   projectId: string
-  initial?: ObjSchema
+  initial?: WeftObject
   onClose: () => void
   onCreated: (c: Created) => void
 }) {
   const publish = usePublish(projectId)
-  const initCls = initial ? valClass(initial.val) : null
-  const [name, setName] = useState(initial?.object_id ?? '')
+  const initCls = initial ? valClass(initial.value) : null
+  const [name, setName] = useState(initial?.name ?? '')
   const [cls, setCls] = useState<'StringPrompt' | 'MessagesPrompt'>(initCls === 'StringPrompt' ? 'StringPrompt' : 'MessagesPrompt')
-  const [content, setContent] = useState<string>(initial?.val?.content ?? '')
+  const [content, setContent] = useState<string>(initial?.value?.content ?? '')
   const [messages, setMessages] = useState<ChatMessage[]>(
-    initial?.val?.messages ?? [
+    initial?.value?.messages ?? [
       { role: 'system', content: 'You are a helpful assistant.' },
       { role: 'user', content: '{question}' },
     ],
   )
-  const [description, setDescription] = useState<string>(initial?.val?.description ?? '')
+  const [description, setDescription] = useState<string>(initial?.value?.description ?? '')
   return (
     <FormModal
-      title={initial ? `Edit prompt ${initial.object_id}` : 'New prompt'}
+      title={initial ? `Edit prompt ${initial.name}` : 'New prompt'}
       onClose={onClose}
       wide
       disabled={!name || (cls === 'StringPrompt' ? !content : messages.length === 0)}
@@ -249,7 +249,7 @@ export function PromptFormModal({
           cls === 'StringPrompt'
             ? { name, description: description || null, content }
             : { name, description: description || null, messages }
-        const base = initial && initCls === cls ? initial.val : {}
+        const base = initial && initCls === cls ? initial.value : {}
         onCreated(await publish(name, { ...base, ...classVal(cls, ['Prompt'], fields) }))
       }}
     >
@@ -376,20 +376,20 @@ export function ModelFormModal({
   onCreated,
 }: {
   projectId: string
-  initial?: ObjSchema
+  initial?: WeftObject
   onClose: () => void
   onCreated: (c: Created) => void
 }) {
   const publish = usePublish(projectId)
-  const [name, setName] = useState(initial?.object_id ?? '')
-  const [fields, setFields] = useState<LLMModelFields>(initial ? modelFieldsFrom(initial.val) : DEFAULT_MODEL_FIELDS)
+  const [name, setName] = useState(initial?.name ?? '')
+  const [fields, setFields] = useState<LLMModelFields>(initial ? modelFieldsFrom(initial.value) : DEFAULT_MODEL_FIELDS)
   return (
     <FormModal
-      title={initial ? `Edit model ${initial.object_id}` : 'New LLM completion model'}
+      title={initial ? `Edit model ${initial.name}` : 'New LLM completion model'}
       onClose={onClose}
       wide
       disabled={!name || !fields.llm_model_id}
-      onSubmit={async () => onCreated(await publish(name, llmModelVal(name, fields, initial?.val)))}
+      onSubmit={async () => onCreated(await publish(name, llmModelVal(name, fields, initial?.value)))}
     >
       <NameField value={name} onChange={setName} locked={!!initial} placeholder="gpt4o-mini-qa" />
       <LLMModelFieldsEditor value={fields} onChange={setFields} />
@@ -566,21 +566,21 @@ export function ScorerFormModal({
   onlyJudge,
 }: {
   projectId: string
-  initial?: ObjSchema
+  initial?: WeftObject
   onClose: () => void
   onCreated: (c: Created) => void
   onlyJudge?: boolean
 }) {
   const publish = usePublish(projectId)
-  const [name, setName] = useState(initial?.object_id ?? '')
-  const [fields, setFields] = useState<ScorerFields>(initial ? scorerFieldsFrom(initial.val) : DEFAULT_SCORER_FIELDS)
+  const [name, setName] = useState(initial?.name ?? '')
+  const [fields, setFields] = useState<ScorerFields>(initial ? scorerFieldsFrom(initial.value) : DEFAULT_SCORER_FIELDS)
   return (
     <FormModal
-      title={initial ? `Edit scorer ${initial.object_id}` : onlyJudge ? 'New LLM judge' : 'New scorer'}
+      title={initial ? `Edit scorer ${initial.name}` : onlyJudge ? 'New LLM judge' : 'New scorer'}
       onClose={onClose}
       wide={fields.cls === 'LLMAsAJudgeScorer'}
       disabled={!name || !scorerFieldsValid(fields)}
-      onSubmit={async () => onCreated(await publish(name, scorerVal(name, fields, initial?.val)))}
+      onSubmit={async () => onCreated(await publish(name, scorerVal(name, fields, initial?.value)))}
     >
       <NameField value={name} onChange={setName} locked={!!initial} placeholder={fields.cls === 'LLMAsAJudgeScorer' ? 'correctness-judge' : 'exact'} />
       <ScorerFieldsEditor value={fields} onChange={setFields} lockClass={!!initial} onlyJudge={onlyJudge} />

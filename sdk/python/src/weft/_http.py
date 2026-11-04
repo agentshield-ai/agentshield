@@ -92,7 +92,11 @@ class HTTPClient:
         raw = self.request_raw("POST", path, body, timeout)
         return json.loads(raw) if raw.strip() else {}
 
-    def get(self, path: str, timeout: Optional[float] = None) -> Any:
+    def get(self, path: str, timeout: Optional[float] = None, query: Optional[Dict[str, str]] = None) -> Any:
+        if query:
+            import urllib.parse
+
+            path = path + "?" + urllib.parse.urlencode(query)
         raw = self.request_raw("GET", path, None, timeout)
         return json.loads(raw) if raw.strip() else {}
 

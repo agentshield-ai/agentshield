@@ -13,7 +13,7 @@ import textwrap
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from ._op import Op
-from ._refs import ObjectRef, OpRef
+from ._refs import FunctionRef, ObjectRef
 
 if TYPE_CHECKING:  # pragma: no cover
     from ._client import WeftClient
@@ -49,7 +49,9 @@ def load_op(val: Dict[str, Any], ref: Optional[ObjectRef], client: "WeftClient")
     target.decorator_list = []  # re-wrapped below; decorators may not be importable
     import weft
 
-    namespace: Dict[str, Any] = {"__name__": f"weft_loaded.{func_name}", "weft": weft, "op": weft.op}
+    from ._op import trace
+
+    namespace: Dict[str, Any] = {"__name__": f"weft_loaded.{func_name}", "weft": weft, "trace": trace, "op": trace}
     try:
         exec(compile(tree, f"<weft op {where}>", "exec"), namespace)  # noqa: S102 - documented behaviour
     except Exception as e:
@@ -59,7 +61,7 @@ def load_op(val: Dict[str, Any], ref: Optional[ObjectRef], client: "WeftClient")
         raise OpLoadError(f"cannot load op {where}: function {target.name!r} not defined by stored code")
     op = Op(fn, name=name, code=code)
     if ref is not None:
-        op._refs[(client.server_url, client.project_id)] = OpRef(ref.entity, ref.project, ref.name, ref.digest)
+        op._refs[(client.server_url, client.project_id)] = FunctionRef(ref.entity, ref.project, ref.name, ref.digest)
     return op
 
 
@@ -87,7 +89,7 @@ def load_dynamic_object(val: Dict[str, Any], client: "WeftClient", ref: Optional
             continue
         if isinstance(v, str) and is_ref_uri(v):
             r = parse_uri(v)
-            if isinstance(r, OpRef):
+            if isinstance(r, FunctionRef):
                 ops[k] = load_op(client._read_obj_val(r), r, client)
                 continue
             if _is_obj_or_table_ref(v):

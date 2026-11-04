@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { opDisplayName } from '../../api/refs'
+import { spanDisplayName } from '../../api/refs'
 import { callStatus, fmtDuration } from '../../lib/format'
 import { callLabel, type TreeNode } from './callUtils'
 import { composeOps, flameLayout, flattenComposed } from './flameLayout'
@@ -87,7 +87,7 @@ export function FlameGraph({ roots, selectedId, onSelect }: { roots: TreeNode[];
  */
 export function CodeComposition({ roots, selectedId, onSelect }: { roots: TreeNode[]; selectedId: string; onSelect: (id: string) => void }) {
   // Fold by op (not display name) so renamed calls of one op still merge.
-  const ops = useMemo(() => composeOps(roots, (c) => opDisplayName(c.op_name)), [roots])
+  const ops = useMemo(() => composeOps(roots, (c) => spanDisplayName(c.name)), [roots])
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const rows = flattenComposed(ops, (k) => !closed.has(k))
   const rootMs = ops.reduce((s, o) => s + o.totalMs, 0) || 1
@@ -99,7 +99,7 @@ export function CodeComposition({ roots, selectedId, onSelect }: { roots: TreeNo
           {rows.length} op line{rows.length === 1 ? '' : 's'} folded from the call tree
         </span>
         <span className="grow" />
-        <span>Click a line to step through its calls</span>
+        <span>Click a line to step through its spans</span>
       </div>
       {rows.map((o) => {
         const sel = o.callIds.indexOf(selectedId)
@@ -113,7 +113,7 @@ export function CodeComposition({ roots, selectedId, onSelect }: { roots: TreeNo
             aria-selected={sel >= 0}
             className={`code-line ${sel >= 0 ? 'selected' : ''}`}
             onClick={() => onSelect(next)}
-            title={`${o.key}\n${o.count} call${o.count === 1 ? '' : 's'} · ${fmtDuration(o.totalMs)} total`}
+            title={`${o.key}\n${o.count} span${o.count === 1 ? '' : 's'} · ${fmtDuration(o.totalMs)} total`}
           >
             <span className="code-indent" style={{ width: o.depth * 16 }} />
             <button

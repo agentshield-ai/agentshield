@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { queuesApi, type AnnotationQueue } from '../../api/queues'
 import { parseRef, tableRef } from '../../api/refs'
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import { objectUrl } from '../../lib/urls'
 import { ErrorBox, Modal } from '../common'
 import { slugify } from '../traces/callUtils'
@@ -13,8 +13,8 @@ import { buildExportRows } from './queueUtils'
 /** Spec names of a queue's scorer_refs (AnnotationSpec name, else ref name). */
 export async function queueSpecNames(q: AnnotationQueue): Promise<string[]> {
   if (!q.scorer_refs.length) return []
-  const { vals } = await api.refsReadBatch(q.scorer_refs)
-  return q.scorer_refs.map((r, i) => String(vals[i]?.name ?? parseRef(r)?.name ?? r))
+  const { items } = await api.refsRead(q.scorer_refs)
+  return q.scorer_refs.map((r, i) => String(items[i]?.name ?? parseRef(r)?.name ?? r))
 }
 
 /** Collects a queue's calls and annotations and saves them as a Dataset. */
@@ -24,16 +24,16 @@ export async function exportQueue(projectId: string, q: AnnotationQueue, dataset
   const [{ items }, names, fb] = await Promise.all([
     queuesApi.items(projectId, q.id, { limit: 10000 }),
     queueSpecNames(q),
-    api.feedbackQuery({ project_id: projectId, query: { $expr: { $eq: [{ $getField: 'queue_id' }, { $literal: q.id }] } }, limit: 100000 }),
+    api.feedbackQuery({ project_id: projectId, query: { $expr: { $eq: [{ $getField: 'queue_id' }, { $literal: q.id }] } }, limit: 10000 }),
   ])
-  const calls = new Map<string, Call>()
+  const calls = new Map<string, Span>()
   const ids = items.map((i) => i.call_id)
   for (let i = 0; i < ids.length; i += 500) {
-    const r = await api.callsQuery({ project_id: projectId, filter: { call_ids: ids.slice(i, i + 500) }, limit: 500 })
-    for (const c of r.calls) calls.set(c.id, c)
+    const r = await api.spansQuery({ project_id: projectId, filter: { ids: ids.slice(i, i + 500) }, limit: 500 })
+    for (const c of r.items) calls.set(c.id, c)
   }
-  const rows = buildExportRows(items, calls, fb.result, names, includeUnannotated)
-  if (!rows.length) throw new Error('Nothing to export yet: no call in this queue has an annotation.')
+  const rows = buildExportRows(items, calls, fb.items, names, includeUnannotated)
+  if (!rows.length) throw new Error('Nothing to export yet: no item in this queue has an annotation.')
   const t = await api.tableCreate(projectId, rows)
   const val = {
     _type: 'Dataset',
@@ -43,7 +43,7 @@ export async function exportQueue(projectId: string, q: AnnotationQueue, dataset
     description: `Annotations from queue "${q.name}"`,
     rows: tableRef(projectId, t.digest),
   }
-  const r = await api.objCreate(projectId, id, val, 'Dataset')
+  const r = await api.objectSave(projectId, id, val, 'Dataset')
   return { objectId: id, digest: r.digest, rows: rows.length }
 }
 
@@ -53,7 +53,7 @@ export function ExportQueueModal({ projectId, queue, onClose }: { projectId: str
   const [all, setAll] = useState(false)
   const run = useMutation({
     mutationFn: () => exportQueue(projectId, queue, name, all),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objs', projectId] }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objects', projectId] }),
   })
   const done = run.data
   return (

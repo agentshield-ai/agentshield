@@ -331,7 +331,7 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
                 <option key={m}>{m}</option>
               ))}
             </select>
-            <input className="input mono" style={{ width: 180 }} placeholder="path prefix, e.g. /call" aria-label="path prefix" value={path} onChange={(e) => reset(() => setPath(e.target.value))} />
+            <input className="input mono" style={{ width: 180 }} placeholder="path prefix, e.g. /api/v1/spans" aria-label="path prefix" value={path} onChange={(e) => reset(() => setPath(e.target.value))} />
             <select className="input" aria-label="outcome" value={outcome} onChange={(e) => reset(() => setOutcome(e.target.value))}>
               <option value="">any outcome</option>
               {OUTCOMES.map((o) => (

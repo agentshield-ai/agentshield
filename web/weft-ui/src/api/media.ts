@@ -8,7 +8,7 @@ export interface ResolveUriError {
 }
 
 /**
- * /files/resolve_url response. With `per_uri_errors` an unresolvable URI does
+ * /api/v1/files/resolve response. With `per_uri_errors` an unresolvable URI does
  * not fail the request: its `download_urls` entry is "" and `errors` (aligned
  * with `uris`) says why.
  */
@@ -19,6 +19,6 @@ export interface ResolveUrlRes {
 }
 
 export const mediaApi = {
-  /** Download URLs (presigned, or this server's /file/content) for file digests, weft-file://, s3:// or http(s) uris, with per-URI errors. */
-  resolveUrls: (project_id: string, uris: string[]) => post<ResolveUrlRes>('/files/resolve_url', { project_id, uris, per_uri_errors: true }),
+  /** Download URLs (presigned, or this server's /api/v1/files/{digest}) for file digests, weft-file://, s3:// or http(s) uris, with per-URI errors. */
+  resolveUrls: (project_id: string, uris: string[]) => post<ResolveUrlRes>('/api/v1/files/resolve', { project_id, uris, per_uri_errors: true }),
 }

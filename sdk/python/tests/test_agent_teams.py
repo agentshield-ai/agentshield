@@ -7,7 +7,7 @@ from weft import _reasoning
 
 
 def _by_op(fake, name):
-    return [c for c in fake.calls.values() if name in c.get("op_name", "")]
+    return [c for c in fake.calls.values() if name in c.get("name", "")]
 
 
 def _attr(c, *path):
@@ -23,7 +23,7 @@ def _attr(c, *path):
 
 
 def test_team_block_sets_team_on_ops_and_spans(client, fake):
-    @weft.op
+    @weft.trace
     def step(x):
         return x
 
@@ -46,7 +46,7 @@ def test_team_block_sets_team_on_ops_and_spans(client, fake):
 
 
 def test_conversation_team_option(client, fake):
-    @weft.op
+    @weft.trace
     def tool_op():
         return 1
 
@@ -62,7 +62,7 @@ def test_conversation_team_option(client, fake):
         if _attr(c, "gen_ai", "conversation", "id") == "c2":
             assert _attr(c, "weft", "team") == {"id": "t2", "name": "Team two"}
         else:
-            assert _attr(c, "weft", "team") == {"id": "t1", "name": "Team one"}, c["op_name"]
+            assert _attr(c, "weft", "team") == {"id": "t1", "name": "Team one"}, c["name"]
     with pytest.raises(ValueError):
         weft.team("  ")
     with pytest.raises(TypeError):
@@ -152,7 +152,7 @@ def test_reasoning_on_conversation_span(client, fake):
 
 
 def test_reasoning_on_op_call_resends_start(client, fake):
-    @weft.op
+    @weft.trace
     def plan(goal):
         weft.reasoning("first check the calendar")
         return "ok"
@@ -161,8 +161,8 @@ def test_reasoning_on_op_call_resends_start(client, fake):
     weft.flush(5)
     c = _by_op(fake, "plan")[0]
     assert _attr(c, "weft", "reasoning")[0]["text"] == "first check the calendar"
-    starts = [r for r in fake.requests if r["path"] == "/call/upsert_batch"]
-    modes = [(it["mode"], it["req"][it["mode"]]["id"]) for r in starts for it in r["body"]["batch"] if it["req"][it["mode"]]["id"] == c["id"]]
+    starts = [r for r in fake.requests if r["path"] == "/api/v1/spans/batch"]
+    modes = [(mode, req["id"]) for r in starts for it in r["body"]["items"] for mode, req in it.items() if req["id"] == c["id"]]
     assert modes == [("start", c["id"]), ("start", c["id"]), ("end", c["id"])]
 
 
@@ -260,4 +260,4 @@ def test_update_call_resends_start(client, fake):
     client.finish_call(call, 1)
     weft.flush(5)
     c = fake.calls[call.id]
-    assert c["thread_id"] == "sess" and _attr(c, "gen_ai", "conversation", "id") == "sess" and c["inputs"] == {"a": 1}
+    assert c["session_id"] == "sess" and _attr(c, "gen_ai", "conversation", "id") == "sess" and c["inputs"] == {"a": 1}

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../../api/client'
-import type { CallsFilter, CallsStatsBucket, Query } from '../../api/types'
+import type { SpansFilter, SpansStatsBucket, Query } from '../../api/types'
 import { fmtCost, fmtDuration, fmtNumber } from '../../lib/format'
 import { ErrorBox, Spinner } from '../common'
 
@@ -48,10 +48,10 @@ function ChartCard({ title, value, children }: { title: string; value: string; c
   )
 }
 
-export function CallCharts({ projectId, filter, query, search }: { projectId: string; filter?: CallsFilter; query?: Query; search?: string }) {
+export function CallCharts({ projectId, filter, query, search }: { projectId: string; filter?: SpansFilter; query?: Query; search?: string }) {
   const stats = useQuery({
     queryKey: ['calls-stats', projectId, filter, query, search],
-    queryFn: () => api.callsStats({ project_id: projectId, filter, query, search }),
+    queryFn: () => api.spansStats({ project_id: projectId, filter, query, search }),
   })
   if (stats.isLoading)
     return (
@@ -62,7 +62,7 @@ export function CallCharts({ projectId, filter, query, search }: { projectId: st
   if (stats.error) return <ErrorBox error={stats.error} />
   const s = stats.data!
   if (!s.buckets.length) return <div className="chart-strip empty small">No data in range for charts.</div>
-  const data = s.buckets.map((b: CallsStatsBucket) => ({ ...b, success: Math.max(0, b.count - b.error_count) }))
+  const data = s.buckets.map((b: SpansStatsBucket) => ({ ...b, success: Math.max(0, b.count - b.error_count) }))
   const fmt = tickFormatter(s.bucket_seconds)
   const labelFmt = (iso: string) => new Date(iso).toLocaleString()
   const xAxis = <XAxis dataKey="start" tickFormatter={fmt} tick={AXIS} minTickGap={24} axisLine={false} tickLine={false} />
@@ -70,7 +70,7 @@ export function CallCharts({ projectId, filter, query, search }: { projectId: st
   const errPct = s.totals.count ? (s.totals.error_count / s.totals.count) * 100 : 0
   return (
     <div className="chart-strip">
-      <ChartCard title="Calls" value={`${fmtNumber(s.totals.count)}${s.totals.error_count ? ` · ${errPct.toFixed(1)}% err` : ''}`}>
+      <ChartCard title="Spans" value={`${fmtNumber(s.totals.count)}${s.totals.error_count ? ` · ${errPct.toFixed(1)}% err` : ''}`}>
         <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
           {grid}
           {xAxis}

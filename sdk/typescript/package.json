@@ -11,7 +11,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "README.md", "CHANGELOG.md"],
   "engines": {
     "node": ">=18"
   },

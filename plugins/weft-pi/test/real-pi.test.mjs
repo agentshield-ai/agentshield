@@ -53,7 +53,7 @@ test('a real Pi agent session is traced', { skip: !(URL && MODS) && 'set WEFT_TE
   assert.equal(msgs.find((m) => m.type === 'tool_call').tool_call.tool_name, 'bash');
   assert.ok(msgs.some((m) => m.assistant_message?.text === 'The command printed hello-from-pi.'));
   const headers = { 'Content-Type': 'application/json', ...(process.env.WEFT_TEST_API_KEY ? { Authorization: `Bearer ${process.env.WEFT_TEST_API_KEY}` } : {}) };
-  const res = await fetch(`${URL}/calls/stream_query`, { method: 'POST', headers, body: JSON.stringify({ project_id: project }) });
-  const ops = (await res.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l).op_name.split('/').pop().split(':')[0]);
-  assert.deepEqual(ops.sort(), ['pi.agent_run', 'pi.llm', 'pi.llm', 'pi.tool.bash'], 'one call per LLM response, no phantom ones');
+  const res = await fetch(`${URL}/api/v1/spans/stream`, { method: 'POST', headers, body: JSON.stringify({ project_id: project }) });
+  const ops = (await res.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l).name.split('/').pop().split(':')[0]);
+  assert.deepEqual(ops.sort(), ['pi.agent_run', 'pi.llm', 'pi.llm', 'pi.tool.bash'], 'one span per LLM response, no phantom ones');
 });

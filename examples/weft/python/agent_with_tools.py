@@ -14,12 +14,12 @@ import weft
 client = weft.init("agent-demo")
 
 
-@weft.op(kind="tool")
+@weft.trace(kind="tool")
 def get_weather(city: str) -> dict:
     return {"city": city, "forecast": "sunny", "temp_c": 21}
 
 
-@weft.op(kind="tool")
+@weft.trace(kind="tool")
 def calculator(expression: str) -> float:
     allowed = set("0123456789+-*/(). ")
     if not set(expression) <= allowed:
@@ -30,7 +30,7 @@ def calculator(expression: str) -> float:
 TOOLS = {"get_weather": get_weather, "calculator": calculator}
 
 
-@weft.op(kind="llm")
+@weft.trace(kind="llm")
 def llm(messages: list) -> str:
     if os.environ.get("OPENAI_API_KEY"):
         from openai import OpenAI  # traced automatically as openai.chat.completions.create
@@ -41,11 +41,11 @@ def llm(messages: list) -> str:
     # usage is reported on this call (the server rolls it up to the root).
     resp = client.completions_create({"model": "mock/echo", "messages": messages})
     u = resp.get("usage") or {}
-    weft.add_usage(weft.get_current_call(), resp.get("model", "mock/echo"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+    weft.add_usage(weft.get_current_span(), resp.get("model", "mock/echo"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
     return resp["choices"][0]["message"]["content"]
 
 
-@weft.op
+@weft.trace
 def plan(question: str) -> list:
     """A toy planner deciding which tools to call."""
     steps = []
@@ -56,7 +56,7 @@ def plan(question: str) -> list:
     return steps
 
 
-@weft.op(kind="agent", color="purple", call_display_name=lambda call: f"turn: {call.inputs['question'][:30]}")
+@weft.trace(kind="agent", color="purple", call_display_name=lambda call: f"turn: {call.inputs['question'][:30]}")
 def agent_turn(question: str) -> str:
     observations = []
     for tool_name, args in plan(question):
@@ -76,6 +76,6 @@ if __name__ == "__main__":
         print(agent_turn("What's the weather in Paris?"))
         print(agent_turn("And what is 21 * 2?"))
     weft.flush()
-    print("thread:", t.thread_id)
-    root = next(iter(client.get_calls(filter={"op_names": ["agent_turn"]}, limit=1)))
+    print("thread:", t.session_id)
+    root = next(iter(client.spans(filter={"names": ["agent_turn"]}, limit=1)))
     print("root usage (rolled up by the server):", root.summary.get("usage"))

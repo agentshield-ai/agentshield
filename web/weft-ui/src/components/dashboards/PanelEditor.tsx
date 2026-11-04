@@ -35,12 +35,12 @@ const AGG_NAMES: Record<MetricAgg, string> = {
 /** Numeric and groupable fields seen on recent calls, for the field pickers. */
 function useFieldSuggestions(projectId: string) {
   const sample = useQuery({
-    queryKey: ['calls', projectId, 'field-sample'],
-    queryFn: () => api.callsQuery({ project_id: projectId, limit: 200, include_feedback: true, sort_by: [{ field: 'started_at', direction: 'desc' }] }),
+    queryKey: ['spans', projectId, 'field-sample'],
+    queryFn: () => api.spansQuery({ project_id: projectId, limit: 200, include_feedback: true, sort_by: [{ field: 'started_at', direction: 'desc' }] }),
     staleTime: 60_000,
   })
   return useMemo(() => {
-    const calls = sample.data?.calls ?? []
+    const calls = sample.data?.items ?? []
     const paths = [...discoverFields(calls, ['inputs', 'output', 'attributes']), ...discoverFeedbackFields(calls)]
     const numeric: string[] = []
     const text: string[] = []
@@ -81,7 +81,7 @@ function MetricRow({ m, onChange, onRemove, listId }: { m: MetricSpec; onChange:
       <input
         className="input mono"
         list={listId}
-        placeholder={needsField ? 'field, e.g. latency_ms' : 'of all calls'}
+        placeholder={needsField ? 'field, e.g. latency_ms' : 'of all spans'}
         aria-label="Field"
         value={m.agg === 'error_rate' ? '' : (m.field ?? '')}
         disabled={m.agg === 'error_rate'}
@@ -124,8 +124,8 @@ export function PanelEditor({
 }) {
   const [p, setP] = useState<DashboardPanel>(initial)
   const { numeric, text } = useFieldSuggestions(projectId)
-  const ops = useQuery({ queryKey: ['calls', projectId, 'op_counts', false], queryFn: () => api.opCounts(projectId, false) })
-  const opNames = useMemo(() => [...new Set((ops.data?.ops ?? []).map((o) => o.op_base_name))].sort(), [ops.data])
+  const ops = useQuery({ queryKey: ['spans', projectId, 'op_counts', false], queryFn: () => api.spanNames(projectId, false) })
+  const opNames = useMemo(() => [...new Set((ops.data?.items ?? []).map((o) => o.base_name))].sort(), [ops.data])
   const listId = 'dash-fields'
   const groupIsPreset = GROUP_PRESETS.some((g) => g.id === (p.group_by ?? ''))
   const [customGroup, setCustomGroup] = useState(!groupIsPreset)
@@ -138,7 +138,7 @@ export function PanelEditor({
     return () => clearTimeout(t)
   }, [p])
   const setMetric = (i: number, m: MetricSpec) => setP({ ...p, metrics: p.metrics.map((x, j) => (j === i ? m : x)) })
-  const op = p.filter?.op_names?.[0] ?? ''
+  const op = p.filter?.names?.[0] ?? ''
   const roots = p.filter?.trace_roots_only
   return (
     <Modal
@@ -214,7 +214,7 @@ export function PanelEditor({
                     />
                   </label>
                 ))}
-                <div className="small faint">One point per call; click a point to open the call. Group by colours the points.</div>
+                <div className="small faint">One point per span; click a point to open the span. Group by colours the points.</div>
               </div>
             </div>
           ) : (
@@ -278,9 +278,9 @@ export function PanelEditor({
               <select
                 className="input"
                 value={op}
-                onChange={(e) => setP({ ...p, filter: { ...p.filter, op_names: e.target.value ? [e.target.value] : undefined } })}
+                onChange={(e) => setP({ ...p, filter: { ...p.filter, names: e.target.value ? [e.target.value] : undefined } })}
               >
-                <option value="">All ops</option>
+                <option value="">All names</option>
                 {opNames.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
@@ -296,13 +296,13 @@ export function PanelEditor({
               >
                 <option value="">{dash ? 'As dashboard' : 'Default'}</option>
                 <option value="roots">Trace roots only</option>
-                <option value="all">All calls</option>
+                <option value="all">All spans</option>
               </select>
             </label>
           </div>
           <label className="field">
             Search
-            <input className="input" placeholder="Free text over op, inputs, output" value={p.search ?? ''} onChange={(e) => setP({ ...p, search: e.target.value || undefined })} />
+            <input className="input" placeholder="Free text over name, inputs, output" value={p.search ?? ''} onChange={(e) => setP({ ...p, search: e.target.value || undefined })} />
           </label>
           {p.query && (
             <div className="row small">

@@ -15,7 +15,7 @@ export function MonitorsPage() {
   const projectId = useProjectId()
   const nav = useNavigate()
   const qc = useQueryClient()
-  const mons = useObjects(projectId, { base_object_classes: ['Monitor'] })
+  const mons = useObjects(projectId, { kinds: ['monitor'] })
   const [creating, setCreating] = useState(false)
   const { toggle, pending } = useToggleMonitor(projectId)
   return (
@@ -23,7 +23,7 @@ export function MonitorsPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Monitors</h1>
-          <span className="muted small">Score production calls automatically as they arrive. Results are stored as feedback on each call.</span>
+          <span className="muted small">Score production spans automatically as they arrive. Results are stored as feedback on each span.</span>
         </div>
         <span className="spacer" />
         <button className="btn primary" onClick={() => setCreating(true)}>
@@ -38,7 +38,7 @@ export function MonitorsPage() {
         <div className="card">
           <Empty>
             <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-              <div style={{ maxWidth: 480 }}>No monitors yet. A monitor samples calls of the ops you choose and scores them with LLM judges or rule-based scorers.</div>
+              <div style={{ maxWidth: 480 }}>No monitors yet. A monitor samples spans of the functions you choose and scores them with LLM judges or rule-based scorers.</div>
               <button className="btn primary" onClick={() => setCreating(true)}>
                 + New monitor
               </button>
@@ -52,7 +52,7 @@ export function MonitorsPage() {
               <tr>
                 <th style={{ width: 56 }}>Active</th>
                 <th>Name</th>
-                <th>Ops</th>
+                <th>Span names</th>
                 <th className="num">Sampling</th>
                 <th>Scorers</th>
                 <th>Updated</th>
@@ -61,22 +61,22 @@ export function MonitorsPage() {
             </thead>
             <tbody>
               {mons.data.map((o) => {
-                const v = o.val ?? {}
+                const v = o.value ?? {}
                 return (
-                  <tr key={o.object_id} className="clickable" onClick={() => nav(monitorUrl(projectId, o.object_id))}>
+                  <tr key={o.name} className="clickable" onClick={() => nav(monitorUrl(projectId, o.name))}>
                     <td>
-                      <Switch on={!!v.active} disabled={pending === o.object_id} onChange={() => void toggle(o)} title={v.active ? 'Pause monitor' : 'Activate monitor'} />
+                      <Switch on={!!v.active} disabled={pending === o.name} onChange={() => void toggle(o)} title={v.active ? 'Pause monitor' : 'Activate monitor'} />
                     </td>
                     <td>
-                      <Link to={monitorUrl(projectId, o.object_id)} style={{ fontWeight: 500 }} onClick={(e) => e.stopPropagation()}>
-                        {o.object_id}
+                      <Link to={monitorUrl(projectId, o.name)} style={{ fontWeight: 500 }} onClick={(e) => e.stopPropagation()}>
+                        {o.name}
                       </Link>
                       {v.description && <div className="faint small cell-preview">{v.description}</div>}
                     </td>
                     <td>
                       <span className="chips">
                         {(v.op_names ?? []).length === 0 ? (
-                          <span className="faint small">all root calls</span>
+                          <span className="faint small">all root spans</span>
                         ) : (
                           (v.op_names as string[]).slice(0, 3).map((n) => (
                             <span key={n} className="chip mono">
@@ -95,11 +95,11 @@ export function MonitorsPage() {
                     <td onClick={(e) => e.stopPropagation()}>
                       <ConfirmButton
                         className="btn ghost sm icon danger"
-                        title={`Delete monitor ${o.object_id}?`}
+                        title={`Delete monitor ${o.name}?`}
                         body="Scores it already produced are kept as feedback."
                         onConfirm={async () => {
-                          await api.objDelete(projectId, o.object_id)
-                          await qc.invalidateQueries({ queryKey: ['objs', projectId] })
+                          await api.objectDelete(projectId, o.name)
+                          await qc.invalidateQueries({ queryKey: ['objects', projectId] })
                         }}
                       >
                         ✕
@@ -118,7 +118,7 @@ export function MonitorsPage() {
           onClose={() => setCreating(false)}
           onSaved={(c) => {
             setCreating(false)
-            nav(monitorUrl(projectId, c.objectId))
+            nav(monitorUrl(projectId, c.name))
           }}
         />
       )}

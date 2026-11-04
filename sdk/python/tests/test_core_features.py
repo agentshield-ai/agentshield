@@ -14,11 +14,11 @@ from weft import scorers
 
 # ---------------------------------------------------------------- op options and settings
 def test_kind_and_color_attributes(client, fake):
-    @weft.op(kind="agent", color="purple")
+    @weft.trace(kind="agent", color="purple")
     def agent():
         return tool()
 
-    @weft.op(kind="tool")
+    @weft.trace(kind="tool")
     def tool():
         return 1
 
@@ -39,11 +39,11 @@ def test_global_attributes_print_link_and_capture_code(fake, capsys):
     c = weft.init("ent/proj", server_url=fake.url, autopatch=False,
                   settings={"global_attributes": {"env": "staging", "team": "a"}, "capture_code": False})
     try:
-        @weft.op
+        @weft.trace
         def root():
             return child()
 
-        @weft.op
+        @weft.trace
         def child():
             return 1
 
@@ -56,29 +56,29 @@ def test_global_attributes_print_link_and_capture_code(fake, capsys):
         assert call.ui_url == f"{fake.url}/ent/proj/calls/{call.id}"
         [r] = fake.calls_by_op("root")
         assert r["attributes"]["env"] == "staging" and r["attributes"]["team"] == "b"
-        assert fake.objs["root"][0]["val"]["code"] == "# Code capture disabled\n"
+        assert fake.objs["root"][0]["value"]["code"] == "# Code capture disabled\n"
     finally:
         weft.finish()
     c2 = weft.init("p", server_url=fake.url, autopatch=False, settings={"print_call_link": False})
     try:
-        weft.op(lambda: 1, name="quiet")()
+        weft.trace(lambda: 1, name="quiet")()
         assert "weft: http" not in capsys.readouterr().err
     finally:
         weft.finish()
 
 
 def test_per_op_code_capture_toggle(client, fake):
-    @weft.op(enable_code_capture=False)
+    @weft.trace(enable_code_capture=False)
     def secret_sauce():
         return 42
 
     secret_sauce()
     client.flush()
-    assert fake.objs["secret_sauce"][0]["val"]["code"] == "# Code capture disabled\n"
+    assert fake.objs["secret_sauce"][0]["value"]["code"] == "# Code capture disabled\n"
 
 
 def test_tracing_disabled(client, fake):
-    @weft.op
+    @weft.trace
     def f():
         return 1
 
@@ -94,9 +94,9 @@ def test_retry_and_queue_settings(fake):
                   settings={"retry_max_attempts": 5, "retry_backoff": 0.001, "retry_max_backoff": 0.002, "max_queue_size": 7})
     try:
         assert c._sender.max_retries == 5 and c._sender.max_queue == 7 and c._sender.max_backoff == 0.002
-        fake.fail_paths["/call/upsert_batch"] = 4
+        fake.fail_paths["/api/v1/spans/batch"] = 4
 
-        @weft.op
+        @weft.trace
         def f():
             return 1
 
@@ -112,7 +112,7 @@ def test_write_ahead_log_replays_on_next_start(fake, tmp_path):
     fake.fail_status = 503
     c = weft.init("wal-proj", server_url=fake.url, autopatch=False, settings=settings)
 
-    @weft.op
+    @weft.trace
     def important(x):
         return x
 
@@ -144,7 +144,7 @@ def test_wal_env_and_queue_overflow_spills(fake, tmp_path, monkeypatch):
     c = weft.init("p", server_url="http://127.0.0.1:9", autopatch=False, settings={"max_queue_size": 2, "retry_max_attempts": 0})
     try:
         for i in range(10):
-            weft.op(lambda i: i, name="burst")(i)
+            weft.trace(lambda i: i, name="burst")(i)
         assert c._sender.dropped == 0 and c._sender.wal_written > 0
     finally:
         c._sender.max_retries = 0
@@ -158,7 +158,7 @@ def test_content_and_media_types(client, fake, tmp_path):
     pdf = b"%PDF-1.4 fake"
     mp4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 8
 
-    @weft.op
+    @weft.trace
     def make():
         return {
             "path": weft.Content.from_path(p),
@@ -185,19 +185,19 @@ def test_content_and_media_types(client, fake, tmp_path):
     assert out["sniffed_pdf"]["_type"] == "PDF"
     assert client.read_file(out["md"]["file_digest"]) == b"# Title"
     c = weft.Content.from_text("x")
-    assert c.size == 1 and c.as_text() == "x" and c.digest == weft._canonical.b64digest(b"x")
+    assert c.size == 1 and c.as_text() == "x" and c.digest == weft._canonical.file_digest(b"x")
 
 
 # ---------------------------------------------------------------- object management
 def test_object_management(client, fake):
-    ref0 = weft.publish({"v": 0}, name="cfg")
-    ref1 = weft.publish({"v": 1}, name="cfg")
+    ref0 = weft.save({"v": 0}, name="cfg")
+    ref1 = weft.save({"v": 1}, name="cfg")
     client.set_aliases(ref1, "production")
     client.set_alias("cfg:v0", ["staging", "dev"])
     assert fake.aliases[("cfg", "production")] == ref1.digest
     assert fake.aliases[("cfg", "staging")] == ref0.digest
-    put = [r for r in fake.requests if r["method"] == "PUT" and r["path"] == "/objs/cfg/aliases"][0]
-    assert put["body"] == {"project_id": "test-entity/test-proj", "digest": ref1.digest, "aliases": ["production"]}
+    put = [r for r in fake.requests if r["path"] == "/api/v1/objects/cfg/aliases"][0]
+    assert put["body"] == {"project_id": "test-entity/test-proj", "version": ref1.digest, "aliases": ["production"]}
     assert client.get_aliases(ref0) == ["dev", "staging"]
     client.remove_aliases("cfg", "dev")
     assert ("cfg", "dev") not in fake.aliases
@@ -208,13 +208,13 @@ def test_object_management(client, fake):
     client.remove_tags(ref1.uri(), ["reviewed"])
     assert client.get_tags(ref1) == ["golden"]
     assert client.list_tags() == ["golden"]
-    tag_put = [r for r in fake.requests if r["method"] == "PUT" and "/tags" in r["path"]][0]
-    assert tag_put["path"] == f"/objs/cfg/versions/{ref1.digest}/tags"
+    tag_put = [r for r in fake.requests if r["path"].endswith("/tags")][0]
+    assert tag_put["path"] == f"/api/v1/objects/cfg/versions/{ref1.digest}/tags"
     assert tag_put["body"] == {"project_id": "test-entity/test-proj", "tags": ["reviewed", "golden"]}
 
     assert client.delete_object_version(ref0) == 1
     assert [v["digest"] for v in fake.objs["cfg"]] == [ref1.digest]
-    weft.publish({"v": 2}, name="cfg")
+    weft.save({"v": 2}, name="cfg")
     assert client.delete_object_versions("cfg", [ref1.digest]) == 1
     assert client.delete_all_object_versions("cfg") == 1
     assert fake.objs["cfg"] == []
@@ -222,8 +222,8 @@ def test_object_management(client, fake):
 
 def test_module_level_tags_and_aliases(client, fake):
     """Module-level add_tags & co., on the global client."""
-    ref0 = weft.publish({"v": 0}, name="mod")
-    ref1 = weft.publish({"v": 1}, name="mod")
+    ref0 = weft.save({"v": 0}, name="mod")
+    ref1 = weft.save({"v": 1}, name="mod")
     weft.set_aliases(ref1, "production")
     weft.set_aliases(ref0, ["staging", "dev"])
     weft.remove_aliases(ref0, "dev")
@@ -244,12 +244,11 @@ def test_module_level_tags_need_init():
         weft.list_aliases()
 
 
-def test_alias_fallback_to_legacy_endpoint(client, fake):
-    fake.alias_routes = False
-    ref = weft.publish({"v": 0}, name="old")
-    client.set_alias(ref, "prod")
+def test_alias_by_name_and_version(client, fake):
+    ref = weft.save({"v": 0}, name="old")
+    client.set_alias("old:v0", "prod")
     assert fake.aliases[("old", "prod")] == ref.digest
-    assert any(r["path"] == "/obj/alias/set" for r in fake.requests)
+    assert weft.get("old:prod") == {"v": 0}
     client.remove_alias("old", "prod")
     assert ("old", "prod") not in fake.aliases
 
@@ -257,7 +256,7 @@ def test_alias_fallback_to_legacy_endpoint(client, fake):
 # ---------------------------------------------------------------- EvaluationLogger
 def test_log_example_and_dataset_linking(client, fake):
     ds = weft.Dataset(name="qa", rows=[{"q": "a"}, {"q": "b"}])
-    ref = weft.publish(ds)
+    ref = weft.save(ds)
     ev = weft.EvaluationLogger(model="m", dataset=ds, name="linked")
     ev.log_example({"q": "a"}, "A", {"correct": True})
     ev.log_example({"q": "zzz"}, "Z", {"correct": False})  # not in the dataset
@@ -280,19 +279,19 @@ def test_log_example_and_dataset_linking(client, fake):
 # ---------------------------------------------------------------- scorers
 def test_new_scorers_serialise(client, fake):
     s = scorers
-    weft.publish(s.RemoteScorer(name="remote", url="https://x/score", headers_secret="SCORER_HEADERS", timeout=5))
-    weft.publish(s.HallucinationFreeScorer(name="hall"))
-    weft.publish(s.SummarizationScorer(name="summ", model="gpt-4.1"))
-    weft.publish(s.RelevanceScorer(name="rel"))
-    weft.publish(s.ValidXMLScorer(name="xml"))
-    weft.publish(s.JSONSchemaScorer(name="js", schema={"type": "object"}))
-    weft.publish(s.OpenAIModerationScorer(name="mod"))
-    weft.publish(s.EmbeddingSimilarityScorer(name="emb", target_column="ref", model="text-embedding-3-small"))
-    weft.publish(s.RuleScorer(name="rule", rule={"$eq": [1, 1]}, threshold=0.5))
+    weft.save(s.RemoteScorer(name="remote", url="https://x/score", headers_secret="SCORER_HEADERS", timeout=5))
+    weft.save(s.HallucinationFreeScorer(name="hall"))
+    weft.save(s.SummarizationScorer(name="summ", model="gpt-4.1"))
+    weft.save(s.RelevanceScorer(name="rel"))
+    weft.save(s.ValidXMLScorer(name="xml"))
+    weft.save(s.JSONSchemaScorer(name="js", schema={"type": "object"}))
+    weft.save(s.OpenAIModerationScorer(name="mod"))
+    weft.save(s.EmbeddingSimilarityScorer(name="emb", target_column="ref", model="text-embedding-3-small"))
+    weft.save(s.RuleScorer(name="rule", rule={"$eq": [1, 1]}, threshold=0.5))
     base = {"_bases": ["Scorer", "Object", "BaseModel"], "description": None, "column_map": None}
 
     def val(n):
-        return fake.objs[n][0]["val"]
+        return fake.objs[n][0]["value"]
 
     assert val("remote") == {**base, "_type": "RemoteScorer", "_class_name": "RemoteScorer", "name": "remote",
                              "url": "https://x/score", "headers_secret": "SCORER_HEADERS", "timeout": 5.0}
@@ -304,7 +303,7 @@ def test_new_scorers_serialise(client, fake):
     assert val("mod") == {**base, "_type": "OpenAIModerationScorer", "_class_name": "OpenAIModerationScorer", "name": "mod"}
     assert val("emb")["target_column"] == "ref" and val("emb")["model"] == "text-embedding-3-small"
     assert val("rule")["rule"] == {"$eq": [1, 1]} and val("rule")["threshold"] == 0.5
-    back = weft.ref("js").get()
+    back = weft.get("js")
     assert isinstance(back, s.JSONSchemaScorer) and back.schema_ == {"type": "object"}
 
 
@@ -335,7 +334,7 @@ def test_new_scorers_run_locally(client, fake, monkeypatch):
     assert [r for r in fake.requests if r["path"] == "/remote/score"][-1]["headers"]["Authorization"] == "Bearer tok123"
 
     emb = s.EmbeddingSimilarityScorer(target_column="ref")
-    with pytest.raises(RuntimeError, match="no /embeddings/create endpoint"):
+    with pytest.raises(RuntimeError, match="no embeddings route"):
         emb.score(output="abc", ref="abcd")
     fake.embeddings_enabled = True
     sim = emb.score(output="abc", ref="abc")
@@ -359,5 +358,5 @@ def test_new_scorers_in_evaluation(client, fake):
         scorers.ValidXMLScorer(name="xml"),
         scorers.RuleScorer(name="has_x", rule={"$contains": {"input": {"$getField": "output"}, "substr": {"$literal": "x"}}}),
     ])
-    summary = asyncio.run(ev.evaluate(weft.op(lambda q: "<x/>", name="m")))
+    summary = asyncio.run(ev.evaluate(weft.trace(lambda q: "<x/>", name="m")))
     assert summary["xml"]["true_fraction"] == 1.0 and summary["has_x"]["true_fraction"] == 1.0

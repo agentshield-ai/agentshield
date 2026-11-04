@@ -1,4 +1,9 @@
-"""Ref URIs: ``weft:///<entity>/<project>/<kind>/<name>:<digest>[/attr/x/...]``."""
+"""Ref URIs: ``weft:///<entity>/<project>/<kind>/<name>:<digest>[/attr/x/...]``.
+
+``<kind>`` is ``object``, ``function`` (a versioned function), ``table`` or
+``span`` (docs/weft/DESIGN.md §10.2). Refs written with the earlier kind
+names ``op`` and ``call`` are read as ``function`` and ``span``.
+"""
 
 from __future__ import annotations
 
@@ -38,8 +43,11 @@ class Ref:
         return self.uri()
 
     def get(self) -> Any:
+        """Deprecated: use ``weft.get(ref)``."""
+        from ._deprecation import deprecated_call
         from ._client import require_client
 
+        deprecated_call("Ref.get()", "weft.get(ref)")
         return require_client().get(self)
 
 
@@ -74,8 +82,14 @@ class ObjectRef(Ref):
 
 
 @dataclass(frozen=True)
-class OpRef(ObjectRef):
-    _kind = "op"
+class FunctionRef(ObjectRef):
+    """A ref to a versioned function (``kind: "function"``)."""
+
+    _kind = "function"
+
+
+# Earlier name of FunctionRef.
+OpRef = FunctionRef
 
 
 @dataclass(frozen=True)
@@ -91,15 +105,21 @@ class TableRef(Ref):
 
 
 @dataclass(frozen=True)
-class CallRef(Ref):
+class SpanRef(Ref):
+    """A ref to a span (``weft:///<entity>/<project>/span/<id>``)."""
+
     id: str
     extra: Tuple[str, ...] = field(default_factory=tuple)
 
     def uri(self) -> str:
-        return f"weft:///{self.entity}/{self.project}/call/{self.id}" + _extra_path(self.extra)
+        return f"weft:///{self.entity}/{self.project}/span/{self.id}" + _extra_path(self.extra)
 
     def __repr__(self) -> str:
-        return f"CallRef({self.uri()!r})"
+        return f"SpanRef({self.uri()!r})"
+
+
+# Earlier name of SpanRef.
+CallRef = SpanRef
 
 
 def parse_uri(uri: str) -> Ref:
@@ -116,16 +136,16 @@ def parse_uri(uri: str) -> Ref:
     extra = tuple(urllib.parse.unquote(p) for p in parts[4:])
     if extra and (len(extra) % 2 != 0 or any(extra[i] not in _EXTRA_KINDS for i in range(0, len(extra), 2))):
         raise ValueError(f"invalid ref path: {uri!r}")
-    if kind in ("object", "op"):
+    if kind in ("object", "function", "op"):
         name, sep, digest = name_part.rpartition(":")
         if not sep:
             name, digest = name_part, "latest"
-        cls = OpRef if kind == "op" else ObjectRef
+        cls = ObjectRef if kind == "object" else FunctionRef
         return cls(entity, project, urllib.parse.unquote(name), digest, extra)
     if kind == "table":
         return TableRef(entity, project, name_part, extra)
-    if kind == "call":
-        return CallRef(entity, project, name_part, extra)
+    if kind in ("span", "call"):
+        return SpanRef(entity, project, name_part, extra)
     raise ValueError(f"unknown ref kind {kind!r} in {uri!r}")
 
 

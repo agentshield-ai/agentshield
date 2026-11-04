@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { HttpClient, WeftHTTPError } from './http.js';
 
 export type Item =
-  | { kind: 'call_start' | 'call_end'; payload: Record<string, unknown>; cb?: (r: any) => void; prepared?: boolean }
+  | { kind: 'span_start' | 'span_end'; payload: Record<string, unknown>; cb?: (r: any) => void; prepared?: boolean }
   | { kind: 'post'; path: string; payload: unknown; cb?: (r: any) => void }
   | { kind: 'file'; path: string; fields: Record<string, string>; data: Uint8Array; filename: string; mime: string; cb?: (r: any) => void };
 
@@ -19,6 +19,17 @@ export interface SenderOptions {
   walPath?: string;
   /** With `walPath`: write every item to the WAL and send nothing (WEFT_DISABLE_WAL_SENDER). */
   walOnly?: boolean;
+}
+
+const isSpanItem = (it: Item): boolean => it.kind === 'span_start' || it.kind === 'span_end';
+
+// Write-ahead logs of earlier versions name span items call_start/call_end and use the earlier field names.
+const LEGACY_FIELDS: Record<string, string> = { op_name: 'name', thread_id: 'session_id', exception: 'error' };
+function legacySpanItem(d: any): void {
+  d.kind = d.kind === 'call_start' ? 'span_start' : 'span_end';
+  const p: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d.payload ?? {})) p[LEGACY_FIELDS[k] ?? k] = v;
+  d.payload = p;
 }
 
 /** Append-only JSONL file of unsent requests. */
@@ -53,6 +64,7 @@ export class WriteAheadLog {
         try {
           const d = JSON.parse(line);
           if (d.kind === 'file') d.data = new Uint8Array(Buffer.from(d.data, 'base64'));
+          if (d.kind === 'call_start' || d.kind === 'call_end') legacySpanItem(d);
           out.push(d as Item);
         } catch {
           /* skip corrupt line */
@@ -75,8 +87,8 @@ export class WriteAheadLog {
 }
 
 /**
- * Background batching sender. Call starts/ends are coalesced into
- * /call/upsert_batch; other writes are sent one by one, in order. The queue is
+ * Background batching sender. Span starts/ends are coalesced into
+ * POST /api/v1/spans/batch; other writes are sent one by one, in order. The queue is
  * bounded and failures are retried then dropped with a warning, so user code
  * never blocks on or crashes because of the server.
  */
@@ -204,9 +216,9 @@ export class Sender {
     try {
       while (this.queue.length) {
         const first = this.queue[0];
-        if (first.kind === 'call_start' || first.kind === 'call_end') {
+        if (isSpanItem(first)) {
           const items: Item[] = [];
-          while (items.length < this.batchSize && this.queue.length && (this.queue[0].kind === 'call_start' || this.queue[0].kind === 'call_end')) {
+          while (items.length < this.batchSize && this.queue.length && isSpanItem(this.queue[0])) {
             items.push(this.queue.shift()!);
           }
           if (this.prepare) {
@@ -215,16 +227,13 @@ export class Sender {
               try {
                 await this.prepare(todo);
               } catch (e) {
-                this.warn(`weft: preparing calls failed: ${(e as Error).message}`);
+                this.warn(`weft: preparing spans failed: ${(e as Error).message}`);
               }
               for (const it of todo) (it as { prepared?: boolean }).prepared = true;
             }
           }
-          const batch = items.map((it) => {
-            const mode = it.kind === 'call_start' ? 'start' : 'end';
-            return { mode, req: { [mode]: (it as { payload: unknown }).payload } };
-          });
-          const res = await this.retry(() => this.http.post('/call/upsert_batch', { batch }), 'call/upsert_batch');
+          const batch = items.map((it) => ({ [it.kind === 'span_start' ? 'start' : 'end']: (it as { payload: unknown }).payload }));
+          const res = await this.retry(() => this.http.post('/api/v1/spans/batch', { items: batch }), 'spans/batch');
           if (res !== undefined) for (const it of items) it.cb?.(res);
           else if (this.lastFailureRetryable) this.spill(items);
         } else {

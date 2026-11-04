@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Dict, Iterable, Iterator, List,
 from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator
 
 from ._op import BoundOp, Op
-from ._refs import ObjectRef, OpRef, Ref, TableRef, is_ref_uri, parse_uri
+from ._refs import FunctionRef, ObjectRef, Ref, TableRef, is_ref_uri, parse_uri
 
 if TYPE_CHECKING:  # pragma: no cover
     from ._client import WeftClient
@@ -26,9 +26,9 @@ def registered_class(name: str) -> Optional[type]:
 class Object(BaseModel):
     """Base class for versioned objects.
 
-    Subclass it (pydantic fields) and publish with ``weft.publish(obj)``.
-    Methods decorated with ``@weft.op`` are traced, and published alongside
-    the object as op refs.
+    Subclass it (pydantic fields) and save it with ``weft.save(obj)``.
+    Methods decorated with ``@weft.trace`` are traced, and saved alongside
+    the object as function refs.
     """
 
     model_config = ConfigDict(
@@ -54,10 +54,19 @@ class Object(BaseModel):
     def ref(self) -> Optional[ObjectRef]:
         return self._weft_ref
 
-    def publish(self, name: Optional[str] = None) -> ObjectRef:
+    def save(self, name: Optional[str] = None) -> ObjectRef:
+        """Save a version of this object (``weft.save(self, name)``) and return its ref."""
         from ._client import require_client
 
-        return require_client().publish(self, name=name)
+        return require_client().save(self, name=name)
+
+    def publish(self, name: Optional[str] = None) -> ObjectRef:
+        """Deprecated: use ``obj.save(name)``."""
+        from ._client import require_client
+        from ._deprecation import deprecated_call
+
+        deprecated_call("Object.publish()", "Object.save()")
+        return require_client().save(self, name=name)
 
     @classmethod
     def _weft_from_val(cls, val: Dict[str, Any], client: "WeftClient", ref: Optional[ObjectRef]) -> Any:
@@ -75,7 +84,7 @@ class Object(BaseModel):
                 except ValueError:
                     data[k] = v
                     continue
-                if isinstance(r, OpRef):
+                if isinstance(r, FunctionRef):
                     if k in cls.model_fields:
                         data[k] = v
                     continue
@@ -100,11 +109,11 @@ def _resolve_list_item(x: Any, client: "WeftClient") -> Any:
             r = parse_uri(x)
         except ValueError:
             return x
-        if isinstance(r, OpRef):
+        if isinstance(r, FunctionRef):
             try:
                 return client.get(r)
             except Exception as e:
-                logger.warning("weft: could not load op %s: %s", x, e)
+                logger.warning("weft: could not load function %s: %s", x, e)
     return x
 
 
@@ -115,7 +124,7 @@ def _is_obj_or_table_ref(x: Any) -> bool:
         r = parse_uri(x)
     except ValueError:
         return False
-    return isinstance(r, TableRef) or (isinstance(r, ObjectRef) and not isinstance(r, OpRef))
+    return isinstance(r, TableRef) or (isinstance(r, ObjectRef) and not isinstance(r, FunctionRef))
 
 
 def resolve_ref_value(r: Ref, client: "WeftClient") -> Any:
@@ -178,12 +187,12 @@ class Table:
         offset = 0
         while True:
             res = client._http.post(
-                "/table/query",
+                "/api/v1/tables/query",
                 {"project_id": self.ref.project_id, "digest": self.ref.digest, "limit": self.PAGE, "offset": offset},
             )
-            page = res.get("rows") or []
+            page = res.get("items") or []
             for r in page:
-                rows.append(r.get("val"))
+                rows.append(r.get("value"))
                 digests.append(r.get("digest"))
             if len(page) < self.PAGE:
                 break
@@ -228,7 +237,7 @@ class Dataset(Object):
     """A versioned collection of rows (dicts). Rows are stored as a table.
 
     >>> ds = weft.Dataset(name="qa", rows=[{"question": "2+2?", "expected": "4"}])
-    >>> weft.publish(ds)
+    >>> weft.save(ds)
     """
 
     rows: Any = None
@@ -263,8 +272,13 @@ class Dataset(Object):
         return self.rows[i]
 
     @classmethod
+    def from_spans(cls, spans: Iterable[Any], name: Optional[str] = None) -> "Dataset":
+        """Build a dataset from spans: one row ``{"inputs", "output"}`` per span (``self`` dropped)."""
+        return cls.from_calls(spans, name=name)
+
+    @classmethod
     def from_calls(cls, calls: Iterable[Any], name: Optional[str] = None) -> "Dataset":
-        """Build a dataset from calls: one row ``{"inputs", "output"}`` per call (``self`` dropped)."""
+        """Build a dataset from spans (``from_spans``): one row ``{"inputs", "output"}`` per span."""
         rows = []
         for c in calls:
             inputs = {k: v for k, v in (c.inputs or {}).items() if k != "self"}
@@ -344,9 +358,9 @@ class Dataset(Object):
     def add_rows(self, rows: Iterable[Any]) -> "Dataset":
         """Return a new dataset version with ``rows`` appended.
 
-        When this dataset is published, the rows are appended server side with
-        ``/table/update`` and the new version (pointing at the new table
-        digest) is published under the same name.
+        When this dataset is saved, the rows are appended server side with
+        ``POST /api/v1/tables/update`` and the new version (pointing at the new
+        table digest) is saved under the same name.
         """
         new_rows = list(rows)
         if self._weft_ref is None:
@@ -362,12 +376,12 @@ class Dataset(Object):
         new_table = Table(list(table.rows) + new_rows, ref=tref, client=client)
         new_table.row_digests = list(table.row_digests or []) + appended
         new = Dataset(name=self.name, description=self.description, rows=new_table)
-        client.publish(new, name=self._weft_ref.name)
+        client.save(new, name=self._weft_ref.name)
         return new
 
 
 class Model(Object):
-    """Base class for models. Subclass and define ``@weft.op def predict(self, ...)``."""
+    """Base class for models. Subclass and define ``@weft.trace def predict(self, ...)``."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -461,7 +475,7 @@ class LLMStructuredCompletionModel(Model):
     ...     default_params={"messages_template": [{"role": "user", "content": "{question}"}],
     ...                     "temperature": 0, "response_format": "text"})
 
-    Locally, ``predict`` calls the Weft server's ``/completions/create``.
+    Locally, ``predict`` calls the Weft server's ``POST /api/v1/completions``.
     """
 
     _weft_publish_ops: ClassVar[bool] = False

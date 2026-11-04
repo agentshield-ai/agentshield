@@ -35,11 +35,11 @@ const attr = (c: any, dotted: string): any => {
   const flat = c.attributes?.[dotted];
   return flat !== undefined ? flat : dotted.split('.').reduce((v, k) => (v && typeof v === 'object' ? v[k] : undefined), c.attributes);
 };
-const byOpPrefix = (prefix: string) => [...fake.calls.values()].filter((c) => String(c.op_name ?? '').includes(`/op/${prefix}`));
+const byOpPrefix = (prefix: string) => [...fake.calls.values()].filter((c) => String(c.name ?? '').includes(`/function/${prefix}`));
 
 describe('teams', () => {
   it('withTeam sets weft.team on ops and spans; conversations take a team option', async () => {
-    const step = weft.op(function step(x: number) {
+    const step = weft.trace(function step(x: number) {
       return x;
     });
     await weft.withTeam({ id: 'trip-planners', name: 'Trip planners' }, async () => {
@@ -114,7 +114,7 @@ describe('hand-offs', () => {
     const rc = fake.calls.get(inner.callId!);
     expect(rc.parent_id).toBe(h.id);
     expect(rc.trace_id).toBe(outer.traceId);
-    expect(rc.thread_id).toBe('s-2');
+    expect(rc.session_id).toBe('s-2');
     expect(fake.calls.get(outer.callId!).ended_at).toBeTruthy(); // the outer turn stayed open and ended normally
     expect(fake.calls.get(nested.callId!).parent_id).toBe(outer.callId);
     expect(fake.calls.get(same.callId!).parent_id).toBeNull();
@@ -140,7 +140,7 @@ describe('hand-offs', () => {
 
 describe('reasoning', () => {
   it('weft.reasoning() on spans and ops (the op start is sent again)', async () => {
-    const plan = weft.op(function plan(goal: string) {
+    const plan = weft.trace(function plan(goal: string) {
       weft.reasoning('first check the calendar');
       return 'ok';
     });
@@ -164,10 +164,10 @@ describe('reasoning', () => {
     const [p] = byOpPrefix('plan');
     expect(attr(p, 'weft.reasoning')[0].text).toBe('first check the calendar');
     const modes = fake.requests
-      .filter((r) => r.path === '/call/upsert_batch')
-      .flatMap((r) => r.body.batch)
-      .filter((it: any) => it.req[it.mode].id === p.id)
-      .map((it: any) => it.mode);
+      .filter((r) => r.path === '/api/v1/spans/batch')
+      .flatMap((r) => r.body.items)
+      .filter((it: any) => (it.start ?? it.end).id === p.id)
+      .map((it: any) => Object.keys(it)[0]);
     expect(modes).toEqual(['start', 'start', 'end']);
   });
 
@@ -451,7 +451,7 @@ describe('framework integrations: sessions and hand-offs', () => {
     }
     await settle();
     const [root] = fake.callsByOp('claude_agent_sdk.query');
-    expect(root.thread_id).toBe(sid);
+    expect(root.session_id).toBe(sid);
     expect(attr(root, 'gen_ai.conversation.id')).toBe(sid);
     const [task] = fake.callsByOp('claude_agent_sdk.tool.Task');
     expect(attr(task, 'gen_ai.agent.name')).toBe('reviewer');

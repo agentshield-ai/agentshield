@@ -9,7 +9,7 @@ export type SignalCategory = 'Quality' | 'Safety' | 'Reliability'
 export interface SignalOptions {
   /** Judge model for LLM-based signals (e.g. gpt-4o-mini, mock/json). */
   model: string
-  /** Ops to monitor; empty means all root calls. */
+  /** Span names to monitor; empty means all root spans. */
   opNames: string[]
   samplingRate: number
   /** latency signal threshold in seconds. */

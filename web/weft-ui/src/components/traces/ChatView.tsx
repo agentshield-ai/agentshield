@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { Any, Call } from '../../api/types'
+import type { Any, Span } from '../../api/types'
 import { MediaView, ValueView, isMedia } from '../ValueView'
 import { isReferenceUri } from '../media/mediaUtils'
 
@@ -178,7 +178,7 @@ export interface CallChat {
 }
 
 /** Extract a chat view from a call, or null when its data is not chat-shaped. */
-export function extractChat(call: Pick<Call, 'inputs' | 'output'>): CallChat | null {
+export function extractChat(call: Pick<Span, 'inputs' | 'output'>): CallChat | null {
   const input = findInputMessages(call.inputs)
   if (!input) return null
   let output = findOutputMessages(call.output)

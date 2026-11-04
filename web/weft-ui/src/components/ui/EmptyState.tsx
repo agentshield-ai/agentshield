@@ -116,7 +116,7 @@ pi`,
 }
 
 export function Snippets({ projectId, only, initial }: { projectId: string; only?: SnippetId[]; initial?: SnippetId }) {
-  const info = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo, staleTime: 60_000 })
+  const info = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const all = snippets(serverOrigin(), projectId, !!info.data?.auth_required)
   const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'codex', 'openclaw', 'pi'] as SnippetId[])
   const [tab, setTab] = useState<SnippetId>(initial ?? ids[0])

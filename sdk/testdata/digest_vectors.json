@@ -1,0 +1,206 @@
+{
+ "_comment": "Weft digests (docs/weft/DESIGN.md \u00a710.3) computed by the server; checked by the Python and TypeScript SDK tests. Values use only numbers both languages print the same way.",
+ "values": [
+  {
+   "name": "empty_object",
+   "value": {},
+   "canonical": "{}",
+   "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  {
+   "name": "empty_list",
+   "value": [],
+   "canonical": "[]",
+   "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+   "name": "scalars",
+   "value": {
+    "b": true,
+    "f": false,
+    "n": null,
+    "i": 42,
+    "neg": -7,
+    "s": "x"
+   },
+   "canonical": "{\"b\":true,\"f\":false,\"i\":42,\"n\":null,\"neg\":-7,\"s\":\"x\"}",
+   "digest": "a22e464c4673f0212d964a013c3f85fb01222bd496a76c011da36c486ce4f306"
+  },
+  {
+   "name": "key_order",
+   "value": {
+    "b": 1,
+    "a": [
+     1.5,
+     2,
+     true,
+     null
+    ],
+    "A": 0,
+    "_": 1,
+    "aa": 2
+   },
+   "canonical": "{\"A\":0,\"_\":1,\"a\":[1.5,2,true,null],\"aa\":2,\"b\":1}",
+   "digest": "914209767b8bfb80b670b6231a3c3b9fc4063cfb8e41a63ad991dac75cae1b7c"
+  },
+  {
+   "name": "floats",
+   "value": {
+    "half": 1.5,
+    "tenth": 0.1,
+    "big": 1e+21,
+    "neg": -2.25,
+    "tiny": 0.001
+   },
+   "canonical": "{\"big\":1e+21,\"half\":1.5,\"neg\":-2.25,\"tenth\":0.1,\"tiny\":0.001}",
+   "digest": "0b681daa58e027cd451064293d2a11844d35687ec42d277f8f7b56b4a3302c0c"
+  },
+  {
+   "name": "ints",
+   "value": {
+    "max_safe": 9007199254740991,
+    "min_safe": -9007199254740991,
+    "zero": 0
+   },
+   "canonical": "{\"max_safe\":9007199254740991,\"min_safe\":-9007199254740991,\"zero\":0}",
+   "digest": "816efa0090675bc014a590284eab101dec87a9f893fbc7791177fd21a8864fa9"
+  },
+  {
+   "name": "escapes",
+   "value": {
+    "x": "quote \" backslash \\ newline \n tab \t cr \r bs \b ff \f"
+   },
+   "canonical": "{\"x\":\"quote \\\" backslash \\\\ newline \\n tab \\t cr \\r bs \\b ff \\f\"}",
+   "digest": "ed580b49dcc7a35984d292b734d68546027e1a47b82429acb8a3c142d4f545a0"
+  },
+  {
+   "name": "control_chars",
+   "value": {
+    "c": "\u0000\u0001\u001f\u007f\u0080\u009f"
+   },
+   "canonical": "{\"c\":\"\\u0000\\u0001\\u001f\u007f\u0080\u009f\"}",
+   "digest": "c6b7ed6fa96e804fc919dfbe018519bc42d8a5cfb183b9e48723a4c3b7d0e1f4"
+  },
+  {
+   "name": "html_and_separators",
+   "value": {
+    "h": "<a&b> \u2028 \u2029 '"
+   },
+   "canonical": "{\"h\":\"<a&b> \u2028 \u2029 '\"}",
+   "digest": "026c2378db0f596dfc6c60449e2ad55608f6375ed105f35adc482deb41be52d2"
+  },
+  {
+   "name": "unicode",
+   "value": {
+    "\u00e9": "\u00fc",
+    "\u65e5\u672c": "\u8a9e",
+    "emoji": "\ud83d\ude00",
+    "z": "\u03a9"
+   },
+   "canonical": "{\"emoji\":\"\ud83d\ude00\",\"z\":\"\u03a9\",\"\u00e9\":\"\u00fc\",\"\u65e5\u672c\":\"\u8a9e\"}",
+   "digest": "d25a944946f1a5496e83ca8eb2e33022b31296aee8fc6effbc037edfcbb7693a"
+  },
+  {
+   "name": "astral_keys",
+   "value": {
+    "\ud83d\ude00": 1,
+    "\uffff": 2,
+    "\ue000": 3,
+    "a": 4
+   },
+   "canonical": "{\"a\":4,\"\ue000\":3,\"\uffff\":2,\"\ud83d\ude00\":1}",
+   "digest": "e35c6d2222f28525e8f637f9141a8799ab0555bd39aa60776abcc278e11ab993"
+  },
+  {
+   "name": "lone_surrogate",
+   "value": {
+    "s": "a\ud800b"
+   },
+   "canonical": "{\"s\":\"a\ufffdb\"}",
+   "digest": "831e2ffe20d5ec81d65bb674545ecad8eb14892a421787b7d9588084a3e038c7"
+  },
+  {
+   "name": "nested",
+   "value": {
+    "op": {
+     "_type": "Op",
+     "name": "f",
+     "code": "def f(x):\n    return x\n",
+     "language": "python"
+    },
+    "rows": [
+     {
+      "q": "1+1",
+      "a": "2"
+     },
+     {
+      "q": "2+2",
+      "a": "4"
+     }
+    ],
+    "deep": [
+     [
+      [
+       [
+        "x"
+       ]
+      ]
+     ]
+    ]
+   },
+   "canonical": "{\"deep\":[[[[\"x\"]]]],\"op\":{\"_type\":\"Op\",\"code\":\"def f(x):\\n    return x\\n\",\"language\":\"python\",\"name\":\"f\"},\"rows\":[{\"a\":\"2\",\"q\":\"1+1\"},{\"a\":\"4\",\"q\":\"2+2\"}]}",
+   "digest": "ccc251104d293a8da183740b2abe5da14315404aa5cee6aa65c8086e457e2380"
+  },
+  {
+   "name": "string_value",
+   "value": "just a string",
+   "canonical": "\"just a string\"",
+   "digest": "3fe01def54b1c6cd795b2ebfcbab64150f6a507bce043040c662c682eebfed1e"
+  },
+  {
+   "name": "number_value",
+   "value": 3,
+   "canonical": "3",
+   "digest": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+  },
+  {
+   "name": "list_value",
+   "value": [
+    1,
+    "two",
+    {
+     "three": 3
+    },
+    [
+     4
+    ],
+    null
+   ],
+   "canonical": "[1,\"two\",{\"three\":3},[4],null]",
+   "digest": "3a3c571da11ed9624968071ce688fe5b0b858a48c3a406fa3ca4652141a22771"
+  }
+ ],
+ "table": {
+  "row_digests": [
+   "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "a22e464c4673f0212d964a013c3f85fb01222bd496a76c011da36c486ce4f306",
+   "914209767b8bfb80b670b6231a3c3b9fc4063cfb8e41a63ad991dac75cae1b7c"
+  ],
+  "digest": "ec2a4066f85d1f9fb6c52191e0427c37fd346e75e43087f57b606a123318dadd"
+ },
+ "files": [
+  {
+   "text": "",
+   "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "text": "abc",
+   "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  {
+   "text": "h\u00e9llo \ud83d\ude00\n",
+   "digest": "37c1ef0f903b8920ad1d94e9ed2dd2ecb7e75d4f710b083126fedfc288fefbdf"
+  }
+ ]
+}

@@ -17,14 +17,14 @@ describe('Traces filters', () => {
   })
 
   it('reads views saved before Traces used the shared filter bar', () => {
-    expect(legacyTraceView({ val: { view_type: 'traces', definition: { filter: { op_names: ['chat'] }, cols: ['inputs.q'], search: 'oslo' } } })).toEqual({
+    expect(legacyTraceView({ value: { view_type: 'traces', definition: { filter: { op_names: ['chat'] }, cols: ['inputs.q'], search: 'oslo' } } })).toEqual({
       op: 'chat',
       cols: 'inputs.q',
       q: 'oslo',
       time: 'all',
     })
-    expect(legacyTraceView({ val: { view_type: 'traces', definition: { ui_params: { status: 'error' } } } })).toEqual({ status: 'error', time: 'all' })
-    expect(legacyTraceView({ val: { view_type: 'filters.sessions' } })).toBeNull()
-    expect(legacyTraceView({ val: { view_type: 'evaluations' } })).toBeNull()
+    expect(legacyTraceView({ value: { view_type: 'traces', definition: { ui_params: { status: 'error' } } } })).toEqual({ status: 'error', time: 'all' })
+    expect(legacyTraceView({ value: { view_type: 'filters.sessions' } })).toBeNull()
+    expect(legacyTraceView({ value: { view_type: 'evaluations' } })).toBeNull()
   })
 })

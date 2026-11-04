@@ -2,23 +2,23 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { objectRef, parseRef } from '../../api/refs'
-import type { ObjSchema } from '../../api/types'
+import type { WeftObject } from '../../api/types'
 import { settingsUrl } from '../../lib/urls'
 import { Spinner } from '../common'
 import { specName } from './queueUtils'
 
 export function useAnnotationSpecs(projectId: string) {
   return useQuery({
-    queryKey: ['objs', projectId, 'AnnotationSpec', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['AnnotationSpec'], latest_only: true }, limit: 200 }),
-    select: (r) => r.objs.filter((o) => !o.deleted_at),
+    queryKey: ['objects', projectId, 'AnnotationSpec', 'latest'],
+    queryFn: () => api.objectsQuery({ project_id: projectId, filter: { kinds: ['annotation_spec'], latest_only: true }, limit: 200 }),
+    select: (r) => r.items.filter((o) => !o.deleted_at),
   })
 }
 
-export const specRef = (o: ObjSchema) => objectRef(o.project_id, o.object_id, o.digest)
+export const specRef = (o: WeftObject) => objectRef(o.project_id, o.name, o.digest)
 
-function schemaLabel(o: ObjSchema): string {
-  const s = o.val?.field_schema ?? {}
+function schemaLabel(o: WeftObject): string {
+  const s = o.value?.field_schema ?? {}
   if (Array.isArray(s.enum)) return `one of ${s.enum.slice(0, 4).join(', ')}${s.enum.length > 4 ? '…' : ''}`
   if (s.minimum != null && s.maximum != null) return `${s.type ?? 'number'} ${s.minimum}–${s.maximum}`
   return s.type ?? 'text'
@@ -41,13 +41,13 @@ export function SpecPicker({ projectId, value, onChange }: { projectId: string; 
     <div className="pick-list">
       {list.map((o) => {
         const ref = specRef(o)
-        const on = value.includes(ref) || names.has(o.object_id)
+        const on = value.includes(ref) || names.has(o.name)
         return (
-          <label key={o.object_id}>
+          <label key={o.name}>
             <input
               type="checkbox"
               checked={on}
-              onChange={() => onChange(on ? value.filter((r) => parseRef(r)?.name !== o.object_id) : [...value, ref])}
+              onChange={() => onChange(on ? value.filter((r) => parseRef(r)?.name !== o.name) : [...value, ref])}
             />
             <span className="mono grow truncate">{specName(o)}</span>
             <span className="faint small">{schemaLabel(o)}</span>

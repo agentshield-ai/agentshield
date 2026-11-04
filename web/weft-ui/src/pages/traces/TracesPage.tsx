@@ -1,12 +1,13 @@
+import { normaliseSpansFilter } from '../../api/filters'
 import { cloneElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import { opDisplayName } from '../../api/refs'
-import type { Any, Call, CallsFilter, Operation, Query, SortBy } from '../../api/types'
+import { spanDisplayName } from '../../api/refs'
+import type { Any, Span, SpansFilter, Operation, Query, SortBy } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
-import { callUrl, compareCallsUrl, threadsUrl } from '../../lib/urls'
+import { spanUrl, compareSpansUrl, spanSessionsUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Spinner, StatusDot } from '../../components/common'
 import { CallCharts } from '../../components/traces/CallCharts'
 import { extractChat, messageText, normaliseMessage } from '../../components/traces/ChatView'
@@ -43,7 +44,7 @@ const SORT_FIELD: Partial<Record<BaseCol, string>> = {
   started: 'started_at',
   latency: 'summary.weft.latency_ms',
   tokens: 'summary.total_tokens',
-  name: 'op_name',
+  name: 'name',
 }
 const PAGE_SIZES = [25, 50, 100, 200]
 /** The shared status chip's values (filters.ts StatusFilter). */
@@ -165,11 +166,11 @@ export function buildRequest(
   shared: FilterState = {},
   time: TimeRange = 'all',
   traceIds: string[] | null = null,
-): { filter: CallsFilter; query?: Query; search?: string } {
-  const filter: CallsFilter = {}
+): { filter: SpansFilter; query?: Query; search?: string } {
+  const filter: SpansFilter = {}
   if (s.roots) filter.trace_roots_only = true
   if (traceIds) filter.trace_ids = traceIds.length ? traceIds : [NO_TRACE]
-  if (s.op) filter.op_names = [s.op]
+  if (s.op) filter.names = [s.op]
   const ops: Operation[] = []
   // Monitor scorers and server-side LLM calls are tagged internal; hide them unless asked.
   if (!s.system) ops.push({ $not: [{ $eq: [{ $getField: 'attributes.weft.internal' }, { $literal: true }] }] })
@@ -185,7 +186,7 @@ export function buildRequest(
 
 // ---------------------------------------------------------------- cell helpers
 
-function inputsPreview(c: Call): string {
+function inputsPreview(c: Span): string {
   const chat = extractChat(c)
   if (chat) {
     const users = chat.input.filter((m) => m?.role === 'user')
@@ -199,7 +200,7 @@ function inputsPreview(c: Call): string {
     .join(' · ')
 }
 
-function outputPreview(c: Call): string {
+function outputPreview(c: Span): string {
   const chat = extractChat(c)
   if (chat?.output?.length) {
     const m = normaliseMessage(chat.output[chat.output.length - 1])
@@ -225,7 +226,7 @@ function colLabel(path: string) {
 // ---------------------------------------------------------------- saved views
 
 interface SavedViewDef {
-  filter?: CallsFilter
+  filter?: SpansFilter
   query?: Query
   sort_by?: SortBy[]
   cols?: string[]
@@ -238,14 +239,15 @@ interface SavedViewDef {
 
 /** URL parameters of a Traces view saved before views moved into the filter bar. */
 export function legacyTraceView(o: Any): Record<string, string> | null {
-  const t = o.val?.view_type
+  const t = o.value?.view_type
   if (t !== undefined && t !== 'traces') return null
-  const def: SavedViewDef = o.val?.definition ?? {}
+  const def: SavedViewDef = o.value?.definition ?? {}
   // Views saved before Traces had a time range showed all time.
   if (def.ui_params) return def.ui_params.time || def.ui_params.from || def.ui_params.to ? def.ui_params : { ...def.ui_params, time: 'all' }
   const p: Record<string, string> = {}
-  if (def.filter?.trace_roots_only === false) p.roots = '0'
-  if (def.filter?.op_names?.[0]) p.op = def.filter.op_names[0]
+  const filter = normaliseSpansFilter(def.filter)
+  if (filter.trace_roots_only === false) p.roots = '0'
+  if (filter.names?.[0]) p.op = filter.names[0]
   if (def.sort_by?.[0]) p.sort = `${def.sort_by[0].field}:${def.sort_by[0].direction}`
   if (def.cols?.length) p.cols = def.cols.join(',')
   if (def.col_order?.length) p.order = encodeIds(def.col_order)
@@ -266,7 +268,7 @@ export function TracesPage() {
   const s = useMemo(() => parseState(params), [params])
   const shared = useMemo(() => parseFilters(params), [params])
   // Last 24 hours by default, widening when that is empty (DESIGN.md §7.1 rule 6).
-  const widen = useWidenedTime(shared, DEFAULT_TIME, async (r) => (await api.callsQueryStats({ project_id: projectId, ...buildRequest(s, { ...shared, time: r }, r) })).count, [
+  const widen = useWidenedTime(shared, DEFAULT_TIME, async (r) => (await api.spansCount({ project_id: projectId, ...buildRequest(s, { ...shared, time: r }, r) })), [
     projectId,
     'traces',
     JSON.stringify(buildRequest(s, { ...shared, time: 'all' }, 'all')),
@@ -299,9 +301,9 @@ export function TracesPage() {
   const refetchInterval = s.live ? 5000 : false
   const sortBy: SortBy[] = [s.sort]
   const calls = useQuery({
-    queryKey: ['calls', projectId, 'table', req, s.sort, s.offset, s.limit],
+    queryKey: ['spans', projectId, 'table', req, s.sort, s.offset, s.limit],
     queryFn: () =>
-      api.callsQuery({
+      api.spansQuery({
         project_id: projectId,
         ...req,
         sort_by: sortBy,
@@ -316,22 +318,22 @@ export function TracesPage() {
     refetchInterval,
   })
   const count = useQuery({
-    queryKey: ['calls', projectId, 'count', req],
-    queryFn: () => api.callsQueryStats({ project_id: projectId, ...req }),
+    queryKey: ['spans', projectId, 'count', req],
+    queryFn: () => api.spansCount({ project_id: projectId, ...req }),
     enabled: ready,
     placeholderData: keepPreviousData,
     refetchInterval,
   })
-  const opCounts = useQuery({ queryKey: ['calls', projectId, 'op_counts', s.roots], queryFn: () => api.opCounts(projectId, s.roots) })
+  const spanNames = useQuery({ queryKey: ['spans', projectId, 'op_counts', s.roots], queryFn: () => api.spanNames(projectId, s.roots) })
   // op_counts may list several versions of one op; the filter works on base names.
   const opOptions = useMemo(() => {
     const m = new Map<string, number>()
-    for (const o of opCounts.data?.ops ?? []) m.set(o.op_base_name, (m.get(o.op_base_name) ?? 0) + o.count)
+    for (const o of spanNames.data?.items ?? []) m.set(o.base_name, (m.get(o.base_name) ?? 0) + o.count)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
-  }, [opCounts.data])
+  }, [spanNames.data])
 
-  const rows = calls.data?.calls ?? []
-  const total = count.data?.count ?? null
+  const rows = calls.data?.items ?? []
+  const total = count.data ?? null
 
   // Field discovery for the filter builder and column picker. Accumulate across pages.
   const [seenFields, setSeenFields] = useState<string[]>([])
@@ -352,9 +354,9 @@ export function TracesPage() {
   const columnCandidates = seenFields.filter((f) => f.startsWith('inputs.') || f.startsWith('output.'))
   const filterFields = useMemo(() => [...BASE_FILTER_FIELDS, ...seenFields], [seenFields])
 
-  // Selection survives paging; keep the Call objects for actions.
-  const [selected, setSelected] = useState<Map<string, Call>>(new Map())
-  const toggleSel = (c: Call) =>
+  // Selection survives paging; keep the Span objects for actions.
+  const [selected, setSelected] = useState<Map<string, Span>>(new Map())
+  const toggleSel = (c: Span) =>
     setSelected((prev) => {
       const n = new Map(prev)
       if (n.has(c.id)) n.delete(c.id)
@@ -373,13 +375,13 @@ export function TracesPage() {
   const [modal, setModal] = useState<null | 'delete' | 'dataset'>(null)
   // Server export, copy-as-code and add-to-dashboard modals.
   const [extraModal, setExtraModal] = useState<null | 'serverExport' | 'code' | 'chart'>(null)
-  const serverInfo = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo, staleTime: 60_000 })
+  const server = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const del = useMutation({
-    mutationFn: () => api.callsDelete(projectId, [...selected.keys()]),
+    mutationFn: () => api.spansDelete(projectId, [...selected.keys()]),
     onSuccess: () => {
       setSelected(new Map())
       setModal(null)
-      void qc.invalidateQueries({ queryKey: ['calls', projectId] })
+      void qc.invalidateQueries({ queryKey: ['spans', projectId] })
       void qc.invalidateQueries({ queryKey: ['calls-stats', projectId] })
     },
   })
@@ -400,7 +402,7 @@ export function TracesPage() {
         e.preventDefault()
         setCursor((c) => Math.max(0, c - 1))
       } else if (e.key === 'Enter' && cursor >= 0 && rows[cursor]) {
-        navigate(callUrl(projectId, rows[cursor].id))
+        navigate(spanUrl(projectId, rows[cursor].id))
       } else if (e.key === 'x' && cursor >= 0 && rows[cursor]) {
         toggleSel(rows[cursor])
       }
@@ -470,8 +472,8 @@ export function TracesPage() {
     <div className="page page-fill">
       <div className="page-header">
         <h1>Traces</h1>
-        <Link className="btn sm ghost" to={threadsUrl(projectId)} title="Spans grouped by thread id">
-          Threads
+        <Link className="btn sm ghost" to={spanSessionsUrl(projectId)} title="Spans grouped by session id">
+          Span sessions
         </Link>
         {(hasFilters || s.view || s.cols.length > 0) && (
           <button className="btn sm ghost" onClick={() => setParams(new URLSearchParams())} title="Clear filters, columns and sort">
@@ -486,7 +488,7 @@ export function TracesPage() {
         <label className="checkbox small" title="Refresh every 5 seconds">
           <input type="checkbox" checked={s.live} onChange={(e) => update({ live: e.target.checked ? '1' : null }, false)} /> Auto-refresh
         </label>
-        <button className="btn sm" onClick={() => void qc.invalidateQueries({ queryKey: ['calls', projectId] })} title="Refresh">
+        <button className="btn sm" onClick={() => void qc.invalidateQueries({ queryKey: ['spans', projectId] })} title="Refresh">
           ↻
         </button>
         <button className="btn sm" onClick={() => update({ charts: s.charts ? '0' : null }, false)} aria-expanded={s.charts}>
@@ -599,7 +601,7 @@ export function TracesPage() {
             Clear
           </button>
           <span className="grow" />
-          <button className="btn sm" disabled={selected.size < 2} title={selected.size < 2 ? 'Select at least two spans' : undefined} onClick={() => navigate(compareCallsUrl(projectId, [...selected.keys()]))}>
+          <button className="btn sm" disabled={selected.size < 2} title={selected.size < 2 ? 'Select at least two spans' : undefined} onClick={() => navigate(compareSpansUrl(projectId, [...selected.keys()]))}>
             Compare
           </button>
           <button className="btn sm" onClick={() => setModal('dataset')}>
@@ -714,7 +716,7 @@ export function TracesPage() {
                   selected={selected.has(c.id)}
                   focused={cursor === i}
                   onToggle={() => toggleSel(c)}
-                  onOpen={() => navigate(callUrl(projectId, c.id))}
+                  onOpen={() => navigate(spanUrl(projectId, c.id))}
                   onFilterOp={(op) => update({ op })}
                   provisionalRoot={s.roots && !!c.parent_id}
                 />
@@ -783,7 +785,7 @@ export function TracesPage() {
 
       {modal === 'delete' && (
         <ConfirmModal
-          title={`Delete ${selected.size} call${selected.size === 1 ? '' : 's'}?`}
+          title={`Delete ${selected.size} span${selected.size === 1 ? '' : 's'}?`}
           body={<>The selected spans and all of their descendants will be deleted. This cannot be undone from the UI.</>}
           confirmLabel="Delete"
           danger
@@ -798,7 +800,7 @@ export function TracesPage() {
         <ServerExportModal spec={{ projectId, ...req, sortBy }} columns={s.cols} onClose={() => setExtraModal(null)} />
       )}
       {extraModal === 'code' && (
-        <CopyAsCodeModal spec={{ projectId, ...req, sortBy }} authRequired={!!serverInfo.data?.auth_required} onClose={() => setExtraModal(null)} />
+        <CopyAsCodeModal spec={{ projectId, ...req, sortBy }} authRequired={!!server.data?.auth_required} onClose={() => setExtraModal(null)} />
       )}
       {extraModal === 'chart' && (
         <AddToDashboardModal projectId={projectId} filter={req.filter} query={req.query} search={req.search} onClose={() => setExtraModal(null)} />
@@ -821,7 +823,7 @@ function CallRow({
   onFilterOp,
   provisionalRoot,
 }: {
-  call: Call
+  call: Span
   index: number
   projectId: string
   slots: ColumnSlot[]
@@ -843,7 +845,7 @@ function CallRow({
   const scores = (c.feedback ?? []).filter((f) => f.feedback_type.startsWith('weft.scorer.')).length
   const notes = (c.feedback ?? []).filter((f) => f.feedback_type === 'weft.note').length
   const childCounts = c.summary?.status_counts
-  const opBase = opDisplayName(c.op_name)
+  const opBase = spanDisplayName(c.name)
   const label = callLabel(c)
   const cell = (col: BaseCol) => {
     switch (col) {
@@ -856,14 +858,14 @@ function CallRow({
       case 'name':
         return (
           <td key={col} className="name-cell">
-            <Link to={callUrl(projectId, c.id)} onClick={(e) => e.stopPropagation()} className="call-link">
+            <Link to={spanUrl(projectId, c.id)} onClick={(e) => e.stopPropagation()} className="call-link">
               {label}
             </Link>
             <div className="row small faint" style={{ gap: 6, whiteSpace: 'nowrap' }}>
               {label !== opBase && (
                 <button
                   className="linkish"
-                  title="Filter by this op"
+                  title="Filter by this name"
                   onClick={(e) => {
                     e.stopPropagation()
                     onFilterOp(opBase)
@@ -879,7 +881,7 @@ function CallRow({
               )}
               {childCounts && (childCounts.success ?? 0) + (childCounts.error ?? 0) > 0 && (
                 <span title="Descendant spans">
-                  {plural((childCounts.success ?? 0) + (childCounts.error ?? 0), 'call')}
+                  {plural((childCounts.success ?? 0) + (childCounts.error ?? 0), 'span')}
                   {childCounts.error ? <span style={{ color: 'var(--error)' }}> · {childCounts.error} err</span> : null}
                 </span>
               )}
@@ -940,7 +942,7 @@ function CallRow({
       case 'output':
         return (
           <td key={col}>
-            {c.exception ? (
+            {c.error ? (
               // Red only when the run failed: a failed step the run went on
               // after (or a verdict record of such a session) is not a failure.
               <span
@@ -948,7 +950,7 @@ function CallRow({
                 style={!runStatus || runStatus === 'error' ? { color: 'var(--error)' } : undefined}
                 title={runStatus && runStatus !== 'error' ? `This span failed. Run: ${RUN_STATUS_LABEL[runStatus]}` : undefined}
               >
-                {c.exception}
+                {c.error}
               </span>
             ) : (
               <span className="cell-preview">{outputPreview(c)}</span>
@@ -960,7 +962,7 @@ function CallRow({
   return (
     <tr className={`clickable ${selected ? 'selected' : ''} ${focused ? 'focused' : ''}`} data-row={index} onClick={onOpen}>
       <td onClick={(e) => e.stopPropagation()} className={leadPinned ? 'col-pinned col-lead' : ''}>
-        <input type="checkbox" checked={selected} onChange={onToggle} aria-label="Select call" />
+        <input type="checkbox" checked={selected} onChange={onToggle} aria-label="Select span" />
       </td>
       {slots.map((slot) => {
         const el: ReactElement<{ className?: string; style?: React.CSSProperties }> | undefined = (BASE_COLS as readonly string[]).includes(slot.id) ? (

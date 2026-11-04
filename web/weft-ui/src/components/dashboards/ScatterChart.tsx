@@ -5,7 +5,7 @@ import { CartesianGrid, Legend, ResponsiveContainer, Scatter, ScatterChart, Tool
 import { api } from '../../api/client'
 import type { DashboardPanel, DashboardVal } from '../../api/dashboards'
 import type { Operation, Query } from '../../api/types'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../common'
 import { SERIES_COLORS } from '../evals/evalUtils'
 import { fieldLabel, fmtValue, groupLabel, mergeFilters, mergeQueries, scatterSeries, timeRangeBounds, valueKind } from './dashboardUtils'
@@ -41,7 +41,7 @@ export function ScatterPanel({
       if (range.end) timeOps.push({ $lt: [{ $getField: 'started_at' }, { $literal: range.end }] })
       const timeQuery = { $expr: timeOps.length === 1 ? timeOps[0] : { $and: timeOps } } as Query
       const needsFeedback = [xField, yField].some((f) => f.startsWith('feedback.'))
-      return api.callsQuery({
+      return api.spansQuery({
         project_id: projectId,
         filter: mergeFilters(dash?.filter, panel.filter),
         query: mergeQueries(dash?.query, panel.query, timeQuery),
@@ -55,7 +55,7 @@ export function ScatterPanel({
     refetchInterval: refreshMs || false,
     placeholderData: (prev) => prev,
   })
-  const series = useMemo(() => scatterSeries(q.data?.calls ?? [], xField, yField, panel.group_by), [q.data, xField, yField, panel.group_by])
+  const series = useMemo(() => scatterSeries(q.data?.items ?? [], xField, yField, panel.group_by), [q.data, xField, yField, panel.group_by])
   if (q.isLoading)
     return (
       <div className="dash-chart-empty" style={{ height }}>
@@ -91,7 +91,7 @@ export function ScatterPanel({
           {series.map((s, i) => (
             <Scatter
               key={s.group}
-              name={grouped ? groupLabel({ group: s.group === '__other__' ? null : s.group, other: s.group === '__other__' }, panel.group_by) : 'Calls'}
+              name={grouped ? groupLabel({ group: s.group === '__other__' ? null : s.group, other: s.group === '__other__' }, panel.group_by) : 'Spans'}
               data={s.points}
               fill={s.group === '__other__' ? 'var(--text-3)' : SERIES_COLORS[i % SERIES_COLORS.length]}
               fillOpacity={0.75}
@@ -99,13 +99,13 @@ export function ScatterPanel({
               cursor="pointer"
               onClick={(p: { id?: string; payload?: { id: string } }) => {
                 const id = p?.payload?.id ?? p?.id
-                if (id) navigate(callUrl(projectId, id))
+                if (id) navigate(spanUrl(projectId, id))
               }}
             />
           ))}
         </ScatterChart>
       </ResponsiveContainer>
-      {(q.data?.calls.length ?? 0) >= MAX_CALLS && <div className="small faint">Showing the latest {MAX_CALLS} calls.</div>}
+      {(q.data?.items.length ?? 0) >= MAX_CALLS && <div className="small faint">Showing the latest {MAX_CALLS} calls.</div>}
     </div>
   )
 }

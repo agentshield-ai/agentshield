@@ -39,13 +39,13 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
       /* drain */
     }
     await client.flush();
-    const [root] = await client.getCalls({ filter: { op_names: ['bedrock_agent.invoke_agent'] } });
-    expect(root.threadId).toBe(sid);
+    const [root] = await client.spans({ filter: { names: ['bedrock_agent.invoke_agent'] } });
+    expect(root.sessionId).toBe(sid);
     const kids = await root.children();
-    expect(new Set(kids.map((k) => k.opBaseName))).toEqual(
+    expect(new Set(kids.map((k) => k.baseName))).toEqual(
       new Set(['bedrock_agent.model_invocation', 'bedrock_agent.action_group', 'bedrock_agent.knowledge_base', 'bedrock_agent.collaborator', 'bedrock_agent.guardrail']),
     );
-    const full = await client.getCall(root.id);
+    const full = await client.span(root.id);
     expect(full!.summary.usage[MODEL].prompt_tokens).toBe(900);
     const chat = await waitFor(async () => {
       const r = await post('/agents/conversations/chat', { conversation_id: sid });
@@ -67,12 +67,12 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
     rt.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: 'call_1', output: '{"temp": 21}' } });
     rt.close();
     await client.flush();
-    const [sess] = await client.getCalls({ filter: { op_names: ['openai.realtime.session'] } });
+    const [sess] = await client.spans({ filter: { names: ['openai.realtime.session'] } });
     const kids = await sess.children();
-    const resp = kids.find((k) => k.opBaseName === 'openai.realtime.response')!;
+    const resp = kids.find((k) => k.baseName === 'openai.realtime.response')!;
     expect(resp.output).toMatchObject({ text: 'It is sunny.', status: 'completed' });
-    expect(kids.find((k) => k.opBaseName === 'openai.realtime.tool.get_weather')!.output).toEqual({ temp: 21 });
-    expect((await client.getCall(sess.id))!.summary.usage['gpt-realtime'].prompt_tokens).toBe(100);
+    expect(kids.find((k) => k.baseName === 'openai.realtime.tool.get_weather')!.output).toEqual({ temp: 21 });
+    expect((await client.span(sess.id))!.summary.usage['gpt-realtime'].prompt_tokens).toBe(100);
   });
 
   it('NER-redacts through a Presidio-compatible analyzer before sending', async () => {
@@ -94,7 +94,7 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
       const call = c.createCall('ner.echo', { text: 'Grace Hopper, grace@navy.mil' });
       c.finishCall(call, 'Thanks Grace Hopper');
       await c.flush();
-      const got = await client.getCall(call.id);
+      const got = await client.span(call.id);
       expect(got!.inputs.text).toBe('<PERSON>, <EMAIL_ADDRESS>');
       expect(got!.output).toBe('Thanks <PERSON>');
     } finally {
@@ -105,7 +105,7 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
   it('links a prompt and a dataset to a registry and reads them back', async () => {
     const reg = `registry-${randomUUID().slice(0, 6)}`;
     const p = new weft.StringPrompt({ name: 'ts-persona', content: 'You are {persona}.' });
-    await weft.publish(p);
+    await weft.save(p);
     expect((await weft.linkPromptToRegistry(p, { targetPath: `${reg}/personas`, aliases: ['staging'] })).versionIndex).toBe(0);
     await weft.linkToRegistry(new weft.Dataset({ name: 'ts-evalset', rows: [{ q: 'hi' }] }), { targetPath: `${reg}/datasets` });
     const cols = await client.queryRegistry(reg);
@@ -117,14 +117,14 @@ describe.skipIf(!URL)('real server: parity gaps', () => {
   });
 
   it('returns call records with run linkage', async () => {
-    const stepFn = weft.op(function stepFn(x: number) {
+    const stepFn = weft.trace(function stepFn(x: number) {
       return x * 2;
     });
     weft.setRun('run-live', 5);
     await stepFn(1);
     await stepFn(2);
     weft.setRun(null);
-    const recs = await client.getCallsRecords({ filter: { op_names: ['stepFn'] }, sortBy: [{ field: 'started_at', direction: 'asc' }] });
+    const recs = await client.spanRecords({ filter: { names: ['stepFn'] }, sortBy: [{ field: 'started_at', direction: 'asc' }] });
     expect(recs.map((r) => r.output)).toEqual([2, 4]);
     expect(recs.every((r) => r.run_id === `${client.projectId}/run-live` && r.status === 'success')).toBe(true);
   });

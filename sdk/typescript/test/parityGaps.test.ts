@@ -43,7 +43,7 @@ describe('AWS Bedrock Agents', () => {
     await settle();
     const [root] = fake.callsByOp('bedrock_agent.invoke_agent');
     expect(kind(root)).toBe('agent');
-    expect(root.thread_id).toBe('sess-42');
+    expect(root.session_id).toBe('sess-42');
     expect(root.turn_id).toBe(root.id);
     expect(root.attributes['gen_ai.agent.name']).toBe('AGENT1');
     expect(root.attributes['gen_ai.conversation.id']).toBe('sess-42');
@@ -52,11 +52,11 @@ describe('AWS Bedrock Agents', () => {
     expect(root.output.usage).toEqual({ input_tokens: 900, output_tokens: 105 });
     expect(root.output.citations[0].retrievedReferences[0].location).toBe('s3://kb/oslo.txt');
     expect(root.output.sessionId).toBe('sess-42');
-    expect(root.exception).toBeFalsy();
+    expect(root.error).toBeFalsy();
 
     const llms = fake.callsByOp('bedrock_agent.model_invocation');
     expect(llms).toHaveLength(5);
-    expect(llms.every((c) => kind(c) === 'llm' && c.thread_id === 'sess-42' && c.turn_id === root.id)).toBe(true);
+    expect(llms.every((c) => kind(c) === 'llm' && c.session_id === 'sess-42' && c.turn_id === root.id)).toBe(true);
     const pre = llms.find((c) => c.inputs.stage === 'pre_processing');
     expect(pre.inputs.system).toBe('You are a weather agent.');
     expect(pre.output.parsed_response).toEqual({ isValid: true, rationale: 'fine' });
@@ -102,13 +102,13 @@ describe('AWS Bedrock Agents', () => {
     await settle();
     const roots = [...fake.calls.values()].filter((c) => fake.opBase(c).startsWith('bedrock_agent.invoke'));
     const by = Object.fromEntries(roots.map((c) => [c.inputs.sessionId, c]));
-    expect(by.s1.exception).toMatch(/Lambda timed out/);
-    expect(fake.callsByOp('bedrock_agent.model_invocation')[0].exception).toMatch(/Lambda timed out/);
+    expect(by.s1.error).toMatch(/Lambda timed out/);
+    expect(fake.callsByOp('bedrock_agent.model_invocation')[0].error).toMatch(/Lambda timed out/);
     expect(fake.opBase(by.s2)).toBe('bedrock_agent.invoke_inline_agent');
     expect(by.s2.attributes['gen_ai.request.model']).toBe(MODEL);
     expect(by.s2.output.return_control[0].invocations[0]).toEqual({ tool: 'billing.refund', action_group: 'billing', parameters: { order: '42' }, function: 'refund' });
     expect(fake.callsByOp('bedrock_agent.return_control')[0].parent_id).toBe(by.s2.id);
-    expect(by.s3.exception).toMatch(/stream broke/);
+    expect(by.s3.error).toMatch(/stream broke/);
   });
 });
 
@@ -147,7 +147,7 @@ describe('OpenAI Realtime', () => {
     expect(r1.output.output[0].content[0]).toMatchObject({ type: 'output_audio', transcript: 'It is sunny.', audio_bytes: 300, audio: { _type: 'Audio', mime_type: 'audio/wav' } });
     expect(r1.summary.usage['gpt-realtime']).toMatchObject({ prompt_tokens: 100, completion_tokens: 50, cached_tokens: 20, input_audio_tokens: 60, output_audio_tokens: 40 });
     expect(sess.summary?.usage).toBeUndefined();
-    expect(r2.exception).toMatch(/rate limited/);
+    expect(r2.error).toMatch(/rate limited/);
     expect(r2.inputs.input[0].type).toBe('function_call_output');
     const [tool] = fake.callsByOp('openai.realtime.tool.get_weather');
     expect(kind(tool)).toBe('tool');
@@ -196,7 +196,7 @@ describe('NER PII redaction', () => {
       sender: { flushIntervalMs: 5 },
       settings: { printCallLink: false, redactPii: true, redactPiiAnalyzer: analyzer, redactPiiScoreThreshold: 0.5, redactPiiExcludeFields: ['PHONE_NUMBER'] },
     });
-    const greet = weft.op(function greet(msg: string, meta: Record<string, unknown>) {
+    const greet = weft.trace(function greet(msg: string, meta: Record<string, unknown>) {
       return `Hi Bob, mail alice@example.com or call 555-123-4567 from Paris`;
     });
     await greet('I am Alice Smith', { api_key: 'sk-1', note: 'Bob says hi' });
@@ -232,7 +232,7 @@ describe('NER PII redaction', () => {
       process.env.WEFT_REDACT_PII = 'true';
       const c = await weft.init('ts-entity/presidio', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });
       expect(c.redactor.ner).not.toBeNull();
-      const echo = weft.op(function echo(text: string) {
+      const echo = weft.trace(function echo(text: string) {
         return text;
       });
       await echo('Ada Lovelace wrote to ada@example.com');
@@ -268,8 +268,8 @@ describe('NER PII redaction', () => {
 describe('SDK extras', () => {
   it('links prompts and any object to a registry', async () => {
     const reg = new Map<string, any[]>();
-    fake.routes.set('/link_to_registry', (b) => {
-      const key = `${b.target.entity_name}/${b.target.project_name}|${b.target.portfolio_name}`;
+    fake.routes.set('/api/v1/registry/link', (b) => {
+      const key = `${b.project_id}|${b.collection}`;
       const vs = reg.get(key) ?? [];
       let v = vs.find((x) => x.ref === b.ref);
       if (!v) vs.push((v = { version_index: vs.length, version: `v${vs.length}`, ref: b.ref, aliases: [] }));
@@ -278,9 +278,9 @@ describe('SDK extras', () => {
         v.aliases.push(a);
       }
       reg.set(key, vs);
-      return { version_index: v.version_index };
+      return { version: v.version_index };
     });
-    fake.routes.set('/registry/query', (b) => ({
+    fake.routes.set('/api/v1/registry/query', (b) => ({
       collections: [...reg.entries()]
         .filter(([k]) => k.startsWith(`${b.project_id}|`) && (!b.portfolio_name || k.endsWith(`|${b.portfolio_name}`)))
         .map(([k, vs]) => ({
@@ -289,16 +289,16 @@ describe('SDK extras', () => {
         })),
     }));
     const p1 = new weft.StringPrompt({ name: 'support', content: 'Answer {q} briefly.' });
-    await weft.publish(p1);
+    await weft.save(p1);
     const r = await weft.linkPromptToRegistry(p1, { targetPath: 'prompts/support', aliases: ['production'] });
     expect(r).toMatchObject({ versionIndex: 0, targetPath: 'ts-entity/prompts/support' });
-    const req = fake.requests.find((q) => q.path === '/link_to_registry')!.body;
-    expect(req.target).toEqual({ portfolio_name: 'support', entity_name: 'ts-entity', project_name: 'prompts' });
+    const req = fake.requests.find((q) => q.path === '/api/v1/registry/link')!.body;
+    expect(req).toMatchObject({ project_id: 'ts-entity/prompts', collection: 'support' });
     expect(req.ref).toBe(r.ref);
     const ds = new weft.Dataset({ name: 'golden', rows: [{ q: '1+1' }] });
     expect((await weft.linkToRegistry(ds, { targetPath: 'other/datasets/golden' })).versionIndex).toBe(0);
     const p2 = new weft.StringPrompt({ name: 'support', content: 'Answer {q} in one word.' });
-    await weft.publish(p2);
+    await weft.save(p2);
     expect((await weft.linkToRegistry('support:latest', { targetPath: 'prompts/support', aliases: ['production'] })).versionIndex).toBe(1);
     const [col] = await client.queryRegistry('prompts', { collection: 'support' });
     expect(col.versions.map((v) => v.version_index)).toEqual([1, 0]);
@@ -309,24 +309,24 @@ describe('SDK extras', () => {
   });
 
   it('returns calls as records and passes include_usernames / include_storage_size', async () => {
-    const f = weft.op(function f(x: number) {
+    const f = weft.trace(function f(x: number) {
       return x + 1;
     });
     await f(1);
     await f(2);
-    const recs = await client.getCallsRecords({ filter: { op_names: ['f'] }, includeUsernames: true, includeStorageSize: true, includeRunStatus: true });
+    const recs = await client.spanRecords({ filter: { names: ['f'] }, includeUsernames: true, includeStorageSize: true, includeRunStatus: true });
     expect(recs.map((r) => r.output).sort()).toEqual([2, 3]);
-    expect(recs[0]).toMatchObject({ status: 'success', op_name: expect.stringContaining('/op/f:'), run_id: null });
-    const q = fake.requests.filter((r) => r.path === '/calls/stream_query').pop()!.body;
+    expect(recs[0]).toMatchObject({ status: 'success', name: expect.stringContaining('/function/f:'), error: null, session_id: null, run_id: null });
+    const q = fake.requests.filter((r) => r.path === '/api/v1/spans/stream').pop()!.body;
     expect(q.include_usernames).toBe(true);
     expect(q.include_storage_size).toBe(true);
     expect(q.include_run_status).toBe(true);
-    expect(new weft.Call({ id: 'x', project_id: 'a/b', op_name: 'o', trace_id: 't', username: 'ann', run_step: 2 }, null).toRecord()).toMatchObject({ username: 'ann', run_step: 2 });
+    expect(new weft.Span({ id: 'x', project_id: 'a/b', name: 'o', trace_id: 't', username: 'ann', run_step: 2 }, null).toRecord()).toMatchObject({ username: 'ann', run_step: 2 });
   });
 
   it('sends run_id / run_step / run_step_end', async () => {
     let step = 3;
-    const trainStep = weft.op(function trainStep() {
+    const trainStep = weft.trace(function trainStep() {
       step += 1;
       return step;
     });

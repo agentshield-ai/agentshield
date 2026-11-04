@@ -3,10 +3,10 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
 import { parseRef } from '../../api/refs'
-import type { Any, ChatMessage, CompletionInputs, LLMModelInfo, ObjSchema } from '../../api/types'
+import type { Any, ChatMessage, CompletionInputs, LLMModelInfo, WeftObject } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDuration, fmtNumber } from '../../lib/format'
-import { callUrl, settingsUrl } from '../../lib/urls'
+import { spanUrl, settingsUrl } from '../../lib/urls'
 import { ErrorBox, Modal, Spinner } from '../../components/common'
 import { JsonBlock } from '../../components/ValueView'
 import { ChatMessageView, findInputMessages, normaliseMessage } from '../../components/traces/ChatView'
@@ -192,7 +192,7 @@ function pickDefaultModel(models: LLMModelInfo[]): string {
 export function PlaygroundPage() {
   const projectId = useProjectId()
   const [params, setParams] = useSearchParams()
-  const fromCall = params.get('call')
+  const fromCall = params.get('span') ?? params.get('call')
   const fromPrompt = params.get('prompt')
   const modelsQ = useQuery({ queryKey: ['llm-models'], queryFn: api.llmModels, staleTime: 60_000 })
   const models = useMemo(() => {
@@ -254,21 +254,21 @@ export function PlaygroundPage() {
     setPanels((ps) => ps.map((p) => (p.model ? p : { ...p, model: pickDefaultModel(models) })))
   }, [modelsQ.data, models])
 
-  // Load messages, model and params from a call (?call=<id>).
-  const callQ = useQuery({ queryKey: ['call', projectId, fromCall], queryFn: () => api.callRead(projectId, fromCall!), enabled: !!fromCall })
+  // Load messages, model and params from a span (?span=<id>).
+  const callQ = useQuery({ queryKey: ['span', projectId, fromCall], queryFn: () => api.spanFind(projectId, fromCall!), enabled: !!fromCall })
   useEffect(() => {
-    const c = callQ.data?.call
+    const c = callQ.data
     if (!c) return
     const st = stateFromInputs(c.inputs ?? {})
     if (!st) {
-      setLoadNote(`Call ${c.id.slice(0, 8)} has no chat messages in its inputs.`)
+      setLoadNote(`Span ${c.id.slice(0, 8)} has no chat messages in its inputs.`)
       return
     }
     setShared(st.msgs)
     setSync(true)
     const { params: p, model } = st
     setPanels((ps) => ps.map((x, i) => (i === 0 ? { ...x, model: model ?? x.model, params: p, result: null } : x)))
-    setLoadNote(`Loaded from call ${c.id.slice(0, 8)}${model ? ` (${model})` : ''}.`)
+    setLoadNote(`Loaded from span ${c.id.slice(0, 8)}${model ? ` (${model})` : ''}.`)
   }, [callQ.data])
 
   const panelMessages = (p: Panel) => (sync ? shared : p.messages)
@@ -309,7 +309,7 @@ export function PlaygroundPage() {
           inputs,
           (chunk) => {
             chunks.push(chunk)
-            if (chunk?._meta?.call_id) callId = chunk._meta.call_id
+            if (chunk?._meta?.span_id) callId = chunk._meta.span_id
             if (chunk?.error) streamError = typeof chunk.error === 'string' ? chunk.error : (chunk.error.message ?? JSON.stringify(chunk.error))
             if (chunk?.usage) usage = chunk.usage
             const ch = chunk?.choices?.[0]
@@ -348,16 +348,16 @@ export function PlaygroundPage() {
         }
         // Fall back to the non-streaming endpoint.
         try {
-          const r = await api.completionsCreate(projectId, inputs)
+          const r = await api.completions(projectId, inputs)
           const resp = r.response
           record.current({
-            id: r.call_id ?? `local-${Date.now()}-${panel.id}`,
+            id: r.span_id ?? `local-${Date.now()}-${panel.id}`,
             at: new Date().toISOString(),
             mode: 'chat',
             model: panel.model,
             inputs: inputs as Any,
             output: messageText(resp.choices?.[0]?.message),
-            callId: r.call_id,
+            callId: r.span_id ?? undefined,
             latencyMs: performance.now() - t0,
             tokens: resp.usage?.total_tokens,
             error: resp.error,
@@ -369,7 +369,7 @@ export function PlaygroundPage() {
               message: resp.choices?.[0]?.message,
               finishReason: resp.choices?.[0]?.finish_reason,
               usage: resp.usage,
-              callId: r.call_id,
+              callId: r.span_id ?? undefined,
               error: resp.error,
               latencyMs: performance.now() - t0,
               raw: resp,
@@ -430,19 +430,19 @@ export function PlaygroundPage() {
     setLoadNote(`Loaded a ${run.source === 'server' ? 'tracked' : 'previous'} run of ${run.model} from ${new Date(run.at).toLocaleString()}.`)
   }
 
-  const loadPrompt = (o: ObjSchema, fromUrl = false) => {
-    const v = o.val ?? {}
+  const loadPrompt = (o: WeftObject, fromUrl = false) => {
+    const v = o.value ?? {}
     let msgs: EditMsg[] = []
     if (Array.isArray(v.messages)) msgs = v.messages.map(toEditMsg)
     else if (typeof v.content === 'string') msgs = [{ id: uid(), role: 'user', content: v.content }]
     else if (typeof v.prompt === 'string') msgs = [{ id: uid(), role: 'user', content: v.prompt }]
     if (!msgs.length) {
-      setLoadNote(`Prompt ${o.object_id} has no messages.`)
+      setLoadNote(`Prompt ${o.name} has no messages.`)
       return
     }
     if (sync) setShared(msgs)
     else setPanels((ps) => ps.map((p) => ({ ...p, messages: msgs.map((m) => ({ ...m, id: uid() })) })))
-    setLoadNote(`Loaded prompt ${o.object_id} (v${o.version_index}).`)
+    setLoadNote(`Loaded prompt ${o.name} (v${o.version}).`)
     // A prompt picked from the menu replaces whatever the URL pointed at.
     if (!fromUrl && (fromCall || fromPrompt)) setParams({}, { replace: true })
   }
@@ -453,13 +453,13 @@ export function PlaygroundPage() {
     queryFn: async () => {
       const ref = parseRef(fromPrompt!)
       if (ref && ref.kind !== 'object') throw new Error(`${fromPrompt} is not an object ref`)
-      return ref ? api.objRead(ref.projectId, ref.name, ref.digest ?? 'latest') : api.objRead(projectId, fromPrompt!, 'latest')
+      return ref ? api.objectGet(ref.projectId, ref.name, ref.digest ?? 'latest') : api.objectGet(projectId, fromPrompt!, 'latest')
     },
     enabled: !!fromPrompt,
     staleTime: Infinity,
   })
   useEffect(() => {
-    if (promptQ.data?.obj) loadPrompt(promptQ.data.obj, true)
+    if (promptQ.data) loadPrompt(promptQ.data, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promptQ.data])
 
@@ -482,7 +482,7 @@ export function PlaygroundPage() {
             Image
           </button>
         </div>
-        <button className={`btn sm ${showHistory ? 'primary' : ''}`} aria-pressed={showHistory} onClick={() => toggleHistory(!showHistory)} title="Past runs in this browser and tracked calls">
+        <button className={`btn sm ${showHistory ? 'primary' : ''}`} aria-pressed={showHistory} onClick={() => toggleHistory(!showHistory)} title="Past runs in this browser and tracked spans">
           History{history.length ? ` (${history.length})` : ''}
         </button>
         <span className="spacer" />
@@ -578,12 +578,12 @@ export function PlaygroundPage() {
 
 // ---------------------------------------------------------------- pieces
 
-function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: ObjSchema) => void }) {
+function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: WeftObject) => void }) {
   const prompts = useQuery({
-    queryKey: ['objs', projectId, 'Prompt', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['Prompt'], latest_only: true }, sort_by: [{ field: 'created_at', direction: 'desc' }], limit: 200 }),
+    queryKey: ['objects', projectId, 'Prompt', 'latest'],
+    queryFn: () => api.objectsQuery({ project_id: projectId, filter: { kinds: ['prompt'], latest_only: true }, sort_by: [{ field: 'created_at', direction: 'desc' }], limit: 200 }),
   })
-  const list = (prompts.data?.objs ?? []).filter((o) => !o.deleted_at)
+  const list = (prompts.data?.items ?? []).filter((o) => !o.deleted_at)
   return (
     <Dropdown label="Load prompt ▾" className="btn sm">
       {(close) => (
@@ -592,14 +592,14 @@ function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: Ob
           {!prompts.isLoading && list.length === 0 && <div className="dd-note">No saved prompts in this project.</div>}
           {list.map((o) => (
             <MenuItem
-              key={o.object_id}
+              key={o.name}
               onClick={() => {
                 onPick(o)
                 close()
               }}
             >
-              <span className="grow">{o.object_id}</span>
-              <span className="faint small">{o.leaf_object_class ?? o.base_object_class}</span>
+              <span className="grow">{o.name}</span>
+              <span className="faint small">{o.class ?? o.kind}</span>
             </MenuItem>
           ))}
         </>
@@ -653,10 +653,10 @@ function SaveModelModal({ projectId, panels, onClose }: { projectId: string; pan
       if (p.top_p !== 1) default_params.top_p = p.top_p
       if (p.json) default_params.response_format = 'json_object'
       const val = { _class_name: 'LLMStructuredCompletionModel', _bases: ['Model', 'Object', 'BaseModel'], name: id, llm_model_id: panel.model, default_params }
-      const r = await api.objCreate(projectId, id, val, 'LLMStructuredCompletionModel')
+      const r = await api.objectSave(projectId, id, val, 'LLMStructuredCompletionModel')
       return { id, ...r }
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objs', projectId] }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objects', projectId] }),
   })
   return (
     <Modal
@@ -681,7 +681,7 @@ function SaveModelModal({ projectId, panels, onClose }: { projectId: string; pan
     >
       {save.data ? (
         <div className="success-box">
-          Saved model <b>{save.data.id}</b> (v{save.data.version_index}). It can now be run in{' '}
+          Saved model <b>{save.data.id}</b> (v{save.data.version}). It can now be run in{' '}
           <Link to={`/${projectId}/evaluations/new`}>a new evaluation</Link>.
         </div>
       ) : (
@@ -722,10 +722,10 @@ function SavePromptModal({ projectId, messages, onClose }: { projectId: string; 
       const id = slugify(name)
       if (!id) throw new Error('Enter a name')
       const msgs = messages.map(toApiMsg)
-      const r = await api.objCreate(projectId, id, { _class_name: 'MessagesPrompt', _bases: ['Prompt', 'Object', 'BaseModel'], name: id, messages: msgs }, 'MessagesPrompt')
+      const r = await api.objectSave(projectId, id, { _class_name: 'MessagesPrompt', _bases: ['Prompt', 'Object', 'BaseModel'], name: id, messages: msgs }, 'MessagesPrompt')
       return { id, ...r }
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objs', projectId] }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['objects', projectId] }),
   })
   return (
     <Modal
@@ -750,7 +750,7 @@ function SavePromptModal({ projectId, messages, onClose }: { projectId: string; 
     >
       {save.data ? (
         <div className="success-box">
-          Saved <b>{save.data.id}</b> as version v{save.data.version_index}.
+          Saved <b>{save.data.id}</b> as version v{save.data.version}.
         </div>
       ) : (
         <>
@@ -999,7 +999,7 @@ function PanelView({
             </span>
           )}
           {r?.callId && (
-            <Link className="small" to={callUrl(projectId, r.callId)}>
+            <Link className="small" to={spanUrl(projectId, r.callId)}>
               View call
             </Link>
           )}

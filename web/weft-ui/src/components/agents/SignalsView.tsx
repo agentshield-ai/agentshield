@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { api } from '../../api/client'
 import { agentUrl, conversationUrl, signalsApi, type SignalKind, type SignalPreset, type SignalResult, type SignalRunRes } from '../../api/agents'
 import { fmtDate, fmtNumber, fmtRelative, truncate } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Modal, Pager, Spinner } from '../common'
 import { windowStart } from './agentUtils'
 import { RangePicker, ScorePill, Sparkline, TOOLTIP_STYLE } from './bits'
@@ -32,17 +32,17 @@ type Update = (patch: Record<string, string | null>) => void
 export function useSignalConfig(projectId: string) {
   const qc = useQueryClient()
   const q = useQuery({
-    queryKey: ['obj', projectId, SIGNALS_OBJECT_ID],
+    queryKey: ['object', projectId, SIGNALS_OBJECT_ID],
     queryFn: async () => {
-      const r = await api.objsQuery({ project_id: projectId, filter: { object_ids: [SIGNALS_OBJECT_ID], latest_only: true }, limit: 1 })
-      const o = r.objs.find((x) => !x.deleted_at)
-      return o ? parseSignalsVal(o.val) : { signals: [] as SignalConfig[], model: undefined as string | undefined, auto: true }
+      const r = await api.objectsQuery({ project_id: projectId, filter: { names: [SIGNALS_OBJECT_ID], latest_only: true }, limit: 1 })
+      const o = r.items.find((x) => !x.deleted_at)
+      return o ? parseSignalsVal(o.value) : { signals: [] as SignalConfig[], model: undefined as string | undefined, auto: true }
     },
   })
   const save = useMutation({
     mutationFn: (next: { signals: SignalConfig[]; model?: string; auto?: boolean }) =>
-      api.objCreate(projectId, SIGNALS_OBJECT_ID, signalsVal(next.signals, next.model, next.auto ?? q.data?.auto ?? true)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['obj', projectId, SIGNALS_OBJECT_ID] }),
+      api.objectSave(projectId, SIGNALS_OBJECT_ID, signalsVal(next.signals, next.model, next.auto ?? q.data?.auto ?? true)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['object', projectId, SIGNALS_OBJECT_ID] }),
   })
   return { q, save, signals: q.data?.signals ?? [], model: q.data?.model, auto: q.data?.auto ?? true }
 }
@@ -527,7 +527,7 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
                         {truncate(r.conversation_name || r.conversation_id, 40)}
                       </Link>
                     ) : (
-                      <Link to={callUrl(projectId, r.span_id)} className="small mono">
+                      <Link to={spanUrl(projectId, r.span_id)} className="small mono">
                         turn {r.span_id.slice(0, 8)}
                       </Link>
                     )}

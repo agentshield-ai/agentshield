@@ -1,31 +1,42 @@
-"""Call records (local and fetched from the server) and feedback helpers."""
+"""Spans (local and fetched from the server) and feedback helpers.
+
+A span is one traced function or model call (docs/weft/DESIGN.md §10.2).
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
-from ._refs import CallRef, is_ref_uri, parse_uri
+from ._deprecation import deprecated_call
+from ._refs import SpanRef, is_ref_uri, parse_uri
 
 if TYPE_CHECKING:  # pragma: no cover
     from ._client import WeftClient
 
 
 @dataclass
-class Call:
+class Span:
+    """One traced function or model call.
+
+    ``name`` is the function ref (or a plain span name), ``error`` the error
+    text of a failed span, ``session_id`` / ``turn_id`` the conversation and
+    turn it belongs to.
+    """
+
     id: str
     project_id: str
-    op_name: str
+    name: str
     trace_id: str
     parent_id: Optional[str] = None
     display_name: Optional[str] = None
-    thread_id: Optional[str] = None
+    session_id: Optional[str] = None
     turn_id: Optional[str] = None
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
     inputs: Dict[str, Any] = field(default_factory=dict)
     output: Any = None
-    exception: Optional[str] = None
+    error: Optional[str] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
     summary: Dict[str, Any] = field(default_factory=dict)
     user_id: Optional[str] = None
@@ -42,28 +53,28 @@ class Call:
     _raw_inputs: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
     _raw_output: Any = field(default=None, repr=False, compare=False)
     _child_count: int = field(default=0, repr=False, compare=False)
-    # True for calls recorded by weft.conversation spans (Turn, LLM, Tool,
-    # SubAgent) rather than by ops.
+    # True for spans recorded by weft.conversation (Turn, LLM, Tool,
+    # SubAgent) rather than by traced functions.
     _conversation_span: bool = field(default=False, repr=False, compare=False)
-    # The conversation span (Turn, LLM, Tool, SubAgent, Handoff) recording this call.
+    # The conversation span (Turn, LLM, Tool, SubAgent, Handoff) recording this span.
     _weft_span: Any = field(default=None, repr=False, compare=False)
     # Attributes changed after the start was sent: the start is sent again
     # (an upsert) before the end.
     _resend_start: bool = field(default=False, repr=False, compare=False)
-    # weft.reasoning() steps recorded while the call ran.
+    # weft.reasoning() steps recorded while the span ran.
     _weft_reasoning: Optional[List[Dict[str, Any]]] = field(default=None, repr=False, compare=False)
-    # An LLM call was recorded under this one (its reasoning is not repeated here).
+    # An LLM span was recorded under this one (its reasoning is not repeated here).
     _llm_descendant: bool = field(default=False, repr=False, compare=False)
 
     # ---- convenience -----------------------------------------------------
     _DICT_FIELDS = (
-        "id", "project_id", "op_name", "display_name", "trace_id", "parent_id", "thread_id", "turn_id",
-        "started_at", "ended_at", "inputs", "output", "exception", "attributes", "summary",
+        "id", "project_id", "name", "display_name", "trace_id", "parent_id", "session_id", "turn_id",
+        "started_at", "ended_at", "inputs", "output", "error", "attributes", "summary",
         "user_id", "username", "run_id", "run_step", "run_step_end", "deleted_at",
     )
 
     def to_dict(self) -> Dict[str, Any]:
-        """The call as a plain dict (server field names), as used by ``CallsIter.to_pandas()``."""
+        """The span as a plain dict (server field names), as used by ``SpansIter.to_pandas()``."""
         d: Dict[str, Any] = {k: getattr(self, k) for k in self._DICT_FIELDS}
         d["status"] = self.status
         if self.storage_size_bytes is not None:
@@ -73,25 +84,62 @@ class Call:
         return d
 
     @property
-    def op_base_name(self) -> str:
-        if is_ref_uri(self.op_name):
+    def base_name(self) -> str:
+        """The function's name for a function ref (``my_fn``), else ``name``."""
+        if is_ref_uri(self.name):
             try:
-                return parse_uri(self.op_name).name  # type: ignore[attr-defined]
+                return parse_uri(self.name).name  # type: ignore[attr-defined]
             except ValueError:
-                return self.op_name
-        return self.op_name
+                return self.name
+        return self.name
+
+    # ---- earlier field names (deprecated) ---------------------------------
+    @property
+    def op_name(self) -> str:
+        deprecated_call("Span.op_name", "Span.name")
+        return self.name
+
+    @op_name.setter
+    def op_name(self, v: str) -> None:
+        deprecated_call("Span.op_name", "Span.name")
+        self.name = v
 
     @property
-    def ref(self) -> CallRef:
+    def op_base_name(self) -> str:
+        deprecated_call("Span.op_base_name", "Span.base_name")
+        return self.base_name
+
+    @property
+    def exception(self) -> Optional[str]:
+        deprecated_call("Span.exception", "Span.error")
+        return self.error
+
+    @exception.setter
+    def exception(self, v: Optional[str]) -> None:
+        deprecated_call("Span.exception", "Span.error")
+        self.error = v
+
+    @property
+    def thread_id(self) -> Optional[str]:
+        deprecated_call("Span.thread_id", "Span.session_id")
+        return self.session_id
+
+    @thread_id.setter
+    def thread_id(self, v: Optional[str]) -> None:
+        deprecated_call("Span.thread_id", "Span.session_id")
+        self.session_id = v
+
+    @property
+    def ref(self) -> SpanRef:
         entity, _, project = self.project_id.partition("/")
-        return CallRef(entity, project, self.id)
+        return SpanRef(entity, project, self.id)
 
     def uri(self) -> str:
         return self.ref.uri()
 
     @property
     def ui_url(self) -> str:
-        """Link to this call in the Weft UI."""
+        """Link to this span in the Weft UI."""
         base = self._client.server_url if self._client is not None else ""
         return f"{base}/{self.project_id}/calls/{self.id}"
 
@@ -100,13 +148,13 @@ class Call:
         computed = (self.summary or {}).get("weft") or {}
         if computed.get("status"):
             return computed["status"]
-        if self.exception:
+        if self.error:
             return "error"
         return "success" if self.ended_at else "running"
 
     @property
-    def feedback(self) -> "CallFeedback":
-        return CallFeedback(self)
+    def feedback(self) -> "SpanFeedback":
+        return SpanFeedback(self)
 
     def _require_client(self) -> "WeftClient":
         if self._client is None:
@@ -116,20 +164,20 @@ class Call:
         return self._client
 
     def set_display_name(self, name: Optional[str]) -> None:
-        """Rename the call (sent immediately; pending writes are flushed first)."""
+        """Rename the span (sent immediately; pending writes are flushed first)."""
         client = self._require_client()
         self.display_name = name
         client.flush()
-        client._http.post("/call/update", {"project_id": self.project_id, "call_id": self.id, "display_name": name})
+        client._http.post("/api/v1/spans/update", {"project_id": self.project_id, "id": self.id, "display_name": name})
 
     def delete(self) -> None:
         client = self._require_client()
         client.flush()
-        client._http.post("/calls/delete", {"project_id": self.project_id, "call_ids": [self.id]})
+        client._http.post("/api/v1/spans/delete", {"project_id": self.project_id, "ids": [self.id]})
 
-    def children(self) -> List["Call"]:
+    def children(self) -> List["Span"]:
         client = self._require_client()
-        return list(client.get_calls(filter={"parent_ids": [self.id]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
+        return list(client.spans(filter={"parent_ids": [self.id]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
 
     # ---- guardrails / online scoring -------------------------------------
     def _scorer_plan(self, scorer: Any, additional_scorer_kwargs: Optional[Dict[str, Any]]) -> Any:
@@ -144,7 +192,7 @@ class Call:
                 raise TypeError("scorer must be a weft.Scorer or an op/function")
         client = self._require_client()
         if isinstance(scorer, Scorer):
-            runnable_ref = client.publish(scorer).uri()
+            runnable_ref = client.save(scorer).uri()
         else:
             runnable_ref = client._op_ref(scorer if isinstance(scorer, Op) else scorer.op).uri()
         inputs = self._raw_inputs if self._raw_inputs is not None else self.inputs
@@ -154,42 +202,42 @@ class Call:
         fn, cmap = _scorer_fn(scorer)
         return client, fn, _scorer_args(fn, row, output, cmap), scorer_name(scorer), runnable_ref
 
-    def _scorer_done(self, client: "WeftClient", res: Any, score_call: Any, name: str, runnable_ref: str) -> "ApplyScorerResult":
-        if score_call is not None and score_call.exception:
-            raise RuntimeError(f"scorer {name} failed: {score_call.exception.splitlines()[0]}")
+    def _scorer_done(self, client: "WeftClient", res: Any, score_span: Any, name: str, runnable_ref: str) -> "ApplyScorerResult":
+        if score_span is not None and score_span.error:
+            raise RuntimeError(f"scorer {name} failed: {score_span.error.splitlines()[0]}")
         fid = None
-        if score_call is not None:
+        if score_span is not None:
             fid = self.feedback.add(
                 f"weft.scorer.{name}",
                 {"output": res},
                 runnable_ref=runnable_ref,
-                call_ref=score_call.uri(),
+                span_ref=score_span.uri(),
             )
-        return ApplyScorerResult(result=res, score_call=score_call, feedback_id=fid)
+        return ApplyScorerResult(result=res, score_span=score_span, feedback_id=fid)
 
     async def apply_scorer(self, scorer: Any, additional_scorer_kwargs: Optional[Dict[str, Any]] = None) -> "ApplyScorerResult":
-        """Score this call (guardrail / online evaluation).
+        """Score this span (guardrail / online evaluation).
 
-        Runs ``scorer`` on the call's inputs and output (argument names are
-        matched to input names; ``output`` receives the call output), records
-        the scorer call, and attaches ``weft.scorer.<scorer>`` feedback with
-        ``runnable_ref`` and ``call_ref``. Returns the result so callers can
-        block on it.
+        Runs ``scorer`` on the span's inputs and output (argument names are
+        matched to input names; ``output`` receives the span output), records
+        the scorer's own span, and attaches ``weft.scorer.<scorer>`` feedback
+        with ``runnable_ref`` and ``span_ref``. Returns the result so callers
+        can block on it.
         """
         import inspect
 
         from . import _context
 
         client, fn, args, name, runnable_ref = self._scorer_plan(scorer, additional_scorer_kwargs)
-        token = _context._call_stack.set(())  # scorer calls are their own traces
+        token = _context._call_stack.set(())  # scorer spans are their own traces
         try:
             out = fn.call(**args)
             if inspect.isawaitable(out):
                 out = await out
         finally:
             _context._call_stack.reset(token)
-        res, score_call = out
-        return self._scorer_done(client, res, score_call, name, runnable_ref)
+        res, score_span = out
+        return self._scorer_done(client, res, score_span, name, runnable_ref)
 
     def apply_scorer_sync(self, scorer: Any, additional_scorer_kwargs: Optional[Dict[str, Any]] = None) -> "ApplyScorerResult":
         """Synchronous ``apply_scorer`` (async scorers run in a new event loop)."""
@@ -213,25 +261,25 @@ class Call:
                     _context._call_stack.reset(t)
 
             out = asyncio.run(_run())
-        res, score_call = out
-        return self._scorer_done(client, res, score_call, name, runnable_ref)
+        res, score_span = out
+        return self._scorer_done(client, res, score_span, name, runnable_ref)
 
     @classmethod
-    def from_server(cls, d: Dict[str, Any], client: Optional["WeftClient"]) -> "Call":
+    def from_server(cls, d: Dict[str, Any], client: Optional["WeftClient"]) -> "Span":
         c = cls(
             id=d.get("id", ""),
             project_id=d.get("project_id", ""),
-            op_name=d.get("op_name", ""),
+            name=d.get("name") or "",
             trace_id=d.get("trace_id", ""),
             parent_id=d.get("parent_id"),
             display_name=d.get("display_name"),
-            thread_id=d.get("thread_id"),
+            session_id=d.get("session_id"),
             turn_id=d.get("turn_id"),
             started_at=d.get("started_at"),
             ended_at=d.get("ended_at"),
             inputs=d.get("inputs") or {},
             output=d.get("output"),
-            exception=d.get("exception"),
+            error=d.get("error"),
             attributes=d.get("attributes") or {},
             summary=d.get("summary") or {},
             user_id=d.get("user_id"),
@@ -249,23 +297,36 @@ class Call:
         return c
 
 
+# Earlier name of Span.
+Call = Span
+
+
 @dataclass
 class ApplyScorerResult:
-    """Result of ``Call.apply_scorer``: the score, the scorer's call and the feedback id."""
+    """Result of ``Span.apply_scorer``: the score, the scorer's span and the feedback id."""
 
     result: Any
-    score_call: Optional[Call]
+    score_span: Optional[Span]
     feedback_id: Optional[str]
 
+    @property
+    def score_call(self) -> Optional[Span]:
+        deprecated_call("ApplyScorerResult.score_call", "ApplyScorerResult.score_span")
+        return self.score_span
 
-class CallFeedback:
-    """Feedback attached to a call: iterate it, or add reactions/notes/payloads."""
 
-    def __init__(self, call: Call):
-        self.call = call
+class SpanFeedback:
+    """Feedback attached to a span: iterate it, or add reactions/notes/payloads."""
+
+    def __init__(self, span: Span):
+        self.span = span
+
+    @property
+    def call(self) -> Span:
+        return self.span
 
     def _client(self) -> "WeftClient":
-        return self.call._require_client()
+        return self.span._require_client()
 
     def add(
         self,
@@ -275,26 +336,29 @@ class CallFeedback:
         creator: Optional[str] = None,
         annotation_ref: Optional[str] = None,
         runnable_ref: Optional[str] = None,
-        call_ref: Optional[str] = None,
+        span_ref: Optional[str] = None,
         trigger_ref: Optional[str] = None,
         **extra: Any,
     ) -> str:
-        """Attach feedback. ``annotation_ref``/``runnable_ref``/``call_ref``/``trigger_ref`` accept refs or URIs."""
-        for k, v in (("annotation_ref", annotation_ref), ("runnable_ref", runnable_ref), ("call_ref", call_ref), ("trigger_ref", trigger_ref)):
+        """Attach feedback. ``annotation_ref``/``runnable_ref``/``span_ref``/``trigger_ref`` accept refs or URIs."""
+        if span_ref is None and extra.get("call_ref") is not None:
+            span_ref = extra.pop("call_ref")
+        extra.pop("call_ref", None)
+        for k, v in (("annotation_ref", annotation_ref), ("runnable_ref", runnable_ref), ("span_ref", span_ref), ("trigger_ref", trigger_ref)):
             if v is not None:
                 extra[k] = v.uri() if hasattr(v, "uri") else str(v)
         client = self._client()
         client.flush()
         body: Dict[str, Any] = {
-            "project_id": self.call.project_id,
-            "ref": self.call.uri(),
+            "project_id": self.span.project_id,
+            "ref": self.span.uri(),
             "feedback_type": feedback_type,
             "payload": payload if isinstance(payload, dict) else {"value": payload},
         }
         if creator:
             body["creator"] = creator
         body.update({k: v for k, v in extra.items() if v is not None})
-        res = client._http.post("/feedback/create", body)
+        res = client._http.post("/api/v1/feedback/create", body)
         return res.get("id", "")
 
     def add_reaction(self, emoji: str, creator: Optional[str] = None) -> str:
@@ -306,30 +370,28 @@ class CallFeedback:
     def add_annotation(self, spec: Any, value: Any, creator: Optional[str] = None) -> str:
         """Human annotation following an ``AnnotationSpec`` (published if needed)."""
         client = self._client()
-        ref = getattr(spec, "_weft_ref", None) or client.publish(spec)
+        ref = getattr(spec, "_weft_ref", None) or client.save(spec)
         if hasattr(spec, "value_is_valid") and not spec.value_is_valid(value):
             raise ValueError(f"value {value!r} does not match annotation spec {ref.name}")
         return self.add(f"weft.annotation.{ref.name}", {"value": value}, creator=creator, annotation_ref=ref)
 
     def purge(self, feedback_id: str) -> None:
         client = self._client()
-        client._http.post(
-            "/feedback/purge",
-            {"project_id": self.call.project_id, "query": {"$expr": {"$eq": [{"$getField": "id"}, {"$literal": feedback_id}]}}},
-        )
+        client._http.post("/api/v1/feedback/delete", {"project_id": self.span.project_id, "ids": [feedback_id]})
 
     def _list(self) -> List[Dict[str, Any]]:
         client = self._client()
         client.flush()
         res = client._http.post(
-            "/feedback/query",
+            "/api/v1/feedback/query",
             {
-                "project_id": self.call.project_id,
-                "query": {"$expr": {"$eq": [{"$getField": "ref"}, {"$literal": self.call.uri()}]}},
+                "project_id": self.span.project_id,
+                "query": {"$expr": {"$eq": [{"$getField": "ref"}, {"$literal": self.span.uri()}]}},
                 "sort_by": [{"field": "created_at", "direction": "asc"}],
+                "limit": 10000,
             },
         )
-        return list(res.get("result") or [])
+        return list(res.get("items") or [])
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         return iter(self._list())
@@ -341,4 +403,8 @@ class CallFeedback:
         return self._list()[i]
 
     def __repr__(self) -> str:
-        return f"CallFeedback(call={self.call.id!r})"
+        return f"SpanFeedback(span={self.span.id!r})"
+
+
+# Earlier name of SpanFeedback.
+CallFeedback = SpanFeedback

@@ -30,8 +30,8 @@ export function DashboardPage() {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const q = useQuery({ queryKey: ['dashboard', projectId, objectId], queryFn: () => dashboardsApi.read(projectId, objectId) })
-  const ops = useQuery({ queryKey: ['calls', projectId, 'op_counts', false], queryFn: () => api.opCounts(projectId, false) })
-  const opNames = useMemo(() => [...new Set((ops.data?.ops ?? []).map((o) => o.op_base_name))].sort(), [ops.data])
+  const ops = useQuery({ queryKey: ['spans', projectId, 'op_counts', false], queryFn: () => api.spanNames(projectId, false) })
+  const opNames = useMemo(() => [...new Set((ops.data?.items ?? []).map((o) => o.base_name))].sort(), [ops.data])
 
   const [editing, setEditing] = useState<DashboardPanel | null>(null)
   const [modal, setModal] = useState<null | 'rename' | 'delete'>(null)
@@ -45,13 +45,13 @@ export function DashboardPage() {
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['dashboard', projectId, objectId] })
-      void qc.invalidateQueries({ queryKey: ['objs', projectId, 'Dashboard'] })
+      void qc.invalidateQueries({ queryKey: ['objects', projectId, 'Dashboard'] })
     },
   })
   const del = useMutation({
     mutationFn: () => dashboardsApi.remove(projectId, objectId),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['objs', projectId, 'Dashboard'] })
+      void qc.invalidateQueries({ queryKey: ['objects', projectId, 'Dashboard'] })
       nav(dashboardsUrl(projectId))
     },
   })
@@ -64,7 +64,7 @@ export function DashboardPage() {
         <Link to={dashboardsUrl(projectId)}>Back to dashboards</Link>
       </div>
     )
-  const val: DashboardVal = { ...q.data.val, panels: q.data.val.panels ?? [] }
+  const val: DashboardVal = { ...q.data.value, panels: q.data.value.panels ?? [] }
   // URL overrides let people explore other ranges without saving a new version.
   const range = params.get('range') ?? val.time_range ?? '7d'
   const refresh = Number(params.get('refresh') ?? val.refresh_seconds ?? 0) || 0
@@ -82,7 +82,7 @@ export function DashboardPage() {
   const dash = { filter: val.filter, query: val.query, time_range: range }
   const update = (patch: Partial<DashboardVal>) => save.mutate({ ...val, ...patch })
   const setPanels = (panels: DashboardPanel[]) => update({ panels })
-  const op = val.filter?.op_names?.[0] ?? ''
+  const op = val.filter?.names?.[0] ?? ''
   const roots = val.filter?.trace_roots_only ?? false
 
   return (
@@ -100,7 +100,7 @@ export function DashboardPage() {
         <span className="spacer" />
         {save.isPending && <Spinner label="Saving…" />}
         <span className="small faint" title={q.data.created_at}>
-          v{q.data.version_index} · saved {fmtRelative(q.data.created_at)}
+          v{q.data.version} · saved {fmtRelative(q.data.created_at)}
         </span>
         <button className="btn primary" onClick={() => setEditing(blankPanel())}>
           + Add chart
@@ -132,14 +132,14 @@ export function DashboardPage() {
 
       <div className="toolbar dash-filters">
         <TimeRangePicker value={range} onChange={(v) => setParam('range', v === (val.time_range ?? '7d') ? null : v)} />
-        <select className="input" aria-label="Op filter" value={op} onChange={(e) => update({ filter: { ...val.filter, op_names: e.target.value ? [e.target.value] : undefined } })} style={{ maxWidth: 220 }}>
-          <option value="">All ops</option>
+        <select className="input" aria-label="Span name filter" value={op} onChange={(e) => update({ filter: { ...val.filter, names: e.target.value ? [e.target.value] : undefined } })} style={{ maxWidth: 220 }}>
+          <option value="">All names</option>
           {opNames.map((n) => (
             <option key={n}>{n}</option>
           ))}
           {op && !opNames.includes(op) && <option>{op}</option>}
         </select>
-        <label className="checkbox small" title="Charts count only the root call of each trace unless a chart overrides it">
+        <label className="checkbox small" title="Charts count only the root span of each trace unless a chart overrides it">
           <input type="checkbox" checked={roots} onChange={(e) => update({ filter: { ...val.filter, trace_roots_only: e.target.checked } })} /> Roots only
         </label>
         <span className="grow" />
@@ -238,7 +238,7 @@ export function DashboardPage() {
                       </MenuItem>
                       <MenuItem
                         onClick={() => {
-                          const op = p.filter?.op_names?.[0] ?? val.filter?.op_names?.[0]
+                          const op = p.filter?.names?.[0] ?? val.filter?.names?.[0]
                           const params: Record<string, string> = {}
                           if (op) params.op = op
                           if ((p.filter?.trace_roots_only ?? val.filter?.trace_roots_only) === false) params.roots = '0'

@@ -4,11 +4,12 @@ Content-addressed reads never change, so their responses are kept in memory
 (LRU) and on disk (SQLite, default ``~/.cache/weft``) and reused across
 processes:
 
-- ``/obj/read`` by digest (not ``latest``, ``v<N>`` or an alias, and not with
-  ``include_tags_and_aliases``);
-- ``/table/query`` and ``/table/query_stats`` by table digest;
-- ``/file/content`` by file digest;
-- ``/refs/read_batch`` per object, op or table ref with a digest.
+- ``GET /api/v1/objects/{name}/versions/{digest}`` by digest (not ``latest``,
+  ``v<N>`` or an alias); the cached value has no tags or aliases, so those
+  are always read from the server;
+- ``POST /api/v1/tables/query`` and ``/api/v1/tables/stats`` by table digest;
+- ``GET /api/v1/files/{digest}`` by file digest;
+- ``POST /api/v1/refs/read`` per object, function or table ref with a digest.
 
 Deleting objects through the client invalidates their cached reads.
 Configure with ``weft.init(..., settings={"use_server_cache": False,
@@ -25,6 +26,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
@@ -34,12 +36,14 @@ from ._version import __version__
 logger = logging.getLogger("weft")
 
 DEFAULT_SIZE_LIMIT = 1_000_000_000
-_DIGEST_RE = re.compile(r"[A-Za-z0-9_-]{43}|[0-9a-f]{64}")  # object/file digests, table digests
-_KEY_VERSION = "v1"
+_DIGEST_RE = re.compile(r"[A-Za-z0-9_-]{43}|[0-9a-f]{64}")  # Weft digests (and the 43-character form of earlier versions)
+_KEY_VERSION = "v2"
+_OBJECT_VERSION_RE = re.compile(r"/api/v1/objects/([^/?]+)/versions/([^/?]+)\?(.*)")
+_FILE_RE = re.compile(r"/api/v1/files/([^/?]+)\?(.*)")
 
 
 def digest_is_cacheable(d: Any) -> bool:
-    """True for content digests (base64url or hex SHA-256), false for ``latest``, ``v3`` or aliases."""
+    """True for content digests (hex SHA-256, or the older 43-character form), false for ``latest``, ``v3`` or aliases."""
     return isinstance(d, str) and bool(_DIGEST_RE.fullmatch(d))
 
 
@@ -208,19 +212,44 @@ class CachingHTTPClient(HTTPClient):
     def post(self, path: str, body: Any, timeout: Optional[float] = None) -> Any:
         if not isinstance(body, dict):
             return super().post(path, body, timeout)
-        if path == "/obj/read":
-            return self._obj_read(body, timeout)
-        if path in ("/table/query", "/table/query_stats"):
+        if path in ("/api/v1/tables/query", "/api/v1/tables/stats"):
             return self._table(path, body, timeout)
-        if path == "/refs/read_batch":
+        if path == "/api/v1/refs/read":
             return self._refs(body, timeout)
-        if path == "/obj/delete":
-            self.invalidate_object(body.get("project_id", ""), body.get("object_id", ""))
+        if path == "/api/v1/objects/delete":
+            self.invalidate_object(body.get("project_id", ""), body.get("name", ""))
         return super().post(path, body, timeout)
 
+    def get(self, path: str, timeout: Optional[float] = None, query: Optional[Dict[str, str]] = None) -> Any:
+        if query:
+            path = path + "?" + urllib.parse.urlencode(query)
+        m = _OBJECT_VERSION_RE.fullmatch(path)
+        if m is None:
+            return super().get(path, timeout)
+        name, version = urllib.parse.unquote(m.group(1)), urllib.parse.unquote(m.group(2))
+        if not digest_is_cacheable(version):
+            if self.enabled:
+                self.stats["skips"] += 1
+            return super().get(path, timeout)
+        pid = dict(urllib.parse.parse_qsl(m.group(3))).get("project_id", "")
+        key = self._key("object", pid, name, version)
+        hit = self._get(key)
+        if hit is not None:
+            try:
+                return json.loads(hit)
+            except ValueError:
+                pass
+        res = super().get(path, timeout)
+        if isinstance(res, dict) and not res.get("deleted_at"):
+            # Tags and aliases change; the cached copy has none (they are read fresh).
+            self._set(key, json.dumps({**res, "tags": [], "aliases": [], "is_latest": None}).encode("utf-8"))
+        return res
+
     def request_raw(self, method: str, path: str, body: Any = None, timeout: Optional[float] = None) -> bytes:
-        if method == "POST" and path == "/file/content" and isinstance(body, dict) and digest_is_cacheable(body.get("digest")):
-            key = self._key("file_content", body.get("project_id", ""), body["digest"])
+        m = _FILE_RE.fullmatch(path) if method == "GET" else None
+        if m is not None and digest_is_cacheable(urllib.parse.unquote(m.group(1))):
+            pid = dict(urllib.parse.parse_qsl(m.group(2))).get("project_id", "")
+            key = self._key("file", pid, urllib.parse.unquote(m.group(1)))
             hit = self._get(key)
             if hit is not None:
                 return hit
@@ -228,26 +257,6 @@ class CachingHTTPClient(HTTPClient):
             self._set(key, data)
             return data
         return super().request_raw(method, path, body, timeout)
-
-    def _obj_read(self, body: Dict[str, Any], timeout: Optional[float]) -> Any:
-        cacheable = digest_is_cacheable(body.get("digest")) and not body.get("include_tags_and_aliases") and not body.get("include_deleted")
-        if not cacheable:
-            if self.enabled:
-                self.stats["skips"] += 1
-            return super().post("/obj/read", body, timeout)
-        rest = {k: v for k, v in body.items() if k not in ("project_id", "object_id", "digest")}
-        key = self._key("obj_read", body.get("project_id", ""), body.get("object_id", ""), body["digest"], _canon(rest))
-        hit = self._get(key)
-        if hit is not None:
-            try:
-                return json.loads(hit)
-            except ValueError:
-                pass
-        res = super().post("/obj/read", body, timeout)
-        obj = res.get("obj") if isinstance(res, dict) else None
-        if isinstance(obj, dict) and not obj.get("deleted_at"):
-            self._set(key, json.dumps(res).encode("utf-8"))
-        return res
 
     def _table(self, path: str, body: Dict[str, Any], timeout: Optional[float]) -> Any:
         if not digest_is_cacheable(body.get("digest")):
@@ -266,7 +275,7 @@ class CachingHTTPClient(HTTPClient):
         return res
 
     def _refs(self, body: Dict[str, Any], timeout: Optional[float]) -> Any:
-        from ._refs import CallRef, ObjectRef, TableRef, parse_uri
+        from ._refs import ObjectRef, TableRef, parse_uri
 
         refs: List[Any] = list(body.get("refs") or [])
         vals: List[Any] = [None] * len(refs)
@@ -278,9 +287,8 @@ class CachingHTTPClient(HTTPClient):
                 r = parse_uri(uri) if isinstance(uri, str) else None
             except ValueError:
                 r = None
-            if isinstance(r, ObjectRef) and digest_is_cacheable(r.digest) or isinstance(r, TableRef) and digest_is_cacheable(r.digest):
-                if not isinstance(r, CallRef):
-                    key = self._key("refs_read", r.project_id, uri)
+            if isinstance(r, (ObjectRef, TableRef)) and digest_is_cacheable(r.digest):
+                key = self._key("refs_read", r.project_id, uri)
             keys[i] = key
             hit = self._get(key) if key is not None else None
             if key is None and self.enabled:
@@ -293,21 +301,21 @@ class CachingHTTPClient(HTTPClient):
                     pass
             need.append(i)
         if need:
-            res = super().post("/refs/read_batch", {**body, "refs": [refs[i] for i in need]}, timeout)
-            got = list((res or {}).get("vals") or [])
+            res = super().post("/api/v1/refs/read", {**body, "refs": [refs[i] for i in need]}, timeout)
+            got = list((res or {}).get("items") or [])
             for j, i in enumerate(need):
                 v = got[j] if j < len(got) else None
                 vals[i] = v
                 if v is not None and keys[i] is not None:
                     self._set(keys[i], json.dumps(v).encode("utf-8"))  # type: ignore[arg-type]
-        return {"vals": vals}
+        return {"items": vals}
 
     # ---- invalidation -------------------------------------------------------------
-    def invalidate_object(self, project_id: str, object_id: str) -> None:
+    def invalidate_object(self, project_id: str, name: str) -> None:
         """Forget cached reads of every version of an object."""
-        if self.cache is None or not object_id:
+        if self.cache is None or not name:
             return
-        self.cache.delete_prefix(self._prefix("obj_read", project_id, object_id))
+        self.cache.delete_prefix(self._prefix("object", project_id, name))
         # ref reads embed the object name in the URI; drop this project's object refs to be safe
         self.cache.delete_prefix(self._prefix("refs_read", project_id))
 

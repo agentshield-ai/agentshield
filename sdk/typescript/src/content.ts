@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { b64digest } from './canonical.js';
+import { fileDigest } from './canonical.js';
 import type { WeftClient } from './client.js';
 import { sniffMime } from './serialize.js';
 
@@ -96,7 +96,13 @@ export class Content {
     let url = this.uri!;
     if (!/^https?:\/\//.test(url)) {
       const { requireClient } = await import('./global.js');
-      url = (await requireClient().resolveUrl(url)) as string;
+      const client = requireClient();
+      url = (await client.resolveUrl(url)) as string;
+      if (url?.startsWith(`${client.serverUrl}/api/v1/files/`)) {
+        // this server's file: read it with the client's credentials
+        this.bytes = new Uint8Array(await (await client.http.raw('GET', url.slice(client.serverUrl.length))).arrayBuffer());
+        return this.bytes;
+      }
     }
     const res = await fetch(url);
     if (!res.ok) throw new Error(`fetching ${this.uri} failed: HTTP ${res.status}`);
@@ -134,7 +140,7 @@ export class Content {
   }
 
   get digest(): string {
-    return b64digest(this.data);
+    return fileDigest(this.data);
   }
 
   asText(): string {

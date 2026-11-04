@@ -2,8 +2,8 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { agentEvalsApi, conversationUrl, evalSpansUrl, type AgentEvalPrediction, type AgentEvalRun } from '../../api/agents'
-import type { Any, CallStatus } from '../../api/types'
-import { refUrl, callUrl, compareEvaluationsUrl } from '../../lib/urls'
+import type { Any, SpanStatus } from '../../api/types'
+import { refUrl, spanUrl, compareEvaluationsUrl } from '../../lib/urls'
 import { fmtCost, fmtDate, fmtNumber, fmtRelative, preview, truncate } from '../../lib/format'
 import { Empty, ErrorBox, Pager, Spinner, StatusBadge } from '../common'
 import { flattenScores, fmtMetric, sortMetricKeys } from '../evals/evalUtils'
@@ -18,10 +18,10 @@ import './agents.css'
 // EvaluationLogger.log_prediction(call=...)).
 
 const LIMIT = 50
-const CALL_STATUSES: CallStatus[] = ['success', 'error', 'running', 'descendant_error']
+const CALL_STATUSES: SpanStatus[] = ['success', 'error', 'running', 'descendant_error']
 
 export function EvalStatus({ status }: { status: string }) {
-  return CALL_STATUSES.includes(status as CallStatus) ? <StatusBadge status={status as CallStatus} /> : <span className="small faint">{status || 'unknown'}</span>
+  return CALL_STATUSES.includes(status as SpanStatus) ? <StatusBadge status={status as SpanStatus} /> : <span className="small faint">{status || 'unknown'}</span>
 }
 
 /** Score chips for a prediction's scores (`{scorer: value | {field: value}}`). */
@@ -276,7 +276,7 @@ export function EvalFilterBanner({ projectId, runId, pred, agent, onClear }: { p
           {r?.model_name && <span className="muted small truncate">· {r.model_name}</span>}
           {r && <EvalStatus status={r.status} />}
           {pred && (
-            <Link to={callUrl(projectId, pred)} className="chip mono" title="The prediction (predict_and_score call)">
+            <Link to={spanUrl(projectId, pred)} className="chip mono" title="The prediction (predict_and_score call)">
               prediction {pred.slice(-8)}
             </Link>
           )}
@@ -289,7 +289,7 @@ export function EvalFilterBanner({ projectId, runId, pred, agent, onClear }: { p
       ) : (
         <span className="grow">
           prediction{' '}
-          <Link to={callUrl(projectId, pred ?? '')} className="mono">
+          <Link to={spanUrl(projectId, pred ?? '')} className="mono">
             {pred}
           </Link>
         </span>
@@ -352,7 +352,7 @@ function PredictionRow({ projectId, run, p }: { projectId: string; run: AgentEva
   return (
     <div className="eval-pred-row">
       <div className="row wrap" style={{ gap: 6 }}>
-        <Link to={callUrl(projectId, p.predict_and_score_call_id)} className="mono small" title="predict_and_score call">
+        <Link to={spanUrl(projectId, p.predict_and_score_call_id)} className="mono small" title="predict_and_score call">
           prediction {p.predict_and_score_call_id.slice(-8)}
         </Link>
         <EvalStatus status={p.status} />
@@ -438,7 +438,7 @@ export function TurnEvalBadge({ projectId, items }: { projectId: string; items: 
         return (
           <Link
             key={run.call_id + pred.predict_and_score_call_id}
-            to={callUrl(projectId, pred.predict_and_score_call_id)}
+            to={spanUrl(projectId, pred.predict_and_score_call_id)}
             className="badge accent"
             title={`Prediction ${pred.predict_and_score_call_id} of ${run.evaluation_name || run.call_id}`}
           >

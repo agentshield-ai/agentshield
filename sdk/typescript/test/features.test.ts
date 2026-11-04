@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as weft from '../src/index.js';
-import { b64digest } from '../src/canonical.js';
+import { fileDigest } from '../src/canonical.js';
 import { FakeWeft } from './fakeServer.js';
 
 let fake: FakeWeft;
@@ -22,10 +22,10 @@ afterEach(async () => {
 
 describe('op options and settings', () => {
   it('stores kind and color', async () => {
-    const tool = weft.op(function tool() {
+    const tool = weft.trace(function tool() {
       return 1;
     }, { kind: 'tool' });
-    const agent = weft.op(async function agent() {
+    const agent = weft.trace(async function agent() {
       return tool();
     }, { kind: 'agent', color: 'purple' });
     await agent();
@@ -47,10 +47,10 @@ describe('op options and settings', () => {
       return true;
     }) as any);
     const c = await weft.init('ent/proj', { serverUrl: fake.url, sender: { flushIntervalMs: 1 }, settings: { globalAttributes: { env: 'staging', team: 'a' }, captureCode: false } });
-    const child = weft.op(function child() {
+    const child = weft.trace(function child() {
       return 1;
     });
-    const root = weft.op(function root() {
+    const root = weft.trace(function root() {
       return child();
     });
     const [, call] = await weft.attributes({ team: 'b' }, () => root.call());
@@ -59,22 +59,22 @@ describe('op options and settings', () => {
     const [r] = fake.callsByOp('root');
     expect(r.attributes.env).toBe('staging');
     expect(r.attributes.team).toBe('b');
-    expect(fake.objs.get('root')![0].val.code).toBe('// Code capture disabled\n');
-    const secret = weft.op(function secret() {}, { enableCodeCapture: false });
+    expect(fake.objs.get('root')![0].value.code).toBe('// Code capture disabled\n');
+    const secret = weft.trace(function secret() {}, { enableCodeCapture: false });
     await weft.init('p2', { serverUrl: fake.url, settings: { printCallLink: false } });
     secret();
     await weft.flush();
-    expect(fake.objs.get('secret')![0].val.code).toBe('// Code capture disabled\n');
+    expect(fake.objs.get('secret')![0].value.code).toBe('// Code capture disabled\n');
   });
 
   it('supports withTracingDisabled and per-op sampling', async () => {
-    const child = weft.op(function child() {
+    const child = weft.trace(function child() {
       return 1;
     });
-    const never = weft.op(function never() {
+    const never = weft.trace(function never() {
       return child();
     }, { tracingSampleRate: 0 });
-    const f = weft.op(function f() {
+    const f = weft.trace(function f() {
       return 1;
     });
     weft.withTracingDisabled(() => f());
@@ -92,7 +92,7 @@ describe('op options and settings', () => {
     fake.failStatus = 503;
     const c1 = await weft.init('wal-proj', { serverUrl: fake.url, sender: { flushIntervalMs: 1 }, settings });
     expect(c1.sender.maxRetries).toBe(1);
-    const important = weft.op(function important(x: number) {
+    const important = weft.trace(function important(x: number) {
       return x;
     });
     important(1);
@@ -117,7 +117,7 @@ describe('Content and media', () => {
     const p = join(dir, 'notes.txt');
     writeFileSync(p, 'hello file');
     const pdf = new Uint8Array(Buffer.from('%PDF-1.4 fake'));
-    const make = weft.op(function make() {
+    const make = weft.trace(function make() {
       return {
         path: weft.Content.fromPath(p),
         text: weft.Content.fromText('plain', { filename: 'a.txt' }),
@@ -132,7 +132,7 @@ describe('Content and media', () => {
     make();
     await client.flush();
     const out = fake.callsByOp('make')[0].output;
-    expect(out.path).toEqual({ _type: 'Content', mimetype: 'text/plain', filename: 'notes.txt', file_digest: b64digest('hello file') });
+    expect(out.path).toEqual({ _type: 'Content', mimetype: 'text/plain', filename: 'notes.txt', file_digest: fileDigest('hello file') });
     expect(fake.files.get(out.path.file_digest)!.toString()).toBe('hello file');
     expect(out.bytes).toMatchObject({ mimetype: 'application/octet-stream', filename: 'file.bin' });
     expect(out.video).toMatchObject({ _type: 'Video', mime_type: 'video/mp4' });
@@ -145,13 +145,13 @@ describe('Content and media', () => {
 
 describe('object management', () => {
   it('aliases, tags and deletion', async () => {
-    const r0 = await weft.publish({ v: 0 }, 'cfg');
-    const r1 = await weft.publish({ v: 1 }, 'cfg');
+    const r0 = await weft.save({ v: 0 }, 'cfg');
+    const r1 = await weft.save({ v: 1 }, 'cfg');
     await client.setAliases(r1, 'production');
     await client.setAliases('cfg:v0', ['staging', 'dev']);
     expect(fake.aliases.get('cfg|production')).toBe(r1.digest);
-    const put = fake.requests.find((r) => r.method === 'PUT' && r.path === '/objs/cfg/aliases')!;
-    expect(put.body).toEqual({ project_id: 'ts-entity/ts-proj', digest: r1.digest, aliases: ['production'] });
+    const put = fake.requests.find((r) => r.path === '/api/v1/objects/cfg/aliases')!;
+    expect(put.body).toEqual({ project_id: 'ts-entity/ts-proj', version: r1.digest, aliases: ['production'] });
     expect(await client.getAliases(r0)).toEqual(['dev', 'staging']);
     await client.removeAliases('cfg', 'dev');
     expect(fake.aliases.has('cfg|dev')).toBe(false);
@@ -161,16 +161,16 @@ describe('object management', () => {
     await client.removeTags(r1.uri(), ['reviewed']);
     expect(await client.listTags()).toEqual(['golden']);
     expect(await client.deleteObjectVersion(r0)).toBe(1);
-    await weft.publish({ v: 2 }, 'cfg');
+    await weft.save({ v: 2 }, 'cfg');
     expect(await client.deleteObjectVersions('cfg', [r1.digest])).toBe(1);
     expect(await client.deleteAllObjectVersions('cfg')).toBe(1);
   });
 
-  it('falls back to the legacy alias endpoint', async () => {
-    fake.aliasRoutes = false;
-    const r = await weft.publish({ v: 0 }, 'old');
-    await client.setAliases(r, 'prod');
+  it('sets aliases by name and version', async () => {
+    const r = await weft.save({ v: 0 }, 'old');
+    await client.setAliases('old:v0', 'prod');
     expect(fake.aliases.get('old|prod')).toBe(r.digest);
+    expect(await weft.get('old:prod')).toEqual({ v: 0 });
     await client.removeAliases('old', 'prod');
     expect(fake.aliases.has('old|prod')).toBe(false);
   });
@@ -201,15 +201,15 @@ describe('EvaluationLogger.logExample', () => {
 
 describe('new scorers', () => {
   it('serialise like the Python SDK', async () => {
-    await weft.publish(new weft.RemoteScorer({ name: 'remote', url: 'https://x/score', headersSecret: 'H', timeout: 5 }));
-    await weft.publish(new weft.HallucinationFreeScorer({ name: 'hall' }));
-    await weft.publish(new weft.JSONSchemaScorer({ name: 'js', schema: { type: 'object' } }));
-    await weft.publish(new weft.EmbeddingSimilarityScorer({ name: 'emb', targetColumn: 'ref' }));
-    await weft.publish(new weft.RuleScorer({ name: 'rule', rule: { $eq: [1, 1] }, threshold: 0.5 }));
-    await weft.publish(new weft.ValidXMLScorer({ name: 'xml' }));
-    await weft.publish(new weft.OpenAIModerationScorer({ name: 'mod' }));
+    await weft.save(new weft.RemoteScorer({ name: 'remote', url: 'https://x/score', headersSecret: 'H', timeout: 5 }));
+    await weft.save(new weft.HallucinationFreeScorer({ name: 'hall' }));
+    await weft.save(new weft.JSONSchemaScorer({ name: 'js', schema: { type: 'object' } }));
+    await weft.save(new weft.EmbeddingSimilarityScorer({ name: 'emb', targetColumn: 'ref' }));
+    await weft.save(new weft.RuleScorer({ name: 'rule', rule: { $eq: [1, 1] }, threshold: 0.5 }));
+    await weft.save(new weft.ValidXMLScorer({ name: 'xml' }));
+    await weft.save(new weft.OpenAIModerationScorer({ name: 'mod' }));
     const base = { _bases: ['Scorer', 'Object', 'BaseModel'], description: null, column_map: null };
-    const val = (n: string) => fake.objs.get(n)![0].val;
+    const val = (n: string) => fake.objs.get(n)![0].value;
     expect(val('remote')).toEqual({ ...base, _type: 'RemoteScorer', _class_name: 'RemoteScorer', name: 'remote', url: 'https://x/score', headers_secret: 'H', timeout: 5 });
     expect(val('hall')).toEqual({ ...base, _type: 'HallucinationFreeScorer', _class_name: 'HallucinationFreeScorer', name: 'hall', model: 'gpt-4o-mini', scoring_prompt: weft.HALLUCINATION_PROMPT });
     expect(val('js').schema).toEqual({ type: 'object' });
@@ -244,7 +244,7 @@ describe('new scorers', () => {
     expect(fake.requests.find((r) => r.path === '/remote/score')!.headers['x-key']).toBe('k');
     delete process.env.WEFT_TEST_SCORER_HEADERS;
     const emb = new weft.EmbeddingSimilarityScorer({ targetColumn: 'ref' });
-    await expect(emb.score({ modelOutput: 'abc', datasetRow: { ref: 'abc' } })).rejects.toThrow(/no \/embeddings\/create endpoint/);
+    await expect(emb.score({ modelOutput: 'abc', datasetRow: { ref: 'abc' } })).rejects.toThrow(/no embeddings route/);
     fake.embeddingsEnabled = true;
     expect(await emb.score({ modelOutput: 'abc', datasetRow: { ref: 'abc' } })).toBeCloseTo(1);
     const saved = process.env.OPENAI_API_KEY;

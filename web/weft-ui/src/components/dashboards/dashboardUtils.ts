@@ -1,6 +1,6 @@
 // Pure helpers for dashboards and custom charts (unit tested in dashboards.test.ts).
-import type { Call, CallsFilter, Operation, Query } from '../../api/types'
-import { opDisplayName } from '../../api/refs'
+import type { Span, SpansFilter, Operation, Query } from '../../api/types'
+import { spanDisplayName } from '../../api/refs'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, getPath } from '../../lib/format'
 import type { ChartType, DashboardPanel, DashboardVal, MetricAgg, MetricSpec, MetricsReq, MetricsRes } from '../../api/dashboards'
 
@@ -47,11 +47,11 @@ export function timeRangeBounds(id: string | undefined, now: Date = new Date()):
 }
 
 /** Merge two structured filters; list fields are intersected only when both set them (the panel wins otherwise). */
-export function mergeFilters(a?: CallsFilter, b?: CallsFilter): CallsFilter | undefined {
+export function mergeFilters(a?: SpansFilter, b?: SpansFilter): SpansFilter | undefined {
   if (!a) return b
   if (!b) return a
-  const out: CallsFilter = { ...a, ...b }
-  for (const k of Object.keys(a) as (keyof CallsFilter)[]) {
+  const out: SpansFilter = { ...a, ...b }
+  for (const k of Object.keys(a) as (keyof SpansFilter)[]) {
     const av = a[k]
     const bv = b[k]
     if (Array.isArray(av) && Array.isArray(bv) && av.length && bv.length) {
@@ -79,7 +79,7 @@ export function maxGroupsFor(chart: ChartType): number {
   return chart === 'table' ? 25 : chart === 'stat' ? 1 : 6
 }
 
-/** The /calls/metrics request for one panel of a dashboard. */
+/** The /api/v1/spans/metrics request for one panel of a dashboard. */
 export function panelRequest(projectId: string, panel: DashboardPanel, dash?: Pick<DashboardVal, 'filter' | 'query' | 'time_range'>, now: Date = new Date()): MetricsReq {
   const range = timeRangeBounds(panel.time_range || dash?.time_range, now)
   const req: MetricsReq = {
@@ -124,22 +124,22 @@ export const FIELD_PRESETS: { field: string; label: string }[] = [
 
 export const GROUP_PRESETS: { id: string; label: string }[] = [
   { id: '', label: 'No grouping' },
-  { id: 'op_name', label: 'Op' },
+  { id: 'name', label: 'Name' },
   { id: 'model', label: 'Model' },
   { id: 'status', label: 'Status' },
-  { id: 'thread', label: 'Thread' },
+  { id: 'session', label: 'Session' },
   { id: 'user', label: 'User' },
 ]
 
 export function fieldLabel(field?: string): string {
-  if (!field) return 'calls'
+  if (!field) return 'spans'
   return FIELD_PRESETS.find((f) => f.field === field)?.label.toLowerCase() ?? field
 }
 
 /** Human label for a metric: "p95 latency (ms)", "Count", "Error rate". */
 export function metricLabel(m: MetricSpec): string {
   if (m.name && m.name !== metricName({ ...m, name: undefined })) return m.name
-  if (m.agg === 'count' && !m.field) return 'Calls'
+  if (m.agg === 'count' && !m.field) return 'Spans'
   if (m.agg === 'error_rate') return 'Error rate'
   return `${AGG_LABEL[m.agg]} ${fieldLabel(m.field)}`
 }
@@ -231,7 +231,7 @@ export function blankPanel(): DashboardPanel {
 
 export function panelTitle(p: DashboardPanel): string {
   if (p.title) return p.title
-  const ms = p.metrics.map(metricLabel).join(', ') || 'Calls'
+  const ms = p.metrics.map(metricLabel).join(', ') || 'Spans'
   const g = GROUP_PRESETS.find((x) => x.id === p.group_by)?.label ?? p.group_by
   return p.group_by ? `${ms} by ${g?.toLowerCase()}` : ms
 }
@@ -240,12 +240,12 @@ export function panelTitle(p: DashboardPanel): string {
 export function overviewPanels(): DashboardPanel[] {
   const id = newPanelId
   return [
-    { id: id(), title: 'Calls by status', chart: 'stacked', metrics: [{ agg: 'count', name: 'Calls' }], group_by: 'status', width: 2 },
-    { id: id(), title: 'Error rate', chart: 'stat', metrics: [{ agg: 'error_rate', name: 'Error rate' }, { agg: 'count', name: 'Calls' }], width: 1 },
+    { id: id(), title: 'Spans by status', chart: 'stacked', metrics: [{ agg: 'count', name: 'Spans' }], group_by: 'status', width: 2 },
+    { id: id(), title: 'Error rate', chart: 'stat', metrics: [{ agg: 'error_rate', name: 'Error rate' }, { agg: 'count', name: 'Spans' }], width: 1 },
     { id: id(), title: 'Latency p50 / p95', chart: 'line', metrics: [{ agg: 'p50', field: 'latency_ms', name: 'p50' }, { agg: 'p95', field: 'latency_ms', name: 'p95' }], width: 1 },
     { id: id(), title: 'Tokens by model', chart: 'stacked', metrics: [{ agg: 'sum', field: 'total_tokens', name: 'Tokens' }], group_by: 'model', filter: { trace_roots_only: false }, width: 1 },
     { id: id(), title: 'Cost by model', chart: 'bar', metrics: [{ agg: 'sum', field: 'cost', name: 'Cost' }], group_by: 'model', filter: { trace_roots_only: false }, width: 1 },
-    { id: id(), title: 'Ops', chart: 'table', metrics: [{ agg: 'count', name: 'Calls' }, { agg: 'p95', field: 'latency_ms', name: 'p95 latency' }, { agg: 'sum', field: 'total_tokens', name: 'Tokens' }, { agg: 'error_rate', name: 'Error rate' }], group_by: 'op_name', width: 3 },
+    { id: id(), title: 'Span names', chart: 'table', metrics: [{ agg: 'count', name: 'Spans' }, { agg: 'p95', field: 'latency_ms', name: 'p95 latency' }, { agg: 'sum', field: 'total_tokens', name: 'Tokens' }, { agg: 'error_rate', name: 'Error rate' }], group_by: 'name', width: 3 },
   ]
 }
 
@@ -272,7 +272,7 @@ export function movePanel(panels: DashboardPanel[], id: string, dir: -1 | 1): Da
   return out
 }
 
-// ---------------------------------------------------------------- scatter (metric vs metric per call)
+// ---------------------------------------------------------------- scatter (metric vs metric per span)
 
 function numOf(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v
@@ -281,8 +281,8 @@ function numOf(v: unknown): number | null {
   return null
 }
 
-/** A per-call value for a metric field: built-in fields, feedback.<type>.<path>, or a dotted call path. */
-export function callFieldValue(c: Call, field: string): number | null {
+/** A per-span value for a metric field: built-in fields, feedback.<type>.<path>, or a dotted span path. */
+export function callFieldValue(c: Span, field: string): number | null {
   switch (field) {
     case 'latency_ms':
       return callLatencyMs(c)
@@ -306,21 +306,23 @@ export function callFieldValue(c: Call, field: string): number | null {
   return numOf(getPath(c, field))
 }
 
-/** The scatter series a call belongs to for a dashboard group-by. */
-export function callGroupValue(c: Call, groupBy: string | undefined): string {
+/** The scatter series a span belongs to for a dashboard group-by. */
+export function callGroupValue(c: Span, groupBy: string | undefined): string {
   switch (groupBy || '') {
     case '':
       return ''
+    case 'name':
     case 'op_name':
-      return opDisplayName(c.op_name)
+      return spanDisplayName(c.name)
     case 'status':
       return callStatus(c)
     case 'model': {
       const models = Object.keys(c.summary?.usage ?? {})
       return models.length === 1 ? models[0] : models.length ? 'multiple' : '(none)'
     }
+    case 'session':
     case 'thread':
-      return c.thread_id ?? '(none)'
+      return c.session_id ?? '(none)'
     case 'user':
       return c.user_id ?? '(none)'
   }
@@ -334,7 +336,7 @@ export interface ScatterSeries {
 }
 
 /** Points per group for calls that have both values; at most `maxGroups` groups, the rest folded into "Other". */
-export function scatterSeries(calls: Call[], xField: string, yField: string, groupBy?: string, maxGroups = 6): ScatterSeries[] {
+export function scatterSeries(calls: Span[], xField: string, yField: string, groupBy?: string, maxGroups = 6): ScatterSeries[] {
   const by = new Map<string, ScatterSeries['points']>()
   for (const c of calls) {
     const x = callFieldValue(c, xField)
@@ -342,7 +344,7 @@ export function scatterSeries(calls: Call[], xField: string, yField: string, gro
     if (x == null || y == null) continue
     const g = callGroupValue(c, groupBy)
     if (!by.has(g)) by.set(g, [])
-    by.get(g)!.push({ x, y, id: c.id, label: c.display_name || opDisplayName(c.op_name) })
+    by.get(g)!.push({ x, y, id: c.id, label: c.display_name || spanDisplayName(c.name) })
   }
   const groups = [...by.entries()].sort((a, b) => b[1].length - a[1].length)
   const out: ScatterSeries[] = groups.slice(0, maxGroups).map(([group, points]) => ({ group, points }))

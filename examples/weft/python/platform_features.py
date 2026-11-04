@@ -17,17 +17,17 @@ client = weft.init(
 )
 
 
-@weft.op(kind="retriever")
+@weft.trace(kind="retriever")
 def search_docs(query: str) -> list:
     return ["Refunds are processed within 5 days.", "Contact support@example.com for help."]
 
 
-@weft.op(kind="llm")
+@weft.trace(kind="llm")
 def draft_answer(query: str, docs: list) -> str:
     return f"{docs[0]} (answering: {query})"
 
 
-@weft.op(kind="agent", color="blue")
+@weft.trace(kind="agent", color="blue")
 def support_agent(query: str) -> dict:
     docs = search_docs(query)
     answer = draft_answer(query, docs)
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         support_agent("not recorded")
 
     # attach a document to a call
-    @weft.op
+    @weft.trace
     def attach_policy() -> weft.Content:
         return weft.Content.from_text("Refund policy: 5 business days.", filename="policy.txt")
 
@@ -58,7 +58,7 @@ if __name__ == "__main__":
 
     # datasets, aliases and tags
     ds = weft.Dataset(name="support-questions", rows=[{"query": "How long do refunds take?"}, {"query": "How do I contact support?"}])
-    ref = weft.publish(ds)
+    ref = weft.save(ds)
     client.set_aliases(ref, "production")
     client.add_tags(ref, ["reviewed"])
     print("aliases:", client.get_aliases(ref), "tags:", client.get_tags(ref))

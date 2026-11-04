@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Seed a Weft server with a realistic demo project.
 
-Uses only the standard library and the HTTP API (plus OTLP JSON), so it works
-without the SDK installed. Offline mock models are used for evaluations.
+Uses only the standard library and Weft's own HTTP API (``/api/v1``, see
+docs/weft/API.md; plus OTLP JSON), so it works without the SDK installed.
+Offline mock models are used for evaluations.
 
     python3 scripts/weft_seed_demo.py --url http://127.0.0.1:6345 --project demo/support-bot
 """
@@ -10,6 +11,7 @@ import argparse
 import json
 import random
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -37,6 +39,13 @@ class Client:
         self.url, self.project, self.key = url.rstrip("/"), project, api_key
         self.entity, self.name = project.split("/", 1)
 
+    def get(self, path, query):
+        h = {"Authorization": "Bearer " + self.key} if self.key else {}
+        req = urllib.request.Request(self.url + path + "?" + urllib.parse.urlencode(query), headers=h)
+        with urllib.request.urlopen(req) as r:
+            raw = r.read()
+        return json.loads(raw) if raw.strip() else {}
+
     def post(self, path, body, headers=None):
         h = {"Content-Type": "application/json"}
         if self.key:
@@ -51,14 +60,13 @@ class Client:
         base = f"weft:///{self.project}/{kind}/{name}"
         return f"{base}:{digest}" if digest else base
 
-    def publish(self, object_id, val):
-        r = self.post("/obj/create", {"obj": {"project_id": self.project, "object_id": object_id, "val": val}})
-        return self.ref("object", object_id, r["digest"])
+    def save(self, name, value):
+        """Save an object version; returns its ref (``weft:///<project>/object/<name>:<digest>``)."""
+        return self.post("/api/v1/objects/save", {"project_id": self.project, "name": name, "value": value})["ref"]
 
-    def op(self, name, code):
-        r = self.post("/obj/create", {"obj": {"project_id": self.project, "object_id": name,
-                                              "val": {"_type": "Op", "name": name, "code": code, "language": "python"}}})
-        return f"weft:///{self.project}/op/{name}:{r['digest']}"
+    def function(self, name, code):
+        """Save a versioned function; returns its ref (``.../function/<name>:<digest>``), the name of its spans."""
+        return self.save(name, {"_type": "Op", "name": name, "code": code, "language": "python"})
 
 
 def iso(t):
@@ -66,29 +74,29 @@ def iso(t):
 
 
 class Trace:
-    """Collects calls for one trace and sends them in a single batch."""
+    """Collects the spans of one trace and sends them in a single batch (``POST /api/v1/spans/batch``)."""
 
-    def __init__(self, client, start, thread_id=None):
+    def __init__(self, client, start, session_id=None):
         self.c, self.t, self.items = client, start, []
-        self.trace_id, self.thread_id = str(uuid.uuid4()), thread_id
+        self.trace_id, self.session_id = str(uuid.uuid4()), session_id
 
-    def call(self, op, inputs, output, dur_ms, parent=None, usage=None, exception=None, display=None, offset_ms=0, turn=False):
-        cid = self.trace_id if parent is None and not self.items else str(uuid.uuid4())
+    def span(self, name, inputs, output, dur_ms, parent=None, usage=None, error=None, display=None, offset_ms=0, turn=False):
+        sid = self.trace_id if parent is None and not self.items else str(uuid.uuid4())
         st = self.t + timedelta(milliseconds=offset_ms)
-        start = {"project_id": self.c.project, "id": cid, "trace_id": self.trace_id, "parent_id": parent, "op_name": op,
-                 "started_at": iso(st), "inputs": inputs, "display_name": display, "attributes": {"env": "prod", "app_version": "1.4.2"}}
-        if self.thread_id:
-            start["thread_id"] = self.thread_id
+        span = {"id": sid, "trace_id": self.trace_id, "parent_id": parent, "name": name,
+                "started_at": iso(st), "inputs": inputs, "display_name": display, "attributes": {"env": "prod", "app_version": "1.4.2"},
+                "ended_at": iso(st + timedelta(milliseconds=dur_ms)), "output": output, "summary": {"usage": usage} if usage else {}}
+        if error:
+            span["error"] = error
+        if self.session_id:
+            span["session_id"] = self.session_id
             if turn:
-                start["turn_id"] = cid
-        end = {"project_id": self.c.project, "id": cid, "ended_at": iso(st + timedelta(milliseconds=dur_ms)), "output": output,
-               "summary": {"usage": usage} if usage else {}, "exception": exception}
-        self.items.append({"mode": "start", "req": {"start": start}})
-        self.items.append({"mode": "end", "req": {"end": end}})
-        return cid
+                span["turn_id"] = sid
+        self.items.append({"span": span})
+        return sid
 
     def send(self):
-        self.c.post("/call/upsert_batch", {"batch": self.items})
+        self.c.post("/api/v1/spans/batch", {"project_id": self.c.project, "items": self.items})
 
 
 def chat_usage(model, p, c):
@@ -106,38 +114,38 @@ def seed_traces(c, ops, n=40):
         model = random.choice(["gpt-4o-mini", "gpt-4o-mini", "claude-sonnet-4-5", "gpt-4.1"])
         failed = random.random() < 0.08
         total = random.randint(900, 4200)
-        root = tr.call(ops["support_agent"], {"question": q, "user_id": f"u{random.randint(100, 999)}"},
+        root = tr.span(ops["support_agent"], {"question": q, "user_id": f"u{random.randint(100, 999)}"},
                        None if failed else {"answer": a, "sources": ["kb://faq"]}, total,
-                       exception="RateLimitError: 429 Too Many Requests\n  at openai._base_client.request" if failed else None, turn=True)
+                       error="RateLimitError: 429 Too Many Requests\n  at openai._base_client.request" if failed else None, turn=True)
         key = next((k for k in DOCS if k in q.lower()), "order")
-        tr.call(ops["retrieve_docs"], {"query": q, "k": 3}, [{"id": f"kb://{key}", "text": DOCS[key], "score": 0.82}],
+        tr.span(ops["retrieve_docs"], {"query": q, "k": 3}, [{"id": f"kb://{key}", "text": DOCS[key], "score": 0.82}],
                 random.randint(40, 180), parent=root, offset_ms=10)
         msgs = [{"role": "system", "content": "You are a concise, friendly support agent for an online clothing store."},
                 {"role": "user", "content": f"Context:\n{DOCS[key]}\n\nQuestion: {q}"}]
         p, comp = random.randint(180, 900), random.randint(20, 160)
         if "order" in q.lower():
-            llm1 = tr.call("openai.chat.completions.create", {"model": model, "messages": msgs, "temperature": 0.2,
+            llm1 = tr.span("openai.chat.completions.create", {"model": model, "messages": msgs, "temperature": 0.2,
                                                                "tools": [{"type": "function", "function": {"name": "lookup_order"}}]},
                            {"id": "chatcmpl-1", "model": model, "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
                                "role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function",
                                                                                      "function": {"name": "lookup_order", "arguments": "{\"order_id\": \"4512\"}"}}]}}]},
                            random.randint(300, 900), parent=root, usage=chat_usage(model, p, 18), offset_ms=200)
-            tr.call(ops["lookup_order"], {"order_id": "4512"}, {"status": "shipped", "eta": "Friday"}, 60, parent=root, offset_ms=1100)
+            tr.span(ops["lookup_order"], {"order_id": "4512"}, {"status": "shipped", "eta": "Friday"}, 60, parent=root, offset_ms=1100)
             msgs = msgs + [{"role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function",
                                                                                  "function": {"name": "lookup_order", "arguments": "{\"order_id\": \"4512\"}"}}]},
                            {"role": "tool", "tool_call_id": "call_1", "content": "{\"status\": \"shipped\", \"eta\": \"Friday\"}"}]
             _ = llm1
-        tr.call("openai.chat.completions.create", {"model": model, "messages": msgs, "temperature": 0.2},
+        tr.span("openai.chat.completions.create", {"model": model, "messages": msgs, "temperature": 0.2},
                 {"id": "chatcmpl-2", "model": model, "choices": [{"index": 0, "finish_reason": "stop",
                                                                   "message": {"role": "assistant", "content": a}}]},
                 random.randint(400, total - 300), parent=root, usage=chat_usage(model, p + 40, comp), offset_ms=1250,
-                exception="RateLimitError: 429 Too Many Requests" if failed else None)
+                error="RateLimitError: 429 Too Many Requests" if failed else None)
         tr.send()
         if not failed and random.random() < 0.4:
-            c.post("/feedback/create", {"project_id": c.project, "ref": c.ref("call", root),
+            c.post("/api/v1/feedback/create", {"project_id": c.project, "ref": c.ref("span", root),
                                         "feedback_type": "weft.reaction", "payload": {"emoji": random.choice(["👍", "👍", "👎", "🎉"])}})
         if random.random() < 0.15:
-            c.post("/feedback/create", {"project_id": c.project, "ref": c.ref("call", root), "feedback_type": "weft.note",
+            c.post("/api/v1/feedback/create", {"project_id": c.project, "ref": c.ref("span", root), "feedback_type": "weft.note",
                                         "payload": {"note": "Answer is correct but could link to the help article."}})
 
 
@@ -179,50 +187,50 @@ def seed_otlp(c, n=8):
 
 def seed_assets(c):
     rows = [{"question": q, "expected": a.split(";")[0]} for q, a in QUESTIONS]
-    table = c.post("/table/create", {"table": {"project_id": c.project, "rows": rows}})
-    ds = c.publish("support-questions", {"_type": "Dataset", "_class_name": "Dataset", "_bases": ["Object", "BaseModel"],
+    table = c.post("/api/v1/tables/create", {"project_id": c.project, "rows": rows})
+    ds = c.save("support-questions", {"_type": "Dataset", "_class_name": "Dataset", "_bases": ["Object", "BaseModel"],
                                          "name": "support-questions", "description": "Common customer questions with reference answers",
                                          "rows": c.ref("table", table["digest"])})
-    c.publish("support-system-prompt", {"_class_name": "MessagesPrompt", "_bases": ["Prompt", "Object", "BaseModel"],
+    c.save("support-system-prompt", {"_class_name": "MessagesPrompt", "_bases": ["Prompt", "Object", "BaseModel"],
                                         "name": "support-system-prompt", "messages": [
                                             {"role": "system", "content": "You are a concise, friendly support agent for an online clothing store."},
                                             {"role": "user", "content": "{question}"}]})
-    exact = c.publish("exact-match", {"_class_name": "ExactMatchScorer", "_bases": ["Scorer", "Object", "BaseModel"],
+    exact = c.save("exact-match", {"_class_name": "ExactMatchScorer", "_bases": ["Scorer", "Object", "BaseModel"],
                                       "name": "exact-match", "target_column": "expected"})
-    contains = c.publish("mentions-answer", {"_class_name": "ContainsScorer", "_bases": ["Scorer", "Object", "BaseModel"],
+    contains = c.save("mentions-answer", {"_class_name": "ContainsScorer", "_bases": ["Scorer", "Object", "BaseModel"],
                                              "name": "mentions-answer", "target_column": "question", "case_insensitive": True})
-    judge = c.publish("helpfulness-judge", {"_class_name": "LLMAsAJudgeScorer", "_bases": ["Scorer", "Object", "BaseModel"],
+    judge = c.save("helpfulness-judge", {"_class_name": "LLMAsAJudgeScorer", "_bases": ["Scorer", "Object", "BaseModel"],
                                             "name": "helpfulness-judge", "model": "mock/json", "response_format": "json_object",
                                             "scoring_prompt": "Question: {question}\nAnswer: {output}\nRate helpfulness 1-5 as JSON {\"score\": n, \"correct\": bool}."})
-    ev = c.publish("support-eval", {"_type": "Evaluation", "_class_name": "Evaluation", "_bases": ["Object", "BaseModel"],
+    ev = c.save("support-eval", {"_type": "Evaluation", "_class_name": "Evaluation", "_bases": ["Object", "BaseModel"],
                                     "name": "support-eval", "dataset": ds, "scorers": [exact, contains, judge], "trials": 1})
     models = []
     for mid, tmpl in [("echo-baseline", "{question}"), ("polite-echo", "Thanks for asking! {question}")]:
-        models.append(c.publish(mid, {"_class_name": "LLMStructuredCompletionModel", "_bases": ["Model", "Object", "BaseModel"],
+        models.append(c.save(mid, {"_class_name": "LLMStructuredCompletionModel", "_bases": ["Model", "Object", "BaseModel"],
                                       "name": mid, "llm_model_id": "mock/echo",
                                       "default_params": {"messages_template": [{"role": "user", "content": tmpl}], "temperature": 0}}))
-    call_ids = [c.post("/evaluate_model", {"project_id": c.project, "evaluation_ref": ev, "model_ref": m})["call_id"] for m in models]
-    for cid in call_ids:
+    run_ids = [c.post("/api/v1/evaluations/run", {"project_id": c.project, "evaluation_ref": ev, "model_ref": m})["id"] for m in models]
+    for rid in run_ids:
         for _ in range(200):
-            st = c.post("/evaluation_status", {"project_id": c.project, "call_id": cid})["status"]
+            st = c.get(f"/api/v1/evaluations/{rid}/status", {"project_id": c.project})
             if st["code"] != "running":
                 break
             time.sleep(0.1)
-    c.publish("support-leaderboard", {"_class_name": "Leaderboard", "_bases": ["Object", "BaseModel"], "name": "support-leaderboard",
+    c.save("support-leaderboard", {"_class_name": "Leaderboard", "_bases": ["Object", "BaseModel"], "name": "support-leaderboard",
                                       "description": "Support answer quality", "columns": [
                                           {"evaluation_object_ref": ev, "scorer_name": "helpfulness-judge", "summary_metric_path": "score.mean", "should_minimize": False},
                                           {"evaluation_object_ref": ev, "scorer_name": "mentions-answer", "summary_metric_path": "true_fraction", "should_minimize": False},
                                           {"evaluation_object_ref": ev, "scorer_name": "model_latency", "summary_metric_path": "mean", "should_minimize": True}]})
-    c.publish("answer-quality", {"_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "answer-quality",
+    c.save("answer-quality", {"_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "answer-quality",
                                  "description": "Reviewer rating of the final answer", "unique_among_creators": True, "op_scope": None,
                                  "field_schema": {"type": "integer", "minimum": 1, "maximum": 5}})
-    c.publish("resolution", {"_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "resolution",
+    c.save("resolution", {"_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "resolution",
                              "description": "Did the answer resolve the ticket?", "unique_among_creators": True, "op_scope": None,
                              "field_schema": {"type": "string", "enum": ["resolved", "partially", "unresolved"]}})
-    c.publish("helpfulness-monitor", {"_class_name": "Monitor", "_bases": ["Object", "BaseModel"], "name": "helpfulness-monitor",
+    c.save("helpfulness-monitor", {"_class_name": "Monitor", "_bases": ["Object", "BaseModel"], "name": "helpfulness-monitor",
                                       "description": "Judge a sample of production answers", "active": True, "sampling_rate": 0.5,
                                       "op_names": ["support_agent"], "scorers": [judge]})
-    return call_ids
+    return run_ids
 
 
 def main():
@@ -234,10 +242,10 @@ def main():
     args = ap.parse_args()
     random.seed(7)
     c = Client(args.url, args.project, args.api_key)
-    ops = {name: c.op(name, code) for name, code in [
-        ("support_agent", "@weft.op\ndef support_agent(question: str, user_id: str) -> dict:\n    docs = retrieve_docs(question, k=3)\n    return answer(question, docs)\n"),
-        ("retrieve_docs", "@weft.op\ndef retrieve_docs(query: str, k: int = 3) -> list[dict]:\n    return index.search(query, k)\n"),
-        ("lookup_order", "@weft.op\ndef lookup_order(order_id: str) -> dict:\n    return orders_api.get(order_id)\n"),
+    ops = {name: c.function(name, code) for name, code in [
+        ("support_agent", "@weft.trace\ndef support_agent(question: str, user_id: str) -> dict:\n    docs = retrieve_docs(question, k=3)\n    return answer(question, docs)\n"),
+        ("retrieve_docs", "@weft.trace\ndef retrieve_docs(query: str, k: int = 3) -> list[dict]:\n    return index.search(query, k)\n"),
+        ("lookup_order", "@weft.trace\ndef lookup_order(order_id: str) -> dict:\n    return orders_api.get(order_id)\n"),
     ]}
     # Assets first so the monitor exists before production traffic arrives.
     eval_ids = seed_assets(c)

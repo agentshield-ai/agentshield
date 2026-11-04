@@ -40,7 +40,7 @@ def _wait(fn, timeout=10.0):
 
 
 def test_conversation_appears_in_agents_api(live):
-    @weft.op
+    @weft.trace
     def lookup(order_id: int) -> dict:
         return {"order": order_id, "status": "shipped"}
 
@@ -83,8 +83,8 @@ def test_conversation_appears_in_agents_api(live):
     ops = sorted(s["operation_name"] or "" for s in spans["spans"])
     assert ops.count("invoke_agent") == 3 and ops.count("chat") == 2 and ops.count("execute_tool") == 1
     # also a thread in the Threads view
-    threads = _post(live, "/threads/query", {})["threads"]
-    assert any(t["thread_id"] == conv.conversation_id and t["turn_count"] == 2 for t in threads)
+    threads = _post(live, "/api/v1/spans/sessions", {})["items"]
+    assert any(t["session_id"] == conv.conversation_id and t["turn_count"] == 2 for t in threads)
 
 
 def test_batch_logged_conversation_is_queryable(live):
@@ -102,7 +102,7 @@ def test_batch_logged_conversation_is_queryable(live):
 
 
 def test_saved_view_filters_on_the_server(live):
-    @weft.op
+    @weft.trace
     def answer(q: str) -> str:
         if q == "boom":
             raise ValueError("boom")
@@ -116,17 +116,17 @@ def test_saved_view_filters_on_the_server(live):
     live.flush()
     view = (weft.SavedView(label="Successful long answers").filter_op("answer").add_filter("summary.weft.status", "equals", "success")
             .add_filter("output", "contains", "B").sort_by("started_at", "asc").add_column("inputs.q", "Question").save())
-    assert [c.inputs["q"] for c in view.get_calls()] == ["bb"]
-    assert [c.inputs["q"] for c in weft.SavedView().filter_op("answer").add_filter("inputs.q", "in", ["a", "ccc"]).sort_by("started_at", "asc").get_calls()] == ["a", "ccc"]
-    assert len(list(weft.SavedView().filter_op("answer").add_filter("started_at", "after", "2020-01-01").get_calls())) == 4
-    assert len(list(weft.SavedView().filter_op("answer").add_filter("summary.weft.status", "equals", "error").get_calls())) == 1
+    assert [c.inputs["q"] for c in view.spans()] == ["bb"]
+    assert [c.inputs["q"] for c in weft.SavedView().filter_op("answer").add_filter("inputs.q", "in", ["a", "ccc"]).sort_by("started_at", "asc").spans()] == ["a", "ccc"]
+    assert len(list(weft.SavedView().filter_op("answer").add_filter("started_at", "after", "2020-01-01").spans())) == 4
+    assert len(list(weft.SavedView().filter_op("answer").add_filter("summary.weft.status", "equals", "error").spans())) == 1
     loaded = weft.SavedView.load(view.name)
-    assert loaded.label == "Successful long answers" and [c.inputs["q"] for c in loaded.get_calls()] == ["bb"]
+    assert loaded.label == "Successful long answers" and [c.inputs["q"] for c in loaded.spans()] == ["bb"]
     assert [v.name for v in live.get_saved_views(view_type="traces")] == [view.name]
 
 
 def test_server_cache_hits_on_live_reads(live):
-    ref = weft.publish(weft.Dataset(name="cached", rows=[{"i": i} for i in range(3)]))
+    ref = weft.save(weft.Dataset(name="cached", rows=[{"i": i} for i in range(3)]))
     live.clear_server_cache()
     before = live.cache_stats()
     assert [r["i"] for r in live.get(ref).rows] == [0, 1, 2]
@@ -148,18 +148,18 @@ def test_evaluation_logger_links_existing_turns(live):
         p.finish()
     ev.log_summary()
     live.flush()
-    [pas, _] = list(live.get_calls(filter={"op_names": ["Evaluation.predict_and_score"]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
+    [pas, _] = list(live.spans(filter={"names": ["Evaluation.predict_and_score"]}, sort_by=[{"field": "started_at", "direction": "asc"}]))
     links = pas.attributes["weft"]["linked_calls"]
     assert links == [{"call_id": turns[0].call_id, "trace_id": turns[0].trace_id}]
     q = {"$eq": [{"$getField": "attributes.weft.genai_span_ref.0.span_id"}, {"$literal": turns[1].call_id}]}
-    found = list(live.get_calls(query=q))
-    assert len(found) >= 1 and all(c.op_base_name in ("Evaluation.predict_and_score", "calc.predict") for c in found)
+    found = list(live.spans(query=q))
+    assert len(found) >= 1 and all(c.base_name in ("Evaluation.predict_and_score", "calc.predict") for c in found)
 
 
 def test_byob_references_and_resolve_url(live):
     blob = weft.Content(b"stored in weft", mimetype="text/plain")
 
-    @weft.op
+    @weft.trace
     def look(image, doc, local) -> str:
         return "ok"
 
@@ -167,11 +167,11 @@ def test_byob_references_and_resolve_url(live):
     page = weft.Content.from_uri("https://example.com/doc.pdf")
     look(img, page, blob)
     live.flush()
-    [c] = list(live.get_calls(filter={"op_names": ["look"]}))
+    [c] = list(live.spans(filter={"names": ["look"]}))
     assert c.inputs["image"]["uri"] == "s3://customer-bucket/cats/1.png" and c.inputs["image"]["_type"] == "Image"
     assert c.inputs["doc"]["uri"] == "https://example.com/doc.pdf"
     url = live.resolve_url(blob)
-    assert "/file/content" in url and blob.digest in url
+    assert "/api/v1/files/" in url and blob.digest in url
     with urllib.request.urlopen(url) as resp:
         assert resp.read() == b"stored in weft"
     assert live.resolve_url(["https://example.com/doc.pdf"]) == ["https://example.com/doc.pdf"]

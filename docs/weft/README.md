@@ -12,7 +12,7 @@ and the web UI, backed by a single SQLite file. Python and TypeScript SDKs
 live in `sdk/`.
 
 ```
- your app ──@weft.op / wrapOpenAI──▶ /api/v1/spans/batch ┐
+ your app ──@weft.trace / wrapOpenAI─▶ /api/v1/spans/batch ┐
  any OTel / OpenInference / OpenLLMetry ──▶ /otel/v1/traces ┤──▶ weft (Go) ──▶ SQLite
  browser ──────────────────────────▶ web UI + JSON API ┘        │
                                                                 └─▶ LLM providers (playground, judges, monitors)
@@ -113,14 +113,16 @@ import weft
 
 weft.init("my-team/my-app")
 
-@weft.op
+@weft.trace
 def answer(question: str) -> str:
     return client.chat.completions.create(model="gpt-4o-mini",
         messages=[{"role": "user", "content": question}]).choices[0].message.content
 ```
 
 OpenAI and Anthropic clients are patched automatically, so their calls appear
-as child calls with token usage and cost.
+as child spans with token usage and cost. Versioned values are saved with
+`weft.save(obj, name)` and read back with `weft.get(ref)`; spans are queried
+with `client.spans(...)` and `client.span(id)`.
 
 **Any OpenTelemetry exporter.** Point an OTLP/HTTP trace exporter at
 `http://<host>:6345/otel/v1/traces` and send the project in a header:
@@ -139,7 +141,7 @@ Datasets, models, scorers and evaluations follow the same pattern:
 ```python
 dataset = weft.Dataset(name="capitals", rows=[{"question": "France?", "expected": "Paris"}])
 
-@weft.op
+@weft.trace
 def exact(expected: str, output: str) -> bool:
     return expected == output
 
@@ -156,12 +158,12 @@ further setup. See [sdk/python/README.md](../../sdk/python/README.md).
 ```ts
 import * as weft from 'weft-sdk'
 await weft.init('my-team/my-app')
-const answer = weft.op(async function answer(question: string) { /* ... */ })
+const answer = weft.trace(async function answer(question: string) { /* ... */ })
 const openai = weft.wrapOpenAI(new OpenAI())
 ```
 
 It also provides `Dataset`, `Evaluation`, `EvaluationLogger`, built-in scorers,
-`publish`/`ref`, `wrapAnthropic`, `attributes` and `withThread`. See
+`save`/`get`, `spans`/`span`, `wrapAnthropic`, `attributes` and `withThread`. See
 [sdk/typescript/README.md](../../sdk/typescript/README.md).
 
 The TypeScript SDK also traces LangChain.js, LlamaIndex.TS, the Vercel AI SDK

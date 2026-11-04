@@ -9,7 +9,7 @@ import type { Detection } from '../../api/v1'
 import { agentColor } from '../../lib/agentColor'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber } from '../../lib/format'
 import { currentFocus, moveFocus, oneLine, reasoningFor, STEP_LABEL, stepTitle, type BuiltTimeline, type Step, type StepType } from '../../lib/timeline'
-import { agentUrl, callUrl, securityUrl } from '../../lib/urls'
+import { agentUrl, spanUrl, securityUrl } from '../../lib/urls'
 import { isTyping } from '../ui/Shortcuts'
 import { ActionBadge, AgentChip, CopyId, SeverityText, StatusPill } from '../ui/bits'
 import { Icon, type IconName } from '../ui/Icons'
@@ -481,7 +481,7 @@ function StepBody({ pid, s }: { pid: string; s: Step }) {
         {s.item.span_id && s.type !== 'detection' && (
           <Field label="Span">
             <CopyId id={s.item.span_id} label="Span id" />{' '}
-            <Link className="small" to={callUrl(pid, s.item.span_id)}>
+            <Link className="small" to={spanUrl(pid, s.item.span_id)}>
               Open raw span
             </Link>
           </Field>

@@ -108,12 +108,12 @@ class Monitor(Object):
     def activate(self) -> Any:
         """Set ``active=True`` and publish a new version."""
         self.active = True
-        return self.publish(self.name)
+        return self.save(self.name)
 
     def deactivate(self) -> Any:
         """Set ``active=False`` and publish a new version."""
         self.active = False
-        return self.publish(self.name)
+        return self.save(self.name)
 
 
 class LeaderboardColumn(BaseModel):

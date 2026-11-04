@@ -1,3 +1,4 @@
+import { dynamicRunIds } from '../../api/leaderboards'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -10,7 +11,7 @@ import { fmtMetric, toNum } from '../../components/evals/evalUtils'
 import { encodeLb } from '../../components/evals/leaderboardUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative } from '../../lib/format'
-import { callUrl, compareEvaluationsUrl, newEvaluationUrl, objectUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
+import { spanUrl, compareEvaluationsUrl, newEvaluationUrl, objectUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
 
 type Row = LeaderboardComputeRes['rows'][number]
 
@@ -83,19 +84,19 @@ export function LeaderboardPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2, minWidth: 0 }}>
           <h1 className="truncate">{objectId}</h1>
-          {data?.leaderboard.val?.description && <span className="muted small">{data.leaderboard.val.description}</span>}
+          {data?.leaderboard.value?.description && <span className="muted small">{data.leaderboard.value.description}</span>}
         </div>
         <span className="spacer" />
         {data && (
           <>
             <Link className="btn ghost" to={objectVersionsUrl(projectId, objectId)}>
-              v{data.leaderboard.version_index} · history
+              v{data.leaderboard.version} · history
             </Link>
-            {Array.isArray(data.leaderboard.val?.weft_dynamic?.evaluation_call_ids) && data.leaderboard.val.weft_dynamic.evaluation_call_ids.length > 0 && (
+            {dynamicRunIds(data.leaderboard.value).length > 0 && (
               <Link
                 className="btn ghost"
                 title="Open the evaluation comparison this leaderboard was saved from"
-                to={`${compareEvaluationsUrl(projectId, data.leaderboard.val.weft_dynamic.evaluation_call_ids)}${Array.isArray(data.leaderboard.val.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.val.weft_dynamic.metrics))}` : ''}`}
+                to={`${compareEvaluationsUrl(projectId, dynamicRunIds(data.leaderboard.value))}${Array.isArray(data.leaderboard.value.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.value.weft_dynamic.metrics))}` : ''}`}
               >
                 Source comparison
               </Link>
@@ -104,7 +105,7 @@ export function LeaderboardPage() {
               className="btn"
               disabled={!data.rows.length}
               onClick={() => {
-                const ids = [...new Set(data.rows.flatMap((r) => Object.values(r.values).map((v) => v.evaluation_call_id)))].filter(Boolean)
+                const ids = [...new Set(data.rows.flatMap((r) => Object.values(r.values).map((v) => v.evaluation_run_id)))].filter(Boolean)
                 nav(compareEvaluationsUrl(projectId, ids))
               }}
             >
@@ -209,7 +210,7 @@ export function LeaderboardPage() {
                         return (
                           <td key={k} className={`num ${isBest ? 'best' : ''}`}>
                             {cell ? (
-                              <Link to={callUrl(projectId, cell.evaluation_call_id)} title={`Run ${fmtDate(cell.started_at)}`} style={{ color: 'inherit' }}>
+                              <Link to={spanUrl(projectId, cell.evaluation_run_id)} title={`Run ${fmtDate(cell.started_at)}`} style={{ color: 'inherit' }}>
                                 <div className="mono">{fmtMetric(cell.value)}</div>
                                 <div style={{ height: 3, background: 'var(--panel-2)', borderRadius: 2, marginTop: 3 }}>
                                   <div style={{ width: `${Math.max(4, frac * 100)}%`, height: '100%', background: isBest ? 'var(--success)' : 'var(--accent)', borderRadius: 2, opacity: 0.7 }} />

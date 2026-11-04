@@ -27,14 +27,14 @@ export const FILTER_OPS: { id: FilterOp; label: string; noValue?: boolean }[] = 
 ]
 
 export const BASE_FILTER_FIELDS = [
-  'op_name',
+  'name',
   'display_name',
   'id',
   'trace_id',
   'parent_id',
-  'thread_id',
+  'session_id',
   'turn_id',
-  'exception',
+  'error',
   'user_id',
   'started_at',
   'ended_at',

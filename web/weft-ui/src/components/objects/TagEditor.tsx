@@ -1,4 +1,4 @@
-// Version tags (/objs/{id}/versions/{digest}/tags): chips with add/remove.
+// Version tags (/api/v1/objects/{name}/versions/{version}/tags): chips with add/remove.
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
@@ -11,8 +11,8 @@ export function TagEditor({ projectId, objectId, digest, tags, compact }: { proj
   const [err, setErr] = useState<string | null>(null)
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
-    void qc.invalidateQueries({ queryKey: ['obj', projectId, objectId] })
-    void qc.invalidateQueries({ queryKey: ['objs', projectId] })
+    void qc.invalidateQueries({ queryKey: ['object', projectId, objectId] })
+    void qc.invalidateQueries({ queryKey: ['objects', projectId] })
   }
   const run = async (fn: () => Promise<unknown>) => {
     try {

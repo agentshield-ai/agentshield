@@ -26,7 +26,7 @@ export function CodeSnippet({ code, lang }: { code: string; lang?: string }) {
 /** How to send data to this server: Python SDK, OTLP exporter, raw HTTP. */
 export function GettingStarted({ projectId, compact }: { projectId: string; compact?: boolean }) {
   const [tab, setTab] = useState<Tab>('python')
-  const info = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo, staleTime: 60_000 })
+  const info = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const origin = serverOrigin()
   const otel = `${origin}${info.data?.otel_endpoint ?? '/otel/v1/traces'}`
   const auth = info.data?.auth_required
@@ -35,7 +35,7 @@ import weft
 
 weft.init("${projectId}", server_url="${origin}")${auth ? '  # API key from WEFT_API_KEY' : ''}
 
-@weft.op
+@weft.trace
 def answer(question: str) -> str:
     # OpenAI / Anthropic calls made here are traced too
     return "42"
@@ -47,11 +47,10 @@ export OTEL_EXPORTER_OTLP_TRACES_HEADERS="project_id=${projectId}${auth ? ',Auth
 
 # gen_ai.* (OpenTelemetry GenAI) and other common span conventions
 # are mapped to inputs, outputs and token usage.`
-  const curl = `curl -X POST ${origin}/call/start \\
+  const curl = `curl -X POST ${origin}/api/v1/spans/start \\
   -H 'Content-Type: application/json'${auth ? " \\\n  -H 'Authorization: Bearer <api key>'" : ''} \\
-  -d '{"start": {"project_id": "${projectId}", "op_name": "hello",
-       "started_at": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "inputs": {"name": "world"}}}'
-# => {"id": "...", "trace_id": "..."}  then POST /call/end with that id`
+  -d '{"project_id": "${projectId}", "name": "hello", "inputs": {"name": "world"}}'
+# => {"id": "...", "trace_id": "..."}  then POST /api/v1/spans/end with that id`
   return (
     <div className="col" style={{ gap: 10 }}>
       {!compact && (

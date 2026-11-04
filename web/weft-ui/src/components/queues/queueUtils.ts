@@ -1,10 +1,10 @@
 import type { AnnotationQueueItem } from '../../api/queues'
-import type { Any, Call, Feedback, ObjSchema } from '../../api/types'
+import type { Any, Span, Feedback, WeftObject } from '../../api/types'
 import { callToDatasetRow, getDotted } from '../traces/callUtils'
 
-/** Name of an AnnotationSpec object (its `name` field, else the object id). */
-export function specName(spec: Pick<ObjSchema, 'object_id' | 'val'>): string {
-  return String(spec.val?.name ?? spec.object_id)
+/** Name of an AnnotationSpec object (its `name` field, else the object name). */
+export function specName(spec: Pick<WeftObject, 'name' | 'value'>): string {
+  return String(spec.value?.name ?? spec.name)
 }
 
 export const annotationType = (name: string) => `weft.annotation.${name}`
@@ -42,7 +42,7 @@ export function progressCounts(items: Pick<AnnotationQueueItem, 'annotation_stat
 }
 
 /** Values of a call at the queue's display_fields paths (e.g. "inputs.question"). */
-export function displayFieldValues(call: Call, fields: string[]): { path: string; value: unknown }[] {
+export function displayFieldValues(call: Span, fields: string[]): { path: string; value: unknown }[] {
   return fields.map((path) => ({ path, value: getDotted(call, path) }))
 }
 
@@ -54,14 +54,14 @@ export function displayFieldValues(call: Call, fields: string[]): { path: string
  */
 export function buildExportRows(
   items: Pick<AnnotationQueueItem, 'call_id'>[],
-  calls: Map<string, Call>,
+  calls: Map<string, Span>,
   feedback: Feedback[],
   specNames: string[],
   includeUnannotated = false,
 ): Record<string, Any>[] {
   const byCall = new Map<string, Feedback[]>()
   for (const f of feedback) {
-    const m = /\/call\/([^/]+)$/.exec(f.ref)
+    const m = /\/(?:span|call)\/([^/]+)$/.exec(f.ref)
     if (!m) continue
     const list = byCall.get(m[1]) ?? []
     list.push(f)

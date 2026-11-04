@@ -77,7 +77,7 @@ test('the AgentShield Codex hook sends the session and tool-call ids this plugin
       const span = toolSpans.find((c) => c.attributes['gen_ai.tool.call.id'] === req.tool_call_id);
       assert.ok(span, `a Weft tool span for ${req.tool_call_id}`);
       assert.equal(span.attributes['gen_ai.conversation.id'], req.session_id, 'session id = gen_ai.conversation.id');
-      assert.equal(span.thread_id, req.session_id);
+      assert.equal(span.session_id, req.session_id);
     }
   } finally {
     await eng.close();

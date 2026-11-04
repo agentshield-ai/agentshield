@@ -373,7 +373,7 @@ export function RetentionTab({ projectId }: { projectId: string }) {
             <ConfirmButton
               className="btn danger"
               title={`Purge data older than ${current} days now?`}
-              body="Calls and their feedback older than the retention period are deleted permanently."
+              body="Spans and their feedback older than the retention period are deleted permanently."
               confirmLabel="Purge"
               disabled={!current || principal.data?.admin === false}
               onConfirm={async () => {
@@ -430,7 +430,7 @@ export function SamplingTab({ projectId }: { projectId: string }) {
                 <span className="muted">% of traces kept</span>
               </div>
               <label className="checkbox">
-                <Switch on={dry} onChange={setDry} /> Dry run: keep everything, but mark calls that would be dropped (attribute <span className="mono">weft_ingest_sampling</span>)
+                <Switch on={dry} onChange={setDry} /> Dry run: keep everything, but mark spans that would be dropped (attribute <span className="mono">weft_ingest_sampling</span>)
               </label>
               <div className="row">
                 <button

@@ -12,7 +12,7 @@ import * as weft from '../../../sdk/typescript/dist/index.js';
 const client = await weft.init('ts-quickstart');
 
 // --- tracing -----------------------------------------------------------------
-const retrieve = weft.op(
+const retrieve = weft.trace(
   async function retrieve(query: string) {
     return [`doc about ${query}`, 'another doc'];
   },
@@ -36,7 +36,7 @@ const llmClient = weft.wrapOpenAI({
   },
 });
 
-const answer = weft.op(
+const answer = weft.trace(
   async function answer(question: string) {
     const docs = await retrieve(question);
     const res = await llmClient.chat.completions.create({
@@ -68,16 +68,16 @@ const dataset = new weft.Dataset({
   ],
 });
 
-const capitalModel = weft.op(async function capitalModel({ datasetRow }: { datasetRow: { country: string } }) {
+const capitalModel = weft.trace(async function capitalModel({ datasetRow }: { datasetRow: { country: string } }) {
   const known: Record<string, string> = { France: 'Paris', Japan: 'Tokyo', Australia: 'Sydney' };
   return known[datasetRow.country] ?? 'unknown';
 });
 
-const exactMatch = weft.op(function exactMatch({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
+const exactMatch = weft.trace(function exactMatch({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
   return modelOutput === datasetRow.expected;
 });
 
-const lengthDelta = weft.op(function lengthDelta({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
+const lengthDelta = weft.trace(function lengthDelta({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
   return { delta: Math.abs(modelOutput.length - datasetRow.expected.length) };
 });
 
@@ -89,13 +89,13 @@ const evaluation = new weft.Evaluation({
 console.log('summary:', JSON.stringify(await evaluation.evaluate({ model: capitalModel })));
 
 // --- reading data back ---------------------------------------------------------
-const [latest] = await client.getCalls({ filter: { op_names: ['answer'] }, sortBy: [{ field: 'started_at', direction: 'desc' }], limit: 1 });
+const [latest] = await client.spans({ filter: { names: ['answer'] }, sortBy: [{ field: 'started_at', direction: 'desc' }], limit: 1 });
 await latest.feedback.addReaction('👍');
 const guard = await latest.applyScorer(new weft.RuleScorer({ name: 'non_empty', rule: { $gt: [{ $getField: 'output' }, { $literal: '' }] } }));
 console.log('guardrail:', guard.result);
 
 // attach a document, then tag the dataset version
-const attach = weft.op(function attachNotes() {
+const attach = weft.trace(function attachNotes() {
   return weft.Content.fromText('Capitals reviewed by the geography team.', { filename: 'notes.txt' });
 });
 attach();

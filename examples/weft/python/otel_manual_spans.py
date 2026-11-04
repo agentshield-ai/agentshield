@@ -42,7 +42,7 @@ def generate(query: str, docs: list) -> str:
 
 def rag(query: str) -> str:
     with tracer.start_as_current_span("rag_pipeline") as span:
-        span.set_attribute("session.id", "otel-session-1")  # becomes thread_id
+        span.set_attribute("session.id", "otel-session-1")  # becomes the session_id
         weft.otel.set_inputs(span, {"query": query})
         answer = generate(query, retrieve(query))
         weft.otel.set_output(span, {"answer": answer})

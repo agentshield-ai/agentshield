@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { AutomationRun } from '../../api/automations'
 import { fmtDate, fmtRelative } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { JsonBlock } from '../ValueView'
 
 export function RunStatus({ run }: { run: AutomationRun }) {
@@ -59,7 +59,7 @@ export function RunsTable({ projectId, runs, showAutomation = true }: { projectI
                     {callId && callId !== 'test-call' && (
                       <>
                         {' '}
-                        <Link to={callUrl(projectId, callId)} onClick={(e) => e.stopPropagation()}>
+                        <Link to={spanUrl(projectId, callId)} onClick={(e) => e.stopPropagation()}>
                           call
                         </Link>
                       </>

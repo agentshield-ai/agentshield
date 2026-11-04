@@ -195,7 +195,7 @@ function safeFormat(template: string, values: Record<string, unknown>): string {
 
 /**
  * An LLM judge. `scoringPrompt` placeholders: `{output}` and dataset columns.
- * Runs through the Weft server's /completions/create (track_llm_call: false),
+ * Runs through the Weft server's POST /api/v1/completions (track: false),
  * so provider keys stay on the server; usage is recorded on the scorer call.
  */
 export class LLMAsAJudgeScorer extends Scorer {
@@ -453,7 +453,7 @@ export class OpenAIModerationScorer extends Scorer {
   }
   async score({ modelOutput }: ScoreArgs): Promise<unknown> {
     const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OpenAIModerationScorer runs locally only with OPENAI_API_KEY set; publish it and let the server run it');
+    if (!key) throw new Error('OpenAIModerationScorer runs locally only with OPENAI_API_KEY set; save it and let the server run it');
     const res = await fetch('https://api.openai.com/v1/moderations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -465,7 +465,7 @@ export class OpenAIModerationScorer extends Scorer {
   }
 }
 
-/** Cosine similarity of output and `row[targetColumn]` embeddings (needs the server's /embeddings/create to run locally). */
+/** Cosine similarity of output and `row[targetColumn]` embeddings (needs the server's POST /api/v1/embeddings to run locally). */
 export class EmbeddingSimilarityScorer extends Scorer {
   targetColumn: string;
   model: string;
@@ -485,10 +485,10 @@ export class EmbeddingSimilarityScorer extends Scorer {
     const texts = [asText(modelOutput), asText(datasetRow[this.targetColumn])];
     let res: any;
     try {
-      res = await client.http.post('/embeddings/create', { project_id: client.projectId, inputs: { model: this.model, input: texts } });
+      res = await client.http.post('/api/v1/embeddings', { project_id: client.projectId, inputs: { model: this.model, input: texts } });
     } catch (e) {
       if (e instanceof WeftHTTPError && [404, 405, 501].includes(e.status)) {
-        throw new Error('EmbeddingSimilarityScorer cannot run locally: this Weft server has no /embeddings/create endpoint. Publish the scorer and run it server side.');
+        throw new Error('EmbeddingSimilarityScorer cannot run locally: this Weft server has no embeddings route. Save the scorer and run it server side.');
       }
       throw e;
     }

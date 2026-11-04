@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import { callRef, objectRef, parseRef } from '../../api/refs'
-import type { Any, Call, Feedback, ObjSchema } from '../../api/types'
+import { spanRef, objectRef, parseRef } from '../../api/refs'
+import type { Any, Span, Feedback, WeftObject } from '../../api/types'
 import { fmtDate, fmtRelative, fmtScore } from '../../lib/format'
 import { refUrl, objectUrl, settingsUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Loading, Section } from '../common'
@@ -39,7 +39,7 @@ export function isMine(f: Feedback): boolean {
 }
 
 export function useCallFeedback(projectId: string, callId: string) {
-  const targetRef = callRef(projectId, callId)
+  const targetRef = spanRef(projectId, callId)
   return useQuery({
     queryKey: ['feedback', projectId, targetRef],
     queryFn: () =>
@@ -54,10 +54,10 @@ export function useCallFeedback(projectId: string, callId: string) {
 
 function useFeedbackMutations(projectId: string, callId: string) {
   const qc = useQueryClient()
-  const targetRef = callRef(projectId, callId)
+  const targetRef = spanRef(projectId, callId)
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['feedback', projectId, targetRef] })
-    void qc.invalidateQueries({ queryKey: ['calls', projectId] })
+    void qc.invalidateQueries({ queryKey: ['spans', projectId] })
   }
   const create = useMutation({
     mutationFn: (req: { feedback_type: string; payload: Any; annotation_ref?: string }) => api.feedbackCreate({ project_id: projectId, ref: targetRef, ...req }),
@@ -71,7 +71,7 @@ function useFeedbackMutations(projectId: string, callId: string) {
       api.feedbackReplace({ project_id: projectId, ref: targetRef, ...req }),
     onSuccess: invalidate,
   })
-  const purge = useMutation({ mutationFn: (id: string) => api.feedbackPurge(projectId, id), onSuccess: invalidate })
+  const purge = useMutation({ mutationFn: (id: string) => api.feedbackDelete(projectId, id), onSuccess: invalidate })
   return { create, replace, purge }
 }
 
@@ -172,15 +172,15 @@ export interface FieldSchema {
   maxLength?: number
 }
 
-function specName(o: ObjSchema): string {
-  return String(o.val?.name ?? o.object_id)
+function specName(o: WeftObject): string {
+  return String(o.value?.name ?? o.name)
 }
 
-function specApplies(spec: ObjSchema, call: Call | undefined): boolean {
-  const scope = spec.val?.op_scope
+function specApplies(spec: WeftObject, call: Span | undefined): boolean {
+  const scope = spec.value?.op_scope
   if (!call || !Array.isArray(scope) || scope.length === 0) return true
   const base = (s: string) => parseRef(s)?.name ?? s
-  return scope.some((s: string) => base(s) === base(call.op_name))
+  return scope.some((s: string) => base(s) === base(call.name))
 }
 
 export function AnnotationInput({ schema, value, onChange }: { schema: FieldSchema; value: Any; onChange: (v: Any) => void }) {
@@ -241,19 +241,19 @@ export function AnnotationInput({ schema, value, onChange }: { schema: FieldSche
   return <textarea className="input" maxLength={schema.maxLength} value={value ?? ''} onChange={(e) => onChange(e.target.value)} style={{ minHeight: 54 }} />
 }
 
-function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: string; callId: string; spec: ObjSchema; feedback: Feedback[] }) {
+function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: string; callId: string; spec: WeftObject; feedback: Feedback[] }) {
   const { create, replace, purge } = useFeedbackMutations(projectId, callId)
   const name = specName(spec)
   const type = `weft.annotation.${name}`
-  const schema: FieldSchema = spec.val?.field_schema ?? {}
-  const unique = spec.val?.unique_among_creators !== false
+  const schema: FieldSchema = spec.value?.field_schema ?? {}
+  const unique = spec.value?.unique_among_creators !== false
   const rows = feedback.filter((f) => f.feedback_type === type)
   const mine = rows.find(isMine)
   const others = rows.filter((r) => r !== mine)
   const [draft, setDraft] = useState<Any>(mine?.payload?.value ?? null)
   useEffect(() => setDraft(mine?.payload?.value ?? null), [mine?.id, mine?.payload?.value])
   const dirty = draft !== (mine?.payload?.value ?? null)
-  const annotationRef = objectRef(projectId, spec.object_id, spec.digest)
+  const annotationRef = objectRef(projectId, spec.name, spec.digest)
   const save = (v: Any) => {
     if (v == null || v === '') return
     const req = { feedback_type: type, payload: { value: v }, annotation_ref: annotationRef }
@@ -265,7 +265,7 @@ function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: strin
   return (
     <div className="annotation">
       <div className="row">
-        <Link to={objectUrl(projectId, spec.object_id, spec.digest)} className="mono small" title="Annotation spec">
+        <Link to={objectUrl(projectId, spec.name, spec.digest)} className="mono small" title="Annotation spec">
           {name}
         </Link>
         <span className="faint small">{schema.type ?? 'string'}{Array.isArray(schema.enum) ? ' enum' : ''}{schema.minimum != null ? ` ${schema.minimum}–${schema.maximum ?? ''}` : ''}</span>
@@ -276,7 +276,7 @@ function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: strin
           </button>
         )}
       </div>
-      {spec.val?.description && <div className="faint small">{spec.val.description}</div>}
+      {spec.value?.description && <div className="faint small">{spec.value.description}</div>}
       <div className="row" style={{ alignItems: 'flex-start' }}>
         <div className="grow">
           <AnnotationInput
@@ -309,14 +309,14 @@ function AnnotationRow({ projectId, callId, spec, feedback }: { projectId: strin
   )
 }
 
-function Annotations({ projectId, call, feedback }: { projectId: string; call?: Call; feedback: Feedback[] }) {
+function Annotations({ projectId, call, feedback }: { projectId: string; call?: Span; feedback: Feedback[] }) {
   const specs = useQuery({
-    queryKey: ['objs', projectId, 'AnnotationSpec', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['AnnotationSpec'], latest_only: true }, limit: 200 }),
+    queryKey: ['objects', projectId, 'AnnotationSpec', 'latest'],
+    queryFn: () => api.objectsQuery({ project_id: projectId, filter: { kinds: ['annotation_spec'], latest_only: true }, limit: 200 }),
   })
   if (specs.isLoading) return <Loading />
   if (specs.error) return <ErrorBox error={specs.error} />
-  const list = (specs.data?.objs ?? []).filter((s) => !s.deleted_at && specApplies(s, call))
+  const list = (specs.data?.items ?? []).filter((s) => !s.deleted_at && specApplies(s, call))
   if (!list.length)
     return (
       <div className="faint small">
@@ -327,7 +327,7 @@ function Annotations({ projectId, call, feedback }: { projectId: string; call?: 
   return (
     <div className="col" style={{ gap: 14 }}>
       {list.map((s) => (
-        <AnnotationRow key={s.object_id} projectId={projectId} callId={call?.id ?? ''} spec={s} feedback={feedback} />
+        <AnnotationRow key={s.name} projectId={projectId} callId={call?.id ?? ''} spec={s} feedback={feedback} />
       ))}
     </div>
   )
@@ -337,11 +337,11 @@ function Annotations({ projectId, call, feedback }: { projectId: string; call?: 
 
 const KNOWN = (t: string) => t === 'weft.reaction' || t === 'weft.note' || t.startsWith('weft.annotation.') || t.startsWith('weft.scorer.')
 
-export function FeedbackPanel({ projectId, call }: { projectId: string; call: Call }) {
+export function FeedbackPanel({ projectId, call }: { projectId: string; call: Span }) {
   const fb = useCallFeedback(projectId, call.id)
   if (fb.isLoading) return <Loading />
   if (fb.error) return <ErrorBox error={fb.error} />
-  const all = fb.data?.result ?? []
+  const all = fb.data?.items ?? []
   const other = all.filter((f) => !KNOWN(f.feedback_type))
   return (
     <div className="col" style={{ gap: 14 }}>
@@ -396,24 +396,24 @@ function FeedbackTable({ projectId, rows }: { projectId: string; rows: Feedback[
 
 const RUNNABLE_SCORERS = ['LLMAsAJudgeScorer', 'ExactMatchScorer', 'ContainsScorer', 'RegexScorer', 'JSONValidScorer', 'LevenshteinScorer']
 
-/** Runs a server-runnable scorer on this call; the result lands as feedback. */
-function RunScorerBar({ projectId, call }: { projectId: string; call: Call }) {
+/** Runs a server-runnable scorer on this span; the result lands as feedback. */
+function RunScorerBar({ projectId, call }: { projectId: string; call: Span }) {
   const qc = useQueryClient()
   const scorers = useQuery({
-    queryKey: ['objs', projectId, 'runnable-scorers'],
+    queryKey: ['objects', projectId, 'runnable-scorers'],
     queryFn: () =>
-      api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['Scorer'], leaf_object_classes: RUNNABLE_SCORERS, latest_only: true }, metadata_only: true }),
+      api.objectsQuery({ project_id: projectId, filter: { kinds: ['scorer'], classes: RUNNABLE_SCORERS, latest_only: true }, metadata_only: true }),
   })
   const [sel, setSel] = useState('')
   const run = useMutation({
-    mutationFn: (ref: string) => api.callsScore(projectId, [call.id], [ref]),
+    mutationFn: (ref: string) => api.spansScore(projectId, [call.id], [ref]),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['feedback', projectId] }),
   })
-  const list = scorers.data?.objs ?? []
+  const list = scorers.data?.items ?? []
   if (!scorers.isLoading && !list.length)
     return (
       <div className="small muted">
-        Create an LLM judge or rule-based scorer under <Link to={`/${projectId}/scorers`}>Scorers</Link> to score calls on demand.
+        Create an LLM judge or rule-based scorer under <Link to={`/${projectId}/scorers`}>Scorers</Link> to score spans on demand.
       </div>
     )
   return (
@@ -422,23 +422,23 @@ function RunScorerBar({ projectId, call }: { projectId: string; call: Call }) {
         <select className="input" value={sel} onChange={(e) => setSel(e.target.value)} aria-label="Scorer">
           <option value="">Choose a scorer…</option>
           {list.map((o) => (
-            <option key={o.object_id} value={objectRef(o.project_id, o.object_id, o.digest)}>
-              {o.object_id} ({o.leaf_object_class})
+            <option key={o.name} value={objectRef(o.project_id, o.name, o.digest)}>
+              {o.name} ({o.class})
             </option>
           ))}
         </select>
         <button className="btn primary" disabled={!sel || run.isPending} onClick={() => run.mutate(sel)}>
           {run.isPending ? 'Scoring…' : 'Run scorer'}
         </button>
-        {run.isSuccess && !run.data.results.some((r) => r.error) && <span className="small muted">Score added.</span>}
+        {run.isSuccess && !run.data.items.some((r) => r.error) && <span className="small muted">Score added.</span>}
       </div>
-      {run.data?.results.filter((r) => r.error).map((r) => <ErrorBox key={r.scorer} error={`${r.scorer}: ${r.error}`} />)}
+      {run.data?.items.filter((r) => r.error).map((r) => <ErrorBox key={r.scorer} error={`${r.scorer}: ${r.error}`} />)}
       {run.error && <ErrorBox error={run.error} />}
     </div>
   )
 }
 
-export function ScoresPanel({ projectId, call }: { projectId: string; call: Call }) {
+export function ScoresPanel({ projectId, call }: { projectId: string; call: Span }) {
   return (
     <div className="col" style={{ gap: 14 }}>
       <RunScorerBar projectId={projectId} call={call} />
@@ -447,14 +447,14 @@ export function ScoresPanel({ projectId, call }: { projectId: string; call: Call
   )
 }
 
-function ScoresList({ projectId, call }: { projectId: string; call: Call }) {
+function ScoresList({ projectId, call }: { projectId: string; call: Span }) {
   const fb = useCallFeedback(projectId, call.id)
   if (fb.isLoading) return <Loading />
   if (fb.error) return <ErrorBox error={fb.error} />
-  const scores = (fb.data?.result ?? []).filter((f) => f.feedback_type.startsWith('weft.scorer.'))
+  const scores = (fb.data?.items ?? []).filter((f) => f.feedback_type.startsWith('weft.scorer.'))
   const evalScores = call.output && typeof call.output === 'object' && call.output.scores && typeof call.output.scores === 'object' ? (call.output.scores as Record<string, Any>) : null
   if (!scores.length && !evalScores)
-    return <Empty>No scores yet. Scores appear here when a monitor or an evaluation scorer runs on this call.</Empty>
+    return <Empty>No scores yet. Scores appear here when a monitor or an evaluation scorer runs on this span.</Empty>
   return (
     <div className="col" style={{ gap: 14 }}>
       {scores.length > 0 && (
@@ -464,14 +464,14 @@ function ScoresList({ projectId, call }: { projectId: string; call: Call }) {
               <tr>
                 <th>Scorer</th>
                 <th>Output</th>
-                <th>Scorer call</th>
+                <th>Scorer span</th>
                 <th>Source</th>
                 <th>Created</th>
               </tr>
             </thead>
             <tbody>
               {scores.map((f) => {
-                const scorerCallUrl = f.call_ref ? refUrl(f.call_ref) : null
+                const scorerCallUrl = f.span_ref ? refUrl(f.span_ref) : null
                 return (
                   <tr key={f.id}>
                     <td>
@@ -481,7 +481,7 @@ function ScoresList({ projectId, call }: { projectId: string; call: Call }) {
                     <td style={{ minWidth: 200 }}>
                       <ScoreValue value={f.payload?.output} projectId={projectId} />
                     </td>
-                    <td>{scorerCallUrl ? <Link to={scorerCallUrl}>View call</Link> : <span className="faint">—</span>}</td>
+                    <td>{scorerCallUrl ? <Link to={scorerCallUrl}>View span</Link> : <span className="faint">—</span>}</td>
                     <td>{f.trigger_ref ? <RefChip refStr={f.trigger_ref} /> : <span className="faint">manual</span>}</td>
                     <td title={fmtDate(f.created_at)}>{fmtRelative(f.created_at)}</td>
                   </tr>

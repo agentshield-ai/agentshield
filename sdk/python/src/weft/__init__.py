@@ -2,16 +2,22 @@
 
 >>> import weft
 >>> weft.init("my-project")
->>> @weft.op
+>>> @weft.trace
 ... def greet(name: str) -> str:
 ...     return f"hello {name}"
+>>> ref = weft.save(weft.StringPrompt("Hello {name}"), "greeting")
+>>> weft.get(ref).format(name="Ada")
+'Hello Ada'
 """
+
+from typing import Any as _Any
+
 
 from ._version import __version__
 from . import scorers
-from ._call import Call, CallFeedback
+from ._call import Span, SpanFeedback
 from ._client import (
-    CallsIter,
+    SpansIter,
     WeftClient,
     add_tags,
     finish,
@@ -28,6 +34,7 @@ from ._client import (
     list_tags,
     publish,
     ref,
+    save,
     remove_aliases,
     remove_tags,
     set_aliases,
@@ -35,12 +42,12 @@ from ._client import (
 )
 from ._content import PDF, Audio, Content, Html, Image, Markdown, Video
 from ._context import (
-    NoCurrentCallError,
+    NoCurrentSpanError,
     Thread,
     ThreadPoolExecutor,
     attributes,
-    get_current_call,
-    require_current_call,
+    get_current_span,
+    require_current_span,
     thread,
     tracing_disabled,
 )
@@ -61,9 +68,9 @@ from ._object import (
 )
 from ._call import ApplyScorerResult
 from ._loader import OpLoadError
-from ._op import BoundOp, Op, op
+from ._op import BoundOp, Op, trace
 from ._platform import AnnotationSpec, Leaderboard, LeaderboardColumn, Monitor, SavedView
-from ._refs import CallRef, ObjectRef, OpRef, TableRef, parse_uri
+from ._refs import FunctionRef, ObjectRef, SpanRef, TableRef, parse_uri
 from ._usage import add_usage
 from .scorers import Scorer
 from . import conversation
@@ -105,17 +112,17 @@ __all__ = [
     "finish",
     "flush",
     "get_client",
-    "op",
+    "trace",
     "Op",
     "BoundOp",
-    "Call",
-    "CallFeedback",
-    "CallsIter",
+    "Span",
+    "SpanFeedback",
+    "SpansIter",
     "WeftClient",
     "WeftHTTPError",
-    "get_current_call",
-    "require_current_call",
-    "NoCurrentCallError",
+    "get_current_span",
+    "require_current_span",
+    "NoCurrentSpanError",
     "CustomRuntimeID",
     "trace_server_interface",
     "urls",
@@ -123,9 +130,9 @@ __all__ = [
     "thread",
     "ThreadPoolExecutor",
     "Thread",
-    "publish",
-    "ref",
+    "save",
     "get",
+    "ref",
     "link_to_registry",
     "link_prompt_to_registry",
     "set_run",
@@ -154,9 +161,9 @@ __all__ = [
     "ScoreLogger",
     "auto_summarize",
     "ObjectRef",
-    "OpRef",
+    "FunctionRef",
     "TableRef",
-    "CallRef",
+    "SpanRef",
     "parse_uri",
     "WeftObject",
     "add_usage",
@@ -208,3 +215,38 @@ __all__ = [
     "start_handoff",
     "reasoning",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Earlier names, kept as deprecated aliases for one release (CHANGELOG.md).
+# ---------------------------------------------------------------------------
+
+
+def op(fn: _Any = None, **kwargs: _Any) -> _Any:
+    """Deprecated: use ``@weft.trace``."""
+    from ._deprecation import deprecated_call
+
+    deprecated_call("weft.op", "weft.trace")
+    return trace(fn, **kwargs)
+
+
+_DEPRECATED = {
+    "Call": ("Span", lambda: Span),
+    "CallFeedback": ("SpanFeedback", lambda: SpanFeedback),
+    "CallsIter": ("SpansIter", lambda: SpansIter),
+    "CallRef": ("SpanRef", lambda: SpanRef),
+    "OpRef": ("FunctionRef", lambda: FunctionRef),
+    "get_current_call": ("get_current_span", lambda: get_current_span),
+    "require_current_call": ("require_current_span", lambda: require_current_span),
+    "NoCurrentCallError": ("NoCurrentSpanError", lambda: NoCurrentSpanError),
+}
+
+
+def __getattr__(name: str) -> _Any:
+    if name in _DEPRECATED:
+        from ._deprecation import deprecated_call
+
+        new, get = _DEPRECATED[name]
+        deprecated_call(f"weft.{name}", f"weft.{new}")
+        return get()
+    raise AttributeError(f"module 'weft' has no attribute {name!r}")

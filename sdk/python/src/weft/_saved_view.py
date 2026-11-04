@@ -13,7 +13,7 @@ The stored object follows the Weft UI convention (see ``docs/weft/API.md``)::
 ...         .add_filter("summary.weft.latency_ms", ">", 1000)
 ...         .sort_by("started_at", "desc")
 ...         .save())
->>> calls = view.get_calls(limit=20)
+>>> spans = view.spans(limit=20)
 >>> views = weft.get_client().get_saved_views()
 >>> same = weft.SavedView.load("Slow-errors")
 """
@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from ._object import Object
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ._client import CallsIter, WeftClient
+    from ._client import SpansIter, WeftClient
 
 KNOWN_COLUMNS = [
     "id", "display_name", "op_name", "inputs", "output", "attributes", "summary", "started_at", "ended_at",
@@ -66,7 +66,11 @@ DEFAULT_PIN = {"left": ["CustomCheckbox", "op_name"], "right": []}
 CALLS_FILTER_KEYS = {
     "op_names", "input_refs", "output_refs", "parent_ids", "trace_ids", "call_ids", "trace_roots_only",
     "user_ids", "run_ids", "thread_ids", "turn_ids",
+    # Weft's span filter names
+    "names", "ids", "session_ids",
 }
+# Stored view filter names → Weft's span filter names.
+_SPAN_FILTER_NAMES = {"op_names": "names", "call_ids": "ids", "thread_ids": "session_ids"}
 
 
 class Filter(BaseModel):
@@ -252,7 +256,7 @@ def _check_column(path: str) -> None:
 
 class SavedView(Object):
     """A saved traces/evaluations view: filters, query, sort, columns. Build it fluently, ``save()`` it,
-    ``load()`` it, and run it with ``get_calls()`` (or ``to_calls_query()`` for the raw request)."""
+    ``load()`` it, and run it with ``spans()`` (or ``to_spans_query()`` for the raw request)."""
 
     view_type: str = "traces"
     label: Optional[str] = "SavedView"
@@ -358,7 +362,7 @@ class SavedView(Object):
             if not is_ref_uri(op_name):
                 if not self.entity:
                     raise ValueError("Must specify an op ref when no project is known")
-                uri = f"weft:///{self.entity}/{self.project}/op/{op_name}" + ("" if ":" in op_name else ":*")
+                uri = f"weft:///{self.entity}/{self.project}/function/{op_name}" + ("" if ":" in op_name else ":*")
             flt["op_names"] = [uri]
         if flt:
             self.definition["filter"] = flt
@@ -556,14 +560,14 @@ class SavedView(Object):
 
     # ---- persistence -----------------------------------------------------------------------
     def save(self) -> "SavedView":
-        """Publish the view (named after the label, or ``<view_type>_<timestamp>``)."""
+        """Save the view (named after the label, or ``<view_type>_<timestamp>``)."""
         if not self.name:
             from ._client import sanitize_name
 
             base = self.label if self.label and self.label != "SavedView" else None
             stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
             self.name = sanitize_name(base) if base else f"{self.view_type}_{stamp}"
-        self.publish(self.name)
+        Object.save(self, self.name)
         return self
 
     @classmethod
@@ -593,7 +597,7 @@ class SavedView(Object):
         return f"{base}/{self._weft_ref.entity}/{self._weft_ref.project}/{page}?view={self._weft_ref.name}"
 
     # ---- applying the view -----------------------------------------------------------------
-    def to_calls_query(
+    def to_spans_query(
         self,
         *,
         limit: Optional[int] = None,
@@ -602,14 +606,17 @@ class SavedView(Object):
         include_feedback: bool = False,
         all_columns: bool = False,
     ) -> Dict[str, Any]:
-        """The ``/calls/query`` body this view stands for (``project_id`` included when known)."""
+        """The ``POST /api/v1/spans/query`` body this view stands for (``project_id`` included when known).
+
+        The view's stored filter keeps its own field names (``op_names``,
+        ``thread_ids``, ...); they are given Weft's span names here."""
         d = self.definition
         body: Dict[str, Any] = {}
         if self.entity and self.project:
             body["project_id"] = f"{self.entity}/{self.project}"
-        flt = {k: v for k, v in (d.get("filter") or {}).items() if k in CALLS_FILTER_KEYS and v is not None}
+        flt = {_SPAN_FILTER_NAMES.get(k, k): v for k, v in (d.get("filter") or {}).items() if k in CALLS_FILTER_KEYS and v is not None}
         if self.view_type == "evaluations":
-            flt["op_names"] = ["Evaluation.evaluate"]
+            flt["names"] = ["Evaluation.evaluate"]
         if flt:
             body["filter"] = flt
         if d.get("query"):
@@ -633,20 +640,34 @@ class SavedView(Object):
             body["include_feedback"] = True
         return body
 
-    def get_calls(
+    def to_calls_query(self, **kwargs: Any) -> Dict[str, Any]:
+        """Deprecated: use ``to_spans_query()``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("SavedView.to_calls_query()", "SavedView.to_spans_query()")
+        return self.to_spans_query(**kwargs)
+
+    def get_calls(self, *args: Any, **kwargs: Any) -> "SpansIter":
+        """Deprecated: use ``spans()``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("SavedView.get_calls()", "SavedView.spans()")
+        return self.spans(*args, **kwargs)
+
+    def spans(
         self,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         include_costs: bool = False,
         include_feedback: bool = False,
         all_columns: bool = False,
-    ) -> "CallsIter":
-        """Calls matching the view's filter, query, search and sort."""
-        body = self.to_calls_query(
+    ) -> "SpansIter":
+        """Spans matching the view's filter, query, search and sort."""
+        body = self.to_spans_query(
             limit=limit, offset=offset, include_costs=include_costs, include_feedback=include_feedback, all_columns=all_columns
         )
         client = self._client()
-        return client.get_calls(
+        return client.spans(
             filter=body.get("filter"),
             query=body.get("query"),
             sort_by=body.get("sort_by"),

@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Dict, Iterator, List, Literal,
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr
 
 from . import _context
-from ._call import Call
+from ._call import Span as Call
 from ._ids import uuid7
 from ._version import __version__
 
@@ -335,11 +335,11 @@ def _tracing_client() -> Optional["WeftClient"]:
 
 def _media_value(mime_type: str, modality: str, data: bytes, client: Optional["WeftClient"]) -> Dict[str, Any]:
     """Upload bytes and return a media value the UI and agents views render."""
-    from ._canonical import b64digest
+    from ._canonical import file_digest
 
     mt = mime_type or "application/octet-stream"
     modality = modality or (mt.split("/", 1)[0] if mt.split("/", 1)[0] in ("image", "audio", "video") else "")
-    digest = client._upload_file(data, mt) if client is not None else b64digest(data)
+    digest = client._upload_file(data, mt) if client is not None else file_digest(data)
     if modality == "image":
         return {"type": "image", "_type": "Image", "file_digest": digest, "mime_type": mt}
     if modality == "audio":
@@ -625,7 +625,7 @@ class _SpanBase(BaseModel):
         conv = self._conv
         thread_id = conv.conversation_id or None if conv else None
         if thread_id is None and parent_call is not None:
-            thread_id = parent_call.thread_id
+            thread_id = parent_call.session_id
         if isinstance(self, Turn):
             turn_id: Optional[str] = call_id
         else:
@@ -636,11 +636,11 @@ class _SpanBase(BaseModel):
         self._call = Call(
             id=call_id,
             project_id=client.project_id,
-            op_name=client._op_ref(op).uri(),
+            name=client._op_ref(op).uri(),
             trace_id=parent_call.trace_id if parent_call is not None else uuid7(),
             parent_id=parent_call.id if parent_call is not None else None,
             display_name=self._span_display_name(),
-            thread_id=thread_id,
+            session_id=thread_id,
             turn_id=turn_id,
             started_at=_iso(self.started_at),  # type: ignore[attr-defined]
         )
@@ -765,29 +765,29 @@ class _SpanBase(BaseModel):
         call.inputs = ser_inputs
         call.output = ser_output
         call.ended_at = _iso(self.ended_at)  # type: ignore[attr-defined]
-        call.exception = self._exception
+        call.error = self._exception
         call.summary = summary
         call._ended = True
         start: Dict[str, Any] = {
             "project_id": call.project_id,
             "id": call.id,
-            "op_name": call.op_name,
+            "name": call.name,
             "trace_id": call.trace_id,
             "parent_id": call.parent_id,
             "started_at": call.started_at,
             "attributes": attrs,
             "inputs": ser_inputs,
         }
-        for k in ("display_name", "thread_id", "turn_id"):
+        for k in ("display_name", "session_id", "turn_id"):
             if getattr(call, k) is not None:
                 start[k] = getattr(call, k)
         end: Dict[str, Any] = {"project_id": call.project_id, "id": call.id, "ended_at": call.ended_at, "output": ser_output}
         if self._exception:
-            end["exception"] = self._exception
+            end["error"] = self._exception
         if summary:
             end["summary"] = to_json(summary, client)
-        client._sender.enqueue("call_start", start)
-        client._sender.enqueue("call_end", end)
+        client._sender.enqueue("span_start", start)
+        client._sender.enqueue("span_end", end)
 
 
 # ---------------------------------------------------------------------------

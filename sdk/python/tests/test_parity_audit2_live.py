@@ -54,7 +54,7 @@ def test_verdict_real_library_one_trace_live(live):
     p = Pipeline("double") >> MapUnit(lambda x: Schema.of(values=x.values * 2)) >> MapUnit(lambda x: Schema.of(values=x.values + 1))
     p.run(Schema.of(values=3), display=False)
     live.flush()
-    calls = live.get_calls().to_list()
+    calls = live.spans().to_list()
     assert len(calls) == 5 and len({c.trace_id for c in calls}) == 1, "one trace per pipeline run"
     [root] = [c for c in calls if c.parent_id is None]
     maps = sorted((c for c in calls if c.display_name == "Map"), key=lambda c: c.started_at)
@@ -75,7 +75,7 @@ def test_realtime_audio_round_trip_live(live):
         rt.on_server_event(ev)
     rt.close()
     live.flush()
-    [resp] = live.get_calls(filter={"op_names": ["openai.realtime.response"]}).to_list()
+    [resp] = live.spans(filter={"names": ["openai.realtime.response"]}).to_list()
 
     def frames(media):
         assert media["_type"] == "Audio"
@@ -90,15 +90,15 @@ def test_custom_runtime_and_threads_live(live):
     res = live.register_custom_runtime(name="audit2-vllm", base_url="http://127.0.0.1:9/v1",
                                        runtime_ids=["llama-3-8b", weft.CustomRuntimeID(id="qwen2-7b", max_tokens=8192)])
     assert {r.playground_id: r.max_tokens for r in res.runtime_ids} == {"audit2-vllm/llama-3-8b": 4096, "audit2-vllm/qwen2-7b": 8192}
-    listed = _get(f"/v2/{live.entity}/{live.project}/runtimes")["runtimes"]
+    listed = _get(f"/api/v1/runtimes?project_id={live.project_id}")["items"]
     assert any(r["name"] == "audit2-vllm" for r in listed)
     live.register_custom_runtime(name="audit2-vllm", base_url="http://127.0.0.1:9/v1", runtime_ids=["llama-3-8b"])
-    [rt] = [r for r in _get(f"/v2/{live.entity}/{live.project}/runtimes")["runtimes"] if r["name"] == "audit2-vllm"]
+    [rt] = [r for r in _get(f"/api/v1/runtimes?project_id={live.project_id}")["items"] if r["name"] == "audit2-vllm"]
     assert [r["id"] for r in rt["runtime_ids"]] == ["llama-3-8b"], "omitted IDs are removed"
 
-    @weft.op
+    @weft.trace
     def turn(i):
-        return weft.require_current_call().id
+        return weft.require_current_span().id
 
     with weft.thread("live-a"):
         turn(1)
@@ -107,7 +107,7 @@ def test_custom_runtime_and_threads_live(live):
         turn(3)
     live.flush()
     res = live.threads_query(ThreadsQueryReq(sort_by=[SortBy(field="turn_count", direction="desc")]))
-    assert [(t.thread_id, t.turn_count) for t in res.threads] == [("live-a", 2), ("live-b", 1)]
+    assert [(t.session_id, t.turn_count) for t in res.threads] == [("live-a", 2), ("live-b", 1)]
     assert res.threads[0].last_updated is not None and res.threads[0].p50_turn_duration_ms is not None
     url = weft.urls.agent_conversation_path(live.entity, live.project, "live-a")
     assert url == f"{URL}/{live.entity}/{live.project}/conversations/live-a"
@@ -118,7 +118,7 @@ def test_typesafe_live(live, monkeypatch):
     assert patch_typesafe()
     mod.TypeSafeClient().system_one({"ticket": "refund"}, ["refund?"])
     live.flush()
-    [llm] = live.get_calls(filter={"op_names": ["chat"]}).to_list()
+    [llm] = live.spans(filter={"names": ["chat"]}).to_list()
     assert llm.attributes["gen_ai"]["provider"]["name"] == "typesafe" and llm.summary["usage"]["jev-2"]["prompt_tokens"] == 42
 
 
@@ -126,15 +126,15 @@ def test_typesafe_inside_op_is_a_linked_trace_live(live, monkeypatch):
     mod = _install_typesafe(monkeypatch)
     assert patch_typesafe()
 
-    @weft.op
+    @weft.trace
     def classify(msg):
         return mod.TypeSafeClient().system_one(msg, ["refund?"]).answers
 
     classify("refund please")
     live.flush()
-    [op] = live.get_calls(filter={"op_names": ["classify"]}).to_list()
-    [llm] = live.get_calls(filter={"op_names": ["chat"]}).to_list()
-    [turn] = live.get_calls(filter={"op_names": ["invoke_agent"]}).to_list()
+    [op] = live.spans(filter={"names": ["classify"]}).to_list()
+    [llm] = live.spans(filter={"names": ["chat"]}).to_list()
+    [turn] = live.spans(filter={"names": ["invoke_agent"]}).to_list()
     assert op.trace_id != llm.trace_id == turn.trace_id and turn.parent_id is None and llm.parent_id == turn.id
     # The server exposes the weft.parent_call.* link as the agent span fields parent_call_id / parent_call_trace_id.
     res = live._http.post("/agents/spans/query", {
@@ -147,7 +147,7 @@ def test_typesafe_inside_op_is_a_linked_trace_live(live, monkeypatch):
 
 
 def test_list_aliases_and_get_tags_and_aliases(live):
-    ref = weft.publish({"rows": [1, 2]}, name="alias-check")
+    ref = weft.save({"rows": [1, 2]}, name="alias-check")
     live.set_aliases(ref, ["production", "staging"])
     live.add_tags(ref, ["reviewed"])
     tags, aliases = live.get_tags_and_aliases(ref)

@@ -27,7 +27,7 @@ def _attr(c, dotted):
 
 
 def test_streaming_conversation_records_agent_calls(client, fake):
-    @weft.op
+    @weft.trace
     def lookup(order_id: int) -> str:
         return "shipped"
 
@@ -53,10 +53,10 @@ def test_streaming_conversation_records_agent_calls(client, fake):
     [tl] = _by_op(fake, "execute_tool")
     [op] = _by_op(fake, "lookup")
     # tree, thread and turn ids
-    assert t["parent_id"] is None and t["turn_id"] == t["id"] and t["thread_id"] == conv.conversation_id
+    assert t["parent_id"] is None and t["turn_id"] == t["id"] and t["session_id"] == conv.conversation_id
     assert l["parent_id"] == t["id"] and tl["parent_id"] == t["id"] and op["parent_id"] == tl["id"]
     assert {l["trace_id"], tl["trace_id"], op["trace_id"]} == {t["trace_id"]}
-    assert l["turn_id"] == t["id"] and op["thread_id"] == conv.conversation_id and op["turn_id"] == t["id"]
+    assert l["turn_id"] == t["id"] and op["session_id"] == conv.conversation_id and op["turn_id"] == t["id"]
     # attributes the agents index reads
     assert _attr(t, "gen_ai.operation.name") == "invoke_agent" and _attr(t, "gen_ai.agent.name") == "support"
     assert _attr(t, "gen_ai.conversation.name") == "Order help" and _attr(t, "gen_ai.conversation.id") == conv.conversation_id
@@ -93,11 +93,11 @@ def test_turns_are_separate_traces_and_start_turn_ends_previous(client, fake):
     turns = sorted(_by_op(fake, "invoke_agent"), key=lambda c: c["started_at"])
     assert [c["inputs"]["messages"][0]["content"] for c in turns] == ["one", "two"]
     assert turns[0]["trace_id"] != turns[1]["trace_id"]
-    assert {c["thread_id"] for c in turns} == {conv.conversation_id}
+    assert {c["session_id"] for c in turns} == {conv.conversation_id}
 
 
 def test_continue_parent_trace_nests_turn_under_current_call(client, fake):
-    @weft.op
+    @weft.trace
     def handler() -> None:
         with weft.start_conversation(agent_name="nested", continue_parent_trace=True):
             with weft.start_turn(user_message="hi"):
@@ -133,7 +133,7 @@ def test_module_level_functions_and_subagents(client, fake):
     chats = _by_op(fake, "chat")
     [search] = [c for c in _by_op(fake, "execute_tool") if _attr(c, "gen_ai.tool.name") == "search"]
     [book_c] = [c for c in _by_op(fake, "execute_tool") if _attr(c, "gen_ai.tool.name") == "book"]
-    assert sub["parent_id"] == turn["id"] and sub["turn_id"] == turn["id"] and sub["thread_id"] == turn["thread_id"]
+    assert sub["parent_id"] == turn["id"] and sub["turn_id"] == turn["id"] and sub["session_id"] == turn["session_id"]
     assert search["parent_id"] == sub["id"] and book_c["parent_id"] == turn["id"]
     assert search["inputs"] == {"arguments": "flights to Lisbon"} and search["output"] == "3 results"
     assert book_c["inputs"] == {"flight": 1} and book_c["output"] is True
@@ -150,8 +150,8 @@ def test_errors_are_recorded_and_reraised(client, fake):
     _flushed(fake, client)
     [tool] = _by_op(fake, "execute_tool")
     [turn] = _by_op(fake, "invoke_agent")
-    assert "RuntimeError: tool broke" in tool["exception"] and _attr(tool, "error.type") == "RuntimeError"
-    assert "tool broke" in turn["exception"]
+    assert "RuntimeError: tool broke" in tool["error"] and _attr(tool, "error.type") == "RuntimeError"
+    assert "tool broke" in turn["error"]
 
 
 def test_include_content_false_drops_messages(client, fake):
@@ -183,7 +183,7 @@ def test_set_attributes_record_error_and_events(client, fake):
     [t] = _by_op(fake, "invoke_agent")
     assert t["attributes"]["team.tag"] == "x" and t["attributes"]["custom"] == 1 and "late" not in t["attributes"]
     assert t["attributes"]["weft"]["events"][0]["name"] == "permission_request"
-    assert "ValueError: soft failure" in t["exception"]
+    assert "ValueError: soft failure" in t["error"]
 
 
 def test_log_turn_and_log_conversation_batch(client, fake):
@@ -207,12 +207,12 @@ def test_log_turn_and_log_conversation_batch(client, fake):
     _flushed(fake, client)
     t = fake.calls[res.root_span_ids[0]]
     assert t["started_at"] == "2026-01-01T12:00:00.000000Z" and t["ended_at"] == "2026-01-01T12:00:02.000000Z"
-    assert t["thread_id"] == "conv-batch" and t["turn_id"] == t["id"] and _attr(t, "source") == "replay"
+    assert t["session_id"] == "conv-batch" and t["turn_id"] == t["id"] and _attr(t, "source") == "replay"
     kids = fake.children(t["id"])
     assert [fake.op_base(k) for k in kids] == ["chat", "execute_tool"]
     assert kids[0]["started_at"] == "2026-01-01T12:00:00.000000Z" and kids[1]["output"] == "12:00"
     later = [fake.calls[i] for i in res2.root_span_ids]
-    assert {c["thread_id"] for c in later} == {res2.conversation_id}
+    assert {c["session_id"] for c in later} == {res2.conversation_id}
     assert all(_attr(c, "gen_ai.agent.name") == "batcher" and _attr(c, "gen_ai.conversation.name") == "replayed" for c in later)
     # the caller's turns were not mutated
     assert turns[0].agent_name == "" and turns[0].call is None
@@ -259,7 +259,7 @@ def test_agent_name_override_and_deprecated_aliases(client, fake):
     _flushed(fake, client)
     [t] = _by_op(fake, "invoke_agent")
     assert _attr(t, "gen_ai.agent.name") == "auto-named"
-    assert t.get("thread_id") is None and t["turn_id"] == t["id"]  # a turn outside a conversation
+    assert t.get("session_id") is None and t["turn_id"] == t["id"]  # a turn outside a conversation
     with pytest.raises(ValueError):
         with cv.agent_name_override(" "):
             pass

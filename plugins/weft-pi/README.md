@@ -26,10 +26,10 @@ in-memory state and return nothing, so the extension never blocks a tool call
 (`tool_call`/`tool_result` are not used), never rewrites a message and never
 changes the system prompt.
 
-Finished turns are sent to `/call/upsert_batch` at `agent_end` and by a
-background timer (`flushIntervalMs`), with a short timeout. Call ids are
+Finished turns are sent to `/api/v1/spans/batch` at `agent_end` and by a
+background timer (`flushIntervalMs`), with a short timeout. Span ids are
 derived from the session and turn, so a resend after a failure upserts the
-same calls. `session_shutdown` closes an unfinished turn (marked as such) and
+same spans. `session_shutdown` closes an unfinished turn (marked as such) and
 waits briefly for the last send. Warnings go to `~/.weft-pi/logs/weft-pi.log`
 (Pi's TUI owns the terminal). Type `/weft` in Pi to see the conversation's
 Weft link and what was sent.

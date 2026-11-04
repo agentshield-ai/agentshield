@@ -122,7 +122,7 @@ def test_openai_sync_autopatch(client, fake, fake_openai):
     autopatch()  # idempotent
     oc = fake_openai.Client()
 
-    @weft.op
+    @weft.trace
     def agent(q):
         r = oc.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": q}], temperature=0)
         return r.choices[0]["message"]["content"]
@@ -132,7 +132,7 @@ def test_openai_sync_autopatch(client, fake, fake_openai):
     [root] = fake.calls_by_op("agent")
     [c] = fake.calls_by_op("openai.chat.completions.create")
     assert c["parent_id"] == root["id"]
-    assert c["op_name"].startswith("weft:///test-entity/test-proj/op/openai.chat.completions.create:")
+    assert c["name"].startswith("weft:///test-entity/test-proj/function/openai.chat.completions.create:")
     assert c["inputs"] == {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}], "temperature": 0}
     assert c["output"]["choices"][0]["message"]["content"] == "hello"
     assert c["summary"]["usage"] == {"gpt-4o-mini": {"requests": 1, "prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15}}
@@ -189,7 +189,7 @@ def test_openai_error_recorded(client, fake, fake_openai):
         fake_openai.Client().chat.completions.create(model="boom", messages=[])
     client.flush()
     [c] = fake.calls_by_op("openai.chat.completions.create")
-    assert c["exception"].startswith("RuntimeError: api down")
+    assert c["error"].startswith("RuntimeError: api down")
 
 
 def test_openai_responses(client, fake, fake_openai):

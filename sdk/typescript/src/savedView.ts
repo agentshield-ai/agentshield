@@ -19,6 +19,7 @@ import type { Call } from './call.js';
 import { getClient, requireClient } from './global.js';
 import { WeftObject } from './objects.js';
 import { Ref, isRefUri } from './refs.js';
+import { deprecated } from './deprecation.js';
 
 export const KNOWN_COLUMNS = [
   'id', 'display_name', 'op_name', 'inputs', 'output', 'attributes', 'summary', 'started_at', 'ended_at',
@@ -55,7 +56,11 @@ const DEFAULT_PIN = { left: ['CustomCheckbox', 'op_name'], right: [] as string[]
 export const CALLS_FILTER_KEYS = new Set([
   'op_names', 'input_refs', 'output_refs', 'parent_ids', 'trace_ids', 'call_ids', 'trace_roots_only',
   'user_ids', 'run_ids', 'thread_ids', 'turn_ids',
+  // Weft's span filter names
+  'names', 'ids', 'session_ids',
 ]);
+/** Stored view filter names → Weft's span filter names. */
+const SPAN_FILTER_NAMES: Record<string, string> = { op_names: 'names', call_ids: 'ids', thread_ids: 'session_ids' };
 
 export interface ViewFilter {
   field: string;
@@ -310,7 +315,7 @@ export class SavedView extends WeftObject {
       if (!isRefUri(opName)) {
         const p = this.projectRef;
         if (!p) throw new Error('Must specify an op ref when no project is known');
-        uri = `weft:///${p.entity}/${p.project}/op/${opName}${opName.includes(':') ? '' : ':*'}`;
+        uri = `weft:///${p.entity}/${p.project}/function/${opName}${opName.includes(':') ? '' : ':*'}`;
       }
       flt.op_names = [uri];
     }
@@ -497,7 +502,7 @@ export class SavedView extends WeftObject {
     return paths.map((p) => ({ path: p, label: headers[p] ?? p }));
   }
 
-  /** Publish the view (named after the label, or `<viewType>_<timestamp>`). */
+  /** Save the view (named after the label, or `<viewType>_<timestamp>`). */
   async save(): Promise<this> {
     if (!this.name) {
       const base = this.label && this.label !== 'SavedView' ? this.label : null;
@@ -505,7 +510,7 @@ export class SavedView extends WeftObject {
         ? base.trim().replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 128) || 'view'
         : `${this.viewType}_${new Date().toISOString().replace(/[:.]/g, '-')}`;
     }
-    await requireClient().publish(this, this.name);
+    await requireClient().save(this, this.name);
     return this;
   }
 
@@ -529,15 +534,19 @@ export class SavedView extends WeftObject {
     return `${base}/${this.__weftRef.entity}/${this.__weftRef.project}/${page}?view=${this.__weftRef.name}`;
   }
 
-  /** The `/calls/query` body this view stands for. */
-  toCallsQuery(opts: SavedViewGetCallsOptions = {}): Record<string, unknown> {
+  /**
+   * The `POST /api/v1/spans/query` body this view stands for. The view's
+   * stored filter keeps its own field names (`op_names`, `thread_ids`, ...);
+   * they are given Weft's span names here.
+   */
+  toSpansQuery(opts: SavedViewGetCallsOptions = {}): Record<string, unknown> {
     const d = this.definition;
     const body: Record<string, unknown> = {};
     const p = this.projectRef;
     if (p) body.project_id = `${p.entity}/${p.project}`;
     const flt: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(d.filter ?? {})) if (CALLS_FILTER_KEYS.has(k) && v !== null && v !== undefined) flt[k] = v;
-    if (this.viewType === 'evaluations') flt.op_names = ['Evaluation.evaluate'];
+    for (const [k, v] of Object.entries(d.filter ?? {})) if (CALLS_FILTER_KEYS.has(k) && v !== null && v !== undefined) flt[SPAN_FILTER_NAMES[k] ?? k] = v;
+    if (this.viewType === 'evaluations') flt.names = ['Evaluation.evaluate'];
     if (Object.keys(flt).length) body.filter = flt;
     if (d.query) body.query = '$expr' in d.query ? d.query : { $expr: d.query };
     if (d.search) body.search = d.search;
@@ -551,10 +560,22 @@ export class SavedView extends WeftObject {
     return body;
   }
 
-  /** Calls matching the view's filter, query, search and sort. */
+  /** @deprecated use `toSpansQuery` */
+  toCallsQuery(opts: SavedViewGetCallsOptions = {}): Record<string, unknown> {
+    deprecated('SavedView.toCallsQuery()', 'SavedView.toSpansQuery()');
+    return this.toSpansQuery(opts);
+  }
+
+  /** @deprecated use `spans` */
   getCalls(opts: SavedViewGetCallsOptions = {}): Promise<Call[]> {
-    const b = this.toCallsQuery(opts) as any;
-    return requireClient().getCalls({
+    deprecated('SavedView.getCalls()', 'SavedView.spans()');
+    return this.spans(opts);
+  }
+
+  /** Spans matching the view's filter, query, search and sort. */
+  spans(opts: SavedViewGetCallsOptions = {}): Promise<Call[]> {
+    const b = this.toSpansQuery(opts) as any;
+    return requireClient().spans({
       filter: b.filter,
       query: b.query,
       sortBy: b.sort_by,

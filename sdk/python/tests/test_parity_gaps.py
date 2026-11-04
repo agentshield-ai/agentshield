@@ -125,7 +125,7 @@ def test_bedrock_invoke_agent_trace_events_become_spans(client, fake, monkeypatc
 
     [root] = fake.calls_by_op("bedrock_agent.invoke_agent")
     assert kind(root) == "agent" and root["parent_id"] is None
-    assert root["thread_id"] == "sess-42" and root["turn_id"] == root["id"], "a Bedrock session is a conversation"
+    assert root["session_id"] == "sess-42" and root["turn_id"] == root["id"], "a Bedrock session is a conversation"
     a = root["attributes"]
     assert a["gen_ai.agent.name"] == "AGENT1" and a["gen_ai.agent.version"] == "ALIAS1" and a["gen_ai.conversation.id"] == "sess-42"
     assert root["display_name"] == "invoke_agent AGENT1" and root["inputs"]["inputText"] == "Weather in Oslo?"
@@ -133,11 +133,11 @@ def test_bedrock_invoke_agent_trace_events_become_spans(client, fake, monkeypatc
     assert out["completion"] == text and out["sessionId"] == "sess-42" and out["foundation_model"] == MODEL
     assert out["citations"][0]["retrievedReferences"][0]["location"] == "s3://kb/oslo.txt"
     assert out["usage"] == {"input_tokens": 900, "output_tokens": 105} and out["rationales"] == ["I need the weather."]
-    assert not root.get("exception")
+    assert not root.get("error")
 
     llms = fake.calls_by_op("bedrock_agent.model_invocation")
     assert len(llms) == 5
-    assert all(kind(c) == "llm" and c["thread_id"] == "sess-42" and c["turn_id"] == root["id"] for c in llms)
+    assert all(kind(c) == "llm" and c["session_id"] == "sess-42" and c["turn_id"] == root["id"] for c in llms)
     pre = llms[0]
     assert pre["parent_id"] == root["id"] and pre["inputs"]["stage"] == "pre_processing"
     assert pre["inputs"]["system"] == "You are a weather agent." and pre["inputs"]["messages"][0]["content"] == "Weather in Oslo?"
@@ -184,15 +184,15 @@ def test_bedrock_agent_failure_return_control_and_untouched_services(client, fak
     client.flush()
     roots = {c["inputs"].get("sessionId"): c for c in fake.calls.values() if fake.op_base(c).startswith("bedrock_agent.invoke")}
     assert len(roots) == 3
-    assert roots["s1"]["exception"].startswith("RuntimeError: Lambda timed out")
+    assert roots["s1"]["error"].startswith("RuntimeError: Lambda timed out")
     [llm] = fake.calls_by_op("bedrock_agent.model_invocation")
-    assert llm["exception"].startswith("RuntimeError: Lambda timed out")
+    assert llm["error"].startswith("RuntimeError: Lambda timed out")
     inline = roots["s2"]
     assert fake.op_base(inline) == "bedrock_agent.invoke_inline_agent" and inline["attributes"]["gen_ai.request.model"] == MODEL
     assert inline["output"]["return_control"][0]["invocations"][0] == {"tool": "billing.refund", "action_group": "billing", "parameters": {"order": "42"}, "function": "refund"}
     [rcall] = fake.calls_by_op("bedrock_agent.return_control")
     assert rcall["parent_id"] == inline["id"] and rcall["output"]["status"] == "returned_to_application"
-    assert roots["s3"]["exception"].startswith("RuntimeError: stream broke")
+    assert roots["s3"]["error"].startswith("RuntimeError: stream broke")
 
 
 def test_bedrock_agent_respects_autopatch_settings(client, fake, monkeypatch):
@@ -378,11 +378,11 @@ def test_verdict_pipeline_and_units_are_traced(client, fake, monkeypatch):
     tracing, vp = _install_verdict(monkeypatch)
     assert patch_verdict()
 
-    @weft.op(name="openai.chat.completions.create", kind="llm")
+    @weft.trace(name="openai.chat.completions.create", kind="llm")
     def judge_llm(text):
         return 4 if "good" in text else 1
 
-    @weft.op
+    @weft.trace
     def evaluate(text):
         p = vp.Pipeline("SafetyJudge") >> vp.JudgeUnit(lambda x: judge_llm(x)) >> vp.JudgeUnit(lambda x: 5)
         return p.run(text)
@@ -460,7 +460,7 @@ def test_verdict_real_library_chain(client, fake):
     calls = list(fake.calls.values())
     assert len(calls) == 5 and len({c["trace_id"] for c in calls}) == 1, _tree(calls)
     [root] = [c for c in calls if c.get("parent_id") is None]
-    assert root["op_name"].endswith("verdict.double") or root["display_name"] == "double"
+    assert root["name"].endswith("verdict.double") or root["display_name"] == "double"
     maps = sorted((c for c in calls if c["display_name"] == "Map"), key=lambda c: c["started_at"])
     assert len(maps) == 2 and maps[0]["parent_id"] == root["id"] and maps[1]["parent_id"] == maps[0]["id"]
     ids = {c["id"] for c in calls}
@@ -482,8 +482,8 @@ def test_verdict_unit_errors_and_disabled(client, fake, monkeypatch):
         (vp.Pipeline("Bad") >> vp.JudgeUnit(boom)).run("x")
     client.flush()
     [unit] = fake.calls_by_op("verdict.JudgeUnit")
-    assert unit["exception"].startswith("ValueError: judge failed")
-    assert fake.calls_by_op("verdict.Bad")[0]["exception"]
+    assert unit["error"].startswith("ValueError: judge failed")
+    assert fake.calls_by_op("verdict.Bad")[0]["error"]
     _settings.configure({"verdict": {"enabled": False}})
     try:
         (vp.Pipeline("Off") >> vp.JudgeUnit(lambda x: 1)).run("x")
@@ -495,20 +495,20 @@ def test_verdict_unit_errors_and_disabled(client, fake, monkeypatch):
 
 # ---------------------------------------------------------------- CallsIter.to_pandas
 def test_calls_to_records_and_to_pandas(client, fake, monkeypatch):
-    @weft.op
+    @weft.trace
     def f(x: int) -> int:
         return x + 1
 
     f(1)
     f(2)
-    recs = client.get_calls(filter={"op_names": ["f"]}).to_records()
+    recs = client.spans(filter={"names": ["f"]}).to_records()
     assert sorted(r["output"] for r in recs) == [2, 3]
-    assert set(recs[0]) >= {"id", "op_name", "inputs", "output", "status", "trace_id", "run_step"}
+    assert set(recs[0]) >= {"id", "name", "inputs", "output", "status", "trace_id", "run_step", "error", "session_id"}
     assert recs[0]["status"] == "success"
 
     monkeypatch.setitem(sys.modules, "pandas", None)
     with pytest.raises(ImportError, match="pip install pandas"):
-        client.get_calls().to_pandas()
+        client.spans().to_pandas()
 
     seen = {}
 
@@ -521,14 +521,14 @@ def test_calls_to_records_and_to_pandas(client, fake, monkeypatch):
         return ("flat", len(records))
 
     _mods(monkeypatch, pandas={"DataFrame": DataFrame, "json_normalize": json_normalize})
-    assert client.get_calls(filter={"op_names": ["f"]}).to_pandas() == ("df", 2)
-    assert client.get_calls(filter={"op_names": ["f"]}, limit=1).to_pandas(flatten=True) == ("flat", 1)
+    assert client.spans(filter={"names": ["f"]}).to_pandas() == ("df", 2)
+    assert client.spans(filter={"names": ["f"]}, limit=1).to_pandas(flatten=True) == ("flat", 1)
     assert seen["df"][0]["inputs"] in ({"x": 1}, {"x": 2})
 
 
 def test_get_calls_passes_usernames_and_storage_size(client, fake):
-    list(client.get_calls(include_usernames=True, include_storage_size=True, include_run_status=True))
-    [q] = [r for r in fake.requests if r["path"] == "/calls/stream_query"]
+    list(client.spans(include_usernames=True, include_storage_size=True, include_run_status=True))
+    [q] = [r for r in fake.requests if r["path"] == "/api/v1/spans/stream"]
     assert q["body"]["include_usernames"] is True and q["body"]["include_storage_size"] is True
     assert q["body"]["include_run_status"] is True
 
@@ -536,19 +536,19 @@ def test_get_calls_passes_usernames_and_storage_size(client, fake):
 # ---------------------------------------------------------------- registry
 def test_link_prompt_and_any_object_to_registry(client, fake):
     prompt = weft.StringPrompt("Answer {q} briefly.")
-    weft.publish(prompt, name="support-prompt")
+    weft.save(prompt, name="support-prompt")
     res = weft.link_prompt_to_registry(prompt, target_path="prompts/support", aliases=["production"])
-    assert res["version_index"] == 0 and res["target_path"] == "test-entity/prompts/support"
-    req = [r for r in fake.requests if r["path"] == "/link_to_registry"][-1]["body"]
+    assert res["version"] == 0 and res["target_path"] == "test-entity/prompts/support"
+    req = [r for r in fake.requests if r["path"] == "/api/v1/registry/link"][-1]["body"]
     assert req["ref"] == prompt._weft_ref.uri() and req["aliases"] == ["production"]
-    assert req["target"] == {"portfolio_name": "support", "entity_name": "test-entity", "project_name": "prompts"}
+    assert req["project_id"] == "test-entity/prompts" and req["collection"] == "support"
 
     ds = weft.Dataset(name="golden", rows=[{"q": "1+1", "a": "2"}])
-    assert weft.link_to_registry(ds, target_path="other-team/datasets-registry/golden-sets")["version_index"] == 0  # published on the fly
-    assert weft.link_to_registry("support-prompt:v0", target_path="prompts/support")["version_index"] == 0, "same version, same index"
+    assert weft.link_to_registry(ds, target_path="other-team/datasets-registry/golden-sets")["version"] == 0  # published on the fly
+    assert weft.link_to_registry("support-prompt:v0", target_path="prompts/support")["version"] == 0, "same version, same index"
     prompt2 = weft.StringPrompt("Answer {q} in one word.")
-    weft.publish(prompt2, name="support-prompt")
-    assert weft.link_to_registry(prompt2._weft_ref.uri(), target_path="prompts/support", aliases=["production"])["version_index"] == 1
+    weft.save(prompt2, name="support-prompt")
+    assert weft.link_to_registry(prompt2._weft_ref.uri(), target_path="prompts/support", aliases=["production"])["version"] == 1
     [col] = client.query_registry("prompts", "support")
     assert [v["version_index"] for v in col["versions"]] == [1, 0]
     [prod] = client.query_registry("prompts", "support", alias="production")[0]["versions"]
@@ -558,14 +558,14 @@ def test_link_prompt_and_any_object_to_registry(client, fake):
     with pytest.raises(ValueError, match="target_path"):
         weft.link_to_registry(prompt, target_path="no-collection")
     with pytest.raises(TypeError):
-        client.link_to_registry(weft.CallRef("e", "p", "c1"), target_path="r/c")
+        client.link_to_registry(weft.SpanRef("e", "p", "c1"), target_path="r/c")
 
 
 # ---------------------------------------------------------------- run linkage
 def test_run_id_and_steps_are_sent(client, fake, monkeypatch):
     step = {"n": 3}
 
-    @weft.op
+    @weft.trace
     def train_step():
         step["n"] += 1
         return step["n"]
@@ -581,7 +581,7 @@ def test_run_id_and_steps_are_sent(client, fake, monkeypatch):
     assert c1["run_id"] == "test-entity/test-proj/run-abc" and c1["run_step"] == 3 and c1["run_step_end"] == 4
     assert "run_id" not in c2
     assert c3["run_id"] == "acme/train/run-2" and c3["run_step"] == 7
-    assert weft.Call.from_server({"id": "x", "run_step": 2, "username": "ann"}, None).to_dict()["username"] == "ann"
+    assert weft.Span.from_server({"id": "x", "run_step": 2, "username": "ann"}, None).to_dict()["username"] == "ann"
 
 
 # ---------------------------------------------------------------- environment variables

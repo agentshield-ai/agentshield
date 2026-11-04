@@ -241,15 +241,15 @@ export class Redactor {
     await Promise.all(
       items.map(async (it) => {
         const p = it.payload as Record<string, unknown> | undefined;
-        if (!p || (it.kind !== 'call_start' && it.kind !== 'call_end')) return;
-        if (it.kind === 'call_start' && p.inputs && typeof p.inputs === 'object') {
+        if (!p || (it.kind !== 'span_start' && it.kind !== 'span_end')) return;
+        if (it.kind === 'span_start' && p.inputs && typeof p.inputs === 'object') {
           const { self, ...rest } = p.inputs as Record<string, unknown>;
           const red = (await this.applyAsync(rest, 0, cache)) as Record<string, unknown>;
           p.inputs = 'self' in (p.inputs as object) ? { self, ...red } : red;
         }
-        if (it.kind === 'call_end' && p.output !== undefined) p.output = await this.applyAsync(p.output, 0, cache);
+        if (it.kind === 'span_end' && p.output !== undefined) p.output = await this.applyAsync(p.output, 0, cache);
         // reasoning steps recorded with weft.reasoning() (attributes.weft.reasoning[].text)
-        const w = it.kind === 'call_start' ? ((p.attributes as Record<string, any> | undefined)?.weft as Record<string, any> | undefined) : undefined;
+        const w = it.kind === 'span_start' ? ((p.attributes as Record<string, any> | undefined)?.weft as Record<string, any> | undefined) : undefined;
         if (w && Array.isArray(w.reasoning)) {
           w.reasoning = await Promise.all(
             w.reasoning.map(async (st: any) => (st && typeof st.text === 'string' && st.text ? { ...st, text: await this.applyAsync(st.text, 0, cache) } : st)),

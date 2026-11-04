@@ -9,7 +9,7 @@ import { SCORERS_BY_SCOPE, v1, type Detection, type ReplayJob, type Score } from
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
 import { buildTimeline, findStep, oneLine, STEP_LABEL, stepTitle, type BuiltTimeline } from '../../lib/timeline'
-import { agentUrl, callUrl, sessionsUrl, sessionUrl, teamUrl, traceSpansUrl } from '../../lib/urls'
+import { agentUrl, spanUrl, sessionsUrl, sessionUrl, teamUrl, traceSpansUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { AgentGraphView } from '../../components/ui/AgentGraphView'
 import {
@@ -532,7 +532,7 @@ function ScoresTab({ pid, sessionId, scores, agents }: { pid: string; sessionId:
           return n
         }),
       commit: async () => {
-        await api.feedbackPurge(pid, x.id)
+        await api.feedbackDelete(pid, x.id)
         await qc.invalidateQueries({ queryKey: ['v1', pid] })
       },
     })
@@ -686,7 +686,7 @@ function RawTab({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: strin
                   <td>{x.agent ? <AgentChip name={x.agent} size="sm" /> : '—'}</td>
                   <td className="mono small">{oneLine(x.name, 80)}</td>
                   <td>
-                    <Link to={callUrl(pid, id)} className="mono small">
+                    <Link to={spanUrl(pid, id)} className="mono small">
                       {id}
                     </Link>
                   </td>

@@ -15,7 +15,7 @@ import { RemoteModelModal, RuntimeModelModal } from '../../components/evals/Serv
 import { serverModelKind, serverModelSummary } from '../../components/evals/modelUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtRelative } from '../../lib/format'
-import { callUrl, compareEvaluationsUrl, evaluationsUrl, objectUrl } from '../../lib/urls'
+import { spanUrl, compareEvaluationsUrl, evaluationsUrl, objectUrl } from '../../lib/urls'
 
 interface Launched {
   modelRef: string
@@ -29,12 +29,12 @@ function useEvaluationDetails(evalRef: string | null) {
     queryKey: ['eval-details', evalRef],
     enabled: !!evalRef,
     queryFn: async () => {
-      const ev = (await api.refsReadBatch([evalRef!])).vals[0]
+      const ev = (await api.refsRead([evalRef!])).items[0]
       if (!ev) throw new Error('Evaluation not found')
       const scorerRefs: string[] = Array.isArray(ev.scorers) ? ev.scorers.filter((s: Any) => typeof s === 'string') : []
       const [dsVals, scorerVals] = await Promise.all([
-        typeof ev.dataset === 'string' ? api.refsReadBatch([ev.dataset]).then((r) => r.vals) : Promise.resolve([null]),
-        scorerRefs.length ? api.refsReadBatch(scorerRefs).then((r) => r.vals) : Promise.resolve([]),
+        typeof ev.dataset === 'string' ? api.refsRead([ev.dataset]).then((r) => r.items) : Promise.resolve([null]),
+        scorerRefs.length ? api.refsRead(scorerRefs).then((r) => r.items) : Promise.resolve([]),
       ])
       const ds = dsVals[0]
       let columns: string[] = []
@@ -43,10 +43,10 @@ function useEvaluationDetails(evalRef: string | null) {
       if (tp) {
         const [sample, stats] = await Promise.all([
           api.tableQuery({ project_id: tp.projectId, digest: tp.name, limit: 20 }),
-          api.tableQueryStats(tp.projectId, tp.name),
+          api.tableCount(tp.projectId, tp.name),
         ])
-        columns = columnsOf(sample.rows.map((r) => r.val))
-        rowCount = stats.count
+        columns = columnsOf(sample.items.map((r) => r.value))
+        rowCount = stats
       }
       const scorers = scorerRefs.map((ref, i) => ({ ref, cls: valClass(scorerVals[i]), runnable: isServerScorerClass(valClass(scorerVals[i])) }))
       return { ev, ds, columns, rowCount, scorers }
@@ -57,7 +57,7 @@ function useEvaluationDetails(evalRef: string | null) {
 export function NewEvaluationPage() {
   const projectId = useProjectId()
   const [params] = useSearchParams()
-  const evals = useObjects(projectId, { base_object_classes: ['Evaluation'] })
+  const evals = useObjects(projectId, { kinds: ['evaluation'] })
   const models = useObjects(projectId, KIND_META.models.filter)
   // Models the server can run: LLM completion models, remote (predict_url) and runtime-bound models.
   const llmModels = (models.data ?? []).filter((o) => isLLMModel(o) || serverModelKind(o) != null)
@@ -81,7 +81,7 @@ export function NewEvaluationPage() {
   const nonRunnable = details.data?.scorers.filter((s) => !s.runnable) ?? []
 
   const evalOptions = useMemo(() => {
-    const opts = (evals.data ?? []).map((o) => ({ ref: refOf(o), label: `${o.object_id} (v${o.version_index}, latest)` }))
+    const opts = (evals.data ?? []).map((o) => ({ ref: refOf(o), label: `${o.name} (v${o.version}, latest)` }))
     if (evalRef && !opts.some((o) => o.ref === evalRef)) {
       const p = parseRef(evalRef)
       opts.unshift({ ref: evalRef, label: `${p?.name ?? evalRef}:${p?.digest?.slice(0, 8) ?? ''}` })
@@ -90,8 +90,8 @@ export function NewEvaluationPage() {
   }, [evals.data, evalRef])
 
   const modelOptions = useMemo(() => {
-    const opts = llmModels.map((o) => ({ ref: refOf(o), name: o.object_id, val: o.val, kind: serverModelKind(o), sub: `${serverModelSummary(o)} · v${o.version_index} · ${fmtRelative(o.created_at)}` }))
-    for (const r of modelRefs) if (!opts.some((o) => o.ref === r)) opts.unshift({ ref: r, name: parseRef(r)?.name ?? r, val: null, kind: null, sub: `pinned version ${parseRef(r)?.digest?.slice(0, 8) ?? ''}` })
+    const opts = llmModels.map((o) => ({ ref: refOf(o), name: o.name, value: o.value, kind: serverModelKind(o), sub: `${serverModelSummary(o)} · v${o.version} · ${fmtRelative(o.created_at)}` }))
+    for (const r of modelRefs) if (!opts.some((o) => o.ref === r)) opts.unshift({ ref: r, name: parseRef(r)?.name ?? r, value: null, kind: null, sub: `pinned version ${parseRef(r)?.digest?.slice(0, 8) ?? ''}` })
     return opts
   }, [llmModels, modelRefs])
 
@@ -101,8 +101,8 @@ export function NewEvaluationPage() {
     const out: Launched[] = []
     for (const m of modelRefs) {
       try {
-        const r = await api.evaluateModel(projectId, evalRef, m)
-        out.push({ modelRef: m, callId: r.call_id })
+        const r = await api.evaluationRun(projectId, evalRef, m)
+        out.push({ modelRef: m, callId: r.id })
       } catch (e) {
         out.push({ modelRef: m, error: errMsg(e) })
       }
@@ -232,7 +232,7 @@ export function NewEvaluationPage() {
         ) : (
           <div className="pick-list" style={{ maxHeight: 320 }}>
             {modelOptions.map((m) => {
-              const vars = m.val ? templateVars(...(m.val.default_params?.messages_template ?? []).map((x: Any) => (typeof x.content === 'string' ? x.content : ''))) : []
+              const vars = m.value ? templateVars(...(m.value.default_params?.messages_template ?? []).map((x: Any) => (typeof x.content === 'string' ? x.content : ''))) : []
               const missing = details.data?.columns.length ? vars.filter((v) => !details.data!.columns.includes(v.split('.')[0])) : []
               return (
                 <label key={m.ref}>
@@ -328,8 +328,8 @@ function NewEvaluationForm({ projectId, onCreated }: { projectId: string; onCrea
           <select className="input grow" value={dsRef} onChange={(e) => setDataset(e.target.value)}>
             {!datasets.data?.length && <option value="">No datasets</option>}
             {datasets.data?.map((d) => (
-              <option key={d.object_id} value={refOf(d)}>
-                {d.object_id} (v{d.version_index})
+              <option key={d.name} value={refOf(d)}>
+                {d.name} (v{d.version})
               </option>
             ))}
           </select>
@@ -392,7 +392,7 @@ function RunProgress({ projectId, launched }: { projectId: string; launched: Lau
     queries: launched.map((l) => ({
       queryKey: ['eval-status', projectId, l.callId],
       enabled: !!l.callId,
-      queryFn: () => api.evaluationStatus(projectId, l.callId!).then((r) => r.status),
+      queryFn: () => api.evaluationStatus(projectId, l.callId!),
       refetchInterval: (q: { state: { data?: EvalStatus } }) => (q.state.data && q.state.data.code !== 'running' ? false : 1000),
     })),
   })
@@ -423,7 +423,7 @@ function RunProgress({ projectId, launched }: { projectId: string; launched: Lau
                   <span className={`badge ${s.code === 'complete' ? 'success' : s.code === 'failed' ? 'error' : s.code === 'running' ? 'running' : ''}`}>{s.code}</span>
                 </>
               )}
-              {l.callId && <Link to={callUrl(projectId, l.callId)}>trace →</Link>}
+              {l.callId && <Link to={spanUrl(projectId, l.callId)}>trace →</Link>}
             </div>
             <div className={`progress ${s?.code === 'complete' ? 'success' : s?.code === 'failed' || l.error ? 'error' : ''}`}>
               <span style={{ width: `${l.error ? 100 : pct}%` }} />

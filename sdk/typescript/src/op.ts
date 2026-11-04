@@ -148,13 +148,25 @@ function listAcc(acc: any, item: unknown): any {
 }
 
 /**
- * Trace a function: `weft.op(fn, {name})`, or `weft.op(thisArg, fn, opts)` for
- * a method (the instance is recorded as `self`). Sync and async functions,
- * (async) generators and functions returning async iterables are supported.
+ * Trace a function: `weft.trace(fn, {name})`, or `weft.trace(thisArg, fn, opts)`
+ * for a method (the instance is recorded as `self`). Every call is recorded as
+ * a span named by the function's ref (the function is saved as a versioned
+ * `function` object). Sync and async functions, (async) generators and
+ * functions returning async iterables are supported.
  */
-export function op<F extends (...args: any[]) => any>(fn: F, options?: OpOptions): Op<F>;
-export function op<F extends (...args: any[]) => any>(thisArg: object, fn: F, options?: OpOptions): Op<F>;
-export function op(a: any, b?: any, c?: any): any {
+export function trace<F extends (...args: any[]) => any>(fn: F, options?: OpOptions): Op<F>;
+export function trace<F extends (...args: any[]) => any>(thisArg: object, fn: F, options?: OpOptions): Op<F>;
+export function trace(a: any, b?: any, c?: any): any {
+  return makeTraced(a, b, c);
+}
+
+/** The SDK's own modules use this name; the public `op` export is a deprecated alias of `trace`. */
+export const op = trace;
+
+/** Options of `trace` (earlier name `OpOptions`). */
+export type TraceOptions = OpOptions;
+
+function makeTraced(a: any, b?: any, c?: any): any {
   let thisArg: unknown;
   let fn: (...args: any[]) => any;
   let options: OpOptions;

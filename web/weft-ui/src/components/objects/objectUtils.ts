@@ -3,37 +3,56 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { objectRef, parseRef } from '../../api/refs'
-import type { Any, ObjSchema, ObjsFilter } from '../../api/types'
+import type { Any, ObjectKind, ObjectsFilter, TableRow, WeftObject } from '../../api/types'
 
-export type ObjectKind = 'datasets' | 'models' | 'prompts' | 'scorers' | 'ops' | 'all'
+/** The object list pages (Assets). */
+export type ObjectPageKind = 'datasets' | 'models' | 'prompts' | 'scorers' | 'ops' | 'all'
 
-export const KIND_META: Record<ObjectKind, { title: string; singular: string; filter: ObjsFilter; blurb: string }> = {
+/** Every object kind except function (docs/weft/API.md "Kind and class"). */
+export const VALUE_KINDS: ObjectKind[] = [
+  'dataset',
+  'model',
+  'evaluation',
+  'scorer',
+  'prompt',
+  'leaderboard',
+  'monitor',
+  'annotation_spec',
+  'saved_view',
+  'provider',
+  'provider_model',
+  'dashboard',
+  'automation',
+  'object',
+]
+
+export const KIND_META: Record<ObjectPageKind, { title: string; singular: string; filter: ObjectsFilter; blurb: string }> = {
   datasets: {
     title: 'Datasets',
     singular: 'dataset',
-    filter: { base_object_classes: ['Dataset'] },
+    filter: { kinds: ['dataset'] },
     blurb: 'Versioned collections of examples used for evaluations.',
   },
   models: {
     title: 'Models',
     singular: 'model',
-    filter: { base_object_classes: ['Model', 'LLMStructuredCompletionModel'] },
+    filter: { kinds: ['model'] },
     blurb: 'Versioned model configurations. LLM completion models can be run by the server.',
   },
   prompts: {
     title: 'Prompts',
     singular: 'prompt',
-    filter: { base_object_classes: ['Prompt', 'StringPrompt', 'MessagesPrompt'] },
+    filter: { kinds: ['prompt'] },
     blurb: 'Versioned prompt templates with {placeholders}.',
   },
   scorers: {
     title: 'Scorers',
     singular: 'scorer',
-    filter: { base_object_classes: ['Scorer', 'LLMAsAJudgeScorer'] },
+    filter: { kinds: ['scorer'] },
     blurb: 'Functions and LLM judges that grade model outputs.',
   },
-  ops: { title: 'Functions', singular: 'function', filter: { is_op: true }, blurb: 'Traced functions (ops), versioned by their source code.' },
-  all: { title: 'All objects', singular: 'object', filter: { is_op: false }, blurb: 'Every versioned object in this project.' },
+  ops: { title: 'Functions', singular: 'function', filter: { kinds: ['function'] }, blurb: 'Traced functions, versioned by their source code.' },
+  all: { title: 'All objects', singular: 'object', filter: { kinds: VALUE_KINDS }, blurb: 'Every versioned object in this project.' },
 }
 
 export const OBJ_BASES = ['Object', 'BaseModel']
@@ -64,24 +83,41 @@ export function valClass(val: Any): string | null {
 }
 
 /** Most specific class name for display. */
-export function objClass(o: ObjSchema): string {
-  if (o.kind === 'op') return 'Op'
-  return o.leaf_object_class ?? valClass(o.val) ?? o.base_object_class ?? (Array.isArray(o.val) ? 'List' : typeof o.val === 'object' ? 'Object' : typeof o.val)
+export function objClass(o: WeftObject): string {
+  if (o.kind === 'function') return 'Function'
+  return o.class ?? valClass(o.value) ?? (Array.isArray(o.value) ? 'List' : typeof o.value === 'object' ? 'Object' : typeof o.value)
 }
 
-function classes(o: ObjSchema): string[] {
-  const out = [o.base_object_class, o.leaf_object_class, valClass(o.val)]
-  if (o.val && typeof o.val === 'object' && Array.isArray(o.val._bases)) out.push(...o.val._bases)
+/** The base class of each kind. */
+const KIND_CLASS: Partial<Record<ObjectKind, string>> = {
+  dataset: 'Dataset',
+  model: 'Model',
+  evaluation: 'Evaluation',
+  scorer: 'Scorer',
+  prompt: 'Prompt',
+  leaderboard: 'Leaderboard',
+  monitor: 'Monitor',
+  annotation_spec: 'AnnotationSpec',
+  saved_view: 'SavedView',
+  provider: 'Provider',
+  provider_model: 'ProviderModel',
+  dashboard: 'Dashboard',
+  automation: 'Automation',
+}
+
+function classes(o: WeftObject): string[] {
+  const out = [KIND_CLASS[o.kind], o.class, valClass(o.value)]
+  if (o.value && typeof o.value === 'object' && Array.isArray(o.value._bases)) out.push(...o.value._bases)
   return out.filter(Boolean) as string[]
 }
 
-export const hasClass = (o: ObjSchema, ...names: string[]) => classes(o).some((c) => names.includes(c))
-export const isDataset = (o: ObjSchema) => hasClass(o, 'Dataset')
-export const isPrompt = (o: ObjSchema) => hasClass(o, 'Prompt', 'StringPrompt', 'MessagesPrompt')
-export const isEvaluation = (o: ObjSchema) => hasClass(o, 'Evaluation')
-export const isScorer = (o: ObjSchema) => hasClass(o, 'Scorer', 'LLMAsAJudgeScorer')
-export const isLLMModel = (o: ObjSchema) => hasClass(o, 'LLMStructuredCompletionModel')
-export const isModel = (o: ObjSchema) => hasClass(o, 'Model', 'LLMStructuredCompletionModel')
+export const hasClass = (o: WeftObject, ...names: string[]) => classes(o).some((c) => names.includes(c))
+export const isDataset = (o: WeftObject) => hasClass(o, 'Dataset')
+export const isPrompt = (o: WeftObject) => hasClass(o, 'Prompt', 'StringPrompt', 'MessagesPrompt')
+export const isEvaluation = (o: WeftObject) => hasClass(o, 'Evaluation')
+export const isScorer = (o: WeftObject) => hasClass(o, 'Scorer', 'LLMAsAJudgeScorer')
+export const isLLMModel = (o: WeftObject) => hasClass(o, 'LLMStructuredCompletionModel')
+export const isModel = (o: WeftObject) => hasClass(o, 'Model', 'LLMStructuredCompletionModel')
 /** More server-runnable scorer classes (created by the Signals gallery or the SDKs, not the generic scorer form). */
 export const EXTRA_SERVER_SCORER_CLASSES = [
   'RemoteScorer',
@@ -96,11 +132,11 @@ export const EXTRA_SERVER_SCORER_CLASSES = [
 ] as const
 export const isServerScorerClass = (cls: string | null | undefined) =>
   (SERVER_SCORER_CLASSES as readonly string[]).includes(cls ?? '') || (EXTRA_SERVER_SCORER_CLASSES as readonly string[]).includes(cls ?? '')
-export const isServerScorer = (o: ObjSchema) => isServerScorerClass(valClass(o.val))
+export const isServerScorer = (o: WeftObject) => isServerScorerClass(valClass(o.value))
 
 /** The object list page an object belongs to. */
-export function kindOf(o: ObjSchema): ObjectKind {
-  if (o.kind === 'op') return 'ops'
+export function kindOf(o: WeftObject): ObjectPageKind {
+  if (o.kind === 'function') return 'ops'
   if (isDataset(o)) return 'datasets'
   if (isPrompt(o)) return 'prompts'
   if (isScorer(o)) return 'scorers'
@@ -108,10 +144,10 @@ export function kindOf(o: ObjSchema): ObjectKind {
   return 'all'
 }
 
-export const refOf = (o: ObjSchema) => objectRef(o.project_id, o.object_id, o.digest, o.kind === 'op' ? 'op' : 'object')
+export const refOf = (o: WeftObject) => objectRef(o.project_id, o.name, o.digest, o.kind === 'function' ? 'function' : 'object')
 
 /** Ref with a readable version, e.g. for SDK snippets: name:v3 */
-export const versionLabel = (o: Pick<ObjSchema, 'version_index'>) => `v${o.version_index}`
+export const versionLabel = (o: Pick<WeftObject, 'version'>) => `v${o.version}`
 
 export function refName(ref: string | null | undefined): string {
   if (!ref) return '—'
@@ -119,7 +155,7 @@ export function refName(ref: string | null | undefined): string {
   return p ? p.name : ref
 }
 
-/** Valid object ids: letters, digits, -, _, . */
+/** Valid object names: letters, digits, -, _, . */
 export function sanitizeObjectId(s: string): string {
   return s
     .trim()
@@ -156,19 +192,19 @@ export function classVal(cls: string, bases: string[], fields: Record<string, An
 
 // ------------------------------------------------------------- hooks
 
-export function useObjects(projectId: string, filter: ObjsFilter, opts: { enabled?: boolean; metadataOnly?: boolean } = {}) {
+export function useObjects(projectId: string, filter: ObjectsFilter, opts: { enabled?: boolean; metadataOnly?: boolean } = {}) {
   return useQuery({
-    queryKey: ['objs', projectId, filter, !!opts.metadataOnly],
+    queryKey: ['objects', projectId, filter, !!opts.metadataOnly],
     queryFn: () =>
       api
-        .objsQuery({
+        .objectsQuery({
           project_id: projectId,
           filter: { latest_only: true, ...filter },
           sort_by: [{ field: 'created_at', direction: 'desc' }],
           limit: 1000,
           metadata_only: opts.metadataOnly,
         })
-        .then((r) => r.objs),
+        .then((r) => r.items),
     enabled: opts.enabled ?? true,
   })
 }
@@ -178,14 +214,14 @@ export function useObjectVersions(projectId: string, objectId: string, metadataO
     queryKey: ['obj-versions', projectId, objectId, metadataOnly],
     queryFn: () =>
       api
-        .objsQuery({
+        .objectsQuery({
           project_id: projectId,
-          filter: { object_ids: [objectId], latest_only: false },
+          filter: { names: [objectId], latest_only: false },
           sort_by: [{ field: 'created_at', direction: 'desc' }],
           limit: 1000,
           metadata_only: metadataOnly,
         })
-        .then((r) => r.objs.slice().sort((a, b) => b.version_index - a.version_index)),
+        .then((r) => r.items.slice().sort((a, b) => b.version - a.version)),
   })
 }
 
@@ -208,12 +244,12 @@ export function downloadText(filename: string, text: string, mime = 'application
 
 /** Fetch every row of a table (paged). */
 export async function fetchAllRows(projectId: string, digest: string, max = 50_000) {
-  const out: { digest: string; val: Any; original_index: number }[] = []
+  const out: TableRow[] = []
   const page = 1000
   for (let offset = 0; offset < max; offset += page) {
     const r = await api.tableQuery({ project_id: projectId, digest, limit: page, offset })
-    out.push(...r.rows)
-    if (r.rows.length < page) break
+    out.push(...r.items)
+    if (r.items.length < page) break
   }
   return out
 }

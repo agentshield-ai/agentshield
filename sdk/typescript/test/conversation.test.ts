@@ -20,7 +20,7 @@ const attr = (c: any, dotted: string): any => dotted.split('.').reduce((v, k) =>
 
 describe('agent conversations', () => {
   it('records turns, LLM calls, tools and nested ops', async () => {
-    const lookup = weft.op(function lookup(id: number) {
+    const lookup = weft.trace(function lookup(id: number) {
       return 'shipped';
     });
     const conv = weft.startConversation({ agentName: 'support', conversationName: 'Order help', attributes: { team: 'cx' } });
@@ -50,12 +50,12 @@ describe('agent conversations', () => {
     const [op] = fake.callsByOp('lookup');
     expect(tc.parent_id).toBeNull();
     expect(tc.turn_id).toBe(tc.id);
-    expect(tc.thread_id).toBe(conv.conversationId);
+    expect(tc.session_id).toBe(conv.conversationId);
     expect(l.parent_id).toBe(tc.id);
     expect(tl.parent_id).toBe(tc.id);
     expect(op.parent_id).toBe(tl.id);
     expect(new Set([l.trace_id, tl.trace_id, op.trace_id])).toEqual(new Set([tc.trace_id]));
-    expect(op.thread_id).toBe(conv.conversationId);
+    expect(op.session_id).toBe(conv.conversationId);
     expect(op.turn_id).toBe(tc.id);
     expect(attr(tc, 'gen_ai.agent.name')).toBe('support');
     expect(attr(tc, 'gen_ai.operation.name')).toBe('invoke_agent');
@@ -86,7 +86,7 @@ describe('agent conversations', () => {
     const t2 = conv.startTurn({ userMessage: 'two' });
     expect(t1.ended).toBe(true);
     t2.end();
-    const handler = weft.op(async function handler() {
+    const handler = weft.trace(async function handler() {
       const c = weft.startConversation({ agentName: 'nested', continueParentTrace: true });
       await c.run(async () => {
         await weft.startTurn({ userMessage: 'hi' }).run(() => undefined);
@@ -141,7 +141,7 @@ describe('agent conversations', () => {
     expect(search.parent_id).toBe(researcher.id);
     expect(search.inputs).toEqual({ arguments: 'flights' });
     expect(flaky.parent_id).toBe(planner.id);
-    expect(flaky.exception).toContain('tool broke');
+    expect(flaky.error).toContain('tool broke');
     expect(attr(flaky, 'error.type')).toBe('Error');
     expect(attr(researcher, 'gen_ai.agent.version')).toBe('2');
     const chats = fake.callsByOp('chat');
@@ -166,12 +166,12 @@ describe('agent conversations', () => {
     const t = fake.calls.get(res.rootSpanIds[0]);
     expect(t.started_at).toBe('2026-01-01T12:00:00.000Z');
     expect(t.ended_at).toBe('2026-01-01T12:00:02.000Z');
-    expect(t.thread_id).toBe('conv-batch');
+    expect(t.session_id).toBe('conv-batch');
     expect(attr(t, 'source')).toBe('replay');
     expect(fake.children(t.id).map((c) => fake.opBase(c)).sort()).toEqual(['chat', 'execute_tool']);
     for (const id of res2.rootSpanIds) {
       const c = fake.calls.get(id);
-      expect(c.thread_id).toBe(res2.conversationId);
+      expect(c.session_id).toBe(res2.conversationId);
       expect(attr(c, 'gen_ai.conversation.name')).toBe('replayed');
     }
     expect(turns[0].agentName).toBe('');

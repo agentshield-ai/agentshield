@@ -1,4 +1,4 @@
-import type { Call, CallStatus } from '../api/types'
+import type { Span, SpanStatus } from '../api/types'
 
 export function fmtDuration(ms: number | null | undefined): string {
   if (ms == null || Number.isNaN(ms)) return '—'
@@ -72,17 +72,17 @@ export function fmtScore(v: unknown): string {
   return typeof v === 'string' ? v : JSON.stringify(v)
 }
 
-export function callStatus(c: Call): CallStatus {
-  return c.summary?.weft?.status ?? (c.exception ? 'error' : c.ended_at ? 'success' : 'running')
+export function callStatus(c: Span): SpanStatus {
+  return c.summary?.weft?.status ?? (c.error ? 'error' : c.ended_at ? 'success' : 'running')
 }
 
-export function callLatencyMs(c: Call): number | null {
+export function callLatencyMs(c: Span): number | null {
   if (c.summary?.weft?.latency_ms != null) return c.summary.weft.latency_ms
   if (!c.ended_at) return null
   return new Date(c.ended_at).getTime() - new Date(c.started_at).getTime()
 }
 
-export function callTokens(c: Call): { prompt: number; completion: number; total: number } {
+export function callTokens(c: Span): { prompt: number; completion: number; total: number } {
   let prompt = 0
   let completion = 0
   let total = 0
@@ -96,7 +96,7 @@ export function callTokens(c: Call): { prompt: number; completion: number; total
   return { prompt, completion, total }
 }
 
-export function callCost(c: Call): number | null {
+export function callCost(c: Span): number | null {
   const costs = c.summary?.weft?.costs
   if (!costs) return null
   let t = 0

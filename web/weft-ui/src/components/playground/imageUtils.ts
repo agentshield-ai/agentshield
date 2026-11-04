@@ -1,6 +1,6 @@
 // Image helpers for the playground (unit tested in playground.test.ts).
 
-/** An <img> src for one image of an /image/create response: a data URL for b64_json, else a safe http(s) or data URL. */
+/** An <img> src for one image of an /api/v1/images response: a data URL for b64_json, else a safe http(s) or data URL. */
 export function imageSrc(im: { b64_json?: string; url?: string } | null | undefined): string | null {
   if (!im) return null
   if (typeof im.b64_json === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(im.b64_json)) {

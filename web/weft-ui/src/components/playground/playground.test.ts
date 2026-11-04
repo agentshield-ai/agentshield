@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import { addRun, callToRun, loadRuns, runPrompt, saveRuns, type PlaygroundRun } from './history'
 import { imageSrc } from './imageUtils'
 
@@ -41,21 +41,21 @@ describe('playground history', () => {
     expect(runPrompt(run('a'))).toBe('Hello there')
     expect(runPrompt(run('b', { mode: 'image', inputs: { model: 'm', prompt: 'a cat' } }))).toBe('a cat')
   })
-  it('turns tracked calls into runs', () => {
+  it('turns tracked spans into runs', () => {
     const chat = {
       id: 'c1',
-      op_name: 'weft:///e/p/op/weft.completions.create:x',
+      name: 'weft:///e/p/function/weft.completions.create:x',
       started_at: '2026-01-01T00:00:00Z',
       ended_at: '2026-01-01T00:00:01.5Z',
       inputs: { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'q' }] },
       output: { choices: [{ message: { role: 'assistant', content: 'answer' } }] },
       summary: { usage: { 'gpt-4o-mini': { prompt_tokens: 3, completion_tokens: 2 } } },
-      exception: null,
-    } as unknown as Call
+      error: null,
+    } as unknown as Span
     expect(callToRun(chat)).toMatchObject({ id: 'call:c1', mode: 'chat', output: 'answer', callId: 'c1', latencyMs: 1500, tokens: 5, source: 'server' })
-    const img = { ...chat, id: 'c2', op_name: 'weft:///e/p/op/weft.images.generate:x', inputs: { model: 'mock/img', prompt: 'p' }, output: { data: [{}, {}] } } as unknown as Call
+    const img = { ...chat, id: 'c2', name: 'weft:///e/p/function/weft.images.generate:x', inputs: { model: 'mock/img', prompt: 'p' }, output: { data: [{}, {}] } } as unknown as Span
     expect(callToRun(img)).toMatchObject({ mode: 'image', images: 2, output: '2 images' })
-    expect(callToRun({ ...chat, inputs: {} } as unknown as Call)).toBeNull()
+    expect(callToRun({ ...chat, inputs: {} } as unknown as Span)).toBeNull()
   })
 })
 

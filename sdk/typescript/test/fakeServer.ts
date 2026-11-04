@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { b64digest, digest, tableDigest } from '../src/canonical.js';
+import { digest, fileDigest, tableDigest } from '../src/canonical.js';
 
 export interface Recorded {
   method: string;
@@ -9,21 +9,43 @@ export interface Recorded {
   headers: IncomingMessage['headers'];
 }
 
-/** In-process fake Weft server recording requests. */
+const KINDS: Record<string, string> = {
+  Dataset: 'dataset',
+  Model: 'model',
+  Evaluation: 'evaluation',
+  Scorer: 'scorer',
+  Prompt: 'prompt',
+  SavedView: 'saved_view',
+  Leaderboard: 'leaderboard',
+  Monitor: 'monitor',
+  AnnotationSpec: 'annotation_spec',
+};
+
+function kindOf(val: any): string {
+  if (!val || typeof val !== 'object') return 'object';
+  if (val._type === 'Op') return 'function';
+  for (const c of [val._class_name, ...(val._bases ?? [])]) if (KINDS[c]) return KINDS[c];
+  return 'object';
+}
+
+/**
+ * In-process fake Weft server serving Weft's own /api/v1 routes and recording
+ * requests. Stored spans use Weft's names (`name`, `error`, `session_id`),
+ * objects `{name, digest, version, kind, value}`, table rows `{digest, value}`.
+ */
 export class FakeWeft {
   requests: Recorded[] = [];
   calls = new Map<string, any>();
   objs = new Map<string, any[]>();
-  tables = new Map<string, Array<{ digest: string; val: any }>>();
+  tables = new Map<string, Array<{ digest: string; value: any }>>();
   files = new Map<string, Buffer>();
   feedback: any[] = [];
   failPaths = new Map<string, number>();
   failStatus: number | null = null;
-  tags = new Map<string, string[]>(); // `${object}|${digest}`
-  aliases = new Map<string, string>(); // `${object}|${alias}` -> digest
+  tags = new Map<string, string[]>(); // `${name}|${digest}`
+  aliases = new Map<string, string>(); // `${name}|${alias}` -> digest
   embeddingsEnabled = false;
-  aliasRoutes = true;
-  /** Extra POST routes for individual tests: path -> handler(body). */
+  /** Extra routes for individual tests: path -> handler(body, or the query of a GET). */
   routes = new Map<string, (body: any) => unknown>();
   url = '';
   private server: Server;
@@ -52,43 +74,44 @@ export class FakeWeft {
         return send(503, { reason: 'injected' });
       }
       try {
-        if (req.method === 'GET' && path.startsWith('/tags?')) return send(200, { tags: [...new Set([...this.tags.values()].flat())].sort() });
+        const [p, qs] = path.split('?');
+        const q = new URLSearchParams(qs ?? '');
         if (req.method === 'PUT') {
-          let m = /^\/objs\/([^/]+)\/aliases$/.exec(path);
-          if (m && this.aliasRoutes) {
-            for (const a of body.aliases) this.aliases.set(`${decodeURIComponent(m[1])}|${a}`, body.digest);
-            return send(200, {});
-          }
-          m = /^\/objs\/([^/]+)\/versions\/([^/]+)\/tags$/.exec(path);
-          if (m && this.aliasRoutes) {
-            const key = `${decodeURIComponent(m[1])}|${m[2]}`;
-            const cur = this.tags.get(key) ?? [];
-            for (const t of body.tags) if (!cur.includes(t)) cur.push(t);
-            this.tags.set(key, cur);
-            return send(200, {});
-          }
-          m = /^\/v2\/([^/]+)\/([^/]+)\/runtimes\/([^/]+)$/.exec(path);
+          const m = /^\/api\/v1\/runtimes\/([^/]+)$/.exec(p);
           if (m) {
-            const name = decodeURIComponent(m[3]);
+            const name = decodeURIComponent(m[1]);
             const ids = body.runtime_ids.map((r: any) => ({ id: r.id, max_tokens: r.max_tokens ?? 4096, playground_id: `${name}/${r.id}` }));
             return send(200, { name, base_url: body.base_url, api_key_secret: body.api_key_secret ?? null, headers: body.headers ?? {}, runtime_ids: ids, kind: 'openai' });
           }
           return send(404, { reason: 'no route' });
         }
-        if (req.method === 'GET' && path.startsWith('/file/content?')) {
-          const d = new URLSearchParams(path.split('?')[1]).get('digest') ?? '';
-          if (!this.files.has(d)) return send(404, { reason: 'no file' });
-          res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
-          return res.end(this.files.get(d));
+        if (req.method === 'GET') {
+          const route = this.routes.get(p);
+          if (route) return send(200, route(Object.fromEntries(q)));
+          let m = /^\/api\/v1\/files\/([^/]+)$/.exec(p);
+          if (m) {
+            const d = decodeURIComponent(m[1]);
+            if (!this.files.has(d)) return send(404, { reason: 'no file' });
+            res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+            return res.end(this.files.get(d));
+          }
+          m = /^\/api\/v1\/objects\/([^/]+)(?:\/versions\/([^/]+))?$/.exec(p);
+          if (m) {
+            const v = this.version(decodeURIComponent(m[1]), decodeURIComponent(m[2] ?? 'latest'));
+            if (!v) return send(404, { reason: 'not found' });
+            return send(200, this.object(q.get('project_id') ?? '', v));
+          }
+          m = /^\/api\/v1\/spans\/([^/]+)$/.exec(p);
+          if (m) {
+            const c = this.calls.get(decodeURIComponent(m[1]));
+            return c ? send(200, c) : send(404, { reason: 'not found' });
+          }
+          if (p === '/auth/whoami') return send(200, { user_id: 'anonymous', auth_required: false });
+          if (p === '/api/v1/server') return send(200, { name: 'weft', version: 'fake', auth_required: false, otel_endpoint: '/otel/v1/traces' });
+          return send(404, { reason: 'no route' });
         }
-        if (path === '/file/content') {
-          res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
-          return res.end(this.files.get(body.digest));
-        }
-        if (req.method === 'GET' && path === '/auth/whoami') return send(200, { user_id: 'anonymous', auth_required: false });
-        if (req.method === 'GET' && path === '/server_info') return send(200, { version: 'fake', auth_required: false, otel_endpoint: '/otel/v1/traces' });
         const out = this.handle(path, body, raw, ctype);
-        if (typeof out === 'string') return send(200, out, 'application/jsonl');
+        if (typeof out === 'string') return send(200, out, 'application/x-ndjson');
         return send(200, out);
       } catch (e) {
         return send(404, { reason: String(e) });
@@ -106,9 +129,10 @@ export class FakeWeft {
     return new Promise((r) => this.server.close(() => r()));
   }
 
+  /** The function (base) name of a span. */
   opBase(c: any): string {
-    const op: string = c.op_name ?? '';
-    return op.startsWith('weft:///') ? op.split('/').pop()!.replace(/:[^:]*$/, '') : op;
+    const n: string = c.name ?? '';
+    return n.startsWith('weft:///') ? n.split('/').pop()!.replace(/:[^:]*$/, '') : n;
   }
 
   callsByOp(name: string): any[] {
@@ -119,132 +143,172 @@ export class FakeWeft {
     return [...this.calls.values()].filter((c) => c.parent_id === id).sort((a, b) => (a.id < b.id ? -1 : 1));
   }
 
+  private version(name: string, version: string): any | undefined {
+    const versions = this.objs.get(name) ?? [];
+    if (version === 'latest') return versions.at(-1);
+    if (/^v\d+$/.test(version)) return versions.find((v) => v.version === Number(version.slice(1)));
+    const aliased = this.aliases.get(`${name}|${version}`);
+    return versions.find((v) => v.digest === (aliased ?? version));
+  }
+
+  private object(projectId: string, v: any): any {
+    const [e, p] = projectId.split('/');
+    return {
+      ...v,
+      project_id: projectId,
+      ref: `weft:///${e}/${p}/${v.kind === 'function' ? 'function' : 'object'}/${v.name}:${v.digest}`,
+      tags: this.tags.get(`${v.name}|${v.digest}`) ?? [],
+      aliases: [...this.aliases.entries()].filter(([k, d]) => k.startsWith(`${v.name}|`) && d === v.digest).map(([k]) => k.split('|')[1]).sort(),
+    };
+  }
+
   private handle(path: string, body: any, raw: Buffer, ctype: string): unknown {
     const extra = this.routes.get(path);
     if (extra) return extra(body);
-    let m = /^\/objs\/([^/]+)\/aliases\/remove$/.exec(path);
-    if (m && this.aliasRoutes) {
-      for (const a of body.aliases) this.aliases.delete(`${decodeURIComponent(m[1])}|${a}`);
+    let m = /^\/api\/v1\/objects\/([^/]+)\/aliases(\/remove)?$/.exec(path);
+    if (m && !['tags', 'aliases'].includes(m[1])) {
+      const name = decodeURIComponent(m[1]);
+      for (const a of body.aliases) {
+        if (m[2]) this.aliases.delete(`${name}|${a}`);
+        else this.aliases.set(`${name}|${a}`, this.version(name, body.version)!.digest);
+      }
       return {};
     }
-    m = /^\/objs\/([^/]+)\/versions\/([^/]+)\/tags\/remove$/.exec(path);
-    if (m && this.aliasRoutes) {
-      const key = `${decodeURIComponent(m[1])}|${m[2]}`;
-      this.tags.set(key, (this.tags.get(key) ?? []).filter((t) => !body.tags.includes(t)));
+    m = /^\/api\/v1\/objects\/([^/]+)\/versions\/([^/]+)\/tags(\/remove)?$/.exec(path);
+    if (m) {
+      const name = decodeURIComponent(m[1]);
+      const key = `${name}|${this.version(name, decodeURIComponent(m[2]))!.digest}`;
+      const cur = this.tags.get(key) ?? [];
+      if (m[3]) this.tags.set(key, cur.filter((t) => !body.tags.includes(t)));
+      else {
+        for (const t of body.tags) if (!cur.includes(t)) cur.push(t);
+        this.tags.set(key, cur);
+      }
       return {};
     }
     switch (path) {
-      case '/obj/alias/set':
-        this.aliases.set(`${body.object_id}|${body.alias}`, body.digest);
-        return {};
-      case '/obj/alias/remove':
-        this.aliases.delete(`${body.object_id}|${body.alias}`);
-        return {};
-      case '/obj/delete': {
-        const versions = this.objs.get(body.object_id) ?? [];
+      case '/api/v1/objects/tags': {
+        const items = [...new Set([...this.tags.values()].flat())].sort();
+        return { items, total_count: items.length };
+      }
+      case '/api/v1/objects/aliases': {
+        const items = [...new Set([...this.aliases.keys()].map((k) => k.split('|')[1]))].sort();
+        return { items, total_count: items.length };
+      }
+      case '/api/v1/objects/delete': {
+        const versions = this.objs.get(body.name) ?? [];
         const ds: string[] | undefined = body.digests;
-        const keep = ds ? versions.filter((v) => !ds.includes(v.digest) && !ds.includes(`v${v.version_index}`)) : [];
-        this.objs.set(body.object_id, keep);
+        const keep = ds ? versions.filter((v) => !ds.includes(v.digest) && !ds.includes(`v${v.version}`)) : [];
+        this.objs.set(body.name, keep);
         return { num_deleted: versions.length - keep.length };
       }
-      case '/embeddings/create': {
+      case '/api/v1/objects/save': {
+        if (!/^[A-Za-z0-9_.-]{1,128}$/.test(body.name)) throw new Error(`invalid name ${body.name}`);
+        const d = digest(body.value);
+        const versions = this.objs.get(body.name) ?? [];
+        this.objs.set(body.name, versions);
+        let v = versions.find((x) => x.digest === d);
+        if (!v) {
+          const kind = kindOf(body.value);
+          v = { name: body.name, digest: d, value: body.value, version: versions.length, kind, class: kind === 'function' ? null : (body.value?._class_name ?? null) };
+          versions.push(v);
+        }
+        return { name: body.name, digest: d, version: v.version, kind: v.kind, ref: this.object(body.project_id, v).ref };
+      }
+      case '/api/v1/objects/query': {
+        const f = body.filter ?? {};
+        const items: any[] = [];
+        for (const [name, versions] of this.objs) {
+          if (f.names && !f.names.includes(name)) continue;
+          for (const v of f.latest_only ? versions.slice(-1) : versions) if (!f.kinds || f.kinds.includes(v.kind)) items.push(this.object(body.project_id, v));
+        }
+        return { items, total_count: items.length };
+      }
+      case '/api/v1/embeddings': {
         if (!this.embeddingsEnabled) throw new Error('no route');
         return { response: { model: body.inputs.model, data: body.inputs.input.map((t: string) => ({ embedding: [t.length, 1] })) } };
       }
       case '/remote/score':
         return { score: 0.9, received: body };
-      case '/call/upsert_batch':
+      case '/api/v1/spans/batch':
         return {
-          res: body.batch.map((it: any) => {
-            const r = it.req[it.mode];
+          items: body.items.map((it: any) => {
+            const keys = Object.keys(it);
+            if (keys.length !== 1) throw new Error('expected exactly one of start, end or span');
+            const r = it[keys[0]];
             this.calls.set(r.id, { ...(this.calls.get(r.id) ?? {}), ...r });
-            return it.mode === 'start' ? { id: r.id, trace_id: r.trace_id } : {};
+            return keys[0] === 'end' ? { id: r.id } : { id: r.id, trace_id: r.trace_id };
           }),
         };
-      case '/obj/create': {
-        const o = body.obj;
-        const d = digest(o.val);
-        const versions = this.objs.get(o.object_id) ?? [];
-        this.objs.set(o.object_id, versions);
-        const existing = versions.find((v) => v.digest === d);
-        if (existing) return { digest: d, object_id: o.object_id, version_index: existing.version_index };
-        versions.push({ digest: d, val: o.val, version_index: versions.length, kind: o.val._type === 'Op' ? 'op' : 'object' });
-        return { digest: d, object_id: o.object_id, version_index: versions.length - 1 };
-      }
-      case '/obj/read': {
-        const versions = this.objs.get(body.object_id)!;
-        const dg: string = body.digest;
-        const v = dg === 'latest' ? versions.at(-1) : /^v\d+$/.test(dg) ? versions[Number(dg.slice(1))] : versions.find((x) => x.digest === dg);
-        if (!v) throw new Error('not found');
-        const extra = body.include_tags_and_aliases
-          ? {
-              tags: this.tags.get(`${body.object_id}|${v.digest}`) ?? [],
-              aliases: [...this.aliases.entries()].filter(([k, d]) => k.startsWith(`${body.object_id}|`) && d === v.digest).map(([k]) => k.split('|')[1]).sort(),
-            }
-          : {};
-        return { obj: { ...v, project_id: body.project_id, object_id: body.object_id, ...extra } };
-      }
-      case '/table/create': {
-        const rows = body.table.rows;
+      case '/api/v1/tables/create': {
+        const rows = body.rows;
         const rds = rows.map((r: unknown) => digest(r));
         const td = tableDigest(rds);
-        this.tables.set(td, rows.map((r: unknown, i: number) => ({ digest: rds[i], val: r })));
+        this.tables.set(td, rows.map((r: unknown, i: number) => ({ digest: rds[i], value: r })));
         return { digest: td, row_digests: rds };
       }
-      case '/table/update': {
-        const rows = [...this.tables.get(body.base_digest)!];
+      case '/api/v1/tables/update': {
+        const rows = [...this.tables.get(body.digest)!];
         const added: string[] = [];
         for (const u of body.updates) {
-          rows.push({ digest: digest(u.append.row), val: u.append.row });
+          rows.push({ digest: digest(u.append.row), value: u.append.row });
           added.push(digest(u.append.row));
         }
         const td = tableDigest(rows.map((r) => r.digest));
         this.tables.set(td, rows);
         return { digest: td, updated_row_digests: added };
       }
-      case '/table/query': {
+      case '/api/v1/tables/query': {
         const rows = this.tables.get(body.digest)!;
         const off = body.offset ?? 0;
-        return { rows: rows.slice(off, off + (body.limit ?? rows.length)) };
+        return { items: rows.slice(off, off + (body.limit ?? rows.length)).map((r, i) => ({ ...r, index: off + i })), total_count: rows.length };
       }
-      case '/file/create': {
+      case '/api/v1/files/upload': {
         const boundary = /boundary=(.*)$/.exec(ctype)![1];
         const parts = raw.toString('latin1').split(`--${boundary}`);
         const filePart = parts.find((p) => p.includes('filename='))!;
         const content = Buffer.from(filePart.slice(filePart.indexOf('\r\n\r\n') + 4, -2), 'latin1');
-        const d = b64digest(content);
+        const d = fileDigest(content);
         this.files.set(d, content);
-        return { digest: d };
+        return { digest: d, size_bytes: content.length };
       }
-      case '/calls/stream_query': {
+      case '/api/v1/spans/query':
+      case '/api/v1/spans/stream': {
         const f = body.filter ?? {};
+        const known = new Set(['names', 'ids', 'trace_ids', 'parent_ids', 'session_ids', 'turn_ids', 'user_ids', 'run_ids', 'input_refs', 'output_refs', 'trace_roots_only']);
+        for (const k of Object.keys(f)) if (!known.has(k)) throw new Error(`unknown filter field ${k}`);
         let calls = [...this.calls.values()];
-        if (f.op_names) calls = calls.filter((c) => f.op_names.includes(c.op_name) || f.op_names.includes(this.opBase(c)));
+        if (f.names) calls = calls.filter((c) => f.names.includes(c.name) || f.names.includes(this.opBase(c)));
         if (f.parent_ids) calls = calls.filter((c) => f.parent_ids.includes(c.parent_id));
+        if (f.session_ids) calls = calls.filter((c) => f.session_ids.includes(c.session_id));
         calls.sort((a, b) => (a.started_at < b.started_at ? -1 : 1));
+        const total = calls.length;
+        if (path === '/api/v1/spans/query') return { items: body.limit === 0 ? [] : calls.slice(0, body.limit ?? 100), total_count: total };
         if (body.limit) calls = calls.slice(0, body.limit);
         return calls.map((c) => JSON.stringify(c)).join('\n') + '\n';
       }
-      case '/call/read':
-        return { call: this.calls.get(body.id) ?? null };
-      case '/call/update':
-        this.calls.get(body.call_id).display_name = body.display_name;
+      case '/api/v1/spans/update':
+        this.calls.get(body.id).display_name = body.display_name;
         return {};
-      case '/calls/delete':
-        for (const id of body.call_ids) this.calls.get(id).deleted_at = 'now';
+      case '/api/v1/spans/delete':
+        for (const id of body.ids) this.calls.get(id).deleted_at = 'now';
         return {};
-      case '/feedback/create': {
+      case '/api/v1/feedback/create': {
         const fb = { ...body, id: `fb${this.feedback.length}` };
         this.feedback.push(fb);
         return { id: fb.id };
       }
-      case '/feedback/query': {
+      case '/api/v1/feedback/query': {
         const val = body.query.$expr.$eq[1].$literal;
-        return { result: this.feedback.filter((f) => f.ref === val) };
+        const items = this.feedback.filter((f) => f.ref === val);
+        return { items, total_count: items.length };
       }
-      case '/cost/create':
-        return { ids: Object.keys(body.costs).map((k, i) => [`c${i}`, k]) };
-      case '/completions/create': {
+      case '/api/v1/feedback/delete':
+        this.feedback = this.feedback.filter((f) => !(body.ids ?? []).includes(f.id));
+        return {};
+      case '/api/v1/prices/create':
+        return { items: Object.keys(body.prices).map((k, i) => ({ id: `c${i}`, llm_id: k })) };
+      case '/api/v1/completions': {
         const inputs = body.inputs;
         const last = inputs.messages.filter((m: any) => m.role === 'user').at(-1).content;
         const content = inputs.response_format?.type === 'json_object' ? JSON.stringify({ correct: true, echo: last }) : last;
@@ -255,10 +319,11 @@ export class FakeWeft {
             choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
             usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
           },
+          span_id: null,
         };
       }
-      case '/refs/read_batch':
-        return { vals: body.refs.map(() => null) };
+      case '/api/v1/refs/read':
+        return { items: body.refs.map(() => null) };
     }
     throw new Error(`unhandled ${path}`);
   }

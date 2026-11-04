@@ -14,10 +14,10 @@ test('a recorded session becomes a conversation with runs, model calls, tools an
   await tracer.flush();
   const sid = fx.session_id;
   const calls = [...rec.calls().values()];
-  const runs = calls.filter((c) => c.op_name === 'openclaw.agent_run');
+  const runs = calls.filter((c) => c.name === 'openclaw.agent_run');
   assert.equal(runs.length, 3, 'two runs of the session and the sub-agent run');
   const [r1, r2] = runs.filter((c) => c.parent_id === null).sort((a, b) => a.started_at.localeCompare(b.started_at));
-  assert.equal(r1.thread_id, sid);
+  assert.equal(r1.session_id, sid);
   assert.equal(r1.turn_id, r1.id);
   assert.equal(r1.attributes['gen_ai.agent.name'], 'main');
   assert.equal(r1.attributes['gen_ai.agent.id'], 'main');
@@ -29,7 +29,7 @@ test('a recorded session becomes a conversation with runs, model calls, tools an
   assert.equal(r1.started_at, '2026-11-02T12:00:00.100Z');
   assert.equal(r1.ended_at, '2026-11-02T12:00:03.700Z');
 
-  const llm1 = calls.filter((c) => c.op_name === 'openclaw.llm' && c.parent_id === r1.id).sort((a, b) => a.started_at.localeCompare(b.started_at));
+  const llm1 = calls.filter((c) => c.name === 'openclaw.llm' && c.parent_id === r1.id).sort((a, b) => a.started_at.localeCompare(b.started_at));
   assert.equal(llm1.length, 3, 'one per model call');
   assert.equal(llm1[0].inputs.messages[0].role, 'system');
   assert.equal(llm1[0].inputs.messages.at(-1).content, "What's the weather in Oslo? Ask the researcher too.");
@@ -44,28 +44,28 @@ test('a recorded session becomes a conversation with runs, model calls, tools an
   assert.equal(fetch1.started_at, '2026-11-02T12:00:01.000Z');
   assert.equal(fetch1.ended_at, '2026-11-02T12:00:01.400Z');
 
-  const sub = calls.find((c) => c.op_name === 'openclaw.subagent');
+  const sub = calls.find((c) => c.name === 'openclaw.subagent');
   assert.equal(sub.parent_id, r1.id);
   assert.equal(sub.trace_id, r1.trace_id);
   assert.equal(sub.attributes['gen_ai.agent.name'], 'researcher');
-  assert.equal(sub.thread_id, sid);
+  assert.equal(sub.session_id, sid);
   const child = runs.find((c) => c.parent_id === sub.id);
   assert.ok(child, 'the child session run nests under the sub-agent (same trace)');
   assert.equal(child.trace_id, r1.trace_id);
   // the child session is its own Weft session: the id AgentShield sends as session_id for its tool calls
-  assert.equal(child.thread_id, 'oc-sess-child-01');
+  assert.equal(child.session_id, 'oc-sess-child-01');
   assert.equal(child.attributes['gen_ai.conversation.id'], 'oc-sess-child-01');
   assert.equal(child.turn_id, child.id);
   const search = calls.find((c) => c.attributes['gen_ai.tool.call.id'] === 'tc-c1');
   assert.equal(search.parent_id, child.id);
   assert.equal(search.attributes['gen_ai.conversation.id'], 'oc-sess-child-01');
-  const childLLM = calls.find((c) => c.op_name === 'openclaw.llm' && c.parent_id === child.id);
+  const childLLM = calls.find((c) => c.name === 'openclaw.llm' && c.parent_id === child.id);
   assert.equal(childLLM.summary.usage['claude-haiku-4-5'].prompt_tokens, 300);
 
   const exec = calls.find((c) => c.attributes['gen_ai.tool.call.id'] === 'tc-3');
   assert.equal(exec.parent_id, r2.id);
-  assert.equal(exec.exception, 'blocked by policy');
-  const llm2 = calls.filter((c) => c.op_name === 'openclaw.llm' && c.parent_id === r2.id);
+  assert.equal(exec.error, 'blocked by policy');
+  const llm2 = calls.filter((c) => c.name === 'openclaw.llm' && c.parent_id === r2.id);
   assert.equal(llm2.length, 1, 'without model_call events: one per llm_input/llm_output pair');
   assert.equal(llm2[0].inputs.messages.length, 3);
   assert.equal(tracer.runs.size, 0);
@@ -82,7 +82,7 @@ test('failed sends are retried; content capture can be turned off', async () => 
   assert.equal(tracer.queue.length, 0);
   const calls = [...rec.calls().values()];
   assert.ok(calls.every((c) => Object.keys(c.inputs).length === 0 && c.output === null));
-  assert.ok(calls.some((c) => c.op_name === 'openclaw.agent_run' && c.attributes['gen_ai.agent.name'] === 'claw'));
+  assert.ok(calls.some((c) => c.name === 'openclaw.agent_run' && c.attributes['gen_ai.agent.name'] === 'claw'));
   assert.ok(calls.some((c) => c.summary?.usage));
 });
 
@@ -99,11 +99,11 @@ test('runs close without agent_end (no conversation access): a new run or sessio
   api.emit('session_end', { sessionId: 's1', reason: 'idle' }, ctx);
   await tracer.flush();
   const calls = [...rec.calls().values()];
-  assert.equal(calls.filter((c) => c.op_name === 'openclaw.agent_run').length, 2);
-  const llm = calls.find((c) => c.op_name === 'openclaw.llm');
-  assert.equal(llm.exception, 'rate_limit');
-  const tool = calls.find((c) => c.op_name === 'openclaw.tool.read');
-  assert.match(tool.exception, /did not finish/);
+  assert.equal(calls.filter((c) => c.name === 'openclaw.agent_run').length, 2);
+  const llm = calls.find((c) => c.name === 'openclaw.llm');
+  assert.equal(llm.error, 'rate_limit');
+  const tool = calls.find((c) => c.name === 'openclaw.tool.read');
+  assert.match(tool.error, /did not finish/);
 });
 
 test('plugin shape, config and a disabled plugin', async () => {

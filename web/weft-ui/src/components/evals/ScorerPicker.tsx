@@ -49,14 +49,14 @@ export function ScorerPicker({
           ))}
           {runnable.map((o) => {
             const ref = refOf(o)
-            const cls = valClass(o.val) as ServerScorerClass
+            const cls = valClass(o.value) as ServerScorerClass
             return (
-              <label key={o.object_id}>
-                <input type="checkbox" checked={value.includes(ref)} onChange={() => toggle(ref, o.object_id)} />
-                <span className="mono grow truncate">{o.object_id}</span>
-                {selectedNames.has(o.object_id) && !value.includes(ref) && <span className="badge warn">older version selected</span>}
+              <label key={o.name}>
+                <input type="checkbox" checked={value.includes(ref)} onChange={() => toggle(ref, o.name)} />
+                <span className="mono grow truncate">{o.name}</span>
+                {selectedNames.has(o.name) && !value.includes(ref) && <span className="badge warn">older version selected</span>}
                 <span className="badge">{SCORER_LABELS[cls] ?? cls}</span>
-                <Link to={objectUrl(projectId, o.object_id, o.digest)} target="_blank" className="small" onClick={(e) => e.stopPropagation()}>
+                <Link to={objectUrl(projectId, o.name, o.digest)} target="_blank" className="small" onClick={(e) => e.stopPropagation()}>
                   view
                 </Link>
               </label>
@@ -77,7 +77,7 @@ export function ScorerPicker({
           onClose={() => setCreating(false)}
           onCreated={(c) => {
             setCreating(false)
-            onChange([...value.filter((r) => parseRef(r)?.name !== c.objectId), c.ref])
+            onChange([...value.filter((r) => parseRef(r)?.name !== c.name), c.ref])
           }}
         />
       )}

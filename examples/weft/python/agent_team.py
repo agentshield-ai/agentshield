@@ -25,7 +25,7 @@ client = weft.init("agent-team-demo", settings={"print_call_link": False})
 SESSION = f"trip-oslo-{uuid.uuid4().hex[:6]}"
 
 
-@weft.op(kind="tool")
+@weft.trace(kind="tool")
 def web_search(query: str) -> list:
     return ["Capital of Norway", "On the Oslofjord", "Home of the Nobel Peace Prize"]
 

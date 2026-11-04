@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { conversationUrl } from '../../api/agents'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { hasLinks, linksOf } from './linkedCalls'
 import './traceViews.css'
 
@@ -16,7 +16,7 @@ export function LinkedCalls({ projectId, attributes, compact }: { projectId: str
         <div className="row wrap" style={{ gap: 6 }}>
           <span className="muted small">Linked {l.calls.length === 1 ? 'call' : 'calls'}</span>
           {l.calls.map((c) => (
-            <Link key={c.callId} to={callUrl(projectId, c.callId)} className="chip mono" title={c.traceId ? `trace ${c.traceId}` : undefined}>
+            <Link key={c.callId} to={spanUrl(projectId, c.callId)} className="chip mono" title={c.traceId ? `trace ${c.traceId}` : undefined}>
               {c.callId.slice(0, 12)} ↗
             </Link>
           ))}
@@ -36,12 +36,12 @@ export function LinkedCalls({ projectId, attributes, compact }: { projectId: str
         <div className="row wrap" style={{ gap: 6 }}>
           <span className="muted small">Recorded during an evaluation</span>
           {l.evalLink.predictAndScoreCallId && (
-            <Link to={callUrl(projectId, l.evalLink.predictAndScoreCallId)} className="chip">
+            <Link to={spanUrl(projectId, l.evalLink.predictAndScoreCallId)} className="chip">
               predict_and_score ↗
             </Link>
           )}
           {l.evalLink.runId && (
-            <Link to={callUrl(projectId, l.evalLink.runId)} className="chip">
+            <Link to={spanUrl(projectId, l.evalLink.runId)} className="chip">
               evaluation run ↗
             </Link>
           )}
@@ -58,7 +58,7 @@ export function LinkedCalls({ projectId, attributes, compact }: { projectId: str
 
 /** LinkedCalls for a call known only by id (reads its attributes). */
 export function LinkedCallsFor({ projectId, callId }: { projectId: string; callId: string }) {
-  const q = useQuery({ queryKey: ['call', projectId, callId], queryFn: () => api.callRead(projectId, callId), staleTime: 60_000 })
-  if (!q.data?.call) return null
-  return <LinkedCalls projectId={projectId} attributes={q.data.call.attributes} compact />
+  const q = useQuery({ queryKey: ['span', projectId, callId], queryFn: () => api.spanFind(projectId, callId), staleTime: 60_000 })
+  if (!q.data) return null
+  return <LinkedCalls projectId={projectId} attributes={q.data.attributes} compact />
 }

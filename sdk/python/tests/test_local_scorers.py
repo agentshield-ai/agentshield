@@ -38,7 +38,32 @@ def test_toxicity_and_bias(monkeypatch):
     bias = ls.BiasScorer(model_name_or_path="/models/bias")
     r = bias.score(output="text")
     assert r == {"passed": False, "metadata": {"gender_bias_score": 0.8, "gender_bias": True, "racial_bias_score": 0.1, "racial_bias": False}}
-    assert seen["models"] == [("wandb/WeaveToxicityScorerV1", "mps", "argmax"), ("/models/bias", "cpu", "sigmoid")]  # loaded once each
+    assert seen["models"] == [("PleIAs/celadon", "mps", "argmax"), ("/models/bias", "cpu", "sigmoid")]  # loaded once each
+
+
+def test_default_models_are_openly_licensed_and_configurable():
+    assert ls.MODEL_PATHS == {
+        "toxicity": "PleIAs/celadon",
+        "bias": "maximuspowers/bias-type-classifier",
+        "coherence": "cross-encoder/nli-deberta-v3-xsmall",
+        "fluency": "pszemraj/electra-small-discriminator-CoLA",
+        "hallucination": "vectara/hallucination_evaluation_model",
+        "context_relevance": "cross-encoder/ms-marco-MiniLM-L6-v2",
+    }
+    assert not any("wandb" in m.lower() or "weave" in m.lower() for m in ls.MODEL_PATHS.values())
+    assert ls.ToxicityScorer().model_id == "PleIAs/celadon"
+    assert ls.ToxicityScorer(model_name_or_path="/models/mine").model_id == "/models/mine"
+
+
+def test_bias_reads_outputs_by_label(monkeypatch):
+    def fake_classifier(model, device="cpu", **kw):
+        predict = lambda text: [0.7, 0.05, 0.2, 0.0]  # noqa: E731
+        predict.labels = ["racial", "religious", "gender", "age"]
+        return predict
+
+    monkeypatch.setattr(ls, "load_sequence_classifier", fake_classifier)
+    r = ls.BiasScorer().score(output="text")
+    assert r == {"passed": False, "metadata": {"gender_bias_score": 0.2, "gender_bias": False, "racial_bias_score": 0.7, "racial_bias": True}}
 
 
 def test_rolling_window_aggregate():
@@ -48,22 +73,31 @@ def test_rolling_window_aggregate():
 
 def test_pipeline_scorers(monkeypatch):
     def fake_pipeline(task, model, device="cpu", **kw):
-        if model.endswith("Coherence" + "ScorerV1"):
-            p = lambda inputs: {"label": "Mostly Coherent", "score": 0.7}
-            p.model = types.SimpleNamespace(config=types.SimpleNamespace(label2id={"Mostly Coherent": 3}))
+        if model == ls.MODEL_PATHS["coherence"]:
+            def p(inputs):
+                label = "contradiction" if "never" in inputs["text_pair"] else "entailment"
+                return {"label": label, "score": 0.7}
+            p.model = types.SimpleNamespace(config=types.SimpleNamespace(label2id={"contradiction": 0, "entailment": 1, "neutral": 2}))
             return p
-        if model.endswith("FluencyScorerV1"):
-            return lambda text: [[{"label": "fluent", "score": 0.9}, {"label": "non-fluent", "score": 0.1}]]
-        if model.endswith("HallucinationScorerV1"):
-            return lambda pair: 0.2 if "Paris" in pair[1] else 0.9
+        if model == ls.MODEL_PATHS["fluency"]:
+            return lambda text: [[{"label": "acceptable", "score": 0.9}, {"label": "unacceptable", "score": 0.1}]]
+        if model == "/models/fluency":
+            return lambda text: [[{"label": "fluent", "score": 0.8}, {"label": "non-fluent", "score": 0.2}]]
         raise AssertionError(model)
 
+    def fake_pair_scorer(model, device="cpu", **kw):
+        assert model == ls.MODEL_PATHS["hallucination"]
+        return lambda pair: 0.2 if "Paris" in pair[1] else 0.9
+
     monkeypatch.setattr(ls, "load_pipeline", fake_pipeline)
+    monkeypatch.setattr(ls, "load_pair_scorer", fake_pair_scorer)
     coh = ls.CoherenceScorer().score(query="How are you?", output="Fine, thanks.")
-    assert coh.passed and coh.metadata == {"coherence_label": "Mostly Coherent", "coherence_id": 3, "score": 0.7}
+    assert coh.passed and coh.metadata == {"coherence_label": "entailment", "coherence_id": 1, "score": 0.7}
+    assert not ls.CoherenceScorer().score(query="Do you swim?", output="I never do anything").passed
     with pytest.raises(ValueError):
         ls.CoherenceScorer().score(query="q", output="o", chat_history=[], context="c")
     assert ls.FluencyScorer().score(output="Fine.").metadata == {"score": 0.9}
+    assert ls.FluencyScorer(model_name_or_path="/models/fluency").score(output="Fine.").metadata == {"score": 0.8}
     h = ls.HallucinationScorer()
     assert not h.score(query="capital?", context=["France"], output="Paris").passed  # 1 - 0.2 = 0.8 >= 0.35
     assert h.score(query="capital?", context="France", output="Lyon").metadata["score"] == pytest.approx(0.1)
@@ -85,13 +119,14 @@ def test_trust_scorer(monkeypatch):
     monkeypatch.setattr(ls, "load_relevance_model", lambda *a, **k: lambda q, d, th: ([], 9, 10))
 
     def fake_pipeline(task, model, device="cpu", **kw):
-        if "Coherence" in model:
-            return lambda inputs: {"label": "Incoherent", "score": 0.6}
-        if "Fluency" in model:
-            return lambda text: [{"label": "fluent", "score": 0.95}]
-        return lambda pair: 0.9
+        if model == ls.MODEL_PATHS["coherence"]:
+            return lambda inputs: {"label": "contradiction", "score": 0.6}
+        if model == ls.MODEL_PATHS["fluency"]:
+            return lambda text: [{"label": "acceptable", "score": 0.95}]
+        raise AssertionError(model)
 
     monkeypatch.setattr(ls, "load_pipeline", fake_pipeline)
+    monkeypatch.setattr(ls, "load_pair_scorer", lambda *a, **k: lambda pair: 0.9)
     r = ls.TrustScorer(run_in_parallel=False).score(query="capital?", context="Paris is the capital", output="Paris 🗼 .")
     assert r.passed and r.metadata["trust_level"] == "medium_advisory-issues-found"
     assert r.metadata["advisory_issues"] == ["CoherenceScorer"] and r.metadata["critical_issues"] == []
@@ -141,7 +176,7 @@ def test_local_scorers_serialise_and_run_in_evaluation(client, fake, monkeypatch
     tox = weft.scorers.ToxicityScorer()
     ds = weft.Dataset(name="tox-ds", rows=[{"text": "lovely"}, {"text": "awful people"}])
 
-    @weft.op
+    @weft.trace
     def echo(text):
         return text
 
@@ -150,7 +185,7 @@ def test_local_scorers_serialise_and_run_in_evaluation(client, fake, monkeypatch
     assert summary["ToxicityScorer"]["passed"]["true_count"] == 1
     client.flush()
     objs = [o for versions in fake.objs.values() for o in versions]
-    vals = [o.get("val") for o in objs if isinstance(o.get("val"), dict) and o["val"].get("_class_name") == "ToxicityScorer"]
+    vals = [o.get("value") for o in objs if isinstance(o.get("value"), dict) and o["value"].get("_class_name") == "ToxicityScorer"]
     assert vals and vals[0]["model_name_or_path"] == "" and vals[0]["total_threshold"] == 5 and "_model" not in vals[0]
     assert "LocalModelScorer" in vals[0]["_bases"]
 
@@ -218,7 +253,7 @@ def test_pii_redaction_end_to_end(fake, monkeypatch):
     an = FakeAnalyzer()
     c = weft.init("pii", server_url=fake.url, autopatch=False, settings={"redact_pii_analyzer": an})
     try:
-        @weft.op
+        @weft.trace
         def greet(person, api_key):
             return f"Hello Alice Smith from Acme Corp, key {api_key}"
 

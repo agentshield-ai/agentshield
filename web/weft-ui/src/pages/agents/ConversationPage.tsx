@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { agentsApi, agentsUrl, agentUrl } from '../../api/agents'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
-import { threadUrl } from '../../lib/urls'
+import { spanSessionUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Spinner } from '../../components/common'
 import { TurnView } from '../../components/agents/AgentTimeline'
 import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
@@ -66,7 +66,7 @@ export function ConversationPage() {
         )}
         {chat.isFetching && <Spinner />}
         <span className="spacer" />
-        <Link className="btn sm" to={threadUrl(projectId, conversationId)}>
+        <Link className="btn sm" to={spanSessionUrl(projectId, conversationId)}>
           View as thread
         </Link>
       </div>

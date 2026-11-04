@@ -77,7 +77,7 @@ describe('integration settings', () => {
 describe('LangChain.js callback handler', () => {
   it('records chains, chat models, tools and retrievers with nesting and usage', async () => {
     const h = new weft.WeftCallbackHandler({ postprocessInputs: (i) => ({ ...i, pp: true }) });
-    const parent = weft.op(async function app() {
+    const parent = weft.trace(async function app() {
       h.handleChainStart({ id: ['langchain', 'RunnableSequence'] }, { question: 'q' }, 'r1', undefined, ['t1'], { user: 'u' });
       h.handleRetrieverStart({ id: ['x', 'VectorStoreRetriever'] }, 'q', 'r2', 'r1');
       h.handleRetrieverEnd([{ pageContent: 'doc', metadata: { s: 1 } }], 'r2');
@@ -108,7 +108,7 @@ describe('LangChain.js callback handler', () => {
     const [tool] = fake.callsByOp('langchain.Tool.search');
     expect(tool.inputs).toEqual({ q: 'x', pp: true });
     expect(attr(tool, 'gen_ai.tool.call.id')).toBe('call_1');
-    expect(tool.exception).toContain('boom');
+    expect(tool.error).toContain('boom');
   });
 });
 
@@ -159,7 +159,7 @@ describe('LlamaIndex.TS', () => {
 
 describe('Vercel AI SDK', () => {
   it('wrapAITools and wrapAISDK trace tools, the run and middleware model calls', async () => {
-    const lookup = weft.op(async function lookup(id: number) {
+    const lookup = weft.trace(async function lookup(id: number) {
       return { id, status: 'shipped' };
     });
     const tools = { order: { description: 'd', execute: async (args: any) => lookup(args.id) } };
@@ -246,7 +246,7 @@ describe('MCP', () => {
     await mcpClient.listTools();
     await mcpClient.readResource({ uri: 'file:///a' });
 
-    const inner = weft.op(function inner(x: string) {
+    const inner = weft.trace(function inner(x: string) {
       return x.toUpperCase();
     });
     const handlers = new Map<string, any>();
@@ -264,7 +264,7 @@ describe('MCP', () => {
     expect(calls[0].inputs).toEqual({ name: 'read', arguments: { path: '/a' } });
     expect(attr(calls[0], 'gen_ai.tool.name')).toBe('read');
     expect(calls[0].attributes.mcp.server.name).toBe('files');
-    expect(calls[1].exception).toContain('nope');
+    expect(calls[1].error).toContain('nope');
     expect(fake.callsByOp('mcp.client.list_tools')).toHaveLength(1);
     expect(fake.callsByOp('mcp.client.read_resource')[0].attributes.weft.span_kind).toBe('retriever');
     const [srv] = fake.callsByOp('mcp.server.call_tool');
@@ -314,7 +314,7 @@ describe('Claude Agent SDK', () => {
     expect(seen).toHaveLength(msgs.length);
     await settle();
     const [root] = fake.callsByOp('claude_agent_sdk.query');
-    expect(root.thread_id).toBe(sid);
+    expect(root.session_id).toBe(sid);
     expect(root.turn_id).toBe(root.id);
     expect(attr(root, 'gen_ai.agent.name')).toBe('claude-agent-sdk');
     expect(root.output).toMatchObject({ result: 'Done.', total_cost_usd: 0.01, num_turns: 3 });
@@ -327,13 +327,13 @@ describe('Claude Agent SDK', () => {
     expect(bash.parent_id).toBe(root.id);
     expect(bash.display_name).toBe('Bash: ls');
     expect(bash.output.content).toBe('a.txt');
-    expect(bash.thread_id).toBe(sid);
+    expect(bash.session_id).toBe(sid);
     const [task] = fake.callsByOp('claude_agent_sdk.tool.Task');
     expect(task.attributes.weft.span_kind).toBe('agent');
     expect(attr(task, 'gen_ai.agent.name')).toBe('reviewer');
     const [read] = fake.callsByOp('claude_agent_sdk.tool.Read');
     expect(read.parent_id).toBe(task.id);
-    expect(read.exception).toContain('denied');
+    expect(read.error).toContain('denied');
     expect(llms.find((c) => c.parent_id === task.id)).toBeTruthy();
   });
 });
@@ -369,7 +369,7 @@ describe('OpenAI Agents JS', () => {
     expect(f.inputs).toEqual({ id: 7 });
     expect(f.output).toEqual({ ok: true });
     const [b] = fake.callsByOp('tool.boom');
-    expect(b.exception).toContain('failed');
+    expect(b.error).toContain('failed');
   });
 });
 

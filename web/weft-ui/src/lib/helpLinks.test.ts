@@ -9,7 +9,7 @@ describe('guide anchors and links', () => {
     expect(s('7. UI')).toBe('7-ui')
     expect(s('Agents')).toBe('agents')
     expect(s('Agents')).toBe('agents-1')
-    expect(s('`/call/start` (Weft)')).toBe('callstart-weft')
+    expect(s('`/spans/start` (Weft)')).toBe('spansstart-weft')
   })
   it('maps links', () => {
     expect(guideLink('API.md#objects')).toEqual({ kind: 'guide', to: '/help/API.md#objects' })

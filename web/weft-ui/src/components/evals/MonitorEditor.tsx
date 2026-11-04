@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { ObjSchema } from '../../api/types'
+import type { WeftObject } from '../../api/types'
 import { ErrorBox, Modal, Spinner } from '../common'
 import { NameField, usePublish, type Created } from '../objects/ObjectForms'
 import { classVal, errMsg } from '../objects/objectUtils'
@@ -16,7 +16,7 @@ export const MONITOR_SCOPES: { id: MonitorScope; label: string; help: string }[]
   { id: 'session', label: 'Each session', help: 'once a session is complete, e.g. goal completion' },
   { id: 'agent', label: 'Each agent in a session', help: 'per agent that took part' },
   { id: 'handoff', label: 'Each hand-off', help: 'per hand-off between agents' },
-  { id: 'call', label: 'Each call', help: 'every matching span as it finishes' },
+  { id: 'call', label: 'Each span', help: 'every matching span as it finishes' },
 ]
 export const DEFAULT_IDLE_SECONDS = 60
 
@@ -26,10 +26,10 @@ export function monitorScopeFields(scopes: MonitorScope[], idleSeconds: number):
   return scopes.length ? { scopes: MONITOR_SCOPES.map((s) => s.id).filter((s) => scopes.includes(s)), session_idle_seconds: idle } : { session_idle_seconds: idle }
 }
 
-export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: ObjSchema; onClose: () => void; onSaved: (c: Created) => void }) {
+export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projectId: string; initial?: WeftObject; onClose: () => void; onSaved: (c: Created) => void }) {
   const publish = usePublish(projectId)
-  const v = initial?.val ?? {}
-  const [name, setName] = useState<string>(initial?.object_id ?? '')
+  const v = initial?.value ?? {}
+  const [name, setName] = useState<string>(initial?.name ?? '')
   const [description, setDescription] = useState<string>(v.description ?? '')
   const [active, setActive] = useState<boolean>(v.active ?? true)
   const [opNames, setOpNames] = useState<string[]>(Array.isArray(v.op_names) ? v.op_names : [])
@@ -42,12 +42,12 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
 
-  const ops = useQuery({ queryKey: ['op-counts', projectId], queryFn: () => api.opCounts(projectId).then((r) => r.ops) })
+  const ops = useQuery({ queryKey: ['span-names', projectId], queryFn: () => api.spanNames(projectId).then((r) => r.items) })
   const opChoices = useMemo(() => {
     const m = new Map<string, number>()
     for (const o of ops.data ?? []) {
-      if (o.op_base_name.endsWith('.score') || o.op_base_name.startsWith('Evaluation.') || o.op_base_name.startsWith('weft.') || o.op_base_name === 'LLMStructuredCompletionModel.predict') continue
-      m.set(o.op_base_name, (m.get(o.op_base_name) ?? 0) + o.count)
+      if (o.base_name.endsWith('.score') || o.base_name.startsWith('Evaluation.') || o.base_name.startsWith('weft.') || o.base_name === 'LLMStructuredCompletionModel.predict') continue
+      m.set(o.base_name, (m.get(o.base_name) ?? 0) + o.count)
     }
     for (const n of opNames) if (!m.has(n)) m.set(n, 0)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
@@ -69,7 +69,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
 
   return (
     <Modal
-      title={initial ? `Edit monitor ${initial.object_id}` : 'New monitor'}
+      title={initial ? `Edit monitor ${initial.name}` : 'New monitor'}
       wide
       onClose={onClose}
       footer={
@@ -86,7 +86,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
               setErr(null)
               try {
                 const fields: Record<string, unknown> = { name, description, active, sampling_rate: rate, op_names: opNames, scorers, ...monitorScopeFields(scopes, idle) }
-                const base = { ...(initial?.val ?? {}) }
+                const base = { ...(initial?.value ?? {}) }
                 delete base.query
                 delete base.scopes
                 if (queryText.trim()) fields.query = JSON.parse(queryText)
@@ -116,8 +116,8 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
 
       <div className="field" style={{ fontSize: 12, color: 'var(--text-2)' }}>
         <div className="row">
-          <span className="grow">Ops to monitor {opNames.length ? `(${opNames.length})` : '(none selected: all root calls)'}</span>
-          <input className="input" style={{ height: 24, width: 160, fontSize: 12 }} placeholder="Filter or add op…" value={opSearch} onChange={(e) => setOpSearch(e.target.value)} onKeyDown={(e) => {
+          <span className="grow">Span names to monitor {opNames.length ? `(${opNames.length})` : '(none selected: all root spans)'}</span>
+          <input className="input" style={{ height: 24, width: 160, fontSize: 12 }} placeholder="Filter or add a span name…" value={opSearch} onChange={(e) => setOpSearch(e.target.value)} onKeyDown={(e) => {
             if (e.key === 'Enter' && opSearch.trim() && !opNames.includes(opSearch.trim())) {
               setOpNames([...opNames, opSearch.trim()])
               setOpSearch('')
@@ -135,7 +135,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
                 {count > 0 && <span className="faint"> {count}</span>}
               </button>
             ))}
-            {shownOps.length === 0 && <span className="hint">{opSearch ? 'Press Enter to add this op name.' : 'No ops recorded yet.'}</span>}
+            {shownOps.length === 0 && <span className="hint">{opSearch ? 'Press Enter to add this span name.' : 'No spans recorded yet.'}</span>}
           </div>
         )}
       </div>
@@ -148,7 +148,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
       <label className="field">
         Filter (optional query)
         <textarea className="input mono" rows={3} value={queryText} onChange={(e) => setQueryText(e.target.value)} placeholder={QUERY_EXAMPLE} />
-        {queryErr ? <span className="hint" style={{ color: 'var(--error)' }}>{queryErr}</span> : <span className="hint">Only calls matching this query are scored. Uses the same $expr language as trace filters.</span>}
+        {queryErr ? <span className="hint" style={{ color: 'var(--error)' }}>{queryErr}</span> : <span className="hint">Only spans matching this query are scored. Uses the same $expr language as trace filters.</span>}
       </label>
 
       <div className="field" style={{ fontSize: 12, color: 'var(--text-2)' }}>
@@ -169,7 +169,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
           </label>
         ))}
         <span className="hint">
-          {scopes.length ? '' : 'None ticked: session, agent and hand-off judges score each session, other scorers score each call.'}
+          {scopes.length ? '' : 'None ticked: session, agent and hand-off judges score each session, other scorers score each span.'}
         </span>
       </fieldset>
       {(scopes.length === 0 || scopes.some((s) => s !== 'call')) && (
@@ -189,12 +189,12 @@ export function useToggleMonitor(projectId: string) {
   const publish = usePublish(projectId)
   const qc = useQueryClient()
   const [pending, setPending] = useState<string | null>(null)
-  const toggle = async (o: ObjSchema) => {
-    setPending(o.object_id)
+  const toggle = async (o: WeftObject) => {
+    setPending(o.name)
     try {
-      await publish(o.object_id, { ...o.val, active: !o.val?.active })
-      await qc.invalidateQueries({ queryKey: ['objs', projectId] })
-      await qc.invalidateQueries({ queryKey: ['obj', projectId, o.object_id] })
+      await publish(o.name, { ...o.value, active: !o.value?.active })
+      await qc.invalidateQueries({ queryKey: ['objects', projectId] })
+      await qc.invalidateQueries({ queryKey: ['object', projectId, o.name] })
     } catch (e) {
       alert(`Could not update monitor: ${errMsg(e)}`)
     } finally {

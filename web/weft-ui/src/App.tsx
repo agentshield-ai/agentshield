@@ -9,13 +9,13 @@ import { LoginScreen } from './components/LoginScreen'
 const lazyNamed = <K extends string>(loader: () => Promise<Record<K, React.ComponentType<any>>>, name: K) =>
   lazy(() => loader().then((m) => ({ default: m[name] })))
 
-// Observe (traces, calls, threads, playground)
+// Observe (traces, spans, span sessions, playground)
 const ProjectsPage = lazyNamed(() => import('./pages/projects/ProjectsPage'), 'ProjectsPage')
 const TracesPage = lazyNamed(() => import('./pages/traces/TracesPage'), 'TracesPage')
-const CallPage = lazyNamed(() => import('./pages/traces/CallPage'), 'CallPage')
-const CompareCallsPage = lazyNamed(() => import('./pages/traces/CompareCallsPage'), 'CompareCallsPage')
-const ThreadsPage = lazyNamed(() => import('./pages/threads/ThreadsPage'), 'ThreadsPage')
-const ThreadPage = lazyNamed(() => import('./pages/threads/ThreadPage'), 'ThreadPage')
+const SpanPage = lazyNamed(() => import('./pages/traces/SpanPage'), 'SpanPage')
+const CompareSpansPage = lazyNamed(() => import('./pages/traces/CompareSpansPage'), 'CompareSpansPage')
+const SpanSessionsPage = lazyNamed(() => import('./pages/traces/SpanSessionsPage'), 'SpanSessionsPage')
+const SpanSessionPage = lazyNamed(() => import('./pages/traces/SpanSessionPage'), 'SpanSessionPage')
 const PlaygroundPage = lazyNamed(() => import('./pages/playground/PlaygroundPage'), 'PlaygroundPage')
 // Assets & evaluation
 const ObjectsPage = lazyNamed(() => import('./pages/objects/ObjectsPage'), 'ObjectsPage')
@@ -49,11 +49,14 @@ const ScoresPage = lazyNamed(() => import('./pages/scores/ScoresPage'), 'ScoresP
 const DashboardsPage = lazyNamed(() => import('./pages/dashboards/DashboardsPage'), 'DashboardsPage')
 const DashboardPage = lazyNamed(() => import('./pages/dashboards/DashboardPage'), 'DashboardPage')
 
-/** Renamed paths keep working: /queues → /review-queues, /ops → /functions. */
+/**
+ * Renamed paths keep working: /queues → /review-queues, /ops → /functions,
+ * and the span pages' earlier paths (links printed by older clients).
+ */
 function Renamed({ to }: { to: string }) {
-  const { entity, project, queueId } = useParams()
+  const { entity, project, id } = useParams()
   const loc = useLocation()
-  return <Navigate to={`/${entity}/${project}/${to}${queueId ? `/${encodeURIComponent(queueId)}` : ''}${loc.search}`} replace />
+  return <Navigate to={`/${entity}/${project}/${to}${id ? `/${encodeURIComponent(id)}` : ''}${loc.search}`} replace />
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
@@ -108,10 +111,14 @@ export function App() {
             <Route path="security" element={<SecurityPage />} />
             <Route path="scores" element={<ScoresPage />} />
             <Route path="traces" element={<TracesPage />} />
-            <Route path="calls/:callId" element={<CallPage />} />
-            <Route path="compare-calls" element={<CompareCallsPage />} />
-            <Route path="threads" element={<ThreadsPage />} />
-            <Route path="threads/:threadId" element={<ThreadPage />} />
+            <Route path="traces/sessions" element={<SpanSessionsPage />} />
+            <Route path="traces/sessions/:sessionId" element={<SpanSessionPage />} />
+            <Route path="spans/:spanId" element={<SpanPage />} />
+            <Route path="compare-spans" element={<CompareSpansPage />} />
+            <Route path="calls/:id" element={<Renamed to="spans" />} />
+            <Route path="compare-calls" element={<Renamed to="compare-spans" />} />
+            <Route path="threads" element={<Renamed to="traces/sessions" />} />
+            <Route path="threads/:id" element={<Renamed to="traces/sessions" />} />
             <Route path="playground" element={<PlaygroundPage />} />
             <Route path="evaluations" element={<EvaluationsPage />} />
             <Route path="evaluations/compare" element={<CompareEvaluationsPage />} />
@@ -134,7 +141,7 @@ export function App() {
             <Route path="review-queues" element={<QueuesPage />} />
             <Route path="review-queues/:queueId" element={<QueueReviewPage />} />
             <Route path="queues" element={<Renamed to="review-queues" />} />
-            <Route path="queues/:queueId" element={<Renamed to="review-queues" />} />
+            <Route path="queues/:id" element={<Renamed to="review-queues" />} />
             <Route path="automations" element={<AutomationsPage />} />
             <Route path="agents" element={<AgentsListPage />} />
             <Route path="agents/:agentName" element={<AgentDetailPage />} />

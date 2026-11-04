@@ -321,9 +321,9 @@ async function longNames(base: string, project: string) {
 }
 
 async function score(base: string, project: string, s: Session, scorer: string, value: number, reason: string) {
-  await post(base, '/feedback/create', {
+  await post(base, '/api/v1/feedback/create', {
     project_id: project,
-    ref: `weft:///${project}/call/${s.id('O')}`,
+    ref: `weft:///${project}/span/${s.id('O')}`,
     feedback_type: `weft.score.${scorer}`,
     payload: { scope: 'session', session_id: s.sid, scorer, value, reason },
   })

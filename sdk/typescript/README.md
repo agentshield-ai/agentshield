@@ -2,7 +2,10 @@
 
 TypeScript/JavaScript client for **Weft**, an OpenTelemetry-native LLM tracing
 and evaluation server. ESM with type declarations, Node >= 18, and no runtime
-dependencies (it uses the global `fetch` and `AsyncLocalStorage`).
+dependencies (it uses the global `fetch` and `AsyncLocalStorage`). It speaks
+Weft's own API (`/api/v1`, [API.md](../../docs/weft/API.md)): traced functions
+record **spans**, versioned values are **objects**. Earlier SDK names still
+work for one release; see [CHANGELOG.md](CHANGELOG.md).
 
 ```bash
 cd sdk/typescript && npm install && npm run build   # from this repository
@@ -16,16 +19,19 @@ import * as weft from 'weft-sdk';
 
 const client = await weft.init('my-project', { serverUrl: 'http://localhost:6345', apiKey: process.env.WEFT_API_KEY });
 
-const retrieve = weft.op(async function retrieve(query: string) {
+const retrieve = weft.trace(async function retrieve(query: string) {
   return ['doc one', 'doc two'];
 });
 
-const answer = weft.op(async function answer(question: string) {
-  const docs = await retrieve(question);       // child call
+const answer = weft.trace(async function answer(question: string) {
+  const docs = await retrieve(question);       // child span
   return `${docs.length} docs for ${question}`;
 });
 
 await answer('what is weft?');
+const ref = await weft.save(new weft.StringPrompt({ content: 'Answer {question} briefly.' }), 'answer-prompt');
+const prompt = await weft.get(ref);            // or weft.get('answer-prompt'), 'answer-prompt:v0'
+const [span] = await client.spans({ filter: { names: ['answer'] }, limit: 1 });   // span.name, span.error, span.sessionId
 await weft.finish();                           // flush (also attempted on process beforeExit)
 ```
 
@@ -38,7 +44,7 @@ redaction).
 
 By default, values under keys named `api_key`, `apikey`, `authorization`,
 `auth`, `password`, `secret`, `token` or `access_token` are replaced with
-`"REDACTED"` in call inputs and outputs. Matching is case-insensitive and on
+`"REDACTED"` in span inputs and outputs. Matching is case-insensitive and on
 the exact key, at any depth.
 
 ```ts
@@ -85,8 +91,8 @@ is sent and stored is fully redacted. The server can also apply NER
 await weft.init('my-project', {
   settings: {
     globalAttributes: { app: 'support-bot' },   // added to every call
-    printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root call (WEFT_PRINT_CALL_LINK)
-    captureCode: true,                           // store op source (WEFT_CAPTURE_CODE)
+    printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root span (WEFT_PRINT_CALL_LINK)
+    captureCode: true,                           // store traced functions' source (WEFT_CAPTURE_CODE)
     captureReasoning: true,                      // model reasoning: thinking, summaries, weft.reasoning() (WEFT_CAPTURE_REASONING)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)
     disableWalSender: false,                     // with the WAL on: write everything to it, send nothing (WEFT_DISABLE_WAL_SENDER)
@@ -119,7 +125,7 @@ stderr.
 
 ## Tracing
 
-- `weft.op(fn, { name, kind, color, tracingSampleRate, enableCodeCapture, callDisplayName, parameterNames, postprocessInputs, postprocessOutput, accumulator })`
+- `weft.trace(fn, { name, kind, color, tracingSampleRate, enableCodeCapture, callDisplayName, parameterNames, postprocessInputs, postprocessOutput, accumulator })`
   traces sync and async functions, generators, async generators and functions
   returning async iterables. Streamed items are accumulated into the output (an
   array by default).
@@ -129,24 +135,27 @@ stderr.
 - `kind` (`agent`, `llm`, `tool`, `chain`, `retriever`, `embedding`,
   `scorer`, ...) and `color` are stored as `attributes.weft.span_kind` and
   `attributes.weft.color`.
-  `tracingSampleRate` samples root calls, and a root's children follow it.
+  `tracingSampleRate` samples root spans, and a root's children follow it.
   `weft.withTracingDisabled(() => ...)` runs code without recording anything.
-- `weft.op(this, fn)` traces a method and records the instance as `self` (its
-  ref when it has been published).
-- `await myOp.call(...args)` resolves to `[result, call]`. Errors are captured
-  on the call instead of being thrown.
-- Errors are recorded as `"<Name>: <message>"` plus the stack, then rethrown.
+- `weft.trace(this, fn)` traces a method and records the instance as `self` (its
+  ref when it has been saved).
+- `await traced.call(...args)` resolves to `[result, span]`. Errors are captured
+  on the span instead of being thrown.
+- Errors are recorded as the span's `error` (`"<Name>: <message>"` plus the stack), then rethrown.
 - Parent/child tracking uses `AsyncLocalStorage`, so it follows `await`,
   `Promise.all` and timers.
-- `weft.attributes({ env: 'prod' }, () => ...)` attaches attributes to calls
+- `weft.attributes({ env: 'prod' }, () => ...)` attaches attributes to spans
   started inside the callback. `weft.withThread('conversation-id', () => ...)`
-  sets `thread_id`, and calls started directly inside are turns.
-- `weft.getCurrentCall()` returns the current call, and
-  `weft.addUsage(call, model, promptTokens, completionTokens)` records the
-  call's own LLM usage. The server adds up descendants.
-- Calls are batched to `/call/upsert_batch` by a background sender with a
+  sets the spans' `session_id`, and spans started directly inside are turns.
+- `weft.getCurrentSpan()` returns the current span, and
+  `weft.addUsage(span, model, promptTokens, completionTokens)` records the
+  span's own LLM usage. The server adds up descendants.
+- Spans are batched to `POST /api/v1/spans/batch` by a background sender with a
   bounded queue, retries and backoff. If the server is down you get a warning,
-  never a crash.
+  never a crash. Each traced function is saved as a versioned `function`
+  object; its spans are named by its ref, whose digest (lowercase hex SHA-256
+  of canonical JSON, [DESIGN.md](../../docs/weft/DESIGN.md) §10.3) the SDK
+  computes locally.
 
 ## LLM clients
 
@@ -330,14 +339,14 @@ through.
 
 ```ts
 const ds = new weft.Dataset({ name: 'qa', rows: [{ question: '2+2', expected: '4' }] });
-const ref = await weft.publish(ds);      // rows uploaded as a table; content addressed
+const ref = await weft.save(ds);      // rows uploaded as a table; content addressed
 ref.uri();                               // weft:///default/my-project/object/qa:<digest>
-const loaded = await weft.ref('qa:latest').get();   // Dataset (also "qa", "qa:v0", full URIs)
-const ds2 = await loaded.addRows([{ question: '3+3', expected: '6' }]);   // /table/update + new version
-await weft.publish({ temperature: 0.2 }, 'config');
+const loaded = await weft.get('qa:latest');   // Dataset (also "qa", "qa:v0", full URIs)
+const ds2 = await loaded.addRows([{ question: '3+3', expected: '6' }]);   // POST /api/v1/tables/update + new version
+await weft.save({ temperature: 0.2 }, 'config');
 ```
 
-Files and rich media are uploaded through `/file/create`:
+Files and rich media are uploaded through `POST /api/v1/files/upload` (a file's digest is the hex SHA-256 of its bytes):
 
 ```ts
 weft.Content.fromPath('report.pdf');     // {_type: 'Content', mimetype, filename, file_digest}
@@ -353,7 +362,7 @@ reference, without uploading:
 ```ts
 weft.Image.fromUri('s3://my-bucket/photos/cat.png');   // {_type: 'Image', uri, mime_type, filename}
 weft.Content.fromUri('https://example.com/report.pdf', { size: 1234 });
-await client.resolveUrl('s3://my-bucket/photos/cat.png');      // /files/resolve_url (presigned for the server's S3 backend)
+await client.resolveUrl('s3://my-bucket/photos/cat.png');      // POST /api/v1/files/resolve (presigned for the server's S3 backend)
 await client.resolveUrl([content, fileDigest], { expiresIn: 600 });
 await weft.Content.fromUri('weft-file://<digest>').load();   // download the bytes
 ```
@@ -365,40 +374,43 @@ new weft.StringPrompt({ name: 'greet', content: 'Hello {name}' }).format({ name:
 new weft.MessagesPrompt({ name: 'qa', messages: [{ role: 'user', content: '{question}' }] }).format({ question: '2+2' });
 const m = new weft.LLMStructuredCompletionModel({ name: 'qa-model', llmModelId: 'gpt-4o-mini',
   defaultParams: { messages_template: [{ role: 'user', content: '{question}' }], temperature: 0 } });
-await m.predict({ question: '2+2' });          // via the server's /completions/create
-await client.evaluateModel(evaluation, m);     // server-side evaluation; polls until done
+await m.predict({ question: '2+2' });          // via the server's POST /api/v1/completions
+await client.evaluateModel(evaluation, m);     // server-side evaluation (POST /api/v1/evaluations/run); polls until done; {id, status, summary}
 ```
 
 Dataset helpers: `ds.select([0, 2])`, `ds.columnNames`, `ds.numRows`,
-`weft.Dataset.fromCalls(calls)`.
+`weft.Dataset.fromCalls(spans)` (one row per span).
 
 Object versions:
 
 ```ts
-await client.setAliases(ref, 'production');      // then weft.ref('qa:production')
+await client.setAliases(ref, 'production');      // then weft.get('qa:production')
 await client.removeAliases('qa', 'production');
 await client.addTags(ref, ['reviewed']); await client.removeTags(ref, ['reviewed']);
-await client.getTags(ref); await client.getAliases(ref); await client.listTags();
+await client.getTags(ref); await client.getAliases(ref); await client.listTags(); await client.listAliases();
 await client.deleteObjectVersion('qa:v0'); await client.deleteObjectVersions('qa', ['v1']); await client.deleteAllObjectVersions('qa');
 ```
 
-**Loading ops evaluates stored code.** `await weft.ref('myOp').get()` returns a
-runnable op built from the stored JavaScript source with `new Function`. Its
-calls are linked to the same op ref. Only self-contained functions work; a
+Refs name `object`, `function`, `table` and `span` kinds (`weft:///<entity>/<project>/<kind>/...`);
+refs written with the earlier kind names (`op`, `call`) are read as `function` and `span`.
+
+**Loading functions evaluates stored code.** `await weft.get('myFn')` returns a
+runnable traced function built from the stored JavaScript source with `new Function`. Its
+spans are linked to the same function ref. Only self-contained functions work; a
 function that closes over module variables throws `ReferenceError` when
-called. When the code can't be rebuilt (for example a Python op) you get
-`OpLoadError`. Only load ops from servers you trust.
+called. When the code can't be rebuilt (for example a Python function) you get
+`OpLoadError`. Only load functions from servers you trust.
 
 `AnnotationSpec`, `Leaderboard`, `Monitor` and `SavedView` serialise in the
 shapes documented in API.md and load back as their classes:
 
 ```ts
 const spec = new weft.AnnotationSpec({ name: 'quality', fieldSchema: { type: 'integer', minimum: 1, maximum: 5 } });
-await call.feedback.addAnnotation(spec, 4);
-await weft.publish(new weft.Leaderboard({ name: 'qa-board', columns: [
+await span.feedback.addAnnotation(spec, 4);
+await weft.save(new weft.Leaderboard({ name: 'qa-board', columns: [
   { evaluationObjectRef: evaluation, scorerName: 'exact', summaryMetricPath: 'true_fraction' },
 ] }));
-await weft.publish(new weft.Monitor({ name: 'judge-chats', opNames: ['openai.chat.completions.create'], samplingRate: 0.2, scorers: [judge] }));
+await weft.save(new weft.Monitor({ name: 'judge-chats', opNames: ['openai.chat.completions.create'], samplingRate: 0.2, scorers: [judge] }));
 ```
 
 `SavedView` has a fluent query API; views open in the UI and UI views load here:
@@ -411,8 +423,8 @@ const view = await new weft.SavedView({ label: 'Slow errors' })
   .sortBy('started_at', 'desc')
   .addColumn('inputs.question', 'Question')
   .save();                                  // named after the label
-const calls = await view.getCalls({ limit: 20 });
-view.toCallsQuery();                        // the raw /calls/query body
+const spans = await view.spans({ limit: 20 });
+view.toSpansQuery();                        // the raw POST /api/v1/spans/query body
 await weft.SavedView.load('Slow-errors'); await client.getSavedViews('traces');
 ```
 
@@ -424,10 +436,10 @@ Operators: `contains`, `does not contain`, `equals`, `does not equal`, `in`,
 ## Agents: conversations, turns, LLM calls and tools
 
 `weft.startConversation()` and friends. Turns, LLM calls, tools and
-sub-agents are recorded as calls the agents index understands, so they show
+sub-agents are recorded as spans the agents index understands, so they show
 up in **Agents** (`/agents/*`), Threads and Traces (see the Python README for
-the call shapes). `span.run(fn)` is Python's `with`: the span is current while
-`fn` runs (ops inside become children), a thrown error is recorded and
+the span shapes). `span.run(fn)` is Python's `with`: the span is current while
+`fn` runs (traced functions inside become children), a thrown error is recorded and
 re-thrown, and the span ends afterwards.
 
 ```ts
@@ -468,7 +480,7 @@ under **Sessions** and **Teams** and in the native API (`/api/v1/sessions/{id}`,
 camelCase.
 
 **Sessions** are `gen_ai.conversation.id`: a conversation's `conversationId`
-(its calls' `thread_id`), or the session the integrations record (OpenAI
+(its spans' `session_id`), or the session the integrations record (OpenAI
 Agents `groupId`, else the trace id; LangGraph `thread_id`; the Claude Agent
 SDK session id; Bedrock Agents `sessionId`).
 
@@ -529,10 +541,10 @@ Models are called as `model({ datasetRow })` and scorers as
 `scorer({ modelOutput, datasetRow })`:
 
 ```ts
-const model = weft.op(async function model({ datasetRow }) {
+const model = weft.trace(async function model({ datasetRow }) {
   return String(datasetRow.question).length > 3 ? 'long' : 'short';
 });
-const exact = weft.op(function exact({ modelOutput, datasetRow }) {
+const exact = weft.trace(function exact({ modelOutput, datasetRow }) {
   return modelOutput === datasetRow.expected;
 });
 
@@ -541,10 +553,10 @@ const summary = await evaluation.evaluate({ model });
 // { exact: { true_count, true_fraction }, model_latency: { mean } }
 ```
 
-The recorded calls match the Python SDK:
+The recorded spans match the Python SDK:
 
 ```
-Evaluation.evaluate          inputs {self: <evaluation ref>, model: <model op ref>}
+Evaluation.evaluate          inputs {self: <evaluation ref>, model: <model function ref>}
 ├── Evaluation.predict_and_score  inputs {self, model, example: <dataset row ref>}
 │   ├── model
 │   └── scorers
@@ -557,7 +569,7 @@ objects key by key, plus `model_latency: {mean}` (seconds).
 ### Built-in scorers
 
 These serialise exactly like the Python SDK's, so the server can run them
-(`/evaluate_model`, Monitors). They also run locally:
+(`client.evaluateModel`, Monitors). They also run locally:
 
 ```ts
 scorers: [
@@ -576,8 +588,8 @@ More built-ins serialise exactly like their Python counterparts:
 - `ValidXMLScorer`.
 - `JSONSchemaScorer({ schema })`.
 - `OpenAIModerationScorer`. Locally it needs `OPENAI_API_KEY`.
-- `EmbeddingSimilarityScorer({ targetColumn, model })`. Locally it needs a
-  server `/embeddings/create` endpoint; without one it fails with a clear
+- `EmbeddingSimilarityScorer({ targetColumn, model })`. Locally it uses the
+  server's `POST /api/v1/embeddings`; without it, it fails with a clear
   error.
 - `RuleScorer({ rule, threshold })`: a query-language operation evaluated on
   `{output, inputs, ...columns}`.
@@ -585,7 +597,7 @@ More built-ins serialise exactly like their Python counterparts:
   `url`. Locally the headers come from the environment variable named by
   `headersSecret`.
 
-`LLMAsAJudgeScorer` runs through the server's `/completions/create` with
+`LLMAsAJudgeScorer` runs through the server's `POST /api/v1/completions` with
 `track_llm_call: false`, so provider keys stay on the server and usage is
 recorded on the scorer call. For a custom scorer object, subclass
 `weft.Scorer` and implement `score({ modelOutput, datasetRow })`.
@@ -601,17 +613,17 @@ ev.logExample({ question: '3+3' }, '6', { correct: true });   // prediction + sc
 const summary = await ev.logSummary();     // same call structure as Evaluation
 ```
 
-Without an output the predict call stays open: `await pred.run(async (p) => { p.output = await agent(q); })`
-records calls made inside as its children (and stamps `weft.eval.*` on
+Without an output the predict span stays open: `await pred.run(async (p) => { p.output = await agent(q); })`
+records spans made inside as its children (and stamps `weft.eval.*` on
 conversation spans started there), then finishes the prediction.
 
 **Linking existing traces (agent evals):** the third argument may be options,
-including `call` (a Call, call id or URI, a Turn or other span, a `LogResult`,
+including `call` (a Span, span id or URI, a Turn or other conversation span, a `LogResult`,
 a `Conversation`, or an array):
 
 ```ts
 const [, call] = await agent.call('2+2');
-ev.logPrediction({ q: '2+2' }, undefined, { call });          // output and latency from the call
+ev.logPrediction({ q: '2+2' }, undefined, { call });          // output and latency from the span
 ev.logPrediction({ q: 'hi' }, 'hello', { call: turn, exampleId: 'ex-1' });
 ```
 
@@ -619,55 +631,58 @@ Links are stored as `attributes.weft.linked_calls`, `attributes.weft.genai_span_
 (`[{trace_id, span_id}]`, the v2 predictions field) and `attributes.weft.linked_conversation_ids`.
 
 Pass a `Dataset` as `dataset` to link predictions to its rows. Load a
-published one with `await weft.ref('qa').get()` first. A prediction whose
+saved one with `await weft.get('qa')` first. A prediction whose
 inputs equal a row references that row's ref.
 
-Objects are published with locally computed digests, which match the
-server's, so logging never waits on the network.
+Objects are saved with locally computed digests (Weft digests, the hex
+SHA-256 of canonical JSON), which match the server's, so logging never waits
+on the network.
 
 ### Guardrails
 
 ```ts
-const [answer, call] = await generate.call(prompt);
-const check = await call!.applyScorer(toxicity, { additionalScorerKwargs: { threshold: 0.8 } });
+const [answer, span] = await generate.call(prompt);
+const check = await span!.applyScorer(toxicity, { additionalScorerKwargs: { threshold: 0.8 } });
 if ((check.result as any).flagged) { /* block */ }
 ```
 
 `applyScorer` calls the scorer with
-`{ modelOutput: <call output>, datasetRow: <call inputs + kwargs> }`. It
-records the scorer call as its own trace and attaches `weft.scorer.<scorer>`
-feedback (with `runnable_ref` and `call_ref`) to the scored call.
+`{ modelOutput: <span output>, datasetRow: <span inputs + kwargs> }`. It
+records the scorer's span as its own trace and attaches `weft.scorer.<scorer>`
+feedback (with `runnable_ref` and `span_ref`) to the scored span; the result
+is `{ result, scoreSpan, feedbackId }`.
 
 ## Querying
 
 ```ts
-const calls = await client.getCalls({ filter: { op_names: ['answer'] }, limit: 10 });
-const call = await client.getCall(calls[0].id, { includeCosts: true });
-await call!.feedback.addReaction('👍');
-await call!.feedback.addNote('nice');
-await call!.setDisplayName('golden');
+const spans = await client.spans({ filter: { names: ['answer'] }, limit: 10 });   // POST /api/v1/spans/stream
+const span = await client.span(spans[0].id, { includeCosts: true });                // GET /api/v1/spans/{id}; null when absent
+span!.name; span!.baseName; span!.error; span!.sessionId; span!.turnId;
+await span!.feedback.addReaction('👍');
+await span!.feedback.addNote('nice');
+await span!.setDisplayName('golden');
 await client.addCost('my-model', 1e-6, 2e-6);
 await client.queryCosts({ llmIds: ['my-model'] }); await client.purgeCosts(ids);
 await client.whoami();                     // { user_id, auth_required }
-await client.countCalls({ filter: { op_names: ['answer'] } });
-await client.deleteCalls([id]);
+await client.countSpans({ filter: { names: ['answer'] } });
+await client.deleteSpans([id]);
 await client.getFeedback({ query: { $eq: [{ $getField: 'feedback_type' }, { $literal: 'weft.note' }] } });
-await call!.feedback.list(); await call!.feedback.purge(feedbackId);
-await call!.children(); call!.status; call!.uiUrl;
-await client.getThreads({ limit: 20 });
+await span!.feedback.list(); await span!.feedback.purge(feedbackId);
+await span!.children(); span!.status; span!.uiUrl;
+await client.getThreads({ limit: 20 });      // sessions (POST /api/v1/spans/sessions)
 await client.registerCustomRuntime({        // an OpenAI-compatible endpoint; resolves to { data, error: null }
   name: 'my-vllm', baseUrl: 'https://vllm.internal/v1',
   runtimeIds: ['llama-3-8b', { id: 'qwen2-7b', maxTokens: 8192 }],   // the complete list
   apiKeySecret: 'VLLM_KEY', headers: { 'X-Team': 'ml' },
 });                                          // models "my-vllm/llama-3-8b", ...
 client.conversationUrl(conversationId);      // UI link; also weft.agentConversationPath(entity, project, id)
-await client.getEvaluations(); await client.getEvaluationCalls();
+await client.getEvaluations(); await client.evaluationRuns();
 await client.compareEvaluations([a, b]); await client.leaderboard('qa-board');
 await weft.get('qa:latest'); weft.parseUri('weft:///e/p/object/qa:<digest>');
 
-// calls as plain records (the TS counterpart of Python's CallsIter.to_pandas()/to_records())
-const rows = await client.getCallsRecords({ filter: { op_names: ['answer'] }, includeUsernames: true });
-calls[0].toRecord();   // { id, op_name, inputs, output, status, summary, run_id, ... }
+// spans as plain records (the TS counterpart of Python's SpansIter.to_pandas()/to_records())
+const rows = await client.spanRecords({ filter: { names: ['answer'] }, includeUsernames: true });
+spans[0].toRecord();   // { id, name, inputs, output, error, session_id, status, summary, run_id, ... }
 
 // registry (prompt versions, and any object)
 await weft.linkPromptToRegistry(prompt, { targetPath: 'prompts/support-bot', aliases: ['production'] });
@@ -676,9 +691,9 @@ await client.queryRegistry('prompts', { collection: 'support-bot' });
 await client.getFromRegistry('prompts/support-bot', 'production');   // alias, 'v0', 0 or 'latest'
 ```
 
-`getCalls` already returns an array (`Call[]`). `targetPath` is
+`spans` already returns an array (`Span[]`). `targetPath` is
 `<registry_project>/<collection>` (in your entity) or
-`<entity>/<registry_project>/<collection>`; unpublished objects are published
+`<entity>/<registry_project>/<collection>`; unsaved objects are saved
 first.
 
 ## OpenTelemetry

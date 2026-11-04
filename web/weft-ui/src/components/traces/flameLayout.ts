@@ -1,10 +1,10 @@
 // Flame graph and code-composition layouts for a trace (unit tested in flameLayout.test.ts).
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import type { TreeNode } from './callUtils'
 
 export interface FlameRect {
   id: string
-  call: Call
+  call: Span
   depth: number
   /** Display row: concurrent calls at one depth get their own lanes. */
   row: number
@@ -22,7 +22,7 @@ export interface FlameLayout {
   spanMs: number
 }
 
-const endMs = (c: Call, now: number) => (c.ended_at ? new Date(c.ended_at).getTime() : now)
+const endMs = (c: Span, now: number) => (c.ended_at ? new Date(c.ended_at).getTime() : now)
 
 /**
  * Icicle layout: x is time relative to the earliest start, y is tree depth.
@@ -97,7 +97,7 @@ export interface ComposedOp {
  * of every merged call are merged again one level down, so a loop that
  * calls `retrieve` then `llm` five times reads as two lines with ×5.
  */
-export function composeOps(roots: TreeNode[], labelOf: (c: Call) => string, now: number = Date.now()): ComposedOp[] {
+export function composeOps(roots: TreeNode[], labelOf: (c: Span) => string, now: number = Date.now()): ComposedOp[] {
   const build = (nodes: TreeNode[], depth: number, prefix: string): ComposedOp[] => {
     const groups = new Map<string, TreeNode[]>()
     for (const n of nodes) {
@@ -113,7 +113,7 @@ export function composeOps(roots: TreeNode[], labelOf: (c: Call) => string, now:
         depth,
         callIds: ns.map((n) => n.call.id),
         count: ns.length,
-        errors: ns.filter((n) => !!n.call.exception).length,
+        errors: ns.filter((n) => !!n.call.error).length,
         totalMs: ns.reduce((s, n) => s + Math.max(0, endMs(n.call, now) - new Date(n.call.started_at).getTime()), 0),
         children: build(
           ns.flatMap((n) => n.children),

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { isRef, tableRef } from '../../api/refs'
-import type { Any, ObjSchema, TableRow, TableUpdate } from '../../api/types'
+import type { Any, WeftObject, TableRow, TableUpdate } from '../../api/types'
 import { Empty, ErrorBox, Loading, Pager, Spinner } from '../common'
 import { RefChip } from '../RefChip'
 import { ValueView } from '../ValueView'
@@ -35,8 +35,8 @@ export function CellValue({ v, projectId }: { v: Any; projectId: string }) {
 
 const asObj = (v: Any): Row => (v && typeof v === 'object' && !Array.isArray(v) ? v : { value: v })
 
-export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: string; obj: ObjSchema; onPublished: (c: Created) => void }) {
-  const digest = rowsDigest(obj.val)
+export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: string; obj: WeftObject; onPublished: (c: Created) => void }) {
+  const digest = rowsDigest(obj.value)
   const publish = usePublish(projectId)
   const [offset, setOffset] = useState(0)
   const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' } | null>(null)
@@ -51,7 +51,7 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
 
   const count = useQuery({
     queryKey: ['table-count', projectId, digest],
-    queryFn: () => api.tableQueryStats(projectId, digest!).then((r) => r.count),
+    queryFn: () => api.tableCount(projectId, digest!),
     enabled: !!digest,
   })
   const page = useQuery({
@@ -65,13 +65,13 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
           offset,
           sort_by: sort ? [{ field: `val.${sort.col}`, direction: sort.dir }] : undefined,
         })
-        .then((r) => r.rows),
+        .then((r) => r.items),
     enabled: !!digest,
     placeholderData: keepPreviousData,
   })
 
   const columns = useMemo(() => {
-    const vals = (page.data ?? []).map((r) => edits.get(r.original_index) ?? r.val)
+    const vals = (page.data ?? []).map((r) => edits.get(r.index) ?? r.value)
     return columnsOf([...vals, ...appended])
   }, [page.data, edits, appended])
 
@@ -83,13 +83,13 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
     setSaveErr(null)
   }
 
-  if (!digest) return <ErrorBox error={`This dataset has no rows table (rows = ${JSON.stringify(obj.val?.rows)})`} />
+  if (!digest) return <ErrorBox error={`This dataset has no rows table (rows = ${JSON.stringify(obj.value?.rows)})`} />
 
   const download = async (fmt: 'json' | 'csv' | 'jsonl') => {
     setDownloading(true)
     try {
-      const rows = (await fetchAllRows(projectId, digest)).map((r) => r.val)
-      const name = `${obj.object_id}-v${obj.version_index}`
+      const rows = (await fetchAllRows(projectId, digest)).map((r) => r.value)
+      const name = `${obj.name}-v${obj.version}`
       if (fmt === 'csv') downloadText(`${name}.csv`, rowsToCSV(rows), 'text/csv')
       else if (fmt === 'jsonl') downloadText(`${name}.jsonl`, rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'application/x-ndjson')
       else downloadText(`${name}.json`, JSON.stringify(rows, null, 2))
@@ -111,7 +111,7 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
       for (const index of [...deleted].sort((a, b) => b - a)) updates.push({ pop: { index } })
       for (const row of appended) updates.push({ append: { row } })
       const t = await api.tableUpdate(projectId, digest, updates)
-      const c = await publish(obj.object_id, datasetVal(obj.object_id, tableRef(projectId, t.digest), null, obj.val))
+      const c = await publish(obj.name, datasetVal(obj.name, tableRef(projectId, t.digest), null, obj.value))
       reset()
       setEditing(false)
       onPublished(c)
@@ -123,9 +123,9 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
   }
 
   const setCell = (r: TableRow, col: string, text: string) => {
-    const base = asObj(edits.get(r.original_index) ?? r.val)
+    const base = asObj(edits.get(r.index) ?? r.value)
     const next = new Map(edits)
-    next.set(r.original_index, { ...base, [col]: textToCell(text, base[col]) })
+    next.set(r.index, { ...base, [col]: textToCell(text, base[col]) })
     setEdits(next)
   }
 
@@ -210,17 +210,17 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
             </thead>
             <tbody>
               {(page.data ?? []).map((r) => {
-                const isDel = deleted.has(r.original_index)
-                const edited = edits.get(r.original_index)
-                const val = asObj(edited ?? r.val)
+                const isDel = deleted.has(r.index)
+                const edited = edits.get(r.index)
+                const val = asObj(edited ?? r.value)
                 return (
                   <tr
-                    key={r.digest + r.original_index}
+                    key={r.digest + r.index}
                     className={`${isDel ? 'row-deleted' : edited ? 'row-edited' : ''} ${editing ? '' : 'clickable'}`}
                     onClick={() => !editing && setOpen(r)}
                   >
                     <td className="num faint small" style={editing ? { padding: '7px 8px' } : undefined}>
-                      {r.original_index}
+                      {r.index}
                     </td>
                     {columns.map((c) =>
                       editing ? (
@@ -240,8 +240,8 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
                           title={isDel ? 'Restore row' : 'Delete row'}
                           onClick={() => {
                             const n = new Set(deleted)
-                            if (isDel) n.delete(r.original_index)
-                            else n.add(r.original_index)
+                            if (isDel) n.delete(r.index)
+                            else n.add(r.index)
                             setDeleted(n)
                           }}
                         >
@@ -280,9 +280,9 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
       )}
       {total != null && total > LIMIT && <Pager offset={offset} limit={LIMIT} total={total} onChange={setOffset} />}
       {open && (
-        <Drawer title={`Row ${open.original_index}`} onClose={() => setOpen(null)}>
+        <Drawer title={`Row ${open.index}`} onClose={() => setOpen(null)}>
           <div className="hint mono">digest {open.digest}</div>
-          <ValueView value={open.val} projectId={projectId} />
+          <ValueView value={open.value} projectId={projectId} />
         </Drawer>
       )}
     </div>

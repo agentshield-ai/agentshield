@@ -1,15 +1,15 @@
-import type { Any, Call, Feedback } from '../../api/types'
-import { opDisplayName } from '../../api/refs'
+import type { Any, Span, Feedback } from '../../api/types'
+import { spanDisplayName } from '../../api/refs'
 import { callCost, callLatencyMs, callStatus, callTokens } from '../../lib/format'
 
 export interface TreeNode {
-  call: Call
+  call: Span
   children: TreeNode[]
   depth: number
 }
 
 /** Build a forest from a flat list of calls, by parent_id. Children sorted by started_at. */
-export function buildTree(calls: Call[]): TreeNode[] {
+export function buildTree(calls: Span[]): TreeNode[] {
   const byId = new Map<string, TreeNode>()
   for (const c of calls) byId.set(c.id, { call: c, children: [], depth: 0 })
   const roots: TreeNode[] = []
@@ -42,8 +42,8 @@ export function flattenTree(roots: TreeNode[], isOpen: (id: string) => boolean =
   return out
 }
 
-export function callLabel(c: Call): string {
-  return c.display_name || c.summary?.weft?.display_name || opDisplayName(c.op_name)
+export function callLabel(c: Span): string {
+  return c.display_name || c.summary?.weft?.display_name || spanDisplayName(c.name)
 }
 
 // ---------------------------------------------------------------- field discovery
@@ -51,7 +51,7 @@ export function callLabel(c: Call): string {
 const MAX_KEYS = 60
 
 /** Discover dotted paths under `inputs.` / `output.` / `attributes.` from loaded calls (up to 2 levels). */
-export function discoverFields(calls: Call[], roots: ('inputs' | 'output' | 'attributes')[] = ['inputs', 'output']): string[] {
+export function discoverFields(calls: Span[], roots: ('inputs' | 'output' | 'attributes')[] = ['inputs', 'output']): string[] {
   const out = new Set<string>()
   for (const root of roots) {
     for (const c of calls) {
@@ -70,7 +70,7 @@ export function discoverFields(calls: Call[], roots: ('inputs' | 'output' | 'att
 }
 
 /** Feedback query paths discovered from feedback attached to calls. */
-export function discoverFeedbackFields(calls: Call[]): string[] {
+export function discoverFeedbackFields(calls: Span[]): string[] {
   const out = new Set<string>(['feedback.weft.reaction.emoji', 'feedback.weft.note.note'])
   for (const c of calls)
     for (const f of c.feedback ?? []) {
@@ -111,15 +111,15 @@ function csvCell(v: unknown): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
-export function callsToCsv(calls: Call[], extraPaths: string[] = []): string {
-  const head = ['id', 'trace_id', 'parent_id', 'op_name', 'display_name', 'status', 'started_at', 'ended_at', 'latency_ms', 'total_tokens', 'cost_usd', 'exception', 'inputs', 'output', ...extraPaths]
+export function callsToCsv(calls: Span[], extraPaths: string[] = []): string {
+  const head = ['id', 'trace_id', 'parent_id', 'name', 'display_name', 'status', 'started_at', 'ended_at', 'latency_ms', 'total_tokens', 'cost_usd', 'error', 'inputs', 'output', ...extraPaths]
   const lines = [head.join(',')]
   for (const c of calls) {
     const row: unknown[] = [
       c.id,
       c.trace_id,
       c.parent_id,
-      opDisplayName(c.op_name),
+      spanDisplayName(c.name),
       c.display_name,
       callStatus(c),
       c.started_at,
@@ -127,7 +127,7 @@ export function callsToCsv(calls: Call[], extraPaths: string[] = []): string {
       callLatencyMs(c),
       callTokens(c).total,
       callCost(c),
-      c.exception,
+      c.error,
       c.inputs,
       c.output,
       ...extraPaths.map((p) => getDotted(c, p)),
@@ -137,7 +137,7 @@ export function callsToCsv(calls: Call[], extraPaths: string[] = []): string {
   return lines.join('\n') + '\n'
 }
 
-export function exportCalls(calls: Call[], format: 'json' | 'jsonl' | 'csv', extraPaths: string[] = []) {
+export function exportCalls(calls: Span[], format: 'json' | 'jsonl' | 'csv', extraPaths: string[] = []) {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
   if (format === 'json') download(`calls-${stamp}.json`, JSON.stringify(calls, null, 2), 'application/json')
   else if (format === 'jsonl') download(`calls-${stamp}.jsonl`, calls.map((c) => JSON.stringify(c)).join('\n') + '\n', 'application/jsonl')
@@ -163,7 +163,7 @@ export function getDotted(obj: unknown, path: string): unknown {
 }
 
 /** Row for a dataset built from a call: its inputs (minus `self`) plus `output`. */
-export function callToDatasetRow(c: Call, includeOutput: boolean): Record<string, Any> {
+export function callToDatasetRow(c: Span, includeOutput: boolean): Record<string, Any> {
   const row: Record<string, Any> = {}
   const inputs = c.inputs && typeof c.inputs === 'object' && !Array.isArray(c.inputs) ? c.inputs : { input: c.inputs }
   for (const [k, v] of Object.entries(inputs)) if (k !== 'self') row[k] = v

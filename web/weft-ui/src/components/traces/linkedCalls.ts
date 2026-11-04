@@ -31,7 +31,7 @@ const s = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
 /** A call id from an id, a weft:/// call ref, or {call_id|span_id|id}. */
 function callOf(v: unknown): LinkedCall | null {
   if (typeof v === 'string') {
-    const m = /^weft:\/\/\/[^/]+\/[^/]+\/call\/([^/?#]+)/.exec(v)
+    const m = /^weft:\/\/\/[^/]+\/[^/]+\/(?:span|call)\/([^/?#]+)/.exec(v)
     if (m) return { callId: m[1] }
     return /^[\w-]{6,}$/.test(v) ? { callId: v } : null
   }

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { playgroundApi } from '../../api/playground'
 import { fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { ErrorBox, Spinner } from '../common'
 import { callToRun, runPrompt, type PlaygroundRun } from './history'
 import './playground.css'
@@ -35,7 +35,7 @@ export function HistoryPanel({
     queryFn: () => playgroundApi.history(projectId, 50),
     enabled: tab === 'server',
   })
-  const runs = (tab === 'local' ? local : (server.data?.calls ?? []).map(callToRun).filter((r): r is PlaygroundRun => !!r)).filter(
+  const runs = (tab === 'local' ? local : (server.data?.items ?? []).map(callToRun).filter((r): r is PlaygroundRun => !!r)).filter(
     (r) => !q.trim() || `${r.model} ${runPrompt(r)} ${r.output}`.toLowerCase().includes(q.trim().toLowerCase()),
   )
   return (
@@ -55,12 +55,12 @@ export function HistoryPanel({
         </button>
       </div>
       <input className="input sm" placeholder="Filter by model or text" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter history" />
-      {tab === 'server' && server.isLoading && <Spinner label="Loading calls…" />}
+      {tab === 'server' && server.isLoading && <Spinner label="Loading runs…" />}
       <ErrorBox error={tab === 'server' ? server.error : null} />
       <div className="pg-history-list">
         {runs.length === 0 && !(tab === 'server' && server.isLoading) && (
           <div className="small muted" style={{ padding: 8 }}>
-            {tab === 'local' ? 'Runs you make here are kept in this browser.' : 'No tracked playground calls yet.'}
+            {tab === 'local' ? 'Runs you make here are kept in this browser.' : 'No tracked playground runs yet.'}
           </div>
         )}
         {runs.map((r) => (
@@ -84,7 +84,7 @@ export function HistoryPanel({
               {r.latencyMs != null && <span>{fmtDuration(r.latencyMs)}</span>}
               {r.tokens != null && <span>{fmtNumber(r.tokens)} tok</span>}
               {r.callId && (
-                <Link to={callUrl(projectId, r.callId)} title="Open the tracked call">
+                <Link to={spanUrl(projectId, r.callId)} title="Open the tracked span">
                   call ↗
                 </Link>
               )}

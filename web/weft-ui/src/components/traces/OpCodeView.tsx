@@ -2,26 +2,26 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { parseRef } from '../../api/refs'
-import type { Any, Call } from '../../api/types'
+import type { Any, Span } from '../../api/types'
 import { refUrl } from '../../lib/urls'
 import { CodeBlock } from '../objects/bits'
 import { ErrorBox, Spinner } from '../common'
 
-/** Source of the op a call ran: val.code, or files['obj.py'] for ops that keep their source in a file. */
+/** Source of the function a span ran: value.code, or files['obj.py'] for functions that keep their source in a file. */
 export function useOpSource(opName: string) {
   const ref = parseRef(opName)
-  const isOp = ref?.kind === 'op' && !!ref.digest
+  const isOp = ref?.kind === 'function' && !!ref.digest
   const obj = useQuery({
-    queryKey: ['obj', ref?.projectId, ref?.name, ref?.digest],
-    queryFn: () => api.objRead(ref!.projectId, ref!.name, ref!.digest!).then((r) => r.obj),
+    queryKey: ['object', ref?.projectId, ref?.name, ref?.digest],
+    queryFn: () => api.objectGet(ref!.projectId, ref!.name, ref!.digest!),
     enabled: isOp,
     staleTime: Infinity,
   })
-  const v: Any = obj.data?.val ?? {}
+  const v: Any = obj.data?.value ?? {}
   const fileDigest: string | undefined = !v.code && v.files && typeof v.files === 'object' ? (v.files['obj.py'] ?? Object.values(v.files)[0]) : undefined
   const file = useQuery({
     queryKey: ['op-file', ref?.projectId, fileDigest],
-    queryFn: () => api.fileContentText(ref!.projectId, fileDigest!),
+    queryFn: () => api.fileText(ref!.projectId, fileDigest!),
     enabled: !!fileDigest && !!ref,
     staleTime: Infinity,
   })
@@ -36,8 +36,8 @@ export function useOpSource(opName: string) {
   }
 }
 
-export function OpCodeView({ call }: { call: Call }) {
-  const src = useOpSource(call.op_name)
+export function OpCodeView({ call }: { call: Span }) {
+  const src = useOpSource(call.name)
   if (!src.isOp)
     return (
       <div className="empty small">
@@ -45,7 +45,7 @@ export function OpCodeView({ call }: { call: Call }) {
       </div>
     )
   if (src.loading) return <Spinner label="Loading source…" />
-  const link = refUrl(call.op_name)
+  const link = refUrl(call.name)
   return (
     <div className="col" style={{ gap: 10 }}>
       <ErrorBox error={src.error} />
@@ -62,11 +62,11 @@ export function OpCodeView({ call }: { call: Call }) {
           maxHeight={640}
         />
       ) : (
-        <div className="empty small">No source code was captured for this op version.</div>
+        <div className="empty small">No source code was captured for this function version.</div>
       )}
       {link && (
         <div className="small">
-          <Link to={link}>Open op version →</Link>
+          <Link to={link}>Open function version →</Link>
         </div>
       )}
     </div>

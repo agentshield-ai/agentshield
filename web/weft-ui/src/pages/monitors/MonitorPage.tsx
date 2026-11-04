@@ -14,7 +14,7 @@ import { Stat, Switch } from '../../components/objects/bits'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
-import { callUrl, objectUrl, objectVersionsUrl } from '../../lib/urls'
+import { spanUrl, objectUrl, objectVersionsUrl } from '../../lib/urls'
 
 const RUNNABLE_PREFIX = 'weft.scorer.'
 
@@ -26,8 +26,8 @@ export function MonitorPage() {
   const [editing, setEditing] = useState(false)
   const [scorerFilter, setScorerFilter] = useState('')
   const obj = useQuery({
-    queryKey: ['obj', projectId, objectId, 'latest'],
-    queryFn: () => api.objRead(projectId, objectId, 'latest').then((r) => r.obj),
+    queryKey: ['object', projectId, objectId, 'latest'],
+    queryFn: () => api.objectGet(projectId, objectId, 'latest'),
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 1,
   })
   const results = useQuery({
@@ -40,7 +40,7 @@ export function MonitorPage() {
           sort_by: [{ field: 'created_at', direction: 'desc' }],
           limit: 1000,
         })
-        .then((r) => r.result.filter((f) => parseRef(f.trigger_ref ?? '')?.name === objectId)),
+        .then((r) => r.items.filter((f) => parseRef(f.trigger_ref ?? '')?.name === objectId)),
     refetchInterval: 15_000,
   })
   const { toggle, pending } = useToggleMonitor(projectId)
@@ -63,7 +63,7 @@ export function MonitorPage() {
     )
 
   const o = obj.data
-  const v = o.val ?? {}
+  const v = o.value ?? {}
   const fb = results.data ?? []
   const scorerNames = [...new Set(fb.map(scorerOf))]
   const shown = scorerFilter ? fb.filter((f) => scorerOf(f) === scorerFilter) : fb
@@ -76,12 +76,12 @@ export function MonitorPage() {
         <span>{objectId}</span>
       </div>
       <div className="page-header">
-        <Switch on={!!v.active} disabled={pending === o.object_id} onChange={() => void toggle(o)} title={v.active ? 'Pause monitor' : 'Activate monitor'} />
+        <Switch on={!!v.active} disabled={pending === o.name} onChange={() => void toggle(o)} title={v.active ? 'Pause monitor' : 'Activate monitor'} />
         <h1 className="truncate">{objectId}</h1>
         <span className={`badge ${v.active ? 'success' : ''}`}>{v.active ? 'Active' : 'Paused'}</span>
         <span className="spacer" />
         <Link className="btn ghost" to={objectVersionsUrl(projectId, objectId)}>
-          v{o.version_index} · history
+          v{o.version} · history
         </Link>
         <button className="btn primary" onClick={() => setEditing(true)}>
           Edit
@@ -92,7 +92,7 @@ export function MonitorPage() {
       <div className="grid-2">
         <Section title="Configuration">
           <div className="kv">
-            <div className="k">ops</div>
+            <div className="k">span names</div>
             <div className="v chips">
               {(v.op_names ?? []).length ? (
                 (v.op_names as string[]).map((n) => (
@@ -101,7 +101,7 @@ export function MonitorPage() {
                   </span>
                 ))
               ) : (
-                <span className="faint">all root calls</span>
+                <span className="faint">all root spans</span>
               )}
             </div>
             <div className="k">sampling</div>
@@ -118,7 +118,7 @@ export function MonitorPage() {
               {Array.isArray(v.scopes) && v.scopes.length ? (
                 (v.scopes as string[]).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
               ) : (
-                <span className="faint">each scorer where it fits (sessions for session judges, calls otherwise)</span>
+                <span className="faint">each scorer where it fits (sessions for session judges, spans otherwise)</span>
               )}
               <span className="faint small"> · a session is complete after {v.session_idle_seconds ?? DEFAULT_IDLE_SECONDS}s without new spans</span>
             </div>
@@ -142,7 +142,7 @@ export function MonitorPage() {
           ) : (
             <div className="stat-grid">
               <Stat label="Scores" value={fb.length >= 1000 ? '1000+' : fb.length.toLocaleString()} />
-              <Stat label="Calls scored" value={new Set(fb.map((f) => f.ref)).size.toLocaleString()} />
+              <Stat label="Spans scored" value={new Set(fb.map((f) => f.ref)).size.toLocaleString()} />
               <Stat label="Last score" value={fb[0] ? fmtRelative(fb[0].created_at) : '—'} title={fb[0] ? fmtDate(fb[0].created_at) : undefined} />
               {scorerNames.slice(0, 3).map((s) => (
                 <Stat key={s} label={s} value={summarize(fb.filter((f) => scorerOf(f) === s))} />
@@ -183,13 +183,13 @@ export function MonitorPage() {
                   <th>Span</th>
                   <th>Scorer</th>
                   <th>Output</th>
-                  <th>Scorer call</th>
+                  <th>Scorer span</th>
                 </tr>
               </thead>
               <tbody>
                 {shown.slice(0, 300).map((f) => {
                   const target = parseRef(f.ref)
-                  const sc = f.call_ref ? parseRef(f.call_ref) : null
+                  const sc = f.span_ref ? parseRef(f.span_ref) : null
                   const out = f.payload?.output
                   return (
                     <tr key={f.id}>
@@ -197,8 +197,8 @@ export function MonitorPage() {
                         {fmtRelative(f.created_at)}
                       </td>
                       <td>
-                        {target?.kind === 'call' ? (
-                          <Link className="mono" to={callUrl(projectId, target.name)}>
+                        {target?.kind === 'span' ? (
+                          <Link className="mono" to={spanUrl(projectId, target.name)}>
                             {target.name.slice(-8)}
                           </Link>
                         ) : (
@@ -211,7 +211,7 @@ export function MonitorPage() {
                       <td>
                         <OutputCell v={out} />
                       </td>
-                      <td>{sc?.kind === 'call' ? <Link to={callUrl(projectId, sc.name)}>view →</Link> : <span className="faint">—</span>}</td>
+                      <td>{sc?.kind === 'span' ? <Link to={spanUrl(projectId, sc.name)}>view →</Link> : <span className="faint">—</span>}</td>
                     </tr>
                   )
                 })}

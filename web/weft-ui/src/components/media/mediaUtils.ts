@@ -27,7 +27,7 @@ export interface MediaSpec {
   text?: string
   /** For legacy Content (compat/legacyMedia.ts): the metadata.json digest, read to learn the mimetype. */
   metaDigest?: string
-  /** External storage (s3://, gs://, https://) resolved through /files/resolve_url. */
+  /** External storage (s3://, gs://, https://) resolved through /api/v1/files/resolve. */
   uri?: string
 }
 

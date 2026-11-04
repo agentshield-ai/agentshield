@@ -17,7 +17,7 @@ ROWS = [
 class Calc(weft.Model):
     offset: int = 0
 
-    @weft.op
+    @weft.trace
     async def predict(self, question: str) -> str:
         if "+" in question:
             a, b = question.split("+")
@@ -25,18 +25,18 @@ class Calc(weft.Model):
         return "Lyon"
 
 
-@weft.op
+@weft.trace
 def exact(expected: str, output: str) -> bool:
     return expected == output
 
 
-@weft.op
+@weft.trace
 def detail(output: str, expected: str) -> dict:
     return {"len_diff": abs(len(output) - len(expected)), "same": output == expected}
 
 
 class LenScorer(weft.Scorer):
-    @weft.op
+    @weft.trace
     def score(self, *, output, answer):
         return len(output) if answer else 0
 
@@ -74,11 +74,11 @@ def test_evaluation_call_structure_and_summary(client, fake):
     assert root["inputs"]["model"] == f"weft:///test-entity/test-proj/object/calc:{model_val['digest']}"
     assert root["output"] == summary
     # Evaluation object follows the documented value convention
-    v = eval_val["val"]
+    v = eval_val["value"]
     assert v["_type"] == "Evaluation" and v["_bases"] == ["Object", "BaseModel"]
     assert v["dataset"].startswith("weft:///test-entity/test-proj/object/arith:")
     assert v["trials"] == 1 and len(v["scorers"]) == 4
-    assert v["scorers"][0].startswith("weft:///test-entity/test-proj/op/exact:")
+    assert v["scorers"][0].startswith("weft:///test-entity/test-proj/function/exact:")
     assert v["scorers"][2].startswith("weft:///test-entity/test-proj/object/em:")
     assert "preprocess_model_input" not in v
 
@@ -89,8 +89,8 @@ def test_evaluation_call_structure_and_summary(client, fake):
     assert summ[0]["output"] == summary
     assert summ[0]["inputs"] == {"self": root["inputs"]["self"]}
     ds_ref = v["dataset"]
-    tdigest = fake.objs["arith"][0]["val"]["rows"].rsplit("/", 1)[1]
-    row_digests = {r["digest"]: r["val"] for r in fake.tables[tdigest]}
+    tdigest = fake.objs["arith"][0]["value"]["rows"].rsplit("/", 1)[1]
+    row_digests = {r["digest"]: r["value"] for r in fake.tables[tdigest]}
     for p in pas:
         assert p["inputs"]["self"] == root["inputs"]["self"]
         assert p["inputs"]["model"] == root["inputs"]["model"]
@@ -111,7 +111,7 @@ def test_evaluation_call_structure_and_summary(client, fake):
 
 
 def test_evaluation_with_function_model_trials_and_preprocess(client, fake):
-    @weft.op
+    @weft.trace
     def model(q: str) -> str:
         return q.upper()
 
@@ -125,14 +125,14 @@ def test_evaluation_with_function_model_trials_and_preprocess(client, fake):
     assert summary["exact"] == {"true_count": 3, "true_fraction": 0.5}
     client.flush()
     [root] = fake.calls_by_op("Evaluation.evaluate")
-    assert root["inputs"]["model"].startswith("weft:///test-entity/test-proj/op/model:")
+    assert root["inputs"]["model"].startswith("weft:///test-entity/test-proj/function/model:")
     assert len(fake.calls_by_op("Evaluation.predict_and_score")) == 6
     assert len(fake.calls_by_op("model")) == 6
-    assert fake.objs["Evaluation"][0]["val"]["trials"] == 3
+    assert fake.objs["Evaluation"][0]["value"]["trials"] == 3
 
 
 def test_evaluation_model_errors_are_recorded(client, fake):
-    @weft.op
+    @weft.trace
     def flaky(question: str) -> str:
         if question == "2+2":
             raise ValueError("nope")
@@ -142,15 +142,15 @@ def test_evaluation_model_errors_are_recorded(client, fake):
     summary = asyncio.run(ev.evaluate(flaky))
     assert summary["exact"] == {"true_count": 1, "true_fraction": 0.5}
     client.flush()
-    errs = [c for c in fake.calls_by_op("flaky") if c.get("exception")]
-    assert len(errs) == 1 and errs[0]["exception"].startswith("ValueError")
+    errs = [c for c in fake.calls_by_op("flaky") if c.get("error")]
+    assert len(errs) == 1 and errs[0]["error"].startswith("ValueError")
 
 
 def test_evaluation_parallelism(client, fake, monkeypatch):
     monkeypatch.setenv("WEFT_PARALLELISM", "2")
     running = {"now": 0, "max": 0}
 
-    @weft.op
+    @weft.trace
     async def slow(question: str) -> str:
         running["now"] += 1
         running["max"] = max(running["max"], running["now"])
@@ -215,7 +215,7 @@ def test_evaluation_logger_structure(client, fake):
     gk = fake.children(p0["id"])
     assert [fake.op_base(g) for g in gk] == ["my-model.predict", "correct", "quality"]
     assert gk[0]["output"] == "A" and gk[1]["output"] is True
-    model_val = fake.objs["my-model"][0]["val"]
+    model_val = fake.objs["my-model"][0]["value"]
     assert model_val["_class_name"] == "Model" and model_val["_bases"] == ["Object", "BaseModel"]
-    ds_val = fake.objs["my-ds"][0]["val"]
+    ds_val = fake.objs["my-ds"][0]["value"]
     assert ds_val["_class_name"] == "Dataset"

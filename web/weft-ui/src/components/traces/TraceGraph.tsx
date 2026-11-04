@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import { callLatencyMs, callStatus, fmtDuration } from '../../lib/format'
 import { callLabel } from './callUtils'
 import { opStyle } from './opStyle'
 import { layoutOpGraph, nextCallFor, opPath, type GraphCall } from './graphLayout'
 import './traceViews.css'
 
-export function toGraphCalls(calls: Call[]): GraphCall[] {
+export function toGraphCalls(calls: Span[]): GraphCall[] {
   return calls.map((c) => ({
     id: c.id,
     parent_id: c.parent_id,
@@ -19,7 +19,7 @@ export function toGraphCalls(calls: Call[]): GraphCall[] {
 }
 
 /** Op → op graph of a trace. Clicking a node selects its calls in turn. */
-export function TraceGraph({ calls, selectedId, onSelect }: { calls: Call[]; selectedId: string; onSelect: (id: string) => void }) {
+export function TraceGraph({ calls, selectedId, onSelect }: { calls: Span[]; selectedId: string; onSelect: (id: string) => void }) {
   const gcalls = useMemo(() => toGraphCalls(calls), [calls])
   const g = useMemo(() => layoutOpGraph(gcalls), [gcalls])
   const path = useMemo(() => opPath(gcalls, selectedId), [gcalls, selectedId])
@@ -37,7 +37,7 @@ export function TraceGraph({ calls, selectedId, onSelect }: { calls: Call[]; sel
         <span>
           {g.nodes.length} op{g.nodes.length === 1 ? '' : 's'} · {calls.length} call{calls.length === 1 ? '' : 's'}
         </span>
-        <span>Click an op to step through its calls</span>
+        <span>Click a name to step through its spans</span>
       </div>
       <svg width={g.width} height={g.height} role="group" aria-label="Trace graph" style={{ display: 'block' }}>
         <defs>
@@ -72,7 +72,7 @@ export function TraceGraph({ calls, selectedId, onSelect }: { calls: Call[]; sel
               tabIndex={0}
               role="button"
               aria-pressed={sel}
-              aria-label={`${n.label}: ${n.count} call${n.count === 1 ? '' : 's'}${err ? `, ${n.errors} failed` : ''}`}
+              aria-label={`${n.label}: ${n.count} span${n.count === 1 ? '' : 's'}${err ? `, ${n.errors} failed` : ''}`}
               onClick={() => onSelect(nextCallFor(n, selectedId))}
               onKeyDown={(ev) => {
                 if (ev.key === 'Enter' || ev.key === ' ') {

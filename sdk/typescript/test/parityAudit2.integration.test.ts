@@ -37,12 +37,12 @@ describe.skipIf(!URL)('real server: parity audit 2', () => {
     for (const e of responseEvents('resp_live', 'item_a', out)) t.serverSend(e);
     session.close();
     await client.flush();
-    const [resp] = await client.getCalls({ filter: { op_names: ['openai.realtime.response'] } });
+    const [resp] = await client.spans({ filter: { names: ['openai.realtime.response'] } });
     const inAudio: any = (resp.inputs as any).input[0].content[0].audio;
     const outAudio: any = (resp.output as any).output[0].content[0].audio;
     expect(wavData(await client.readFile(inAudio.file_digest)).equals(mic)).toBe(true);
     expect(wavData(await client.readFile(outAudio.file_digest)).equals(out)).toBe(true);
-    const [sess] = await client.getCalls({ filter: { op_names: ['openai.realtime.session'] } });
+    const [sess] = await client.spans({ filter: { names: ['openai.realtime.session'] } });
     expect((sess.inputs as any).session.model).toBe(SESSION.model);
     expect(b64(new Uint8Array([1]))).toBe('AQ==');
   });
@@ -71,16 +71,16 @@ describe.skipIf(!URL)('real server: parity audit 2', () => {
     const ts = weft.wrapTypeSafe(new TypeSafeClient());
     await ts.systemOne({ state: 'hello', questions: ['q'] });
     await client.flush();
-    const [llm] = await client.getCalls({ filter: { op_names: ['chat'] } });
+    const [llm] = await client.spans({ filter: { names: ['chat'] } });
     expect((llm.attributes as any).gen_ai.response.id).toBe('req_live');
     expect((llm.summary as any).usage['jev-2'].prompt_tokens).toBe(3);
     // Inside an op: its own trace, which the server links back to the op.
-    const classify = weft.op(async function classify(msg: string) {
+    const classify = weft.trace(async function classify(msg: string) {
       return (await ts.systemOne({ state: msg, questions: ['q'] })).answers;
     });
     await classify('refund');
     await client.flush();
-    const [op] = await client.getCalls({ filter: { op_names: ['classify'] } });
+    const [op] = await client.spans({ filter: { names: ['classify'] } });
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (process.env.WEFT_TEST_API_KEY) headers.Authorization = `Bearer ${process.env.WEFT_TEST_API_KEY}`;
     const res = await fetch(`${URL}/agents/spans/query`, {

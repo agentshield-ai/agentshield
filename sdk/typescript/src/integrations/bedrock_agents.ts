@@ -394,7 +394,7 @@ export function startAgentCall(client: WeftClient, name: string, input: Record<s
   // A Bedrock session is a conversation: thread it unless the caller already did.
   const ctx = currentContext();
   const parent = ctx.stack[ctx.stack.length - 1];
-  const call = sessionId && !ctx.thread && !parent?.threadId ? withThread(sessionId, make) : make();
+  const call = sessionId && !ctx.thread && !parent?.sessionId ? withThread(sessionId, make) : make();
   return new AgentTraceProcessor(client, call, meta, agentName, sessionId, model);
 }
 

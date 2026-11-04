@@ -1,4 +1,4 @@
-"""The ``@weft.op`` decorator: traced functions, methods, coroutines and generators."""
+"""The ``@weft.trace`` decorator: traced functions, methods, coroutines and generators."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 SYNC, ASYNC, GEN, AGEN = "sync", "async", "gen", "agen"
 
-#: Common values for ``@weft.op(kind=...)`` (any string is accepted).
+#: Common values for ``@weft.trace(kind=...)`` (any string is accepted).
 OP_KINDS = ("agent", "llm", "tool", "chain", "retriever", "embedding", "scorer", "search", "guardrail", "reranker", "workflow")
-#: Values for ``@weft.op(color=...)``.
+#: Values for ``@weft.trace(color=...)``.
 OP_COLORS = ("red", "orange", "yellow", "green", "blue", "purple")
 CODE_CAPTURE_DISABLED = "# Code capture disabled\n"
 
@@ -66,11 +66,11 @@ def _list_accumulator(acc: Any, item: Any) -> Any:
 
 
 class Op:
-    """A traced function. Created by ``@weft.op``.
+    """A traced function. Created by ``@weft.trace``.
 
-    Calling the op runs the function and records a call when a client is
-    initialised. ``op.call(...)`` returns ``(result, Call)`` and never raises
-    (an exception is recorded on the returned call and the result is None).
+    Calling it runs the function and records a span when a client is
+    initialised. ``fn.call(...)`` returns ``(result, Span)`` and never raises
+    (an exception is recorded on the returned span and the result is None).
     """
 
     def __init__(
@@ -89,7 +89,7 @@ class Op:
         enable_code_capture: bool = True,
     ):
         if not callable(fn):
-            raise TypeError("weft.op requires a callable")
+            raise TypeError("weft.trace requires a callable")
         if not 0.0 <= float(tracing_sample_rate) <= 1.0:
             raise ValueError("tracing_sample_rate must be between 0 and 1")
         self.resolve_fn = fn
@@ -192,11 +192,11 @@ class BoundOp:
 
 
 @overload
-def op(fn: F) -> F: ...
+def trace(fn: F) -> F: ...
 
 
 @overload
-def op(
+def trace(
     fn: None = None,
     *,
     name: Optional[str] = None,
@@ -211,15 +211,16 @@ def op(
 ) -> Callable[[F], F]: ...
 
 
-def op(fn: Any = None, **kwargs: Any) -> Any:
-    """Decorate a function or method so its calls are traced.
+def trace(fn: Any = None, **kwargs: Any) -> Any:
+    """Decorate a function or method so every call of it is recorded as a span.
 
     Works with sync and async functions, generators and async generators
-    (yielded items are accumulated into the call output), and methods (``self``
-    is recorded as a ref when the object has been published).
+    (yielded items are accumulated into the span output), and methods (``self``
+    is recorded as a ref when the object has been saved). The function is
+    saved as a versioned ``function`` object and its spans are named by its ref.
 
     ``kind`` (agent, llm, tool, chain, retriever, embedding, scorer, ...) and
-    ``color`` are stored on every call as ``attributes.weft.span_kind`` /
+    ``color`` are stored on every span as ``attributes.weft.span_kind`` /
     ``attributes.weft.color``.
     """
     if fn is None:
@@ -227,6 +228,10 @@ def op(fn: Any = None, **kwargs: Any) -> Any:
     if isinstance(fn, Op):
         return fn
     return Op(fn, **kwargs)
+
+
+# The SDK's own modules use this name; the public ``weft.op`` is a deprecated alias of ``weft.trace``.
+op = trace
 
 
 def as_op(fn: Any) -> Union[Op, BoundOp]:

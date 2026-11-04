@@ -3,8 +3,8 @@ import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { queuesApi, type AnnotationQueueItem, type AnnotationState } from '../../api/queues'
-import { callRef, opDisplayName, parseRef } from '../../api/refs'
-import type { Any, Call, Feedback } from '../../api/types'
+import { spanRef, spanDisplayName, parseRef } from '../../api/refs'
+import type { Any, Span, Feedback } from '../../api/types'
 import { Empty, ErrorBox, Loading, Section, Spinner, StatusBadge } from '../../components/common'
 import { queuesUrl } from '../../components/queues/AddToQueueModal'
 import { ExportQueueModal } from '../../components/queues/ExportQueueModal'
@@ -14,7 +14,7 @@ import { AnnotationInput, isMine, rememberUserId, useCallFeedback, type FieldSch
 import { ValueView } from '../../components/ValueView'
 import { useProjectId } from '../../hooks/useProject'
 import { callStatus, fmtDate, fmtDuration, callLatencyMs } from '../../lib/format'
-import { callUrl, objectUrl } from '../../lib/urls'
+import { spanUrl, objectUrl } from '../../lib/urls'
 import { undoable } from '../../components/ui/Toasts'
 
 interface QueueSpec {
@@ -53,13 +53,13 @@ export function QueueReviewPage() {
     queryFn: async (): Promise<QueueSpec[]> => {
       const refs = queue.data!.scorer_refs
       if (!refs.length) return []
-      const { vals } = await api.refsReadBatch(refs)
+      const { items } = await api.refsRead(refs)
       return refs.map((ref, i) => ({
         ref,
-        name: String(vals[i]?.name ?? parseRef(ref)?.name ?? ref),
-        description: vals[i]?.description ?? undefined,
-        schema: (vals[i]?.field_schema ?? {}) as FieldSchema,
-        unique: vals[i]?.unique_among_creators !== false,
+        name: String(items[i]?.name ?? parseRef(ref)?.name ?? ref),
+        description: items[i]?.description ?? undefined,
+        schema: (items[i]?.field_schema ?? {}) as FieldSchema,
+        unique: items[i]?.unique_among_creators !== false,
       }))
     },
   })
@@ -83,7 +83,7 @@ export function QueueReviewPage() {
   const removeItem = useCallback(
     (item: AnnotationQueueItem) =>
       undoable({
-        message: `Removed “${opDisplayName(item.call_op_name)}” from the queue`,
+        message: `Removed “${spanDisplayName(item.call_op_name)}” from the queue`,
         apply: () => setHidden((h) => new Set(h).add(item.id)),
         revert: () =>
           setHidden((h) => {
@@ -223,28 +223,28 @@ export function QueueReviewPage() {
 }
 
 function CallPane({ projectId, item }: { projectId: string; item: AnnotationQueueItem }) {
-  const call = useQuery({ queryKey: ['call', projectId, item.call_id], queryFn: () => api.callRead(projectId, item.call_id).then((r) => r.call) })
-  if (call.isLoading) return <Loading label="Loading call…" />
+  const call = useQuery({ queryKey: ['span', projectId, item.call_id], queryFn: () => api.spanFind(projectId, item.call_id) })
+  if (call.isLoading) return <Loading label="Loading span…" />
   if (call.error) return <ErrorBox error={call.error} />
-  const c = call.data as Call | null
-  if (!c) return <div className="card"><Empty>This call no longer exists.</Empty></div>
+  const c = call.data as Span | null
+  if (!c) return <div className="card"><Empty>This span no longer exists.</Empty></div>
   const chat = extractChat(c)
   const fields = item.display_fields.length ? displayFieldValues(c, item.display_fields) : []
   return (
     <div className="col" style={{ gap: 12, minWidth: 0 }}>
       <div className="card">
         <div className="card-header row">
-          <b className="mono truncate">{opDisplayName(c.op_name)}</b>
+          <b className="mono truncate">{spanDisplayName(c.name)}</b>
           <StatusBadge status={callStatus(c)} />
           <span className="spacer grow" />
           <span className="faint small">{fmtDate(c.started_at)}</span>
           <span className="faint small">{fmtDuration(callLatencyMs(c))}</span>
-          <Link className="btn sm ghost" to={callUrl(projectId, c.id)} target="_blank">
+          <Link className="btn sm ghost" to={spanUrl(projectId, c.id)} target="_blank">
             Open call ↗
           </Link>
         </div>
       </div>
-      {c.exception && <div className="error-box mono small">{c.exception}</div>}
+      {c.error && <div className="error-box mono small">{c.error}</div>}
       {fields.length > 0 && (
         <Section title="Fields">
           <div className="col" style={{ gap: 10 }}>
@@ -306,7 +306,7 @@ function AnnotationPane({
 }) {
   const qc = useQueryClient()
   const fb = useCallFeedback(projectId, item.call_id)
-  const rows: Feedback[] = fb.data?.result ?? NO_FEEDBACK
+  const rows: Feedback[] = fb.data?.items ?? NO_FEEDBACK
   const mineBySpec = useMemo(() => {
     const m = new Map<string, Feedback>()
     for (const s of specs) {
@@ -330,7 +330,7 @@ function AnnotationPane({
 
   const submit = useMutation({
     mutationFn: async () => {
-      const ref = callRef(projectId, item.call_id)
+      const ref = spanRef(projectId, item.call_id)
       for (const s of specs) {
         const v = drafts[s.name]
         const mine = mineBySpec.get(s.name)
@@ -480,13 +480,13 @@ function ItemList({
             >
               <span className="dot" style={{ background: STATE_COLOR[it.annotation_state], width: 8, height: 8, borderRadius: 4, flex: 'none' }} />
               <span className="mono faint">{it.position_in_queue ?? i + 1}</span>
-              <span className="mono truncate grow">{opDisplayName(it.call_op_name)}</span>
+              <span className="mono truncate grow">{spanDisplayName(it.call_op_name)}</span>
               <span className="faint">{STATE_LABEL[it.annotation_state]}</span>
             </button>
             <button
               type="button"
               className="icon-btn"
-              aria-label={`Remove ${opDisplayName(it.call_op_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
+              aria-label={`Remove ${spanDisplayName(it.call_op_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
               title="Remove from the queue (annotations already given are kept)"
               onClick={() => onRemove(it)}
             >

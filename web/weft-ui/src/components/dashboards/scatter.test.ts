@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import { callFieldValue, callGroupValue, scatterSeries, withChart } from './dashboardUtils'
 
-const call = (id: string, over: Partial<Call> & Record<string, unknown>): Call =>
+const call = (id: string, over: Partial<Span> & Record<string, unknown>): Span =>
   ({
     id,
-    op_name: 'weft:///e/p/op/answer:abc',
+    name: 'weft:///e/p/function/answer:abc',
     started_at: '2026-01-01T00:00:00Z',
     ended_at: '2026-01-01T00:00:02Z',
     inputs: {},
@@ -13,12 +13,12 @@ const call = (id: string, over: Partial<Call> & Record<string, unknown>): Call =
     attributes: {},
     summary: {},
     ...over,
-  }) as unknown as Call
+  }) as unknown as Span
 
 describe('scatter charts', () => {
   const a = call('a', { summary: { usage: { 'gpt-4o': { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } }, attributes: { env: 'prod' } })
   const b = call('b', { ended_at: '2026-01-01T00:00:00.500Z', output: { score: '0.5' }, feedback: [{ feedback_type: 'weft.scorer.judge', payload: { output: { ok: true } } }] } as never)
-  it('reads per-call metric values', () => {
+  it('reads per-span metric values', () => {
     expect(callFieldValue(a, 'latency_ms')).toBe(2000)
     expect(callFieldValue(a, 'total_tokens')).toBe(15)
     expect(callFieldValue(b, 'total_tokens')).toBeNull()
@@ -26,9 +26,10 @@ describe('scatter charts', () => {
     expect(callFieldValue(b, 'feedback.weft.scorer.judge.output.ok')).toBe(1)
     expect(callFieldValue(a, 'attributes.env')).toBeNull()
   })
-  it('groups calls', () => {
+  it('groups spans', () => {
     expect(callGroupValue(a, 'model')).toBe('gpt-4o')
-    expect(callGroupValue(a, 'op_name')).toBe('answer')
+    expect(callGroupValue(a, 'name')).toBe('answer')
+    expect(callGroupValue(a, 'session')).toBe('(none)')
     expect(callGroupValue(a, 'attributes.env')).toBe('prod')
     expect(callGroupValue(b, 'attributes.env')).toBe('(none)')
     expect(callGroupValue(a, '')).toBe('')

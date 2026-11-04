@@ -99,7 +99,7 @@ export function RuntimeModelModal({ projectId, onClose, onCreated }: { projectId
   const [template, setTemplate] = useState('{question}')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
-  const list = runtimes.data?.runtimes ?? []
+  const list = runtimes.data?.items ?? []
   const rt = list.find((r) => r.name === runtime)
   const isPredict = rt?.kind === 'predict'
   const save = async () => {
@@ -139,7 +139,7 @@ export function RuntimeModelModal({ projectId, onClose, onCreated }: { projectId
           <Spinner label="Loading runtimes…" />
         ) : list.length === 0 ? (
           <div className="info-box small">
-            No runtimes in this project yet. Register one with <span className="mono">PUT /v2/&lt;entity&gt;/&lt;project&gt;/runtimes/&lt;name&gt;</span> (the SDKs'{' '}
+            No runtimes in this project yet. Register one with <span className="mono">PUT /api/v1/runtimes/&lt;name&gt;</span> (the SDKs'{' '}
             <span className="mono">register_custom_runtime</span>).
           </div>
         ) : null}

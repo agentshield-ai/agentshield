@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { automationsApi, type AutomationVal } from '../../api/automations'
-import type { ObjSchema } from '../../api/types'
+import type { WeftObject } from '../../api/types'
 import { Empty, ErrorBox, Loading, Section } from '../../components/common'
 import { AutomationEditor } from '../../components/automations/AutomationEditor'
 import { describeAction, describeTrigger } from '../../components/automations/automationUtils'
@@ -17,8 +17,8 @@ export function AutomationsPage() {
   const projectId = useProjectId()
   const qc = useQueryClient()
   const publish = usePublish(projectId)
-  const autos = useObjects(projectId, { base_object_classes: ['Automation'] })
-  const [editing, setEditing] = useState<ObjSchema | 'new' | null>(null)
+  const autos = useObjects(projectId, { kinds: ['automation'] })
+  const [editing, setEditing] = useState<WeftObject | 'new' | null>(null)
   const [filter, setFilter] = useState<string>('')
   const runs = useQuery({ queryKey: ['automation-runs', projectId], queryFn: () => automationsApi.runs(projectId, undefined, 200).then((r) => r.runs), refetchInterval: 10_000 })
   const refreshRuns = () => qc.invalidateQueries({ queryKey: ['automation-runs', projectId] })
@@ -80,20 +80,20 @@ export function AutomationsPage() {
             </thead>
             <tbody>
               {autos.data.map((o) => {
-                const v = (o.val ?? {}) as AutomationVal
-                const last = lastRun(o.object_id)
+                const v = (o.value ?? {}) as AutomationVal
+                const last = lastRun(o.name)
                 const enabled = v.enabled !== false
                 return (
-                  <tr key={o.object_id}>
+                  <tr key={o.name}>
                     <td>
                       <Switch
                         on={enabled}
-                        disabled={toggling === o.object_id}
+                        disabled={toggling === o.name}
                         title={enabled ? 'Disable' : 'Enable'}
                         onChange={async () => {
-                          setToggling(o.object_id)
+                          setToggling(o.name)
                           try {
-                            await publish(o.object_id, { ...o.val, enabled: !enabled })
+                            await publish(o.name, { ...o.value, enabled: !enabled })
                           } catch (e) {
                             alert(`Could not update automation: ${errMsg(e)}`)
                           } finally {
@@ -103,7 +103,7 @@ export function AutomationsPage() {
                       />
                     </td>
                     <td>
-                      <span style={{ fontWeight: 500 }}>{o.object_id}</span>
+                      <span style={{ fontWeight: 500 }}>{o.name}</span>
                       {v.description && <div className="faint small cell-preview">{v.description}</div>}
                     </td>
                     <td className="small mono">{v.trigger ? describeTrigger(v.trigger) : '—'}</td>
@@ -119,22 +119,22 @@ export function AutomationsPage() {
                     </td>
                     <td>
                       <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
-                        <button className="btn sm" disabled={test.isPending && test.variables === o.object_id} onClick={() => test.mutate(o.object_id)}>
-                          {test.isPending && test.variables === o.object_id ? 'Sending…' : 'Test'}
+                        <button className="btn sm" disabled={test.isPending && test.variables === o.name} onClick={() => test.mutate(o.name)}>
+                          {test.isPending && test.variables === o.name ? 'Sending…' : 'Test'}
                         </button>
-                        <button className="btn sm ghost" onClick={() => setFilter(filter === o.object_id ? '' : o.object_id)}>
-                          {filter === o.object_id ? 'All runs' : 'Runs'}
+                        <button className="btn sm ghost" onClick={() => setFilter(filter === o.name ? '' : o.name)}>
+                          {filter === o.name ? 'All runs' : 'Runs'}
                         </button>
                         <button className="btn sm ghost" onClick={() => setEditing(o)}>
                           Edit
                         </button>
                         <ConfirmButton
                           className="btn ghost sm icon danger"
-                          title={`Delete automation ${o.object_id}?`}
+                          title={`Delete automation ${o.name}?`}
                           body="Its run history is kept."
                           onConfirm={async () => {
-                            await api.objDelete(projectId, o.object_id)
-                            await qc.invalidateQueries({ queryKey: ['objs', projectId] })
+                            await api.objectDelete(projectId, o.name)
+                            await qc.invalidateQueries({ queryKey: ['objects', projectId] })
                           }}
                         >
                           ✕
@@ -176,7 +176,7 @@ export function AutomationsPage() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
-            void qc.invalidateQueries({ queryKey: ['objs', projectId] })
+            void qc.invalidateQueries({ queryKey: ['objects', projectId] })
             void refreshRuns()
           }}
         />

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as weft from '../src/index.js';
 import { createHash } from 'node:crypto';
-import { b64digest, digest, digestJson, tableDigest } from '../src/canonical.js';
+import { canonicalJson, digest, fileDigest, tableDigest } from '../src/canonical.js';
 import { FakeWeft } from './fakeServer.js';
 
 let fake: FakeWeft;
@@ -25,48 +25,50 @@ const ROWS = [
 ];
 
 describe('objects and evaluations', () => {
-  it('digests match the server scheme', () => {
-    expect(digestJson({ b: 1, a: [1.5, true, null], c: '<&>' })).toBe('{"a": [1.5, true, null], "b": 1, "c": "<&>"}');
-    // ensure_ascii escapes, surrogate pairs, code point key order
-    expect(digestJson({ 'é': 1, z: 2, A: ['ü😀', String.fromCharCode(0x2028)] })).toBe('{"A": ["\\u00fc\\ud83d\\ude00", "\\u2028"], "z": 2, "\\u00e9": 1}');
-    expect(digestJson('"q" \\ \n\t\u0001')).toBe('"\\"q\\" \\\\ \\n\\t\\u0001"');
+  it('digests are Weft digests (DESIGN.md §10.3)', () => {
+    expect(canonicalJson({ b: 1, a: [1.5, true, null], c: '<&>' })).toBe('{"a":[1.5,true,null],"b":1,"c":"<&>"}');
+    // UTF-8 (no \\u escapes above U+001F), code point key order (not UTF-16 order)
+    expect(canonicalJson({ 'é': 1, z: 2, A: ['ü😀', String.fromCharCode(0x2028)], '\u{1F600}': 3, '\uFFFF': 4 })).toBe(
+      '{"A":["ü😀","\u2028"],"z":2,"é":1,"\uFFFF":4,"😀":3}',
+    );
+    expect(canonicalJson('"q" \\ \n\t\u0001\u007f')).toBe('"\\"q\\" \\\\ \\n\\t\\u0001\u007f"');
+    expect(canonicalJson('a\ud800b')).toBe('"a\ufffdb"'); // a lone surrogate reaches the server as U+FFFD
     // numbers keep the text this SDK sends
-    expect(digestJson({ f: 1.0, g: 1e-7, h: 1e21 })).toBe('{"f": 1, "g": 1e-7, "h": 1e+21}');
-    const raw = createHash('sha256').update('abc').digest('base64url').replace(/-/g, 'X').replace(/_/g, 'Y');
-    expect(b64digest('abc')).toBe(raw);
-    expect(digest({ a: 1 })).toBe(b64digest('{"a": 1}'));
-    expect(tableDigest(['d1', 'd2'])).toBe(createHash('sha256').update('d1d2').digest('hex'));
+    expect(canonicalJson({ f: 1.0, g: 1e-7, h: 1e21 })).toBe('{"f":1,"g":1e-7,"h":1e+21}');
+    expect(fileDigest('abc')).toBe(createHash('sha256').update('abc').digest('hex'));
+    expect(digest({ a: 1 })).toBe(fileDigest('{"a":1}'));
+    expect(tableDigest(['d1', 'd2'])).toBe(digest(['d1', 'd2']));
   });
 
   it('publishes datasets as tables and loads them back', async () => {
     const ds = new weft.Dataset({ name: 'math', rows: ROWS });
-    const ref = await weft.publish(ds);
+    const ref = await weft.save(ds);
     expect(ref.uri()).toBe(`weft:///ts-entity/ts-proj/object/math:${ref.digest}`);
-    const v = fake.objs.get('math')![0].val;
+    const v = fake.objs.get('math')![0].value;
     expect(v).toMatchObject({ _type: 'Dataset', _class_name: 'Dataset', _bases: ['Object', 'BaseModel'], name: 'math' });
     expect(v.rows).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/table\//);
-    const again = await weft.publish(new weft.Dataset({ name: 'math', rows: ROWS }));
+    const again = await weft.save(new weft.Dataset({ name: 'math', rows: ROWS }));
     expect(again.digest).toBe(ref.digest);
     const loaded = await weft.ref('math:latest').get();
     expect(loaded).toBeInstanceOf(weft.Dataset);
     expect(loaded.rows).toEqual(ROWS);
     expect(loaded.rowDigests).toEqual(ds.rowDigests);
     expect((await weft.ref('math:v0').get()).rows).toHaveLength(4);
-    const plain = await weft.publish({ temperature: 0.1 }, 'cfg');
+    const plain = await weft.save({ temperature: 0.1 }, 'cfg');
     expect(await client.get(plain)).toEqual({ temperature: 0.1 });
   });
 
   it('runs an evaluation with the documented call structure', async () => {
-    const model = weft.op(async function calc({ datasetRow }: { datasetRow: { question: string } }) {
+    const model = weft.trace(async function calc({ datasetRow }: { datasetRow: { question: string } }) {
       const q = datasetRow.question;
       if (!q.includes('+')) return 'Lyon';
       const [a, b] = q.split('+').map(Number);
       return String(a + b);
     });
-    const exact = weft.op(function exact({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
+    const exact = weft.trace(function exact({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
       return modelOutput === datasetRow.expected;
     });
-    const detail = weft.op(function detail({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
+    const detail = weft.trace(function detail({ modelOutput, datasetRow }: { modelOutput: string; datasetRow: { expected: string } }) {
       return { len_diff: Math.abs(modelOutput.length - datasetRow.expected.length), same: modelOutput === datasetRow.expected };
     });
     const ev = new weft.Evaluation({ name: 'arith-eval', dataset: new weft.Dataset({ name: 'arith', rows: ROWS }), scorers: [exact, detail] });
@@ -79,11 +81,11 @@ describe('objects and evaluations', () => {
     const [root] = fake.callsByOp('Evaluation.evaluate');
     const evObj = fake.objs.get('arith-eval')![0];
     expect(root.inputs.self).toBe(`weft:///ts-entity/ts-proj/object/arith-eval:${evObj.digest}`);
-    expect(root.inputs.model).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/op\/calc:/);
+    expect(root.inputs.model).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/function\/calc:/);
     expect(root.output).toEqual(summary);
-    expect(evObj.val).toMatchObject({ _type: 'Evaluation', _bases: ['Object', 'BaseModel'], trials: 1 });
-    expect(evObj.val.dataset).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/object\/arith:/);
-    expect(evObj.val.scorers[0]).toMatch(/\/op\/exact:/);
+    expect(evObj.value).toMatchObject({ _type: 'Evaluation', _bases: ['Object', 'BaseModel'], trials: 1 });
+    expect(evObj.value.dataset).toMatch(/^weft:\/\/\/ts-entity\/ts-proj\/object\/arith:/);
+    expect(evObj.value.scorers[0]).toMatch(/\/function\/exact:/);
     const kids = fake.children(root.id);
     const pas = kids.filter((k) => fake.opBase(k) === 'Evaluation.predict_and_score');
     const summ = kids.filter((k) => fake.opBase(k) === 'Evaluation.summarize');
@@ -94,7 +96,7 @@ describe('objects and evaluations', () => {
     for (const p of pas) {
       expect(p.inputs.self).toBe(root.inputs.self);
       expect(p.inputs.model).toBe(root.inputs.model);
-      expect(p.inputs.example).toMatch(new RegExp(`^${evObj.val.dataset}/attr/rows/id/`));
+      expect(p.inputs.example).toMatch(new RegExp(`^${evObj.value.dataset}/attr/rows/id/`));
       expect(Object.keys(p.output).sort()).toEqual(['model_latency', 'output', 'scores']);
       const names = fake.children(p.id).map((g) => fake.opBase(g)).sort();
       expect(names).toEqual(['calc', 'detail', 'exact']);

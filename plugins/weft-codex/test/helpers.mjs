@@ -31,13 +31,13 @@ export function recorder({ fail = 0 } = {}) {
       failures--;
       throw new Error('connect ECONNREFUSED');
     }
-    items.push(...JSON.parse(init.body).batch);
-    return new Response('{"res":[]}', { status: 200 });
+    items.push(...JSON.parse(init.body).items);
+    return new Response('{"items":[]}', { status: 200 });
   };
   const calls = () => {
     const m = new Map();
     for (const it of items) {
-      const r = it.req[it.mode];
+      const r = it.span ?? it.start ?? it.end;
       m.set(r.id, { ...(m.get(r.id) ?? {}), ...r });
     }
     return m;

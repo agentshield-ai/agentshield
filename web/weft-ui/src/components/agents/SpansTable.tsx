@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { agentEvalsApi, agentsApi, agentUrl, conversationUrl, signalsApi, type AgentEvalPrediction, type AgentSpan, type SignalResult, type SpanGroup } from '../../api/agents'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
-import { callUrl } from '../../lib/urls'
+import { spanUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Spinner } from '../common'
 import { compact, errorRate, fmtPct, kindClass, windowStartOrAll } from './agentUtils'
 import { EvalFilterBanner, ScoreChips } from './AgentEvals'
@@ -349,7 +349,7 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
                   <td style={{ maxWidth: 280 }}>
                     <div className="row" style={{ gap: 6 }}>
                       <span className={`kind-dot ${kindClass(s.operation_name, s.status_code)}`} />
-                      <Link to={callUrl(projectId, s.span_id)} className="mono small truncate" onClick={(e) => e.stopPropagation()}>
+                      <Link to={spanUrl(projectId, s.span_id)} className="mono small truncate" onClick={(e) => e.stopPropagation()}>
                         {s.display_name}
                       </Link>
                       {s.is_turn && <span className="badge">turn</span>}
@@ -479,7 +479,7 @@ function GroupTable({
                   <td style={{ minWidth: 180, maxWidth: 320 }} onClick={(e) => e.stopPropagation()}>
                     {(predsByConv!.get(label(g)) ?? []).map((p) => (
                       <div key={p.predict_and_score_call_id} className="col" style={{ gap: 2 }}>
-                        <Link to={callUrl(projectId, p.predict_and_score_call_id)} className="small mono" title="predict_and_score call">
+                        <Link to={spanUrl(projectId, p.predict_and_score_call_id)} className="small mono" title="predict_and_score call">
                           {p.example_id ? `example ${p.example_id}` : `prediction ${p.predict_and_score_call_id.slice(-8)}`}
                         </Link>
                         <ScoreChips scores={p.scores} max={4} />

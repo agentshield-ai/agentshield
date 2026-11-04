@@ -85,7 +85,7 @@ def main():
     # --- Run linkage: calls carry run_id / run_step -----------------------
     step = {"n": 0}
 
-    @weft.op
+    @weft.trace
     def train_step(batch: int) -> float:
         step["n"] += 1
         return 1.0 / (batch + 1)
@@ -97,7 +97,7 @@ def main():
 
     # --- Registry: link a prompt version and a dataset --------------------------
     prompt = weft.StringPrompt("You are a concise weather assistant. Question: {q}")
-    weft.publish(prompt, name="weather-prompt")
+    weft.save(prompt, name="weather-prompt")
     link = weft.link_prompt_to_registry(prompt, target_path="prompts-registry/weather", aliases=["production"])
     print("registry:", link)
     weft.link_to_registry(weft.Dataset(name="weather-questions", rows=[{"q": "Oslo?"}, {"q": "Lima?"}]),
@@ -107,9 +107,9 @@ def main():
 
     # --- Calls as records / a DataFrame ------------------------------------------
     client.flush()
-    calls = client.get_calls(filter={"op_names": ["train_step"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
+    calls = client.spans(filter={"names": ["train_step"]}, sort_by=[{"field": "started_at", "direction": "asc"}])
     for r in calls.to_records():
-        print(r["op_name"].rsplit("/", 1)[-1].split(":")[0], r["output"], r["run_id"], r["run_step"])
+        print(r["name"].rsplit("/", 1)[-1].split(":")[0], r["output"], r["run_id"], r["run_step"])
     try:
         df = calls.to_pandas(flatten=True)
         print(df[["inputs.batch", "output", "run_step"]])

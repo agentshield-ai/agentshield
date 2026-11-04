@@ -15,9 +15,15 @@ export function splitProject(project: string): [string, string] {
   return [entity, proj];
 }
 
-export type RefKind = 'object' | 'op' | 'table' | 'call';
+/**
+ * Ref kinds (docs/weft/DESIGN.md §10.2). Refs written with the earlier kind
+ * names `op` and `call` are read as `function` and `span`.
+ */
+export type RefKind = 'object' | 'function' | 'table' | 'span';
 
-/** A weft:/// reference to an object, op, table or call (optionally with a path). */
+const KIND_ALIASES: Record<string, RefKind> = { op: 'function', call: 'span' };
+
+/** A weft:/// reference to an object, function, table or span (optionally with a path). */
 export class Ref {
   constructor(
     public readonly entity: string,
@@ -34,7 +40,7 @@ export class Ref {
 
   uri(): string {
     const head = `weft:///${this.entity}/${this.project}/${this.kind}/`;
-    const body = this.kind === 'object' || this.kind === 'op' ? `${this.name}:${this.digest}` : this.name;
+    const body = this.kind === 'object' || this.kind === 'function' ? `${this.name}:${this.digest}` : this.name;
     return head + body + this.extra.map((p) => '/' + encodeURIComponent(p)).join('');
   }
 
@@ -55,15 +61,16 @@ export class Ref {
     if (!scheme) throw new Error(`not a weft ref: ${uri}`);
     const parts = uri.slice(scheme.length).split('/');
     if (parts.length < 4) throw new Error(`invalid ref: ${uri}`);
-    const [entity, project, kind, namePart] = parts;
+    const [entity, project, rawKind, namePart] = parts;
+    const kind = KIND_ALIASES[rawKind] ?? rawKind;
     const extra = parts.slice(4).map(decodeURIComponent);
-    if (kind === 'object' || kind === 'op') {
+    if (kind === 'object' || kind === 'function') {
       const i = namePart.lastIndexOf(':');
       const name = i < 0 ? namePart : namePart.slice(0, i);
       const dg = i < 0 ? 'latest' : namePart.slice(i + 1);
       return new Ref(entity, project, kind, decodeURIComponent(name), dg, extra);
     }
-    if (kind === 'table' || kind === 'call') return new Ref(entity, project, kind, namePart, '', extra);
+    if (kind === 'table' || kind === 'span') return new Ref(entity, project, kind, namePart, '', extra);
     throw new Error(`unknown ref kind in ${uri}`);
   }
 }

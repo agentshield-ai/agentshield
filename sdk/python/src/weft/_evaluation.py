@@ -210,9 +210,9 @@ class Evaluation(Object):
                 raise TypeError("model must be a weft.Model or a function")
         client = tracing_client()
         if client is not None:
-            client.publish(self, name=self.name or "Evaluation")
+            client.save(self, name=self.name or "Evaluation")
             if isinstance(model, Object):
-                client.publish(model)
+                client.save(model)
         name = self.evaluation_name
         display: Optional[str] = None
         if callable(name):
@@ -332,7 +332,7 @@ def _linked_calls(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
     ``Conversation``, or a list of these.
     """
     from ._call import Call
-    from ._refs import CallRef, is_ref_uri, parse_uri
+    from ._refs import SpanRef, is_ref_uri, parse_uri
 
     calls: List[Dict[str, Any]] = []
     convs: List[str] = []
@@ -348,8 +348,8 @@ def _linked_calls(link: Any) -> "Tuple[List[Dict[str, Any]], List[str], List[Any
         if isinstance(it, str):
             if is_ref_uri(it):
                 r = parse_uri(it)
-                if not isinstance(r, CallRef):
-                    raise TypeError(f"{it} is not a call ref")
+                if not isinstance(r, SpanRef):
+                    raise TypeError(f"{it} is not a span ref")
                 calls.append({"call_id": r.id})
             else:
                 calls.append({"call_id": it})
@@ -546,9 +546,9 @@ class EvaluationLogger:
         self._call = None
         self._row_refs: Dict[str, Any] = {}
         if self._client is not None:
-            self._client.publish(self.evaluation, name=self.evaluation.name)
+            self._client.save(self.evaluation, name=self.evaluation.name)
             if isinstance(self.model, Object):
-                self._client.publish(self.model)
+                self._client.save(self.model)
             self._index_dataset_rows()
             self._call = self._client.create_call(
                 Evaluation.__dict__["_evaluate"], {"self": self.evaluation, "model": self.model}, display_name=name
@@ -671,7 +671,7 @@ class EvaluationLogger:
 
             cid = parse_uri(obj).id if is_ref_uri(obj) else obj  # type: ignore[attr-defined]
             try:
-                c = self._client.get_call(cid)
+                c = self._client.span(cid)
             except Exception as e:  # the link is still recorded
                 logger.warning("weft: could not read linked call %s: %s", cid, e)
                 return None, None

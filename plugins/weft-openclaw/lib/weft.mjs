@@ -5,11 +5,12 @@
 // plugins/weft-harness-common/sync.mjs`); a test checks the copies match.
 // Plain Node (>= 18) ESM with no dependencies, so plugins run without a build.
 //
-// It builds Weft calls in the shapes the server's agents index understands
-// (turns are `invoke_agent` calls, LLM requests `chat` calls, tools
-// `execute_tool` calls; conversation = thread id) and sends them to
-// /call/upsert_batch with a short timeout. Call ids are derived from stable
-// harness ids, so a resend after a failure upserts the same calls.
+// It builds Weft spans in the shapes the server's agents index understands
+// (turns are `invoke_agent` spans, LLM requests `chat` spans, tools
+// `execute_tool` spans; conversation = the span's session_id) and sends them
+// to Weft's span batch route, POST /api/v1/spans/batch, with a short timeout.
+// Span ids are derived from stable harness ids, so a resend after a failure
+// upserts the same spans.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
@@ -115,7 +116,7 @@ export function iso(t) {
 
 // ---------------------------------------------------------------- values
 
-/** Cap strings (and very large values) so a tool result never bloats a call. */
+/** Cap strings (and very large values) so a tool result never bloats a span. */
 export function truncate(value, max = 20000, depth = 0) {
   if (typeof value === 'string') return value.length > max ? `${value.slice(0, max)}… [truncated ${value.length - max} chars]` : value;
   if (value === null || typeof value !== 'object') return value;
@@ -154,7 +155,7 @@ export function shortText(v, n = 60) {
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
 }
 
-/** Display name for a tool call: the tool plus its most telling argument. */
+/** Display name for a tool span: the tool plus its most telling argument. */
 export function toolDisplay(name, input) {
   if (input && typeof input === 'object') {
     for (const k of ['command', 'cmd', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt']) {
@@ -165,44 +166,39 @@ export function toolDisplay(name, input) {
   return name;
 }
 
-// ---------------------------------------------------------------- calls
+// ---------------------------------------------------------------- spans
 
 /**
- * One finished call as start/end batch items for /call/upsert_batch.
- * `kind` is the span kind (agent, llm, tool); `genai` are flat gen_ai.* attributes.
+ * One finished span as a batch item for POST /api/v1/spans/batch
+ * (`{span: {...}}`: start and end in one piece).
+ * `kind` is the span kind (agent, llm, tool); `genai` are flat gen_ai.* attributes;
+ * `sessionId` is the conversation (gen_ai.conversation.id), `turnId` the turn.
  */
-export function callItems(cfg, c) {
+export function spanItems(cfg, c) {
   const kind = c.kind;
   const attributes = {
     ...(c.attributes ?? {}),
     weft: { span_kind: kind, source: cfg.plugin, plugin_version: c.pluginVersion ?? CORE_VERSION, ...(c.attributes?.weft ?? {}) },
   };
   for (const [k, v] of Object.entries(c.genai ?? {})) if (v !== undefined && v !== null && v !== '') attributes[k] = v;
-  const start = {
+  const span = {
     project_id: cfg.project,
     id: c.id,
-    op_name: c.opName,
+    name: c.name,
     display_name: c.displayName ?? null,
     trace_id: c.traceId,
     parent_id: c.parentId ?? null,
     started_at: iso(c.startedAt),
     attributes,
     inputs: cfg.captureContent ? truncate(c.inputs ?? {}, cfg.maxFieldChars) : {},
-  };
-  if (c.threadId) start.thread_id = c.threadId;
-  if (c.turnId) start.turn_id = c.turnId;
-  const end = {
-    project_id: cfg.project,
-    id: c.id,
     ended_at: iso(c.endedAt ?? c.startedAt),
     output: cfg.captureContent ? truncate(c.output ?? null, cfg.maxFieldChars) : null,
     summary: c.summary ?? {},
   };
-  if (c.exception) end.exception = String(c.exception).slice(0, 4000);
-  return [
-    { mode: 'start', req: { start } },
-    { mode: 'end', req: { end } },
-  ];
+  if (c.sessionId) span.session_id = c.sessionId;
+  if (c.turnId) span.turn_id = c.turnId;
+  if (c.error) span.error = String(c.error).slice(0, 4000);
+  return [{ span }];
 }
 
 /** `summary.usage` for one LLM request. */
@@ -226,7 +222,7 @@ export function chatOutput(model, content, finishReason) {
 // ---------------------------------------------------------------- sending
 
 /**
- * POST batch items to /call/upsert_batch (in chunks) with a timeout.
+ * POST span items to /api/v1/spans/batch (in chunks) with a timeout.
  * Throws on a network error or a non-2xx status.
  */
 export async function sendItems(cfg, items, { fetchImpl = globalThis.fetch, timeoutMs } = {}) {
@@ -235,10 +231,10 @@ export async function sendItems(cfg, items, { fetchImpl = globalThis.fetch, time
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
   for (let i = 0; i < items.length; i += 200) {
     const chunk = items.slice(i, i + 200);
-    const res = await fetchImpl(`${cfg.serverUrl}/call/upsert_batch`, {
+    const res = await fetchImpl(`${cfg.serverUrl}/api/v1/spans/batch`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ batch: chunk }),
+      body: JSON.stringify({ project_id: cfg.project, items: chunk }),
       signal: AbortSignal.timeout(timeoutMs ?? cfg.timeoutMs),
     });
     if (!res.ok) {

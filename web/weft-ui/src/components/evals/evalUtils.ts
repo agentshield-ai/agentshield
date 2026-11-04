@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { isRef, parseRef } from '../../api/refs'
-import type { Any, Call, Operation } from '../../api/types'
+import type { Any, Span, Operation } from '../../api/types'
 import { and, contains, toQuery } from '../../lib/query'
 
 export const EVAL_OP = 'Evaluation.evaluate'
@@ -60,7 +60,7 @@ export interface EvalRunInfo {
   summary: Any
 }
 
-export function evalRunInfo(c: Call): EvalRunInfo {
+export function evalRunInfo(c: Span): EvalRunInfo {
   const self = c.inputs?.self
   const model = c.inputs?.model
   const evalRef = typeof self === 'string' && isRef(self) ? self : null
@@ -89,9 +89,9 @@ export function useEvalRuns(
     queryKey: ['eval-runs', projectId, opts.evalName ?? null, opts.modelName ?? null, opts.limit ?? 200],
     queryFn: () =>
       api
-        .callsQuery({
+        .spansQuery({
           project_id: projectId,
-          filter: { op_names: [EVAL_OP] },
+          filter: { names: [EVAL_OP] },
           query: toQuery(q as Operation | null),
           sort_by: [{ field: 'started_at', direction: 'desc' }],
           limit: opts.limit ?? 200,
@@ -99,7 +99,7 @@ export function useEvalRuns(
         })
         .then((r) =>
           // Guard against substring over-matching (e.g. "qa:" inside "my-qa:").
-          r.calls.filter((c) => {
+          r.items.filter((c) => {
             const i = evalRunInfo(c)
             return (!opts.evalName || i.evalName === opts.evalName) && (!opts.modelName || i.modelName === opts.modelName)
           }),
@@ -118,10 +118,10 @@ export function useDatasetSizes(evalRefs: string[]) {
     staleTime: 60_000,
     queryFn: async () => {
       const out: Record<string, number | null> = {}
-      const evals = await api.refsReadBatch(refs)
-      const dsRefs = evals.vals.map((v) => (typeof v?.dataset === 'string' ? v.dataset : null))
+      const evals = await api.refsRead(refs)
+      const dsRefs = evals.items.map((v) => (typeof v?.dataset === 'string' ? v.dataset : null))
       const uniqDs = [...new Set(dsRefs.filter(Boolean) as string[])]
-      const dsVals = uniqDs.length ? (await api.refsReadBatch(uniqDs)).vals : []
+      const dsVals = uniqDs.length ? (await api.refsRead(uniqDs)).items : []
       const sizeByDs: Record<string, number | null> = {}
       await Promise.all(
         uniqDs.map(async (d, i) => {
@@ -129,7 +129,7 @@ export function useDatasetSizes(evalRefs: string[]) {
           const p = typeof rows === 'string' ? parseRef(rows) : null
           if (!p) return (sizeByDs[d] = Array.isArray(rows) ? rows.length : null)
           try {
-            sizeByDs[d] = (await api.tableQueryStats(p.projectId, p.name)).count
+            sizeByDs[d] = await api.tableCount(p.projectId, p.name)
           } catch {
             sizeByDs[d] = null
           }

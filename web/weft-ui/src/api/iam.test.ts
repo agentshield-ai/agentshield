@@ -11,7 +11,7 @@ describe('CSRF helpers', () => {
   })
   it('adds the header only to same-origin writes', () => {
     const o = 'https://weft.example.com'
-    expect(needsCsrf('POST', '/calls/query', o)).toBe(true)
+    expect(needsCsrf('POST', '/api/v1/spans/query', o)).toBe(true)
     expect(needsCsrf('delete', 'https://weft.example.com/x', o)).toBe(true)
     expect(needsCsrf('GET', '/projects', o)).toBe(false)
     expect(needsCsrf(undefined, '/projects', o)).toBe(false)

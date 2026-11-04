@@ -3,14 +3,15 @@
 `weft.mjs` is the dependency-free core shared by the Weft agent harness plugins
 ([Claude Code](../weft-claude-code), [Codex](../weft-codex),
 [OpenClaw](../weft-openclaw), [Pi](../weft-pi)): configuration (`WEFT_SERVER_URL`,
-`WEFT_API_KEY`, `WEFT_PROJECT`, ...), stable call ids, the call shapes the
-agents index understands (`invoke_agent` turns, `chat` LLM calls,
-`execute_tool` tools, conversation = thread id), truncation and the
-`/call/upsert_batch` sender with a timeout.
+`WEFT_API_KEY`, `WEFT_PROJECT`, ...), stable span ids, the span shapes the
+agents index understands (`invoke_agent` turns, `chat` LLM spans,
+`execute_tool` tools, conversation = the span's `session_id`), truncation and
+the sender, which posts finished spans to Weft's `POST /api/v1/spans/batch`
+([API.md](../../docs/weft/API.md#spans)) with a timeout.
 
 **Correlation with AgentShield** ([DESIGN.md](../../docs/weft/DESIGN.md) §5.3).
 Every plugin records the harness session id as `gen_ai.conversation.id` (and
-`thread_id`) and the harness tool-use id as `gen_ai.tool.call.id` on tool
+the span's `session_id`) and the harness tool-use id as `gen_ai.tool.call.id` on tool
 spans, exactly the values the AgentShield plugin of the same harness sends as
 `session_id` and `tool_call_id`: Claude Code's `session_id` / `tool_use_id`
 (sub-agent tools included: they share the session id), the Codex session id

@@ -8,7 +8,7 @@ import weft
 client = weft.init("feedback-demo")
 
 
-@weft.op
+@weft.trace
 def answer(question: str) -> str:
     return "42"
 
@@ -27,8 +27,8 @@ if __name__ == "__main__":
     client.add_cost("my-finetune", prompt_token_cost=2e-6, completion_token_cost=8e-6)
 
     # Calls can be filtered by feedback fields with the query language.
-    liked = client.get_calls(
+    liked = client.spans(
         query={"$eq": [{"$getField": "feedback.weft.reaction.emoji"}, {"$literal": "👍"}]},
         include_feedback=True,
     )
-    print("liked calls:", [c.display_name or c.op_base_name for c in liked])
+    print("liked calls:", [c.display_name or c.base_name for c in liked])

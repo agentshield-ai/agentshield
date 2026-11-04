@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
 import { objectRef, parseRef } from '../../api/refs'
-import type { Any, ObjSchema } from '../../api/types'
+import type { Any, WeftObject } from '../../api/types'
 import { CopyButton, Empty, ErrorBox, Loading, Section, Spinner, Tabs } from '../../components/common'
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock, ValueView } from '../../components/ValueView'
@@ -36,7 +36,7 @@ import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtDate, fmtRelative, fmtScore, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
 import {
-  callUrl,
+  spanUrl,
   compareEvaluationsUrl,
   leaderboardUrl,
   monitorUrl,
@@ -56,8 +56,8 @@ export function ObjectVersionPage() {
   const [tab, setTab] = useState<Tab>('overview')
   const [editing, setEditing] = useState(false)
   const obj = useQuery({
-    queryKey: ['obj', projectId, objectId, digest],
-    queryFn: () => api.objRead(projectId, objectId, digest).then((r) => r.obj),
+    queryKey: ['object', projectId, objectId, digest],
+    queryFn: () => api.objectGet(projectId, objectId, digest),
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 1,
   })
   const versions = useObjectVersions(projectId, objectId)
@@ -87,13 +87,13 @@ export function ObjectVersionPage() {
   const o = obj.data
   const kind = kindOf(o)
   const ref = refOf(o)
-  const prev = versions.data?.find((v) => v.version_index === o.version_index - 1)
+  const prev = versions.data?.find((v) => v.version === o.version - 1)
   const onPublished = (c: Created) => {
     setEditing(false)
     nav(objectUrl(projectId, objectId, c.digest))
   }
   const editable = isPrompt(o) || isLLMModel(o) || isServerScorer(o)
-  const useKind = kind === 'datasets' ? 'dataset' : kind === 'models' ? 'model' : kind === 'prompts' ? 'prompt' : kind === 'ops' ? 'op' : 'other'
+  const useKind = kind === 'datasets' ? 'dataset' : kind === 'models' ? 'model' : kind === 'prompts' ? 'prompt' : kind === 'ops' ? 'function' : 'other'
 
   return (
     <div className="page">
@@ -102,13 +102,13 @@ export function ObjectVersionPage() {
         <span>/</span>
         <Link to={objectVersionsUrl(projectId, objectId)}>{objectId}</Link>
         <span>/</span>
-        <span>v{o.version_index}</span>
+        <span>v{o.version}</span>
       </div>
       <div className="page-header">
         <h1 className="mono truncate" style={{ maxWidth: '100%' }}>
           {objectId}
         </h1>
-        <span className="badge accent">v{o.version_index}</span>
+        <span className="badge accent">v{o.version}</span>
         <span className="badge">{objClass(o)}</span>
         {o.is_latest && <span className="badge success">latest</span>}
         <span className="spacer" />
@@ -121,14 +121,14 @@ export function ObjectVersionPage() {
         >
           {(versions.data ?? [o]).map((v) => (
             <option key={v.digest} value={v.digest}>
-              v{v.version_index} · {fmtRelative(v.created_at)}
+              v{v.version} · {fmtRelative(v.created_at)}
               {v.aliases.filter((a) => a !== 'latest').length ? ` · ${v.aliases.filter((a) => a !== 'latest').join(', ')}` : ''}
             </option>
           ))}
         </select>
         {prev && (
           <Link className="btn" to={objectDiffUrl(projectId, objectId, prev.digest, o.digest)}>
-            Diff vs v{prev.version_index}
+            Diff vs v{prev.version}
           </Link>
         )}
         {editable && (
@@ -183,10 +183,10 @@ export function ObjectVersionPage() {
       {tab === 'overview' && <ClassView o={o} projectId={projectId} onPublished={onPublished} />}
       {tab === 'use' && (
         <Section title="Use this object">
-          <UsePanel refUri={ref} name={objectId} version={`v${o.version_index}`} kind={useKind} />
+          <UsePanel refUri={ref} name={objectId} version={`v${o.version}`} kind={useKind} />
         </Section>
       )}
-      {tab === 'json' && <JsonBlock value={o.val} />}
+      {tab === 'json' && <JsonBlock value={o.value} />}
 
       {editing && isPrompt(o) && <PromptFormModal projectId={projectId} initial={o} onClose={() => setEditing(false)} onCreated={onPublished} />}
       {editing && isLLMModel(o) && <ModelFormModal projectId={projectId} initial={o} onClose={() => setEditing(false)} onCreated={onPublished} />}
@@ -195,8 +195,8 @@ export function ObjectVersionPage() {
   )
 }
 
-function ClassView({ o, projectId, onPublished }: { o: ObjSchema; projectId: string; onPublished: (c: Created) => void }) {
-  if (o.kind === 'op') return <OpView o={o} projectId={projectId} />
+function ClassView({ o, projectId, onPublished }: { o: WeftObject; projectId: string; onPublished: (c: Created) => void }) {
+  if (o.kind === 'function') return <OpView o={o} projectId={projectId} />
   if (isDataset(o)) return <DatasetView o={o} projectId={projectId} onPublished={onPublished} />
   if (isPrompt(o)) return <PromptView o={o} projectId={projectId} />
   if (isEvaluation(o)) return <EvaluationView o={o} projectId={projectId} />
@@ -205,14 +205,14 @@ function ClassView({ o, projectId, onPublished }: { o: ObjSchema; projectId: str
   if (isScorer(o)) return <ScorerView o={o} projectId={projectId} />
   const cls = objClass(o)
   const link =
-    cls === 'Leaderboard' || o.base_object_class === 'Leaderboard'
-      ? { to: leaderboardUrl(projectId, o.object_id), label: 'Open leaderboard' }
-      : cls === 'Monitor' || o.base_object_class === 'Monitor'
-        ? { to: monitorUrl(projectId, o.object_id), label: 'Open monitor' }
+    cls === 'Leaderboard' || o.kind === 'leaderboard'
+      ? { to: leaderboardUrl(projectId, o.name), label: 'Open leaderboard' }
+      : cls === 'Monitor' || o.kind === 'monitor'
+        ? { to: monitorUrl(projectId, o.name), label: 'Open monitor' }
         : null
   return (
     <Section title="Value" actions={link && <Link className="btn sm" to={link.to}>{link.label}</Link>}>
-      <ValueView value={o.val} projectId={projectId} />
+      <ValueView value={o.value} projectId={projectId} />
     </Section>
   )
 }
@@ -224,39 +224,39 @@ function Description({ val }: { val: Any }) {
 
 // ------------------------------------------------------------------ dataset
 
-function DatasetView({ o, projectId, onPublished }: { o: ObjSchema; projectId: string; onPublished: (c: Created) => void }) {
+function DatasetView({ o, projectId, onPublished }: { o: WeftObject; projectId: string; onPublished: (c: Created) => void }) {
   return (
     <div className="col" style={{ gap: 12 }}>
-      <Description val={o.val} />
+      <Description val={o.value} />
       <DatasetRowsView projectId={projectId} obj={o} onPublished={onPublished} />
-      <DatasetSources projectId={projectId} objectId={o.object_id} />
+      <DatasetSources projectId={projectId} objectId={o.name} />
     </div>
   )
 }
 
 // ------------------------------------------------------------------ op
 
-function OpView({ o, projectId }: { o: ObjSchema; projectId: string }) {
+function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const [allVersions, setAllVersions] = useState(false)
-  const ref = objectRef(projectId, o.object_id, o.digest, 'op')
+  const ref = objectRef(projectId, o.name, o.digest, 'function')
   const calls = useQuery({
-    queryKey: ['op-calls', projectId, o.object_id, allVersions ? '*' : o.digest],
+    queryKey: ['function-spans', projectId, o.name, allVersions ? '*' : o.digest],
     queryFn: () =>
       api
-        .callsQuery({
+        .spansQuery({
           project_id: projectId,
-          filter: { op_names: [allVersions ? `weft:///${projectId}/op/${o.object_id}:*` : ref] },
+          filter: { names: [allVersions ? `weft:///${projectId}/function/${o.name}:*` : ref] },
           sort_by: [{ field: 'started_at', direction: 'desc' }],
           limit: 50,
         })
-        .then((r) => r.calls),
+        .then((r) => r.items),
   })
-  const v = o.val ?? {}
+  const v = o.value ?? {}
   // Some ops keep their source in a file (files["obj.py"]) instead of val.code.
   const fileDigest: string | undefined = !v.code && v.files && typeof v.files === 'object' ? (v.files['obj.py'] ?? Object.values(v.files)[0]) : undefined
   const fileCode = useQuery({
     queryKey: ['op-file', projectId, fileDigest],
-    queryFn: () => api.fileContentText(projectId, fileDigest!),
+    queryFn: () => api.fileText(projectId, fileDigest!),
     enabled: !!fileDigest,
     staleTime: Infinity,
   })
@@ -270,20 +270,20 @@ function OpView({ o, projectId }: { o: ObjSchema; projectId: string }) {
           language={v.language ?? 'python'}
           title={
             <span className="mono">
-              {v.name ?? o.object_id}
+              {v.name ?? o.name}
               {v.signature ?? ''}
             </span>
           }
           maxHeight={560}
         />
       ) : (
-        <Section title="Op">
-          <div className="faint">No source code was captured for this op.</div>
+        <Section title="Function">
+          <div className="faint">No source code was captured for this function.</div>
           <ValueView value={v} projectId={projectId} />
         </Section>
       )}
       <Section
-        title="Recent calls"
+        title="Recent spans"
         actions={
           <label className="checkbox small">
             <input type="checkbox" checked={allVersions} onChange={(e) => setAllVersions(e.target.checked)} /> All versions
@@ -305,8 +305,8 @@ function OpView({ o, projectId }: { o: ObjSchema; projectId: string }) {
 
 // ------------------------------------------------------------------ prompt
 
-function PromptView({ o, projectId }: { o: ObjSchema; projectId: string }) {
-  const v = o.val ?? {}
+function PromptView({ o, projectId }: { o: WeftObject; projectId: string }) {
+  const v = o.value ?? {}
   const messages = Array.isArray(v.messages) ? v.messages : null
   const texts: string[] = messages ? messages.map((m: Any) => (typeof m.content === 'string' ? m.content : '')) : [String(v.content ?? '')]
   const ref = refOf(o)
@@ -342,10 +342,10 @@ function PromptView({ o, projectId }: { o: ObjSchema; projectId: string }) {
 
 // ------------------------------------------------------------------ evaluation
 
-function EvaluationView({ o, projectId }: { o: ObjSchema; projectId: string }) {
+function EvaluationView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const nav = useNavigate()
-  const v = o.val ?? {}
-  const runs = useEvalRuns(projectId, { evalName: o.object_id, limit: 100 })
+  const v = o.value ?? {}
+  const runs = useEvalRuns(projectId, { evalName: o.name, limit: 100 })
   const runIds = useMemo(() => (runs.data ?? []).map((c) => c.id), [runs.data])
   const agentRuns = useAgentEvalRuns(projectId, runIds)
   const [sel, setSel] = useState<string[]>([])
@@ -396,9 +396,9 @@ function EvaluationView({ o, projectId }: { o: ObjSchema; projectId: string }) {
 
 // ------------------------------------------------------------------ models
 
-function ModelRuns({ o, projectId }: { o: ObjSchema; projectId: string }) {
+function ModelRuns({ o, projectId }: { o: WeftObject; projectId: string }) {
   const nav = useNavigate()
-  const runs = useEvalRuns(projectId, { modelName: o.object_id, limit: 50 })
+  const runs = useEvalRuns(projectId, { modelName: o.name, limit: 50 })
   const runIds = useMemo(() => (runs.data ?? []).map((c) => c.id), [runs.data])
   const agentRuns = useAgentEvalRuns(projectId, runIds)
   const [sel, setSel] = useState<string[]>([])
@@ -443,8 +443,8 @@ function KV({ items }: { items: [string, ReactNode][] }) {
   )
 }
 
-function LLMModelView({ o, projectId }: { o: ObjSchema; projectId: string }) {
-  const v = o.val ?? {}
+function LLMModelView({ o, projectId }: { o: WeftObject; projectId: string }) {
+  const v = o.value ?? {}
   const p = v.default_params ?? {}
   const msgs = Array.isArray(p.messages_template) ? p.messages_template : []
   const { messages_template: _m, ...otherParams } = p
@@ -475,11 +475,11 @@ function LLMModelView({ o, projectId }: { o: ObjSchema; projectId: string }) {
   )
 }
 
-function GenericModelView({ o, projectId }: { o: ObjSchema; projectId: string }) {
+function GenericModelView({ o, projectId }: { o: WeftObject; projectId: string }) {
   return (
     <div className="col" style={{ gap: 16 }}>
       <Section title="Attributes">
-        <ValueView value={o.val} projectId={projectId} />
+        <ValueView value={o.value} projectId={projectId} />
       </Section>
       <ModelRuns o={o} projectId={projectId} />
     </div>
@@ -488,27 +488,27 @@ function GenericModelView({ o, projectId }: { o: ObjSchema; projectId: string })
 
 // ------------------------------------------------------------------ scorers
 
-function ScorerView({ o, projectId }: { o: ObjSchema; projectId: string }) {
-  const v = o.val ?? {}
+function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
+  const v = o.value ?? {}
   const cls = valClass(v)
   const feedback = useQuery({
-    queryKey: ['scorer-feedback', projectId, o.object_id],
+    queryKey: ['scorer-feedback', projectId, o.name],
     queryFn: () =>
       api
         .feedbackQuery({
           project_id: projectId,
-          query: toQuery(contains('runnable_ref', objectRefPrefix(projectId, o.object_id), false)),
+          query: toQuery(contains('runnable_ref', objectRefPrefix(projectId, o.name), false)),
           sort_by: [{ field: 'created_at', direction: 'desc' }],
           limit: 30,
         })
-        .then((r) => r.result),
+        .then((r) => r.items),
   })
   const runs = useQuery({
-    queryKey: ['scorer-calls', projectId, o.object_id],
+    queryKey: ['scorer-calls', projectId, o.name],
     queryFn: () =>
       api
-        .callsQuery({ project_id: projectId, filter: { op_names: [`${o.object_id}.score`] }, sort_by: [{ field: 'started_at', direction: 'desc' }], limit: 20 })
-        .then((r) => r.calls),
+        .spansQuery({ project_id: projectId, filter: { names: [`${o.name}.score`] }, sort_by: [{ field: 'started_at', direction: 'desc' }], limit: 20 })
+        .then((r) => r.items),
   })
   return (
     <div className="col" style={{ gap: 16 }}>
@@ -553,7 +553,7 @@ function ScorerView({ o, projectId }: { o: ObjSchema; projectId: string }) {
                       <td className="muted" title={fmtDate(f.created_at)}>
                         {fmtRelative(f.created_at)}
                       </td>
-                      <td>{p?.kind === 'call' ? <Link to={callUrl(projectId, p.name)} className="mono">{p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
+                      <td>{p?.kind === 'span' ? <Link to={spanUrl(projectId, p.name)} className="mono">{p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
                       <td>
                         <span className="cell-preview mono small">{preview(f.payload?.output ?? f.payload, 160)}</span>
                       </td>
@@ -566,7 +566,7 @@ function ScorerView({ o, projectId }: { o: ObjSchema; projectId: string }) {
         </Section>
       )}
       {!!runs.data?.length && (
-        <Section title="Recent scorer calls">
+        <Section title="Recent scorer spans">
           <CallsMiniTable projectId={projectId} calls={runs.data} />
         </Section>
       )}

@@ -17,7 +17,7 @@
 // session is a Weft session of its own (nested in the parent's trace), and
 // each tool span carries the session id of the tool call's own context.
 
-import { callItems, chatOutput, iso, newId, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
+import { spanItems, chatOutput, iso, newId, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
 
 export const PLUGIN = 'weft-openclaw';
 export const PLUGIN_VERSION = '0.1.0';
@@ -265,20 +265,20 @@ export class WeftOpenClawTracer {
     for (const r of [...this.runs.values()]) if (r.session.sessionKey === sub.childSessionKey) this.finishRun(r, { reason: 'subagent ended' });
     const ok = !event.outcome || event.outcome === 'ok';
     this.enqueue(
-      callItems(this.cfg, {
+      spanItems(this.cfg, {
         id: sub.id,
         traceId: sub.traceId,
         parentId: sub.parentId,
-        threadId: sub.conversationId,
+        sessionId: sub.conversationId,
         turnId: sub.turnId,
-        opName: 'openclaw.subagent',
+        name: 'openclaw.subagent',
         kind: 'agent',
         displayName: `invoke_agent ${sub.name}`,
         startedAt: sub.startedAt,
         endedAt: event.endedAt ?? this.now(),
         inputs: { label: sub.label, mode: sub.mode, child_session_key: sub.childSessionKey },
         output: { outcome: event.outcome ?? 'ok', reason: event.reason },
-        exception: ok ? undefined : errText(event.error) ?? `subagent ${event.outcome}`,
+        error: ok ? undefined : errText(event.error) ?? `subagent ${event.outcome}`,
         genai: { 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': sub.name, 'gen_ai.request.model': sub.model, 'gen_ai.provider.name': sub.provider, 'gen_ai.conversation.id': sub.conversationId },
         pluginVersion: PLUGIN_VERSION,
       }),
@@ -313,25 +313,25 @@ export class WeftOpenClawTracer {
     const cfg = this.cfg;
     const endedAt = this.now();
     const agentName = cfg.agentName || run.agentId || 'openclaw';
-    const base = { traceId: run.traceId, threadId: run.conversationId, turnId: run.turnId, pluginVersion: PLUGIN_VERSION };
+    const base = { traceId: run.traceId, sessionId: run.conversationId, turnId: run.turnId, pluginVersion: PLUGIN_VERSION };
     const conv = { 'gen_ai.conversation.id': run.conversationId, 'gen_ai.conversation.name': run.session.firstPrompt };
     const items = [];
     const lastOut = run.llmOutputs[run.llmOutputs.length - 1]?.event;
     const finalText = lastAssistantText(run.endMessages) || (lastOut?.assistantTexts ?? []).join('\n');
     const exception = run.error ? errText(run.error) : run.success === false ? 'agent run failed' : undefined;
     items.push(
-      ...callItems(cfg, {
+      ...spanItems(cfg, {
         ...base,
         id: run.id,
         parentId: run.parentId,
-        opName: 'openclaw.agent_run',
+        name: 'openclaw.agent_run',
         kind: 'agent',
         displayName: `invoke_agent ${agentName}`,
         startedAt: run.startedAt,
         endedAt,
         inputs: { messages: [{ role: 'user', content: run.prompt ?? '' }] },
         output: finalText ? { messages: [{ role: 'assistant', content: finalText }] } : null,
-        exception,
+        error: exception,
         genai: {
           ...conv,
           'gen_ai.operation.name': 'invoke_agent',
@@ -373,11 +373,11 @@ export class WeftOpenClawTracer {
       const text = (l.output?.assistantTexts ?? []).join('\n');
       const content = l.output?.lastAssistant?.content ?? text;
       items.push(
-        ...callItems(cfg, {
+        ...spanItems(cfg, {
           ...base,
           id: stableId('openclaw', 'llm', run.id, l.key),
           parentId: run.id,
-          opName: 'openclaw.llm',
+          name: 'openclaw.llm',
           kind: 'llm',
           displayName: text ? shortText(text) : `chat ${l.model ?? ''}`.trim(),
           startedAt: l.startedAt,
@@ -385,7 +385,7 @@ export class WeftOpenClawTracer {
           inputs: { model: l.model, ...(messages.length ? { messages } : {}), ...(l.input?.tools ? { tools: l.input.tools.length } : {}) },
           output: l.output ? chatOutput(l.model, content, null) : null,
           summary: usageSummary(l.model, usage),
-          exception: l.error,
+          error: l.error,
           genai: { ...conv, 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': l.model, 'gen_ai.provider.name': l.provider },
         }),
       );
@@ -396,19 +396,19 @@ export class WeftOpenClawTracer {
       // the session id AgentShield sent for this tool call (normally the run's)
       const sid = t.sessionId ?? run.conversationId;
       items.push(
-        ...callItems(cfg, {
+        ...spanItems(cfg, {
           ...base,
-          threadId: sid,
+          sessionId: sid,
           id: stableId('openclaw', 'tool', run.id, t.callId ?? i),
           parentId: run.id,
-          opName: `openclaw.tool.${t.name}`,
+          name: `openclaw.tool.${t.name}`,
           kind: 'tool',
           displayName: toolDisplay(t.name, params),
           startedAt: t.startedAt,
           endedAt: t.endedAt ?? endedAt,
           inputs: params,
           output: t.result ?? null,
-          exception: t.error ? errText(t.error) : t.endedAt ? undefined : 'tool did not finish before the run ended',
+          error: t.error ? errText(t.error) : t.endedAt ? undefined : 'tool did not finish before the run ended',
           genai: { ...conv, 'gen_ai.conversation.id': sid, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.callId },
         }),
       );

@@ -24,7 +24,7 @@ function parseProjectInput(s: string): { entity: string; project: string } | nul
 export function ProjectsPage() {
   const navigate = useNavigate()
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.projects })
-  const info = useQuery({ queryKey: ['server-info'], queryFn: api.serverInfo, staleTime: 60_000 })
+  const info = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const [name, setName] = useState('')
   const [filter, setFilter] = useState('')
   const parsed = parseProjectInput(name)

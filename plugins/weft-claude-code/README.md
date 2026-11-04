@@ -29,11 +29,11 @@ This is separate from the AgentShield security plugin in
   no network call in the hook.
 - On `Stop`, `SessionEnd`, or a new prompt after an unfinished turn, the hook
   starts a detached worker (`weft-hook.mjs --flush <session>`). The worker
-  reads the session log and the transcript, builds the calls and posts them to
-  `/call/upsert_batch` with a short timeout (`WEFT_HOOK_TIMEOUT_MS`, 2 s).
-- Call ids are derived from the session, prompt and tool-use ids. If the
+  reads the session log and the transcript, builds the spans and posts them to
+  `/api/v1/spans/batch` with a short timeout (`WEFT_HOOK_TIMEOUT_MS`, 2 s).
+- Span ids are derived from the session, prompt and tool-use ids. If the
   server is down, the worker logs the error and the next flush resends the
-  same calls; nothing is duplicated.
+  same spans; nothing is duplicated.
 - Failures are logged to `~/.weft-claude-code/logs/` and otherwise ignored.
 
 Turns interrupted without a `Stop` (Esc, a new prompt) are closed when the

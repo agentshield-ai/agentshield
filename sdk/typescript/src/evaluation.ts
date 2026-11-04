@@ -149,7 +149,7 @@ export class Evaluation extends WeftObject {
   async evaluate({ model }: { model: ModelFn }): Promise<Record<string, unknown>> {
     const m = isOp(model) ? model : op(model);
     const client = tracingClient();
-    if (client) await client.publish(this, this.name ?? 'Evaluation');
+    if (client) await client.save(this, this.name ?? 'Evaluation');
     return evaluateOp(this, m);
   }
 }
@@ -194,7 +194,7 @@ function linkedCalls(link: unknown): Linked {
     } else if (typeof it === 'string') {
       if (isRefUri(it)) {
         const r = Ref.parse(it);
-        if (r.kind !== 'call') throw new Error(`${it} is not a call ref`);
+        if (r.kind !== 'span') throw new Error(`${it} is not a span ref`);
         out.calls.push({ call_id: r.name });
       } else out.calls.push({ call_id: it });
       out.callObjects.push(it);

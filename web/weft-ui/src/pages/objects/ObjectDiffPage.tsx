@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { Any, ObjSchema, TableRow } from '../../api/types'
+import type { Any, WeftObject, TableRow } from '../../api/types'
 import { Empty, ErrorBox, Loading, Section } from '../../components/common'
 import { Stat } from '../../components/objects/bits'
 import { columnsOf } from '../../components/objects/csv'
@@ -24,8 +24,8 @@ export function ObjectDiffPage() {
   const [view, setView] = useState<View>('split')
   const versions = useObjectVersions(projectId, objectId)
   const read = (d: string) => ({
-    queryKey: ['obj', projectId, objectId, d],
-    queryFn: () => api.objRead(projectId, objectId, d).then((r) => r.obj),
+    queryKey: ['object', projectId, objectId, d],
+    queryFn: () => api.objectGet(projectId, objectId, d),
     enabled: !!d,
   })
   const qa = useQuery(read(a))
@@ -36,17 +36,17 @@ export function ObjectDiffPage() {
     setParams(p, { replace: true })
   }
 
-  const changes = useMemo(() => (qa.data && qb.data ? pathDiff(qa.data.val, qb.data.val) : []), [qa.data, qb.data])
-  const left = useMemo(() => (qa.data ? stableJson(qa.data.val) : ''), [qa.data])
-  const right = useMemo(() => (qb.data ? stableJson(qb.data.val) : ''), [qb.data])
+  const changes = useMemo(() => (qa.data && qb.data ? pathDiff(qa.data.value, qb.data.value) : []), [qa.data, qb.data])
+  const left = useMemo(() => (qa.data ? stableJson(qa.data.value) : ''), [qa.data])
+  const right = useMemo(() => (qb.data ? stableJson(qb.data.value) : ''), [qb.data])
   const kind = qb.data ? kindOf(qb.data) : 'all'
 
-  const picker = (side: 'a' | 'b', cur: ObjSchema | undefined) => (
+  const picker = (side: 'a' | 'b', cur: WeftObject | undefined) => (
     <select className="input" value={cur?.digest ?? (side === 'a' ? a : b)} onChange={(e) => setSide(side, e.target.value)} style={{ maxWidth: 240 }}>
       {!cur && <option value={side === 'a' ? a : b}>{side === 'a' ? a || 'choose…' : b}</option>}
       {(versions.data ?? []).map((v) => (
         <option key={v.digest} value={v.digest}>
-          v{v.version_index} · {v.digest.slice(0, 8)} · {fmtRelative(v.created_at)}
+          v{v.version} · {v.digest.slice(0, 8)} · {fmtRelative(v.created_at)}
         </option>
       ))}
     </select>
@@ -96,7 +96,7 @@ export function ObjectDiffPage() {
         <>
           <div className="row wrap small muted" style={{ gap: 16 }}>
             <span>
-              <Link to={objectUrl(projectId, objectId, qa.data.digest)}>v{qa.data.version_index}</Link> → <Link to={objectUrl(projectId, objectId, qb.data.digest)}>v{qb.data.version_index}</Link>
+              <Link to={objectUrl(projectId, objectId, qa.data.digest)}>v{qa.data.version}</Link> → <Link to={objectUrl(projectId, objectId, qb.data.digest)}>v{qb.data.version}</Link>
             </span>
             <span style={{ color: 'var(--success)' }}>+{changes.filter((c) => c.kind === 'added').length} added</span>
             <span style={{ color: 'var(--error)' }}>−{changes.filter((c) => c.kind === 'removed').length} removed</span>
@@ -130,9 +130,9 @@ export function ObjectDiffPage() {
   )
 }
 
-function DatasetRowDiff({ projectId, a, b }: { projectId: string; a: ObjSchema; b: ObjSchema }) {
-  const da = rowsDigest(a.val)
-  const db = rowsDigest(b.val)
+function DatasetRowDiff({ projectId, a, b }: { projectId: string; a: WeftObject; b: WeftObject }) {
+  const da = rowsDigest(a.value)
+  const db = rowsDigest(b.value)
   const [show, setShow] = useState<'added' | 'removed'>('added')
   const q = useQuery({
     queryKey: ['dataset-row-diff', projectId, da, db],
@@ -184,7 +184,7 @@ function DatasetRowDiff({ projectId, a, b }: { projectId: string; a: ObjSchema; 
 
 function RowsTable({ projectId, rows, tone }: { projectId: string; rows: TableRow[]; tone: 'added' | 'removed' }) {
   const shown = rows.slice(0, 200)
-  const cols = columnsOf(shown.map((r) => r.val))
+  const cols = columnsOf(shown.map((r) => r.value))
   if (!rows.length) return <div className="faint small">None.</div>
   const obj = (v: Any) => (v && typeof v === 'object' && !Array.isArray(v) ? v : { value: v })
   return (
@@ -201,10 +201,10 @@ function RowsTable({ projectId, rows, tone }: { projectId: string; rows: TableRo
         <tbody>
           {shown.map((r) => (
             <tr key={r.digest} style={{ background: tone === 'added' ? 'var(--success-bg)' : 'var(--error-bg)' }}>
-              <td className="num faint small">{r.original_index}</td>
+              <td className="num faint small">{r.index}</td>
               {cols.map((c) => (
                 <td key={c}>
-                  <CellValue v={obj(r.val)[c]} projectId={projectId} />
+                  <CellValue v={obj(r.value)[c]} projectId={projectId} />
                 </td>
               ))}
             </tr>

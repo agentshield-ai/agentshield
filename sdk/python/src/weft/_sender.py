@@ -1,8 +1,8 @@
 """Background batching sender.
 
-Call starts/ends are coalesced into ``/call/upsert_batch`` requests; other
-writes (op publishing, file uploads, feedback) are sent individually, in
-enqueue order. The queue is bounded; when it is full new items are dropped
+Span starts/ends are coalesced into ``POST /api/v1/spans/batch`` requests;
+other writes (function versions, file uploads, feedback) are sent
+individually, in enqueue order. The queue is bounded; when it is full new items are dropped
 with a warning. Network failures are retried with backoff and then dropped,
 so user code is never blocked or crashed by an unavailable server.
 """
@@ -23,6 +23,18 @@ from ._http import HTTPClient, WeftHTTPError
 logger = logging.getLogger("weft")
 
 Item = Tuple[str, Any, Optional[Callable[[Any], None]]]
+
+_SPAN_KINDS = ("span_start", "span_end")
+# Write-ahead logs of earlier versions name span items "call_start"/"call_end"
+# and use the earlier field names.
+_LEGACY_KINDS = {"call_start": "span_start", "call_end": "span_end"}
+_LEGACY_FIELDS = {"op_name": "name", "thread_id": "session_id", "exception": "error"}
+
+
+def _legacy_item(kind: str, payload: Any) -> Tuple[str, Any]:
+    if kind in _LEGACY_KINDS and isinstance(payload, dict):
+        return _LEGACY_KINDS[kind], {_LEGACY_FIELDS.get(k, k): v for k, v in payload.items()}
+    return kind, payload
 
 
 class Sender:
@@ -151,18 +163,18 @@ class Sender:
             self._thread.start()
 
     def _take(self) -> List[Item]:
-        """Take the next unit of work: a run of call items, or one other item."""
+        """Take the next unit of work: a run of span items, or one other item."""
         with self._cv:
             while not self._q and not self._stopped:
                 self._cv.wait(timeout=1.0)
             if not self._q:
                 return []
             first = self._q[0]
-            if first[0] not in ("call_start", "call_end"):
+            if first[0] not in _SPAN_KINDS:
                 self._q.popleft()
                 self._inflight += 1
                 return [first]
-        # brief pause lets call ends join their starts in the same batch
+        # brief pause lets span ends join their starts in the same batch
         if self.flush_interval:
             time.sleep(self.flush_interval)
         with self._cv:
@@ -170,7 +182,7 @@ class Sender:
             size = 0
             while self._q and len(items) < self.batch_size:
                 kind = self._q[0][0]
-                if kind not in ("call_start", "call_end"):
+                if kind not in _SPAN_KINDS:
                     break
                 est = _estimate(self._q[0][1])
                 if items and size + est > self.max_batch_bytes:
@@ -199,12 +211,12 @@ class Sender:
 
     def _send(self, items: List[Item]) -> None:
         kind = items[0][0]
-        if kind in ("call_start", "call_end"):
+        if kind in _SPAN_KINDS:
             batch = []
             for k, payload, _ in items:
-                mode = "start" if k == "call_start" else "end"
-                batch.append({"mode": mode, "req": {mode: payload}})
-            res = self._with_retries(lambda: self.http.post("/call/upsert_batch", {"batch": batch}), "call/upsert_batch")
+                batch.append({"start" if k == "span_start" else "end": payload})
+            body = {"items": batch}
+            res = self._with_retries(lambda: self.http.post("/api/v1/spans/batch", body), "spans/batch")
             if res is None and self._last_failure_retryable:
                 self._spill(items)
             for _, _, cb in items:
@@ -290,7 +302,7 @@ class WriteAheadLog:
             return kind, (d["path"], d["fields"], files)
         if kind == "post":
             return kind, (d["path"], d["body"])
-        return kind, d["payload"]
+        return _legacy_item(kind, d["payload"])
 
     def append(self, items: List[Any]) -> None:
         if not items:

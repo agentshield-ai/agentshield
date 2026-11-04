@@ -3,18 +3,18 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { parseRef, tableRef } from '../../api/refs'
-import type { Any, Call } from '../../api/types'
+import type { Any, Span } from '../../api/types'
 import { objectUrl } from '../../lib/urls'
 import { preview } from '../../lib/format'
 import { Modal, ErrorBox } from '../common'
 import { callToDatasetRow, slugify } from './callUtils'
 
 /** Create a Dataset from calls, or append them to an existing one. */
-export function AddToDatasetModal({ projectId, calls, onClose }: { projectId: string; calls: Call[]; onClose: () => void }) {
+export function AddToDatasetModal({ projectId, calls, onClose }: { projectId: string; calls: Span[]; onClose: () => void }) {
   const qc = useQueryClient()
   const datasets = useQuery({
-    queryKey: ['objs', projectId, 'Dataset', 'latest'],
-    queryFn: () => api.objsQuery({ project_id: projectId, filter: { base_object_classes: ['Dataset'], latest_only: true }, sort_by: [{ field: 'created_at', direction: 'desc' }], limit: 200 }),
+    queryKey: ['objects', projectId, 'Dataset', 'latest'],
+    queryFn: () => api.objectsQuery({ project_id: projectId, filter: { kinds: ['dataset'], latest_only: true }, sort_by: [{ field: 'created_at', direction: 'desc' }], limit: 200 }),
   })
   const [mode, setMode] = useState<'new' | 'existing'>('new')
   const [name, setName] = useState('')
@@ -37,12 +37,12 @@ export function AddToDatasetModal({ projectId, calls, onClose }: { projectId: st
           description: null,
           rows: tableRef(projectId, t.digest),
         }
-        const r = await api.objCreate(projectId, id, val, 'Dataset')
+        const r = await api.objectSave(projectId, id, val, 'Dataset')
         return { objectId: id, digest: r.digest, added: rows.length }
       }
       if (!existing) throw new Error('Choose a dataset')
-      const { obj } = await api.objRead(projectId, existing, 'latest')
-      const val: Any = { ...obj.val }
+      const obj = await api.objectGet(projectId, existing, 'latest')
+      const val: Any = { ...obj.value }
       const ref = typeof val.rows === 'string' ? parseRef(val.rows) : null
       let digest: string
       if (ref && ref.kind === 'table') {
@@ -53,11 +53,11 @@ export function AddToDatasetModal({ projectId, calls, onClose }: { projectId: st
         digest = (await api.tableCreate(projectId, [...prev, ...rows])).digest
       }
       val.rows = tableRef(projectId, digest)
-      const r = await api.objCreate(projectId, existing, val, 'Dataset')
+      const r = await api.objectSave(projectId, existing, val, 'Dataset')
       return { objectId: existing, digest: r.digest, added: rows.length }
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['objs', projectId] })
+      void qc.invalidateQueries({ queryKey: ['objects', projectId] })
     },
   })
 
@@ -100,8 +100,8 @@ export function AddToDatasetModal({ projectId, calls, onClose }: { projectId: st
               <input type="radio" checked={mode === 'new'} onChange={() => setMode('new')} /> New dataset
             </label>
             <label className="checkbox">
-              <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} disabled={!datasets.data?.objs.length} /> Existing dataset
-              {datasets.data && !datasets.data.objs.length && <span className="faint small">(none yet)</span>}
+              <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} disabled={!datasets.data?.items.length} /> Existing dataset
+              {datasets.data && !datasets.data.items.length && <span className="faint small">(none yet)</span>}
             </label>
             <span className="grow" />
             <label className="checkbox">
@@ -119,9 +119,9 @@ export function AddToDatasetModal({ projectId, calls, onClose }: { projectId: st
               Dataset
               <select className="input" value={existing} onChange={(e) => setExisting(e.target.value)}>
                 <option value="">Choose…</option>
-                {datasets.data?.objs.map((o) => (
-                  <option key={o.object_id} value={o.object_id}>
-                    {o.object_id} (v{o.version_index})
+                {datasets.data?.items.map((o) => (
+                  <option key={o.name} value={o.name}>
+                    {o.name} (v{o.version})
                   </option>
                 ))}
               </select>

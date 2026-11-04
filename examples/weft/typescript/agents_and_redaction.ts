@@ -33,7 +33,7 @@ const client = await weft.init('ts-agents-redaction', {
 });
 
 // --- NER redaction: names are replaced before the call leaves the process ---------
-const greet = weft.op(function greet(message: string) {
+const greet = weft.trace(function greet(message: string) {
   return `Hello Ada Lovelace, your receipt went to ada@example.com`;
 });
 await greet('Ada Lovelace asked about her order');
@@ -87,12 +87,12 @@ rt.close();
 
 // --- Registry and records ---------------------------------------------------------
 const prompt = new weft.StringPrompt({ name: 'weather-prompt', content: 'You are a concise weather assistant. Question: {q}' });
-await weft.publish(prompt);
+await weft.save(prompt);
 console.log('registry:', await weft.linkPromptToRegistry(prompt, { targetPath: 'prompts-registry/weather', aliases: ['production'] }));
 console.log('production prompt:', (await client.getFromRegistry('prompts-registry/weather', 'production')).format({ q: 'Oslo?' }));
 
 await client.flush();
-for (const r of await client.getCallsRecords({ sortBy: [{ field: 'started_at', direction: 'asc' }] })) {
-  console.log(String(r.display_name ?? r.op_name).slice(0, 60), JSON.stringify(r.inputs).slice(0, 80));
+for (const r of await client.spanRecords({ sortBy: [{ field: 'started_at', direction: 'asc' }] })) {
+  console.log(String(r.display_name ?? r.name).slice(0, 60), JSON.stringify(r.inputs).slice(0, 80));
 }
 await weft.finish();

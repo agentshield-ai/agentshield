@@ -441,7 +441,7 @@ def start_agent_call(client: Any, operation_name: str, api_params: Dict[str, Any
         attrs["gen_ai.request.model"] = model
     inputs = agent_inputs(api_params)
     # A Bedrock session is a conversation: thread it unless the caller already did.
-    if session_id and _context.current_thread_context() is None and not getattr(_context.get_current_call(), "thread_id", None):
+    if session_id and _context.current_thread_context() is None and not getattr(_context.get_current_call(), "session_id", None):
         with _context.thread(str(session_id)):
             call = client.create_call(op, inputs, display_name=f"invoke_agent {name}", attributes=attrs)
     else:

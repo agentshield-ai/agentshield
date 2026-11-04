@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { Call, Feedback } from '../../api/types'
+import type { Span, Feedback } from '../../api/types'
 import { cleanAutomation, describeTrigger, emptyAutomation, validateAutomation } from '../automations/automationUtils'
 import { createSignal, planSignal, SIGNALS, uniqueId } from '../monitors/signals'
 import { buildExportRows, displayFieldValues, nextPendingIndex, progressCounts } from './queueUtils'
 
-const call = (id: string, inputs: Record<string, unknown>, output: unknown) => ({ id, inputs, output, op_name: 'answer' }) as unknown as Call
+const call = (id: string, inputs: Record<string, unknown>, output: unknown) => ({ id, inputs, output, name: 'answer' }) as unknown as Span
 const fb = (callId: string, type: string, value: unknown, at: string, user = 'alice'): Feedback => ({
   id: `${callId}-${type}-${at}`,
   project_id: 'e/p',
-  ref: `weft:///e/p/call/${callId}`,
+  ref: `weft:///e/p/span/${callId}`,
   feedback_type: type,
   payload: { value },
   creator: null,

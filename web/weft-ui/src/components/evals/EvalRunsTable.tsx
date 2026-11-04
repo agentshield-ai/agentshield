@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { Call } from '../../api/types'
+import type { Span } from '../../api/types'
 import { StatusBadge } from '../common'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
-import { callUrl, objectUrl } from '../../lib/urls'
+import { spanUrl, objectUrl } from '../../lib/urls'
 import { parseRef } from '../../api/refs'
 import { evalRunInfo, flattenScores, fmtMetric, sortMetricKeys, useDatasetSizes } from './evalUtils'
 import type { AgentEvalRun } from '../../api/agents'
@@ -30,7 +30,7 @@ export function EvalRunsTable({
   agentRuns,
 }: {
   projectId: string
-  calls: Call[]
+  calls: Span[]
   selected?: string[]
   onSelect?: (ids: string[]) => void
   hideEval?: boolean
@@ -98,7 +98,7 @@ export function EvalRunsTable({
         </thead>
         <tbody>
           {infos.map(({ c, i, m }) => (
-            <tr key={c.id} className={`clickable ${sel.includes(c.id) ? 'selected' : ''}`} onClick={() => nav(callUrl(projectId, c.id))}>
+            <tr key={c.id} className={`clickable ${sel.includes(c.id) ? 'selected' : ''}`} onClick={() => nav(spanUrl(projectId, c.id))}>
               {onSelect && (
                 <td onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={sel.includes(c.id)} onChange={() => toggle(c.id)} aria-label="Select run" />
@@ -151,8 +151,8 @@ export function EvalRunsTable({
   )
 }
 
-/** Generic compact list of calls (for "recent calls of this op", "used in calls"). */
-export function CallsMiniTable({ projectId, calls }: { projectId: string; calls: Call[] }) {
+/** Generic compact list of spans (for "recent spans of this function", "used in spans"). */
+export function CallsMiniTable({ projectId, calls }: { projectId: string; calls: Span[] }) {
   const nav = useNavigate()
   return (
     <div className="table-wrap">
@@ -160,7 +160,7 @@ export function CallsMiniTable({ projectId, calls }: { projectId: string; calls:
         <thead>
           <tr>
             <th>Status</th>
-            <th>Call</th>
+            <th>Span</th>
             <th>Started</th>
             <th className="num">Latency</th>
             <th>Inputs</th>
@@ -169,12 +169,12 @@ export function CallsMiniTable({ projectId, calls }: { projectId: string; calls:
         </thead>
         <tbody>
           {calls.map((c) => (
-            <tr key={c.id} className="clickable" onClick={() => nav(callUrl(projectId, c.id))}>
+            <tr key={c.id} className="clickable" onClick={() => nav(spanUrl(projectId, c.id))}>
               <td>
                 <StatusBadge status={callStatus(c)} />
               </td>
               <td>
-                <Link to={callUrl(projectId, c.id)} onClick={(e) => e.stopPropagation()} className="mono">
+                <Link to={spanUrl(projectId, c.id)} onClick={(e) => e.stopPropagation()} className="mono">
                   {c.display_name || c.id.slice(-8)}
                 </Link>
               </td>
@@ -186,7 +186,7 @@ export function CallsMiniTable({ projectId, calls }: { projectId: string; calls:
                 <span className="cell-preview mono small">{previewArgs(c.inputs)}</span>
               </td>
               <td>
-                <span className="cell-preview mono small">{c.exception ? <span style={{ color: 'var(--error)' }}>{c.exception}</span> : previewArgs(c.output)}</span>
+                <span className="cell-preview mono small">{c.error ? <span style={{ color: 'var(--error)' }}>{c.error}</span> : previewArgs(c.output)}</span>
               </td>
             </tr>
           ))}

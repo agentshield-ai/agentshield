@@ -25,7 +25,7 @@ hook** (fired when a turn finishes) starts a detached collector and exits at
 once, with no output and no network on Codex's path. The collector waits half
 a second for Codex to finish writing, reads the rollout from a per-session
 cursor, rebuilds the turns (timestamps from the rollout, so durations are
-real) and posts them to `/call/upsert_batch` with a short timeout. Call ids
+real) and posts them to `/api/v1/spans/batch` with a short timeout. Span ids
 are derived from the session and rollout positions; a failed send is retried
 by the next turn's run without duplicates. Errors go to
 `~/.weft-codex/logs/collector.log`.

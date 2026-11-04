@@ -9,7 +9,7 @@ import * as weft from '../../../sdk/typescript/dist/index.js';
 
 const client = await weft.init('ts-agent-conversation-demo');
 
-const lookupOrder = weft.op(
+const lookupOrder = weft.trace(
   function lookupOrder(orderId: number) {
     return { orderId, status: 'shipped', eta: 'Friday' };
   },
@@ -47,6 +47,6 @@ for (const turn of turns) {
 console.log('eval summary:', await ev.logSummary());
 
 const view = await new weft.SavedView({ label: 'Support tool calls (ts)' }).filterOp('lookupOrder').sortBy('started_at', 'desc').save();
-console.log('view', view.name, 'matches', (await view.getCalls()).length, 'calls');
+console.log('view', view.name, 'matches', (await view.spans()).length, 'spans');
 await client.flush();
 await weft.finish();

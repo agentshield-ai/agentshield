@@ -16,7 +16,7 @@ import * as weft from '../../../sdk/typescript/dist/index.js';
 const client = await weft.init('ts-agent-team-demo', { settings: { printCallLink: false } });
 const session = `trip-oslo-${randomUUID().slice(0, 6)}`;
 
-const webSearch = weft.op(
+const webSearch = weft.trace(
   function webSearch(_query: string) {
     return ['Capital of Norway', 'On the Oslofjord', 'Home of the Nobel Peace Prize'];
   },

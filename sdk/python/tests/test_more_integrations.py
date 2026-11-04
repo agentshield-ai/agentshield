@@ -57,7 +57,7 @@ def _chunks(model, usage_key="usage"):
 
 # ---------------------------------------------------------------- litellm
 def test_litellm(client, fake, monkeypatch):
-    @weft.op
+    @weft.trace
     def provider_sdk_call():
         return "nested"
 
@@ -341,13 +341,13 @@ def test_langchain_tracer(client, fake, fake_langchain):
     t = lc.WeftTracer()
     chain, llm, tool, retr, llm2 = (uuid.uuid4() for _ in range(5))
 
-    @weft.op
+    @weft.trace
     def helper():
         return "inside the tool"
 
-    @weft.op(name="openai.chat.completions.create")
+    @weft.trace(name="openai.chat.completions.create")
     def nested_provider_call():
-        weft.add_usage(weft.get_current_call(), "gpt-4o", 1, 1)
+        weft.add_usage(weft.get_current_span(), "gpt-4o", 1, 1)
 
     t.on_chain_start({"id": ["langchain", "RunnableSequence"]}, {"question": "hi"}, run_id=chain, tags=["t1"])
     t.on_retriever_start({"name": "VectorStore"}, "hi", run_id=retr, parent_run_id=chain)
@@ -365,7 +365,7 @@ def test_langchain_tracer(client, fake, fake_langchain):
     nested_provider_call()
     t.on_llm_end(result, run_id=llm2)
     t.on_chain_end({"answer": "hello"}, run_id=chain)
-    assert weft.get_current_call() is None
+    assert weft.get_current_span() is None
     client.flush()
     [root] = fake.calls_by_op("langchain.Chain.RunnableSequence")
     assert root["parent_id"] is None and root["output"] == {"answer": "hello"}
@@ -376,7 +376,7 @@ def test_langchain_tracer(client, fake, fake_langchain):
     assert llms[0]["summary"]["usage"] == {"gpt-4o-mini": {"requests": 1, "prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}}
     assert "usage" not in (llms[1].get("summary") or {})
     assert fake.calls_by_op("openai.chat.completions.create")[0]["parent_id"] == llms[1]["id"]
-    assert kids["langchain.Tool.search"]["exception"].startswith("ValueError: tool broke")
+    assert kids["langchain.Tool.search"]["error"].startswith("ValueError: tool broke")
     assert fake.calls_by_op("helper")[0]["parent_id"] == kids["langchain.Tool.search"]["id"]
     assert kids["langchain.Retriever.VectorStore"]["attributes"]["weft"]["span_kind"] == "retriever"
 
@@ -413,7 +413,7 @@ def test_openai_agents_processor(client, fake, monkeypatch):
     p.on_span_start(gen)
     p.on_span_end(gen)
     p.on_span_start(fn)
-    weft.op(lambda: 1, name="tool_impl")()  # nests under the function span
+    weft.trace(lambda: 1, name="tool_impl")()  # nests under the function span
     p.on_span_end(fn)
     p.on_span_start(bad)
     p.on_span_end(bad)
@@ -433,7 +433,7 @@ def test_openai_agents_processor(client, fake, monkeypatch):
     assert f["inputs"] == {"input": '{"id": 1}'} and f["output"] == "found" and f["attributes"]["weft"]["span_kind"] == "tool"
     assert fake.calls_by_op("tool_impl")[0]["parent_id"] == f["id"]
     [gr] = fake.calls_by_op("guardrail.pii")
-    assert gr["exception"].startswith("RuntimeError: Guardrail tripped") and gr["output"] == {"triggered": True}
+    assert gr["error"].startswith("RuntimeError: Guardrail tripped") and gr["output"] == {"triggered": True}
 
 
 # ---------------------------------------------------------------- dspy
@@ -472,4 +472,4 @@ def test_dspy_callback(client, fake, monkeypatch):
     [lm] = fake.calls_by_op("dspy.LM")
     [tl] = fake.calls_by_op("dspy.Tool.calc")
     assert lm["parent_id"] == m["id"] and lm["inputs"]["model"] == "openai/gpt-4o-mini" and lm["output"] == ["4"]
-    assert tl["exception"].startswith("ValueError") and m["output"] == {"answer": "4"}
+    assert tl["error"].startswith("ValueError") and m["output"] == {"answer": "4"}

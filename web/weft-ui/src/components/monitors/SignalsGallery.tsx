@@ -15,24 +15,24 @@ export function SignalsGallery({ projectId, onCreated }: { projectId: string; on
   const [picked, setPicked] = useState<SignalTemplate | null>(null)
   const [open, setOpen] = useState<boolean | null>(null)
   const monitors = useQuery({
-    queryKey: ['objs', projectId, 'signal-monitors'],
+    queryKey: ['objects', projectId, 'signal-monitors'],
     queryFn: () =>
-      api.objsQuery({
+      api.objectsQuery({
         project_id: projectId,
-        filter: { base_object_classes: ['Monitor'], latest_only: true },
+        filter: { kinds: ['monitor'], latest_only: true },
         metadata_only: true,
         limit: 1000,
       }),
   })
   const installed = useMemo(() => {
     const m = new Map<string, string>()
-    for (const o of monitors.data?.objs ?? []) {
-      for (const s of SIGNALS) if (o.object_id === `signal-${s.id}` || o.object_id.startsWith(`signal-${s.id}-`)) m.set(s.id, o.object_id)
+    for (const o of monitors.data?.items ?? []) {
+      for (const s of SIGNALS) if (o.name === `signal-${s.id}` || o.name.startsWith(`signal-${s.id}-`)) m.set(s.id, o.name)
     }
     return m
   }, [monitors.data])
   // Expanded while the project has no monitors; collapsible afterwards.
-  const expanded = open ?? (monitors.isSuccess && (monitors.data?.objs.length ?? 0) === 0)
+  const expanded = open ?? (monitors.isSuccess && (monitors.data?.items.length ?? 0) === 0)
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <div className="card-header row">
@@ -119,22 +119,22 @@ function AddSignalModal({
   const [latency, setLatency] = useState(10)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
-  const opCounts = useQuery({
-    queryKey: ['op-counts', projectId],
-    queryFn: () => api.opCounts(projectId).then((r) => r.ops),
+  const spanNames = useQuery({
+    queryKey: ['span-names', projectId],
+    queryFn: () => api.spanNames(projectId).then((r) => r.items),
   })
 
   const create = async () => {
     setBusy(true)
     setErr(null)
     try {
-      const all = await api.objsQuery({
+      const all = await api.objectsQuery({
         project_id: projectId,
         filter: { latest_only: true },
         metadata_only: true,
-        limit: 100000,
+        limit: 10000,
       })
-      const taken = new Set(all.objs.map((o) => o.object_id))
+      const taken = new Set(all.items.map((o) => o.name))
       const opNames = ops
         .split(',')
         .map((s) => s.trim())
@@ -197,24 +197,24 @@ function AddSignalModal({
           </label>
         )}
         <label className="field">
-          Ops to monitor
+          Span names to monitor
           <input
             className="input mono"
             list="signal-ops"
             value={ops}
             onChange={(e) => setOps(e.target.value)}
-            placeholder="Comma-separated; empty means all root calls"
+            placeholder="Comma-separated; empty means all root spans"
           />
           <datalist id="signal-ops">
-            {(opCounts.data ?? []).map((o) => (
-              <option key={o.op_base_name} value={o.op_base_name} />
+            {(spanNames.data ?? []).map((o) => (
+              <option key={o.base_name} value={o.base_name} />
             ))}
           </datalist>
         </label>
         <label className="field">
           Sampling rate: {Math.round(rate * 100)}% of matching calls
           <input className="input" type="range" min={0.01} max={1} step={0.01} value={rate} onChange={(e) => setRate(Number(e.target.value))} />
-          {template.model && <span className="hint">LLM-based signals cost a judge call per scored call; sample to control spend.</span>}
+          {template.model && <span className="hint">LLM-based signals cost a judge call per scored span; sample to control spend.</span>}
         </label>
         <ErrorBox error={err} />
       </div>

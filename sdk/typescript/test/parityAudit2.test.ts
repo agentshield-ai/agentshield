@@ -82,7 +82,7 @@ describe('TypeSafe', () => {
     expect(JSON.parse(ok.output.choices[0].message.content)).toEqual({ q0: 'yes', q1: 3 });
     expect(ok.summary.usage['jev-2'].prompt_tokens).toBe(42);
     expect(bad.inputs.model).toBe('jev-3');
-    expect(bad.exception).toMatch(/^UnprocessableEntityError/);
+    expect(bad.error).toMatch(/^UnprocessableEntityError/);
     expect(JSON.stringify(bad) + JSON.stringify(turns.get(bad.parent_id))).not.toMatch(/secret/);
     expect(bad.attributes.http.response.status_code).toBe(422);
     expect(bad.attributes.gen_ai.response.id).toBe('req_err');
@@ -114,12 +114,12 @@ describe('TypeSafe', () => {
 
   it('inside an op starts its own trace linked to the op by weft.parent_call.*', async () => {
     const ts = weft.wrapTypeSafe(new TypeSafeClient());
-    const classify = weft.op(async function classify(msg: string) {
+    const classify = weft.trace(async function classify(msg: string) {
       return (await ts.systemOne({ state: msg, questions: ['refund?'] })).answers;
     });
     await classify('refund please');
     let helperTurn = '';
-    const handle = weft.op(async function handle(msg: string) {
+    const handle = weft.trace(async function handle(msg: string) {
       const conv = weft.startConversation({ conversationId: 'conv-op' });
       const turn = conv.startTurn({ agentName: 'helper' });
       await turn.run(async () => {
@@ -162,8 +162,9 @@ describe('registerCustomRuntime and conversation links', () => {
       headers: { 'X-Team': 'ml' },
     });
     const put = fake.requests.find((r) => r.method === 'PUT')!;
-    expect(put.path).toBe('/v2/ts-entity/audit2/runtimes/my-vllm');
-    expect(put.body).toEqual({ base_url: 'https://vllm.internal/v1', api_key_secret: 'VLLM_KEY', headers: { 'X-Team': 'ml' }, runtime_ids: [{ id: 'llama-3-8b' }, { id: 'qwen2-7b', max_tokens: 8192 }] });
+    expect(put.path).toBe('/api/v1/runtimes/my-vllm');
+    expect(put.body.project_id).toBe('ts-entity/audit2');
+    expect(put.body).toEqual({ project_id: 'ts-entity/audit2', base_url: 'https://vllm.internal/v1', api_key_secret: 'VLLM_KEY', headers: { 'X-Team': 'ml' }, runtime_ids: [{ id: 'llama-3-8b' }, { id: 'qwen2-7b', max_tokens: 8192 }] });
     expect(res.error).toBeNull();
     expect(res.data.runtime_ids.map((r) => r.playground_id)).toEqual(['my-vllm/llama-3-8b', 'my-vllm/qwen2-7b']);
   });
@@ -186,7 +187,7 @@ describe('environment', () => {
     try {
       process.env.WEFT_DEBUG_HTTP = '1';
       const c = await weft.init('ts-entity/dbg', { serverUrl: fake.url, apiKey: 'sk-secret', settings: { printCallLink: false } });
-      const f = weft.op(function f(x: number) {
+      const f = weft.trace(function f(x: number) {
         return x + 1;
       });
       await f(1);
@@ -201,7 +202,7 @@ describe('environment', () => {
       spy.mockRestore();
     }
     const err = lines.join('');
-    expect(err).toContain(`URL: ${fake.url}/call/upsert_batch`);
+    expect(err).toContain(`URL: ${fake.url}/api/v1/spans/batch`);
     expect(err).toContain('Method: POST');
     expect(err).toContain('----- Response below -----');
     expect(err).toContain('Status Code: 200');
@@ -216,12 +217,12 @@ describe('environment', () => {
     process.env.WEFT_WAL_DIR = dir;
     process.env.WEFT_DISABLE_WAL_SENDER = 'true';
     const c = await weft.init('ts-entity/wal', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });
-    const g = weft.op(function g(x: number) {
+    const g = weft.trace(function g(x: number) {
       return x * 2;
     });
     await g(2);
     await c.flush();
-    expect(fake.requests.filter((r) => r.path === '/call/upsert_batch')).toHaveLength(0);
+    expect(fake.requests.filter((r) => r.path === '/api/v1/spans/batch')).toHaveLength(0);
     expect((c as any).sender.wal.count()).toBeGreaterThanOrEqual(2);
     delete process.env.WEFT_DISABLE_WAL_SENDER;
     const c2 = await weft.init('ts-entity/wal', { serverUrl: fake.url, sender: { flushIntervalMs: 5 }, settings: { printCallLink: false } });

@@ -2,13 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
-import { api, fileUrl, getApiKey } from '../../api/client'
+import { api, fileFetch, fileUrl } from '../../api/client'
 import { fmtBytes } from '../../lib/format'
 import { dataUrlText, detectMedia, resolveContent, type MediaSpec } from './mediaUtils'
 import { useInView, useResolvedUri } from './useResolvedUri'
 import './media.css'
 
-const API_BASE: string = (import.meta.env.VITE_WEFT_API as string | undefined) ?? ''
 
 /** Text of a media value: inline, a data: URL, or the file content. */
 function useMediaText(projectId: string, spec: MediaSpec, enabled: boolean) {
@@ -17,7 +16,7 @@ function useMediaText(projectId: string, spec: MediaSpec, enabled: boolean) {
     queryFn: async () => {
       if (spec.text != null) return spec.text
       if (spec.dataUrl) return dataUrlText(spec.dataUrl)
-      return api.fileContentText(projectId, spec.digest!)
+      return api.fileText(projectId, spec.digest!)
     },
     enabled,
     staleTime: Infinity,
@@ -26,7 +25,7 @@ function useMediaText(projectId: string, spec: MediaSpec, enabled: boolean) {
 
 /**
  * A same-origin blob: URL with the right type. Used for PDFs, which the
- * browser will not render from the sandboxed /file/content response.
+ * browser will not render from the sandboxed /api/v1/files/{digest} response.
  */
 function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
   const [url, setUrl] = useState<string | null>(null)
@@ -39,14 +38,7 @@ function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
       try {
         let blob: Blob
         if (spec.dataUrl) blob = await (await fetch(spec.dataUrl)).blob()
-        else {
-          const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-          const key = getApiKey()
-          if (key) headers.Authorization = `Bearer ${key}`
-          const res = await fetch(API_BASE + '/file/content', { method: 'POST', headers, body: JSON.stringify({ project_id: projectId, digest: spec.digest }) })
-          if (!res.ok) throw new Error(`file: ${res.status}`)
-          blob = await res.blob()
-        }
+        else blob = await (await fileFetch(projectId, spec.digest!)).blob()
         blob = new Blob([blob], { type: spec.mimetype || 'application/pdf' })
         made = URL.createObjectURL(blob)
         if (!revoked) setUrl(made)
@@ -132,7 +124,7 @@ function Rendered({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
 function ClientContent({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   const meta = useQuery({
     queryKey: ['file-text', projectId, spec.metaDigest],
-    queryFn: () => api.fileContentText(projectId, spec.metaDigest!),
+    queryFn: () => api.fileText(projectId, spec.metaDigest!),
     enabled: !!spec.metaDigest,
     staleTime: Infinity,
   })
@@ -200,7 +192,7 @@ const LOAD_FAILED = 'could not load: the object may be missing, or the bucket re
 /**
  * Media stored outside Weft (s3://, gs://, https://). Images, audio, video
  * and PDFs are resolved lazily, once scrolled into view, through
- * /files/resolve_url (presigned URLs are cached until they expire) and render
+ * /api/v1/files/resolve (presigned URLs are cached until they expire) and render
  * inline; other files show the URI with an on-demand download link. When the
  * URI cannot be resolved (bucket not registered, no access) the URI shows as
  * text with the reason.

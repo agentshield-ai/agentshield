@@ -220,6 +220,7 @@ python3 scripts/weft_seed_demo.py      # demo data (offline mock models)
 - Feedback uses Weft's names: field `ref`, types `weft.reaction`, `weft.note`, `weft.scorer.<scorer>`, `weft.annotation.<name>`, `weft.score.<scorer>`, `weft.signal`; the computed call summary block is `summary.weft`.
 - `docs/weft/*.md` guides are embedded (`docs/weft/docs.go`) and served at `/api/v1/help`; the UI renders them at `/help/<guide>`.
 - `web/weft-ui` needs `legacy-peer-deps` (`.npmrc`) because npm 10 crashes resolving vitest 4 optional peers.
+- The SDKs (`sdk/python`, `sdk/typescript`) and harness plugins (`plugins/weft-*`, shared core `plugins/weft-harness-common`) call only `/api/v1` and use DESIGN.md §10.4 names (`@weft.trace` / `trace`, `save`, `get`, `client.spans` / `client.span`, `Span` with `name`/`error`/`session_id`); earlier names are deprecated aliases listed only in each SDK's `CHANGELOG.md`. Digests are computed locally and must match the server byte for byte: `sdk/testdata/digest_vectors.json` is checked by both SDKs (and, with `WEFT_TEST_SERVER_URL`, against a live server).
 
 ## Key Environment Variables
 
