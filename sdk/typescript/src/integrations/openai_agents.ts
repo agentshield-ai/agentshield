@@ -23,7 +23,7 @@
  *   underneath, the reasoning stays on that call only.
  */
 import { asError, RunTracker } from './runs.js';
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'openai_agents';
 
@@ -121,8 +121,8 @@ function spanOutput(d: any): { out: unknown; usage: any } {
 export class WeftTracingProcessor {
   private tracker: RunTracker;
 
-  constructor(opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}) {
-    this.tracker = new RunTracker(INTEGRATION, pickOpSettings(opts));
+  constructor(opts: WrapperTraceOptions = {}) {
+    this.tracker = new RunTracker(INTEGRATION, pickTraceSettings(opts));
   }
 
   start(): void {}
@@ -188,7 +188,7 @@ export class WeftTracingProcessor {
  * Register a `WeftTracingProcessor` with the `@openai/agents` module (uses its
  * `addTraceProcessor`). Returns the processor.
  */
-export function instrumentOpenAIAgents(agents: { addTraceProcessor?: (p: any) => void }, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): WeftTracingProcessor {
+export function instrumentOpenAIAgents(agents: { addTraceProcessor?: (p: any) => void }, opts: WrapperTraceOptions = {}): WeftTracingProcessor {
   if (typeof agents?.addTraceProcessor !== 'function') throw new TypeError('instrumentOpenAIAgents: pass the @openai/agents module (it exports addTraceProcessor)');
   const p = new WeftTracingProcessor(opts);
   agents.addTraceProcessor(p);

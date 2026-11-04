@@ -43,13 +43,13 @@ class FakeStream<T> {
 describe('integration settings', () => {
   it('applies postprocess hooks, op name, attributes and enable flags', async () => {
     weft.configureIntegrations({
-      groq: { opSettings: { postprocessInputs: (i) => ({ ...i, note: 'x' }), postprocessOutput: (o: any) => ({ redacted: true, model: o.model }), attributes: { team: 'ml' } } },
+      groq: { traceSettings: { postprocessInputs: (i) => ({ ...i, note: 'x' }), postprocessOutput: (o: any) => ({ redacted: true, model: o.model }), attributes: { team: 'ml' } } },
       together: false,
     });
     const make = () => ({ chat: { completions: { create: async (b: any) => ({ model: b.model, choices: [], usage: { prompt_tokens: 1, completion_tokens: 2 } }) } } });
     const groq = weft.wrapGroq(make());
     const together = weft.wrapTogether(make());
-    const cerebras = weft.wrapCerebras(make(), { opName: 'cb.chat', postprocessOutput: () => 'local' });
+    const cerebras = weft.wrapCerebras(make(), { spanName: 'cb.chat', postprocessOutput: () => 'local' });
     await groq.chat.completions.create({ model: 'llama-3.3-70b', messages: [], note: 'k' } as any);
     await together.chat.completions.create({ model: 'mixtral', messages: [] } as any);
     await cerebras.chat.completions.create({ model: 'llama3.1-8b', messages: [] } as any);

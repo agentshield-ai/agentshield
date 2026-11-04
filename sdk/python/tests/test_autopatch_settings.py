@@ -10,7 +10,7 @@ import pytest
 
 import weft
 from weft import integrations as wi
-from weft.integrations import AutopatchSettings, IntegrationSettings, OpSettings, unpatch_all
+from weft.integrations import AutopatchSettings, IntegrationSettings, TraceSettings, unpatch_all
 from weft.integrations import _settings
 
 
@@ -54,17 +54,17 @@ def fake_crewai(monkeypatch):
 
 
 def test_settings_parsing():
-    _settings.configure({"OpenAI": {"enabled": False}, "llama_index": True, "anthropic": OpSettings(name="claude"),
-                         "crewai": IntegrationSettings(op_settings=OpSettings(color="red"))})
+    _settings.configure({"OpenAI": {"enabled": False}, "llama_index": True, "anthropic": TraceSettings(name="claude"),
+                         "crewai": IntegrationSettings(trace_settings=TraceSettings(color="red"))})
     assert not _settings.is_enabled("openai") and _settings.is_enabled("llamaindex")
-    assert _settings.get("anthropic").op_settings.name == "claude"
-    assert _settings.get("crewai").op_settings.color == "red"
+    assert _settings.get("anthropic").trace_settings.name == "claude"
+    assert _settings.get("crewai").trace_settings.color == "red"
     _settings.configure(AutopatchSettings(openai=IntegrationSettings(enabled=False)))
     assert not _settings.is_enabled("openai") and _settings.is_enabled("crewai")
     with pytest.raises(TypeError):
         _settings.configure({"openai": 3})
     with pytest.raises(Exception):
-        _settings.configure({"openai": {"op_settings": {"bogus": 1}}})
+        _settings.configure({"openai": {"trace_settings": {"bogus": 1}}})
 
 
 def test_disable_integration_via_settings(client, fake, fake_openai):
@@ -81,7 +81,7 @@ def test_disable_integration_via_settings(client, fake, fake_openai):
     assert len(fake.calls_by_op("openai.chat.completions.create")) == 1
 
 
-def test_op_settings_postprocess_and_display(client, fake, fake_openai, fake_crewai):
+def test_trace_settings_postprocess_and_display(client, fake, fake_openai, fake_crewai):
     def scrub_inputs(inputs):
         return {**inputs, "messages": "<scrubbed>"}
 
@@ -89,9 +89,9 @@ def test_op_settings_postprocess_and_display(client, fake, fake_openai, fake_cre
         return {"redacted": True, "model": out.get("model")} if isinstance(out, dict) else "<scrubbed>"
 
     wi.autopatch({
-        "openai": {"op_settings": {"postprocess_inputs": scrub_inputs, "postprocess_output": scrub_output,
+        "openai": {"trace_settings": {"postprocess_inputs": scrub_inputs, "postprocess_output": scrub_output,
                                    "span_display_name": "LLM call", "color": "purple", "attributes": {"team": "search"}}},
-        "crewai": {"op_settings": {"name": "my_crew_step", "kind": "chain", "postprocess_output": lambda o: o.upper()}},
+        "crewai": {"trace_settings": {"name": "my_crew_step", "kind": "chain", "postprocess_output": lambda o: o.upper()}},
     })
     r = fake_openai().create(model="gpt-4o", messages=[{"role": "user", "content": "my password is hunter2"}])
     assert r["choices"][0]["message"]["content"] == "secret answer"  # the caller still gets the real response
@@ -123,7 +123,7 @@ def test_settings_apply_to_callback_integrations(client, fake, monkeypatch):
     monkeypatch.setattr(lc, "_TRACER_CLS", None)
     monkeypatch.setattr(lc, "_registered", False)
     lc.patch_langchain()
-    _settings.configure({"langchain": {"op_settings": {"postprocess_inputs": lambda d: {"n": len(d)}}}})
+    _settings.configure({"langchain": {"trace_settings": {"postprocess_inputs": lambda d: {"n": len(d)}}}})
     t = lc.WeftTracer()
     rid = uuid.uuid4()
     t.on_chain_start({"name": "Chain"}, {"a": 1, "b": 2}, run_id=rid)
@@ -151,7 +151,7 @@ def test_env_switches(monkeypatch, fake_openai, fake_crewai):
 
 def test_init_with_autopatch_settings(fake, fake_openai, monkeypatch):
     monkeypatch.delenv("WEFT_DISABLED", raising=False)
-    weft.init("p", server_url=fake.url, autopatch_settings={"openai": {"op_settings": {"span_display_name": "chat"}}})
+    weft.init("p", server_url=fake.url, autopatch_settings={"openai": {"trace_settings": {"span_display_name": "chat"}}})
     try:
         assert getattr(fake_openai.create, "__weft_patched__", False)
         fake_openai().create(model="gpt-4o", messages=[])

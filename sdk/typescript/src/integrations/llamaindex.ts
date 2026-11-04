@@ -15,7 +15,7 @@
  */
 import { logger } from '../log.js';
 import { asError, RunTracker } from './runs.js';
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'llamaindex';
 
@@ -73,12 +73,12 @@ const installed = new WeakMap<object, LlamaIndexInstrumentation>();
  * Subscribe Weft to LlamaIndex.TS events. Pass `Settings` (from `llamaindex`
  * or `@llamaindex/core/global`) or a `CallbackManager`. Idempotent.
  */
-export function instrumentLlamaIndex(settingsOrManager: any, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): LlamaIndexInstrumentation {
+export function instrumentLlamaIndex(settingsOrManager: any, opts: WrapperTraceOptions = {}): LlamaIndexInstrumentation {
   const cm = settingsOrManager?.callbackManager ?? settingsOrManager;
   if (!cm || typeof cm.on !== 'function') throw new TypeError('instrumentLlamaIndex: pass LlamaIndex Settings or a CallbackManager');
   const existing = installed.get(cm);
   if (existing) return existing;
-  const tracker = new RunTracker(INTEGRATION, pickOpSettings(opts));
+  const tracker = new RunTracker(INTEGRATION, pickTraceSettings(opts));
   const llmModels = new Map<string, string | undefined>();
   const toolKey = (tc: any) => `tool:${tc?.id ?? tc?.name}`;
   const pendingRetrieves: unknown[] = [];

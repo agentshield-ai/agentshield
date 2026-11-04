@@ -276,14 +276,56 @@ describe('names', () => {
     expect(msgs.filter((x) => x.includes('getThreads(')).length).toBe(1); // once per name
   });
 
-  it('integration opSettings take spanDisplayName; callDisplayName still works and warns', async () => {
+  it('integration traceSettings take spanDisplayName; callDisplayName still works and warns', async () => {
     const warn = captureDeprecations();
-    const { integrationOp, pickOpSettings } = await import('../src/integrations/settings.js');
+    const { integrationOp, pickTraceSettings } = await import('../src/integrations/settings.js');
     expect(integrationOp(undefined, 'x.new', 'llm', {}, { spanDisplayName: 'new' }).options.spanDisplayName).toBe('new');
     expect(await warn.messages()).toEqual([]);
-    expect(integrationOp(undefined, 'x.old', 'llm', {}, pickOpSettings({ callDisplayName: 'old' })).options.spanDisplayName).toBe('old');
-    expect(await warn.messages()).toEqual(['weft: opSettings callDisplayName is deprecated; use spanDisplayName']);
+    expect(integrationOp(undefined, 'x.old', 'llm', {}, pickTraceSettings({ callDisplayName: 'old' })).options.spanDisplayName).toBe('old');
+    expect(await warn.messages()).toEqual(['weft: traceSettings callDisplayName is deprecated; use spanDisplayName']);
   });
+
+  it('traceSettings, wrapper spanName and SavedView.filterName', async () => {
+    const warn = captureDeprecations();
+    const { integrationOp, pickTraceSettings } = await import('../src/integrations/settings.js');
+    weft.updateIntegration('mistral', { traceSettings: { name: 'm.renamed', color: 'red' } });
+    expect(weft.getIntegrationSettings('mistral').traceSettings).toEqual({ name: 'm.renamed', color: 'red' });
+    expect(integrationOp('mistral', 'mistral.chat', 'llm').name).toBe('m.renamed');
+    expect(pickTraceSettings({ spanName: 's', traceSettings: { kind: 'tool' } })).toEqual({ name: 's', kind: 'tool' });
+    const v = new weft.SavedView().filterName('answer');
+    expect(v.definition.filter).toEqual({ names: ['weft:///ts-entity/ts-proj/function/answer:*'] });
+    v.filterName(null);
+    expect(v.definition.filter).toBeUndefined();
+    weft.configureIntegrations({});
+    expect(await warn.messages()).toEqual([]);
+  });
+
+  it('opSettings, IntegrationSettings.opSettings, wrapper opName / opSettings and filterOp still work and warn once each', async () => {
+    const warn = captureDeprecations();
+    const { integrationOp, pickTraceSettings } = await import('../src/integrations/settings.js');
+    weft.configureIntegrations({ mistral: { opSettings: { name: 'm.old' } }, cohere: { op_settings: { color: 'blue' } } as any });
+    expect(weft.getIntegrationSettings('mistral').traceSettings).toEqual({ name: 'm.old' });
+    expect(weft.getIntegrationSettings('mistral').opSettings).toEqual({ name: 'm.old' });
+    expect(integrationOp('cohere', 'cohere.chat', 'llm').options.color).toBe('blue');
+    weft.updateIntegration('mistral', { traceSettings: { name: 'new' }, opSettings: { name: 'old' } });
+    expect(weft.getIntegrationSettings('mistral').traceSettings).toEqual({ name: 'new' }); // the new name wins
+    expect(pickTraceSettings({ opName: 'o' })).toEqual({ name: 'o' });
+    expect(pickTraceSettings({ opName: 'o', spanName: 's' })).toEqual({ name: 's' });
+    expect(pickTraceSettings({ opSettings: { kind: 'a' }, traceSettings: { kind: 'b' } })).toEqual({ kind: 'b' });
+    const v = new weft.SavedView().filterOp('answer');
+    expect(v.definition.filter).toEqual({ names: ['weft:///ts-entity/ts-proj/function/answer:*'] });
+    weft.configureIntegrations({});
+    const msgs = await warn.messages();
+    expect(warn.consoleWarn).not.toHaveBeenCalled();
+    expect(msgs).toEqual([
+      'weft: integration settings opSettings is deprecated; use traceSettings',
+      'weft: IntegrationSettings.opSettings is deprecated; use IntegrationSettings.traceSettings',
+      'weft: wrapper option opName is deprecated; use spanName',
+      'weft: wrapper option opSettings is deprecated; use traceSettings',
+      'weft: SavedView.filterOp() is deprecated; use SavedView.filterName()',
+    ]);
+  });
+
   it('deprecations are DeprecationWarning events once per name; console.warn where process.emitWarning is absent', async () => {
     const warn = captureDeprecations();
     deprecated('old()', 'new()');

@@ -15,7 +15,7 @@
  */
 import type { Call } from '../call.js';
 import { patchWith, withCall } from './common.js';
-import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'mcp';
 
@@ -72,7 +72,7 @@ function mcpError(res: any): Error | undefined {
   return undefined;
 }
 
-function traced(spec: MethodSpec, orig: (...a: any[]) => any, local: IntegrationOpSettings | undefined, serverInfo: () => Record<string, unknown>) {
+function traced(spec: MethodSpec, orig: (...a: any[]) => any, local: IntegrationTraceSettings | undefined, serverInfo: () => Record<string, unknown>) {
   return function (this: unknown, params: any, ...rest: any[]) {
     const client = integrationClient(INTEGRATION);
     if (!client || (isList(spec.op) && !listOps())) return orig.call(this, params, ...rest);
@@ -114,8 +114,8 @@ function clientServerInfo(c: any): Record<string, unknown> {
 }
 
 /** Trace an MCP `Client` instance (`@modelcontextprotocol/sdk/client`). Returns the same client. */
-export function wrapMCPClient<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
-  const local = pickOpSettings(opts);
+export function wrapMCPClient<T>(client: T, opts: WrapperTraceOptions = {}): T {
+  const local = pickTraceSettings(opts);
   for (const [name, spec] of Object.entries(CLIENT_METHODS)) {
     patchWith(client as any, name, (orig) => {
       const c = client as any;
@@ -130,8 +130,8 @@ export function wrapMCPClient<T>(client: T, opts: IntegrationOpSettings & { opSe
  * `@modelcontextprotocol/sdk/server/mcp.js`) or a low-level `Server`. Handlers
  * registered later (e.g. the first `registerTool`) are traced too.
  */
-export function wrapMCPServer<T>(server: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
-  const local = pickOpSettings(opts);
+export function wrapMCPServer<T>(server: T, opts: WrapperTraceOptions = {}): T {
+  const local = pickTraceSettings(opts);
   const proto: any = (server as any)?.server ?? server;
   const handlers: Map<string, (...a: any[]) => any> | undefined = proto?._requestHandlers;
   if (!(handlers instanceof Map)) throw new TypeError('wrapMCPServer: expected an McpServer or a Server from @modelcontextprotocol/sdk');
@@ -162,10 +162,10 @@ export function wrapMCPServer<T>(server: T, opts: IntegrationOpSettings & { opSe
  * Patch MCP classes so every instance is traced: `instrumentMCP({ Client })`
  * patches `Client.prototype`; servers still need `wrapMCPServer(server)`.
  */
-export function instrumentMCP(mod: { Client?: any }, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): boolean {
+export function instrumentMCP(mod: { Client?: any }, opts: WrapperTraceOptions = {}): boolean {
   const proto = mod?.Client?.prototype;
   if (!proto) return false;
-  const local = pickOpSettings(opts);
+  const local = pickTraceSettings(opts);
   let any = false;
   for (const [name, spec] of Object.entries(CLIENT_METHODS)) {
     any =

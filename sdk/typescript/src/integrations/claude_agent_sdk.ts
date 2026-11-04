@@ -25,7 +25,7 @@ import { currentContext, runWith } from '../context.js';
 import type { OpMeta } from '../op.js';
 import { addUsage } from '../usage.js';
 import { short } from './common.js';
-import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'claude_agent_sdk';
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
@@ -72,7 +72,7 @@ class QueryTracer {
     private client: WeftClient,
     private prompt: unknown,
     private options: any,
-    private local: IntegrationOpSettings | undefined,
+    private local: IntegrationTraceSettings | undefined,
     private opName: string,
   ) {
     const s = currentContext().stack;
@@ -263,15 +263,15 @@ function wrapIterator(gen: any, tracer: QueryTracer): any {
 }
 
 /** Wrap the SDK's `query` function. */
-export function wrapClaudeAgentQuery<F extends (...a: any[]) => any>(query: F, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings; opName?: string } = {}): F {
+export function wrapClaudeAgentQuery<F extends (...a: any[]) => any>(query: F, opts: WrapperTraceOptions = {}): F {
   if ((query as any).__weftPatched) return query;
-  const local = pickOpSettings(opts);
+  const local = pickTraceSettings(opts);
   const wrapped = function (this: unknown, params: any, ...rest: any[]) {
     const client = integrationClient(INTEGRATION);
     const gen = query.call(this, params, ...rest);
     if (!client) return gen;
     try {
-      return wrapIterator(gen, new QueryTracer(client, params?.prompt, params?.options, local, opts.opName ?? 'claude_agent_sdk.query'));
+      return wrapIterator(gen, new QueryTracer(client, params?.prompt, params?.options, local, opts.spanName ?? opts.opName ?? 'claude_agent_sdk.query'));
     } catch {
       return gen;
     }
@@ -281,7 +281,7 @@ export function wrapClaudeAgentQuery<F extends (...a: any[]) => any>(query: F, o
 }
 
 /** Return the SDK module with a traced `query` (ES module namespaces cannot be patched in place). */
-export function wrapClaudeAgentSDK<T extends Record<string, any>>(sdk: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapClaudeAgentSDK<T extends Record<string, any>>(sdk: T, opts: WrapperTraceOptions = {}): T {
   if (typeof sdk?.query !== 'function') throw new TypeError('wrapClaudeAgentSDK: expected the @anthropic-ai/claude-agent-sdk module');
   return { ...sdk, query: wrapClaudeAgentQuery(sdk.query, opts) } as T;
 }

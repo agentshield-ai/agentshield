@@ -62,7 +62,7 @@ def test_framework_spans_kinds_and_usage(live, monkeypatch):
     monkeypatch.setitem(sys.modules, "crewai", m)
     from weft.integrations import patch_crewai
 
-    _settings.configure({"crewai": {"op_settings": {"attributes": {"team": "it"}}}})
+    _settings.configure({"crewai": {"trace_settings": {"attributes": {"team": "it"}}}})
     assert patch_crewai()
     assert Crew().kickoff(inputs={"topic": "weft"}) == "ok"
     live.flush()

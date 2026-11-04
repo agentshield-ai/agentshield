@@ -1,7 +1,7 @@
 import type { Call } from '../call.js';
 import { addUsage } from '../usage.js';
 import { short, withCall } from './common.js';
-import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'vercel_ai';
 
@@ -41,10 +41,16 @@ function modelAttrs(model: any): Record<string, unknown> {
   return out;
 }
 
-export interface WeftMiddlewareOptions extends Omit<IntegrationOpSettings, 'name'> {
-  /** Op name prefix (default "vercel_ai"). */
+export interface WeftMiddlewareOptions extends Omit<IntegrationTraceSettings, 'name'> {
+  /** Span name prefix (default "vercel_ai"). */
   name?: string;
-  opSettings?: IntegrationOpSettings;
+  /** Replace the name of every span (same as `traceSettings.name`). */
+  spanName?: string;
+  traceSettings?: IntegrationTraceSettings;
+  /** @deprecated Use `traceSettings`. */
+  opSettings?: IntegrationTraceSettings;
+  /** @deprecated Use `spanName`. */
+  opName?: string;
 }
 
 /**
@@ -54,7 +60,7 @@ export interface WeftMiddlewareOptions extends Omit<IntegrationOpSettings, 'name
  */
 export function weftMiddleware(opts: WeftMiddlewareOptions = {}): Record<string, any> {
   const prefix = opts.name ?? 'vercel_ai';
-  const local = pickOpSettings(opts);
+  const local = pickTraceSettings(opts);
   return {
     async wrapGenerate({ doGenerate, params, model }: any) {
       const client = integrationClient(INTEGRATION);
@@ -123,7 +129,7 @@ export function weftMiddleware(opts: WeftMiddlewareOptions = {}): Record<string,
 
 // ---------------------------------------------------------------- tools
 
-function wrapExecute(name: string, execute: (...a: any[]) => any, local?: IntegrationOpSettings): (...a: any[]) => any {
+function wrapExecute(name: string, execute: (...a: any[]) => any, local?: IntegrationTraceSettings): (...a: any[]) => any {
   if ((execute as any).__weftPatched) return execute;
   const wrapped = function (this: unknown, args: any, options: any, ...rest: any[]) {
     const client = integrationClient(INTEGRATION);
@@ -177,9 +183,9 @@ function wrapExecute(name: string, execute: (...a: any[]) => any, local?: Integr
  * becomes a `tool` call (`vercel_ai.tool.<name>`) with `gen_ai.tool.name` and
  * `gen_ai.tool.call.id`; ops and wrapped clients used inside nest under it.
  */
-export function wrapAITools<T extends Record<string, any>>(tools: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapAITools<T extends Record<string, any>>(tools: T, opts: WrapperTraceOptions = {}): T {
   if (!tools || typeof tools !== 'object') return tools;
-  const local = pickOpSettings(opts);
+  const local = pickTraceSettings(opts);
   const out: Record<string, any> = {};
   for (const [name, t] of Object.entries(tools)) {
     out[name] = t && typeof t.execute === 'function' ? { ...t, execute: wrapExecute(name, t.execute, local) } : t;
@@ -225,8 +231,8 @@ function topOutput(res: any): Record<string, unknown> {
  * Streaming calls end when the stream finishes (`onFinish`/`onError`).
  * Usage is recorded on the model calls, not on the parent.
  */
-export function wrapAISDK<T extends Record<string, any>>(ai: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
-  const local = pickOpSettings(opts);
+export function wrapAISDK<T extends Record<string, any>>(ai: T, opts: WrapperTraceOptions = {}): T {
+  const local = pickTraceSettings(opts);
   const out: Record<string, any> = { ...ai };
   for (const fn of TOP) {
     const orig = ai?.[fn];

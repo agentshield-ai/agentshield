@@ -9,7 +9,7 @@ import type { Call } from '../call.js';
 import { addUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
 import { ChatCompletionAccumulator } from './openai.js';
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'mistral';
 
@@ -57,9 +57,9 @@ export function recordMistralUsage(call: Call, out: any): void {
 }
 
 /** Trace a `Mistral` client instance. Returns the same client. */
-export function wrapMistral<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapMistral<T>(client: T, opts: WrapperTraceOptions = {}): T {
   const c = client as any;
-  const opSettings = pickOpSettings(opts);
+  const opSettings = pickTraceSettings(opts);
   const attributes = () => ({ 'gen_ai.provider.name': 'mistral_ai' });
   const common = { integration: INTEGRATION, opSettings, attributes, accumulator: () => new MistralStreamAccumulator(), recordUsage: recordMistralUsage };
   for (const res of ['chat', 'fim', 'agents'] as const) {

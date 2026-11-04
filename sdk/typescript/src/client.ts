@@ -47,7 +47,7 @@ export interface InitOptions {
   settings?: ClientSettings;
   /**
    * Per-integration settings, keyed by integration name (`openai`, `langchain`,
-   * `mcp`, ...): `{ enabled?, opSettings?: { name, spanDisplayName,
+   * `mcp`, ...): `{ enabled?, traceSettings?: { name, spanDisplayName,
    * postprocessInputs, postprocessOutput, kind, color, attributes } }`.
    * Replaces earlier settings when given.
    */

@@ -63,7 +63,7 @@ print("eval summary:", ev.log_summary())
 
 # --- a saved view, applied as a query ----------------------------------------
 view = (weft.SavedView(label="Support tool calls")
-        .filter_op("lookup_order")
+        .filter_name("lookup_order")
         .add_filter("output.status", "equals", "shipped")
         .sort_by("started_at", "desc")
         .save())

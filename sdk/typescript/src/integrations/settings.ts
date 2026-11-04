@@ -4,18 +4,18 @@
  *
  * ```ts
  * await weft.init('proj', { autopatchSettings: {
- *   openai: { opSettings: { postprocessInputs: scrub, postprocessOutput: scrub } },
+ *   openai: { traceSettings: { postprocessInputs: scrub, postprocessOutput: scrub } },
  *   langchain: { enabled: false },
  * } });
  * ```
  *
- * Each value is `{ enabled?, opSettings? }` (or a boolean for `enabled`).
- * `opSettings` applies to every span the integration records: `name` (span
+ * Each value is `{ enabled?, traceSettings? }` (or a boolean for `enabled`).
+ * `traceSettings` applies to every span the integration records: `name` (span
  * name override), `spanDisplayName` (string or `(span) => string`),
  * `postprocessInputs(inputs) => inputs`, `postprocessOutput(output) => output`,
  * `kind`, `color` and `attributes` (merged into each span's attributes).
  *
- * Wrappers also take the same `opSettings` per client
+ * Wrappers also take the same `traceSettings` per client
  * (`wrapOpenAI(client, { postprocessOutput })`); those run after the global ones.
  *
  * Environment (read at call time): `WEFT_AUTOPATCH=false` disables every
@@ -29,7 +29,7 @@ import { tracingClient } from '../global.js';
 import { deprecated } from '../deprecation.js';
 import type { OpMeta, OpOptions } from '../op.js';
 
-export interface IntegrationOpSettings {
+export interface IntegrationTraceSettings {
   /** Replace the name of every span the integration records. */
   name?: string;
   /** Display name for each span, or a function of the span. */
@@ -44,11 +44,28 @@ export interface IntegrationOpSettings {
   attributes?: Record<string, unknown>;
 }
 
+/** @deprecated Use `IntegrationTraceSettings`. */
+export type IntegrationOpSettings = IntegrationTraceSettings;
+
 export interface IntegrationSettings {
   /** Trace this integration (default true). */
   enabled?: boolean;
-  opSettings?: IntegrationOpSettings;
+  /** Applied to every span the integration records. */
+  traceSettings?: IntegrationTraceSettings;
+  /** @deprecated Use `traceSettings`. */
+  opSettings?: IntegrationTraceSettings;
 }
+
+/** Options every wrapper takes: trace settings for this client, flat or as `traceSettings`. */
+export type WrapperTraceOptions = IntegrationTraceSettings & {
+  traceSettings?: IntegrationTraceSettings;
+  /** Replace the name of every span this wrapper records (same as `traceSettings.name`). */
+  spanName?: string;
+  /** @deprecated Use `traceSettings`. */
+  opSettings?: IntegrationTraceSettings;
+  /** @deprecated Use `spanName`. */
+  opName?: string;
+};
 
 export type AutopatchSettings = Record<string, IntegrationSettings | boolean | undefined>;
 
@@ -98,10 +115,21 @@ let settings = new Map<string, IntegrationSettings>();
 function coerce(v: IntegrationSettings | boolean): IntegrationSettings {
   if (typeof v === 'boolean') return { enabled: v };
   if (!v || typeof v !== 'object') throw new TypeError('integration settings must be an object or a boolean');
-  const allowed = new Set(['enabled', 'opSettings', 'op_settings']);
+  const allowed = new Set(['enabled', 'traceSettings', 'trace_settings', 'opSettings', 'op_settings']);
   for (const k of Object.keys(v)) if (!allowed.has(k)) throw new TypeError(`unknown integration setting "${k}"`);
-  const ops = (v as any).opSettings ?? (v as any).op_settings;
-  return { enabled: v.enabled, opSettings: ops ? { ...ops } : undefined };
+  const anyV = v as any;
+  const old = anyV.opSettings ?? anyV.op_settings;
+  if (old !== undefined) deprecated('integration settings opSettings', 'traceSettings');
+  const ts = anyV.traceSettings ?? anyV.trace_settings ?? old;
+  const out: IntegrationSettings = { enabled: v.enabled, traceSettings: ts ? { ...ts } : undefined };
+  Object.defineProperty(out, 'opSettings', {
+    enumerable: false,
+    get() {
+      deprecated('IntegrationSettings.opSettings', 'IntegrationSettings.traceSettings');
+      return out.traceSettings;
+    },
+  });
+  return out;
 }
 
 /** Replace all integration settings (`undefined` resets to defaults). */
@@ -171,9 +199,9 @@ export function integrationOp(
   opName: string,
   kind?: string,
   defaults: IntegrationOpDefaults = {},
-  local?: IntegrationOpSettings,
+  local?: IntegrationTraceSettings,
 ): OpMeta {
-  const g = integration ? getIntegrationSettings(integration).opSettings ?? {} : {};
+  const g = integration ? getIntegrationSettings(integration).traceSettings ?? {} : {};
   const name = local?.name ?? g.name ?? opName;
   const k = local?.kind ?? g.kind ?? kind;
   const base = syntheticOp(name, k);
@@ -188,10 +216,10 @@ export function integrationOp(
   return { ...base, options };
 }
 
-function displayNameOf(s: IntegrationOpSettings | undefined): IntegrationOpSettings['spanDisplayName'] {
+function displayNameOf(s: IntegrationTraceSettings | undefined): IntegrationTraceSettings['spanDisplayName'] {
   if (!s) return undefined;
   if (s.spanDisplayName !== undefined) return s.spanDisplayName;
-  if (s.callDisplayName !== undefined) deprecated('opSettings callDisplayName', 'spanDisplayName');
+  if (s.callDisplayName !== undefined) deprecated('traceSettings callDisplayName', 'spanDisplayName');
   return s.callDisplayName;
 }
 
@@ -203,25 +231,36 @@ function mergeAttrs(into: Record<string, any>, extra: Record<string, unknown> | 
 }
 
 /** Attributes stamped on every call of an integration, plus the settings' `attributes`. */
-export function integrationAttributes(integration: string | undefined, extra?: Record<string, unknown>, local?: IntegrationOpSettings): Record<string, unknown> {
+export function integrationAttributes(integration: string | undefined, extra?: Record<string, unknown>, local?: IntegrationTraceSettings): Record<string, unknown> {
   const out: Record<string, any> = integration ? { weft: { integration: canonicalIntegration(integration) } } : {};
-  if (integration) mergeAttrs(out, getIntegrationSettings(integration).opSettings?.attributes);
+  if (integration) mergeAttrs(out, getIntegrationSettings(integration).traceSettings?.attributes);
   mergeAttrs(out, local?.attributes);
   mergeAttrs(out, extra);
   return out;
 }
 
-/** Split wrapper options into op settings (anything `IntegrationOpSettings` names). */
-export function pickOpSettings(o: Record<string, any> | undefined): IntegrationOpSettings | undefined {
+/**
+ * Split wrapper options into trace settings: the flat fields `IntegrationTraceSettings`
+ * names (`spanName` for `name`), then `traceSettings`. The earlier `opName` and
+ * `opSettings` are read too, with a warning; the new names win.
+ */
+export function pickTraceSettings(o: Record<string, any> | undefined): IntegrationTraceSettings | undefined {
   if (!o) return undefined;
-  const out: IntegrationOpSettings = {};
+  const out: IntegrationTraceSettings = {};
   let any = false;
-  for (const k of ['spanDisplayName', 'callDisplayName', 'postprocessInputs', 'postprocessOutput', 'kind', 'color', 'attributes', 'opName'] as const) {
+  for (const k of ['spanDisplayName', 'callDisplayName', 'postprocessInputs', 'postprocessOutput', 'kind', 'color', 'attributes'] as const) {
     if (o[k] !== undefined) {
-      (out as any)[k === 'opName' ? 'name' : k] = o[k];
+      (out as any)[k] = o[k];
       any = true;
     }
   }
-  if (o.opSettings) Object.assign(out, o.opSettings), (any = true);
+  if (o.opName !== undefined) deprecated('wrapper option opName', 'spanName');
+  const name = o.spanName ?? o.opName;
+  if (name !== undefined) (out.name = name), (any = true);
+  if (o.opSettings) {
+    deprecated('wrapper option opSettings', 'traceSettings');
+    Object.assign(out, o.opSettings), (any = true);
+  }
+  if (o.traceSettings) Object.assign(out, o.traceSettings), (any = true);
   return any ? out : undefined;
 }

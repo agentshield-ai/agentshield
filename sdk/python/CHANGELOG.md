@@ -27,7 +27,11 @@ adapter still serves the official weave client.
 - `Dataset.from_spans(...)`, `SavedView.spans()` / `to_spans_query()`.
 - `client.create_span(...)` / `client.finish_span(span, ...)` start and end a
   span explicitly; `@weft.trace(span_display_name=...)` (also in an
-  integration's `op_settings`) sets each span's display name.
+  integration's `trace_settings`) sets each span's display name.
+- `autopatch_settings={"<integration>": {"trace_settings": {...}}}` with
+  `weft.integrations.TraceSettings` (and `IntegrationSettings.trace_settings`)
+  set the options of the spans an integration records.
+- `SavedView.filter_name(name)` shows only spans of one function.
 - `client.sessions_query(...)` / `sessions_query_stream(...)` list sessions
   (`POST /api/v1/spans/sessions`) with `weft.api_types.SessionsQueryReq`,
   `SessionsQueryFilter`, `SessionsQueryRes` (`.sessions`) and `SessionSchema`
@@ -119,7 +123,10 @@ These earlier names still work and emit a `DeprecationWarning`:
 | `Dataset.from_calls(spans)` | `Dataset.from_spans(spans)` |
 | `weft.urls.redirect_call(...)` | `weft.urls.redirect_span(...)` |
 | `@weft.trace(call_display_name=...)`, `Op.call_display_name` | `@weft.trace(span_display_name=...)`, `Op.span_display_name` |
-| `op_settings={"call_display_name": ...}`, `OpSettings(call_display_name=...)`, `OpSettings.call_display_name` | `"span_display_name"`, `OpSettings(span_display_name=...)`, `OpSettings.span_display_name` |
+| `trace_settings={"call_display_name": ...}`, `TraceSettings(call_display_name=...)`, `TraceSettings.call_display_name` | `"span_display_name"`, `TraceSettings(span_display_name=...)`, `TraceSettings.span_display_name` |
+| `weft.integrations.OpSettings` | `weft.integrations.TraceSettings` |
+| autopatch settings key `"op_settings"`, `IntegrationSettings(op_settings=...)`, `IntegrationSettings.op_settings` (`trace_settings` wins when both are given) | `"trace_settings"`, `IntegrationSettings(trace_settings=...)`, `IntegrationSettings.trace_settings` |
+| `SavedView.filter_op(name)` | `SavedView.filter_name(name)` |
 
 `WEFT_PRINT_CALL_LINK` is read when `WEFT_PRINT_SPAN_LINK` is unset, with one
 logged warning; likewise `WEFT_MAX_CALLS_QUEUE_SIZE` when

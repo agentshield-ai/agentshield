@@ -31,7 +31,7 @@ describe.skipIf(!URL)('real server: framework integrations', () => {
       serverUrl: URL,
       apiKey: process.env.WEFT_TEST_API_KEY,
       settings: { printSpanLink: false },
-      autopatchSettings: { bedrock: { opSettings: { postprocessOutput: (o: any) => ({ ...o, scrubbed: true }) } } },
+      autopatchSettings: { bedrock: { traceSettings: { postprocessOutput: (o: any) => ({ ...o, scrubbed: true }) } } },
     });
   });
   afterAll(() => weft.finish());

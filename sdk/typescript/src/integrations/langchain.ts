@@ -18,7 +18,7 @@
  * ran a model becomes an agent invocation named after the node, so the server
  * reads consecutive agent nodes as hand-offs.
  */
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 import { RunTracker, type RunUsage } from './runs.js';
 
 const INTEGRATION = 'langchain';
@@ -132,8 +132,8 @@ export class WeftCallbackHandler {
   private tracker: RunTracker;
   private models = new Map<string, string | undefined>();
 
-  constructor(opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}) {
-    this.tracker = new RunTracker(INTEGRATION, pickOpSettings(opts));
+  constructor(opts: WrapperTraceOptions = {}) {
+    this.tracker = new RunTracker(INTEGRATION, pickTraceSettings(opts));
   }
 
   copy(): this {
@@ -271,6 +271,6 @@ export class WeftCallbackHandler {
 }
 
 /** A new `WeftCallbackHandler` (pass it in `callbacks`). */
-export function weftCallbackHandler(opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): WeftCallbackHandler {
+export function weftCallbackHandler(opts: WrapperTraceOptions = {}): WeftCallbackHandler {
   return new WeftCallbackHandler(opts);
 }

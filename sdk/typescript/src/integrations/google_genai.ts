@@ -1,7 +1,7 @@
 import type { Call } from '../call.js';
 import { addGeminiUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 function textOf(cand: any, thought = false): string {
   return (cand?.content?.parts ?? []).filter((p: any) => p && !!p.thought === thought).map((p: any) => p.text ?? '').join('');
@@ -55,9 +55,9 @@ export function recordGenAIUsage(call: Call, out: any): void {
  * Trace a `@google/genai` client: `models.generateContent` and
  * `models.generateContentStream`. Returns the same client.
  */
-export function wrapGoogleGenAI<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapGoogleGenAI<T>(client: T, opts: WrapperTraceOptions = {}): T {
   const models = (client as any)?.models;
-  const opSettings = pickOpSettings(opts);
+  const opSettings = pickTraceSettings(opts);
   const attributes = () => ({ 'gen_ai.provider.name': (client as any)?.vertexai ? 'gcp.vertex_ai' : 'gcp.gemini' });
   patchMethod(models, 'generateContent', {
     integration: 'google_genai',

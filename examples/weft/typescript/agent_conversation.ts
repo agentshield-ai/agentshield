@@ -46,7 +46,7 @@ for (const turn of turns) {
 }
 console.log('eval summary:', await ev.logSummary());
 
-const view = await new weft.SavedView({ label: 'Support tool calls (ts)' }).filterOp('lookupOrder').sortBy('started_at', 'desc').save();
+const view = await new weft.SavedView({ label: 'Support tool calls (ts)' }).filterName('lookupOrder').sortBy('started_at', 'desc').save();
 console.log('view', view.name, 'matches', (await view.spans()).length, 'spans');
 await client.flush();
 await weft.finish();

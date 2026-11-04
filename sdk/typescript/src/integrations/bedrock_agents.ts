@@ -31,7 +31,7 @@ import type { WeftClient } from '../client.js';
 import { currentContext, withSession } from '../context.js';
 import type { OpMeta } from '../op.js';
 import { addUsage } from '../usage.js';
-import { integrationAttributes, integrationOp, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationOp, type IntegrationTraceSettings } from './settings.js';
 
 const INTEGRATION = 'bedrock';
 const PROVIDER = 'aws.bedrock';
@@ -369,7 +369,7 @@ export class AgentTraceProcessor {
 }
 
 /** Start the agent call for an InvokeAgent / InvokeInlineAgent request. */
-export function startAgentCall(client: WeftClient, name: string, input: Record<string, any>, local?: IntegrationOpSettings): AgentTraceProcessor {
+export function startAgentCall(client: WeftClient, name: string, input: Record<string, any>, local?: IntegrationTraceSettings): AgentTraceProcessor {
   const inline = name === 'InvokeInlineAgentCommand';
   const agentName = String(input.agentName ?? input.agentId ?? (inline ? 'inline_agent' : 'bedrock_agent'));
   const sessionId: string | undefined = input.sessionId;

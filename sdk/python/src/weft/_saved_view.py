@@ -3,12 +3,12 @@
 The stored object follows the Weft UI convention (see ``docs/weft/API.md``)::
 
     {"_class_name": "SavedView", "name": "errors", "view_type": "traces", "label": "Errors",
-     "definition": {"filter": {...CallsFilter}, "query": {"$expr": ...}, "sort_by": [...],
+     "definition": {"filter": {...span filter}, "query": {"$expr": ...}, "sort_by": [...],
                     "cols": ["inputs.question", ...], "search": "...", "columns": [...], "pin": {...},
                     "page_size": 50}}
 
 >>> view = (weft.SavedView(label="Slow errors")
-...         .filter_op("answer")
+...         .filter_name("answer")
 ...         .add_filter("summary.weft.status", "equals", "error")
 ...         .add_filter("summary.weft.latency_ms", ">", 1000)
 ...         .sort_by("started_at", "desc")
@@ -364,19 +364,19 @@ class SavedView(Object):
         self._touch()
         return self
 
-    def filter_op(self, op_name: Optional[str]) -> "SavedView":
+    def filter_name(self, name: Optional[str]) -> "SavedView":
         """Show only spans of one function (a name, ``name:version`` or a full function ref); None clears it."""
         flt = _span_filter(self.definition.get("filter"))
-        if op_name is None:
+        if name is None:
             flt.pop("names", None)
         else:
             from ._refs import is_ref_uri
 
-            uri = op_name
-            if not is_ref_uri(op_name):
+            uri = name
+            if not is_ref_uri(name):
                 if not self.entity:
-                    raise ValueError("Must specify an op ref when no project is known")
-                uri = f"weft:///{self.entity}/{self.project}/function/{op_name}" + ("" if ":" in op_name else ":*")
+                    raise ValueError("Must specify a function ref when no project is known")
+                uri = f"weft:///{self.entity}/{self.project}/function/{name}" + ("" if ":" in name else ":*")
             flt["names"] = [uri]
         if flt:
             self.definition["filter"] = flt
@@ -384,6 +384,13 @@ class SavedView(Object):
             self.definition.pop("filter", None)
         self._touch()
         return self
+
+    def filter_op(self, op_name: Optional[str]) -> "SavedView":
+        """Deprecated: use ``SavedView.filter_name``."""
+        from ._deprecation import deprecated_call
+
+        deprecated_call("SavedView.filter_op()", "SavedView.filter_name()")
+        return self.filter_name(op_name)
 
     def set_filter(self, **calls_filter: Any) -> "SavedView":
         """Set span filter fields (``trace_roots_only``, ``session_ids``, ``user_ids``, ...).

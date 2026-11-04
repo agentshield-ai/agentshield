@@ -4,7 +4,7 @@ import { getCurrentCall } from '../context.js';
 import { getClient } from '../global.js';
 import type { OpMeta } from '../op.js';
 import { addUsage } from '../usage.js';
-import { integrationAttributes, integrationClient, integrationOp, type IntegrationOpDefaults, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, type IntegrationOpDefaults, type IntegrationTraceSettings } from './settings.js';
 
 export interface RunUsage {
   model?: string | null;
@@ -32,7 +32,7 @@ export class RunTracker {
 
   constructor(
     readonly integration: string,
-    readonly local?: IntegrationOpSettings,
+    readonly local?: IntegrationTraceSettings,
   ) {}
 
   start(

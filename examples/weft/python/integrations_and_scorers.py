@@ -14,7 +14,7 @@ import importlib.util
 
 import weft
 from weft import local_scorers
-from weft.integrations import OpSettings
+from weft.integrations import TraceSettings
 
 
 def hide_messages(inputs: dict) -> dict:
@@ -48,9 +48,9 @@ client = weft.init(
     settings=settings,
     autopatch_settings={
         # every OpenAI call: inputs scrubbed, a fixed display name and a team attribute
-        "openai": {"op_settings": {"postprocess_inputs": hide_messages, "span_display_name": "chat",
+        "openai": {"trace_settings": {"postprocess_inputs": hide_messages, "span_display_name": "chat",
                                    "attributes": {"team": "research"}}},
-        "anthropic": {"op_settings": OpSettings(color="purple")},
+        "anthropic": {"trace_settings": TraceSettings(color="purple")},
         "crewai": {"enabled": False},  # or WEFT_DISABLED_INTEGRATIONS=crewai
     },
 )

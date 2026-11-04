@@ -571,10 +571,15 @@ digests in the older form; both forms resolve.
   conversation spans' `.span` / `.span_id` (`spanId`; were `.call` /
   `.call_id`); `Dataset.from_spans` (`fromSpans`); `weft.urls.redirect_span`
   and TypeScript `client.spanUrl`; the `span_display_name` option
-  (`spanDisplayName`, also in integration `op_settings`; was
-  `call_display_name`); and `WEFT_MAX_SPANS_QUEUE_SIZE` (was
-  `WEFT_MAX_CALLS_QUEUE_SIZE`; the new name wins when both are set). The
-  earlier names are deprecated aliases on the same terms.
+  (`spanDisplayName`, also in integration `trace_settings`; was
+  `call_display_name`); per-integration `trace_settings` with
+  `TraceSettings` (`traceSettings`, type `IntegrationTraceSettings`; were
+  `op_settings`, `OpSettings`, `opSettings`, `IntegrationOpSettings`), the
+  TypeScript wrapper option `spanName` (was `opName`);
+  `SavedView.filter_name` (`filterName`; was `filter_op` / `filterOp`); and
+  `WEFT_MAX_SPANS_QUEUE_SIZE` (was `WEFT_MAX_CALLS_QUEUE_SIZE`). Where both
+  an earlier and a new name are given, the new one wins. The earlier names
+  are deprecated aliases on the same terms.
   - They emit a `DeprecationWarning`.
   - They are documented only in the SDK changelog.
 - The local scorers default to openly licensed models with neutral names.

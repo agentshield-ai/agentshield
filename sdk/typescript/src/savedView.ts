@@ -3,12 +3,12 @@
  *
  * ```ts
  * const view = await new weft.SavedView({ label: 'Slow errors' })
- *   .filterOp('answer')
+ *   .filterName('answer')
  *   .addFilter('summary.weft.status', 'equals', 'error')
  *   .addFilter('summary.weft.latency_ms', '>', 1000)
  *   .sortBy('started_at', 'desc')
  *   .save();
- * const calls = await view.getCalls({ limit: 20 });
+ * const spans = await view.spans({ limit: 20 });
  * const same = await weft.SavedView.load('Slow-errors');
  * ```
  *
@@ -326,15 +326,15 @@ export class SavedView extends WeftObject {
   }
 
   /** Only spans of one function (a name, `name:version` or function ref); null clears it. */
-  filterOp(opName: string | null): this {
+  filterName(name: string | null): this {
     const flt = spanFilter(this.definition.filter);
-    if (opName === null) delete flt.names;
+    if (name === null) delete flt.names;
     else {
-      let uri = opName;
-      if (!isRefUri(opName)) {
+      let uri = name;
+      if (!isRefUri(name)) {
         const p = this.projectRef;
-        if (!p) throw new Error('Must specify an op ref when no project is known');
-        uri = `weft:///${p.entity}/${p.project}/function/${opName}${opName.includes(':') ? '' : ':*'}`;
+        if (!p) throw new Error('Must specify a function ref when no project is known');
+        uri = `weft:///${p.entity}/${p.project}/function/${name}${name.includes(':') ? '' : ':*'}`;
       }
       flt.names = [uri];
     }
@@ -342,6 +342,12 @@ export class SavedView extends WeftObject {
     else delete this.definition.filter;
     return this.touch();
   }
+  /** @deprecated Use `filterName`. */
+  filterOp(opName: string | null): this {
+    deprecated('SavedView.filterOp()', 'SavedView.filterName()');
+    return this.filterName(opName);
+  }
+
 
   /** Set span filter fields (`trace_roots_only`, `session_ids`, `user_ids`, ...); null removes one. The earlier names (`op_names`, `call_ids`, `thread_ids`) are stored under Weft's. */
   setFilter(fields: Record<string, unknown>): this {

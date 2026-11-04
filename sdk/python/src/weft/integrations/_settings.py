@@ -4,14 +4,14 @@
 ``AutopatchSettings`` object, keyed by integration name::
 
     weft.init("proj", autopatch_settings={
-        "openai": {"op_settings": {"postprocess_inputs": scrub, "postprocess_output": scrub}},
+        "openai": {"trace_settings": {"postprocess_inputs": scrub, "postprocess_output": scrub}},
         "crewai": {"enabled": False},
     })
 
 Each value is an ``IntegrationSettings`` (or a dict of its fields):
 
 * ``enabled`` (default True): patch and trace this integration.
-* ``op_settings``: ``OpSettings`` applied to every span the integration
+* ``trace_settings``: ``TraceSettings`` applied to every span the integration
   records: ``name`` (span name override), ``span_display_name`` (string or
   ``callable(span) -> str``), ``postprocess_inputs(dict) -> dict``,
   ``postprocess_output(value) -> value``, ``kind``, ``color`` and
@@ -77,7 +77,7 @@ def canonical(name: str) -> str:
     return ALIASES.get(n, n.replace("-", "_"))
 
 
-class OpSettings(BaseModel):
+class TraceSettings(BaseModel):
     """Options applied to the spans an integration records (mirrors ``@weft.trace``)."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -96,7 +96,7 @@ class OpSettings(BaseModel):
         if isinstance(data, Mapping) and "call_display_name" in data:
             from .._deprecation import deprecated_call
 
-            deprecated_call("OpSettings(call_display_name=...)", "OpSettings(span_display_name=...)", stacklevel=6)
+            deprecated_call("TraceSettings(call_display_name=...)", "TraceSettings(span_display_name=...)", stacklevel=6)
             data = dict(data)
             old = data.pop("call_display_name")
             if data.get("span_display_name") is None:
@@ -105,10 +105,10 @@ class OpSettings(BaseModel):
 
     @property
     def call_display_name(self) -> Optional[Union[str, Callable[[Any], str]]]:
-        """Deprecated: ``OpSettings.span_display_name``."""
+        """Deprecated: ``TraceSettings.span_display_name``."""
         from .._deprecation import deprecated_call
 
-        deprecated_call("OpSettings.call_display_name", "OpSettings.span_display_name")
+        deprecated_call("TraceSettings.call_display_name", "TraceSettings.span_display_name")
         return self.span_display_name
 
 
@@ -118,7 +118,33 @@ class IntegrationSettings(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     enabled: bool = True
-    op_settings: OpSettings = Field(default_factory=OpSettings)
+    trace_settings: TraceSettings = Field(default_factory=TraceSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _earlier_names(cls, data: Any) -> Any:
+        if isinstance(data, Mapping) and "op_settings" in data:
+            return _earlier_op_settings(dict(data), stacklevel=6)
+        return data
+
+    @property
+    def op_settings(self) -> TraceSettings:
+        """Deprecated: ``IntegrationSettings.trace_settings``."""
+        from .._deprecation import deprecated_call
+
+        deprecated_call("IntegrationSettings.op_settings", "IntegrationSettings.trace_settings")
+        return self.trace_settings
+
+
+def _earlier_op_settings(d: Dict[str, Any], stacklevel: int) -> Dict[str, Any]:
+    """Read the earlier key as ``trace_settings`` (``trace_settings`` wins), with a warning."""
+    from .._deprecation import deprecated_call
+
+    deprecated_call('autopatch settings "op_settings"', '"trace_settings"', stacklevel=stacklevel)
+    old = d.pop("op_settings")
+    if d.get("trace_settings") is None:
+        d["trace_settings"] = old
+    return d
 
 
 class AutopatchSettings(BaseModel):
@@ -145,15 +171,17 @@ def _coerce(value: Any) -> IntegrationSettings:
         return value
     if isinstance(value, bool):
         return IntegrationSettings(enabled=value)
-    if isinstance(value, OpSettings):
-        return IntegrationSettings(op_settings=value)
+    if isinstance(value, TraceSettings):
+        return IntegrationSettings(trace_settings=value)
     if isinstance(value, Mapping):
         d = dict(value)
-        ops = d.get("op_settings")
-        if isinstance(ops, Mapping):
-            d["op_settings"] = OpSettings(**dict(ops))
-        elif ops is None:
-            d.pop("op_settings", None)
+        if "op_settings" in d:
+            d = _earlier_op_settings(d, stacklevel=5)
+        ts = d.get("trace_settings")
+        if isinstance(ts, Mapping):
+            d["trace_settings"] = TraceSettings(**dict(ts))
+        elif ts is None:
+            d.pop("trace_settings", None)
         return IntegrationSettings(**d)
     raise TypeError(f"autopatch settings must be a dict, bool or IntegrationSettings, got {type(value).__name__}")
 
@@ -241,7 +269,7 @@ def _compose(first: Optional[Callable[[Any], Any]], second: Optional[Callable[[A
 
 def _apply(op: Any, integration: str) -> None:
     d: _OpDefaults = op._weft_integration_defaults
-    s = get(integration).op_settings
+    s = get(integration).trace_settings
     new_name = s.name or d.name
     if new_name != op.name:
         op._refs.clear()
@@ -316,10 +344,10 @@ def integration_op(
 
 
 def integration_attributes(integration: str) -> Dict[str, Any]:
-    """Attributes stamped on every call of an integration (plus user ``op_settings.attributes``)."""
+    """Attributes stamped on every span of an integration (plus user ``trace_settings.attributes``)."""
     n = canonical(integration)
     attrs: Dict[str, Any] = {"weft": {"integration": n}}
-    extra = get(n).op_settings.attributes
+    extra = get(n).trace_settings.attributes
     if extra:
         for k, v in extra.items():
             if k == "weft" and isinstance(v, dict):
@@ -327,3 +355,12 @@ def integration_attributes(integration: str) -> Dict[str, Any]:
             else:
                 attrs[k] = v
     return attrs
+
+
+def __getattr__(name: str) -> Any:
+    if name == "OpSettings":  # earlier name (CHANGELOG.md)
+        from .._deprecation import deprecated_call
+
+        deprecated_call("weft.integrations.OpSettings", "weft.integrations.TraceSettings")
+        return TraceSettings
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

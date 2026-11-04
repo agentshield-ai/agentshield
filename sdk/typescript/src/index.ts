@@ -158,7 +158,9 @@ export {
   canonicalIntegration,
   type AutopatchSettings,
   type IntegrationSettings,
+  type IntegrationTraceSettings,
   type IntegrationOpSettings,
+  type WrapperTraceOptions,
 } from './integrations/settings.js';
 export { canonicalJson, digestJson, digest, tableDigest, fileDigest } from './canonical.js';
 

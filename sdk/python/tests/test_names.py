@@ -89,7 +89,7 @@ def test_platform_object_field_names(client, fake):
     assert view.to_spans_query()["filter"] == {"names": ["a"], "session_ids": ["t"]}
     view.set_filter(call_ids=["c"])
     assert view.definition["filter"] == {"names": ["a"], "session_ids": ["t"], "ids": ["c"]}
-    view.filter_op(None)
+    view.filter_name(None)
     assert view.definition["filter"] == {"session_ids": ["t"], "ids": ["c"]}
 
 
@@ -200,7 +200,7 @@ def test_span_names_for_sessions_spans_predictions_and_links(client, fake, monke
         assert weft.urls.redirect_span("e", "p", "s1").endswith("/e/p/spans/s1")
         ds = weft.Dataset.from_spans(list(client.spans(filter={"names": ["ask"]})))
         assert sorted(r["output"] for r in ds.rows) == [2, 4]
-        assert weft.integrations._settings.OpSettings(span_display_name="d").span_display_name == "d"
+        assert weft.integrations._settings.TraceSettings(span_display_name="d").span_display_name == "d"
         monkeypatch.delenv("WEFT_MAX_CALLS_QUEUE_SIZE", raising=False)
         monkeypatch.setenv("WEFT_MAX_SPANS_QUEUE_SIZE", "77")
         assert weft.WeftClient("e/q1", server_url=fake.url).max_queue_size == 77
@@ -266,11 +266,11 @@ def test_earlier_span_names_warn_and_still_work(client, fake, monkeypatch):
     assert [r["output"] for r in ds.rows] == [1]
     assert _warns(lambda: weft.urls.redirect_call("e", "p", "c1"), r"weft\.urls\.redirect_call\(\) is deprecated; use weft\.urls\.redirect_span\(\)") == weft.urls.redirect_span("e", "p", "c1")
 
-    from weft.integrations._settings import OpSettings
+    from weft.integrations._settings import TraceSettings
 
-    s = _warns(lambda: OpSettings(call_display_name="x"), r"OpSettings\(call_display_name=\.\.\.\) is deprecated")
+    s = _warns(lambda: TraceSettings(call_display_name="x"), r"TraceSettings\(call_display_name=\.\.\.\) is deprecated")
     assert s.span_display_name == "x"
-    assert _warns(lambda: s.call_display_name, r"OpSettings\.call_display_name is deprecated") == "x"
+    assert _warns(lambda: s.call_display_name, r"TraceSettings\.call_display_name is deprecated") == "x"
 
     monkeypatch.delenv("WEFT_MAX_SPANS_QUEUE_SIZE", raising=False)
     monkeypatch.delenv("WEFT_MAX_QUEUE_SIZE", raising=False)
@@ -292,3 +292,37 @@ def test_earlier_span_names_warn_and_still_work(client, fake, monkeypatch):
     with pytest.warns(DeprecationWarning):
         tsi = importlib.import_module("weft.trace_server_interface")
     assert tsi.ThreadSchema is SessionSchema and tsi.thread_from_session is weft.api_types.session_from_item
+
+
+def test_trace_settings_and_filter_name(client, fake):
+    """TraceSettings / trace_settings and SavedView.filter_name; the earlier
+    OpSettings, op_settings and filter_op still work and warn."""
+    from weft.integrations import IntegrationSettings, TraceSettings, _settings
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            _settings.configure({"anthropic": {"trace_settings": {"name": "claude"}}, "crewai": TraceSettings(color="red"),
+                                 "mistral": IntegrationSettings(trace_settings=TraceSettings(kind="chain"))})
+            assert _settings.get("anthropic").trace_settings.name == "claude"
+            assert _settings.get("crewai").trace_settings.color == "red"
+            assert _settings.get("mistral").trace_settings.kind == "chain"
+            v = weft.SavedView().filter_name("answer")
+            assert v.definition["filter"] == {"names": ["weft:///test-entity/test-proj/function/answer:*"]}
+            v.filter_name(None)
+            assert "filter" not in v.definition
+
+        old_cls = _warns(lambda: weft.integrations.OpSettings, r"weft\.integrations\.OpSettings is deprecated; use weft\.integrations\.TraceSettings")
+        assert old_cls is TraceSettings
+        assert _warns(lambda: _settings.OpSettings, r"OpSettings is deprecated") is TraceSettings
+        _warns(lambda: _settings.configure({"anthropic": {"op_settings": {"name": "old"}}}),
+               r'autopatch settings "op_settings" is deprecated; use "trace_settings"')
+        s = _settings.get("anthropic")
+        assert s.trace_settings.name == "old"
+        assert _warns(lambda: s.op_settings, r"IntegrationSettings\.op_settings is deprecated; use IntegrationSettings\.trace_settings").name == "old"
+        both = _warns(lambda: IntegrationSettings(op_settings={"name": "old"}, trace_settings={"name": "new"}), r'"op_settings" is deprecated')
+        assert both.trace_settings.name == "new"  # the new name wins
+        v = _warns(lambda: weft.SavedView().filter_op("answer"), r"SavedView\.filter_op\(\) is deprecated; use SavedView\.filter_name\(\)")
+        assert v.definition["filter"] == {"names": ["weft:///test-entity/test-proj/function/answer:*"]}
+    finally:
+        _settings.configure(None)

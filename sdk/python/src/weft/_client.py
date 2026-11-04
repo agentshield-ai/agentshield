@@ -1495,7 +1495,7 @@ def init(
     ``WEFT_API_KEY``, ``WEFT_PROJECT``, ``WEFT_DISABLED``.
 
     ``autopatch_settings`` (dict keyed by integration, e.g. ``{"openai":
-    {"enabled": False}}``): per-integration ``enabled`` and ``op_settings``;
+    {"enabled": False}}``): per-integration ``enabled`` and ``trace_settings``;
     see ``weft.integrations``. PII redaction settings (``redact_pii``,
     ``redact_pii_fields``, ``redact_pii_exclude_fields``, ``redact_pii_engine``)
     are described in ``weft._redact``.

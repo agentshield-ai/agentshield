@@ -1,7 +1,7 @@
 import type { Call } from '../call.js';
 import { recordOpenAIUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings } from './settings.js';
 
 export class ChatCompletionAccumulator implements Accumulator {
   private base: Record<string, any> = {};
@@ -61,19 +61,23 @@ export class ResponsesAccumulator implements Accumulator {
 
 const usage = (call: Call, out: any) => recordOpenAIUsage(call, out);
 
-export interface WrapOpenAIOptions extends Omit<IntegrationOpSettings, 'name'> {
-  /** Op name prefix (default "openai"), e.g. "groq" for an OpenAI-compatible provider. */
+export interface WrapOpenAIOptions extends Omit<IntegrationTraceSettings, 'name'> {
+  /** Span name prefix (default "openai"), e.g. "groq" for an OpenAI-compatible provider. */
   name?: string;
-  /** Replace the op name of every call (same as `opSettings.name`). */
+  /** Replace the name of every span (same as `traceSettings.name`). */
+  spanName?: string;
+  /** @deprecated Use `spanName`. */
   opName?: string;
   /** Add stream_options.include_usage to streamed chat completions (default true). */
   includeUsage?: boolean;
   /** Integration name for settings (default: `name`, else "openai"). */
   integration?: string;
-  /** `gen_ai.provider.name` recorded on each call (default: `name`). */
+  /** `gen_ai.provider.name` recorded on each span (default: `name`). */
   providerName?: string;
-  /** Op settings for this client (same fields as `autopatchSettings.<name>.opSettings`). */
-  opSettings?: IntegrationOpSettings;
+  /** Trace settings for this client (same fields as `autopatchSettings.<name>.traceSettings`). */
+  traceSettings?: IntegrationTraceSettings;
+  /** @deprecated Use `traceSettings`. */
+  opSettings?: IntegrationTraceSettings;
 }
 
 /**
@@ -85,7 +89,7 @@ export function wrapOpenAI<T>(client: T, opts: WrapOpenAIOptions = {}): T {
   const prefix = opts.name ?? 'openai';
   const includeUsage = opts.includeUsage ?? true;
   const integration = opts.integration ?? prefix;
-  const opSettings = pickOpSettings(opts);
+  const opSettings = pickTraceSettings(opts);
   const provider = opts.providerName ?? prefix;
   const attributes = () => ({ 'gen_ai.provider.name': provider });
   const c = client as any;

@@ -3,7 +3,7 @@ import { currentContext } from '../context.js';
 import { toJson } from '../serialize.js';
 import { addAnthropicUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
-import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 export class MessageAccumulator implements Accumulator {
   private msg: any = {};
@@ -62,10 +62,10 @@ export function recordAnthropicUsage(call: Call, out: any): void {
  * Trace an Anthropic client instance: `messages.create` (incl. `stream: true`)
  * and `messages.stream()`. Returns the same client.
  */
-export function wrapAnthropic<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapAnthropic<T>(client: T, opts: WrapperTraceOptions = {}): T {
   const c = client as any;
   const messages = c?.messages;
-  const opSettings = pickOpSettings(opts);
+  const opSettings = pickTraceSettings(opts);
   const attributes = () => ({ 'gen_ai.provider.name': 'anthropic' });
   patchMethod(messages, 'create', {
     integration: 'anthropic',

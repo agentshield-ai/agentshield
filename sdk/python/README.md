@@ -607,22 +607,22 @@ body). `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`,
 ### Per-integration settings
 
 `autopatch_settings` is a dict (or `AutopatchSettings`) keyed by
-the settings keys above. Each value has `enabled` and `op_settings`
+the settings keys above. Each value has `enabled` and `trace_settings`
 (`name`, `span_display_name`, `postprocess_inputs`, `postprocess_output`,
 `kind`, `color`, `attributes`), applied to every span the integration records:
 
 ```python
-from weft.integrations import IntegrationSettings, OpSettings
+from weft.integrations import IntegrationSettings, TraceSettings
 
 def scrub(inputs):
     return {**inputs, "messages": "<hidden>"}
 
 weft.init("my-project", autopatch_settings={
-    "openai": {"op_settings": {"postprocess_inputs": scrub,
-                               "postprocess_output": lambda r: {"id": r.get("id")},
-                               "span_display_name": "chat"}},
+    "openai": {"trace_settings": {"postprocess_inputs": scrub,
+                                  "postprocess_output": lambda r: {"id": r.get("id")},
+                                  "span_display_name": "chat"}},
     "crewai": {"enabled": False},
-    "anthropic": IntegrationSettings(op_settings=OpSettings(color="purple", attributes={"team": "search"})),
+    "anthropic": IntegrationSettings(trace_settings=TraceSettings(color="purple", attributes={"team": "search"})),
 })
 ```
 
@@ -972,7 +972,7 @@ Traces/Evaluations pages, and views saved in the UI load here:
 
 ```python
 view = (weft.SavedView(label="Slow errors")
-        .filter_op("answer")                                   # name, name:version or function ref
+        .filter_name("answer")                                 # name, name:version or function ref
         .add_filter("summary.weft.status", "equals", "error")
         .add_filter("summary.weft.latency_ms", ">", 1000)
         .add_filter("started_at", "after", "2026-01-01")

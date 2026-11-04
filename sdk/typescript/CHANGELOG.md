@@ -27,7 +27,12 @@ the older route shapes are no longer used.
   feedback takes `span_ref`.
 - `client.createSpan(...)` / `client.finishSpan(span, ...)` start and end a
   span explicitly; `weft.trace(fn, { spanDisplayName })` (also in an
-  integration's `opSettings`) sets each span's display name.
+  integration's `traceSettings`) sets each span's display name.
+- `autopatchSettings: { <integration>: { traceSettings } }` (type
+  `IntegrationTraceSettings`) sets the options of the spans an integration
+  records; each wrapper takes the same fields flat or as `traceSettings`, and
+  `spanName` renames every span it records (type `WrapperTraceOptions`).
+- `SavedView.filterName(name)` shows only spans of one function.
 - `client.getSessions({ sessionIds, ... })` lists sessions
   (`POST /api/v1/spans/sessions`); items carry `session_id` and `span_count`.
 - `ev.logPrediction(inputs, output, { span })` links a prediction to existing
@@ -101,7 +106,11 @@ it is a `console.warn`.
 | conversation spans' `.call`, `.callId` (`turn.call`, `llm.callId`, ...) | `.span`, `.spanId` |
 | `Dataset.fromCalls(spans)` | `Dataset.fromSpans(spans)` |
 | `client.callUrl(span)` | `client.spanUrl(span)` |
-| `weft.trace(fn, { callDisplayName })`, `opSettings: { callDisplayName }` | `{ spanDisplayName }` |
+| `weft.trace(fn, { callDisplayName })`, `traceSettings: { callDisplayName }` | `{ spanDisplayName }` |
+| integration settings `opSettings` / `op_settings` (`updateIntegration`, `autopatchSettings`), `getIntegrationSettings(name).opSettings` (`traceSettings` wins when both are given) | `traceSettings`, `getIntegrationSettings(name).traceSettings` |
+| wrapper options `opSettings` and `opName` (`wrapOpenAI(client, { opName })`, ...; the new names win) | `traceSettings` and `spanName` |
+| type `IntegrationOpSettings` | `IntegrationTraceSettings` |
+| `SavedView.filterOp(name)` | `SavedView.filterName(name)` |
 | env `WEFT_MAX_CALLS_QUEUE_SIZE` (still wins over `WEFT_MAX_QUEUE_SIZE`) | `WEFT_MAX_SPANS_QUEUE_SIZE` |
 
 A saved view's default pinned column is `name` (was `op_name`); pins saved

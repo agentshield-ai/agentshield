@@ -83,7 +83,7 @@ describe.skipIf(!URL)('real server: agents and SDK extras', () => {
     });
     for (const q of ['a', 'bb', 'ccc']) await answer(q);
     await client.flush();
-    const view = await new weft.SavedView({ label: 'TS long answers' }).filterOp('answer').addFilter('output', 'contains', 'B').sortBy('started_at', 'asc').save();
+    const view = await new weft.SavedView({ label: 'TS long answers' }).filterName('answer').addFilter('output', 'contains', 'B').sortBy('started_at', 'asc').save();
     expect((await view.spans()).map((c) => c.inputs.q)).toEqual(['bb']);
     const loaded = await weft.SavedView.load(view.name!);
     expect((await loaded.spans()).map((c) => c.inputs.q)).toEqual(['bb']);

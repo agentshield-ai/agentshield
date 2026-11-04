@@ -15,7 +15,7 @@
 import type { Call } from '../call.js';
 import { addGeminiUsage } from '../usage.js';
 import { patchWith, plain, withCall } from './common.js';
-import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'vertexai';
 
@@ -34,7 +34,7 @@ function textOf(resp: any): string {
   return (resp?.candidates?.[0]?.content?.parts ?? []).filter((p: any) => p && !p.thought).map((p: any) => p.text ?? '').join('');
 }
 
-function traceMethod(owner: any, attr: string, op: string, model: () => string | undefined, stream: boolean, local: IntegrationOpSettings | undefined): void {
+function traceMethod(owner: any, attr: string, op: string, model: () => string | undefined, stream: boolean, local: IntegrationTraceSettings | undefined): void {
   patchWith(owner, attr, (orig) =>
     function (this: any, req: any, ...rest: any[]) {
       const client = integrationClient(INTEGRATION);
@@ -80,8 +80,8 @@ function traceMethod(owner: any, attr: string, op: string, model: () => string |
 }
 
 /** Trace a `GenerativeModel` (or preview model) instance. Its chat sessions are traced too. */
-export function wrapVertexModel<T>(model: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
-  const local = pickOpSettings(opts);
+export function wrapVertexModel<T>(model: T, opts: WrapperTraceOptions = {}): T {
+  const local = pickTraceSettings(opts);
   const m = model as any;
   const name = () => modelName(m);
   traceMethod(m, 'generateContent', 'vertexai.GenerativeModel.generate_content', name, false, local);
@@ -96,8 +96,8 @@ export function wrapVertexModel<T>(model: T, opts: IntegrationOpSettings & { opS
 }
 
 /** Trace a `ChatSession`: `sendMessage` and `sendMessageStream`. */
-export function wrapVertexChat<T>(chat: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings; model?: string } = {}): T {
-  const local = pickOpSettings(opts);
+export function wrapVertexChat<T>(chat: T, opts: WrapperTraceOptions & { model?: string } = {}): T {
+  const local = pickTraceSettings(opts);
   const c = chat as any;
   const name = () => opts.model ?? modelName(c) ?? modelName(c?._model);
   traceMethod(c, 'sendMessage', 'vertexai.ChatSession.send_message', name, false, local);
@@ -106,7 +106,7 @@ export function wrapVertexChat<T>(chat: T, opts: IntegrationOpSettings & { opSet
 }
 
 /** Trace a `VertexAI` instance: models from `getGenerativeModel` (and `preview.getGenerativeModel`) are wrapped. */
-export function wrapVertexAI<T>(vertex: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapVertexAI<T>(vertex: T, opts: WrapperTraceOptions = {}): T {
   const v = vertex as any;
   if (typeof v?.generateContent === 'function' && typeof v?.getGenerativeModel !== 'function') return wrapVertexModel(vertex, opts);
   for (const owner of [v, v?.preview]) {

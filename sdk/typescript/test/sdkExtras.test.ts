@@ -24,7 +24,7 @@ describe('SavedView', () => {
     });
     await answer('a');
     const view = new weft.SavedView({ label: 'Long answers' })
-      .filterOp('answer')
+      .filterName('answer')
       .addFilter('output', 'contains', 'B')
       .addFilter('summary.weft.latency_ms', '>=', 0)
       .addFilter('Status', 'is not empty')
@@ -58,7 +58,7 @@ describe('SavedView', () => {
     expect(loaded.uiUrl()).toMatch(/\/ts-entity\/ts-proj\/traces\?view=Long-answers$/);
     expect((await client.getSavedViews()).map((v) => v.name)).toEqual(['Long-answers']);
     expect(await client.getSavedViews('evaluations')).toEqual([]);
-    loaded.removeFilter('output').removeFilter(0).hideColumn('inputs.q').removeColumns().removeFilters().filterOp(null);
+    loaded.removeFilter('output').removeFilter(0).hideColumn('inputs.q').removeColumns().removeFilters().filterName(null);
     expect(loaded.definition.query).toBeUndefined();
     expect(loaded.definition.filter).toBeUndefined();
   });

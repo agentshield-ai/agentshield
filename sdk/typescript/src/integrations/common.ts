@@ -1,7 +1,7 @@
 import type { Call } from '../call.js';
 import { currentContext, storage } from '../context.js';
 import { toJson } from '../serialize.js';
-import { integrationAttributes, integrationClient, integrationOp, type IntegrationOpDefaults, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, type IntegrationOpDefaults, type IntegrationTraceSettings } from './settings.js';
 
 export interface Accumulator {
   add(chunk: any): void;
@@ -20,7 +20,7 @@ export interface LLMSpec {
   /** Integration name for settings (`autopatchSettings`, `WEFT_DISABLED_INTEGRATIONS`). */
   integration?: string;
   /** Per-wrapper op settings (postprocess hooks, display name, ...), applied after the global ones. */
-  opSettings?: IntegrationOpSettings;
+  opSettings?: IntegrationTraceSettings;
   /** Integration defaults (e.g. a display name function). */
   defaults?: IntegrationOpDefaults;
   /** Extra attributes for each call (e.g. `gen_ai.provider.name`). */

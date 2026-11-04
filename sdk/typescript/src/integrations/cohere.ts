@@ -7,7 +7,7 @@
 import type { Call } from '../call.js';
 import { addUsage } from '../usage.js';
 import { patchMethod, type Accumulator } from './common.js';
-import { pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 
 const INTEGRATION = 'cohere';
 
@@ -52,9 +52,9 @@ export function recordCohereUsage(call: Call, out: any): void {
 }
 
 /** Trace a `CohereClientV2` or `CohereClient` instance. Returns the same client. */
-export function wrapCohere<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
+export function wrapCohere<T>(client: T, opts: WrapperTraceOptions = {}): T {
   const c = client as any;
-  const opSettings = pickOpSettings(opts);
+  const opSettings = pickTraceSettings(opts);
   const attributes = () => ({ 'gen_ai.provider.name': 'cohere' });
   const common = { integration: INTEGRATION, opSettings, attributes, accumulator: () => new CohereStreamAccumulator(), recordUsage: recordCohereUsage };
   patchMethod(c, 'chat', { ...common, opName: 'cohere.chat', isStream: () => false });

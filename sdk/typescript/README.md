@@ -318,16 +318,16 @@ Like Python's `autopatch_settings`, per integration:
 ```ts
 await weft.init('proj', {
   autopatchSettings: {
-    openai: { opSettings: { postprocessInputs: (i) => ({ ...i, messages: '[hidden]' }), postprocessOutput: scrub } },
+    openai: { traceSettings: { postprocessInputs: (i) => ({ ...i, messages: '[hidden]' }), postprocessOutput: scrub } },
     langchain: { enabled: false },
-    mcp: { opSettings: { spanDisplayName: (span) => `mcp ${span.inputs.name}`, attributes: { team: 'tools' }, color: 'purple' } },
+    mcp: { traceSettings: { spanDisplayName: (span) => `mcp ${span.inputs.name}`, attributes: { team: 'tools' }, color: 'purple' } },
   },
 });
-weft.updateIntegration('bedrock', { opSettings: { kind: 'llm', name: 'bedrock' } });
-const groq = weft.wrapGroq(client, { postprocessOutput: scrub });   // per client, after the global hooks
+weft.updateIntegration('bedrock', { traceSettings: { kind: 'llm', name: 'bedrock' } });
+const groq = weft.wrapGroq(client, { postprocessOutput: scrub });   // per client, after the global hooks; also spanName, traceSettings
 ```
 
-`opSettings` fields: `name` (span name), `spanDisplayName`, `postprocessInputs`,
+`traceSettings` fields: `name` (span name), `spanDisplayName`, `postprocessInputs`,
 `postprocessOutput`, `kind`, `color`, `attributes`. Names: `openai`,
 `anthropic`, `google_genai`, `vercel_ai`, `langchain`, `llamaindex`, `mcp`,
 `claude_agent_sdk`, `openai_agents`, `mistral`, `cohere`, `groq`, `together`,
@@ -419,7 +419,7 @@ await weft.save(new weft.Monitor({ name: 'judge-chats', names: ['openai.chat.com
 
 ```ts
 const view = await new weft.SavedView({ label: 'Slow errors' })
-  .filterOp('answer')
+  .filterName('answer')
   .addFilter('summary.weft.status', 'equals', 'error')
   .addFilter('summary.weft.latency_ms', '>', 1000)
   .sortBy('started_at', 'desc')

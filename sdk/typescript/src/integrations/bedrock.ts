@@ -21,7 +21,7 @@ import type { Call } from '../call.js';
 import { addUsage } from '../usage.js';
 import { agentCommandName, handleAgentResponse, startAgentCall, type AgentTraceProcessor } from './bedrock_agents.js';
 import { decodeBody, patchWith, proxyStream, withCall, type Accumulator } from './common.js';
-import { integrationAttributes, integrationClient, integrationOp, pickOpSettings, type IntegrationOpSettings } from './settings.js';
+import { integrationAttributes, integrationClient, integrationOp, pickTraceSettings, type IntegrationTraceSettings, type WrapperTraceOptions } from './settings.js';
 import { bedrockContent, bedrockReasoningBlock } from '../reasoning.js';
 
 const INTEGRATION = 'bedrock';
@@ -174,7 +174,7 @@ function strip(res: any): any {
   return rest;
 }
 
-function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | undefined) {
+function makeSend(orig: (...a: any[]) => any, local: IntegrationTraceSettings | undefined) {
   return function (this: any, command: any, ...rest: any[]) {
     const agentCmd = agentCommandName(command);
     if (agentCmd) {
@@ -273,8 +273,8 @@ function makeSend(orig: (...a: any[]) => any, local: IntegrationOpSettings | und
 }
 
 /** Trace a `BedrockRuntimeClient` instance's `send`. Returns the same client. */
-export function wrapBedrock<T>(client: T, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): T {
-  const local = pickOpSettings(opts);
+export function wrapBedrock<T>(client: T, opts: WrapperTraceOptions = {}): T {
+  const local = pickTraceSettings(opts);
   patchWith(client as any, 'send', (orig) => makeSend(orig, local));
   return client;
 }
@@ -283,10 +283,10 @@ export function wrapBedrock<T>(client: T, opts: IntegrationOpSettings & { opSett
 export const wrapBedrockAgent = wrapBedrock;
 
 /** Patch `BedrockRuntimeClient.prototype.send` so every client is traced. */
-export function instrumentBedrock(BedrockRuntimeClient: any, opts: IntegrationOpSettings & { opSettings?: IntegrationOpSettings } = {}): boolean {
+export function instrumentBedrock(BedrockRuntimeClient: any, opts: WrapperTraceOptions = {}): boolean {
   const proto = BedrockRuntimeClient?.prototype;
   if (!proto) return false;
-  const local = pickOpSettings(opts);
+  const local = pickTraceSettings(opts);
   return patchWith(proto, 'send', (orig) => makeSend(orig, local));
 }
 

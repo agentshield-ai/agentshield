@@ -37,7 +37,7 @@ does not import every framework you have installed).
 | ``notdiamond``, ``verifiers``, ``gepa`` | | see ``frameworks.py`` |
 
 Per-integration settings: ``weft.init(..., autopatch_settings={"openai":
-{"enabled": False}, "anthropic": {"op_settings": {"postprocess_inputs": fn}}})``
+{"enabled": False}, "anthropic": {"trace_settings": {"postprocess_inputs": fn}}})``
 and ``WEFT_DISABLED_INTEGRATIONS`` / ``WEFT_AUTOPATCH_<NAME>``; see
 ``_settings.py``.
 """
@@ -50,7 +50,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from . import _hooks, _settings
 from ._common import unpatch_all as _unpatch_attrs
-from ._settings import AutopatchSettings, IntegrationSettings, OpSettings
+from ._settings import AutopatchSettings, IntegrationSettings, TraceSettings
 from .agno import patch_agno
 from .anthropic import patch_anthropic
 from .autogen import TRIGGERS as _AUTOGEN_TRIGGERS
@@ -217,7 +217,7 @@ __all__ = [
     "INTEGRATIONS",
     "AutopatchSettings",
     "IntegrationSettings",
-    "OpSettings",
+    "TraceSettings",
     "RealtimeTracer",
     "wrap_websocket_async",
     "wrap_websocket_connect",
@@ -256,3 +256,12 @@ __all__ = [
     "patch_verifiers",
     "patch_gepa",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "OpSettings":  # earlier name of TraceSettings (CHANGELOG.md)
+        from .._deprecation import deprecated_call
+
+        deprecated_call("weft.integrations.OpSettings", "weft.integrations.TraceSettings")
+        return TraceSettings
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -114,12 +114,12 @@ def test_saved_view_filters_on_the_server(live):
         except ValueError:
             pass
     live.flush()
-    view = (weft.SavedView(label="Successful long answers").filter_op("answer").add_filter("summary.weft.status", "equals", "success")
+    view = (weft.SavedView(label="Successful long answers").filter_name("answer").add_filter("summary.weft.status", "equals", "success")
             .add_filter("output", "contains", "B").sort_by("started_at", "asc").add_column("inputs.q", "Question").save())
     assert [c.inputs["q"] for c in view.spans()] == ["bb"]
-    assert [c.inputs["q"] for c in weft.SavedView().filter_op("answer").add_filter("inputs.q", "in", ["a", "ccc"]).sort_by("started_at", "asc").spans()] == ["a", "ccc"]
-    assert len(list(weft.SavedView().filter_op("answer").add_filter("started_at", "after", "2020-01-01").spans())) == 4
-    assert len(list(weft.SavedView().filter_op("answer").add_filter("summary.weft.status", "equals", "error").spans())) == 1
+    assert [c.inputs["q"] for c in weft.SavedView().filter_name("answer").add_filter("inputs.q", "in", ["a", "ccc"]).sort_by("started_at", "asc").spans()] == ["a", "ccc"]
+    assert len(list(weft.SavedView().filter_name("answer").add_filter("started_at", "after", "2020-01-01").spans())) == 4
+    assert len(list(weft.SavedView().filter_name("answer").add_filter("summary.weft.status", "equals", "error").spans())) == 1
     loaded = weft.SavedView.load(view.name)
     assert loaded.label == "Successful long answers" and [c.inputs["q"] for c in loaded.spans()] == ["bb"]
     assert [v.name for v in live.get_saved_views(view_type="traces")] == [view.name]

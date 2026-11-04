@@ -128,7 +128,7 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
         answer(q)
     view = (
         weft.SavedView(label="Long answers")
-        .filter_op("answer")
+        .filter_name("answer")
         .add_filter("output", "contains", "B")
         .add_filter("summary.weft.latency_ms", ">=", 0)
         .add_filter("Status", "is not empty")
@@ -171,7 +171,7 @@ def test_saved_view_fluent_api_save_load_and_apply(client, fake):
 
     loaded.remove_filter("output").remove_filter(0).hide_column("inputs.q").remove_columns()
     assert [f.field for f in loaded.filters] == ["summary.weft.status"]
-    loaded.remove_filters().filter_op(None)
+    loaded.remove_filters().filter_name(None)
     assert "query" not in loaded.definition and "filter" not in loaded.definition
 
 
