@@ -1,3 +1,4 @@
+import { deprecated } from './deprecation.js';
 import { WeftObject } from './objects.js';
 import { Ref } from './refs.js';
 import { SavedView } from './savedView.js';
@@ -17,13 +18,29 @@ function refUri(v: unknown): string {
 export class AnnotationSpec extends WeftObject {
   fieldSchema: Record<string, unknown>;
   uniqueAmongCreators: boolean;
-  opScope: string[] | null;
+  /** The span names (functions, or their refs) it applies to; null: every span. */
+  names: string[] | null;
 
-  constructor(opts: { name?: string; description?: string | null; fieldSchema?: Record<string, unknown>; uniqueAmongCreators?: boolean; opScope?: string[] | null }) {
+  constructor(opts: {
+    name?: string;
+    description?: string | null;
+    fieldSchema?: Record<string, unknown>;
+    uniqueAmongCreators?: boolean;
+    names?: string[] | null;
+    /** @deprecated use `names` */
+    opScope?: string[] | null;
+  }) {
     super(opts);
     this.fieldSchema = opts.fieldSchema ?? { type: 'string' };
     this.uniqueAmongCreators = opts.uniqueAmongCreators ?? true;
-    this.opScope = opts.opScope ?? null;
+    if (opts.opScope !== undefined) deprecated('AnnotationSpec opScope', 'names');
+    this.names = opts.names ?? opts.opScope ?? null;
+  }
+
+  /** @deprecated use `names` */
+  get opScope(): string[] | null {
+    deprecated('AnnotationSpec.opScope', 'AnnotationSpec.names');
+    return this.names;
   }
 
   get className(): string {
@@ -31,7 +48,7 @@ export class AnnotationSpec extends WeftObject {
   }
 
   fields(): Record<string, unknown> {
-    return { field_schema: this.fieldSchema, unique_among_creators: this.uniqueAmongCreators, op_scope: this.opScope };
+    return { field_schema: this.fieldSchema, unique_among_creators: this.uniqueAmongCreators, names: this.names };
   }
 
   /** Validate a value against `fieldSchema` (type, enum, min/max, length). */
@@ -93,21 +110,39 @@ export class Leaderboard extends WeftObject {
   }
 }
 
-/** Online evaluation: the server scores matching calls with server-runnable scorers. */
+/** Online evaluation: the server scores matching spans with server-runnable scorers. */
 export class Monitor extends WeftObject {
   active: boolean;
   samplingRate: number;
-  opNames: string[];
+  /** Span names (functions) to score; empty: root spans. */
+  names: string[];
   query: Record<string, unknown> | null;
   scorers: unknown[];
 
-  constructor(opts: { name?: string; description?: string | null; active?: boolean; samplingRate?: number; opNames?: string[]; query?: Record<string, unknown> | null; scorers?: unknown[] }) {
+  constructor(opts: {
+    name?: string;
+    description?: string | null;
+    active?: boolean;
+    samplingRate?: number;
+    names?: string[];
+    /** @deprecated use `names` */
+    opNames?: string[];
+    query?: Record<string, unknown> | null;
+    scorers?: unknown[];
+  }) {
     super(opts);
     this.active = opts.active ?? true;
     this.samplingRate = opts.samplingRate ?? 1;
-    this.opNames = opts.opNames ?? [];
+    if (opts.opNames !== undefined) deprecated('Monitor opNames', 'names');
+    this.names = opts.names ?? opts.opNames ?? [];
     this.query = opts.query ? ('$expr' in opts.query ? opts.query : { $expr: opts.query }) : null;
     this.scorers = opts.scorers ?? [];
+  }
+
+  /** @deprecated use `names` */
+  get opNames(): string[] {
+    deprecated('Monitor.opNames', 'Monitor.names');
+    return this.names;
   }
 
   get className(): string {
@@ -115,17 +150,19 @@ export class Monitor extends WeftObject {
   }
 
   fields(): Record<string, unknown> {
-    return { active: this.active, sampling_rate: this.samplingRate, op_names: this.opNames, query: this.query, scorers: this.scorers };
+    return { active: this.active, sampling_rate: this.samplingRate, names: this.names, query: this.query, scorers: this.scorers };
   }
 }
 
-/** Rebuild platform objects loaded from the server (null for other values). */
+/** Rebuild platform objects loaded from the server (null for other values).
+ * Versions saved before the rename (and objects the weave client published)
+ * name a monitor's `names` op_names and an annotation spec's op_scope. */
 export function loadPlatformObject(val: any, ref: Ref | undefined): WeftObject | null {
   const base = { name: val.name ?? undefined, description: val.description ?? null };
   let obj: WeftObject | null = null;
   switch (val._class_name) {
     case 'AnnotationSpec':
-      obj = new AnnotationSpec({ ...base, fieldSchema: val.field_schema, uniqueAmongCreators: val.unique_among_creators, opScope: val.op_scope });
+      obj = new AnnotationSpec({ ...base, fieldSchema: val.field_schema, uniqueAmongCreators: val.unique_among_creators, names: val.names ?? val.op_scope });
       break;
     case 'Leaderboard':
       obj = new Leaderboard({
@@ -139,7 +176,7 @@ export function loadPlatformObject(val: any, ref: Ref | undefined): WeftObject |
       });
       break;
     case 'Monitor':
-      obj = new Monitor({ ...base, active: val.active, samplingRate: val.sampling_rate, opNames: val.op_names, query: val.query, scorers: val.scorers });
+      obj = new Monitor({ ...base, active: val.active, samplingRate: val.sampling_rate, names: val.names ?? val.op_names, query: val.query, scorers: val.scorers });
       break;
     case 'SavedView':
       obj = new SavedView({ ...base, viewType: val.view_type, label: val.label, definition: val.definition });

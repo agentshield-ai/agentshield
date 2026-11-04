@@ -229,14 +229,15 @@ def test_platform_objects_serialise(client, fake):
     v = fake.objs["quality"][0]["value"]
     assert v == {"_type": "AnnotationSpec", "_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "quality",
                  "description": None, "field_schema": {"type": "integer", "minimum": 1, "maximum": 5},
-                 "unique_among_creators": True, "op_scope": None}
+                 "unique_among_creators": True, "names": None}
 
     judge = scorers.LLMAsAJudgeScorer(name="judge", model="gpt-4o-mini", scoring_prompt="{output}")
-    mon = weft.Monitor(name="mon", op_names=["openai.chat.completions.create"], sampling_rate=0.5,
+    mon = weft.Monitor(name="mon", names=["openai.chat.completions.create"], sampling_rate=0.5,
                        query={"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 10}]}, scorers=[judge])
     weft.save(mon)
     mv = fake.objs["mon"][0]["value"]
     assert mv["_class_name"] == "Monitor" and mv["active"] is True and mv["sampling_rate"] == 0.5
+    assert mv["names"] == ["openai.chat.completions.create"] and "op_names" not in mv
     assert mv["query"] == {"$expr": {"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 10}]}}
     assert mv["scorers"][0].startswith("weft:///test-entity/test-proj/object/judge:")
     mon.deactivate()

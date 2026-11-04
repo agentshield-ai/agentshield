@@ -169,6 +169,7 @@ func (s *Routes) callsStreamQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/jsonl")
+	w.WriteHeader(http.StatusOK) // an empty stream is a 200 too
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	flusher, _ := w.(http.Flusher)
@@ -558,7 +559,14 @@ func (s *Routes) feedbackCreate(ctx context.Context, r *http.Request, req *store
 }
 
 type feedbackBatchReq struct {
-	Batch []store.AgentFeedbackItem `json:"batch"`
+	Batch []feedbackBatchItem `json:"batch"`
+}
+
+// feedbackBatchItem is a batch item as the client sends it: the scorer's
+// own span is call_ref (Weft's span_ref).
+type feedbackBatchItem struct {
+	store.AgentFeedbackItem
+	CallRef *string `json:"call_ref"`
 }
 
 func (s *Routes) feedbackBatchCreate(ctx context.Context, r *http.Request, req *feedbackBatchReq) (any, error) {
@@ -566,7 +574,11 @@ func (s *Routes) feedbackBatchCreate(ctx context.Context, r *http.Request, req *
 		return nil, store.Invalidf("batch too large (max 1000)")
 	}
 	res := make([]any, 0, len(req.Batch))
-	for _, b := range req.Batch {
+	for _, it := range req.Batch {
+		b := it.AgentFeedbackItem
+		if it.CallRef != nil {
+			b.SpanRef = it.CallRef
+		}
 		b.UserID = s.host.User(r, b.UserID)
 		f, err := s.store.CreateAgentFeedback(ctx, b)
 		if err != nil {
@@ -729,6 +741,7 @@ func (s *Routes) completionsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/jsonl")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK) // an empty stream is a 200 too
 	flusher, _ := w.(http.Flusher)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)

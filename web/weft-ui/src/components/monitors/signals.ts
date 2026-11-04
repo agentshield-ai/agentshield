@@ -207,7 +207,7 @@ export function planSignal(t: SignalTemplate, o: SignalOptions, taken: Set<strin
       description: `Signal: ${t.title}. ${t.description}`,
       active: true,
       sampling_rate: Math.min(1, Math.max(0, o.samplingRate)),
-      op_names: o.opNames,
+      names: o.opNames,
       scorers: [scorerRef],
     }),
   }

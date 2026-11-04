@@ -65,3 +65,29 @@ def test_deprecated_names_warn_and_still_work(client, fake):
         warnings.simplefilter("error")
         weft.save({"v": 3}, name="dep")  # the new names never warn
         list(client.spans(limit=1))
+
+
+def test_platform_object_field_names(client, fake):
+    """Monitors and annotation specs name spans ``names``; saved views store
+    Weft's span filter names. The earlier names still work, with a warning
+    for keywords, and are read silently from versions saved before the rename."""
+    mon = _warns(lambda: weft.Monitor(name="m", op_names=["f"]), r"Monitor\(op_names=\.\.\.\) is deprecated")
+    assert mon.names == ["f"] and _warns(lambda: mon.op_names, r"Monitor\.op_names is deprecated") == ["f"]
+    weft.save(mon)
+    assert fake.objs["m"][0]["value"]["names"] == ["f"] and "op_names" not in fake.objs["m"][0]["value"]
+    spec = _warns(lambda: weft.AnnotationSpec(name="s", op_scope=["f"]), r"AnnotationSpec\(op_scope=\.\.\.\) is deprecated")
+    assert spec.names == ["f"]
+
+    old = {"_class_name": "Monitor", "_bases": ["Object", "BaseModel"], "name": "old", "active": True, "op_names": ["g"]}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        assert weft.Monitor._weft_from_val(old, client, None).names == ["g"]
+        spec_old = {"_class_name": "AnnotationSpec", "name": "o", "op_scope": ["h"]}
+        assert weft.AnnotationSpec._weft_from_val(spec_old, client, None).names == ["h"]
+
+    view = weft.SavedView(definition={"filter": {"op_names": ["a"], "thread_ids": ["t"]}})
+    assert view.to_spans_query()["filter"] == {"names": ["a"], "session_ids": ["t"]}
+    view.set_filter(call_ids=["c"])
+    assert view.definition["filter"] == {"names": ["a"], "session_ids": ["t"], "ids": ["c"]}
+    view.filter_op(None)
+    assert view.definition["filter"] == {"session_ids": ["t"], "ids": ["c"]}

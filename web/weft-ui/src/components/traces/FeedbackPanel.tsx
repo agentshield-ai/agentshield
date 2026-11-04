@@ -9,6 +9,7 @@ import { refUrl, objectUrl, settingsUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Loading, Section } from '../common'
 import { RefChip } from '../RefChip'
 import { ValueView } from '../ValueView'
+import { annotationSpecNames } from '../objects/objectUtils'
 
 export const REACTION_EMOJIS = ['👍', '👎', '😀', '🎉', '🤔', '👀']
 const USER_KEY = 'weft.userId'
@@ -177,8 +178,8 @@ function specName(o: WeftObject): string {
 }
 
 function specApplies(spec: WeftObject, call: Span | undefined): boolean {
-  const scope = spec.value?.op_scope
-  if (!call || !Array.isArray(scope) || scope.length === 0) return true
+  const scope = annotationSpecNames(spec.value)
+  if (!call || scope.length === 0) return true
   const base = (s: string) => parseRef(s)?.name ?? s
   return scope.some((s: string) => base(s) === base(call.name))
 }

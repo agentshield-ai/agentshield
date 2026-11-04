@@ -67,8 +67,8 @@ test.beforeAll(async () => {
     _bases: ['Object', 'BaseModel'],
     name: 'Health',
     time_range: 'all',
-    filter: { op_names: ['answer'] },
-    panels: [{ id: 'p1', title: 'Spans by name', chart: 'table', metrics: [{ agg: 'count', name: 'Spans' }], group_by: 'op_name', width: 3 }],
+    filter: { names: ['answer'] },
+    panels: [{ id: 'p1', title: 'Spans by name', chart: 'table', metrics: [{ agg: 'count', name: 'Spans' }], group_by: 'name', width: 3 }],
   })
   await save('greeting', { _type: 'StringPrompt', _class_name: 'StringPrompt', _bases: ['Prompt', 'Object', 'BaseModel'], name: 'greeting', content: 'Hello {name}' })
   await save('quality', {
@@ -86,7 +86,7 @@ test.beforeAll(async () => {
     description: '',
     columns: [{ evaluation_object_ref: ev.ref, scorer_name: 'exact', summary_metric_path: 'true_fraction', should_minimize: false }],
   })
-  await save('mon', { _type: 'Monitor', _class_name: 'Monitor', _bases: ['Object', 'BaseModel'], name: 'mon', active: false, sampling_rate: 1, op_names: ['answer'], scorers: [scorer.ref] })
+  await save('mon', { _type: 'Monitor', _class_name: 'Monitor', _bases: ['Object', 'BaseModel'], name: 'mon', active: false, sampling_rate: 1, names: ['answer'], scorers: [scorer.ref] })
   runId = ((await post('/api/v1/evaluations/run', { project_id: P, evaluation_ref: ev.ref, model_ref: model.ref })) as { id: string }).id
   for (let i = 0; i < 100; i++) {
     const st = await (await fetch(`${base()}/api/v1/evaluations/${runId}/status?project_id=${encodeURIComponent(P)}`)).json()

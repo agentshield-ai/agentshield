@@ -14,7 +14,7 @@ import (
 type AgentChatFeedback struct {
 	ID                      string             `json:"id"`
 	AnnotationRef           *string            `json:"annotation_ref"`
-	CallRef                 *string            `json:"call_ref"`
+	SpanRef                 *string            `json:"span_ref"`
 	CreatedAt               *string            `json:"created_at"`
 	Creator                 *string            `json:"creator"`
 	FeedbackType            string             `json:"feedback_type"`
@@ -35,7 +35,7 @@ func chatFeedback(fs []Feedback) []AgentChatFeedback {
 	out := make([]AgentChatFeedback, 0, len(fs))
 	for _, f := range fs {
 		created := f.CreatedAt
-		cf := AgentChatFeedback{ID: f.ID, AnnotationRef: f.AnnotationRef, CallRef: f.CallRef, CreatedAt: &created, Creator: f.Creator,
+		cf := AgentChatFeedback{ID: f.ID, AnnotationRef: f.AnnotationRef, SpanRef: f.CallRef, CreatedAt: &created, Creator: f.Creator,
 			FeedbackType: f.FeedbackType, Payload: asMap(f.Payload), RunnableRef: f.RunnableRef, TriggerRef: f.TriggerRef, UserID: f.UserID,
 			Ref: f.Ref, ScorerRatingConfidences: map[string]float64{}, ScorerRatingReasons: map[string]string{},
 			ScorerRatings: map[string]float64{}, ScorerTagConfidences: map[string]float64{}, ScorerTagReasons: map[string]string{}, ScorerTags: []string{}}

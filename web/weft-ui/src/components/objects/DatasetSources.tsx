@@ -1,5 +1,5 @@
-// Dataset lineage (/api/v1/dataset_sources/*): the calls, spans or
-// conversations that rows of this dataset were built from.
+// Dataset lineage (/api/v1/dataset_sources/*): the spans or conversations
+// that rows of this dataset were built from.
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
@@ -37,7 +37,7 @@ export function DatasetSources({ projectId, objectId }: { projectId: string; obj
                   <td className="mono small" title={l.row_digest}>
                     {l.row_digest.slice(0, 10)}
                   </td>
-                  <td>{l.source_kind === 'call' || l.source_kind === 'span' ? <Link to={spanUrl(projectId, l.source_id)}>{l.source_display_name}</Link> : <span className="mono small">{l.source_display_name}</span>}</td>
+                  <td>{l.source_kind === 'span' ? <Link to={spanUrl(projectId, l.source_id)}>{l.source_display_name}</Link> : <span className="mono small">{l.source_display_name}</span>}</td>
                   <td>
                     <span className="badge">{l.source_kind}</span>
                   </td>

@@ -120,6 +120,9 @@ func newList[T any](items []T, total int64) page[T] {
 }
 
 // ndjson writes items as newline-delimited JSON, flushing as it goes.
+// newNDJSON writes the 200 status at once, so an empty stream is a 200 with
+// no lines (rather than a response whose status was never written); set
+// any other headers before calling it.
 type ndjson struct {
 	enc     *json.Encoder
 	flusher http.Flusher
@@ -129,6 +132,7 @@ type ndjson struct {
 func newNDJSON(w http.ResponseWriter) *ndjson {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	f, _ := w.(http.Flusher)

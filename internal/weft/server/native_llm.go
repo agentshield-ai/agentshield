@@ -51,9 +51,9 @@ func (s *Server) v1CompletionsStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, store.Invalidf("inputs are required"))
 		return
 	}
-	out := newNDJSON(w)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
+	out := newNDJSON(w)
 	started := time.Now()
 	final, streamErr := s.llm.Stream(r.Context(), pid, req.Inputs, func(ch map[string]any) error {
 		if err := out.write(ch); err != nil {

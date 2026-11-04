@@ -97,7 +97,7 @@ step keeps spans with a failed span under them.
 
 On Agents, Teams and Security the status chip keeps what belongs to a
 session with that status (Agents reads Failed and Succeeded off the agent's
-own calls).
+own runs).
 
 ## Filters on pages that do not list sessions
 

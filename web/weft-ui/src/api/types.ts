@@ -224,8 +224,7 @@ export interface Project {
   project_id: string
   entity: string
   project: string
-  /** Spans in the project (GET /projects keeps this name). */
-  call_count: number
+  span_count: number
   trace_count: number
   object_count: number
   last_activity: string | null

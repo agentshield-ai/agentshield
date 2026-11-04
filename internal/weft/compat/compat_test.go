@@ -30,11 +30,8 @@ type env struct {
 	key string
 }
 
-var legacyOff = false
-
 // newEnv builds a server with the adapter on or off; with it off, the older
-// route shapes are off too (server.Config.LegacyRoutes false), as they will
-// be by default once Weft's SDKs and UI use only the native API.
+// route shapes are off too.
 func newEnv(t *testing.T, compatOn bool, keys ...string) *env {
 	t.Helper()
 	e, _ := newEnvServer(t, compatOn, keys...)
@@ -50,9 +47,6 @@ func newEnvServer(t *testing.T, compatOn bool, keys ...string) (*env, *server.Se
 	cfg := server.Config{APIKeys: keys, Compat: compatOn, UI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ui"))
 	})}
-	if !compatOn {
-		cfg.LegacyRoutes = &legacyOff
-	}
 	s := server.New(cfg, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
@@ -527,5 +521,54 @@ func TestAdapterDigestsAndRefKinds(t *testing.T) {
 	}
 	if strings.Contains(string(body), "/function/") || strings.Contains(string(body), "/span/") {
 		t.Fatalf("client response has Weft's ref kinds: %s", body)
+	}
+}
+
+// Weft names spans its own way in fields its client also uses (metric
+// buckets, dataset lineage kinds, the scorer span of feedback); the adapter
+// keeps the client's names on its routes.
+func TestAdapterKeepsClientSpanNames(t *testing.T) {
+	e := newEnv(t, true)
+	e.post("/call/start", map[string]any{"start": map[string]any{"project_id": pid, "id": "c1", "trace_id": "t1", "op_name": "f",
+		"started_at": "2026-01-01T10:00:00Z", "inputs": map[string]any{}, "attributes": map[string]any{}}}, weaveUA)
+	e.post("/call/end", map[string]any{"end": map[string]any{"project_id": pid, "id": "c1", "ended_at": "2026-01-01T10:00:01Z",
+		"output": 1, "summary": map[string]any{}}}, weaveUA)
+
+	st := e.post("/calls/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z", "end": "2026-01-01T11:00:00Z",
+		"granularity": 3600, "call_metrics": []any{map[string]any{"metric": "call_count"}}}, weaveUA)
+	cb, ok := st["call_buckets"].([]any)
+	if !ok || len(cb) != 1 || cb[0].(map[string]any)["sum_call_count"].(float64) != 1 || st["span_buckets"] != nil {
+		t.Fatalf("calls/stats = %v", st)
+	}
+	if code, out, _ := e.raw(http.MethodPost, "/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T10:00:00Z",
+		"span_metrics": []any{map[string]any{"metric": "span_count"}}}, nil); code != 200 || !strings.Contains(string(out), `"sum_span_count":1`) {
+		t.Fatalf("spans/stats -> %d %s", code, out)
+	}
+
+	tbl := e.post("/table/create", map[string]any{"table": map[string]any{"project_id": pid, "rows": []any{map[string]any{"q": 1}}}}, weaveUA)
+	obj := e.post("/obj/create", map[string]any{"obj": map[string]any{"project_id": pid, "object_id": "ds",
+		"val": map[string]any{"_type": "Dataset", "_class_name": "Dataset", "rows": "weave:///" + pid + "/table/" + tbl["digest"].(string)}}}, weaveUA)
+	row := tbl["row_digests"].([]any)[0]
+	e.post("/dataset_sources/link", map[string]any{"project_id": pid, "dataset_object_id": "ds", "dataset_digest": obj["digest"],
+		"links": []any{map[string]any{"row_digest": row, "sources": []any{map[string]any{"source_id": "c1", "source_kind": "call", "source_trace_id": "t1"}}}}}, weaveUA)
+	q := e.post("/dataset_sources/query", map[string]any{"project_id": pid, "dataset_object_id": "ds", "source_kinds": []any{"call"}}, weaveUA)
+	if l := q["links"].([]any); len(l) != 1 || l[0].(map[string]any)["source_kind"] != "call" || l[0].(map[string]any)["source_display_name"] == "" {
+		t.Fatalf("dataset_sources/query = %v", q)
+	}
+	nq := e.post("/api/v1/dataset_sources/query", map[string]any{"project_id": pid, "dataset": "ds"}, nil)
+	if l := nq["items"].([]any); len(l) != 1 || l[0].(map[string]any)["source_kind"] != "span" {
+		t.Fatalf("native query = %v", nq)
+	}
+	m := e.post("/dataset_sources/source_datasets_query", map[string]any{"project_id": pid,
+		"sources": []any{map[string]any{"source_id": "c1", "source_kind": "call"}}}, weaveUA)
+	if ms := m["memberships"].([]any); len(ms) != 1 || ms[0].(map[string]any)["source_kind"] != "call" {
+		t.Fatalf("source_datasets_query = %v", m)
+	}
+
+	e.post("/feedback/batch/create", map[string]any{"batch": []any{map[string]any{"project_id": pid, "weave_ref": "weave:///" + pid + "/call/c1",
+		"feedback_type": "wandb.runnable.judge", "payload": map[string]any{"output": 1}, "call_ref": "weave:///" + pid + "/call/judge-1"}}}, weaveUA)
+	fq := e.post("/api/v1/feedback/query", map[string]any{"project_id": pid}, nil)
+	if items := fq["items"].([]any); len(items) != 1 || items[0].(map[string]any)["span_ref"] != "weft:///"+pid+"/span/judge-1" {
+		t.Fatalf("feedback = %v", fq)
 	}
 }

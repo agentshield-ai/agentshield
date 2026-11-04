@@ -265,3 +265,11 @@ export function rowsDigest(val: Any): string | null {
 export function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
+
+/** The span names (functions) an AnnotationSpec applies to; empty: every
+ * span. Versions saved before the rename, and specs published by the weave
+ * client, name them op_scope. */
+export function annotationSpecNames(v: Any): string[] {
+  const n = v?.names ?? v?.op_scope
+  return Array.isArray(n) ? n.filter((x: unknown): x is string => typeof x === 'string') : []
+}

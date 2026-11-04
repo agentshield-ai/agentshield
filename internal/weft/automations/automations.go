@@ -3,9 +3,9 @@
 //
 // Triggers:
 //   - score_threshold: a scorer result (weft.scorer.<scorer> feedback, as
-//     written by monitors and /calls/score) crosses a threshold;
-//   - error_rate: the share of failed calls of the given ops over a window
-//     reaches a threshold (checked by a background loop);
+//     written by monitors and /api/v1/spans/score) crosses a threshold;
+//   - error_rate: the share of failed spans with the given names over a
+//     window reaches a threshold (checked by a background loop);
 //   - feedback_created: feedback of the given types is created.
 package automations
 
@@ -53,9 +53,13 @@ type Trigger struct {
 	Threshold  float64 `json:"threshold"`
 
 	// error_rate (Threshold is the error fraction 0..1)
-	OpNames       []string `json:"op_names"`
+	Names         []string `json:"names"`
 	WindowMinutes float64  `json:"window_minutes"`
-	MinCalls      int      `json:"min_calls"`
+	MinSpans      int      `json:"min_spans"`
+	// The earlier names of Names and MinSpans, read from versions saved
+	// before the rename (legacyTrigger).
+	OldNames    []string `json:"op_names,omitempty"`
+	OldMinSpans int      `json:"min_calls,omitempty"`
 
 	// feedback_created
 	FeedbackTypes []string `json:"feedback_types"` // exact types or prefixes ending in *
@@ -80,6 +84,14 @@ func Parse(val any) (*Automation, error) {
 	if err := json.Unmarshal(b, &a); err != nil {
 		return nil, store.Invalidf("invalid automation: %v", err)
 	}
+	t := &a.Trigger
+	if t.Names == nil {
+		t.Names = t.OldNames
+	}
+	if t.MinSpans == 0 {
+		t.MinSpans = t.OldMinSpans
+	}
+	t.OldNames, t.OldMinSpans = nil, 0
 	return &a, a.Validate()
 }
 
@@ -273,7 +285,7 @@ func (r *Runner) automations(ctx context.Context, projectID string) ([]*store.Ob
 	return objs, nil
 }
 
-func feedbackCallID(f store.Feedback) string {
+func feedbackSpanID(f store.Feedback) string {
 	if rf, err := refs.Parse(f.Ref); err == nil && rf.Kind == refs.KindSpan {
 		return rf.Name
 	}
@@ -363,14 +375,14 @@ func (r *Runner) HandleFeedback(ctx context.Context, f store.Feedback) []*store.
 				continue
 			}
 			event = map[string]any{"type": "score_threshold", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "ref": f.Ref,
-				"call_id": feedbackCallID(f), "value": raw, "path": a.Trigger.Path, "operator": a.Trigger.Operator, "threshold": a.Trigger.Threshold,
+				"span_id": feedbackSpanID(f), "value": raw, "path": a.Trigger.Path, "operator": a.Trigger.Operator, "threshold": a.Trigger.Threshold,
 				"monitor_ref": f.TriggerRef}
 		case "feedback_created":
 			if !typeMatches(a.Trigger.FeedbackTypes, f.FeedbackType) {
 				continue
 			}
 			event = map[string]any{"type": "feedback_created", "feedback_id": f.ID, "feedback_type": f.FeedbackType, "ref": f.Ref,
-				"call_id": feedbackCallID(f), "payload": f.Payload, "creator": f.Creator, "user_id": f.UserID, "queue_id": f.QueueID}
+				"span_id": feedbackSpanID(f), "payload": f.Payload, "creator": f.Creator, "user_id": f.UserID, "queue_id": f.QueueID}
 		default:
 			continue
 		}
@@ -406,8 +418,8 @@ func (r *Runner) CheckErrorRates(ctx context.Context, projectID string) ([]*stor
 			if err != nil || !a.IsEnabled() || a.Trigger.Type != "error_rate" {
 				continue
 			}
-			ops := make([]string, 0, len(a.Trigger.OpNames))
-			for _, n := range a.Trigger.OpNames {
+			ops := make([]string, 0, len(a.Trigger.Names))
+			for _, n := range a.Trigger.Names {
 				if n = strings.TrimSpace(n); n != "" {
 					ops = append(ops, store.OpBaseName(n))
 				}
@@ -417,16 +429,16 @@ func (r *Runner) CheckErrorRates(ctx context.Context, projectID string) ([]*stor
 			if err != nil {
 				return runs, err
 			}
-			minCalls := int64(max(a.Trigger.MinCalls, 1))
-			if total < minCalls {
+			minSpans := int64(max(a.Trigger.MinSpans, 1))
+			if total < minSpans {
 				continue
 			}
 			rate := float64(errs) / float64(total)
 			if rate < a.Trigger.Threshold || errs == 0 {
 				continue
 			}
-			event := map[string]any{"type": "error_rate", "total_calls": total, "error_calls": errs, "error_rate": rate,
-				"threshold": a.Trigger.Threshold, "window_minutes": a.window().Minutes(), "op_names": a.Trigger.OpNames}
+			event := map[string]any{"type": "error_rate", "total_spans": total, "error_spans": errs, "error_rate": rate,
+				"threshold": a.Trigger.Threshold, "window_minutes": a.window().Minutes(), "names": a.Trigger.Names}
 			if run := r.fireWithCooldown(ctx, o, a, event); run != nil {
 				runs = append(runs, run)
 			}
@@ -468,17 +480,17 @@ func (r *Runner) fireWithCooldown(ctx context.Context, o *store.Obj, a *Automati
 func SampleEvent(a *Automation) map[string]any {
 	switch a.Trigger.Type {
 	case "score_threshold":
-		return map[string]any{"type": "score_threshold", "feedback_type": ScorerFeedbackType(a.Trigger.Scorer), "call_id": "test-call",
+		return map[string]any{"type": "score_threshold", "feedback_type": ScorerFeedbackType(a.Trigger.Scorer), "span_id": "test-span",
 			"value": a.Trigger.Threshold, "path": a.Trigger.Path, "operator": a.Trigger.Operator, "threshold": a.Trigger.Threshold}
 	case "error_rate":
-		return map[string]any{"type": "error_rate", "total_calls": 10, "error_calls": 5, "error_rate": 0.5,
-			"threshold": a.Trigger.Threshold, "window_minutes": a.window().Minutes(), "op_names": a.Trigger.OpNames}
+		return map[string]any{"type": "error_rate", "total_spans": 10, "error_spans": 5, "error_rate": 0.5,
+			"threshold": a.Trigger.Threshold, "window_minutes": a.window().Minutes(), "names": a.Trigger.Names}
 	}
 	ft := "weft.note"
 	if len(a.Trigger.FeedbackTypes) > 0 {
 		ft = strings.TrimSuffix(a.Trigger.FeedbackTypes[0], "*")
 	}
-	return map[string]any{"type": "feedback_created", "feedback_type": ft, "call_id": "test-call", "payload": map[string]any{"note": "test"}}
+	return map[string]any{"type": "feedback_created", "feedback_type": ft, "span_id": "test-span", "payload": map[string]any{"note": "test"}}
 }
 
 // Summary is a one-line description of an event.
@@ -499,13 +511,13 @@ func Summary(event map[string]any) string {
 		if p := f(event["path"]); p != "" {
 			s += "." + p
 		}
-		return fmt.Sprintf("score %s = %s (%s %s) on call %s", s, f(event["value"]), f(event["operator"]), f(event["threshold"]), f(event["call_id"]))
+		return fmt.Sprintf("score %s = %s (%s %s) on span %s", s, f(event["value"]), f(event["operator"]), f(event["threshold"]), f(event["span_id"]))
 	case "error_rate":
 		rate, _ := event["error_rate"].(float64)
-		return fmt.Sprintf("error rate %.1f%% (%v of %v calls) over %v min reached threshold %.1f%%", rate*100, event["error_calls"], event["total_calls"],
+		return fmt.Sprintf("error rate %.1f%% (%v of %v spans) over %v min reached threshold %.1f%%", rate*100, event["error_spans"], event["total_spans"],
 			event["window_minutes"], toF(event["threshold"])*100)
 	case "feedback_created":
-		return fmt.Sprintf("feedback %s created on call %s", f(event["feedback_type"]), f(event["call_id"]))
+		return fmt.Sprintf("feedback %s created on span %s", f(event["feedback_type"]), f(event["span_id"]))
 	}
 	return "automation fired"
 }
@@ -516,6 +528,10 @@ func toF(v any) float64 {
 }
 
 var placeholderRe = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// oldPlaceholders maps the earlier names of event fields, which message
+// templates saved before the rename may use, to the current ones.
+var oldPlaceholders = map[string]string{"call_id": "span_id", "total_calls": "total_spans", "error_calls": "error_spans", "op_names": "names"}
 
 // Render fills {placeholders} in a message template from vars.
 func Render(tmpl string, vars map[string]any) string {
@@ -587,6 +603,12 @@ func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event
 	for k, v := range event {
 		if _, exists := vars[k]; !exists {
 			vars[k] = v
+		}
+	}
+	// Message templates saved before the rename use the earlier names.
+	for old, cur := range oldPlaceholders {
+		if v, ok := event[cur]; ok {
+			vars[old] = v
 		}
 	}
 	message := fmt.Sprintf("Weft automation %q fired in %s: %s", name, o.ProjectID, summary)

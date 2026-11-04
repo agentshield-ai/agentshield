@@ -490,18 +490,23 @@ func TestNativeDatasetSources(t *testing.T) {
 	e.spanBatch(completeSpan(map[string]any{"id": "src", "name": "answer", "display_name": "Answer", "started_at": "2026-01-01T00:00:00Z"}))
 	rows := tbl["row_digests"].([]any)
 	link := e.post("/api/v1/dataset_sources/link", map[string]any{"project_id": pid, "dataset": "golden", "include_created_status": true,
-		"links": []any{map[string]any{"row_digest": rows[0], "sources": []any{map[string]any{"source_id": "src", "source_kind": "call", "source_trace_id": "src"}}},
+		"links": []any{map[string]any{"row_digest": rows[0], "sources": []any{map[string]any{"source_id": "src", "source_kind": "span", "source_trace_id": "src"}}},
 			map[string]any{"row_digest": rows[1], "sources": []any{map[string]any{"source_id": "conv-1", "source_kind": "conversation"}}}}})
 	items := link["items"].([]any)
 	if len(items) != 2 || items[0].(map[string]any)["created"] != true || link["dataset_digest"] == nil {
 		t.Fatalf("link = %v", link)
+	}
+	// The kind's earlier name is not Weft's (the compatibility adapter maps it).
+	if code, out := e.raw("/api/v1/dataset_sources/link", map[string]any{"project_id": pid, "dataset": "golden",
+		"links": []any{map[string]any{"row_digest": rows[0], "sources": []any{map[string]any{"source_id": "src", "source_kind": "call"}}}}}, nil); code != 400 {
+		t.Fatalf("source_kind call -> %d %s", code, out)
 	}
 	q := e.post("/api/v1/dataset_sources/query", map[string]any{"project_id": pid, "dataset": "golden"})
 	if q["total_count"].(float64) != 2 || q["items"].([]any)[0].(map[string]any)["source_display_name"] != "Answer" ||
 		q["items"].([]any)[0].(map[string]any)["dataset"] != "golden" {
 		t.Fatalf("query = %v", q)
 	}
-	m := e.post("/api/v1/dataset_sources/datasets", map[string]any{"project_id": pid, "sources": []any{map[string]any{"source_id": "src", "source_kind": "call"}}})
+	m := e.post("/api/v1/dataset_sources/datasets", map[string]any{"project_id": pid, "sources": []any{map[string]any{"source_id": "src", "source_kind": "span"}}})
 	if m["total_count"].(float64) != 1 || m["items"].([]any)[0].(map[string]any)["dataset"] != "golden" {
 		t.Fatalf("datasets = %v", m)
 	}

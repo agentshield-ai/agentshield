@@ -108,18 +108,24 @@ trace and object API in the route shapes of the weave client: `/call/*`,
 `/v2/{entity}/{project}/…`, `/v1/entities/{entity}/projects/{project}…`,
 `/inference/*`, `/geolocate`, `GET /version` and `GET /server_info`. These
 routes now live in the adapter (`internal/weft/compat`, `routes*.go`,
-`v2.go`, `extra.go`, `inference.go`) and are served only:
+`v2.go`, `extra.go`, `inference.go`) and are served only with the adapter on
+(`--weave-compat`).
 
-- with the adapter on (`--weave-compat`); or
-- while the server's temporary `--legacy-routes` switch is on
-  (`WEFT_LEGACY_ROUTES`; `true` until Weft's own SDKs, UI and plugins use
-  only the native API, then `false`). The switch serves the route shapes
-  alone: none of the adapter's other translations (GraphQL login, the
-  client's v2 call routes, legacy names, `weave:///` refs).
+With the adapter off, every one of them returns 404 (the UI's catch-all
+answers unknown `GET` paths with its own not-found page); `TestOffByDefault`
+in `internal/weft/compat/compat_test.go` checks every route the adapter adds.
 
-With both off, every one of them returns 404 (the UI's catch-all answers
-unknown `GET` paths with its own not-found page); `TestOffByDefault` in
-`internal/weft/compat/compat_test.go` checks every route the adapter adds.
+### Decision: the `--legacy-routes` switch is removed
+
+While Weft's own SDKs, UI and plugins moved to `/api/v1`, a temporary server
+switch, `--legacy-routes` (`WEFT_LEGACY_ROUTES`, on by default), served these
+route shapes without the rest of the adapter. They have all moved, so the
+switch was to be turned off by default. Nothing else needed the route shapes
+without the adapter (no Weft SDK release used them, and the official weave
+client needs the whole adapter anyway), so the switch was removed instead of
+being kept as a second way to serve the adapter's routes: `--legacy-routes`
+is an unknown flag, and a `WEFT_LEGACY_ROUTES` setting is ignored with a
+warning at startup. To serve the older route shapes, turn the adapter on.
 
 On these routes:
 
@@ -300,6 +306,15 @@ whether or not the adapter is on:
 - legacy attribute keys of stored calls are renamed (eval links, parent-call
   links, span kinds, turn markers);
 - saved queries get Weft's names (below);
+- Weft's own field names that said op, call or thread are renamed
+  (`weft-names-1`; [DESIGN.md](DESIGN.md) §10.5, *Other APIs*): monitors'
+  `op_names` and the per-call scope `call`, automations' `op_names` and
+  `min_calls`, saved views' and dashboards' filter keys `op_names`,
+  `call_ids`, `thread_ids` and group keys `op_name` / `thread`,
+  leaderboards' `evaluation_call_ids`, annotation specs' `op_scope` (new
+  versions, as for saved queries below); automation runs' events and
+  `weft.signal` feedback payloads (in place); dataset lineage links of kind
+  `call` (kind `span`);
 - refs held in columns get Weft's kind names, `function` for `op` and
   `span` for `call`: feedback `ref`, `call_ref`, `runnable_ref`,
   `annotation_ref` and `trigger_ref`, span names (`op_name`) and registry
@@ -334,6 +349,29 @@ filters on a monitor by its full ref (`trigger.monitor_ref` with a digest)
 and whose monitor was migrated needs that ref updated, as after any edit of
 the monitor. With the adapter on, queries and saved views the weave client
 sends with the old names are translated on the way in.
+
+### Objects and fields the client shares with Weft
+
+Some of Weft's own field names were also the client's, and some still are:
+
+- **Saved objects.** The client publishes `Monitor` (`op_names`),
+  `AnnotationSpec` (`op_scope`) and `SavedView` (filter `op_names`, …)
+  objects with its names. The adapter stores object values as sent (they
+  are content-addressed, and the client computes their digests), so Weft's
+  readers of those classes (the monitor runner, the UI, the SDKs) accept
+  the earlier field name as well as Weft's (`names`).
+- **Dataset lineage.** The client's source kinds `call` and `span` are both
+  Weft spans (`span`); the adapter maps them on the way in, and names Weft's
+  `span` kind `call` in answers to the client.
+- **Metric buckets.** `/calls/stats` takes the client's `call_metrics`
+  (metric `call_count`) and answers `call_buckets` (`<agg>_call_count`
+  columns); Weft's `/api/v1/spans/stats` says `span_metrics`, `span_count`
+  and `span_buckets`.
+- **Feedback.** `/feedback/batch/create` items name the scorer's own span
+  `call_ref` (Weft: `span_ref`).
+- **Streams.** The adapter's JSON Lines streams (`/calls/stream_query`,
+  `/threads/stream_query`, …) answer `200` with no lines when nothing
+  matches, as Weft's NDJSON streams do.
 
 ## Limits
 

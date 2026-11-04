@@ -59,14 +59,22 @@ export function validateAutomation(v: AutomationVal): string | null {
 const opLabel = (op?: string) => OPERATORS.find((o) => o.id === op)?.label ?? op ?? '?'
 const pct = (x?: number) => `${Math.round((x ?? 0) * 1000) / 10}%`
 
-export function describeTrigger(t: AutomationTrigger): string {
+/** A trigger with today's field names (versions saved before the rename
+ * say op_names and min_calls). */
+export function normaliseTrigger(t: AutomationTrigger & { op_names?: string[]; min_calls?: number }): AutomationTrigger {
+  const { op_names, min_calls, ...rest } = t
+  return { ...rest, names: rest.names ?? op_names, min_spans: rest.min_spans ?? min_calls }
+}
+
+export function describeTrigger(raw: AutomationTrigger): string {
+  const t = normaliseTrigger(raw)
   switch (t.type) {
     case 'score_threshold': {
       const s = `${t.scorer || '?'}${t.path ? '.' + t.path : ''}`
       return `${s} ${opLabel(t.operator)} ${t.threshold ?? '?'}`
     }
     case 'error_rate': {
-      const ops = t.op_names?.length ? t.op_names.join(', ') : 'root calls'
+      const ops = t.names?.length ? t.names.join(', ') : 'root spans'
       return `error rate ≥ ${pct(t.threshold)} over ${t.window_minutes ?? 60} min (${ops})`
     }
     case 'feedback_created':
@@ -96,7 +104,7 @@ export function cleanAutomation(v: AutomationVal): AutomationVal {
       if (t.monitor_ref) trigger.monitor_ref = t.monitor_ref
       break
     case 'error_rate':
-      trigger = { type: t.type, op_names: (t.op_names ?? []).filter(Boolean), window_minutes: Number(t.window_minutes ?? 60), threshold: Number(t.threshold), min_calls: Number(t.min_calls ?? 1) }
+      trigger = { type: t.type, names: (t.names ?? []).filter(Boolean), window_minutes: Number(t.window_minutes ?? 60), threshold: Number(t.threshold), min_spans: Number(t.min_spans ?? 1) }
       break
     default:
       trigger = { type: 'feedback_created', feedback_types: (t.feedback_types ?? []).map((s) => s.trim()).filter(Boolean) }

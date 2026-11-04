@@ -412,3 +412,20 @@ func SavedQueryName(s string) (string, bool) {
 	}
 	return s, false
 }
+
+// SourceKind maps a dataset lineage source kind the client sends to Weft's:
+// the client's "call" and "span" are both Weft spans ("span").
+func SourceKind(k string) string {
+	if k == "call" {
+		return "span"
+	}
+	return k
+}
+
+// SourceKindOut names Weft's span source kind the client's way ("call").
+func SourceKindOut(k string) string {
+	if k == "span" {
+		return "call"
+	}
+	return k
+}

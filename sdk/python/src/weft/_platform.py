@@ -4,11 +4,32 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
+from ._deprecation import deprecated_call
 from ._object import Object
 from ._op import BoundOp, Op
 from ._refs import Ref
+
+
+def _renamed(data: Any, old: str, new: str, what: str) -> Any:
+    """Constructor data with ``old`` (a deprecated keyword) given as ``new``."""
+    if isinstance(data, dict) and old in data:
+        data = dict(data)
+        value = data.pop(old)
+        deprecated_call(f"{what}({old}=...)", f"{what}({new}=...)", stacklevel=4)
+        data.setdefault(new, value)
+    return data
+
+
+def _stored(val: Dict[str, Any], old: str, new: str) -> Dict[str, Any]:
+    """A stored value with ``old`` read as ``new``: versions saved before the
+    rename, and objects published by the weave client, use the earlier name."""
+    if old not in val:
+        return val
+    out = {k: v for k, v in val.items() if k != old}
+    out.setdefault(new, val[old])
+    return out
 
 
 def _as_uri(v: Any) -> Any:
@@ -32,9 +53,25 @@ class AnnotationSpec(Object):
 
     field_schema: Dict[str, Any] = {"type": "string"}
     unique_among_creators: bool = True
-    op_scope: Optional[List[str]] = None
+    #: The span names (functions, or their refs) it applies to; None: every span.
+    names: Optional[List[str]] = None
 
-    @field_validator("op_scope", mode="before")
+    @model_validator(mode="before")
+    @classmethod
+    def _op_scope(cls, data: Any) -> Any:
+        return _renamed(data, "op_scope", "names", "AnnotationSpec")
+
+    @classmethod
+    def _weft_from_val(cls, val: Dict[str, Any], client: Any, ref: Any) -> Any:
+        return super()._weft_from_val(_stored(val, "op_scope", "names"), client, ref)
+
+    @property
+    def op_scope(self) -> Optional[List[str]]:
+        """Deprecated: use ``names``."""
+        deprecated_call("AnnotationSpec.op_scope", "AnnotationSpec.names")
+        return self.names
+
+    @field_validator("names", mode="before")
     @classmethod
     def _scope(cls, v: Any) -> Any:
         if v is None:
@@ -78,17 +115,33 @@ class AnnotationSpec(Object):
 
 
 class Monitor(Object):
-    """Online evaluation: the server scores matching calls with server-runnable scorers."""
+    """Online evaluation: the server scores matching spans with server-runnable scorers."""
 
     active: bool = True
     sampling_rate: float = 1.0
-    op_names: List[str] = []
+    #: Span names (traced functions) to score; empty: root spans.
+    names: List[str] = []
     query: Optional[Dict[str, Any]] = None
     scorers: List[Any] = []
 
-    @field_validator("op_names", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _op_names(cls, v: Any) -> Any:
+    def _op_names(cls, data: Any) -> Any:
+        return _renamed(data, "op_names", "names", "Monitor")
+
+    @classmethod
+    def _weft_from_val(cls, val: Dict[str, Any], client: Any, ref: Any) -> Any:
+        return super()._weft_from_val(_stored(val, "op_names", "names"), client, ref)
+
+    @property
+    def op_names(self) -> List[str]:
+        """Deprecated: use ``names``."""
+        deprecated_call("Monitor.op_names", "Monitor.names")
+        return self.names
+
+    @field_validator("names", mode="before")
+    @classmethod
+    def _names(cls, v: Any) -> Any:
         return [x.name if isinstance(x, (Op, BoundOp)) else x for x in (v or [])]
 
     @field_validator("query", mode="before")

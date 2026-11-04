@@ -3,6 +3,7 @@ package evals
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func monitorObj(scorers []string, extra map[string]any) map[string]any {
 		l[i] = s
 	}
 	v := map[string]any{"_class_name": "Monitor", "_bases": []any{"Object", "BaseModel"}, "active": true, "sampling_rate": 1,
-		"op_names": []any{}, "scorers": l, "session_idle_seconds": 0}
+		"names": []any{}, "scorers": l, "session_idle_seconds": 0}
 	for k, x := range extra {
 		v[k] = x
 	}
@@ -176,5 +177,48 @@ func TestScopeMonitorCompletion(t *testing.T) {
 func TestOrphanRunTimeoutMatchesMonitors(t *testing.T) {
 	if got := defaultSessionIdle * abandonedFactor; got != store.OrphanRunTimeout {
 		t.Fatalf("monitors give up on running sessions after %s, store.OrphanRunTimeout is %s", got, store.OrphanRunTimeout)
+	}
+}
+
+// A monitor names the spans it scores with names and runs per span with
+// the scope "span"; versions saved before the rename (and monitors the
+// compatibility adapter's client publishes) say op_names and "call".
+func TestMonitorNamesAndSpanScope(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := New(st, llm.New(nil, nil), nil)
+	defer e.Close()
+	pid := "acme/mon"
+	root := &store.Call{OpName: "agent"}
+	child := &store.Call{OpName: "tool"}
+	parent := "p"
+	child.ParentID = &parent
+	for _, tc := range []struct {
+		val       map[string]any
+		root, kid bool
+	}{
+		{map[string]any{}, true, false},
+		{map[string]any{"names": []any{"tool"}}, false, true},
+		{map[string]any{"op_names": []any{"tool"}}, false, true},
+		{map[string]any{"names": []any{"agent"}, "op_names": []any{"tool"}}, true, false},
+	} {
+		if monitorMatchesName(tc.val, root) != tc.root || monitorMatchesName(tc.val, child) != tc.kid {
+			t.Errorf("monitor %v: root %v child %v", tc.val, monitorMatchesName(tc.val, root), monitorMatchesName(tc.val, child))
+		}
+	}
+	goal := publishObj(t, st, pid, "goal", map[string]any{"_class_name": "GoalCompletionJudge", "model": "mock/json"})
+	for _, scope := range []string{"span", "call"} {
+		ref := publishObj(t, st, pid, "m-"+scope, monitorObj([]string{goal}, map[string]any{"scopes": []any{scope, "session"}}))
+		o, err := st.ReadObject(context.Background(), pid, "m-"+scope, strings.TrimPrefix(ref[strings.LastIndex(ref, ":")+1:], ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ms := e.monitorScorers(context.Background(), o)
+		if len(ms) != 1 || !ms[0].call || len(ms[0].scopes) != 1 || ms[0].scopes[0] != "session" {
+			t.Fatalf("scopes [%s session] = %+v", scope, ms)
+		}
 	}
 }

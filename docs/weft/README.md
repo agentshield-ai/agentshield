@@ -62,11 +62,13 @@ make weft         # build bin/weft
 | `--shield-url` | `WEFT_SHIELD_URL` | empty; replay against a running AgentShield engine instead (operator configuration: not subject to the egress guard, so loopback works) |
 | `--shield-token` | `WEFT_SHIELD_TOKEN` | the engine's bearer token for `--shield-url` (prefer the env var) |
 | `--shield-timeout` | `WEFT_SHIELD_TIMEOUT` | `10s` per remote evaluation |
-| `--legacy-routes` | `WEFT_LEGACY_ROUTES` | `true` for now: also serve the route shapes Weft had before its own `/api/v1` API (`/call/*`, `/obj/*`, `/table/*`, …) with the compatibility adapter off, while the SDKs, UI and plugins move to the native API. `false` serves only Weft's own API (the default once they have moved); the shapes are documented in [COMPATIBILITY.md](COMPATIBILITY.md#route-shapes) |
 | | `WEFT_SESSION_KEY` | session-cookie signing key (32+ chars); default is derived from the secret key |
 
 The optional compatibility adapter has a flag of its own, off by default; see
-[COMPATIBILITY.md](COMPATIBILITY.md).
+[COMPATIBILITY.md](COMPATIBILITY.md). Only the adapter serves the route
+shapes Weft had before its own `/api/v1` API (`/call/*`, `/obj/*`,
+`/table/*`, …); the earlier `--legacy-routes` switch is gone, and a
+`WEFT_LEGACY_ROUTES` setting is ignored with a warning.
 
 The guides in `docs/weft` are built into the server: open **/help** in the UI
 (each page's "Read the guide" link goes there).
@@ -377,13 +379,13 @@ the OIDC issuer, so it is not subject to the [egress guard](#outbound-requests).
 
 | Area | What Weft does |
 |---|---|
-| Traces | Calls with inputs, output, exception, attributes, summary. Trace tree and timeline views, filters (op, status, free text, any field via the query builder), sorting, saved views, charts (volume, errors, latency percentiles, tokens, cost), export, bulk delete, compare calls. |
+| Traces | Spans with inputs, output, error, attributes, summary. Trace tree and timeline views, filters (function, status, free text, any field via the query builder), sorting, saved views, charts (volume, errors, latency percentiles, tokens, cost), export, bulk delete, compare spans. |
 | Usage and cost | Token usage rolls up from every descendant to the trace root, including OTLP spans that arrive out of order. Built-in prices for common models, with cache-read and cache-write prices, so prompt-cached tokens are billed at the provider's cache rates ([Cached tokens](API.md#cached-tokens)); per-project price overrides (**Settings → Costs**). |
-| Threads | Calls sharing a `thread_id` group into conversations with turn latency and token totals. |
-| Agents | The Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from calls (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or SDK ops with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
+| Sessions (traces view) | Spans sharing a `session_id` group into sessions with turn latency and token totals. |
+| Agents | The Agents view and `/agents/*` API: agents, versions, conversations, turns and LLM/tool spans derived from spans (GenAI, OpenInference, OpenLLMetry, Vercel AI SDK, MLflow, Pydantic AI, Google ADK, or traced SDK functions with a span kind). Per-agent stats over time, tool usage, message search and a chat view of each conversation. |
 | Security | AgentShield verdicts as detections linked to the tool spans they concern (by OTel or push), stats by rule, agent and day, approval-fatigue, override-escalation and cross-agent insights, replay of recorded sessions against changed rules with a diff, and `ToolSafetyScorer`. |
-| Objects | Content-addressed, versioned objects (datasets, models, prompts, scorers, ops, anything JSON). Aliases, version diffs, refs (`weft:///entity/project/object/name:digest`). |
-| Datasets | Row tables with paging and editing; create from CSV/JSON or from selected calls. |
+| Objects | Content-addressed, versioned objects (datasets, models, prompts, scorers, functions, anything JSON). Aliases, version diffs, refs (`weft:///entity/project/object/name:digest`). |
+| Datasets | Row tables with paging and editing; create from CSV/JSON or from selected spans. |
 | Evaluations | SDK-run evaluations (`weft.Evaluation`, `EvaluationLogger`) and server-run evaluations of prompt-based models with built-in scorers and LLM judges. Comparison view with metric deltas and per-example diffs. |
 | Leaderboards | Columns of evaluation × scorer × metric, computed from the latest run per model. |
 | Feedback | Emoji reactions, notes, schema-driven human annotations, scorer results. Feedback is queryable from trace filters. Any server-runnable scorer can be run on a span from its Scores tab (`/api/v1/spans/score`). |

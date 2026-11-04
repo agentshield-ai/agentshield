@@ -796,8 +796,8 @@ func (s *Server) RunRetention(ctx context.Context) (map[string]store.PurgeResult
 		if err != nil {
 			return out, err
 		}
-		if res.Calls > 0 || res.Feedback > 0 {
-			s.log.Info("retention purge", "project", pid, "retention_days", days, "calls", res.Calls, "feedback", res.Feedback)
+		if res.Spans > 0 || res.Feedback > 0 {
+			s.log.Info("retention purge", "project", pid, "retention_days", days, "spans", res.Spans, "feedback", res.Feedback)
 		}
 		out[pid] = res
 	}

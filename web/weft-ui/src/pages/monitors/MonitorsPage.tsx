@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Empty, ErrorBox, Loading } from '../../components/common'
 import { MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
+import { monitorNames } from '../../components/evals/monitorFields'
 import { SignalsGallery } from '../../components/monitors/SignalsGallery'
 import { ConfirmButton, Switch } from '../../components/objects/bits'
 import { refName, useObjects } from '../../components/objects/objectUtils'
@@ -75,16 +76,16 @@ export function MonitorsPage() {
                     </td>
                     <td>
                       <span className="chips">
-                        {(v.op_names ?? []).length === 0 ? (
+                        {monitorNames(v).length === 0 ? (
                           <span className="faint small">all root spans</span>
                         ) : (
-                          (v.op_names as string[]).slice(0, 3).map((n) => (
+                          monitorNames(v).slice(0, 3).map((n) => (
                             <span key={n} className="chip mono">
                               {n}
                             </span>
                           ))
                         )}
-                        {(v.op_names ?? []).length > 3 && <span className="faint small">+{v.op_names.length - 3}</span>}
+                        {monitorNames(v).length > 3 && <span className="faint small">+{monitorNames(v).length - 3}</span>}
                       </span>
                     </td>
                     <td className="num">{Math.round((v.sampling_rate ?? 1) * 100)}%</td>

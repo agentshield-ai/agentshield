@@ -19,11 +19,11 @@ export interface AnnotationQueueItem {
   id: string
   project_id: string
   queue_id: string
-  call_id: string
-  call_op_name: string
-  call_trace_id: string
-  call_started_at: string
-  call_ended_at: string | null
+  span_id: string
+  span_name: string
+  trace_id: string
+  span_started_at: string
+  span_ended_at: string | null
   display_fields: string[]
   added_by: string | null
   annotation_state: AnnotationState
@@ -79,14 +79,14 @@ export const queuesApi = {
   update: (project_id: string, id: string, patch: { name?: string; description?: string; scorer_refs?: string[] }) =>
     send<{ queue: AnnotationQueue }>('PUT', q(id), { project_id, ...patch }),
   remove: (project_id: string, id: string) => send<{ queue: AnnotationQueue }>('DELETE', `${q(id)}?project_id=${encodeURIComponent(project_id)}`),
-  addItems: (project_id: string, id: string, call_ids: string[], display_fields: string[] = []) =>
-    post<{ added_count: number; duplicates: number }>(`${q(id)}/items`, { project_id, call_ids, display_fields }),
+  addItems: (project_id: string, id: string, span_ids: string[], display_fields: string[] = []) =>
+    post<{ added_count: number; duplicates: number }>(`${q(id)}/items`, { project_id, span_ids, display_fields }),
   items: (
     project_id: string,
     id: string,
-    opts: { filter?: { annotation_states?: AnnotationState[]; call_id?: string; id?: string }; limit?: number; offset?: number; include_position?: boolean } = {},
+    opts: { filter?: { annotation_states?: AnnotationState[]; span_id?: string; id?: string }; limit?: number; offset?: number; include_position?: boolean } = {},
   ) => post<{ items: AnnotationQueueItem[] }>(`${q(id)}/items/query`, { project_id, include_position: true, ...opts }),
-  /** Remove one item (its feedback stays); the call can be added again. */
+  /** Remove one item (its feedback stays); the span can be added again. */
   removeItem: (project_id: string, id: string, item_id: string) =>
     send<Record<string, never>>('DELETE', `${q(id)}/items/${encodeURIComponent(item_id)}?project_id=${encodeURIComponent(project_id)}`),
   progress: (project_id: string, id: string, item_id: string, annotation_state: AnnotationState) =>

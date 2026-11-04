@@ -12,9 +12,10 @@ export interface AutomationTrigger {
   path?: string
   operator?: Operator
   threshold?: number
-  op_names?: string[]
+  /** Span names (functions); empty: root spans. */
+  names?: string[]
   window_minutes?: number
-  min_calls?: number
+  min_spans?: number
   feedback_types?: string[]
 }
 

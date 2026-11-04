@@ -104,7 +104,7 @@ func TestAgentSignalsRunAndQuery(t *testing.T) {
 		t.Fatalf("rating results = %v", q["total_count"])
 	}
 	row := q["results"].([]any)[0].(map[string]any)
-	if row["reason"] != "mock judgement" || row["span_id"] == "" || row["turn_started_at"] == nil || row["scorer_call_id"] == nil {
+	if row["reason"] != "mock judgement" || row["span_id"] == "" || row["turn_started_at"] == nil || row["scorer_span_id"] == nil {
 		t.Fatalf("rating row = %v", row)
 	}
 	sums := map[string]map[string]any{}

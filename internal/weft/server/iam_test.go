@@ -23,7 +23,7 @@ func newIAMEnv(t *testing.T, iam IAMConfig) (*testEnv, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(nativeOnly(Config{APIKeys: []string{"root"}, IAM: iam}), st)
+	s := New(Config{APIKeys: []string{"root"}, IAM: iam}, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()
@@ -267,7 +267,7 @@ func TestAuditLog(t *testing.T) {
 	}
 	start := find(func(m map[string]any) bool { return m["path"] == "/api/v1/spans/start" && m["outcome"] == "success" })
 	if start == nil || start["actor"] != "bob" || start["project_id"] != "acme/app" || start["auth_method"] != "api_key" ||
-		len(start["call_ids"].([]any)) != 1 || start["call_ids"].([]any)[0] != "call-1" || start["key_id"] == nil {
+		len(start["span_ids"].([]any)) != 1 || start["span_ids"].([]any)[0] != "call-1" || start["key_id"] == nil {
 		t.Fatalf("call start entry = %v", start)
 	}
 	if o := find(func(m map[string]any) bool { return m["path"] == "/api/v1/objects/save" }); o == nil || o["object_ids"].([]any)[0] != "my-ds" {

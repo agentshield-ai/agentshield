@@ -32,6 +32,23 @@ adapter still serves the official weave client.
   returns `[{"id", "llm_id"}]`; `client.threads_query(...)` items carry
   `session_id` and `span_count`.
 
+### Platform objects and UI links
+
+Weft's other APIs use its names too ([DESIGN.md](../../docs/weft/DESIGN.md)
+§10.5, *Other APIs*), and so do the objects the SDK saves:
+
+- `weft.Monitor` and `weft.AnnotationSpec` save `names` (the span names they
+  apply to; earlier `op_names` / `op_scope`, deprecated below). Versions
+  saved with the earlier names load with `names` filled in (the server also
+  gives the latest version of each a new version with Weft's names, once).
+- `weft.SavedView` stores its span filter with Weft's names (`names`, `ids`,
+  `session_ids`); `set_filter()` takes the earlier ones (`op_names`,
+  `call_ids`, `thread_ids`) and stores them under Weft's, and views saved
+  with them still work.
+- The UI links the SDK prints and `span.ui_url` point at
+  `<server>/<entity>/<project>/spans/<id>` (was `/calls/<id>`, which the UI
+  still redirects).
+
 ### Digests
 
 Objects, table rows, tables and files use Weft's digest: the lowercase hex
@@ -72,6 +89,8 @@ These earlier names still work and emit a `DeprecationWarning`:
 | `span.op_name`, `span.op_base_name`, `span.exception`, `span.thread_id` | `span.name`, `span.base_name`, `span.error`, `span.session_id` |
 | `ApplyScorerResult.score_call` | `ApplyScorerResult.score_span` |
 | `SavedView.get_calls()`, `SavedView.to_calls_query()` | `SavedView.spans()`, `SavedView.to_spans_query()` |
+| `weft.Monitor(op_names=...)`, `monitor.op_names` | `weft.Monitor(names=...)`, `monitor.names` |
+| `weft.AnnotationSpec(op_scope=...)`, `spec.op_scope` | `weft.AnnotationSpec(names=...)`, `spec.names` |
 
 Without a warning, for one release: `call_ref=` on `feedback.add` (now
 `span_ref=`), `"call_id"` in `evaluate_model`'s result and `"version_index"`

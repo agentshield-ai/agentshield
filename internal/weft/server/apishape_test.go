@@ -45,10 +45,10 @@ func TestCallsStatsMetricBuckets(t *testing.T) {
 		"usage_metrics": []any{map[string]any{"metric": "input_tokens", "aggregations": []any{"sum"}},
 			map[string]any{"metric": "total_cost", "aggregations": []any{"sum"}},
 			map[string]any{"metric": "cache_read_input_tokens"}},
-		"call_metrics": []any{map[string]any{"metric": "latency_ms", "aggregations": []any{"avg", "max"}, "percentiles": []any{50, 99.5}},
-			map[string]any{"metric": "call_count"}, map[string]any{"metric": "error_count", "aggregations": []any{"sum", "count_true"}}},
+		"span_metrics": []any{map[string]any{"metric": "latency_ms", "aggregations": []any{"avg", "max"}, "percentiles": []any{50, 99.5}},
+			map[string]any{"metric": "span_count"}, map[string]any{"metric": "error_count", "aggregations": []any{"sum", "count_true"}}},
 	})
-	for _, k := range []string{"start", "end", "granularity", "timezone", "usage_buckets", "call_buckets"} {
+	for _, k := range []string{"start", "end", "granularity", "timezone", "usage_buckets", "span_buckets"} {
 		if _, ok := res[k]; !ok {
 			t.Fatalf("missing %s: %v", k, res)
 		}
@@ -56,12 +56,12 @@ func TestCallsStatsMetricBuckets(t *testing.T) {
 	if res["granularity"].(float64) != 3600 || res["timezone"] != "UTC" || res["buckets"] != nil {
 		t.Fatalf("stats header = %v", res)
 	}
-	cb := res["call_buckets"].([]any)
+	cb := res["span_buckets"].([]any)
 	if len(cb) != 2 {
-		t.Fatalf("call buckets = %v", cb)
+		t.Fatalf("span buckets = %v", cb)
 	}
 	b0, b1 := cb[0].(map[string]any), cb[1].(map[string]any)
-	if b0["timestamp"] != "2026-01-01T10:00:00Z" || b0["count"].(float64) != 3 || b0["sum_call_count"].(float64) != 3 ||
+	if b0["timestamp"] != "2026-01-01T10:00:00Z" || b0["count"].(float64) != 3 || b0["sum_span_count"].(float64) != 3 ||
 		b0["sum_error_count"].(float64) != 0 || b0["max_latency_ms"].(float64) != 5000 {
 		t.Fatalf("bucket 0 = %v", b0)
 	}
@@ -101,13 +101,13 @@ func TestCallsStatsMetricBuckets(t *testing.T) {
 
 	// Timezone alignment and a validation error.
 	tz := e.post("/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T00:00:00Z", "end": "2026-01-03T00:00:00Z",
-		"granularity": 86400, "timezone": "America/New_York", "call_metrics": []any{map[string]any{"metric": "call_count"}}})
-	first := tz["call_buckets"].([]any)[0].(map[string]any)["timestamp"]
+		"granularity": 86400, "timezone": "America/New_York", "span_metrics": []any{map[string]any{"metric": "span_count"}}})
+	first := tz["span_buckets"].([]any)[0].(map[string]any)["timestamp"]
 	if first != "2025-12-31T00:00:00-05:00" {
 		t.Fatalf("tz-aligned first bucket = %v", first)
 	}
 	if code, out := e.raw("/api/v1/spans/stats", map[string]any{"project_id": pid, "start": "2026-01-01T00:00:00Z",
-		"call_metrics": []any{map[string]any{"metric": "tokens"}}}, nil); code != 400 {
+		"span_metrics": []any{map[string]any{"metric": "tokens"}}}, nil); code != 400 {
 		t.Fatalf("unknown metric -> %d %s", code, out)
 	}
 

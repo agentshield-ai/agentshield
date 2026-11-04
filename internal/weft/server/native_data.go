@@ -36,16 +36,9 @@ func feedbackFrom(f store.Feedback) Feedback {
 // the agent feedback schema; docs/weft/API.md "Agents").
 type feedbackCreateReq struct {
 	store.AgentFeedbackItem
-	SpanRef *string `json:"span_ref"`
 }
 
-func (f *feedbackCreateReq) item() store.AgentFeedbackItem {
-	it := f.AgentFeedbackItem
-	if f.SpanRef != nil {
-		it.CallRef = f.SpanRef
-	}
-	return it
-}
+func (f *feedbackCreateReq) item() store.AgentFeedbackItem { return f.AgentFeedbackItem }
 
 func feedbackCreated(f *store.Feedback) map[string]any {
 	return map[string]any{"id": f.ID, "created_at": f.CreatedAt, "user_id": f.UserID, "payload": f.Payload}
@@ -150,7 +143,7 @@ func (s *Server) v1FeedbackReplace(ctx context.Context, r *http.Request, req *fe
 	it.UserID = userFrom(r, it.UserID)
 	f, err := s.store.ReplaceFeedback(ctx, req.FeedbackID, store.FeedbackCreate{ProjectID: it.ProjectID, Ref: it.Ref,
 		FeedbackType: it.FeedbackType, Payload: it.Payload, Creator: it.Creator, UserID: it.UserID, AnnotationRef: it.AnnotationRef,
-		RunnableRef: it.RunnableRef, CallRef: it.CallRef, TriggerRef: it.TriggerRef, QueueID: it.QueueID})
+		RunnableRef: it.RunnableRef, CallRef: it.SpanRef, TriggerRef: it.TriggerRef, QueueID: it.QueueID})
 	if err != nil {
 		return nil, err
 	}

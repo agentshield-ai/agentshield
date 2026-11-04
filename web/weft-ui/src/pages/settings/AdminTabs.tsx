@@ -378,7 +378,7 @@ export function RetentionTab({ projectId }: { projectId: string }) {
               disabled={!current || principal.data?.admin === false}
               onConfirm={async () => {
                 const r = await adminApi.ttlPurge(projectId)
-                setPurged(`Deleted ${fmtNumber(r.purged.calls)} calls and ${fmtNumber(r.purged.feedback)} feedback items.`)
+                setPurged(`Deleted ${fmtNumber(r.purged.spans)} spans and ${fmtNumber(r.purged.feedback)} feedback items.`)
                 void qc.invalidateQueries({ queryKey: ['project-stats', projectId] })
               }}
             >

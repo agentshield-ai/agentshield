@@ -213,15 +213,15 @@ describe('platform objects', () => {
     const sv = fake.objs.get('quality')![0];
     // identical to the Python SDK's value (same digest across SDKs)
     expect(sv.digest).toBe(
-      digest({ _type: 'AnnotationSpec', _class_name: 'AnnotationSpec', _bases: ['Object', 'BaseModel'], name: 'quality', description: null, field_schema: { type: 'integer', minimum: 1, maximum: 5 }, unique_among_creators: true, op_scope: null }),
+      digest({ _type: 'AnnotationSpec', _class_name: 'AnnotationSpec', _bases: ['Object', 'BaseModel'], name: 'quality', description: null, field_schema: { type: 'integer', minimum: 1, maximum: 5 }, unique_among_creators: true, names: null }),
     );
     const ev = new weft.Evaluation({ name: 'lb-eval', dataset: [{ a: 1 }], scorers: [] });
     const evRef = await weft.save(ev);
     await weft.save(new weft.Leaderboard({ name: 'lb', columns: [{ evaluationObjectRef: ev, scorerName: 'exact', summaryMetricPath: 'true_fraction' }] }));
     expect(fake.objs.get('lb')![0].value.columns).toEqual([{ evaluation_object_ref: evRef.uri(), scorer_name: 'exact', summary_metric_path: 'true_fraction', should_minimize: false }]);
-    await weft.save(new weft.Monitor({ name: 'mon', opNames: ['f'], query: { $eq: [1, 1] }, scorers: [new weft.ExactMatchScorer({ name: 'm-exact' })] }));
+    await weft.save(new weft.Monitor({ name: 'mon', names: ['f'], query: { $eq: [1, 1] }, scorers: [new weft.ExactMatchScorer({ name: 'm-exact' })] }));
     const mv = fake.objs.get('mon')![0].value;
-    expect(mv).toMatchObject({ _class_name: 'Monitor', active: true, sampling_rate: 1, op_names: ['f'], query: { $expr: { $eq: [1, 1] } } });
+    expect(mv).toMatchObject({ _class_name: 'Monitor', active: true, sampling_rate: 1, names: ['f'], query: { $expr: { $eq: [1, 1] } } });
     expect(mv.scorers[0]).toMatch(/\/object\/m-exact:/);
     await weft.save(new weft.SavedView({ name: 'view', label: 'Errors' }));
     const loaded = await weft.ref('lb').get();

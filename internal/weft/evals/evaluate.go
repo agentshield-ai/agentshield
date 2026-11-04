@@ -471,7 +471,7 @@ func (e *Engine) Compare(ctx context.Context, projectID string, callIDs []string
 		return nil, &store.InvalidError{Msg: err.Error()}
 	}
 	if len(callIDs) == 0 || len(callIDs) > 50 {
-		return nil, store.Invalidf("evaluation_call_ids must list 1 to 50 calls")
+		return nil, store.Invalidf("list 1 to 50 evaluation runs to compare")
 	}
 	cmp := &Comparison{Evaluations: []CompareEvaluation{}, Metrics: []CompareMetric{}, Rows: []*CompareRow{}}
 	prices, err := e.Store.LoadPriceBook(ctx, pid)
@@ -483,7 +483,7 @@ func (e *Engine) Compare(ctx context.Context, projectID string, callIDs []string
 	for _, id := range callIDs {
 		c, err := e.Store.GetCall(ctx, pid, id, true, false, false)
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, store.Invalidf("evaluation call %q not found", id)
+			return nil, store.Invalidf("evaluation run %q not found", id)
 		}
 		if err != nil {
 			return nil, err

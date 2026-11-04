@@ -89,7 +89,7 @@ export function ProjectsPage() {
                       <b>{fmtNumber(p.trace_count)}</b> traces
                     </span>
                     <span>
-                      <b>{fmtNumber(p.call_count)}</b> spans
+                      <b>{fmtNumber(p.span_count)}</b> spans
                     </span>
                     <span>
                       <b>{fmtNumber(p.object_count)}</b> objects

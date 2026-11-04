@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 )
@@ -751,6 +752,7 @@ func (s *Routes) threadsStreamQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/jsonl")
+	w.WriteHeader(http.StatusOK) // an empty stream is a 200 too
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	for _, t := range ts {
@@ -827,6 +829,12 @@ func (s *Routes) datasetSourcesLink(ctx context.Context, r *http.Request, req *d
 	if err != nil {
 		return nil, err
 	}
+	for i := range req.Links {
+		for j := range req.Links[i].Sources {
+			src := &req.Links[i].Sources[j]
+			src.SourceKind = legacy.SourceKind(src.SourceKind)
+		}
+	}
 	entries, err := s.store.LinkDatasetSources(ctx, req.ProjectID, o.ObjectID, o.Digest, req.Links, s.host.User(r, req.UserID), req.IncludeCreatedStatus)
 	if err != nil {
 		return nil, err
@@ -835,9 +843,21 @@ func (s *Routes) datasetSourcesLink(ctx context.Context, r *http.Request, req *d
 }
 
 func (s *Routes) datasetSourcesQuery(ctx context.Context, _ *http.Request, req *store.DatasetSourcesQuery) (any, error) {
+	kinds := map[string]bool{}
+	for _, k := range req.SourceKinds {
+		kinds[legacy.SourceKind(k)] = true
+	}
+	req.SourceKinds = req.SourceKinds[:0]
+	for k := range kinds {
+		req.SourceKinds = append(req.SourceKinds, k)
+	}
+	sort.Strings(req.SourceKinds)
 	links, err := s.store.QueryDatasetSources(ctx, *req)
 	if err != nil {
 		return nil, err
+	}
+	for i := range links {
+		links[i].SourceKind = legacy.SourceKindOut(links[i].SourceKind)
 	}
 	return map[string]any{"links": links}, nil
 }
@@ -849,9 +869,15 @@ type sourceDatasetsReq struct {
 }
 
 func (s *Routes) sourceDatasetsQuery(ctx context.Context, _ *http.Request, req *sourceDatasetsReq) (any, error) {
+	for i := range req.Sources {
+		req.Sources[i].SourceKind = legacy.SourceKind(req.Sources[i].SourceKind)
+	}
 	ms, err := s.store.SourceDatasets(ctx, req.ProjectID, req.Sources, req.IncludeDeleted)
 	if err != nil {
 		return nil, err
+	}
+	for i := range ms {
+		ms[i].SourceKind = legacy.SourceKindOut(ms[i].SourceKind)
 	}
 	return map[string]any{"memberships": ms}, nil
 }

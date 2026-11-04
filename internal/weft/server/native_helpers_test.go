@@ -15,30 +15,19 @@ import (
 )
 
 // Test helpers for Weft's own API (native*.go). Test servers run with the
-// older route shapes off (nativeOnly), so every test that is not about the
-// compatibility adapter uses the native routes; adapter tests use
-// newLegacyEnv.
+// compatibility adapter off, so the older route shapes return 404 and every
+// test that is not about the adapter uses the native routes; tests of the
+// older routes use newLegacyEnv.
 
-var (
-	legacyOff = false
-	legacyOn  = true
-)
-
-// nativeOnly turns the older route shapes off.
-func nativeOnly(c Config) Config {
-	c.LegacyRoutes = &legacyOff
-	return c
-}
-
-// newLegacyEnv is newEnv with the older route shapes served (the adapter's
-// routes, without the rest of the adapter), for tests of those routes.
+// newLegacyEnv is newEnv with the compatibility adapter on, which serves
+// the older route shapes, for tests of those routes.
 func newLegacyEnv(t *testing.T, keys ...string) *testEnv {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "weft.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{APIKeys: keys, LegacyRoutes: &legacyOn}, st)
+	s := New(Config{APIKeys: keys, Compat: true}, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()

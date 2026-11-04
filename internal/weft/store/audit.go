@@ -46,7 +46,7 @@ type AuditEntry struct {
 	Path       string   `json:"path"`
 	Project    *string  `json:"project_id"`
 	ObjectIDs  []string `json:"object_ids"`
-	CallIDs    []string `json:"call_ids"`
+	SpanIDs    []string `json:"span_ids"` // stored in the call_ids column
 	Status     int      `json:"status"`
 	Outcome    string   `json:"outcome"` // success, denied, unauthenticated, failed
 	IP         string   `json:"ip"`
@@ -83,7 +83,7 @@ func (s *Store) InsertAudit(ctx context.Context, entries []AuditEntry) error {
 				e.TimeMicros = nowMicros()
 			}
 			if _, err := st.ExecContext(ctx, e.TimeMicros, e.Actor, e.AuthMethod, nullStr(e.KeyID), e.Method, e.Path, nullStr(e.Project),
-				mustJSON(nonNilStrs(e.ObjectIDs)), mustJSON(nonNilStrs(e.CallIDs)), e.Status, e.Outcome, e.IP, e.Detail); err != nil {
+				mustJSON(nonNilStrs(e.ObjectIDs)), mustJSON(nonNilStrs(e.SpanIDs)), e.Status, e.Outcome, e.IP, e.Detail); err != nil {
 				return err
 			}
 		}
@@ -167,8 +167,8 @@ func (s *Store) QueryAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, in
 		e.Time = FormatMicros(e.TimeMicros)
 		e.KeyID, e.Project = strPtr(key), strPtr(project)
 		_ = json.Unmarshal([]byte(objs), &e.ObjectIDs)
-		_ = json.Unmarshal([]byte(calls), &e.CallIDs)
-		e.ObjectIDs, e.CallIDs = nonNilStrs(e.ObjectIDs), nonNilStrs(e.CallIDs)
+		_ = json.Unmarshal([]byte(calls), &e.SpanIDs)
+		e.ObjectIDs, e.SpanIDs = nonNilStrs(e.ObjectIDs), nonNilStrs(e.SpanIDs)
 		out = append(out, e)
 	}
 	return out, total, rows.Err()

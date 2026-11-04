@@ -192,7 +192,7 @@ def test_require_current_call_and_urls(client, fake):
         weft.require_current_span()
     url = weft.urls.agent_conversation_path("test-entity", "test-proj", "conv/1 a")
     assert url == f"{fake.url}/test-entity/test-proj/conversations/conv%2F1%20a"
-    assert weft.urls.redirect_call("e", "p", "c1").endswith("/e/p/calls/c1")
+    assert weft.urls.redirect_call("e", "p", "c1").endswith("/e/p/spans/c1")
 
 
 # ---------------------------------------------------------------- custom runtimes, threads

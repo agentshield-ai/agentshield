@@ -101,15 +101,15 @@ func TestAnnotationQueues(t *testing.T) {
 	}
 
 	// items
-	add := e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "call_ids": []any{"c1", "c2", "c1"}, "display_fields": []any{"inputs.question", "output"}})
+	add := e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "span_ids": []any{"c1", "c2", "c1"}, "display_fields": []any{"inputs.question", "output"}})
 	if add["added_count"].(float64) != 2 || add["duplicates"].(float64) != 1 {
 		t.Fatalf("add: %v", add)
 	}
-	add = e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "call_ids": []any{"c2", "c3"}, "display_fields": []any{}})
+	add = e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "span_ids": []any{"c2", "c3"}, "display_fields": []any{}})
 	if add["added_count"].(float64) != 1 || add["duplicates"].(float64) != 1 {
 		t.Fatalf("add again: %v", add)
 	}
-	if code, _ := e.raw("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "call_ids": []any{"nope"}, "display_fields": []any{}}, nil); code != 400 {
+	if code, _ := e.raw("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "span_ids": []any{"nope"}, "display_fields": []any{}}, nil); code != 400 {
 		t.Fatalf("unknown call accepted: %d", code)
 	}
 	items := e.post("/annotation_queues/"+qid+"/items/query", map[string]any{"project_id": pid, "include_position": true})["items"].([]any)
@@ -117,7 +117,7 @@ func TestAnnotationQueues(t *testing.T) {
 		t.Fatalf("items: %v", items)
 	}
 	first := items[0].(map[string]any)
-	if first["call_id"] != "c1" || first["annotation_state"] != "unstarted" || first["position_in_queue"].(float64) != 1 || first["call_op_name"] != "answer" {
+	if first["span_id"] != "c1" || first["annotation_state"] != "unstarted" || first["position_in_queue"].(float64) != 1 || first["span_name"] != "answer" {
 		t.Fatalf("first item: %v", first)
 	}
 	if df := first["display_fields"].([]any); len(df) != 2 {
@@ -140,10 +140,10 @@ func TestAnnotationQueues(t *testing.T) {
 		t.Fatalf("alice should have 2 unstarted, got %d", len(alice))
 	}
 	bob := e.doJSON("POST", "/annotation_queues/"+qid+"/items/query", map[string]any{"project_id": pid, "filter": map[string]any{"annotation_states": []any{"unstarted"}}}, "bob")["items"].([]any)
-	if len(bob) != 2 || bob[0].(map[string]any)["call_id"] != "c1" {
+	if len(bob) != 2 || bob[0].(map[string]any)["span_id"] != "c1" {
 		t.Fatalf("bob unstarted: %v", bob)
 	}
-	byCall := e.post("/annotation_queues/"+qid+"/items/query", map[string]any{"project_id": pid, "filter": map[string]any{"call_id": "c3"}})["items"].([]any)
+	byCall := e.post("/annotation_queues/"+qid+"/items/query", map[string]any{"project_id": pid, "filter": map[string]any{"span_id": "c3"}})["items"].([]any)
 	if len(byCall) != 1 {
 		t.Fatalf("filter by call: %v", byCall)
 	}
@@ -176,7 +176,7 @@ func TestAnnotationQueues(t *testing.T) {
 	if len(after) != len(before)-1 {
 		t.Fatalf("items after delete = %d, before %d", len(after), len(before))
 	}
-	re := e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "call_ids": []any{victim["call_id"]}})
+	re := e.post("/annotation_queues/"+qid+"/items", map[string]any{"project_id": pid, "span_ids": []any{victim["span_id"]}})
 	if re["added_count"].(float64) != 1 {
 		t.Fatalf("re-add after delete: %v", re)
 	}

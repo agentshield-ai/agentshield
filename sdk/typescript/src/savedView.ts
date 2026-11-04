@@ -54,13 +54,23 @@ const VALUELESS = new Set(['(any): isEmpty', '(any): isNotEmpty']);
 const NO_FLOAT_CONVERT = new Set(['summary.weft.latency_ms', 'started_at', 'ended_at']);
 const DEFAULT_PIN = { left: ['CustomCheckbox', 'op_name'], right: [] as string[] };
 export const CALLS_FILTER_KEYS = new Set([
-  'op_names', 'input_refs', 'output_refs', 'parent_ids', 'trace_ids', 'call_ids', 'trace_roots_only',
-  'user_ids', 'run_ids', 'thread_ids', 'turn_ids',
-  // Weft's span filter names
-  'names', 'ids', 'session_ids',
+  'names', 'ids', 'session_ids', 'input_refs', 'output_refs', 'parent_ids', 'trace_ids', 'trace_roots_only',
+  'user_ids', 'run_ids', 'turn_ids',
+  // the earlier names of names, ids and session_ids
+  'op_names', 'call_ids', 'thread_ids',
 ]);
-/** Stored view filter names → Weft's span filter names. */
+/** The earlier filter names (views saved before the rename) → Weft's span filter names. */
 const SPAN_FILTER_NAMES: Record<string, string> = { op_names: 'names', call_ids: 'ids', thread_ids: 'session_ids' };
+
+/** A view filter with Weft's span filter names. */
+function spanFilter(f: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(f ?? {})) {
+    const n = SPAN_FILTER_NAMES[k] ?? k;
+    if (!(n in out) || n === k) out[n] = v;
+  }
+  return out;
+}
 
 export interface ViewFilter {
   field: string;
@@ -306,10 +316,10 @@ export class SavedView extends WeftObject {
     return this.touch();
   }
 
-  /** Only calls of one op (a name, `name:version` or op ref); null clears it. */
+  /** Only spans of one function (a name, `name:version` or function ref); null clears it. */
   filterOp(opName: string | null): this {
-    const flt = { ...(this.definition.filter ?? {}) };
-    if (opName === null) delete flt.op_names;
+    const flt = spanFilter(this.definition.filter);
+    if (opName === null) delete flt.names;
     else {
       let uri = opName;
       if (!isRefUri(opName)) {
@@ -317,19 +327,20 @@ export class SavedView extends WeftObject {
         if (!p) throw new Error('Must specify an op ref when no project is known');
         uri = `weft:///${p.entity}/${p.project}/function/${opName}${opName.includes(':') ? '' : ':*'}`;
       }
-      flt.op_names = [uri];
+      flt.names = [uri];
     }
     if (Object.keys(flt).length) this.definition.filter = flt;
     else delete this.definition.filter;
     return this.touch();
   }
 
-  /** Set CallsFilter fields (`trace_roots_only`, `thread_ids`, `user_ids`, ...); null removes one. */
+  /** Set span filter fields (`trace_roots_only`, `session_ids`, `user_ids`, ...); null removes one. The earlier names (`op_names`, `call_ids`, `thread_ids`) are stored under Weft's. */
   setFilter(fields: Record<string, unknown>): this {
     const bad = Object.keys(fields).filter((k) => !CALLS_FILTER_KEYS.has(k));
-    if (bad.length) throw new Error(`unknown call filter fields: ${bad.join(', ')}`);
-    const flt = { ...(this.definition.filter ?? {}) };
-    for (const [k, v] of Object.entries(fields)) {
+    if (bad.length) throw new Error(`unknown span filter fields: ${bad.join(', ')}`);
+    const flt = spanFilter(this.definition.filter);
+    for (const [key, v] of Object.entries(fields)) {
+      const k = SPAN_FILTER_NAMES[key] ?? key;
       if (v === null || v === undefined) delete flt[k];
       else flt[k] = v;
     }
@@ -535,9 +546,9 @@ export class SavedView extends WeftObject {
   }
 
   /**
-   * The `POST /api/v1/spans/query` body this view stands for. The view's
-   * stored filter keeps its own field names (`op_names`, `thread_ids`, ...);
-   * they are given Weft's span names here.
+   * The `POST /api/v1/spans/query` body this view stands for. Views saved
+   * before the rename name filter fields the earlier way (`op_names`,
+   * `thread_ids`, ...); they are given Weft's span names here.
    */
   toSpansQuery(opts: SavedViewGetCallsOptions = {}): Record<string, unknown> {
     const d = this.definition;
@@ -545,7 +556,7 @@ export class SavedView extends WeftObject {
     const p = this.projectRef;
     if (p) body.project_id = `${p.entity}/${p.project}`;
     const flt: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(d.filter ?? {})) if (CALLS_FILTER_KEYS.has(k) && v !== null && v !== undefined) flt[SPAN_FILTER_NAMES[k] ?? k] = v;
+    for (const [k, v] of Object.entries(spanFilter(d.filter))) if (CALLS_FILTER_KEYS.has(k) && v !== null && v !== undefined) flt[k] = v;
     if (this.viewType === 'evaluations') flt.names = ['Evaluation.evaluate'];
     if (Object.keys(flt).length) body.filter = flt;
     if (d.query) body.query = '$expr' in d.query ? d.query : { $expr: d.query };

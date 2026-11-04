@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Span, Feedback } from '../../api/types'
-import { cleanAutomation, describeTrigger, emptyAutomation, validateAutomation } from '../automations/automationUtils'
+import { cleanAutomation, describeTrigger, emptyAutomation, normaliseTrigger, validateAutomation } from '../automations/automationUtils'
 import { createSignal, planSignal, SIGNALS, uniqueId } from '../monitors/signals'
 import { buildExportRows, displayFieldValues, nextPendingIndex, progressCounts } from './queueUtils'
 
@@ -50,12 +50,12 @@ describe('queue export', () => {
     fb('c1', 'weft.reaction', null, '2025-01-01T00:00:00Z', 'carol'),
   ]
   it('keeps annotated calls with the latest value per spec', () => {
-    const rows = buildExportRows([{ call_id: 'c1' }, { call_id: 'c2' }, { call_id: 'gone' }], calls, feedback, ['quality', 'correct', 'tone'])
-    expect(rows).toEqual([{ question: 'a?', output: 'A', quality: 5, correct: true, tone: null, annotators: ['alice', 'bob'], call_id: 'c1' }])
+    const rows = buildExportRows([{ span_id: 'c1' }, { span_id: 'c2' }, { span_id: 'gone' }], calls, feedback, ['quality', 'correct', 'tone'])
+    expect(rows).toEqual([{ question: 'a?', output: 'A', quality: 5, correct: true, tone: null, annotators: ['alice', 'bob'], span_id: 'c1' }])
   })
   it('can include unannotated calls', () => {
-    const rows = buildExportRows([{ call_id: 'c1' }, { call_id: 'c2' }], calls, feedback, ['quality'], true)
-    expect(rows.map((r) => r.call_id)).toEqual(['c1', 'c2'])
+    const rows = buildExportRows([{ span_id: 'c1' }, { span_id: 'c2' }], calls, feedback, ['quality'], true)
+    expect(rows.map((r) => r.span_id)).toEqual(['c1', 'c2'])
     expect(rows[1].quality).toBeNull()
   })
 })
@@ -74,7 +74,10 @@ describe('automations', () => {
   })
   it('describes triggers', () => {
     expect(describeTrigger({ type: 'score_threshold', scorer: 'judge', path: 'score', operator: 'lt', threshold: 3 })).toBe('judge.score < 3')
-    expect(describeTrigger({ type: 'error_rate', threshold: 0.25, window_minutes: 15, op_names: ['agent'] })).toBe('error rate ≥ 25% over 15 min (agent)')
+    expect(describeTrigger({ type: 'error_rate', threshold: 0.25, window_minutes: 15, names: ['agent'] })).toBe('error rate ≥ 25% over 15 min (agent)')
+    // versions saved before the rename
+    expect(describeTrigger({ type: 'error_rate', threshold: 0.25, window_minutes: 15, op_names: ['agent'] } as never)).toBe('error rate ≥ 25% over 15 min (agent)')
+    expect(normaliseTrigger({ type: 'error_rate', op_names: ['a'], min_calls: 3 })).toEqual({ type: 'error_rate', names: ['a'], min_spans: 3 })
     expect(describeTrigger({ type: 'feedback_created', feedback_types: [] })).toBe('any feedback')
   })
   it('drops fields of other trigger types and prefers the secret', () => {
@@ -113,7 +116,7 @@ describe('signals', () => {
       return { ref: `weft:///e/p/object/${id}:d${published.length}` }
     })
     expect(published.map((p) => p[0])).toEqual(['hallucination', 'signal-hallucination'])
-    expect(published[1][1]).toMatchObject({ _class_name: 'Monitor', active: true, sampling_rate: 0.5, op_names: ['agent'], scorers: ['weft:///e/p/object/hallucination:d1'] })
+    expect(published[1][1]).toMatchObject({ _class_name: 'Monitor', active: true, sampling_rate: 0.5, names: ['agent'], scorers: ['weft:///e/p/object/hallucination:d1'] })
     expect(res.monitorId).toBe('signal-hallucination')
   })
 })

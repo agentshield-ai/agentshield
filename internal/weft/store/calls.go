@@ -92,7 +92,7 @@ func (st *CallStart) normalize() error {
 	}
 	st.ProjectID = p
 	if !validID(st.ID) {
-		return Invalidf("invalid call id %q", st.ID)
+		return Invalidf("invalid span id %q", st.ID)
 	}
 	if st.TraceID == "" {
 		st.TraceID = st.ID
@@ -134,7 +134,7 @@ func (en *CallEnd) normalize() error {
 	}
 	en.ProjectID = p
 	if !validID(en.ID) {
-		return Invalidf("invalid call id %q", en.ID)
+		return Invalidf("invalid span id %q", en.ID)
 	}
 	if en.Summary == nil {
 		en.Summary = map[string]any{}
@@ -566,7 +566,7 @@ func (s *Store) DeleteCalls(ctx context.Context, projectID string, ids []string)
 		return nil
 	}
 	if len(ids) > 1000 {
-		return Invalidf("too many call ids (max 1000)")
+		return Invalidf("too many span ids (max 1000)")
 	}
 	now := nowMicros()
 	return s.withTx(ctx, func(tx *sql.Tx) error {

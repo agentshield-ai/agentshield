@@ -70,7 +70,7 @@ export interface AuditEntry {
   path: string
   project_id: string | null
   object_ids: string[]
-  call_ids: string[]
+  span_ids: string[]
   status: number
   outcome: 'success' | 'denied' | 'unauthenticated' | 'failed'
   ip: string

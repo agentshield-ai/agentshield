@@ -101,7 +101,7 @@ func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
 	}
 	for _, m := range monitors {
 		val := m.Val.(map[string]any)
-		if !monitorMatchesOp(val, call) {
+		if !monitorMatchesName(val, call) {
 			continue
 		}
 		if q, ok := val["query"]; ok && q != nil {
@@ -143,8 +143,19 @@ func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
 	return nil
 }
 
-func monitorMatchesOp(val map[string]any, call *store.Call) bool {
+// monitorNames is a monitor's span names (functions) to score. Versions
+// saved before the rename, and monitors published by the compatibility
+// adapter's client, name them op_names.
+func monitorNames(val map[string]any) []any {
+	if names, ok := val["names"].([]any); ok {
+		return names
+	}
 	ops, _ := val["op_names"].([]any)
+	return ops
+}
+
+func monitorMatchesName(val map[string]any, call *store.Call) bool {
+	ops := monitorNames(val)
 	if len(ops) == 0 {
 		return call.ParentID == nil
 	}
@@ -171,7 +182,7 @@ type ScoreResult struct {
 // results as weft.scorer.<scorer> feedback.
 func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scorerRefs []string, user *string) ([]ScoreResult, error) {
 	if len(callIDs) == 0 || len(callIDs) > 100 {
-		return nil, store.Invalidf("call_ids must list 1 to 100 calls")
+		return nil, store.Invalidf("list 1 to 100 spans to score")
 	}
 	if len(scorerRefs) == 0 || len(scorerRefs) > 10 {
 		return nil, store.Invalidf("scorer_refs must list 1 to 10 scorers")
@@ -188,7 +199,7 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 	for _, id := range callIDs {
 		call, err := e.Store.GetCall(ctx, projectID, id, false, false, false)
 		if err != nil {
-			return nil, store.Invalidf("call %q not found", id)
+			return nil, store.Invalidf("span %q not found", id)
 		}
 		for _, sc := range scorers {
 			res := ScoreResult{CallID: id, Scorer: sc.Name}
@@ -196,7 +207,7 @@ func (e *Engine) ScoreCalls(ctx context.Context, projectID string, callIDs, scor
 			for k, v := range call.Inputs {
 				example[k] = v
 			}
-			attrs := map[string]any{"weft": map[string]any{"internal": true, "scored_call_id": id}}
+			attrs := map[string]any{"weft": map[string]any{"internal": true, "scored_span_id": id}}
 			score, rec, err := e.RunScorer(ctx, projectID, sc, example, call.Output, nil, attrs)
 			if rec != nil {
 				res.ScorerCallID = rec.id
@@ -228,7 +239,7 @@ func (e *Engine) scoreForMonitor(ctx context.Context, monitor *store.Obj, sc *Sc
 		example[k] = v
 	}
 	monitorRef := monitor.Ref()
-	attrs := map[string]any{"weft": map[string]any{"internal": true, "monitor": monitorRef, "scored_call_id": call.ID}}
+	attrs := map[string]any{"weft": map[string]any{"internal": true, "monitor": monitorRef, "scored_span_id": call.ID}}
 	score, rec, err := e.RunScorer(ctx, call.ProjectID, sc, example, call.Output, nil, attrs)
 	if err != nil {
 		return err

@@ -149,7 +149,8 @@ export interface InsightFilter {
 /** Weft extension: keep the spans of an evaluation run (or one of its predictions). */
 export interface EvalSpanFilter {
   evaluation_run_id?: string
-  predict_and_score_call_id?: string
+  /** The prediction's predict_and_score span. */
+  prediction_span_id?: string
 }
 
 export interface SpansQueryReq extends EvalSpanFilter {
@@ -325,9 +326,9 @@ export interface SearchResult {
 
 // ---------------------------------------------------------------- agent evals (Weft extensions)
 
-/** A prediction (predict_and_score call) of an evaluation run with agent spans. */
+/** A prediction (its predict_and_score span) of an evaluation run with agent spans. */
 export interface AgentEvalPrediction {
-  predict_and_score_call_id: string
+  prediction_span_id: string
   status: string
   example: Any
   output: Any
@@ -344,7 +345,7 @@ export interface AgentEvalPrediction {
 
 /** An evaluation run with the agent activity linked to it. */
 export interface AgentEvalRun {
-  call_id: string
+  evaluation_run_id: string
   display_name: string | null
   evaluation_ref: string | null
   evaluation_name: string
@@ -460,7 +461,7 @@ export interface SignalResult {
   turn_started_at: string | null
   turn_status: StatusCode
   last_message: MessagePreview | null
-  scorer_call_id: string | null
+  scorer_span_id: string | null
 }
 
 export interface SignalSummary {

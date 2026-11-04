@@ -47,13 +47,13 @@ export function displayFieldValues(call: Span, fields: string[]): { path: string
 }
 
 /**
- * Dataset rows for a queue export: each reviewed call's inputs and output,
+ * Dataset rows for a queue export: each reviewed span's inputs and output,
  * plus one column per annotation spec holding the latest value given in this
- * queue, and `annotators` listing who annotated it. Calls without any
+ * queue, `annotators` listing who annotated it, and `span_id`. Spans without any
  * annotation are left out unless includeUnannotated is set.
  */
 export function buildExportRows(
-  items: Pick<AnnotationQueueItem, 'call_id'>[],
+  items: Pick<AnnotationQueueItem, 'span_id'>[],
   calls: Map<string, Span>,
   feedback: Feedback[],
   specNames: string[],
@@ -69,9 +69,9 @@ export function buildExportRows(
   }
   const rows: Record<string, Any>[] = []
   for (const it of items) {
-    const call = calls.get(it.call_id)
+    const call = calls.get(it.span_id)
     if (!call) continue
-    const fbs = (byCall.get(it.call_id) ?? []).filter((f) => f.feedback_type.startsWith('weft.annotation.'))
+    const fbs = (byCall.get(it.span_id) ?? []).filter((f) => f.feedback_type.startsWith('weft.annotation.'))
     if (!fbs.length && !includeUnannotated) continue
     const row: Record<string, Any> = { ...callToDatasetRow(call, true) }
     const users = new Set<string>()
@@ -83,7 +83,7 @@ export function buildExportRows(
     }
     for (const f of fbs) users.add(f.creator ?? f.user_id ?? 'anonymous')
     row.annotators = [...users].sort()
-    row.call_id = call.id
+    row.span_id = call.id
     rows.push(row)
   }
   return rows

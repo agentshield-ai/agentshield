@@ -1,0 +1,1 @@
+function a(r){const n=r?.names??r?.op_names;return Array.isArray(n)?n.filter(s=>typeof s=="string"):[]}function o(r){return Array.isArray(r?.scopes)?r.scopes.map(n=>n==="call"?"span":n):[]}export{o as a,a as m};

@@ -159,7 +159,7 @@ export interface SpanFilterState {
   tags: string[]
   ratings: SignalRatingFilter[]
   sentiment: string[]
-  /** Evaluation run (call id) and prediction (predict_and_score call id) the spans belong to. */
+  /** Evaluation run (span id) and prediction (predict_and_score span id) the spans belong to. */
   evalRun: string
   evalPred: string
 }
@@ -235,7 +235,7 @@ export function spanQueryParts(f: SpanFilterState, agent?: string): { query?: Qu
   if (f.tags.length || f.ratings.length) out.signal_filters = { ...(f.tags.length ? { tags: f.tags } : {}), ...(f.ratings.length ? { ratings: f.ratings } : {}) }
   if (f.sentiment.length) out.insight_filters = [{ field: 'intent_sentiment', values: f.sentiment }]
   if (f.evalRun) out.evaluation_run_id = f.evalRun
-  if (f.evalPred) out.predict_and_score_call_id = f.evalPred
+  if (f.evalPred) out.prediction_span_id = f.evalPred
   return out
 }
 

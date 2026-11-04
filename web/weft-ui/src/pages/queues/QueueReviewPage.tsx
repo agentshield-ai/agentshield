@@ -83,7 +83,7 @@ export function QueueReviewPage() {
   const removeItem = useCallback(
     (item: AnnotationQueueItem) =>
       undoable({
-        message: `Removed “${spanDisplayName(item.call_op_name)}” from the queue`,
+        message: `Removed “${spanDisplayName(item.span_name)}” from the queue`,
         apply: () => setHidden((h) => new Set(h).add(item.id)),
         revert: () =>
           setHidden((h) => {
@@ -223,7 +223,7 @@ export function QueueReviewPage() {
 }
 
 function CallPane({ projectId, item }: { projectId: string; item: AnnotationQueueItem }) {
-  const call = useQuery({ queryKey: ['span', projectId, item.call_id], queryFn: () => api.spanFind(projectId, item.call_id) })
+  const call = useQuery({ queryKey: ['span', projectId, item.span_id], queryFn: () => api.spanFind(projectId, item.span_id) })
   if (call.isLoading) return <Loading label="Loading span…" />
   if (call.error) return <ErrorBox error={call.error} />
   const c = call.data as Span | null
@@ -305,7 +305,7 @@ function AnnotationPane({
   onSubmitted: () => Promise<void>
 }) {
   const qc = useQueryClient()
-  const fb = useCallFeedback(projectId, item.call_id)
+  const fb = useCallFeedback(projectId, item.span_id)
   const rows: Feedback[] = fb.data?.items ?? NO_FEEDBACK
   const mineBySpec = useMemo(() => {
     const m = new Map<string, Feedback>()
@@ -330,7 +330,7 @@ function AnnotationPane({
 
   const submit = useMutation({
     mutationFn: async () => {
-      const ref = spanRef(projectId, item.call_id)
+      const ref = spanRef(projectId, item.span_id)
       for (const s of specs) {
         const v = drafts[s.name]
         const mine = mineBySpec.get(s.name)
@@ -480,13 +480,13 @@ function ItemList({
             >
               <span className="dot" style={{ background: STATE_COLOR[it.annotation_state], width: 8, height: 8, borderRadius: 4, flex: 'none' }} />
               <span className="mono faint">{it.position_in_queue ?? i + 1}</span>
-              <span className="mono truncate grow">{spanDisplayName(it.call_op_name)}</span>
+              <span className="mono truncate grow">{spanDisplayName(it.span_name)}</span>
               <span className="faint">{STATE_LABEL[it.annotation_state]}</span>
             </button>
             <button
               type="button"
               className="icon-btn"
-              aria-label={`Remove ${spanDisplayName(it.call_op_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
+              aria-label={`Remove ${spanDisplayName(it.span_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
               title="Remove from the queue (annotations already given are kept)"
               onClick={() => onRemove(it)}
             >

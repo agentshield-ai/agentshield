@@ -12,7 +12,7 @@ client = weft.init(
     settings={
         "global_attributes": {"app": "support-bot", "env": "dev"},
         "enable_disk_fallback": True,  # unsent data survives restarts (~/.weft/wal)
-        "print_call_link": True,       # prints <server>/<entity>/<project>/calls/<id> per root call
+        "print_call_link": True,       # prints <server>/<entity>/<project>/spans/<id> per root span
     },
 )
 

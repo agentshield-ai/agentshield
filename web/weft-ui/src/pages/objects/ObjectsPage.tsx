@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import type { WeftObject } from '../../api/types'
 import { Empty, ErrorBox, Loading } from '../../components/common'
+import { monitorNames } from '../../components/evals/monitorFields'
 import { CreateDatasetModal } from '../../components/objects/CreateDatasetModal'
 import { ModelFormModal, PromptFormModal, ScorerFormModal, type Created } from '../../components/objects/ObjectForms'
 import { ConfirmButton } from '../../components/objects/bits'
@@ -30,7 +31,7 @@ function detail(o: WeftObject): string {
   if (cls === 'StringPrompt') return preview(v.content, 90)
   if (cls === 'MessagesPrompt') return `${(v.messages ?? []).length} messages · ${preview(v.messages?.[v.messages.length - 1]?.content, 60)}`
   if (cls === 'Evaluation') return `${(v.scorers ?? []).length} scorers`
-  if (cls === 'Monitor') return `${v.active ? 'active' : 'paused'} · ${(v.op_names ?? []).join(', ') || 'all root spans'}`
+  if (cls === 'Monitor') return `${v.active ? 'active' : 'paused'} · ${monitorNames(v).join(', ') || 'all root spans'}`
   if (cls === 'Leaderboard') return `${(v.columns ?? []).length} columns`
   if (v.target_column) return `target: ${v.target_column}`
   return typeof v.description === 'string' ? preview(v.description, 90) : ''

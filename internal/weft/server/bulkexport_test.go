@@ -29,7 +29,7 @@ func newEnvStore(t *testing.T, setup func(*store.Store)) (*testEnv, *store.Store
 	if setup != nil {
 		setup(st)
 	}
-	s := New(nativeOnly(Config{}), st)
+	s := New(Config{}, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()

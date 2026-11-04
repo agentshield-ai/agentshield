@@ -14,8 +14,9 @@ package evals
 // Monitor fields (all optional):
 //
 //   - scopes: the scopes to score at ("session", "agent", "handoff", and
-//     "call" for the per-call path). Without it a scope scorer runs at its
-//     first scope of session, handoff, agent, and any other scorer per call.
+//     "span" for the per-span path; "call" in versions saved before the
+//     rename). Without it a scope scorer runs at its first scope of
+//     session, handoff, agent, and any other scorer per span.
 //   - session_idle_seconds: a session is complete once no span of it has
 //     arrived for this many seconds and none of its root spans is still
 //     running (default 60). A session whose root spans never end counts as
@@ -42,7 +43,8 @@ const (
 	defaultSessionIdle = 60 * time.Second
 	maxSessionIdle     = 24 * time.Hour
 	abandonedFactor    = 10
-	scopeCall          = "call"
+	scopeSpan          = "span"
+	scopeSpanOld       = "call" // the per-span scope's earlier name
 )
 
 // scopeTick is how often waiting sessions are checked (tests shorten it).
@@ -112,7 +114,7 @@ func (e *Engine) monitorScorers(ctx context.Context, m *store.Obj) []monitorScor
 		if len(explicit) > 0 {
 			for _, s := range explicit {
 				switch s {
-				case scopeCall:
+				case scopeSpan, scopeSpanOld:
 					ms.call = true
 				case store.ScopeSession, store.ScopeAgent, store.ScopeHandoff:
 					if !scoped || allowed[s] {

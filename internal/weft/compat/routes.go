@@ -121,7 +121,7 @@ func (s *Routes) Mount(r chi.Router) {
 		r.Post("/calls/stream_query", s.callsStreamQuery)
 		r.Post("/calls/query_stats", handle(s.callsQueryStats))
 		r.Post("/calls/delete", handle(s.callsDelete))
-		r.Post("/calls/stats", s.forwardFiltered("/api/v1/spans/stats"))
+		r.Post("/calls/stats", s.callsStats)
 		r.Post("/calls/metrics", s.forwardFiltered("/api/v1/spans/metrics"))
 		r.Post("/calls/op_counts", handle(s.opCounts))
 		r.Post("/calls/score", handle(s.callsScore))
@@ -361,6 +361,56 @@ func (s *Routes) forwardFiltered(path string) http.HandlerFunc {
 		b, _ := json.Marshal(body)
 		s.serveNative(w, r, http.MethodPost, path, b, nil, nil)
 	}
+}
+
+// callsStats forwards /calls/stats to /api/v1/spans/stats. The metric-bucket
+// form names span metrics the client's way: its call_metrics (metric
+// call_count) are Weft's span_metrics (span_count), and the answer's
+// span_buckets (columns <agg>_span_count) are its call_buckets.
+func (s *Routes) callsStats(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := decodeBody(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if f, ok := body["filter"].(map[string]any); ok {
+		body["filter"] = nativeFilter(f)
+	}
+	if m, ok := body["call_metrics"]; ok {
+		delete(body, "call_metrics")
+		if l, ok := m.([]any); ok {
+			for _, x := range l {
+				if sp, ok := x.(map[string]any); ok && sp["metric"] == "call_count" {
+					sp["metric"] = "span_count"
+				}
+			}
+		}
+		body["span_metrics"] = m
+	}
+	b, _ := json.Marshal(body)
+	s.serveNative(w, r, http.MethodPost, "/api/v1/spans/stats", b, nil, func(m map[string]any) any {
+		sb, ok := m["span_buckets"]
+		if !ok {
+			return m
+		}
+		delete(m, "span_buckets")
+		if l, ok := sb.([]any); ok {
+			for _, x := range l {
+				row, ok := x.(map[string]any)
+				if !ok {
+					continue
+				}
+				for k, v := range row {
+					if agg, ok := strings.CutSuffix(k, "_span_count"); ok {
+						delete(row, k)
+						row[agg+"_call_count"] = v
+					}
+				}
+			}
+		}
+		m["call_buckets"] = sb
+		return m
+	})
 }
 
 // ---------------------------------------------------------------- plumbing

@@ -27,7 +27,7 @@ export async function exportQueue(projectId: string, q: AnnotationQueue, dataset
     api.feedbackQuery({ project_id: projectId, query: { $expr: { $eq: [{ $getField: 'queue_id' }, { $literal: q.id }] } }, limit: 10000 }),
   ])
   const calls = new Map<string, Span>()
-  const ids = items.map((i) => i.call_id)
+  const ids = items.map((i) => i.span_id)
   for (let i = 0; i < ids.length; i += 500) {
     const r = await api.spansQuery({ project_id: projectId, filter: { ids: ids.slice(i, i + 500) }, limit: 500 })
     for (const c of r.items) calls.set(c.id, c)

@@ -213,3 +213,26 @@ func TestJSONRewrite(t *testing.T) {
 		t.Fatal("current name mapped")
 	}
 }
+
+func TestRewriteKeyedValues(t *testing.T) {
+	m := map[string]map[string]string{"scopes": {"call": "span"}, "group_by": {"op_name": "name"}}
+	for in, want := range map[string]string{
+		`{"scopes": ["call", "session"], "description": "call"}`:                             `{"scopes": ["span", "session"], "description": "call"}`,
+		`{"names":["call"],"scopes":[],"x":{"scopes":"call"}}`:                               `{"names":["call"],"scopes":[],"x":{"scopes":"span"}}`,
+		`{"panels":[{"group_by":"op_name","title":"op_name"},{"n":1,"group_by":"op_name"}]}`: `{"panels":[{"group_by":"name","title":"op_name"},{"n":1,"group_by":"name"}]}`,
+		`{"a":{"scopes":["call"]},"scopes":["call"]}`:                                        `{"a":{"scopes":["span"]},"scopes":["span"]}`,
+		`{"scopes":["c\u0061ll"]}`:                                                           `{"scopes":["c\u0061ll"]}`, // escaped literals are left alone
+		`not json`:                                                                           `not json`,
+	} {
+		if got := string(legacy.RewriteKeyedValues([]byte(in), m)); got != want {
+			t.Errorf("RewriteKeyedValues(%s) = %s, want %s", in, got, want)
+		}
+	}
+	got := string(legacy.RenameSavedObject("Monitor", []byte(`{"op_names":["call"],"scopes":["call"]}`)))
+	if got != `{"names":["call"],"scopes":["span"]}` {
+		t.Errorf("RenameSavedObject = %s", got)
+	}
+	if got := string(legacy.RenameSavedObject("Dataset", []byte(`{"op_names":1}`))); got != `{"op_names":1}` {
+		t.Errorf("other class rewritten: %s", got)
+	}
+}

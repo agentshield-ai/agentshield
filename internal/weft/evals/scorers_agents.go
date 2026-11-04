@@ -153,7 +153,7 @@ type ScopeRunResult struct {
 	Reason       string   `json:"reason,omitempty"`
 	Output       any      `json:"output,omitempty"`
 	FeedbackID   string   `json:"feedback_id,omitempty"`
-	ScorerCallID string   `json:"scorer_call_id,omitempty"`
+	ScorerSpanID string   `json:"scorer_span_id,omitempty"`
 	Error        string   `json:"error,omitempty"`
 }
 
@@ -253,7 +253,7 @@ func (e *Engine) scoreTarget(ctx context.Context, pid string, t store.ScopeTarge
 	attrs := map[string]any{"weft": map[string]any{"internal": true, "scope": t.Scope, "scored_session_id": t.SessionID}}
 	score, rec, err := e.RunScorer(ctx, pid, sc, example, t.Output, nil, attrs)
 	if rec != nil {
-		res.ScorerCallID = rec.id
+		res.ScorerSpanID = rec.id
 	}
 	if err != nil {
 		res.Error = err.Error()

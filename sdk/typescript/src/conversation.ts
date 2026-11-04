@@ -7,7 +7,7 @@
  * turns and sub-agents are `invoke_agent` calls (`attributes.gen_ai.agent.name`,
  * `attributes.weft.span_kind = "agent"`), LLM calls are `chat` calls with
  * `inputs.messages`, an OpenAI-style output and `summary.usage`, tools are
- * `execute_tool` calls. A conversation's id is the calls' `thread_id`; a turn's
+ * `execute_tool` calls. A conversation's id is the spans' `session_id`; a turn's
  * `turn_id` is its own id. Spans are sent when they end.
  *
  * ```ts
@@ -1134,7 +1134,7 @@ export interface ConversationOptions {
   team?: TeamLike;
 }
 
-/** A conversation: groups turns by `conversationId` (recorded as the calls' `thread_id`). */
+/** A conversation: groups turns by `conversationId` (recorded as the spans' `session_id`). */
 export class Conversation {
   conversationId: string;
   conversationName: string;

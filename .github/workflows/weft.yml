@@ -100,6 +100,7 @@ jobs:
           for i in $(seq 30); do curl -sf http://127.0.0.1:6345/health && break; sleep 1; done
           curl -sf http://127.0.0.1:6345/ | grep -q '<div id="root">'
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345/graphql)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345/calls/query)" = 404
       - name: Install Chromium
         # The browser build matches the @playwright/test version pinned in package.json.
         working-directory: web/weft-ui
@@ -150,8 +151,8 @@ jobs:
       - name: Start server
         run: |
           go build -o bin/weft ./cmd/weft
-          # native API only: the SDKs, plugins and seed script use only /api/v1 (DESIGN.md §10)
-          ./bin/weft --addr 127.0.0.1:6345 --db "$RUNNER_TEMP/weft.db" --legacy-routes=false &
+          # default configuration: Weft's own API only; the SDKs, plugins and seed script use only /api/v1 (DESIGN.md §10)
+          ./bin/weft --addr 127.0.0.1:6345 --db "$RUNNER_TEMP/weft.db" &
           for i in $(seq 30); do curl -sf http://127.0.0.1:6345/health && break; sleep 1; done
       - name: Python SDK tests (unit + against server)
         working-directory: sdk/python
@@ -175,9 +176,11 @@ jobs:
         run: node --test plugins/weft-claude-code/test/*.test.mjs plugins/weft-codex/test/*.test.mjs plugins/weft-openclaw/test/*.test.mjs plugins/weft-pi/test/*.test.mjs
       - name: Demo seed script
         run: python3 scripts/weft_seed_demo.py --traces 5
-      - name: Compatibility adapter is off by default
+      - name: Compatibility adapter and the older route shapes are off by default
         run: |
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345/graphql)" = 404
+          for p in /graphql /call/start /calls/query /obj/create; do
+            test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:6345$p)" = 404 || { echo "$p is served"; exit 1; }
+          done
       - name: Official weave client against Weft (compatibility adapter on)
         run: |
           ./bin/weft --addr 127.0.0.1:6346 --db "$RUNNER_TEMP/weft-compat.db" --weave-compat &

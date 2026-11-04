@@ -27,6 +27,12 @@ import (
 // with Weft's names, and the aliases of the old version move to it; the old
 // version is kept (migrateLegacyObjects). After that nothing outside the
 // compatibility adapter reads the old names.
+//
+// A second migration (migrateWeftNames) renames the fields Weft's own saved
+// objects and records named op, call or thread (op_names, call_ids,
+// scopes "call", ...). Readers of saved objects of those classes still
+// accept the earlier field names, because older versions, and objects the
+// adapter's client publishes, keep them.
 
 const legacyNamesMigration = "legacy-names-1"
 
@@ -128,7 +134,10 @@ func migrateLegacyAttributes(tx *sql.Tx) error {
 	return nil
 }
 
-func init() { registerMigration(migrateLegacyObjects) }
+func init() {
+	registerMigration(migrateLegacyObjects)
+	registerMigration(migrateWeftNames) // after migrateLegacyObjects
+}
 
 // savedQueryClasses are the object classes whose values hold call queries,
 // field names or feedback types.
@@ -137,65 +146,143 @@ var savedQueryClasses = []string{"SavedView", "Dashboard", "Monitor", "Leaderboa
 // migrateLegacyObjects publishes, once, a new version of every saved query
 // whose latest version uses legacy names (see the comment at the top).
 func migrateLegacyObjects(db *sql.DB) error {
+	rw := legacy.JSONRewrite{Key: legacy.SavedQueryName, Value: legacy.SavedQueryName}
 	return runOnce(db, "legacy-objects-1", func(tx *sql.Tx) error {
-		rows, err := tx.Query(`SELECT o.project_id, o.object_id, o.digest, o.kind, o.base_object_class, o.leaf_object_class, o.val, o.user_id
-			FROM objects o WHERE o.deleted_at IS NULL AND o.base_object_class IN (?, ?, ?, ?, ?)
-				AND o.version_index = (SELECT MAX(o2.version_index) FROM objects o2
-					WHERE o2.project_id = o.project_id AND o2.object_id = o.object_id AND o2.deleted_at IS NULL)`,
-			savedQueryClasses[0], savedQueryClasses[1], savedQueryClasses[2], savedQueryClasses[3], savedQueryClasses[4])
-		if err != nil {
-			return err
+		return publishRenamedVersions(tx, savedQueryClasses, func(_ string, val []byte) []byte { return rw.Apply(val) })
+	})
+}
+
+// migrateWeftNames renames, once, the fields Weft itself named op, call or
+// thread before it used function, span and session (DESIGN.md §10;
+// legacy.SavedObjectRenames):
+//
+//   - saved objects (monitors, automations, saved views, dashboards,
+//     leaderboards, annotation specs) get a new version, as in
+//     migrateLegacyObjects;
+//   - automation runs' events and weft.signal feedback payloads get the new
+//     keys in place (they are records, not versioned objects);
+//   - dataset lineage links of kind call become kind span.
+//
+// Table columns (annotation_queue_items.call_*, audit_log.call_ids) keep
+// their names; the API names them span_*.
+func migrateWeftNames(db *sql.DB) error {
+	return runOnce(db, "weft-names-1", func(tx *sql.Tx) error {
+		if err := publishRenamedVersions(tx, legacy.SavedObjectClasses(), func(cls string, val []byte) []byte {
+			return legacy.RenameSavedObject(cls, val)
+		}); err != nil {
+			return fmt.Errorf("saved objects: %w", err)
 		}
-		type ver struct {
-			pid, oid, digest, kind, val string
-			base, leaf, user            sql.NullString
+		if err := renameJSONColumn(tx, "automation_runs", "id", "event", `event LIKE '%call%' OR event LIKE '%op_names%'`,
+			legacy.AutomationEventKeys); err != nil {
+			return fmt.Errorf("automation runs: %w", err)
 		}
-		var vs []ver
-		for rows.Next() {
-			var v ver
-			if err := rows.Scan(&v.pid, &v.oid, &v.digest, &v.kind, &v.base, &v.leaf, &v.val, &v.user); err != nil {
-				rows.Close()
-				return err
-			}
-			vs = append(vs, v)
+		if err := renameJSONColumn(tx, "feedback", "id", "payload", `feedback_type = 'weft.signal' AND payload LIKE '%scorer_call_id%'`,
+			legacy.SignalPayloadKeys); err != nil {
+			return fmt.Errorf("signal feedback: %w", err)
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
+		// A link that also exists as a span link is a duplicate: drop it.
+		if _, err := tx.Exec(`UPDATE OR IGNORE dataset_source_links SET source_kind = 'span' WHERE source_kind = 'call'`); err != nil {
+			return fmt.Errorf("dataset lineage: %w", err)
 		}
-		rw := legacy.JSONRewrite{Key: legacy.SavedQueryName, Value: legacy.SavedQueryName}
-		for _, v := range vs {
-			raw := rw.Apply([]byte(v.val))
-			if string(raw) == v.val {
-				continue
-			}
-			_, digest, canon, err := prepValue(refs.Weft, nil, raw)
-			if err != nil {
-				continue // not valid JSON after all; leave it
-			}
-			var exists int
-			if err := tx.QueryRow(`SELECT COUNT(*) FROM objects WHERE project_id = ? AND object_id = ? AND digest = ?`,
-				v.pid, v.oid, digest).Scan(&exists); err != nil {
-				return err
-			}
-			if exists > 0 {
-				continue // an earlier version already has the new names
-			}
-			var next int
-			if err := tx.QueryRow(`SELECT COALESCE(MAX(version_index) + 1, 0) FROM objects WHERE project_id = ? AND object_id = ?`,
-				v.pid, v.oid).Scan(&next); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`INSERT INTO objects(project_id, object_id, digest, version_index, kind, base_object_class, leaf_object_class,
-					val, created_at, user_id, size_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-				v.pid, v.oid, digest, next, v.kind, v.base, v.leaf, canon, nowMicros(), v.user, len(canon)); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`UPDATE object_aliases SET digest = ? WHERE project_id = ? AND object_id = ? AND digest = ?`,
-				digest, v.pid, v.oid, v.digest); err != nil {
-				return err
-			}
+		if _, err := tx.Exec(`DELETE FROM dataset_source_links WHERE source_kind = 'call'`); err != nil {
+			return fmt.Errorf("dataset lineage: %w", err)
 		}
 		return nil
 	})
+}
+
+// renameJSONColumn renames the object keys of a JSON column in the rows
+// matching where.
+func renameJSONColumn(tx *sql.Tx, table, idCol, col, where string, names map[string]string) error {
+	rows, err := tx.Query(`SELECT "` + idCol + `", "` + col + `" FROM "` + table + `" WHERE ` + where)
+	if err != nil {
+		return err
+	}
+	type upd struct{ id, val string }
+	var updates []upd
+	for rows.Next() {
+		var id string
+		var val sql.NullString
+		if err := rows.Scan(&id, &val); err != nil {
+			rows.Close()
+			return err
+		}
+		if out := legacy.RenameKeys([]byte(val.String), names); string(out) != val.String {
+			updates = append(updates, upd{id, string(out)})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, u := range updates {
+		if _, err := tx.Exec(`UPDATE "`+table+`" SET "`+col+`" = ? WHERE "`+idCol+`" = ?`, u.val, u.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// publishRenamedVersions publishes a new version of every object of the
+// given base classes whose latest version rename changes, and moves the
+// old version's aliases to it; the old version is kept.
+func publishRenamedVersions(tx *sql.Tx, classes []string, rename func(cls string, val []byte) []byte) error {
+	in, args := inList("o.base_object_class", classes)
+	rows, err := tx.Query(`SELECT o.project_id, o.object_id, o.digest, o.kind, o.base_object_class, o.leaf_object_class, o.val, o.user_id
+		FROM objects o WHERE o.deleted_at IS NULL AND `+in+`
+			AND o.version_index = (SELECT MAX(o2.version_index) FROM objects o2
+				WHERE o2.project_id = o.project_id AND o2.object_id = o.object_id AND o2.deleted_at IS NULL)`, args...)
+	if err != nil {
+		return err
+	}
+	type ver struct {
+		pid, oid, digest, kind, val string
+		base, leaf, user            sql.NullString
+	}
+	var vs []ver
+	for rows.Next() {
+		var v ver
+		if err := rows.Scan(&v.pid, &v.oid, &v.digest, &v.kind, &v.base, &v.leaf, &v.val, &v.user); err != nil {
+			rows.Close()
+			return err
+		}
+		vs = append(vs, v)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, v := range vs {
+		raw := rename(v.base.String, []byte(v.val))
+		if string(raw) == v.val {
+			continue
+		}
+		_, digest, canon, err := prepValue(refs.Weft, nil, raw)
+		if err != nil {
+			continue // not valid JSON after all; leave it
+		}
+		var exists int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM objects WHERE project_id = ? AND object_id = ? AND digest = ?`,
+			v.pid, v.oid, digest).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			continue // an earlier version already has the new names
+		}
+		var next int
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(version_index) + 1, 0) FROM objects WHERE project_id = ? AND object_id = ?`,
+			v.pid, v.oid).Scan(&next); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO objects(project_id, object_id, digest, version_index, kind, base_object_class, leaf_object_class,
+				val, created_at, user_id, size_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			v.pid, v.oid, digest, next, v.kind, v.base, v.leaf, canon, nowMicros(), v.user, len(canon)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE object_aliases SET digest = ? WHERE project_id = ? AND object_id = ? AND digest = ?`,
+			digest, v.pid, v.oid, v.digest); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -264,7 +264,7 @@ function AgentActivity({ projectId, run }: { projectId: string; run: AgentEvalRu
           {run.error_count > 0 && <span style={{ color: 'var(--error)' }}> · {fmtNumber(run.error_count)} failed</span>}
         </span>
       </div>
-      <EvalAgentLinks projectId={projectId} runId={run.call_id} />
+      <EvalAgentLinks projectId={projectId} runId={run.evaluation_run_id} />
     </div>
   )
 }

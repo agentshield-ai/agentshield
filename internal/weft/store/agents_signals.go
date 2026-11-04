@@ -306,7 +306,7 @@ type AgentFeedbackItem struct {
 	FeedbackType  string         `json:"feedback_type"`
 	Payload       map[string]any `json:"payload"`
 	AnnotationRef *string        `json:"annotation_ref"`
-	CallRef       *string        `json:"call_ref"`
+	SpanRef       *string        `json:"span_ref"`
 	Creator       *string        `json:"creator"`
 	QueueID       *string        `json:"queue_id"`
 	RunnableRef   *string        `json:"runnable_ref"`
@@ -383,7 +383,7 @@ func (s *Store) CreateAgentFeedback(ctx context.Context, it AgentFeedbackItem) (
 		id = *it.ID
 	}
 	return s.CreateFeedback(ctx, FeedbackCreate{ID: id, ProjectID: pid, Ref: it.Ref, FeedbackType: it.FeedbackType, Payload: payload,
-		Creator: it.Creator, UserID: it.UserID, AnnotationRef: it.AnnotationRef, RunnableRef: it.RunnableRef, CallRef: it.CallRef,
+		Creator: it.Creator, UserID: it.UserID, AnnotationRef: it.AnnotationRef, RunnableRef: it.RunnableRef, CallRef: it.SpanRef,
 		TriggerRef: it.TriggerRef, QueueID: it.QueueID})
 }
 
@@ -1019,7 +1019,7 @@ type AgentSignalResult struct {
 	TurnStartedAt    *string              `json:"turn_started_at"`
 	TurnStatus       string               `json:"turn_status"`
 	LastMessage      *AgentMessagePreview `json:"last_message"`
-	ScorerCallID     *string              `json:"scorer_call_id"`
+	ScorerSpanID     *string              `json:"scorer_span_id"`
 }
 
 // AgentSignalSummary aggregates one signal over the filtered results.
@@ -1077,7 +1077,7 @@ func (s *Store) QuerySignalResults(ctx context.Context, req AgentSignalsQueryReq
 		base := AgentSignalResult{FeedbackID: t.FeedbackID, FeedbackType: t.FeedbackType, Creator: t.Creator, CreatedAt: FormatMicros(t.CreatedUS),
 			SpanID: t.SpanID, TraceID: t.TraceID, ConversationID: ptrIf(t.ConvID), ConversationName: ptrIf(t.ConvName),
 			AgentName: ptrIf(t.Agent), AgentVersion: ptrIf(t.AgentVersion), TurnStartedAt: microsPtr(t.StartedUS), TurnStatus: t.Status,
-			SignalID: payloadStr(t.Payload, "signal"), SignalName: payloadStr(t.Payload, "signal_name"), ScorerCallID: payloadStr(t.Payload, "scorer_call_id"),
+			SignalID: payloadStr(t.Payload, "signal"), SignalName: payloadStr(t.Payload, "signal_name"), ScorerSpanID: payloadStr(t.Payload, "scorer_span_id"),
 			Tags: []string{}}
 		var ratings []ConversationRating
 		var tags []string

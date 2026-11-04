@@ -222,14 +222,14 @@ def seed_assets(c):
                                           {"evaluation_object_ref": ev, "scorer_name": "mentions-answer", "summary_metric_path": "true_fraction", "should_minimize": False},
                                           {"evaluation_object_ref": ev, "scorer_name": "model_latency", "summary_metric_path": "mean", "should_minimize": True}]})
     c.save("answer-quality", {"_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "answer-quality",
-                                 "description": "Reviewer rating of the final answer", "unique_among_creators": True, "op_scope": None,
+                                 "description": "Reviewer rating of the final answer", "unique_among_creators": True, "names": None,
                                  "field_schema": {"type": "integer", "minimum": 1, "maximum": 5}})
     c.save("resolution", {"_class_name": "AnnotationSpec", "_bases": ["Object", "BaseModel"], "name": "resolution",
-                             "description": "Did the answer resolve the ticket?", "unique_among_creators": True, "op_scope": None,
+                             "description": "Did the answer resolve the ticket?", "unique_among_creators": True, "names": None,
                              "field_schema": {"type": "string", "enum": ["resolved", "partially", "unresolved"]}})
     c.save("helpfulness-monitor", {"_class_name": "Monitor", "_bases": ["Object", "BaseModel"], "name": "helpfulness-monitor",
                                       "description": "Judge a sample of production answers", "active": True, "sampling_rate": 0.5,
-                                      "op_names": ["support_agent"], "scorers": [judge]})
+                                      "names": ["support_agent"], "scorers": [judge]})
     return run_ids
 
 

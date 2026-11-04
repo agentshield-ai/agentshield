@@ -214,14 +214,15 @@ func backfillEvalLinks(db *sql.DB) error {
 // ---------------------------------------------------------------- membership
 
 // AgentEvalFilter restricts agent queries to the spans of an evaluation run
-// (Weft extension). PredictAndScoreCallID narrows to one prediction.
+// (Weft extension). PredictionSpanID (the predict_and_score span) narrows
+// to one prediction.
 type AgentEvalFilter struct {
-	EvaluationRunID       string `json:"evaluation_run_id,omitempty"`
-	PredictAndScoreCallID string `json:"predict_and_score_call_id,omitempty"`
+	EvaluationRunID  string `json:"evaluation_run_id,omitempty"`
+	PredictionSpanID string `json:"prediction_span_id,omitempty"`
 }
 
 func (f *AgentEvalFilter) active() bool {
-	return f != nil && (f.EvaluationRunID != "" || f.PredictAndScoreCallID != "")
+	return f != nil && (f.EvaluationRunID != "" || f.PredictionSpanID != "")
 }
 
 // evalRef is one (run, prediction) a span belongs to.
@@ -294,8 +295,8 @@ func (s *Store) filterByEval(ctx context.Context, pid string, spans []*agentSpan
 	if f.EvaluationRunID != "" {
 		runs = []string{f.EvaluationRunID}
 	}
-	if f.PredictAndScoreCallID != "" {
-		pases = []string{f.PredictAndScoreCallID}
+	if f.PredictionSpanID != "" {
+		pases = []string{f.PredictionSpanID}
 	}
 	m, err := s.evalMembership(ctx, pid, runs, pases)
 	if err != nil {
@@ -328,24 +329,24 @@ type AgentEvalsQueryReq struct {
 // AgentEvalPrediction is one prediction (predict_and_score call) of a run
 // with agent spans.
 type AgentEvalPrediction struct {
-	PredictAndScoreCallID string   `json:"predict_and_score_call_id"`
-	Status                string   `json:"status"`
-	Example               any      `json:"example"`
-	Output                any      `json:"output"`
-	Scores                any      `json:"scores"`
-	ModelLatency          any      `json:"model_latency"`
-	Kind                  string   `json:"kind,omitempty"`
-	RowDigest             string   `json:"row_digest,omitempty"`
-	ExampleID             string   `json:"example_id,omitempty"`
-	TrialIndex            any      `json:"trial_index,omitempty"`
-	ConversationIDs       []string `json:"conversation_ids"`
-	TraceIDs              []string `json:"trace_ids"`
-	SpanCount             int      `json:"span_count"`
+	PredictionSpanID string   `json:"prediction_span_id"`
+	Status           string   `json:"status"`
+	Example          any      `json:"example"`
+	Output           any      `json:"output"`
+	Scores           any      `json:"scores"`
+	ModelLatency     any      `json:"model_latency"`
+	Kind             string   `json:"kind,omitempty"`
+	RowDigest        string   `json:"row_digest,omitempty"`
+	ExampleID        string   `json:"example_id,omitempty"`
+	TrialIndex       any      `json:"trial_index,omitempty"`
+	ConversationIDs  []string `json:"conversation_ids"`
+	TraceIDs         []string `json:"trace_ids"`
+	SpanCount        int      `json:"span_count"`
 }
 
 // AgentEvalRun is an evaluation run with the agent activity linked to it.
 type AgentEvalRun struct {
-	CallID            string                 `json:"call_id"`
+	EvaluationRunID   string                 `json:"evaluation_run_id"`
 	DisplayName       *string                `json:"display_name"`
 	EvaluationRef     *string                `json:"evaluation_ref"`
 	EvaluationName    string                 `json:"evaluation_name"`
@@ -409,7 +410,7 @@ func capStrings(m map[string]bool, n int) []string {
 }
 
 func predictionOf(pas string, c *Call) *AgentEvalPrediction {
-	p := &AgentEvalPrediction{PredictAndScoreCallID: pas, Status: callStatusOf(c), ConversationIDs: []string{}, TraceIDs: []string{}}
+	p := &AgentEvalPrediction{PredictionSpanID: pas, Status: callStatusOf(c), ConversationIDs: []string{}, TraceIDs: []string{}}
 	if c == nil {
 		return p
 	}
@@ -517,7 +518,7 @@ func (s *Store) QueryAgentEvals(ctx context.Context, req AgentEvalsQueryReq) ([]
 		ra.agg.finish()
 		a := ra.agg
 		c := calls[id]
-		r := &AgentEvalRun{CallID: id, Status: callStatusOf(c), PredictionCount: len(ra.pases), SpanCount: a.spans, ErrorCount: a.errors,
+		r := &AgentEvalRun{EvaluationRunID: id, Status: callStatusOf(c), PredictionCount: len(ra.pases), SpanCount: a.spans, ErrorCount: a.errors,
 			TurnCount: a.turns, TraceCount: len(ra.traces), ConversationCount: len(a.convs), ConversationIDs: capStrings(a.convs, 50),
 			AgentNames: sortedKeys(a.agents), FirstSeen: microsPtr(a.first), LastSeen: microsPtr(a.last),
 			TotalInputTokens: int64(a.inTok), TotalOutputTokens: int64(a.outTok)}
@@ -546,14 +547,14 @@ func (s *Store) QueryAgentEvals(ctx context.Context, req AgentEvalsQueryReq) ([]
 		if a != b {
 			return a > b
 		}
-		return out[i].CallID < out[j].CallID
+		return out[i].EvaluationRunID < out[j].EvaluationRunID
 	})
 	total := len(out)
 	out = page(out, req.Limit, req.Offset, 50)
 	if req.IncludePredictions || req.ConversationID != "" || req.TraceIDs != nil {
 		var pasIDs []string
 		for _, r := range out {
-			pasIDs = append(pasIDs, sortedKeys(runs[r.CallID].pases)...)
+			pasIDs = append(pasIDs, sortedKeys(runs[r.EvaluationRunID].pases)...)
 		}
 		pcalls, err := s.callsByID(ctx, pid, pasIDs)
 		if err != nil {
@@ -561,18 +562,18 @@ func (s *Store) QueryAgentEvals(ctx context.Context, req AgentEvalsQueryReq) ([]
 		}
 		for _, r := range out {
 			r.Predictions = []*AgentEvalPrediction{}
-			for _, pas := range sortedKeys(runs[r.CallID].pases) {
+			for _, pas := range sortedKeys(runs[r.EvaluationRunID].pases) {
 				p := predictionOf(pas, pcalls[pas])
 				pa := preds[pas]
 				p.ConversationIDs, p.TraceIDs, p.SpanCount = sortedKeys(pa.convs), sortedKeys(pa.traces), pa.spans
 				r.Predictions = append(r.Predictions, p)
 			}
 			sort.SliceStable(r.Predictions, func(i, j int) bool {
-				ci, cj := pcalls[r.Predictions[i].PredictAndScoreCallID], pcalls[r.Predictions[j].PredictAndScoreCallID]
+				ci, cj := pcalls[r.Predictions[i].PredictionSpanID], pcalls[r.Predictions[j].PredictionSpanID]
 				if ci != nil && cj != nil && ci.StartedAt != cj.StartedAt {
 					return ci.StartedAt < cj.StartedAt
 				}
-				return r.Predictions[i].PredictAndScoreCallID < r.Predictions[j].PredictAndScoreCallID
+				return r.Predictions[i].PredictionSpanID < r.Predictions[j].PredictionSpanID
 			})
 		}
 	}
@@ -617,14 +618,14 @@ func (s *Store) EvalConversations(ctx context.Context, req AgentEvalConversation
 		return nil, &InvalidError{Msg: err.Error()}
 	}
 	if !req.AgentEvalFilter.active() {
-		return nil, Invalidf("evaluation_run_id or predict_and_score_call_id is required")
+		return nil, Invalidf("evaluation_run_id or prediction_span_id is required")
 	}
 	var runs, pases []string
 	if req.EvaluationRunID != "" {
 		runs = []string{req.EvaluationRunID}
 	}
-	if req.PredictAndScoreCallID != "" {
-		pases = []string{req.PredictAndScoreCallID}
+	if req.PredictionSpanID != "" {
+		pases = []string{req.PredictionSpanID}
 	}
 	m, err := s.evalMembership(ctx, pid, runs, pases)
 	if err != nil {

@@ -432,15 +432,21 @@ for clients of another tracing product:
 - redirects for the UI links its client prints;
 - its environment-variable names for the settings Weft shares.
 
-With the adapter off, those routes return 404, other ref schemes are plain
-strings, and Weft's own SDKs, UI and plugins still work fully. (Until the
-SDKs, UI and plugins use only §10's routes, a temporary server switch,
-`--legacy-routes`, on by default, also serves the older route shapes of §10
-with the adapter off; it is turned off by default once they have moved.) Databases
+With the adapter off, those routes (including every older route shape of
+§10) return 404, other ref schemes are plain strings, and Weft's own SDKs, UI
+and plugins still work fully: they use only §10's routes. (A temporary
+switch, `--legacy-routes`, served the older route shapes without the rest of
+the adapter while the SDKs, UI and plugins moved; once nothing needed it, it
+was removed rather than turned off.) Databases
 written with the old names are migrated once when the server opens them,
-whether or not the adapter is on; saved queries (content-addressed objects)
-get a new version with Weft's names rather than being edited in place, so no
-code outside the adapter and that migration reads the old names. The adapter is documented in one page,
+whether or not the adapter is on; saved queries and other saved objects
+(content-addressed) get a new version with Weft's names rather than being
+edited in place, so no code outside the adapter and that migration reads
+the old names. The one exception is a saved object's fields that Weft itself
+named op, call or thread before §10 (a monitor's `op_names`, an annotation
+spec's `op_scope`, a saved view's `op_names` filter, …): older versions keep
+them, and the weave client publishes such objects with them, so readers of
+those classes also accept the earlier field name (§10.5). The adapter is documented in one page,
 [COMPATIBILITY.md](COMPATIBILITY.md), and CI runs the official-client check
 with the flag on and everything else with it off.
 
@@ -551,3 +557,32 @@ digests in the older form; both forms resolve.
 - **Queries.** `$expr` takes span names (`name`, `error`, `session_id`);
   the stored column names (`op_name`, `exception`, `thread_id`) stay
   accepted so queries saved earlier keep working.
+- **Other APIs.** The rest of Weft's API names spans, functions and
+  sessions the same way:
+  - monitors and automations take `names` (span names; was `op_names`), a
+    monitor's per-span scope is `span` (was `call`), an error-rate trigger
+    has `min_spans` and its events `span_id`, `total_spans`, `error_spans`
+    and `names`;
+  - annotation (review) queue items are `span_id`, `span_name`, `trace_id`,
+    `span_started_at`, `span_ended_at`, added with `span_ids`;
+  - annotation specs take `names` (was `op_scope`); saved views and
+    dashboards store span filters with `names`, `ids`, `session_ids` and
+    group by `name` / `session`;
+  - the audit log lists `span_ids`; `GET /projects` counts `span_count`; a
+    retention purge reports `spans`;
+  - the Agents API names a prediction by its `predict_and_score` span,
+    `prediction_span_id`, and an evaluation run by `evaluation_run_id` (as
+    leaderboards do); signal and scope-score results carry
+    `scorer_span_id`, and feedback `span_ref`;
+  - dataset lineage source kinds are `span` and `conversation` (`call` is
+    gone; the adapter maps its client's `call`);
+  - `/api/v1/spans/stats` metric buckets take `span_metrics` (metric
+    `span_count`) and return `span_buckets`.
+
+  Stored records (automation runs, signal feedback, lineage links) were
+  rewritten once and saved objects got a new version (`weft-names-1`).
+  Table columns keep their names (`annotation_queue_items.call_*`,
+  `audit_log.call_ids`, like `calls.op_name`). Attribute keys are an ingest
+  contract and keep their names (`weft.op_name`, `weft.thread_id`,
+  `weft.parent_call.*`, `weft.eval.predict_and_score_call_id`,
+  `weft.linked_calls`; §4).

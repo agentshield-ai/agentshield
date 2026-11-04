@@ -108,7 +108,7 @@ func TestAgentEvalsFilterAndList(t *testing.T) {
 		}
 	}
 	// One prediction.
-	res = e.post("/agents/spans/query", map[string]any{"project_id": pid, "predict_and_score_call_id": "pas-2"})
+	res = e.post("/agents/spans/query", map[string]any{"project_id": pid, "prediction_span_id": "pas-2"})
 	if res["total_count"].(float64) != 4 { // b-turn, b-llm, OTel root and child
 		t.Fatalf("pas-2 spans = %v", spanIDsOf(res))
 	}
@@ -142,8 +142,8 @@ func TestAgentEvalsFilterAndList(t *testing.T) {
 	}
 	runs := evs["evaluations"].([]any)
 	r1, r2 := runs[1].(map[string]any), runs[0].(map[string]any) // newest first
-	if r2["call_id"] != "run-2" || r1["call_id"] != "run-1" {
-		t.Fatalf("eval order = %v, %v", r2["call_id"], r1["call_id"])
+	if r2["evaluation_run_id"] != "run-2" || r1["evaluation_run_id"] != "run-1" {
+		t.Fatalf("eval order = %v, %v", r2["evaluation_run_id"], r1["evaluation_run_id"])
 	}
 	if r1["evaluation_name"] != "support-eval" || r1["model_name"] != "support-model" || r1["status"] != "success" ||
 		r1["prediction_count"].(float64) != 3 || r1["conversation_count"].(float64) != 4 || r1["span_count"].(float64) != 7 {
@@ -169,14 +169,14 @@ func TestAgentEvalsFilterAndList(t *testing.T) {
 		r := x.(map[string]any)
 		preds := r["predictions"].([]any)
 		if len(preds) != 1 {
-			t.Fatalf("conv-a predictions of %v = %v", r["call_id"], preds)
+			t.Fatalf("conv-a predictions of %v = %v", r["evaluation_run_id"], preds)
 		}
 		p := preds[0].(map[string]any)
-		want := map[string]string{"run-1": "pas-1", "run-2": "pas-9"}[r["call_id"].(string)]
-		if p["predict_and_score_call_id"] != want || fmt.Sprint(p["conversation_ids"]) != "[conv-a]" || p["scores"].(map[string]any)["resolved"] != true {
+		want := map[string]string{"run-1": "pas-1", "run-2": "pas-9"}[r["evaluation_run_id"].(string)]
+		if p["prediction_span_id"] != want || fmt.Sprint(p["conversation_ids"]) != "[conv-a]" || p["scores"].(map[string]any)["resolved"] != true {
 			t.Fatalf("conv-a prediction = %v", p)
 		}
-		if r["call_id"] == "run-1" && (p["row_digest"] != "row-a" || p["kind"] != "agent") {
+		if r["evaluation_run_id"] == "run-1" && (p["row_digest"] != "row-a" || p["kind"] != "agent") {
 			t.Fatalf("pas-1 eval metadata = %v", p)
 		}
 	}
@@ -196,7 +196,7 @@ func TestAgentEvalsFilterAndList(t *testing.T) {
 		m := x.(map[string]any)
 		byConv[m["conversation_id"].(string)] = m
 	}
-	if p := byConv["conv-d"]["predictions"].([]any); len(p) != 1 || p[0].(map[string]any)["predict_and_score_call_id"] != "pas-3" {
+	if p := byConv["conv-d"]["predictions"].([]any); len(p) != 1 || p[0].(map[string]any)["prediction_span_id"] != "pas-3" {
 		t.Fatalf("conv-d = %v", byConv["conv-d"])
 	}
 	if byConv["conv-b"]["span_count"].(float64) != 2 || byConv["conv-b"]["first_message"] == nil {

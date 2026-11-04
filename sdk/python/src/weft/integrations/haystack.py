@@ -107,7 +107,7 @@ class WeftHaystackSpan:
 
     def get_correlation_data_for_logs(self) -> Dict[str, Any]:
         c = self.call
-        return {"weft.call_id": c.id, "weft.trace_id": c.trace_id} if c is not None else {}
+        return {"weft.span_id": c.id, "weft.trace_id": c.trace_id} if c is not None else {}
 
     # weft
     def _op(self) -> Any:

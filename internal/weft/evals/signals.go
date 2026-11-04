@@ -280,7 +280,7 @@ func (e *Engine) ScoreTurnSignal(ctx context.Context, projectID string, turn sto
 	}
 	parsed.SpanID, parsed.TraceID = res.SpanID, res.TraceID
 	payload := map[string]any{"signal": sp.ID, "signal_name": sp.Name, "signal_kind": sp.Kind, "signal_version": sp.Version(),
-		"model": model, "scorer_call_id": callID, "output": m}
+		"model": model, "scorer_span_id": callID, "output": m}
 	if parsed.Reason != "" {
 		payload["reason"] = parsed.Reason
 	}

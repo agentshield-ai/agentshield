@@ -32,7 +32,8 @@ def project_weft_root_url(entity_name: str, project_name: str) -> str:
 
 
 def redirect_call(entity_name: str, project_name: str, call_id: str) -> str:
-    return f"{remote_project_root_url(entity_name, project_name)}/calls/{quote(call_id)}"
+    """Link to a span in the Weft UI (``/<entity>/<project>/spans/<id>``)."""
+    return f"{remote_project_root_url(entity_name, project_name)}/spans/{quote(call_id)}"
 
 
 def agent_conversation_path(entity_name: str, project_name: str, conversation_id: str) -> str:

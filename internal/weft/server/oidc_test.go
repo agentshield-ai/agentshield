@@ -173,7 +173,7 @@ func newSSOEnv(t *testing.T, alg string, tweak func(*OIDCConfig)) *ssoEnv {
 	if tweak != nil {
 		tweak(oc)
 	}
-	s := New(nativeOnly(Config{IAM: IAMConfig{OIDC: oc}}), st)
+	s := New(Config{IAM: IAMConfig{OIDC: oc}}, st)
 	hs.Config.Handler = s.Handler()
 	t.Cleanup(func() {
 		hs.Close()

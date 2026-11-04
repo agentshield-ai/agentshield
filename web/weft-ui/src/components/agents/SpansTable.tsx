@@ -201,7 +201,7 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
         started_after: since,
         query: agent ? spanQueryParts(EMPTY_SPAN_FILTERS, agent).query : undefined,
         evaluation_run_id: f.evalRun || undefined,
-        predict_and_score_call_id: f.evalPred || undefined,
+        prediction_span_id: f.evalPred || undefined,
         limit: 100,
       }
       const [ops, models, tools, agents] = await Promise.all(
@@ -248,7 +248,7 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
   const evalConvs = useQuery({
     queryKey: ['agent-eval-convs', projectId, f.evalRun, f.evalPred, agent ?? null],
     queryFn: () =>
-      agentEvalsApi.conversations({ project_id: projectId, evaluation_run_id: f.evalRun || undefined, predict_and_score_call_id: f.evalPred || undefined, agent_name: agent, limit: 1000 }),
+      agentEvalsApi.conversations({ project_id: projectId, evaluation_run_id: f.evalRun || undefined, prediction_span_id: f.evalPred || undefined, agent_name: agent, limit: 1000 }),
     enabled: evalFiltered && groupRef?.key === 'conversation_id',
     staleTime: 15_000,
   })
@@ -478,9 +478,9 @@ function GroupTable({
                 {showPreds && (
                   <td style={{ minWidth: 180, maxWidth: 320 }} onClick={(e) => e.stopPropagation()}>
                     {(predsByConv!.get(label(g)) ?? []).map((p) => (
-                      <div key={p.predict_and_score_call_id} className="col" style={{ gap: 2 }}>
-                        <Link to={spanUrl(projectId, p.predict_and_score_call_id)} className="small mono" title="predict_and_score call">
-                          {p.example_id ? `example ${p.example_id}` : `prediction ${p.predict_and_score_call_id.slice(-8)}`}
+                      <div key={p.prediction_span_id} className="col" style={{ gap: 2 }}>
+                        <Link to={spanUrl(projectId, p.prediction_span_id)} className="small mono" title="predict_and_score span">
+                          {p.example_id ? `example ${p.example_id}` : `prediction ${p.prediction_span_id.slice(-8)}`}
                         </Link>
                         <ScoreChips scores={p.scores} max={4} />
                       </div>

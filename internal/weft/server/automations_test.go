@@ -75,7 +75,7 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 	e.post("/secrets/set", map[string]any{"name": "SLACK_HOOK", "value": slack.srv.URL})
 	publish(e, "thumbs", automationVal("thumbs",
 		map[string]any{"type": "feedback_created", "feedback_types": []any{"weft.reaction"}},
-		map[string]any{"type": "slack", "url_secret": "SLACK_HOOK", "message": "{automation}: {feedback_type} on {call_id}"}))
+		map[string]any{"type": "slack", "url_secret": "SLACK_HOOK", "message": "{automation}: {feedback_type} on {span_id}"}))
 
 	ref := spanRef("c1")
 	// Above threshold: no fire.
@@ -85,7 +85,7 @@ func TestAutomationScoreThresholdAndFeedback(t *testing.T) {
 	waitFor(t, "score webhook", func() bool { return sink.count() == 1 })
 	body := sink.last()
 	ev := body["event"].(map[string]any)
-	if ev["type"] != "score_threshold" || ev["call_id"] != "c1" || ev["value"].(float64) != 1 || body["test"] != false {
+	if ev["type"] != "score_threshold" || ev["span_id"] != "c1" || ev["value"].(float64) != 1 || body["test"] != false {
 		t.Fatalf("webhook body: %v", body)
 	}
 
@@ -142,17 +142,17 @@ func TestAutomationErrorRate(t *testing.T) {
 		e.endSpan(end)
 	}
 	publish(e, "errors", automationVal("errors",
-		map[string]any{"type": "error_rate", "op_names": []any{"agent"}, "window_minutes": 10, "threshold": 0.5, "min_calls": 3},
+		map[string]any{"type": "error_rate", "names": []any{"agent"}, "window_minutes": 10, "threshold": 0.5, "min_spans": 3},
 		map[string]any{"type": "webhook", "url": sink.srv.URL}))
 	publish(e, "quiet", automationVal("quiet",
-		map[string]any{"type": "error_rate", "op_names": []any{"agent"}, "window_minutes": 10, "threshold": 0.9},
+		map[string]any{"type": "error_rate", "names": []any{"agent"}, "window_minutes": 10, "threshold": 0.9},
 		map[string]any{"type": "webhook", "url": sink.srv.URL}))
 	runs := e.post("/automations/check", map[string]any{"project_id": pid})["runs"].([]any)
 	if len(runs) != 1 || runs[0].(map[string]any)["automation_id"] != "errors" {
 		t.Fatalf("error-rate runs: %v", runs)
 	}
 	ev := sink.last()["event"].(map[string]any)
-	if ev["error_calls"].(float64) != 2 || ev["total_calls"].(float64) != 3 {
+	if ev["error_spans"].(float64) != 2 || ev["total_spans"].(float64) != 3 {
 		t.Fatalf("event: %v", ev)
 	}
 	// Cooldown defaults to the window for error-rate triggers, but this one has 0.

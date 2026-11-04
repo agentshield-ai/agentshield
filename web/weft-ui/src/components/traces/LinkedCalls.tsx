@@ -14,7 +14,7 @@ export function LinkedCalls({ projectId, attributes, compact }: { projectId: str
     <div className={`linked-calls ${compact ? 'small' : ''}`} aria-label="Linked calls">
       {l.calls.length > 0 && (
         <div className="row wrap" style={{ gap: 6 }}>
-          <span className="muted small">Linked {l.calls.length === 1 ? 'call' : 'calls'}</span>
+          <span className="muted small">Linked {l.calls.length === 1 ? 'span' : 'spans'}</span>
           {l.calls.map((c) => (
             <Link key={c.callId} to={spanUrl(projectId, c.callId)} className="chip mono" title={c.traceId ? `trace ${c.traceId}` : undefined}>
               {c.callId.slice(0, 12)} ↗

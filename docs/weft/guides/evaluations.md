@@ -21,7 +21,7 @@ Each score shows its scorer and the reason it gave.
 A **monitor** runs scorers automatically on new data as it arrives, so you
 see quality change without running anything by hand. Create one on the
 **Monitors** page: choose the scorers, and whether they score each session,
-each agent in a session, each hand-off or each call. A session counts as
+each agent in a session, each hand-off or each span. A session counts as
 complete, and is scored, once no new spans have arrived for a minute (you can
 change this). Session scores then show up on the session's **Scores** tab,
 on the Scores page and in the **Low scores** card.

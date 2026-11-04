@@ -57,26 +57,6 @@ type Config struct {
 	// Compat turns on the compatibility adapter for clients of another
 	// tracing product (package compat, docs/weft/COMPATIBILITY.md).
 	Compat bool
-	// LegacyRoutes serves the route shapes Weft had before its own API
-	// (/call/*, /obj/*, /table/*, ...; compat.Routes) even with the adapter
-	// off; nil means DefaultLegacyRoutes. It is a temporary migration aid
-	// while Weft's SDKs and UI move to the native /api/v1 routes; with it
-	// false and the adapter off, those routes return 404. cmd/weft sets it
-	// from --legacy-routes.
-	LegacyRoutes *bool
-}
-
-// DefaultLegacyRoutes is LegacyRoutes when unset. It is true until Weft's
-// SDKs, UI and plugins use only the native API.
-const DefaultLegacyRoutes = true
-
-// legacyRoutes reports whether the older route shapes are served without
-// the adapter.
-func (c Config) legacyRoutes() bool {
-	if c.LegacyRoutes == nil {
-		return DefaultLegacyRoutes
-	}
-	return *c.LegacyRoutes
 }
 
 // Server is the HTTP API.
@@ -90,8 +70,8 @@ type Server struct {
 	stops  []func()
 	// compat is the compatibility adapter; nil when it is off.
 	compat *compat.Adapter
-	// legacy serves the older route shapes (with the adapter or
-	// LegacyRoutes); nil otherwise.
+	// legacy serves the older route shapes, which exist only with the
+	// adapter; nil otherwise.
 	legacy *compat.Routes
 	// native serves the /api/v1 routes without middleware, for the older
 	// routes, which forward to them after authentication.
@@ -113,7 +93,7 @@ func New(cfg Config, st *store.Store) *Server {
 	if cfg.Compat {
 		s.compat = compat.New(compatHost{s})
 	}
-	if cfg.Compat || cfg.legacyRoutes() {
+	if cfg.Compat {
 		s.legacy = compat.NewRoutes(compatHost{s}, s.compat)
 	}
 	nr := chi.NewRouter()
@@ -246,7 +226,11 @@ func (s *Server) requestLog(next http.Handler) http.Handler {
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		start := time.Now()
 		next.ServeHTTP(ww, r)
-		s.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", ww.Status(), "ms", time.Since(start).Milliseconds())
+		status := ww.Status()
+		if status == 0 { // the handler wrote nothing: net/http sends 200
+			status = http.StatusOK
+		}
+		s.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", status, "ms", time.Since(start).Milliseconds())
 	})
 }
 
@@ -444,7 +428,7 @@ type callsStatsReq struct {
 	End           string             `json:"end"`
 	BucketSeconds int64              `json:"bucket_seconds"`
 	// Metric-bucket fields; when any is present the response has
-	// usage_buckets/call_buckets, see apishape.go.
+	// usage_buckets/span_buckets, see apishape.go.
 	metricStatsFields
 }
 

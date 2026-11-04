@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import type { WeftObject } from '../../api/types'
+import { monitorNames, monitorScopes, type MonitorScope } from './monitorFields'
 import { ErrorBox, Modal, Spinner } from '../common'
 import { NameField, usePublish, type Created } from '../objects/ObjectForms'
 import { classVal, errMsg } from '../objects/objectUtils'
@@ -9,14 +10,14 @@ import { ScorerPicker } from './ScorerPicker'
 
 const QUERY_EXAMPLE = `{"$expr": {"$gt": [{"$getField": "summary.weft.latency_ms"}, {"$literal": 1000}]}}`
 
-export type MonitorScope = 'session' | 'agent' | 'handoff' | 'call'
+export type { MonitorScope }
 
 /** Where a monitor's scorers run (API.md "Monitors": scopes). */
 export const MONITOR_SCOPES: { id: MonitorScope; label: string; help: string }[] = [
   { id: 'session', label: 'Each session', help: 'once a session is complete, e.g. goal completion' },
   { id: 'agent', label: 'Each agent in a session', help: 'per agent that took part' },
   { id: 'handoff', label: 'Each hand-off', help: 'per hand-off between agents' },
-  { id: 'call', label: 'Each span', help: 'every matching span as it finishes' },
+  { id: 'span', label: 'Each span', help: 'every matching span as it finishes' },
 ]
 export const DEFAULT_IDLE_SECONDS = 60
 
@@ -32,11 +33,11 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
   const [name, setName] = useState<string>(initial?.name ?? '')
   const [description, setDescription] = useState<string>(v.description ?? '')
   const [active, setActive] = useState<boolean>(v.active ?? true)
-  const [opNames, setOpNames] = useState<string[]>(Array.isArray(v.op_names) ? v.op_names : [])
+  const [opNames, setOpNames] = useState<string[]>(monitorNames(v))
   const [rate, setRate] = useState<number>(typeof v.sampling_rate === 'number' ? v.sampling_rate : 1)
   const [queryText, setQueryText] = useState<string>(v.query ? JSON.stringify(v.query, null, 2) : '')
   const [scorers, setScorers] = useState<string[]>(Array.isArray(v.scorers) ? v.scorers : [])
-  const [scopes, setScopes] = useState<MonitorScope[]>(Array.isArray(v.scopes) ? v.scopes : [])
+  const [scopes, setScopes] = useState<MonitorScope[]>(monitorScopes(v))
   const [idle, setIdle] = useState<number>(typeof v.session_idle_seconds === 'number' ? v.session_idle_seconds : DEFAULT_IDLE_SECONDS)
   const [opSearch, setOpSearch] = useState('')
   const [busy, setBusy] = useState(false)
@@ -85,9 +86,10 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
               setBusy(true)
               setErr(null)
               try {
-                const fields: Record<string, unknown> = { name, description, active, sampling_rate: rate, op_names: opNames, scorers, ...monitorScopeFields(scopes, idle) }
+                const fields: Record<string, unknown> = { name, description, active, sampling_rate: rate, names: opNames, scorers, ...monitorScopeFields(scopes, idle) }
                 const base = { ...(initial?.value ?? {}) }
                 delete base.query
+                delete base.op_names // the earlier name of names
                 delete base.scopes
                 if (queryText.trim()) fields.query = JSON.parse(queryText)
                 onSaved(await publish(name, { ...base, ...classVal('Monitor', [], fields) }))
@@ -172,7 +174,7 @@ export function MonitorEditor({ projectId, initial, onClose, onSaved }: { projec
           {scopes.length ? '' : 'None ticked: session, agent and hand-off judges score each session, other scorers score each span.'}
         </span>
       </fieldset>
-      {(scopes.length === 0 || scopes.some((s) => s !== 'call')) && (
+      {(scopes.length === 0 || scopes.some((s) => s !== 'span')) && (
         <label className="field">
           A session is complete after this many seconds without new spans
           <input className="input" type="number" min={1} max={86400} step={1} value={idle} onChange={(e) => setIdle(Number(e.target.value))} style={{ maxWidth: 140 }} />

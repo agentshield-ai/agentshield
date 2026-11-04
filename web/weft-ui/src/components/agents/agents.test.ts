@@ -41,7 +41,7 @@ describe('agent evals', () => {
     expect(f.evalRun).toBe('run-1')
     expect(f.evalPred).toBe('pas-2')
     expect(writeSpanFilters(f)).toMatchObject({ eval: 'run-1', pred: 'pas-2', op: 'chat' })
-    expect(spanQueryParts(f)).toMatchObject({ evaluation_run_id: 'run-1', predict_and_score_call_id: 'pas-2' })
+    expect(spanQueryParts(f)).toMatchObject({ evaluation_run_id: 'run-1', prediction_span_id: 'pas-2' })
     expect(activeFilterCount(f)).toBe(2)
     expect(spanQueryParts(EMPTY_SPAN_FILTERS).evaluation_run_id).toBeUndefined()
   })
@@ -55,10 +55,10 @@ describe('agent evals', () => {
     expect(fmtScoreValue('resolved', true)).toBe('✓')
   })
   it('indexes predictions by trace', () => {
-    const pred = (id: string, traces: string[]) => ({ predict_and_score_call_id: id, trace_ids: traces }) as AgentEvalPrediction
-    const runs = [{ call_id: 'r1', predictions: [pred('p1', ['t1', 't2'])] }, { call_id: 'r2', predictions: [pred('p2', ['t1'])] }] as AgentEvalRun[]
+    const pred = (id: string, traces: string[]) => ({ prediction_span_id: id, trace_ids: traces }) as AgentEvalPrediction
+    const runs = [{ evaluation_run_id: 'r1', predictions: [pred('p1', ['t1', 't2'])] }, { evaluation_run_id: 'r2', predictions: [pred('p2', ['t1'])] }] as AgentEvalRun[]
     const m = predictionsByTrace(runs)
-    expect(m.get('t1')?.map((x) => x.pred.predict_and_score_call_id)).toEqual(['p1', 'p2'])
+    expect(m.get('t1')?.map((x) => x.pred.prediction_span_id)).toEqual(['p1', 'p2'])
     expect(m.get('t2')?.length).toBe(1)
     expect(predictionsByTrace(undefined).size).toBe(0)
   })

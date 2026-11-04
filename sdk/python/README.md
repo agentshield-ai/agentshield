@@ -101,7 +101,7 @@ they finish. Fetched spans expose
 when queried with `include_usernames=True` (whether these come back depends on
 the server version).
 
-Root spans print `weft: <server>/<entity>/<project>/calls/<id>` to stderr
+Root spans print `weft: <server>/<entity>/<project>/spans/<id>` to stderr
 (`span.ui_url` gives the same link).
 
 **Durability.** With `enable_disk_fallback`, anything that cannot be sent goes

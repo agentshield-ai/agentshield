@@ -57,7 +57,7 @@ export interface InitOptions {
 export interface ClientSettings extends RedactSettings {
   /** Attributes added to every call. */
   globalAttributes?: Record<string, unknown>;
-  /** Print `<server>/<entity>/<project>/calls/<id>` for each root call (default true; env WEFT_PRINT_CALL_LINK). */
+  /** Print `<server>/<entity>/<project>/spans/<id>` for each root span (default true; env WEFT_PRINT_CALL_LINK). */
   printCallLink?: boolean;
   /** Store op source code (default true; env WEFT_CAPTURE_CODE). */
   captureCode?: boolean;
@@ -355,12 +355,12 @@ export class WeftClient {
 
   /** UI link for a span. */
   spanUrl(span: Span | string): string {
-    return `${this.serverUrl}/${this.projectId}/calls/${typeof span === 'string' ? span : span.id}`;
+    return `${this.serverUrl}/${this.projectId}/spans/${typeof span === 'string' ? span : span.id}`;
   }
 
   /** @internal Earlier name of spanUrl. */
   callUrl(call: Span | string): string {
-    return `${this.serverUrl}/${this.projectId}/calls/${typeof call === 'string' ? call : call.id}`;
+    return this.spanUrl(call);
   }
 
   get projectId(): string {

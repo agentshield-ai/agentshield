@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -83,14 +82,13 @@ func (s *Server) queueQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
+	out := newNDJSON(w)
 	for _, q := range qs {
-		if err := enc.Encode(q); err != nil {
+		if err := out.write(q); err != nil {
 			return
 		}
 	}
+	out.flush()
 }
 
 type queueStatsReq struct {
@@ -166,7 +164,7 @@ func (s *Server) queueDelete(ctx context.Context, r *http.Request, req *queueIDR
 
 type queueItemsAddReq struct {
 	ProjectID     string   `json:"project_id"`
-	CallIDs       []string `json:"call_ids"`
+	SpanIDs       []string `json:"span_ids"`
 	DisplayFields []string `json:"display_fields"`
 	UserID        *string  `json:"user_id"`
 }
@@ -176,7 +174,7 @@ func (s *Server) queueItemsAdd(ctx context.Context, r *http.Request, req *queueI
 	if err != nil {
 		return nil, err
 	}
-	added, dups, err := s.store.AddAnnotationQueueItems(ctx, pid, chi.URLParam(r, "queue_id"), req.CallIDs, req.DisplayFields, userFrom(r, req.UserID))
+	added, dups, err := s.store.AddAnnotationQueueItems(ctx, pid, chi.URLParam(r, "queue_id"), req.SpanIDs, req.DisplayFields, userFrom(r, req.UserID))
 	if err != nil {
 		return nil, err
 	}

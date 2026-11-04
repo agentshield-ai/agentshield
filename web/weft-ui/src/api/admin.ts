@@ -78,7 +78,7 @@ export interface DatasetSourceLink {
   dataset_digest: string
   row_digest: string
   /** `call` names a span by its id (the name stored links have had from the start). */
-  source_kind: 'call' | 'span' | 'conversation'
+  source_kind: 'span' | 'conversation'
   source_id: string
   source_trace_id: string
   source_display_name: string
@@ -101,7 +101,7 @@ export const adminApi = {
   ttlUpdate: (project_id: string, retention_days: number | null) =>
     post<{ retention_days: number | null }>('/project/ttl_settings/update', { project_id, retention_days }),
   ttlPurge: (project_id: string) =>
-    post<{ purged: { calls: number; feedback: number }; retention_days: number | null }>('/project/ttl_settings/purge', { project_id }),
+    post<{ purged: { spans: number; feedback: number }; retention_days: number | null }>('/project/ttl_settings/purge', { project_id }),
 
   samplingRead: (project_id: string) => post<SamplingSettings>('/project/ingest_sampling_settings/read', { project_id }),
   samplingUpdate: (project_id: string, s: SamplingSettings) => post<SamplingSettings>('/project/ingest_sampling_settings/update', { project_id, ...s }),

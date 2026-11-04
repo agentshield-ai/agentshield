@@ -5,7 +5,7 @@ the server's agents index understands:
 
 - a **turn** is an ``invoke_agent`` call (``attributes.weft.span_kind = "agent"``,
   ``attributes.gen_ai.agent.name``), the root of its own trace by default, with
-  ``thread_id`` = the conversation id and ``turn_id`` = its own id;
+  ``session_id`` = the conversation id and ``turn_id`` = its own id;
 - an **LLM call** is a ``chat`` call with ``inputs.messages`` and an OpenAI-style
   ``output`` plus ``summary.usage``;
 - a **tool** is an ``execute_tool`` call with the parsed arguments as inputs and
@@ -1490,7 +1490,7 @@ class Turn(_SpanBase):
 
 
 class Conversation(BaseModel):
-    """A conversation: groups turns by ``conversation_id`` (recorded as the calls' ``thread_id``).
+    """A conversation: groups turns by ``conversation_id`` (recorded as the spans' ``session_id``).
 
     Conversation-level ``agent_name``/``model``/``agent_*`` are defaults for
     its turns. ``attributes`` are added to every span it records;

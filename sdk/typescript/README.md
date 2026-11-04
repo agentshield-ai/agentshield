@@ -91,7 +91,7 @@ is sent and stored is fully redacted. The server can also apply NER
 await weft.init('my-project', {
   settings: {
     globalAttributes: { app: 'support-bot' },   // added to every call
-    printCallLink: true,                         // "weft: <server>/<entity>/<project>/calls/<id>" per root span (WEFT_PRINT_CALL_LINK)
+    printCallLink: true,                         // "weft: <server>/<entity>/<project>/spans/<id>" per root span (WEFT_PRINT_CALL_LINK)
     captureCode: true,                           // store traced functions' source (WEFT_CAPTURE_CODE)
     captureReasoning: true,                      // model reasoning: thinking, summaries, weft.reasoning() (WEFT_CAPTURE_REASONING)
     enableDiskFallback: true,                    // on-disk write-ahead log (WEFT_ENABLE_WAL, dir: walDir / WEFT_WAL_DIR)

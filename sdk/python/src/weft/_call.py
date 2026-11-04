@@ -141,7 +141,7 @@ class Span:
     def ui_url(self) -> str:
         """Link to this span in the Weft UI."""
         base = self._client.server_url if self._client is not None else ""
-        return f"{base}/{self.project_id}/calls/{self.id}"
+        return f"{base}/{self.project_id}/spans/{self.id}"
 
     @property
     def status(self) -> str:

@@ -51,9 +51,9 @@ def test_global_attributes_print_link_and_capture_code(fake, capsys):
             _, call = root.call()
         c.flush()
         err = capsys.readouterr().err
-        assert f"weft: {fake.url}/ent/proj/calls/{call.id}" in err
+        assert f"weft: {fake.url}/ent/proj/spans/{call.id}" in err
         assert err.count("weft: http") == 1  # only root calls print a link
-        assert call.ui_url == f"{fake.url}/ent/proj/calls/{call.id}"
+        assert call.ui_url == f"{fake.url}/ent/proj/spans/{call.id}"
         [r] = fake.calls_by_op("root")
         assert r["attributes"]["env"] == "staging" and r["attributes"]["team"] == "b"
         assert fake.objs["root"][0]["value"]["code"] == "# Code capture disabled\n"

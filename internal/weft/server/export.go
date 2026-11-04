@@ -153,6 +153,7 @@ func (s *Server) exportCalls(w http.ResponseWriter, r *http.Request, req callsEx
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, exportFilename(q.ProjectID, ext)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK) // the query was checked above; an empty export is a 200 too
 	flusher, _ := w.(http.Flusher)
 	flush := func() {
 		if flusher != nil {

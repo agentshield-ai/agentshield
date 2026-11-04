@@ -47,7 +47,7 @@ func newShieldEnv(t *testing.T, rulesDir string) *shieldEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(nativeOnly(Config{APIKeys: []string{"k1"}}), st)
+	s := New(Config{APIKeys: []string{"k1"}}, st)
 	if rulesDir != "" {
 		svc, err := shield.New(shield.Config{RulesDir: rulesDir}, st)
 		if err != nil {
@@ -470,7 +470,7 @@ func TestShieldReplayRouteAndToolSafety(t *testing.T) {
 	// The scorer on a call finds the session from the call itself.
 	sc.Val = map[string]any{"_class_name": "ToolSafetyScorer"}
 	score, _, err = e.s.Engine().RunScorer(ctx, shieldProj, sc, map[string]any{}, nil, nil,
-		map[string]any{"weft": map[string]any{"scored_call_id": "c1c2c3c4c5c6c7c8"}})
+		map[string]any{"weft": map[string]any{"scored_span_id": "c1c2c3c4c5c6c7c8"}})
 	if err != nil {
 		t.Fatal(err)
 	}

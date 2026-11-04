@@ -91,7 +91,7 @@ with `{"reason": "<message>"}`.
 | `GET /api/v1/server` | `{"name": "weft", "version", "api_version": "v1", "auth_required": bool, "otel_endpoint": "/otel/v1/traces", "features": [...], "limits": {...}, "digest": {"algorithm": "sha256", "encoding": "hex", "canonical_json"}}`; no key needed |
 | `GET /auth/check` | `{"ok": true}` or 401 |
 | `GET /auth/whoami` | `{"user_id": "alice" \| "anonymous", "auth_required": bool}` |
-| `GET /projects` | `{"projects": [{"project_id","entity","project","call_count","trace_count","object_count","last_activity"}]}` (`call_count` counts spans) |
+| `GET /projects` | `{"projects": [{"project_id","entity","project","span_count","trace_count","object_count","last_activity"}]}` |
 | `GET /api/v1/projects/stats?project_id=` | `{"span_count","trace_count","object_count","table_count","file_count","feedback_count","storage_size_bytes"}` |
 
 `features` lists what the server supports (`spans`, `objects`, `tables`,
@@ -183,7 +183,7 @@ from OTLP ([OpenTelemetry ingest](#opentelemetry-ingest)).
 | `POST /api/v1/spans/stream` | SpansQuery | NDJSON of Span |
 | `POST /api/v1/spans/update` | `{project_id, id, display_name}` | `{}` |
 | `POST /api/v1/spans/delete` | `{project_id, ids}` | `{}`; soft delete, cascading to descendants (`include_deleted` lists them) |
-| `POST /api/v1/spans/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | time series, below; with any of `granularity`, `usage_metrics`, `call_metrics`, `timezone`: metric buckets, below |
+| `POST /api/v1/spans/stats` | `{project_id, filter?, query?, search?, start?, end?, bucket_seconds?}` | time series, below; with any of `granularity`, `usage_metrics`, `span_metrics`, `timezone`: metric buckets, below |
 | `POST /api/v1/spans/export` | SpansQuery plus `format`, `flatten` | CSV, JSONL or JSON ([Export](#post-apiv1spansexport)) |
 | `POST /api/v1/spans/metrics` | MetricsQuery | chart series ([Metrics](#post-apiv1spansmetrics)) |
 | `POST /api/v1/spans/names` | `{project_id, trace_roots_only?}` | `{"items": [{"name","base_name","count","error_count","last_started_at"}], "total_count"}`, one per span name |
@@ -272,11 +272,11 @@ chosen to give about 60 buckets when absent.
 
 **`/api/v1/spans/stats` metric buckets**: `{project_id, start, end?,
 granularity?, usage_metrics?: [{metric, aggregations?, percentiles?}],
-call_metrics?: [...], filter?, timezone?}` → `{start, end, granularity,
-timezone, usage_buckets, call_buckets}`. Usage metrics (`input_tokens`,
+span_metrics?: [...], filter?, timezone?}` → `{start, end, granularity,
+timezone, usage_buckets, span_buckets}`. Usage metrics (`input_tokens`,
 `output_tokens`, `total_tokens`, `cache_read_input_tokens`,
 `cache_creation_input_tokens`, `input_cost`, `output_cost`, `total_cost`) are
-grouped by bucket and model; span metrics (`latency_ms`, `call_count`,
+grouped by bucket and model; span metrics (`latency_ms`, `span_count`,
 `error_count`) by bucket. Columns are `<agg>_<metric>` (`sum`, `avg`, `min`,
 `max`, `count`, `count_true`, `count_false`; default `sum`) and
 `p<pct>_<metric>`, plus `timestamp`, `count` and `model`. `sum`/`count`/`avg`
@@ -396,12 +396,12 @@ Nested objects, tables and functions are stored as ref strings.
              "summary_metric_path":"true_fraction","should_minimize":false}]}
 // Monitor (online evaluation)
 {"_class_name":"Monitor","_bases":["Object","BaseModel"],"name":"mon","description":"","active":true,
- "sampling_rate":1.0,"op_names":["openai.chat"],"query":{"$expr":{...}} /* optional */,
+ "sampling_rate":1.0,"names":["openai.chat"],"query":{"$expr":{...}} /* optional */,
  "scorers":["weft:///e/p/object/judge:<d>"]}
 // AnnotationSpec (human feedback schema)
 {"_class_name":"AnnotationSpec","_bases":["Object","BaseModel"],"name":"quality","description":"",
  "field_schema":{"type":"integer","minimum":1,"maximum":5},   // or {"type":"string","enum":[..]}, {"type":"boolean"}, {"type":"string","maxLength":500}
- "unique_among_creators":true,"op_scope":null}
+ "unique_among_creators":true,"names":null}   // names: the span names (or function refs) it applies to; null = all
 // SavedView
 {"_class_name":"SavedView","_bases":["Object","BaseModel"],"name":"errors","view_type":"traces","label":"Errors",
  "definition":{"filter":{...},"query":{...},"sort_by":[...],"cols":[...]}}
@@ -641,17 +641,19 @@ model.
 
 ## Monitors
 
-Active `Monitor` objects (latest version) are evaluated whenever a call ends
-or an OTLP span is ingested. Calls whose op base name is in `op_names` (empty
-means all root calls), that match `query`, and pass `sampling_rate` are scored
+Active `Monitor` objects (latest version) are evaluated whenever a span ends
+or an OTLP span is ingested. Spans whose base name is in `names` (empty
+means all root spans), that match `query`, and pass `sampling_rate` are scored
 asynchronously by each server-runnable scorer. The result is stored as
 `weft.scorer.<scorer name>` feedback with `trigger_ref` set to the monitor
-ref, and the scorer's own call is recorded with `op_name = "<scorer name>.score"`.
-Scorer calls and completions are never themselves monitored.
+ref, and the scorer's own span is recorded with `name = "<scorer name>.score"`.
+Scorer spans and completions are never themselves monitored. (Monitors saved
+before Weft's own names, and monitors the weave client publishes through the
+compatibility adapter, say `op_names`; it is read as `names`.)
 
 **Scope scorers.** A scorer whose class scores a scope (`GoalCompletionJudge`,
 `ReasoningConsistencyJudge`, `HandoffQualityJudge`, `ToolSafetyScorer`) does
-not score the call that ended. The call's session is queued instead, and once
+not score the span that ended. The span's session is queued instead, and once
 the session is complete the scorer runs at its scope over the session's
 targets, exactly as [`POST /api/v1/scores/run`](#scores) would: the session,
 each agent in it, or each hand-off. The results are scope scores
@@ -661,7 +663,7 @@ monitor ref. Monitor fields for this (all optional):
 
 | Field | Meaning |
 |---|---|
-| `scopes` | where the scorers run: `session`, `agent`, `handoff`, and `call` for the per-call path above. Default: a scope scorer runs at the first of `session`, `handoff`, `agent` it supports, any other scorer per call |
+| `scopes` | where the scorers run: `session`, `agent`, `handoff`, and `span` for the per-span path above (`call` in monitors saved before Weft's own names). Default: a scope scorer runs at the first of `session`, `handoff`, `agent` it supports, any other scorer per span |
 | `session_idle_seconds` | a session is complete when no span of it has arrived for this many seconds (server time) and none of its root spans is still running; default 60, at most 86400. A session whose root spans never end counts as complete after ten times this |
 | `sampling_rate` | applied once per target; a target sampled out is not considered again |
 
@@ -678,19 +680,19 @@ span arrives.
 from the `project_id` header (also `x-weft-project`), else the resource
 attribute `weft.project`, else `default/default`.
 
-Span → call mapping:
+OTLP span → Weft span mapping:
 
-| Call field | Source (first match wins) |
+| Span field | Source (first match wins) |
 |---|---|
 | `id`, `trace_id`, `parent_id` | hex span id, trace id, parent span id |
-| `op_name` | `weft.op_name`, else span name |
+| `name` | `weft.op_name`, else span name |
 | `display_name` | `weft.display_name`; Traceloop `traceloop.entity.name` (or `traceloop.workflow.name` on workflow spans) |
 | `started_at`, `ended_at` | span start/end |
 | `inputs` | `weft.inputs` (JSON), OpenInference LLM spans' `llm.input_messages.*`, `input.value` (OpenInference; serialised LangChain/LangGraph messages become chat messages), framework layouts (see below), `gen_ai.input.messages`, `llm.input_messages.N.message.*`, `gen_ai.prompt.N.*` (OpenLLMetry), `gen_ai.prompt`, `traceloop.entity.input`, `gen_ai.*.message` span events. Request params (`gen_ai.request.*`, `llm.invocation_parameters`) are added. |
 | `output` | `weft.output`, OpenInference LLM spans' `llm.output_messages.*`, `output.value`, framework layouts (see below), `gen_ai.output.messages`, `llm.output_messages.N.message.*`, `gen_ai.completion.N.*`, `gen_ai.completion`, `traceloop.entity.output`, `gen_ai.choice` events |
 | `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata`; also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
-| `exception` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
-| `thread_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
+| `error` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
+| `session_id`, `turn_id` | `weft.thread_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
 | `user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
 | `attributes` | `weft.attributes.*` (prefix stripped), plus `otel: {span_name, kind, status, resource, scope, attributes, events, links}` |
 
@@ -715,35 +717,37 @@ GenAI message parts: `text` parts are joined; `tool_call` parts become OpenAI
 
 ## Annotation queues
 
-Queues collect calls for human review (Review queues in the UI). A queue's
+Queues collect spans for human review (Review queues in the UI). A queue's
 `scorer_refs` are the `AnnotationSpec` refs reviewers fill in. Progress is
 tracked per annotator (the API key's user, else `X-Weft-User`, else
 `anonymous`).
 
 AnnotationQueueSchema: `{"id","project_id","name","description","scorer_refs":[ref],"created_at","created_by","updated_at","deleted_at":null}`
 
-Item: `{"id","project_id","queue_id","call_id","call_op_name","call_trace_id","call_started_at","call_ended_at","display_fields":[path],
+Item: `{"id","project_id","queue_id","span_id","span_name","trace_id","span_started_at","span_ended_at","display_fields":[path],
 "added_by","annotation_state":"unstarted|in_progress|completed|skipped","annotator_user_id","created_at","created_by","updated_at","deleted_at","position_in_queue"?}`
-(`annotation_state` is the requesting annotator's state.)
+(`annotation_state` is the requesting annotator's state; `span_name`,
+`trace_id`, `span_started_at` and `span_ended_at` are copied from the span
+when it is added.)
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /annotation_queues` | `{project_id, name, scorer_refs, description?}` | `{"id"}` |
-| `POST /annotation_queues/query` | `{project_id, name?, limit?, offset?, sort_by?: [{field: created_at\|updated_at\|name, direction}]}` (`name`: case-insensitive substring) | NDJSON stream of AnnotationQueueSchema |
+| `POST /annotation_queues/query` | `{project_id, name?, limit?, offset?, sort_by?: [{field: created_at\|updated_at\|name, direction}]}` (`name`: case-insensitive substring) | NDJSON stream of AnnotationQueueSchema (`200` with no lines when nothing matches) |
 | `POST /annotation_queues/stats` | `{project_id, queue_ids}` | `{"stats": [{"queue_id","total_items","completed_items"}]}` — completed means completed or skipped by at least one annotator |
 | `GET /annotation_queues/{queue_id}?project_id=` | | `{"queue"}` |
 | `PUT /annotation_queues/{queue_id}` | `{project_id, name?, description?, scorer_refs?}` | `{"queue"}` |
 | `DELETE /annotation_queues/{queue_id}?project_id=` | | `{"queue"}` (soft delete) |
-| `POST /annotation_queues/{queue_id}/items` | `{project_id, call_ids, display_fields}` (`display_fields`: call paths shown to reviewers, e.g. `inputs.question`) | `{"added_count","duplicates"}` |
-| `POST /annotation_queues/{queue_id}/items/query` | `{project_id, filter?: {id?, added_by?, annotation_states?, call_id?, call_op_name?, call_trace_id?}, sort_by?: [{field: created_at\|updated_at\|call_started_at\|call_ended_at\|call_op_name\|annotation_state, direction}], limit?, offset?, include_position?, annotator_user_id?}` (`annotator_user_id` is a Weft extension to view another reviewer's states) | `{"items": [Item]}` in queue order |
+| `POST /annotation_queues/{queue_id}/items` | `{project_id, span_ids, display_fields}` (`display_fields`: span paths shown to reviewers, e.g. `inputs.question`) | `{"added_count","duplicates"}` |
+| `POST /annotation_queues/{queue_id}/items/query` | `{project_id, filter?: {id?, added_by?, annotation_states?, span_id?, span_name?, trace_id?}, sort_by?: [{field: created_at\|updated_at\|span_started_at\|span_ended_at\|span_name\|annotation_state, direction}], limit?, offset?, include_position?, annotator_user_id?}` (`annotator_user_id` views another reviewer's states) | `{"items": [Item]}` in queue order |
 | `POST /annotation_queues/{queue_id}/items/{item_id}/progress` | `{project_id, queue_id, annotation_state}` | `{"item"}` |
-| `DELETE /annotation_queues/{queue_id}/items/{item_id}?project_id=` | | `{}`; removes the item (soft delete; its feedback stays, and the call can be added again). 404 when it is already gone. The UI delays this call to offer undo. |
+| `DELETE /annotation_queues/{queue_id}/items/{item_id}?project_id=` | | `{}`; removes the item (soft delete; its feedback stays, and the span can be added again). 404 when it is already gone. The UI delays this call to offer undo. |
 
 Feedback given while reviewing carries the queue: `/api/v1/feedback/create`,
 `/api/v1/feedback/replace` and `/api/v1/feedback/batch` accept `queue_id`, Feedback
 rows return it, and `queue_id` is a feedback query field. The UI's "Export to
-dataset" builds a Dataset with one row per annotated call: its inputs, `output`,
-one column per spec (latest value given in the queue), `annotators` and `call_id`.
+dataset" builds a Dataset with one row per annotated span: its inputs, `output`,
+one column per spec (latest value given in the queue), `annotators` and `span_id`.
 
 ## Automations
 
@@ -761,8 +765,8 @@ apply within 5 seconds).
              "operator":"lt",           // gt gte lt lte eq ne (or > >= < <= == !=)
              "threshold": 3,
              "monitor_ref": null},      // optional: only scores written by this monitor
- // or {"type":"error_rate","op_names":["agent"],"window_minutes":60,"threshold":0.1,"min_calls":5}
- //    share of finished calls with an exception (op_names empty = trace roots; internal scorer/judge calls excluded); checked every minute
+ // or {"type":"error_rate","names":["agent"],"window_minutes":60,"threshold":0.1,"min_spans":5}
+ //    share of finished spans with an error (names empty = trace roots; internal scorer/judge spans excluded); checked every minute
  // or {"type":"feedback_created","feedback_types":["weft.reaction","weft.note"]}   // exact types or prefixes ending in *; empty = any
  "action": {"type":"slack",             // or "webhook"
             "url":"https://hooks.slack.com/services/…",   // or "url_secret": name of a secret holding the URL
@@ -777,11 +781,16 @@ background loop. Slack receives `{"text": message}`. Webhooks receive:
 
 ```jsonc
 {"automation": {"name","object_id","ref"}, "project_id", "trigger": {...}, "message", "fired_at", "test": false,
- "event": {"type":"score_threshold","feedback_id","feedback_type","ref","call_id","value","path","operator","threshold","monitor_ref"}
-       // error_rate: {"type","total_calls","error_calls","error_rate","threshold","window_minutes","op_names"}
-       // feedback_created: {"type","feedback_id","feedback_type","ref","call_id","payload","creator","user_id","queue_id"}
+ "event": {"type":"score_threshold","feedback_id","feedback_type","ref","span_id","value","path","operator","threshold","monitor_ref"}
+       // error_rate: {"type","total_spans","error_spans","error_rate","threshold","window_minutes","names"}
+       // feedback_created: {"type","feedback_id","feedback_type","ref","span_id","payload","creator","user_id","queue_id"}
 }
 ```
+
+Automations saved before Weft's own names say `op_names` and `min_calls`;
+they are read as `names` and `min_spans`, and their message templates may
+use `{call_id}`, `{total_calls}`, `{error_calls}` and `{op_names}` for the
+event's `span_id`, `total_spans`, `error_spans` and `names`.
 
 AutomationRun: `{"id","project_id","automation_id","automation_ref","trigger_type","action_type","status":"success|error","test","event","response_status","response_body","error","duration_ms","created_at"}`
 
@@ -1018,7 +1027,7 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
 |---|---|---|
 | `/project/ttl_settings/read` | `{project_id}` | `{"retention_days": int\|null}` (null = keep forever) |
 | `/project/ttl_settings/update` | `{project_id, retention_days: null \| 1..36500}` | same |
-| `/project/ttl_settings/purge` | `{project_id}` | `{"purged": {"calls","feedback"}, "retention_days"}` — apply now |
+| `/project/ttl_settings/purge` | `{project_id}` | `{"purged": {"spans","feedback"}, "retention_days"}` — apply now |
 | `/project/ingest_sampling_settings/read` | `{project_id}` | `{"sample_rate": 0..1, "dry_run": bool}` (default 1, false) |
 | `/project/ingest_sampling_settings/update` | `{project_id, sample_rate, dry_run?}` | same |
 | `GET /project/sensitive_data_settings?project_id=` (or POST `.../read`) | | `{"policy": "off"\|"pii-v1", "entities": [], "custom_patterns": [{name, pattern}], "available_entities": [{name, placeholder, description, kind}], "ner": {enabled, score_threshold, language}, "ner_available", "ner_active", "ner_entities"}` |
@@ -1027,8 +1036,8 @@ ApiKey: `{"id","name","user_id","prefix","all_projects","projects","read_only","
 | `/project/delete` | `{project_id, confirm?}` (`confirm` must equal the project id when given) | `{"project_id", "deleted": {"<table>": rows}}` |
 
 - **Retention.** A background job (hourly; `WEFT_RETENTION_INTERVAL`, a Go
-  duration, overrides) hard-deletes calls that started before
-  `now - retention_days`, and feedback on calls created before it. Objects,
+  duration, overrides) hard-deletes spans that started before
+  `now - retention_days`, and feedback created before it. Objects,
   tables and files are versioned assets and are kept.
 - **Ingest sampling** is applied to every ingest path
   (`/api/v1/spans/start|end|batch`, OTLP). A trace is kept when
@@ -1103,7 +1112,7 @@ Kind vocabularies map onto `invoke_agent` (agent, AGENT, subagent, turn),
 |---|---|
 | agent name | `gen_ai.agent.name`, `weft.agent.name`, `agent.name` (OpenInference), `agent_name` (Pydantic AI), `traceloop.entity.name` on Traceloop agent spans; for `invoke_agent` spans without one, the span name after `invoke_agent `, else the display name or op name |
 | agent id / version / description | `gen_ai.agent.id\|version\|description` (`weft.agent.*` also accepted) |
-| conversation | the call's `thread_id` (OTLP: `gen_ai.conversation.id`, `session.id`, …), `gen_ai.conversation.name` |
+| conversation | the span's `session_id` (OTLP: `gen_ai.conversation.id`, `session.id`, …), `gen_ai.conversation.name` |
 | turn | `turn_id == id`, or `weft.is_turn` |
 | tool | `gen_ai.tool.name`, `tool.name`, `ai.toolCall.name`; else the `execute_tool` span name suffix, display name or op name. `gen_ai.tool.call.id`, `ai.toolCall.id` |
 | model, provider | `gen_ai.request.model`, `ai.model.id`, `llm.model_name`, `model_name`, SDK `inputs.model`, else the single model in usage; `gen_ai.provider.name`, `gen_ai.system`, `ai.model.provider` (`openai.chat` → `openai`), `llm.provider`, SDK op prefix |
@@ -1135,7 +1144,7 @@ OpenInference `metadata` JSON flattens under `metadata.`.
 | *Weft*: `/agents/signals/presets` (GET or POST) | — | `{"presets": [{"id","name","kind": "tag"\|"rating","description"}]}` |
 | *Weft*: `/agents/signals/run` | `{project_id, model, signals: [{preset} \| {id, name?, kind, description}] (1–12), agent_name?, conversation_id?, trace_ids?, started_after?, started_before?, limit? (20 most recent turns, max 200), rescore?}` | `{"turns","scored","skipped","failed","results": [{"span_id","trace_id","signal","kind","score"?,"matched"?,"confidence"?,"reason"?,"feedback_id"?,"error"?}]}` |
 | *Weft*: `/agents/signals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, signal?, kind?, tag?, min_score?, max_score?, matched_only? (true), started_after?, started_before?, limit? (100), offset?}` | `{"results": [SignalResult], "summary": [{"signal","signal_name","kind","count","matched","avg","tag_counts"}], "total_count"}` |
-| *Weft*: `/agents/feedback/batch/create` (as `/api/v1/feedback/batch`) | `{batch: [{project_id, ref, feedback_type, payload, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","user_id","payload"}]}` |
+| *Weft*: `/agents/feedback/batch/create` (as `/api/v1/feedback/batch`) | `{batch: [{project_id, ref, feedback_type, payload, span_ref?, scorer_ratings?, scorer_rating_confidences?, scorer_rating_reasons?, scorer_tags?, scorer_tag_confidences?, scorer_tag_reasons?, scorer_trace_id?, span_*?, ...}]}` | `{"res": [{"id","created_at","user_id","payload"}]}` |
 
 **Signals.** A signal scores one *turn* (a conversation turn, or an agent
 invocation at the top of its trace outside conversations) with an LLM judge
@@ -1143,7 +1152,7 @@ invocation at the top of its trace outside conversations) with an LLM judge
 confidence, reason}`, rating signals for `{score, confidence, reason}`;
 1–5, 1–10 and 0–100 scales are rescaled to 0–1. Each result is feedback on
 the turn's root call with `feedback_type` `weft.signal` and payload
-`{signal, signal_name, signal_kind, model, scorer_call_id, output, reason,
+`{signal, signal_name, signal_kind, model, scorer_span_id, output, reason,
 scorer_ratings | scorer_tags, scorer_*_confidences, scorer_*_reasons,
 span_trace_id, span_conversation_id, span_agent_name, span_agent_version,
 span_status_code, scorer_trace_id, signal_version}`. `signal_version` hashes the
@@ -1166,7 +1175,7 @@ and are cut to 256 characters, confidences are clamped to 0–1; missing
 kind, signal, signal_id, signal_name, score, tags, confidence, reason,
 creator, created_at, span_id, trace_id, conversation_id, conversation_name,
 agent_name, agent_version, turn_started_at, turn_status, last_message,
-scorer_call_id}`; ratings and tags from annotations, `weft.scorer.*`
+scorer_span_id}`; ratings and tags from annotations, `weft.scorer.*`
 scorers and reactions on turns are listed too. Results are newest turn first.
 
 **`signal_filters`** `{ratings?: [{scorer_key, op: gte|gt|lte|lt|eq, value}],
@@ -1429,13 +1438,14 @@ Dataset rows can be linked to the spans, or sessions, they were made from.
 
 | Route | Body | Response |
 |---|---|---|
-| `POST /api/v1/dataset_sources/link` | `{project_id, dataset (name), version? (digest, v<N>, alias; default latest), links: [{row_digest, sources: [{source_id, source_kind: call\|span\|conversation, source_trace_id?}], link_metadata?}], include_created_status?}` | `{"items": [{"id","created"?}], "dataset_digest"}`, one per (row, source); relinking returns the same id |
-| `POST /api/v1/dataset_sources/query` | `{project_id, dataset, row_digests?, source_kinds?, include_deleted?, limit?, offset?}` | `{"items": [{"id","dataset","dataset_digest","row_digest","source_kind","source_id","source_trace_id","source_display_name","source_started_at","link_metadata","added_by","created_at","updated_at","deleted_at"}], "total_count"}`; `call` sources resolve the span's display name and start time |
+| `POST /api/v1/dataset_sources/link` | `{project_id, dataset (name), version? (digest, v<N>, alias; default latest), links: [{row_digest, sources: [{source_id, source_kind: span\|conversation, source_trace_id?}], link_metadata?}], include_created_status?}` | `{"items": [{"id","created"?}], "dataset_digest"}`, one per (row, source); relinking returns the same id |
+| `POST /api/v1/dataset_sources/query` | `{project_id, dataset, row_digests?, source_kinds?, include_deleted?, limit?, offset?}` | `{"items": [{"id","dataset","dataset_digest","row_digest","source_kind","source_id","source_trace_id","source_display_name","source_started_at","link_metadata","added_by","created_at","updated_at","deleted_at"}], "total_count"}`; `span` sources resolve the span's display name and start time |
 | `POST /api/v1/dataset_sources/datasets` | `{project_id, sources: [{source_id, source_kind}], include_deleted?}` | `{"items": [{"dataset","source_id","source_kind","source_trace_id","first_seen_at","row_digests" (≤100),"row_digests_total_count","row_digests_truncated"}], "total_count"}` |
 | `POST /api/v1/dataset_sources/delete` | `{project_id, ids}` | `{"items": [{"id","deleted"}]}` (soft delete) |
 
-`source_kind` `call` names a span by its id (the name stored links have had
-from the start).
+`source_kind` `span` names a span by its id, `conversation` a session by
+its id. Links stored with the kind's earlier name, `call`, were renamed once
+when the database was opened.
 
 ## Users, teams and roles
 
@@ -1548,11 +1558,12 @@ them.
 
 Without `project_id` only server admins may query; with it, admins of that
 project. AuditEntry:
-`{"id","ts","actor","auth_method": "static_key"|"api_key"|"session"|"sso"|"none"|"unauthenticated","key_id","method","path","project_id","object_ids","call_ids","status","outcome": "success"|"denied"|"unauthenticated"|"failed","ip","detail"}`.
-`object_ids` and `call_ids` (up to 50 each; `call_ids` are span ids) come
+`{"id","ts","actor","auth_method": "static_key"|"api_key"|"session"|"sso"|"none"|"unauthenticated","key_id","method","path","project_id","object_ids","span_ids","status","outcome": "success"|"denied"|"unauthenticated"|"failed","ip","detail"}`.
+`object_ids` and `span_ids` (up to 50 each) come
 from the body: object names (`/api/v1/objects/...`, also from the path),
-span `id`, `ids` and batch items (`/api/v1/spans/...`), and object, function
-and span refs.
+span `id`, `ids` and batch items (`/api/v1/spans/...`), `span_id` and
+`span_ids` fields (review queues), object, function and span refs, and the
+ids in the older route shapes the compatibility adapter serves.
 
 ### OAuth client credentials (RemoteScorer, predict_url)
 
@@ -1660,10 +1671,12 @@ world-readable.
 Evaluation runs and the agent spans and conversations they involve, for the
 Agents view's **Evals** tab and the **View spans** / **View conversations**
 actions on evaluations. A span belongs to evaluation run R and prediction P
-(an `Evaluation.predict_and_score` call under R) when:
+(an `Evaluation.predict_and_score` span under R) when:
 
 - it carries `weft.eval.run_id = R` and `weft.eval.predict_and_score_call_id = P`
-  (flat, nested under `attributes.weft.eval`, or as OTel span attributes);
+  (flat, nested under `attributes.weft.eval`, or as OTel span attributes; the
+  attribute names are an ingest contract the SDKs and OTel instrumentation
+  write, so they keep their names, DESIGN.md §4);
   spans the SDKs record inside `EvaluationLogger.log_prediction()` get them.
   A span with only `predict_and_score_call_id` is linked to P's parent run;
 - P links it through `attributes.weft.linked_calls` or
@@ -1674,21 +1687,22 @@ actions on evaluations. A span belongs to evaluation run R and prediction P
 - or it descends from such a span (OTel attributes do not propagate, and
   LLM integration calls inside a turn are not tagged).
 
-Links are indexed as calls are written (existing databases are backfilled
-once at startup). Links recorded by deleted calls, or pointing at deleted
+Links are indexed as spans are written (existing databases are backfilled
+once at startup). Links recorded by deleted spans, or pointing at deleted
 runs, are ignored.
 
 **Filters.** `/agents/spans/query`, `/agents/spans/stats` and
 `/agents/spans/custom-attrs/schema` accept `evaluation_run_id?` and
-`predict_and_score_call_id?` (both may be given). With `group_by:
+`prediction_span_id?` (the prediction's `predict_and_score` span; both may
+be given). With `group_by:
 [{key: "conversation_id"}]` the spans query lists a run's conversations.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `/agents/evals/query` | `{project_id, agent_name?, conversation_id?, trace_ids?, evaluation_run_ids?, include_costs?, include_predictions?, limit? (50), offset?}` | `{"evaluations": [AgentEvalRun], "total_count"}`, runs with agent spans, newest first |
-| `/agents/evals/conversations` | `{project_id, evaluation_run_id? \| predict_and_score_call_id? (one required), agent_name?, include_costs?, sort_by? (last_seen desc), limit? (50), offset?}` | `{"conversations": [Group + conversation_id, predictions: [AgentEvalPrediction]], "total_count", "span_count", "other_span_count"}`; `other_span_count` counts the run's spans outside any conversation |
+| `/agents/evals/conversations` | `{project_id, evaluation_run_id? \| prediction_span_id? (one required), agent_name?, include_costs?, sort_by? (last_seen desc), limit? (50), offset?}` | `{"conversations": [Group + conversation_id, predictions: [AgentEvalPrediction]], "total_count", "span_count", "other_span_count"}`; `other_span_count` counts the run's spans outside any conversation |
 
-**AgentEvalRun**: `call_id, display_name, evaluation_ref, evaluation_name,
+**AgentEvalRun**: `evaluation_run_id` (the run's `Evaluation.evaluate` span), `display_name, evaluation_ref, evaluation_name,
 model_ref, model_name, started_at, ended_at, status
 (running|success|error|unknown), summary` (the run's output),
 `prediction_count` (predictions with agent spans), `span_count, error_count,
@@ -1699,8 +1713,9 @@ total_cost_usd` (with `include_costs`), and `predictions` with
 `conversation_id` and `trace_ids` keep runs with a matching span, and the
 totals and predictions then cover matching spans only.
 
-**AgentEvalPrediction**: `predict_and_score_call_id, status, example,
-output, scores, model_latency` (from the call's inputs and output),
+**AgentEvalPrediction**: `prediction_span_id` (its `predict_and_score`
+span), `status, example, output, scores, model_latency` (from the span's
+inputs and output),
 `kind, row_digest, example_id, trial_index` (from `attributes.weft.eval`),
 `conversation_ids, trace_ids, span_count`.
 
@@ -1885,7 +1900,7 @@ for example Koog's Langfuse exporter):
 | `langfuse.observation.{level,status_message,prompt.name,prompt.version,completion_start_time,cost_details,metadata.*}`, `langfuse.trace.{tags,metadata.*}` | `attributes.langfuse` |
 | `langfuse.trace.name` | `display_name` of a root span |
 | `langfuse.trace.input` / `langfuse.trace.output` | inputs / output when the span has nothing more specific |
-| `langfuse.session.id`, `session.id` | `thread_id` |
+| `langfuse.session.id`, `session.id` | `session_id` |
 | `langfuse.user.id`, `user.id` | `user_id` |
 
 **OpenLit** emits the GenAI conventions (`gen_ai.input.messages` /
@@ -1894,7 +1909,7 @@ which were already mapped. The OpenLit fixture test found and fixed: the
 system prompt appeared twice (OpenLit puts it both in
 `gen_ai.system_instructions` and in the input messages; it is now prepended
 only when the messages do not start with one), `gen_ai.session.id` /
-`gen_ai.user.id` are now `thread_id` / `user_id`, and tool spans'
+`gen_ai.user.id` are now `session_id` / `user_id`, and tool spans'
 `gen_ai.tool.input` / `gen_ai.tool.output` are now inputs / output.
 `gen_ai.usage.cost` and `gen_ai.client.token.usage` stay in
 `attributes.otel`; Weft computes costs from its price book.
@@ -1941,7 +1956,7 @@ the order spans arrive in does not matter: a child that arrives before its
 parent is linked when the parent arrives. Databases written before this API
 existed are indexed once, the first time the server starts.
 
-- **Session**: `gen_ai.conversation.id` (or the call's `thread_id`). Spans
+- **Session**: `gen_ai.conversation.id` (or the span's `session_id`). Spans
   without one belong to no session. AgentShield verdict spans
   (instrumentation scope `agentshield`, or `agentshield.verdict.action`) count
   as detections, not as agent activity: they are left out of span, agent,
@@ -2309,7 +2324,7 @@ It runs synchronously: at most 10 scorers and 100 targets per request.
 
 The response is `{items, total_count}` with one result per target and
 scorer: `scope`, `session_id`, `agent`, `handoff_id`, `scorer`, `value`,
-`reason`, `output`, `feedback_id`, `scorer_call_id` (the judge's own call,
+`reason`, `output`, `feedback_id`, `scorer_span_id` (the judge's own span,
 marked internal), or `error`.
 
 `HandoffQualityJudge` runs at the `handoff` scope only, `GoalCompletionJudge`

@@ -383,7 +383,7 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
                         </td>
                         <td className="mono small">{e.project_id ?? <span className="faint">—</span>}</td>
                         <td className="mono small" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          <IdList ids={[...e.object_ids, ...e.call_ids]} />
+                          <IdList ids={[...e.object_ids, ...e.span_ids]} />
                         </td>
                         <td>
                           <span className={`badge ${e.outcome === 'success' ? 'success' : e.outcome === 'failed' ? 'warn' : 'error'}`} title={String(e.status)}>

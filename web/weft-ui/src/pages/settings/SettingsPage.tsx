@@ -7,7 +7,7 @@ import type { Any, PriceEntry, WeftObject } from '../../api/types'
 import { Empty, ErrorBox, Loading, Modal, Section, Spinner, Tabs } from '../../components/common'
 import { CodeBlock, ConfirmButton, Stat } from '../../components/objects/bits'
 import { NameField, usePublish } from '../../components/objects/ObjectForms'
-import { classVal, errMsg, refOf, useObjects } from '../../components/objects/objectUtils'
+import { annotationSpecNames, classVal, errMsg, refOf, useObjects } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtCost, fmtNumber, fmtRelative } from '../../lib/format'
 import { objectUrl } from '../../lib/urls'
@@ -858,7 +858,7 @@ function AnnotationsTab({ projectId }: { projectId: string }) {
                   <td>{describeSchema(s.value?.field_schema)}</td>
                   <td className="muted small">{s.value?.description || '—'}</td>
                   <td className="small">
-                    {Array.isArray(s.value?.op_scope) && s.value.op_scope.length ? s.value.op_scope.join(', ') : <span className="faint">all spans</span>}
+                    {annotationSpecNames(s.value).length ? annotationSpecNames(s.value).join(', ') : <span className="faint">all spans</span>}
                     {s.value?.unique_among_creators && <div className="faint">one per reviewer</div>}
                   </td>
                   <td className="muted">{fmtRelative(s.created_at)}</td>
@@ -898,7 +898,7 @@ function AnnotationSpecModal({ projectId, initial, onClose }: { projectId: strin
   const [description, setDescription] = useState<string>(v.description ?? '')
   const [draft, setDraft] = useState<SpecDraft>(draftFromSchema(v.field_schema))
   const [unique, setUnique] = useState<boolean>(v.unique_among_creators ?? true)
-  const [scope, setScope] = useState<string>(Array.isArray(v.op_scope) ? v.op_scope.join(', ') : '')
+  const [scope, setScope] = useState<string>(annotationSpecNames(v).join(', '))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
   const set = (p: Partial<SpecDraft>) => setDraft({ ...draft, ...p })
@@ -923,9 +923,10 @@ function AnnotationSpecModal({ projectId, initial, onClose }: { projectId: strin
                   .split(',')
                   .map((s) => s.trim())
                   .filter(Boolean)
+                const { op_scope: _old, ...rest } = v // the earlier name of names
                 await publish(name, {
-                  ...v,
-                  ...classVal('AnnotationSpec', [], { name, description, field_schema: schema, unique_among_creators: unique, op_scope: opScope.length ? opScope : null }),
+                  ...rest,
+                  ...classVal('AnnotationSpec', [], { name, description, field_schema: schema, unique_among_creators: unique, names: opScope.length ? opScope : null }),
                 })
                 onClose()
               } catch (e) {

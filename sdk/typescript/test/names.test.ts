@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as weft from '../src/index.js';
 import { resetDeprecationWarnings } from '../src/deprecation.js';
+import { loadPlatformObject } from '../src/platform.js';
 import { FakeWeft } from './fakeServer.js';
 
 let fake: FakeWeft;
@@ -71,5 +72,26 @@ describe('names', () => {
     for (const m of ['op() is deprecated; use trace()', 'publish() is deprecated; use save()', 'ref(...).get() is deprecated', 'WeftClient.getCalls()', 'WeftClient.getCall()', 'Span.opName', 'Span.exception', 'Span.threadId', 'Call is deprecated; use Span', 'getCurrentCall()'])
       expect(msgs.some((x) => x.includes(m))).toBe(true);
     expect(msgs.filter((x) => x.includes('op() is deprecated')).length).toBe(1); // once per name
+  });
+  it('platform objects use names; the earlier field names still work', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mon = new weft.Monitor({ name: 'm', opNames: ['f'] });
+    expect(mon.names).toEqual(['f']);
+    expect(mon.fields()).toMatchObject({ names: ['f'] });
+    expect(mon.fields()).not.toHaveProperty('op_names');
+    expect(mon.opNames).toEqual(['f']);
+    const spec = new weft.AnnotationSpec({ name: 's', opScope: ['g'] });
+    expect(spec.fields()).toMatchObject({ names: ['g'] });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+      'weft: Monitor opNames is deprecated; use names',
+      'weft: Monitor.opNames is deprecated; use Monitor.names',
+      'weft: AnnotationSpec opScope is deprecated; use names',
+    ]);
+    const old = loadPlatformObject({ _class_name: 'Monitor', name: 'o', op_names: ['h'] }, undefined) as weft.Monitor;
+    expect(old.names).toEqual(['h']);
+    const view = new weft.SavedView({ definition: { filter: { op_names: ['a'], thread_ids: ['t'] } } });
+    expect(view.toSpansQuery().filter).toEqual({ names: ['a'], session_ids: ['t'] });
+    view.setFilter({ call_ids: ['c'] });
+    expect(view.definition.filter).toEqual({ names: ['a'], session_ids: ['t'], ids: ['c'] });
   });
 });

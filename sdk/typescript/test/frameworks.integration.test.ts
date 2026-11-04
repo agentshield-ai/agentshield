@@ -90,7 +90,7 @@ describe.skipIf(!URL)('real server: framework integrations', () => {
     expect(tool.output).toEqual({ sum: 3 });
     const [llm] = await byOp('vercel_ai.generate');
     expect(llm.parentId).toBe(gt.id);
-    const [root] = await client.spans({ filter: { call_ids: [gt.id] } });
+    const [root] = await client.spans({ filter: { ids: [gt.id] } });
     expect((root.summary as any).usage['gpt-4o-mini'].prompt_tokens).toBe(5);
     const [m] = await byOp('mcp.client.call_tool');
     expect(m.displayName).toBe('MCP tool: search');

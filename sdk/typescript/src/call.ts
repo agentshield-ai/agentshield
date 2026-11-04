@@ -197,7 +197,7 @@ export class Span {
 
   /** Link to this span in the Weft UI. */
   get uiUrl(): string {
-    return `${this.client?.serverUrl ?? ''}/${this.projectId}/calls/${this.id}`;
+    return `${this.client?.serverUrl ?? ''}/${this.projectId}/spans/${this.id}`;
   }
 
   /** `success`, `error`, `running` or `descendant_error` (server value when fetched). */

@@ -11,7 +11,7 @@ import (
 )
 
 // Metric buckets of /calls/stats: time-bucketed usage metrics grouped by
-// model (usage_buckets) and call metrics (call_buckets). Column names are
+// model (usage_buckets) and span metrics (span_buckets). Column names are
 // "<agg>_<metric>" (sum_input_tokens, avg_latency_ms, count_true_error_count)
 // and "p<pct>_<metric>" (p95_latency_ms), plus "timestamp", "count" and, for
 // usage buckets, "model". sum/count/avg default to 0 in empty buckets;
@@ -24,32 +24,32 @@ type BucketMetricSpec struct {
 	Percentiles  []float64 `json:"percentiles"`
 }
 
-// MetricStatsReq is a metric-bucket /calls/stats request.
+// MetricStatsReq is a metric-bucket /api/v1/spans/stats request.
 type MetricStatsReq struct {
 	ProjectID    string
 	Start        string
 	End          string
 	Granularity  *int64
 	UsageMetrics []BucketMetricSpec
-	CallMetrics  []BucketMetricSpec
+	SpanMetrics  []BucketMetricSpec
 	Filter       *CallsFilter
 	Timezone     string
 }
 
-// MetricStatsRes is a metric-bucket /calls/stats response.
+// MetricStatsRes is a metric-bucket /api/v1/spans/stats response.
 type MetricStatsRes struct {
 	Start        string           `json:"start"`
 	End          string           `json:"end"`
 	Granularity  int64            `json:"granularity"`
 	Timezone     string           `json:"timezone"`
 	UsageBuckets []map[string]any `json:"usage_buckets"`
-	CallBuckets  []map[string]any `json:"call_buckets"`
+	SpanBuckets  []map[string]any `json:"span_buckets"`
 }
 
 var (
 	usageMetricNames = map[string]bool{"input_tokens": true, "output_tokens": true, "total_tokens": true,
 		"cache_read_input_tokens": true, "cache_creation_input_tokens": true, "input_cost": true, "output_cost": true, "total_cost": true}
-	callMetricNames = map[string]bool{"latency_ms": true, "call_count": true, "error_count": true}
+	spanMetricNames = map[string]bool{"latency_ms": true, "span_count": true, "error_count": true}
 	metricAggs      = map[string]bool{"sum": true, "avg": true, "min": true, "max": true, "count": true, "count_true": true, "count_false": true}
 )
 
@@ -172,7 +172,7 @@ func (a *bucketAcc) write(out map[string]any, sp BucketMetricSpec) {
 	}
 }
 
-// ComputeMetricStats computes the metric buckets of /calls/stats.
+// ComputeMetricStats computes the metric buckets of /api/v1/spans/stats.
 func (s *Store) ComputeMetricStats(ctx context.Context, q MetricStatsReq) (*MetricStatsRes, error) {
 	pid, err := refs.NormalizeProject(q.ProjectID)
 	if err != nil {
@@ -182,7 +182,7 @@ func (s *Store) ComputeMetricStats(ctx context.Context, q MetricStatsReq) (*Metr
 	if err != nil {
 		return nil, err
 	}
-	callSpecs, err := normalizeMetricSpecs(q.CallMetrics, callMetricNames, "call")
+	callSpecs, err := normalizeMetricSpecs(q.SpanMetrics, spanMetricNames, "span")
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *Store) ComputeMetricStats(ctx context.Context, q MetricStatsReq) (*Metr
 		gran = max(gran, int64(secs/metricMaxBuckets)+1)
 	}
 	res := &MetricStatsRes{Start: FormatMicros(startUS), End: FormatMicros(endUS), Granularity: gran, Timezone: tz,
-		UsageBuckets: []map[string]any{}, CallBuckets: []map[string]any{}}
+		UsageBuckets: []map[string]any{}, SpanBuckets: []map[string]any{}}
 	if len(usageSpecs) == 0 && len(callSpecs) == 0 {
 		return res, nil
 	}
@@ -296,7 +296,7 @@ func (s *Store) ComputeMetricStats(ctx context.Context, q MetricStatsReq) (*Metr
 					if en.Valid {
 						v = f(float64(en.Int64-st) / 1000)
 					}
-				case "call_count":
+				case "span_count":
 					v = f(1)
 				case "error_count":
 					v = f(0)
@@ -370,7 +370,7 @@ func (s *Store) ComputeMetricStats(ctx context.Context, q MetricStatsReq) (*Metr
 			for j, sp := range callSpecs {
 				callAcc[i][j].write(row, sp)
 			}
-			res.CallBuckets = append(res.CallBuckets, row)
+			res.SpanBuckets = append(res.SpanBuckets, row)
 		}
 	}
 	if len(usageSpecs) > 0 {

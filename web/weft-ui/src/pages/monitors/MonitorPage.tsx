@@ -9,6 +9,7 @@ import { Empty, ErrorBox, Loading, Section, Spinner } from '../../components/com
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock } from '../../components/ValueView'
 import { DEFAULT_IDLE_SECONDS, MONITOR_SCOPES, MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
+import { monitorNames, monitorScopes } from '../../components/evals/monitorFields'
 import { flattenScores, fmtMetric, objectRefPrefix, seriesColor, toNum } from '../../components/evals/evalUtils'
 import { Stat, Switch } from '../../components/objects/bits'
 import { useProjectId } from '../../hooks/useProject'
@@ -94,8 +95,8 @@ export function MonitorPage() {
           <div className="kv">
             <div className="k">span names</div>
             <div className="v chips">
-              {(v.op_names ?? []).length ? (
-                (v.op_names as string[]).map((n) => (
+              {monitorNames(v).length ? (
+                monitorNames(v).map((n) => (
                   <span key={n} className="chip mono">
                     {n}
                   </span>
@@ -115,8 +116,8 @@ export function MonitorPage() {
             </div>
             <div className="k">scores</div>
             <div className="v">
-              {Array.isArray(v.scopes) && v.scopes.length ? (
-                (v.scopes as string[]).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
+              {monitorScopes(v).length ? (
+                monitorScopes(v).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
               ) : (
                 <span className="faint">each scorer where it fits (sessions for session judges, spans otherwise)</span>
               )}

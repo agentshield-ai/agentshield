@@ -230,7 +230,7 @@ func TestTTLPurge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res[pid].Calls != 1 {
+	if res[pid].Spans != 1 {
 		t.Fatalf("purged %v", res)
 	}
 	calls := e.spans(map[string]any{})
@@ -416,7 +416,7 @@ func newEnvWithServer(t *testing.T) (*testEnv, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(nativeOnly(Config{}), st)
+	s := New(Config{}, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()

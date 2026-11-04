@@ -301,7 +301,7 @@ func (s *Store) ProjectsWithTTL(ctx context.Context) (map[string]int, error) {
 
 // PurgeResult counts rows removed by a retention purge.
 type PurgeResult struct {
-	Calls    int64 `json:"calls"`
+	Spans    int64 `json:"spans"`
 	Feedback int64 `json:"feedback"`
 }
 
@@ -320,7 +320,7 @@ func (s *Store) PurgeBefore(ctx context.Context, projectID string, cutoff time.T
 		if err != nil {
 			return err
 		}
-		res.Calls, _ = r.RowsAffected()
+		res.Spans, _ = r.RowsAffected()
 		r, err = tx.ExecContext(ctx, `DELETE FROM feedback WHERE project_id = ? AND created_at < ? AND (ref LIKE ? OR ref LIKE ?)`,
 			pid, us, "%/span/%", "%/call/%")
 		if err != nil {

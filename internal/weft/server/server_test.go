@@ -26,7 +26,7 @@ func newEnv(t *testing.T, keys ...string) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(nativeOnly(Config{APIKeys: keys}), st)
+	s := New(Config{APIKeys: keys}, st)
 	hs := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hs.Close()
@@ -231,7 +231,7 @@ func TestMonitorScoresEndedCalls(t *testing.T) {
 	e := newEnv(t)
 	judge := publish(e, "contains-ok", map[string]any{"_class_name": "RegexScorer", "_bases": []any{"Scorer", "Object", "BaseModel"}, "pattern": "ok"})
 	publish(e, "mon", map[string]any{"_class_name": "Monitor", "_bases": []any{"Object", "BaseModel"}, "name": "mon", "active": true,
-		"sampling_rate": 1, "op_names": []any{"answer"}, "scorers": []any{judge}})
+		"sampling_rate": 1, "names": []any{"answer"}, "scorers": []any{judge}})
 	e.spanBatch(
 		startItem(map[string]any{"id": "m1", "name": "answer", "started_at": "2026-01-01T00:00:00Z", "inputs": map[string]any{"q": "x"}}),
 		endItem(map[string]any{"id": "m1", "ended_at": "2026-01-01T00:00:01Z", "output": "all ok"}),

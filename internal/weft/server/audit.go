@@ -23,7 +23,7 @@ import (
 
 // Audit log: every mutating request (any outcome), every denied request,
 // and sign-in/sign-out events are recorded with who, when, method, path,
-// project, object and call ids and outcome. Entries are written in the
+// project, object and span ids and outcome. Entries are written in the
 // background in batches and purged after the retention period. Request
 // bodies, headers and secrets are never recorded.
 
@@ -98,7 +98,7 @@ func (s *Server) auditLog(next http.Handler) http.Handler {
 		if len(pids) > 0 {
 			e.Project = &pids[0]
 		}
-		e.ObjectIDs, e.CallIDs = auditIDs(r.URL.Path, body)
+		e.ObjectIDs, e.SpanIDs = auditIDs(r.URL.Path, body)
 		s.recordAudit(e)
 	})
 }
@@ -186,8 +186,10 @@ func auditProjects(r *http.Request, body []byte) []string {
 
 const maxAuditIDs = 50
 
-// auditIDs extracts object and call ids from a JSON body.
-func auditIDs(path string, body []byte) (objs, calls []string) {
+// auditIDs extracts object and span ids from a JSON body: Weft's own
+// fields, and the older route shapes' (call_id, call_ids, start/end, batch),
+// which the compatibility adapter serves.
+func auditIDs(path string, body []byte) (objs, spans []string) {
 	if len(body) == 0 {
 		return nil, nil
 	}
@@ -203,9 +205,9 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 		}
 	}
 	addC := func(v string) {
-		if v != "" && !seenC[v] && len(calls) < maxAuditIDs && len(v) <= 256 {
+		if v != "" && !seenC[v] && len(spans) < maxAuditIDs && len(v) <= 256 {
 			seenC[v] = true
-			calls = append(calls, v)
+			spans = append(spans, v)
 		}
 	}
 	str := func(m map[string]any, k string) string {
@@ -242,11 +244,15 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 	if callish {
 		addC(str(top, "id"))
 	}
-	addC(str(top, "call_id"))
-	if ids, ok := top["call_ids"].([]any); ok {
-		for _, x := range ids {
-			if v, ok := x.(string); ok {
-				addC(v)
+	for _, k := range []string{"span_id", "call_id"} {
+		addC(str(top, k))
+	}
+	for _, k := range []string{"span_ids", "call_ids"} {
+		if ids, ok := top[k].([]any); ok {
+			for _, x := range ids {
+				if v, ok := x.(string); ok {
+					addC(v)
+				}
 			}
 		}
 	}
@@ -310,7 +316,7 @@ func auditIDs(path string, body []byte) (objs, calls []string) {
 			}
 		}
 	}
-	return objs, calls
+	return objs, spans
 }
 
 // ---------------------------------------------------------------- writer
@@ -547,7 +553,7 @@ func (s *Server) auditExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="weft-audit.csv"`)
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"id", "ts", "actor", "auth_method", "key_id", "method", "path", "project_id", "object_ids", "call_ids", "status", "outcome", "ip", "detail"})
+	_ = cw.Write([]string{"id", "ts", "actor", "auth_method", "key_id", "method", "path", "project_id", "object_ids", "span_ids", "status", "outcome", "ip", "detail"})
 	for _, e := range entries {
 		key, proj := "", ""
 		if e.KeyID != nil {
@@ -557,7 +563,7 @@ func (s *Server) auditExport(w http.ResponseWriter, r *http.Request) {
 			proj = *e.Project
 		}
 		_ = cw.Write([]string{strconv.FormatInt(e.ID, 10), e.Time, csvSafe(e.Actor), e.AuthMethod, key, e.Method, csvSafe(e.Path), csvSafe(proj),
-			csvSafe(strings.Join(e.ObjectIDs, " ")), csvSafe(strings.Join(e.CallIDs, " ")), strconv.Itoa(e.Status), e.Outcome, e.IP, csvSafe(e.Detail)})
+			csvSafe(strings.Join(e.ObjectIDs, " ")), csvSafe(strings.Join(e.SpanIDs, " ")), strconv.Itoa(e.Status), e.Outcome, e.IP, csvSafe(e.Detail)})
 	}
 	cw.Flush()
 }

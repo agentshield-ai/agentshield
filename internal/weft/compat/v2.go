@@ -90,6 +90,7 @@ func v2Handle[T any](fn func(ctx context.Context, r *http.Request, pid string, r
 
 func writeJSONL[T any](w http.ResponseWriter, items []T) {
 	w.Header().Set("Content-Type", "application/jsonl")
+	w.WriteHeader(http.StatusOK) // an empty stream is a 200 too
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	for _, it := range items {

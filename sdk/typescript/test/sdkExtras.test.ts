@@ -49,7 +49,8 @@ describe('SavedView', () => {
     expect(stored.definition.cols).toEqual(['inputs.q']);
     await view.spans();
     const q = last('/api/v1/spans/stream');
-    expect(q.filter.op_names).toEqual(body.filter.op_names);
+    expect(q.filter.names).toEqual(body.filter.names);
+    expect(stored.definition.filter).toEqual({ names: ['weft:///ts-entity/ts-proj/function/answer:*'] });
     expect(q.sort_by).toEqual([{ field: 'started_at', direction: 'asc' }]);
     const loaded = await weft.SavedView.load('Long-answers');
     expect(loaded).toBeInstanceOf(weft.SavedView);
@@ -202,7 +203,7 @@ describe('objects, client queries and media references', () => {
     });
     const [, call] = await parent.call();
     expect(call!.status).toBe('success');
-    expect(call!.uiUrl).toBe(`${fake.url}/ts-entity/ts-proj/calls/${call!.id}`);
+    expect(call!.uiUrl).toBe(`${fake.url}/ts-entity/ts-proj/spans/${call!.id}`);
     expect(call!.ref.uri()).toBe(call!.uri());
     expect((await call!.children()).map((c) => c.baseName)).toEqual(['child']);
     expect(await client.countSpans({ filter: { names: ['parent'] } })).toBe(7);

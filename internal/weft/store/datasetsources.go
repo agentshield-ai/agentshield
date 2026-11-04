@@ -10,7 +10,7 @@ import (
 )
 
 // Dataset lineage (/dataset_sources/*): links from dataset rows to
-// the calls (or spans, conversations) they were built from.
+// the spans (or conversations) they were built from.
 
 func init() {
 	registerSchema(`
@@ -53,7 +53,13 @@ type DatasetLinkEntry struct {
 	Created *bool  `json:"created,omitempty"`
 }
 
-func validSourceKind(k string) bool { return k == "call" || k == "span" || k == "conversation" }
+// Source kinds: a span (by id) or a conversation (session id).
+const (
+	SourceKindSpan         = "span"
+	SourceKindConversation = "conversation"
+)
+
+func validSourceKind(k string) bool { return k == SourceKindSpan || k == SourceKindConversation }
 
 // LinkDatasetSources upserts links; created reports whether each link is new
 // (or was revived from a soft delete).
@@ -74,7 +80,7 @@ func (s *Store) LinkDatasetSources(ctx context.Context, projectID, objectID, dig
 		}
 		for _, src := range l.Sources {
 			if !validSourceKind(src.SourceKind) || src.SourceID == "" {
-				return nil, Invalidf("each source needs source_id and source_kind call, span or conversation")
+				return nil, Invalidf("each source needs source_id and source_kind span or conversation")
 			}
 		}
 	}
@@ -158,7 +164,7 @@ type DatasetSourcesQuery struct {
 const linkSelect = `SELECT l.id, l.dataset_object_id, l.dataset_digest, l.row_digest, l.source_kind, l.source_id, l.source_trace_id,
 	l.link_metadata, l.added_by, l.created_at, l.updated_at, l.deleted_at,
 	COALESCE(c.display_name, c.op_base_name, l.source_id), COALESCE(c.started_at, l.created_at)
-	FROM dataset_source_links l LEFT JOIN calls c ON l.source_kind = 'call' AND c.project_id = l.project_id AND c.id = l.source_id`
+	FROM dataset_source_links l LEFT JOIN calls c ON l.source_kind = 'span' AND c.project_id = l.project_id AND c.id = l.source_id`
 
 func scanLinks(rows *sql.Rows) ([]DatasetSourceLink, error) {
 	defer rows.Close()

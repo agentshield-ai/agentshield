@@ -15,7 +15,7 @@ type Project struct {
 	ProjectID    string  `json:"project_id"`
 	Entity       string  `json:"entity"`
 	Project      string  `json:"project"`
-	CallCount    int64   `json:"call_count"`
+	SpanCount    int64   `json:"span_count"`
 	TraceCount   int64   `json:"trace_count"`
 	ObjectCount  int64   `json:"object_count"`
 	LastActivity *string `json:"last_activity"`
@@ -45,7 +45,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var last int64
-		if err := rows.Scan(&p.ProjectID, &last, &p.CallCount, &p.TraceCount, &p.ObjectCount); err != nil {
+		if err := rows.Scan(&p.ProjectID, &last, &p.SpanCount, &p.TraceCount, &p.ObjectCount); err != nil {
 			return nil, err
 		}
 		p.Entity, p.Project = refs.SplitProject(p.ProjectID)

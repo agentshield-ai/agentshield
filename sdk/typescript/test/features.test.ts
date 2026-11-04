@@ -55,7 +55,7 @@ describe('op options and settings', () => {
     });
     const [, call] = await weft.attributes({ team: 'b' }, () => root.call());
     await c.flush();
-    expect(lines.filter((l) => l.startsWith('weft: '))).toEqual([`weft: ${fake.url}/ent/proj/calls/${call!.id}\n`]);
+    expect(lines.filter((l) => l.startsWith('weft: '))).toEqual([`weft: ${fake.url}/ent/proj/spans/${call!.id}\n`]);
     const [r] = fake.callsByOp('root');
     expect(r.attributes.env).toBe('staging');
     expect(r.attributes.team).toBe('b');

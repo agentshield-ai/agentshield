@@ -8,12 +8,12 @@ import { settingsUrl } from '../../lib/urls'
 import { ErrorBox, Modal } from '../common'
 import { NameField, usePublish, type Created } from '../objects/ObjectForms'
 import { errMsg, KIND_META, refOf, useObjects } from '../objects/objectUtils'
-import { cleanAutomation, emptyAutomation, OPERATORS, TRIGGER_LABELS, validateAutomation } from './automationUtils'
+import { cleanAutomation, emptyAutomation, normaliseTrigger, OPERATORS, TRIGGER_LABELS, validateAutomation } from './automationUtils'
 import { RunStatus } from './RunsTable'
 
 const FEEDBACK_PRESETS = ['weft.reaction', 'weft.note', 'weft.annotation.*', 'weft.scorer.*']
 
-const MESSAGE_HELP = 'Placeholders: {automation} {project_id} {summary} {call_id} {value} {threshold} {feedback_type} {error_rate} {total_calls} {error_calls}'
+const MESSAGE_HELP = 'Placeholders: {automation} {project_id} {summary} {span_id} {value} {threshold} {feedback_type} {error_rate} {total_spans} {error_spans}'
 
 function toVal(initial?: WeftObject): AutomationVal {
   const base = emptyAutomation(initial?.name ?? '')
@@ -23,7 +23,7 @@ function toVal(initial?: WeftObject): AutomationVal {
     ...base,
     ...v,
     name: initial.name,
-    trigger: { ...base.trigger, ...(v.trigger ?? {}) },
+    trigger: normaliseTrigger({ ...base.trigger, ...(v.trigger ?? {}) }),
     action: { ...base.action, ...(v.action ?? {}) },
   }
 }
@@ -33,7 +33,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
   const [v, setV] = useState<AutomationVal>(() => toVal(initial))
   const [urlMode, setUrlMode] = useState<'url' | 'secret'>(v.action.url_secret ? 'secret' : 'url')
   const [headersText, setHeadersText] = useState(v.action.headers && Object.keys(v.action.headers).length ? JSON.stringify(v.action.headers, null, 2) : '')
-  const [opsText, setOpsText] = useState((v.trigger.op_names ?? []).join(', '))
+  const [opsText, setOpsText] = useState((v.trigger.names ?? []).join(', '))
   const [typesText, setTypesText] = useState((v.trigger.feedback_types ?? []).join(', '))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
@@ -67,7 +67,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
     if (urlMode === 'url') action.url_secret = ''
     else action.url = ''
     action.headers = v.action.type === 'webhook' && headersText.trim() && !headersErr ? JSON.parse(headersText) : {}
-    return cleanAutomation({ ...v, action, trigger: { ...v.trigger, op_names: split(opsText), feedback_types: split(typesText) } })
+    return cleanAutomation({ ...v, action, trigger: { ...v.trigger, names: split(opsText), feedback_types: split(typesText) } })
   }
   const problem = validateAutomation(final()) ?? headersErr
 
@@ -179,8 +179,8 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
       {t.type === 'error_rate' && (
         <>
           <label className="field">
-            Ops
-            <input className="input mono" list="automation-ops" value={opsText} onChange={(e) => setOpsText(e.target.value)} placeholder="Comma-separated; empty means all root calls" />
+            Span names
+            <input className="input mono" list="automation-ops" value={opsText} onChange={(e) => setOpsText(e.target.value)} placeholder="Comma-separated; empty means all root spans" />
             <datalist id="automation-ops">
               {(ops.data ?? []).map((o) => (
                 <option key={o.base_name} value={o.base_name} />
@@ -205,8 +205,8 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
               <input className="input" type="number" min={1} value={t.window_minutes ?? 60} onChange={(e) => setT({ window_minutes: Number(e.target.value) })} />
             </label>
             <label className="field">
-              Minimum calls
-              <input className="input" type="number" min={1} value={t.min_calls ?? 1} onChange={(e) => setT({ min_calls: Number(e.target.value) })} />
+              Minimum spans
+              <input className="input" type="number" min={1} value={t.min_spans ?? 1} onChange={(e) => setT({ min_spans: Number(e.target.value) })} />
             </label>
           </div>
           <span className="hint">Checked every minute in the background (and on demand with “Check now”).</span>

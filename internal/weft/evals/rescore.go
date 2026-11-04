@@ -32,7 +32,7 @@ func (e *Engine) Rescore(ctx context.Context, projectID, sourceRunID string, sco
 		return "", err
 	}
 	if src.OpBaseName() != "Evaluation.evaluate" {
-		return "", store.Invalidf("call %q is not an evaluation run", sourceRunID)
+		return "", store.Invalidf("span %q is not an evaluation run", sourceRunID)
 	}
 	var scorers []*Scorer
 	for _, r := range scorerRefs {

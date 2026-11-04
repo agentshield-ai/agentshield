@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Annotation queues: named lists of calls for human review. Each queue lists
+// Annotation queues: named lists of spans for human review. Each queue lists
 // the AnnotationSpec refs reviewers fill in (scorer_refs), and
 // progress is tracked per annotator.
 
@@ -73,17 +73,18 @@ type AnnotationQueue struct {
 	DeletedAt   *string  `json:"deleted_at"`
 }
 
-// AnnotationQueueItem is one call in a queue, with the requesting
-// annotator's state.
+// AnnotationQueueItem is one span in a queue, with the requesting
+// annotator's state. The span fields are copied when the item is added
+// (stored in the call_* columns).
 type AnnotationQueueItem struct {
 	ID              string   `json:"id"`
 	ProjectID       string   `json:"project_id"`
 	QueueID         string   `json:"queue_id"`
-	CallID          string   `json:"call_id"`
-	CallOpName      string   `json:"call_op_name"`
-	CallTraceID     string   `json:"call_trace_id"`
-	CallStartedAt   string   `json:"call_started_at"`
-	CallEndedAt     *string  `json:"call_ended_at"`
+	SpanID          string   `json:"span_id"`
+	SpanName        string   `json:"span_name"`
+	TraceID         string   `json:"trace_id"`
+	SpanStartedAt   string   `json:"span_started_at"`
+	SpanEndedAt     *string  `json:"span_ended_at"`
 	DisplayFields   []string `json:"display_fields"`
 	AddedBy         *string  `json:"added_by"`
 	AnnotationState string   `json:"annotation_state"`
@@ -323,14 +324,14 @@ func (s *Store) AnnotationQueueStats(ctx context.Context, projectID string, queu
 	return out, nil
 }
 
-// AddAnnotationQueueItems adds calls to a queue, skipping calls already in it.
-func (s *Store) AddAnnotationQueueItems(ctx context.Context, projectID, queueID string, callIDs, displayFields []string, user *string) (added, duplicates int, err error) {
+// AddAnnotationQueueItems adds spans to a queue, skipping spans already in it.
+func (s *Store) AddAnnotationQueueItems(ctx context.Context, projectID, queueID string, spanIDs, displayFields []string, user *string) (added, duplicates int, err error) {
 	q, err := s.GetAnnotationQueue(ctx, projectID, queueID, false)
 	if err != nil {
 		return 0, 0, err
 	}
-	if len(callIDs) == 0 || len(callIDs) > 10000 {
-		return 0, 0, Invalidf("call_ids must list 1 to 10000 calls")
+	if len(spanIDs) == 0 || len(spanIDs) > 10000 {
+		return 0, 0, Invalidf("span_ids must list 1 to 10000 spans")
 	}
 	if displayFields == nil {
 		displayFields = []string{}
@@ -342,13 +343,13 @@ func (s *Store) AddAnnotationQueueItems(ctx context.Context, projectID, queueID 
 		ended     sql.NullInt64
 	}
 	metas := map[string]meta{}
-	for _, id := range callIDs {
+	for _, id := range spanIDs {
 		var m meta
 		var started sql.NullInt64
 		err := s.r.QueryRowContext(ctx, `SELECT op_name, trace_id, started_at, ended_at FROM calls WHERE project_id = ? AND id = ? AND deleted_at IS NULL`,
 			q.ProjectID, id).Scan(&m.op, &m.trace, &started, &m.ended)
 		if err == sql.ErrNoRows {
-			return 0, 0, Invalidf("call %q not found", id)
+			return 0, 0, Invalidf("span %q not found", id)
 		}
 		if err != nil {
 			return 0, 0, err
@@ -360,7 +361,7 @@ func (s *Store) AddAnnotationQueueItems(ctx context.Context, projectID, queueID 
 	now := nowMicros()
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
 		seen := map[string]bool{}
-		for _, id := range callIDs {
+		for _, id := range spanIDs {
 			if seen[id] {
 				duplicates++
 				continue
@@ -399,14 +400,14 @@ type QueueItemsFilter struct {
 	ID               *string  `json:"id"`
 	AddedBy          *string  `json:"added_by"`
 	AnnotationStates []string `json:"annotation_states"`
-	CallID           *string  `json:"call_id"`
-	CallOpName       *string  `json:"call_op_name"`
-	CallTraceID      *string  `json:"call_trace_id"`
+	SpanID           *string  `json:"span_id"`
+	SpanName         *string  `json:"span_name"`
+	TraceID          *string  `json:"trace_id"`
 }
 
 var queueItemSortFields = map[string]string{
-	"created_at": "i.created_at", "updated_at": "i.updated_at", "call_started_at": "i.call_started_at",
-	"call_ended_at": "i.call_ended_at", "call_op_name": "i.call_op_name", "annotation_state": "state",
+	"created_at": "i.created_at", "updated_at": "i.updated_at", "span_started_at": "i.call_started_at",
+	"span_ended_at": "i.call_ended_at", "span_name": "i.call_op_name", "annotation_state": "state",
 }
 
 const queueItemSelect = `SELECT i.id, i.project_id, i.queue_id, i.call_id, i.call_op_name, i.call_trace_id, i.call_started_at, i.call_ended_at,
@@ -424,13 +425,13 @@ func scanQueueItem(row interface{ Scan(...any) error }, withPos bool) (*Annotati
 	var df string
 	var added, annotator sql.NullString
 	var pos int
-	if err := row.Scan(&it.ID, &it.ProjectID, &it.QueueID, &it.CallID, &it.CallOpName, &it.CallTraceID, &started, &ended, &df, &added,
+	if err := row.Scan(&it.ID, &it.ProjectID, &it.QueueID, &it.SpanID, &it.SpanName, &it.TraceID, &started, &ended, &df, &added,
 		&created, &it.CreatedBy, &updated, &deleted, &it.AnnotationState, &annotator, &pos); err != nil {
 		return nil, err
 	}
 	it.DisplayFields = []string{}
 	_ = json.Unmarshal([]byte(df), &it.DisplayFields)
-	it.CallStartedAt, it.CallEndedAt = FormatMicros(started), fmtNullMicros(ended)
+	it.SpanStartedAt, it.SpanEndedAt = FormatMicros(started), fmtNullMicros(ended)
 	it.CreatedAt, it.UpdatedAt, it.DeletedAt = FormatMicros(created), FormatMicros(updated), fmtNullMicros(deleted)
 	it.AddedBy, it.AnnotatorUserID = strPtr(added), strPtr(annotator)
 	if withPos {
@@ -458,9 +459,9 @@ func (s *Store) QueryAnnotationQueueItems(ctx context.Context, projectID, queueI
 		}
 		eq("i.id", f.ID)
 		eq("i.added_by", f.AddedBy)
-		eq("i.call_id", f.CallID)
-		eq("i.call_op_name", f.CallOpName)
-		eq("i.call_trace_id", f.CallTraceID)
+		eq("i.call_id", f.SpanID)
+		eq("i.call_op_name", f.SpanName)
+		eq("i.call_trace_id", f.TraceID)
 		if len(f.AnnotationStates) > 0 {
 			for _, st := range f.AnnotationStates {
 				if !AnnotationStates[st] {

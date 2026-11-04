@@ -64,13 +64,23 @@ VALUELESS_OPERATORS = {"(any): isEmpty", "(any): isNotEmpty"}
 FIELDS_NO_FLOAT_CONVERT = {"summary.weft.latency_ms", "started_at", "ended_at"}
 DEFAULT_PIN = {"left": ["CustomCheckbox", "op_name"], "right": []}
 CALLS_FILTER_KEYS = {
-    "op_names", "input_refs", "output_refs", "parent_ids", "trace_ids", "call_ids", "trace_roots_only",
-    "user_ids", "run_ids", "thread_ids", "turn_ids",
-    # Weft's span filter names
-    "names", "ids", "session_ids",
+    "names", "ids", "session_ids", "input_refs", "output_refs", "parent_ids", "trace_ids", "trace_roots_only",
+    "user_ids", "run_ids", "turn_ids",
+    # the earlier names of names, ids and session_ids
+    "op_names", "call_ids", "thread_ids",
 }
-# Stored view filter names → Weft's span filter names.
+# The earlier filter names (views saved before the rename) → Weft's span filter names.
 _SPAN_FILTER_NAMES = {"op_names": "names", "call_ids": "ids", "thread_ids": "session_ids"}
+
+
+def _span_filter(f: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A view filter with Weft's span filter names (a current name wins over its earlier one)."""
+    out: Dict[str, Any] = {}
+    for k, v in (f or {}).items():
+        n = _SPAN_FILTER_NAMES.get(k, k)
+        if n not in out or n == k:
+            out[n] = v
+    return out
 
 
 class Filter(BaseModel):
@@ -351,10 +361,10 @@ class SavedView(Object):
         return self
 
     def filter_op(self, op_name: Optional[str]) -> "SavedView":
-        """Show only calls of one op (a name, ``name:version`` or a full op ref); None clears it."""
-        flt = dict(self.definition.get("filter") or {})
+        """Show only spans of one function (a name, ``name:version`` or a full function ref); None clears it."""
+        flt = _span_filter(self.definition.get("filter"))
         if op_name is None:
-            flt.pop("op_names", None)
+            flt.pop("names", None)
         else:
             from ._refs import is_ref_uri
 
@@ -363,7 +373,7 @@ class SavedView(Object):
                 if not self.entity:
                     raise ValueError("Must specify an op ref when no project is known")
                 uri = f"weft:///{self.entity}/{self.project}/function/{op_name}" + ("" if ":" in op_name else ":*")
-            flt["op_names"] = [uri]
+            flt["names"] = [uri]
         if flt:
             self.definition["filter"] = flt
         else:
@@ -372,12 +382,15 @@ class SavedView(Object):
         return self
 
     def set_filter(self, **calls_filter: Any) -> "SavedView":
-        """Set CallsFilter fields (``trace_roots_only``, ``thread_ids``, ``user_ids``, ...)."""
+        """Set span filter fields (``trace_roots_only``, ``session_ids``, ``user_ids``, ...).
+
+        The earlier names (``op_names``, ``call_ids``, ``thread_ids``) are stored under Weft's."""
         unknown = set(calls_filter) - CALLS_FILTER_KEYS
         if unknown:
-            raise ValueError(f"unknown call filter fields: {sorted(unknown)}")
-        flt = dict(self.definition.get("filter") or {})
-        for k, v in calls_filter.items():
+            raise ValueError(f"unknown span filter fields: {sorted(unknown)}")
+        flt = _span_filter(self.definition.get("filter"))
+        for key, v in calls_filter.items():
+            k = _SPAN_FILTER_NAMES.get(key, key)
             if v is None:
                 flt.pop(k, None)
             else:
@@ -608,13 +621,13 @@ class SavedView(Object):
     ) -> Dict[str, Any]:
         """The ``POST /api/v1/spans/query`` body this view stands for (``project_id`` included when known).
 
-        The view's stored filter keeps its own field names (``op_names``,
-        ``thread_ids``, ...); they are given Weft's span names here."""
+        Views saved before the rename name filter fields the earlier way
+        (``op_names``, ``thread_ids``, ...); they are given Weft's span names here."""
         d = self.definition
         body: Dict[str, Any] = {}
         if self.entity and self.project:
             body["project_id"] = f"{self.entity}/{self.project}"
-        flt = {_SPAN_FILTER_NAMES.get(k, k): v for k, v in (d.get("filter") or {}).items() if k in CALLS_FILTER_KEYS and v is not None}
+        flt = {k: v for k, v in _span_filter(d.get("filter")).items() if k in CALLS_FILTER_KEYS and v is not None}
         if self.view_type == "evaluations":
             flt["names"] = ["Evaluation.evaluate"]
         if flt:

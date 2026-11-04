@@ -94,7 +94,7 @@ export function useAgentEvalRuns(projectId: string, runIds: string[]) {
     queryFn: () => agentEvalsApi.query({ project_id: projectId, evaluation_run_ids: ids, include_costs: true, limit: ids.length }),
     enabled: ids.length > 0,
     staleTime: 15_000,
-    select: (r) => new Map(r.evaluations.map((e) => [e.call_id, e])),
+    select: (r) => new Map(r.evaluations.map((e) => [e.evaluation_run_id, e])),
   })
 }
 
@@ -165,7 +165,7 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
             <thead>
               <tr>
                 <th style={{ width: 32 }}>
-                  <input type="checkbox" aria-label="Select all runs" checked={sel.length === runs.length} onChange={(e) => setSel(e.target.checked ? runs.map((r) => r.call_id) : [])} />
+                  <input type="checkbox" aria-label="Select all runs" checked={sel.length === runs.length} onChange={(e) => setSel(e.target.checked ? runs.map((r) => r.evaluation_run_id) : [])} />
                 </th>
                 <th>Status</th>
                 <th>Evaluation · model</th>
@@ -202,23 +202,23 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
               {runs.map((r) => {
                 const m = summaryMetrics(r.summary)
                 return (
-                  <tr key={r.call_id} className={`clickable ${sel.includes(r.call_id) ? 'selected' : ''}`} onClick={() => nav(compareEvaluationsUrl(projectId, [r.call_id]))} title="Open the evaluation">
+                  <tr key={r.evaluation_run_id} className={`clickable ${sel.includes(r.evaluation_run_id) ? 'selected' : ''}`} onClick={() => nav(compareEvaluationsUrl(projectId, [r.evaluation_run_id]))} title="Open the evaluation">
                     <td onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={sel.includes(r.call_id)} onChange={() => toggle(r.call_id)} aria-label={`Select run ${r.call_id}`} />
+                      <input type="checkbox" checked={sel.includes(r.evaluation_run_id)} onChange={() => toggle(r.evaluation_run_id)} aria-label={`Select run ${r.evaluation_run_id}`} />
                     </td>
                     <td>
                       <EvalStatus status={r.status} />
                     </td>
                     <td style={{ maxWidth: 260 }}>
                       <div className="truncate" style={{ fontWeight: 500 }}>
-                        <RefName refStr={r.evaluation_ref} name={r.evaluation_name || r.display_name || r.call_id.slice(-8)} />
+                        <RefName refStr={r.evaluation_ref} name={r.evaluation_name || r.display_name || r.evaluation_run_id.slice(-8)} />
                       </div>
                       <div className="small muted truncate">
                         <RefName refStr={r.model_ref} name={r.model_name} />
                       </div>
                     </td>
                     <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
-                      <EvalAgentLinks projectId={projectId} runId={r.call_id} agent={agent} compact />
+                      <EvalAgentLinks projectId={projectId} runId={r.evaluation_run_id} agent={agent} compact />
                     </td>
                     <td className="small" title={fmtDate(r.started_at)} style={{ whiteSpace: 'nowrap' }}>
                       {fmtRelative(r.started_at ?? r.first_seen)}
@@ -276,7 +276,7 @@ export function EvalFilterBanner({ projectId, runId, pred, agent, onClear }: { p
           {r?.model_name && <span className="muted small truncate">· {r.model_name}</span>}
           {r && <EvalStatus status={r.status} />}
           {pred && (
-            <Link to={spanUrl(projectId, pred)} className="chip mono" title="The prediction (predict_and_score call)">
+            <Link to={spanUrl(projectId, pred)} className="chip mono" title="The prediction (predict_and_score span)">
               prediction {pred.slice(-8)}
             </Link>
           )}
@@ -315,7 +315,7 @@ export function EvalFilterBanner({ projectId, runId, pred, agent, onClear }: { p
 export function PredictionAgentLinks({ projectId, runId, pasId }: { projectId: string; runId: string; pasId: string }) {
   const q = useQuery({
     queryKey: ['agent-eval-pred-convs', projectId, pasId],
-    queryFn: () => agentEvalsApi.conversations({ project_id: projectId, predict_and_score_call_id: pasId, limit: 20 }),
+    queryFn: () => agentEvalsApi.conversations({ project_id: projectId, prediction_span_id: pasId, limit: 20 }),
     staleTime: 30_000,
   })
   if (!q.data || q.data.span_count === 0) return null
@@ -352,8 +352,8 @@ function PredictionRow({ projectId, run, p }: { projectId: string; run: AgentEva
   return (
     <div className="eval-pred-row">
       <div className="row wrap" style={{ gap: 6 }}>
-        <Link to={spanUrl(projectId, p.predict_and_score_call_id)} className="mono small" title="predict_and_score call">
-          prediction {p.predict_and_score_call_id.slice(-8)}
+        <Link to={spanUrl(projectId, p.prediction_span_id)} className="mono small" title="predict_and_score span">
+          prediction {p.prediction_span_id.slice(-8)}
         </Link>
         <EvalStatus status={p.status} />
         {meta.map((m) => (
@@ -363,7 +363,7 @@ function PredictionRow({ projectId, run, p }: { projectId: string; run: AgentEva
         ))}
         <span className="small faint">{fmtNumber(p.span_count)} spans here</span>
         <span className="grow" />
-        <Link className="btn sm ghost" to={evalSpansUrl(projectId, run.call_id, { pred: p.predict_and_score_call_id })}>
+        <Link className="btn sm ghost" to={evalSpansUrl(projectId, run.evaluation_run_id, { pred: p.prediction_span_id })}>
           View spans
         </Link>
       </div>
@@ -393,10 +393,10 @@ export function ConversationEvals({ projectId, runs }: { projectId: string; runs
           const m = summaryMetrics(r.summary)
           const keys = sortMetricKeys(Object.keys(m)).slice(0, 4)
           return (
-            <div key={r.call_id} className="col" style={{ gap: 6 }}>
+            <div key={r.evaluation_run_id} className="col" style={{ gap: 6 }}>
               <div className="row wrap" style={{ gap: 8 }}>
                 <b className="truncate">
-                  <RefName refStr={r.evaluation_ref} name={r.evaluation_name || r.display_name || r.call_id.slice(-8)} />
+                  <RefName refStr={r.evaluation_ref} name={r.evaluation_name || r.display_name || r.evaluation_run_id.slice(-8)} />
                 </b>
                 <span className="muted small">
                   · <RefName refStr={r.model_ref} name={r.model_name} />
@@ -411,13 +411,13 @@ export function ConversationEvals({ projectId, runs }: { projectId: string; runs
                   </span>
                 ))}
                 <span className="grow" />
-                <Link className="btn sm" to={compareEvaluationsUrl(projectId, [r.call_id])}>
+                <Link className="btn sm" to={compareEvaluationsUrl(projectId, [r.evaluation_run_id])}>
                   Open evaluation
                 </Link>
-                <EvalAgentLinks projectId={projectId} runId={r.call_id} compact />
+                <EvalAgentLinks projectId={projectId} runId={r.evaluation_run_id} compact />
               </div>
               {(r.predictions ?? []).map((p) => (
-                <PredictionRow key={p.predict_and_score_call_id} projectId={projectId} run={r} p={p} />
+                <PredictionRow key={p.prediction_span_id} projectId={projectId} run={r} p={p} />
               ))}
             </div>
           )
@@ -437,12 +437,12 @@ export function TurnEvalBadge({ projectId, items }: { projectId: string; items: 
         const first = sortMetricKeys(Object.keys(flat))[0]
         return (
           <Link
-            key={run.call_id + pred.predict_and_score_call_id}
-            to={spanUrl(projectId, pred.predict_and_score_call_id)}
+            key={run.evaluation_run_id + pred.prediction_span_id}
+            to={spanUrl(projectId, pred.prediction_span_id)}
             className="badge accent"
-            title={`Prediction ${pred.predict_and_score_call_id} of ${run.evaluation_name || run.call_id}`}
+            title={`Prediction ${pred.prediction_span_id} of ${run.evaluation_name || run.evaluation_run_id}`}
           >
-            eval: {truncate(run.evaluation_name || run.call_id, 24)}
+            eval: {truncate(run.evaluation_name || run.evaluation_run_id, 24)}
             {first ? ` · ${fmtScoreValue(first, flat[first])}` : ''}
           </Link>
         )

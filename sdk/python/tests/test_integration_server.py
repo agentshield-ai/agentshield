@@ -382,7 +382,7 @@ def test_parity_features_live(live):
     assert lb["rows"][0]["values"]["0"]["value"] == 0.5
     cmp = live.compare_evaluations([out["id"]])
     assert cmp["evaluations"][0]["id"] == out["id"]
-    mon = weft.Monitor(name="live-mon", op_names=["reply"], scorers=[scorers.ContainsScorer(name="has_no", target_column="prompt")], active=False)
+    mon = weft.Monitor(name="live-mon", names=["reply"], scorers=[scorers.ContainsScorer(name="has_no", target_column="prompt")], active=False)
     weft.save(mon)
     assert live._read_object(live.project_id, "live-mon", "latest")["kind"] == "monitor"
     weft.save(weft.SavedView(name="live-view", label="Errors", definition={"filter": {"trace_roots_only": True}}))
@@ -403,7 +403,7 @@ def test_batch3_features_live(live, tmp_path):
     live.flush()
     [p] = _calls(live, names=["planner"])
     assert p.attributes["weft"]["span_kind"] == "agent" and p.attributes["weft"]["color"] == "green"
-    assert p.ui_url.endswith(f"/{live.project_id}/calls/{p.id}")
+    assert p.ui_url.endswith(f"/{live.project_id}/spans/{p.id}")
     q = list(live.spans(query={"$eq": [{"$getField": "attributes.weft.span_kind"}, {"$literal": "agent"}]}))
     assert [c.id for c in q] == [p.id]
 

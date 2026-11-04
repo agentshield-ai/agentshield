@@ -78,7 +78,7 @@ func numField(val map[string]any, key string, def float64) float64 {
 // scoredCall returns the call being scored (monitors, /calls/score), if any.
 func (e *Engine) scoredCall(ctx context.Context, projectID string, attrs map[string]any) *store.Call {
 	w, _ := attrs["weft"].(map[string]any)
-	id, _ := w["scored_call_id"].(string)
+	id, _ := w["scored_span_id"].(string)
 	if id == "" {
 		return nil
 	}

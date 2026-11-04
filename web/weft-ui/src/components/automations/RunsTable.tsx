@@ -15,7 +15,7 @@ function eventSummary(e: AutomationRun['event']): string {
     case 'score_threshold':
       return `${e.feedback_type ?? ''}${e.path ? '.' + e.path : ''} = ${JSON.stringify(e.value)}`
     case 'error_rate':
-      return `${Math.round((e.error_rate ?? 0) * 1000) / 10}% errors (${e.error_calls}/${e.total_calls})`
+      return `${Math.round((e.error_rate ?? 0) * 1000) / 10}% errors (${e.error_spans}/${e.total_spans})`
     case 'feedback_created':
       return String(e.feedback_type ?? '')
   }
@@ -42,7 +42,7 @@ export function RunsTable({ projectId, runs, showAutomation = true }: { projectI
         </thead>
         <tbody>
           {runs.map((r) => {
-            const callId = r.event && typeof r.event === 'object' ? r.event.call_id : undefined
+            const spanId = r.event && typeof r.event === 'object' ? r.event.span_id : undefined
             return (
               <Fragment key={r.id}>
                 <tr className="clickable" onClick={() => setOpen(open === r.id ? null : r.id)}>
@@ -56,11 +56,11 @@ export function RunsTable({ projectId, runs, showAutomation = true }: { projectI
                   </td>
                   <td className="small">
                     {eventSummary(r.event)}
-                    {callId && callId !== 'test-call' && (
+                    {spanId && spanId !== 'test-span' && (
                       <>
                         {' '}
-                        <Link to={spanUrl(projectId, callId)} onClick={(e) => e.stopPropagation()}>
-                          call
+                        <Link to={spanUrl(projectId, spanId)} onClick={(e) => e.stopPropagation()}>
+                          span
                         </Link>
                       </>
                     )}

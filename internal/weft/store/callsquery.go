@@ -253,7 +253,7 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 				if refs.IsRef(n) {
 					r, err := refs.Parse(n)
 					if err != nil {
-						return "", nil, Invalidf("bad op ref %q", n)
+						return "", nil, Invalidf("bad function ref %q", n)
 					}
 					if r.Digest == "*" || r.Digest == "latest" || r.Digest == "" {
 						ors = append(ors, "c.op_base_name = ?")
