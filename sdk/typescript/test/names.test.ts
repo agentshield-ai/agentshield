@@ -1,12 +1,34 @@
 // Weft's SDK names (docs/weft/DESIGN.md §10.4) and the deprecated earlier names.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as weft from '../src/index.js';
-import { resetDeprecationWarnings } from '../src/deprecation.js';
+import { DEPRECATION_CODE, deprecated, resetDeprecationWarnings } from '../src/deprecation.js';
 import { loadPlatformObject } from '../src/platform.js';
 import { FakeWeft } from './fakeServer.js';
 
 let fake: FakeWeft;
 let client: weft.WeftClient;
+const listeners: Array<(w: Error) => void> = [];
+
+/**
+ * Collect the SDK's deprecation warnings: `process.emitWarning` DeprecationWarnings with
+ * code WEFT_DEPRECATED, seen through `process.on('warning')` (emitted on the next tick).
+ */
+function captureDeprecations(): { messages(): Promise<string[]>; consoleWarn: ReturnType<typeof vi.spyOn> } {
+  const seen: string[] = [];
+  const onWarning = (w: Error & { code?: string }) => {
+    if (w.name === 'DeprecationWarning' && w.code === DEPRECATION_CODE) seen.push(w.message);
+  };
+  process.on('warning', onWarning);
+  listeners.push(onWarning);
+  const consoleWarn = vi.spyOn(console, 'warn');
+  return {
+    consoleWarn,
+    async messages() {
+      await new Promise((r) => setImmediate(r));
+      return [...seen];
+    },
+  };
+}
 
 beforeEach(async () => {
   fake = await new FakeWeft().start();
@@ -15,6 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  for (const l of listeners.splice(0)) process.off('warning', l);
   vi.restoreAllMocks();
   await weft.finish();
   await fake.close();
@@ -22,7 +45,7 @@ afterEach(async () => {
 
 describe('names', () => {
   it('trace, save and get', async () => {
-    const warn = vi.spyOn(console, 'warn');
+    const warn = captureDeprecations();
     const greet = weft.trace(function greet(name: string) {
       return `hello ${name}`;
     });
@@ -42,7 +65,7 @@ describe('names', () => {
     expect(await client.span('no-such-span')).toBeNull();
     expect((await weft.get(span.ref))!.id).toBe(span.id);
     expect(span.uri()).toBe(`weft:///ts-entity/ts-proj/span/${span.id}`);
-    expect(warn).not.toHaveBeenCalled();
+    expect(await warn.messages()).toEqual([]);
   });
 
   it('reads refs written with the earlier kind names', () => {
@@ -51,7 +74,7 @@ describe('names', () => {
   });
 
   it('earlier names still work and warn once each', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = captureDeprecations();
     const inc = weft.op(function inc(x: number) {
       return x + 1;
     });
@@ -68,13 +91,14 @@ describe('names', () => {
     expect(one.threadId).toBeNull();
     expect(new weft.Call({ id: 'x', project_id: 'a/b', name: 'n', trace_id: 't' }, null)).toBeInstanceOf(weft.Span);
     expect(weft.getCurrentCall()).toBeNull();
-    const msgs = warn.mock.calls.map((c) => String(c[0]));
+    const msgs = await warn.messages();
+    expect(warn.consoleWarn).not.toHaveBeenCalled(); // Node: DeprecationWarning events, not console output
     for (const m of ['op() is deprecated; use trace()', 'publish() is deprecated; use save()', 'ref(...).get() is deprecated', 'WeftClient.getCalls()', 'WeftClient.getCall()', 'Span.opName', 'Span.exception', 'Span.threadId', 'Call is deprecated; use Span', 'getCurrentCall()'])
       expect(msgs.some((x) => x.includes(m))).toBe(true);
     expect(msgs.filter((x) => x.includes('op() is deprecated')).length).toBe(1); // once per name
   });
   it('platform objects use names; the earlier field names still work', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = captureDeprecations();
     const mon = new weft.Monitor({ name: 'm', opNames: ['f'] });
     expect(mon.names).toEqual(['f']);
     expect(mon.fields()).toMatchObject({ names: ['f'] });
@@ -82,7 +106,7 @@ describe('names', () => {
     expect(mon.opNames).toEqual(['f']);
     const spec = new weft.AnnotationSpec({ name: 's', opScope: ['g'] });
     expect(spec.fields()).toMatchObject({ names: ['g'] });
-    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+    expect(await warn.messages()).toEqual([
       'weft: Monitor opNames is deprecated; use names',
       'weft: Monitor.opNames is deprecated; use Monitor.names',
       'weft: AnnotationSpec opScope is deprecated; use names',
@@ -103,7 +127,7 @@ describe('names', () => {
     expect(old.definition.pin).toEqual({ left: ['CustomCheckbox', 'name'], right: [] });
   });
   it('withSession, printSpanLink and updateSpan; the earlier names warn once', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = captureDeprecations();
     const f = weft.trace(function f() {
       return 1;
     });
@@ -134,12 +158,13 @@ describe('names', () => {
         else process.env[k] = v;
       }
     }
-    const msgs = warn.mock.calls.map((c) => String(c[0]));
+    const msgs = await warn.messages();
+    expect(warn.consoleWarn).not.toHaveBeenCalled(); // Node: DeprecationWarning events, not console output
     for (const m of ['withThread() is deprecated; use withSession()', 'WeftClient.updateCall({ threadId })', 'WeftClient.printCallLink', 'settings.printCallLink', 'WEFT_PRINT_CALL_LINK is deprecated'])
       expect(msgs.some((x) => x.includes(m))).toBe(true);
   });
   it('getSessions, createSpan/finishSpan, logPrediction({ span }), predict*Span, conversation span/spanId, fromSpans and spanDisplayName', async () => {
-    const warn = vi.spyOn(console, 'warn');
+    const warn = captureDeprecations();
     fake.routes.set('/api/v1/spans/sessions', (b) => ({ items: [{ session_id: 's1', started_at: 'x', echo: b }], total_count: 1 }));
     const [s] = await client.getSessions({ sessionIds: ['s1'], limit: 3 });
     expect(s).toMatchObject({ session_id: 's1', start_time: 'x', echo: { filter: { session_ids: ['s1'] }, limit: 3 } });
@@ -181,11 +206,11 @@ describe('names', () => {
         else process.env[k] = v;
       }
     }
-    expect(warn).not.toHaveBeenCalled();
+    expect(await warn.messages()).toEqual([]);
   });
 
   it('the earlier names of those still work and warn once each', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = captureDeprecations();
     fake.routes.set('/api/v1/spans/sessions', (b) => ({ items: [{ session_id: 't1', echo: b }], total_count: 1 }));
     const [t] = await client.getThreads({ threadIds: ['t1'] });
     expect(t).toMatchObject({ session_id: 't1', thread_id: 't1', echo: { filter: { session_ids: ['t1'] } } });
@@ -229,7 +254,8 @@ describe('names', () => {
         else process.env[k] = v;
       }
     }
-    const msgs = warn.mock.calls.map((c) => String(c[0]));
+    const msgs = await warn.messages();
+    expect(warn.consoleWarn).not.toHaveBeenCalled(); // Node: DeprecationWarning events, not console output
     for (const m of [
       'WeftClient.getThreads({ threadIds }) is deprecated; use WeftClient.getSessions({ sessionIds })',
       'WeftClient.getSessions({ threadIds }) is deprecated; use WeftClient.getSessions({ sessionIds })',
@@ -251,11 +277,27 @@ describe('names', () => {
   });
 
   it('integration opSettings take spanDisplayName; callDisplayName still works and warns', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = captureDeprecations();
     const { integrationOp, pickOpSettings } = await import('../src/integrations/settings.js');
     expect(integrationOp(undefined, 'x.new', 'llm', {}, { spanDisplayName: 'new' }).options.spanDisplayName).toBe('new');
-    expect(warn).not.toHaveBeenCalled();
+    expect(await warn.messages()).toEqual([]);
     expect(integrationOp(undefined, 'x.old', 'llm', {}, pickOpSettings({ callDisplayName: 'old' })).options.spanDisplayName).toBe('old');
-    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(['weft: opSettings callDisplayName is deprecated; use spanDisplayName']);
+    expect(await warn.messages()).toEqual(['weft: opSettings callDisplayName is deprecated; use spanDisplayName']);
+  });
+  it('deprecations are DeprecationWarning events once per name; console.warn where process.emitWarning is absent', async () => {
+    const warn = captureDeprecations();
+    deprecated('old()', 'new()');
+    deprecated('old()', 'new()');
+    expect(await warn.messages()).toEqual(['weft: old() is deprecated; use new()']);
+    expect(warn.consoleWarn).not.toHaveBeenCalled();
+    const emit = process.emitWarning;
+    const out = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    (process as any).emitWarning = undefined;
+    try {
+      deprecated('older()', 'new()');
+    } finally {
+      process.emitWarning = emit;
+    }
+    expect(out.mock.calls.map((c) => String(c[0]))).toEqual(['weft: older() is deprecated; use new()']);
   });
 });

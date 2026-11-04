@@ -69,8 +69,11 @@ shared vectors and a live server.
 
 ### Deprecated (removed in the next release)
 
-These earlier names still work; each prints one console warning the first
-time it is used:
+These earlier names still work; each emits one warning the first time it is
+used. In Node it is a `DeprecationWarning` (`process.emitWarning`, code
+`WEFT_DEPRECATED`), so `process.on('warning')` sees it and `--no-deprecation` /
+`--throw-deprecation` apply; where `process.emitWarning` is absent (browsers)
+it is a `console.warn`.
 
 | Earlier name | Use |
 |---|---|

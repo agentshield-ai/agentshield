@@ -1,11 +1,25 @@
 const warned = new Set<string>();
 
-/** Warn once per process that `oldName` is deprecated (CHANGELOG.md lists the earlier names). */
+/** The `code` of the SDK's deprecation warnings (`process.on('warning')` sees `warning.code`). */
+export const DEPRECATION_CODE = 'WEFT_DEPRECATED';
+
+/**
+ * Warn once per process that `oldName` is deprecated (CHANGELOG.md lists the earlier names).
+ * In Node this is a `DeprecationWarning` (`process.emitWarning`, code `WEFT_DEPRECATED`), so
+ * `process.on('warning')`, `--no-deprecation` and `--throw-deprecation` apply; elsewhere
+ * (browsers) it is a `console.warn`.
+ */
 export function deprecated(oldName: string, newName: string): void {
   if (warned.has(oldName)) return;
   warned.add(oldName);
+  const msg = `weft: ${oldName} is deprecated; use ${newName}`;
+  const proc = (globalThis as { process?: { emitWarning?: (m: string, o: { type: string; code: string }) => void } }).process;
+  if (typeof proc?.emitWarning === 'function') {
+    proc.emitWarning(msg, { type: 'DeprecationWarning', code: DEPRECATION_CODE });
+    return;
+  }
   // eslint-disable-next-line no-console
-  console.warn(`weft: ${oldName} is deprecated; use ${newName}`);
+  console.warn(msg);
 }
 
 /** @internal For tests: forget which warnings were shown. */
