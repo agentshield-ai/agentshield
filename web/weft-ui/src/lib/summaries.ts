@@ -311,24 +311,36 @@ export function sessionSummaryLine(s: SessionSummary, ctx: RowContext = {}): str
 
 // ---------------------------------------------------------------- the Sessions sentence
 
-export type ClauseId = 'failed' | 'blocked' | 'approval' | 'failed_step' | 'low_score' | 'cost'
+/** The serious kinds of trouble the Sessions sentence names one by one. */
+export type ClauseId = 'failed' | 'blocked' | 'approval'
 
-/** A part of a generated sentence: text, or a clause that links to the sessions it counts. */
-export type SummaryPart =
-  | string
-  | {
-      text: string
-      clause: ClauseId
-      count: number
-      /** The filter (laid over the page's own) that lists exactly these sessions. */
-      filter: FilterState
-      /** When the clause counts one session and it is loaded: that session, and where to open it. */
-      session?: { id: string; step?: string; tab?: string }
-      /** False when the filter lists more than the clause counts (see sessionsSentence). */
-      exact: boolean
-    }
+/** A clause that links to the sessions it counts. */
+export interface FilterClause {
+  text: string
+  clause: ClauseId
+  count: number
+  /** The filter (laid over the page's own) that lists exactly these sessions. */
+  filter: FilterState
+  /** When the clause counts one session and it is loaded: that session, and where to open it. */
+  session?: { id: string; step?: string; tab?: string }
+  /** False when the filter lists more than the clause counts (see sessionsSentence). */
+  exact: boolean
+}
 
-const RANGE_PHRASE: Record<TimeRange, string> = {
+/** The clause about the other sessions that need a look: it points at the "Needs a look" group on the page. */
+export interface GroupClause {
+  text: string
+  clause: 'more'
+  /** How many sessions it counts; with `atLeast`, a lower bound (not every session is loaded). */
+  count: number
+  atLeast: boolean
+}
+
+/** A part of a generated sentence: text, or a clause that links to what it counts. */
+export type SummaryPart = string | FilterClause | GroupClause
+
+/** "in the last 24 hours" for a time range (empty for all time). */
+export const RANGE_PHRASE: Record<TimeRange, string> = {
   '1h': 'in the last hour',
   '24h': 'in the last 24 hours',
   '7d': 'in the last 7 days',
@@ -350,18 +362,25 @@ export interface SessionsSentenceInput {
 }
 
 /**
- * The Sessions page sentence: how many sessions ran, then what needs a look,
- * each clause linking to the sessions it counts. Counts come from the
- * server's attention endpoint over every matching session. "Everything else
- * finished" is said only when every matching session is loaded and it is
- * true of them.
+ * The Sessions page sentence, at most two short sentences. The first names
+ * the serious ones (failed, blocked by AgentShield, kept asking for
+ * approval), each clause linking to the sessions it counts: "Of the 10
+ * sessions that ran in the last 24 hours, 3 failed, 1 was blocked by
+ * AgentShield, and 1 kept asking for approval." The second says how many
+ * more need a look (a failed step, a low score, a cost spike), pointing at
+ * the "Needs a look" group, whose rows say why, and what is still running:
+ * "4 more finished with something worth a look." Counts of the serious
+ * ones come from the server's attention endpoint over every matching
+ * session; the second sentence is counted from the loaded rows, so it is
+ * exact when every matching session is loaded and a lower bound ("at
+ * least") otherwise.
  */
 export function sessionsSentence({ attention: a, time, filtered, rows, total }: SessionsSentenceInput): SummaryPart[] {
   const n = a.sessions
   const range = RANGE_PHRASE[time] ?? ''
+  const where = range ? ` ${range}` : ''
+  if (n === 0) return [`No sessions ${filtered ? 'match these filters' : 'ran'}${where}.`]
   const verb = filtered ? (n === 1 ? 'matches these filters' : 'match these filters') : 'ran'
-  if (n === 0) return [`No sessions ${filtered ? 'match these filters' : 'ran'}${range ? ` ${range}` : ''}.`]
-  const head = `${plural(n, 'session')} ${verb}${range ? ` ${range}` : ''}.`
 
   const card = (id: SessionAttention['items'][number]['id']) => a.items.find((c) => c.id === id)
   const low = a.low_score_threshold ?? 0.5
@@ -372,21 +391,16 @@ export function sessionsSentence({ attention: a, time, filtered, rows, total }: 
     failed: (s) => String(s.status) === 'error',
     blocked: (s) => (s.detection_count?.block ?? 0) > 0,
     approval: (s) => (s.detection_count?.require_approval ?? 0) >= heavy,
-    failed_step: serverFailedStep,
-    low_score: (s) => !!sessionFlags(s, ctx).lowScore,
-    cost: (s) => sessionFlags(s, ctx).costSpike,
   }
-  const step: Partial<Record<ClauseId, { step?: string; tab?: string }>> = {
+  const step: Record<ClauseId, { step?: string; tab?: string }> = {
     failed: { step: 'error' },
     blocked: { step: 'problem' },
     approval: { step: 'problem' },
-    failed_step: { step: 'error' },
-    low_score: { tab: 'scores' },
   }
-  const clause = (id: ClauseId, count: number, words: [string, string], filter: FilterState, exact = true): SummaryPart | null => {
+  const clause = (id: ClauseId, count: number, words: [string, string], filter: FilterState, exact = true): FilterClause | null => {
     if (!count) return null
     const text = n === 1 ? words[0] : `${count} ${count === 1 ? words[0] : words[1]}`
-    let session: { id: string; step?: string; tab?: string } | undefined
+    let session: FilterClause['session']
     if (count === 1) {
       const hits = rows.filter(member[id])
       if (hits.length === 1) session = { id: hits[0].session_id, ...step[id] }
@@ -400,50 +414,63 @@ export function sessionsSentence({ attention: a, time, filtered, rows, total }: 
     // Approval-heavy sessions have no filter of their own: "blocked or approval-heavy" lists exactly
     // them when nothing was blocked, and also the blocked ones otherwise.
     clause('approval', a.approval_heavy, ['kept asking for approval', 'kept asking for approval'], filterFromSessionsParams(security?.filter ?? { has_detection: 'flagged' }), a.blocked === 0),
-  ].filter(Boolean) as Exclude<SummaryPart, string>[]
-  const step2 = card('failed_step')
-  const lowCard = card('low_score')
-  const costCard = card('cost')
-  const mild = [
-    clause('failed_step', step2?.count ?? 0, ['went on after a failed step', 'went on after a failed step'], filterFromSessionsParams(step2?.filter ?? { status: 'failed_step' })),
-    clause('low_score', lowCard?.count ?? 0, [`scored below ${low}`, `scored below ${low}`], filterFromSessionsParams(lowCard?.filter ?? { score_below: String(low) })),
-    a.cost_spike_threshold != null && costCard && Object.keys(costCard.filter).length
-      ? clause('cost', costCard.count, [`cost at least ${a.cost_spike_factor} times the median session`, `cost at least ${a.cost_spike_factor} times the median session`], filterFromSessionsParams(costCard.filter))
-      : null,
-  ].filter(Boolean) as Exclude<SummaryPart, string>[]
+  ].filter((c): c is FilterClause => !!c)
 
-  const parts: SummaryPart[] = [head]
-  const sentence = (cl: Exclude<SummaryPart, string>[], lead?: string) => {
-    if (!cl.length) return
-    parts.push(' ')
-    if (lead) parts.push(lead)
+  // The rest, from the loaded rows: the others that need a look, and those still running.
+  const complete = rows.length === total && total === n
+  const serious = (s: SessionSummary) => (Object.keys(member) as ClauseId[]).some((id) => member[id](s))
+  const more = rows.filter((s) => !serious(s) && needsALook(s, ctx))
+  const rest = rows.filter((s) => !serious(s) && !needsALook(s, ctx))
+  const running = rest.filter((s) => String(s.status) === 'running').length
+  const unknown = rest.filter((s) => String(s.status) !== 'running' && (String(s.status) === 'unknown' || s.verdicts_only)).length
+  const moreFinished = more.every((s) => String(s.status) !== 'running')
+
+  const parts: SummaryPart[] = []
+  const list = (cl: SummaryPart[]) =>
     cl.forEach((c, i) => {
       if (i > 0) parts.push(cl.length === 2 ? ' and ' : i === cl.length - 1 ? ', and ' : ', ')
       parts.push(c)
     })
-    parts.push('.')
-  }
+
   if (n === 1) {
-    sentence([...severe, ...mild], 'It ')
-  } else {
-    sentence(severe)
-    sentence(mild)
+    parts.push(`1 session ${verb}${where}.`)
+    if (severe.length) {
+      parts.push(' It ')
+      list(severe)
+      parts.push('.')
+    } else if (more.length) {
+      parts.push(' It ', { text: moreFinished ? 'finished with something worth a look' : 'needs a look', clause: 'more', count: 1, atLeast: false }, '.')
+    } else if (complete && rows.length === 1) {
+      parts.push(running ? ' It is still running.' : unknown ? ' It has only AgentShield verdicts.' : ' It finished.')
+    }
+    return parts
   }
 
-  // The rest, when every matching session is loaded.
-  if (rows.length === total && total === n) {
-    const counted = (s: SessionSummary) => (Object.keys(member) as ClauseId[]).some((id) => member[id](s) && (id !== 'cost' || a.cost_spike_threshold != null))
-    const rest = rows.filter((s) => !counted(s))
-    if (rest.length) {
-      const running = rest.filter((s) => String(s.status) === 'running').length
-      const unknown = rest.filter((s) => String(s.status) === 'unknown' || s.verdicts_only).length
-      const finished = rest.length - running - unknown
-      const bits: string[] = []
-      if (running) bits.push(`${running} ${running === 1 ? 'is' : 'are'} still running`)
-      if (unknown) bits.push(`${unknown} ${unknown === 1 ? 'has' : 'have'} only AgentShield verdicts`)
-      if (finished) bits.push(bits.length ? 'the rest finished' : severe.length + mild.length ? 'everything else finished' : n === 1 ? 'it finished' : 'all of them finished')
-      if (bits.length) parts.push(' ', cap(joinClauses(bits)) + '.')
-    }
+  if (severe.length) {
+    parts.push(`Of the ${n} sessions that ${verb}${where}, `)
+    list(severe)
+    parts.push('.')
+  } else parts.push(`${n} sessions ${verb}${where}.`)
+
+  const second: SummaryPart[] = []
+  if (more.length) {
+    const k = more.length
+    const lead = complete ? (severe.length ? `${k} more` : `${k}`) : severe.length ? `At least ${k} more` : `At least ${k}`
+    const tail = moreFinished ? ' finished with something worth a look' : k === 1 ? ' needs a look' : ' need a look'
+    second.push({ text: lead + tail, clause: 'more', count: k, atLeast: !complete })
+  }
+  if (complete) {
+    if (running) second.push(`${running} ${running === 1 ? 'is' : 'are'} still running`)
+    if (unknown) second.push(`${unknown} ${unknown === 1 ? 'has' : 'have'} only AgentShield verdicts`)
+    // Saying everything finished adds information only when nothing needs a look.
+    if (!severe.length && !more.length && !running && !unknown) second.push('All of them finished')
+  }
+  if (second.length) {
+    parts.push(' ')
+    const first = second[0]
+    if (typeof first === 'string') second[0] = cap(first)
+    list(second)
+    parts.push('.')
   }
   return parts
 }

@@ -1,7 +1,10 @@
-// Toasts: undoable deletions (lib/undo.ts) and short notices.
+// Toasts: undoable deletions (lib/undo.ts) and short notices. A dark slip at
+// the bottom of the window: the message, then Undo (a link-styled button)
+// with the time left as a thin line; notices carry a glyph, never colour alone.
 import { useEffect, useState } from 'react'
 import { undoQueue, type PendingUndo, type UndoAction } from '../../lib/undo'
 import { Icon } from './Icons'
+import { StatusGlyph } from './StatusGlyph'
 
 interface Notice {
   id: number
@@ -52,7 +55,7 @@ export function ToastHost() {
       {pending.map((p) => (
         <div key={`u${p.id}`} className="toast" role="status">
           <span className="grow">{p.message}</span>
-          <button className="btn sm" onClick={() => undoQueue.undo(p.id)}>
+          <button type="button" className="toast-undo" onClick={() => undoQueue.undo(p.id)}>
             Undo
           </button>
           <span className="toast-timer" style={{ animationDuration: `${Math.max(0, p.expiresAt - Date.now())}ms` }} aria-hidden />
@@ -60,7 +63,9 @@ export function ToastHost() {
       ))}
       {ns.map((n) => (
         <div key={`n${n.id}`} className={`toast ${n.tone}`} role={n.tone === 'error' ? 'alert' : 'status'}>
-          <Icon name={n.tone === 'error' ? 'error' : n.tone === 'ok' ? 'ok' : 'info'} />
+          <span className="toast-glyph">
+            {n.tone === 'info' ? <Icon name="info" /> : <StatusGlyph kind={n.tone === 'error' ? 'failed' : 'check'} size={16} decorative />}
+          </span>
           <span className="grow">{n.message}</span>
         </div>
       ))}

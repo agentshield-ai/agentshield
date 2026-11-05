@@ -1,18 +1,31 @@
+// Automations (DESIGN.md §7, §7.1 rules 1 and 11, §7.2): one sentence says how
+// many there are, how many are on and how the last day went ("2 automations,
+// 1 on. In the last 24 hours they fired 3 times; 1 delivery failed."). Each
+// automation is a row in plain words ("When polite scores below 0.5, post
+// to Slack") with its switch, Test, Edit and Delete on the right; deleting
+// can be undone for a few seconds. Below, the recent runs (?runs=<name>
+// narrows them to one automation).
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { automationsApi, type AutomationVal } from '../../api/automations'
 import type { WeftObject } from '../../api/types'
-import { Empty, ErrorBox, Loading, Section } from '../../components/common'
+import { ErrorBox, Loading } from '../../components/common'
 import { AutomationEditor } from '../../components/automations/AutomationEditor'
-import { describeAction, describeTrigger } from '../../components/automations/automationUtils'
-import { RunStatus, RunsTable } from '../../components/automations/RunsTable'
-import { ConfirmButton, Switch } from '../../components/objects/bits'
+import { RunsTable } from '../../components/automations/RunsTable'
+import { Switch } from '../../components/objects/bits'
 import { usePublish } from '../../components/objects/ObjectForms'
 import { errMsg, useObjects } from '../../components/objects/objectUtils'
+import { SettingsRow, SettingsSection, useUndoDelete } from '../../components/settings/SettingsList'
+import { Icon } from '../../components/ui/Icons'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Sentence } from '../../components/ui/Sentence'
+import { notify } from '../../components/ui/Toasts'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtRelative } from '../../lib/format'
-import { HelpLink } from '../../components/ui/PageHeader'
+import { automationLine, automationsSentence, lastRunLine } from '../../lib/summaries/project'
+
+const RUNS_LIMIT = 200
 
 export function AutomationsPage() {
   const projectId = useProjectId()
@@ -20,157 +33,163 @@ export function AutomationsPage() {
   const publish = usePublish(projectId)
   const autos = useObjects(projectId, { kinds: ['automation'] })
   const [editing, setEditing] = useState<WeftObject | 'new' | null>(null)
-  const [filter, setFilter] = useState<string>('')
-  const runs = useQuery({ queryKey: ['automation-runs', projectId], queryFn: () => automationsApi.runs(projectId, undefined, 200).then((r) => r.runs), refetchInterval: 10_000 })
+  const [params, setParams] = useSearchParams()
+  const filter = params.get('runs') ?? ''
+  const setFilter = (name: string) => {
+    const n = new URLSearchParams(params)
+    if (name) n.set('runs', name)
+    else n.delete('runs')
+    setParams(n, { replace: true })
+  }
+  const runs = useQuery({
+    queryKey: ['automation-runs', projectId],
+    queryFn: () => automationsApi.runs(projectId, undefined, RUNS_LIMIT).then((r) => r.runs),
+    refetchInterval: 10_000,
+  })
   const refreshRuns = () => qc.invalidateQueries({ queryKey: ['automation-runs', projectId] })
-  const test = useMutation({ mutationFn: (id: string) => automationsApi.test(projectId, { automation_id: id }), onSettled: refreshRuns })
-  const check = useMutation({ mutationFn: () => automationsApi.check(projectId), onSettled: refreshRuns })
+  const test = useMutation({
+    mutationFn: (id: string) => automationsApi.test(projectId, { automation_id: id }),
+    onSettled: refreshRuns,
+    onSuccess: (r) =>
+      notify(
+        `Test of ${r.run.automation_id}: ${r.run.status === 'success' ? 'delivered' : 'failed'}${r.run.response_status ? ` (HTTP ${r.run.response_status})` : ''}${r.run.error ? `: ${r.run.error}` : ''}.`,
+        r.run.status === 'success' ? 'ok' : 'error',
+        7000,
+      ),
+  })
+  const check = useMutation({
+    mutationFn: () => automationsApi.check(projectId),
+    onSettled: refreshRuns,
+    onSuccess: (r) =>
+      notify(r.runs.length ? `${r.runs.length} error-rate ${r.runs.length === 1 ? 'automation' : 'automations'} fired.` : 'No error-rate automation is over its threshold (or all are cooling down).', 'info', 6000),
+  })
   const [toggling, setToggling] = useState<string | null>(null)
+  const { hidden, remove } = useUndoDelete()
 
+  const list = (autos.data ?? []).filter((o) => !hidden.has(o.name))
   const lastRun = (id: string) => runs.data?.find((r) => r.automation_id === id && !r.test)
   const shownRuns = (runs.data ?? []).filter((r) => !filter || r.automation_id === filter)
+  const sentence =
+    autos.data && runs.data
+      ? automationsSentence({
+          automations: list.map((o) => ({ name: o.name, enabled: (o.value as AutomationVal | undefined)?.enabled !== false })),
+          runs: runs.data,
+          capped: runs.data.length >= RUNS_LIMIT,
+        })
+      : null
+  const hasErrorRate = list.some((o) => (o.value as AutomationVal | undefined)?.trigger?.type === 'error_rate')
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="col" style={{ gap: 2 }}>
-          <h1>Automations</h1>
-          <HelpLink doc="project.md#automations" topic="Automations" />
-          <span className="muted small">Send a Slack message or a webhook when a score crosses a threshold, the error rate climbs, or feedback arrives.</span>
-        </div>
-        <span className="spacer" />
-        <button className="btn" disabled={check.isPending} onClick={() => check.mutate()} title="Evaluate error-rate triggers now">
-          {check.isPending ? 'Checking…' : 'Check error rates now'}
-        </button>
-        <button className="btn primary" onClick={() => setEditing('new')}>
-          + New automation
-        </button>
-      </div>
-      {check.data && (
-        <div className="info-box" style={{ marginBottom: 12 }}>
-          {check.data.runs.length ? `${check.data.runs.length} error-rate automation(s) fired.` : 'No error-rate automation is over its threshold (or all are cooling down).'}
-        </div>
-      )}
+    <div className="page-frame">
+      <PageHeader
+        title="Automations"
+        help="project.md#automations"
+        controls={
+          <>
+            {hasErrorRate && (
+              <button type="button" className="qbtn" disabled={check.isPending} onClick={() => check.mutate()} title="Evaluate the error-rate automations now">
+                {check.isPending ? 'Checking…' : 'Check error rates now'}
+              </button>
+            )}
+            <button type="button" className="qbtn primary" onClick={() => setEditing('new')}>
+              <Icon name="plus" size={14} /> New automation
+            </button>
+          </>
+        }
+        sentence={sentence ? <Sentence parts={[sentence]} /> : undefined}
+      />
       <ErrorBox error={autos.error ?? runs.error ?? test.error ?? check.error} />
       {autos.isLoading ? (
         <Loading />
-      ) : !autos.data?.length ? (
-        <div className="card">
-          <Empty>
-            <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-              <div style={{ maxWidth: 520 }}>
-                No automations yet. For example: post to Slack when a monitor’s hallucination score is true, or call a webhook when more than 10% of agent runs fail in an hour.
-              </div>
-              <button className="btn primary" onClick={() => setEditing('new')}>
-                + New automation
-              </button>
-            </div>
-          </Empty>
+      ) : !list.length ? (
+        <div className="quiet-empty">
+          <p>
+            An automation sends a Slack message or calls a webhook when something happens: a score crosses a threshold, too many runs fail within an hour, or someone
+            leaves feedback. For example, post to Slack when a monitor finds a hallucination.
+          </p>
         </div>
       ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 56 }}>On</th>
-                <th>Name</th>
-                <th>When</th>
-                <th>Then</th>
-                <th>Last fired</th>
-                <th style={{ width: 200 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {autos.data.map((o) => {
-                const v = (o.value ?? {}) as AutomationVal
-                const last = lastRun(o.name)
-                const enabled = v.enabled !== false
-                return (
-                  <tr key={o.name}>
-                    <td>
-                      <Switch
-                        on={enabled}
-                        disabled={toggling === o.name}
-                        title={enabled ? 'Disable' : 'Enable'}
-                        onChange={async () => {
-                          setToggling(o.name)
-                          try {
-                            await publish(o.name, { ...o.value, enabled: !enabled })
-                          } catch (e) {
-                            alert(`Could not update automation: ${errMsg(e)}`)
-                          } finally {
-                            setToggling(null)
-                          }
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 500 }}>{o.name}</span>
-                      {v.description && <div className="faint small cell-preview">{v.description}</div>}
-                    </td>
-                    <td className="small mono">{v.trigger ? describeTrigger(v.trigger) : '—'}</td>
-                    <td className="small">{v.action ? describeAction(v.action) : '—'}</td>
-                    <td className="small">
-                      {last ? (
-                        <span className="row" style={{ gap: 6 }}>
-                          <RunStatus run={last} /> <span className="muted">{fmtRelative(last.created_at)}</span>
-                        </span>
-                      ) : (
-                        <span className="faint">never</span>
-                      )}
-                    </td>
-                    <td>
-                      <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
-                        <button className="btn sm" disabled={test.isPending && test.variables === o.name} onClick={() => test.mutate(o.name)}>
-                          {test.isPending && test.variables === o.name ? 'Sending…' : 'Test'}
-                        </button>
-                        <button className="btn sm ghost" onClick={() => setFilter(filter === o.name ? '' : o.name)}>
-                          {filter === o.name ? 'All runs' : 'Runs'}
-                        </button>
-                        <button className="btn sm ghost" onClick={() => setEditing(o)}>
-                          Edit
-                        </button>
-                        <ConfirmButton
-                          className="btn ghost sm icon danger"
-                          title={`Delete automation ${o.name}?`}
-                          body="Its run history is kept."
-                          onConfirm={async () => {
-                            await api.objectDelete(projectId, o.name)
-                            await qc.invalidateQueries({ queryKey: ['objects', projectId] })
-                          }}
-                        >
-                          ✕
-                        </ConfirmButton>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <SettingsSection>
+          {list.map((o) => {
+            const v = (o.value ?? {}) as AutomationVal
+            const enabled = v.enabled !== false
+            return (
+              <SettingsRow
+                key={o.name}
+                label={o.name}
+                muted={!enabled}
+                detail={
+                  <>
+                    {v.description && (
+                      <>
+                        {v.description}
+                        <br />
+                      </>
+                    )}
+                    {automationLine(v)} {enabled ? lastRunLine(lastRun(o.name)) : 'Off.'}
+                  </>
+                }
+                control={
+                  <>
+                    <button type="button" className="qbtn sm" disabled={test.isPending && test.variables === o.name} onClick={() => test.mutate(o.name)} title="Send a sample event now">
+                      {test.isPending && test.variables === o.name ? 'Sending…' : 'Test'}
+                    </button>
+                    <button type="button" className="qbtn sm" aria-pressed={filter === o.name} onClick={() => setFilter(filter === o.name ? '' : o.name)}>
+                      {filter === o.name ? 'All runs' : 'Runs'}
+                    </button>
+                    <button type="button" className="qbtn sm" onClick={() => setEditing(o)}>
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="qbtn sm plain danger"
+                      aria-label={`Delete ${o.name}`}
+                      title="Delete (its run history is kept)"
+                      onClick={() =>
+                        remove(o.name, `Deleted automation ${o.name}`, async () => {
+                          await api.objectDelete(projectId, o.name)
+                          await qc.invalidateQueries({ queryKey: ['objects', projectId] })
+                        })
+                      }
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                    <Switch
+                      on={enabled}
+                      disabled={toggling === o.name}
+                      label={`${o.name} on`}
+                      title={enabled ? 'On: turn off' : 'Off: turn on'}
+                      onChange={async () => {
+                        setToggling(o.name)
+                        try {
+                          await publish(o.name, { ...o.value, enabled: !enabled })
+                        } catch (e) {
+                          notify(`Could not update ${o.name}: ${errMsg(e)}`, 'error', 7000)
+                        } finally {
+                          setToggling(null)
+                        }
+                      }}
+                    />
+                  </>
+                }
+              />
+            )
+          })}
+        </SettingsSection>
       )}
-      {test.data && (
-        <div className={test.data.run.status === 'success' ? 'success-box' : 'warn-box'} style={{ marginTop: 12 }}>
-          Test of {test.data.run.automation_id}: {test.data.run.status === 'success' ? 'delivered' : 'failed'}
-          {test.data.run.response_status ? ` (HTTP ${test.data.run.response_status})` : ''}
-          {test.data.run.error ? ` — ${test.data.run.error}` : ''}
-        </div>
-      )}
-      <div style={{ marginTop: 18 }}>
-        <Section
-          title={filter ? `Recent runs of ${filter}` : 'Recent runs'}
-          actions={
-            filter ? (
-              <button className="btn sm ghost" onClick={() => setFilter('')}>
-                Show all
-              </button>
-            ) : undefined
-          }
-        >
-          {runs.isLoading ? <Loading /> : <RunsTable projectId={projectId} runs={shownRuns} showAutomation={!filter} />}
-        </Section>
-      </div>
+      <SettingsSection
+        plain
+        title={filter ? `Recent runs of ${filter}` : 'Recent runs'}
+        action={
+          filter ? (
+            <button type="button" className="qbtn sm" onClick={() => setFilter('')}>
+              Show every automation
+            </button>
+          ) : undefined
+        }
+      >
+        {runs.isLoading ? <Loading /> : <RunsTable projectId={projectId} runs={shownRuns} showAutomation={!filter} />}
+      </SettingsSection>
       {editing && (
         <AutomationEditor
           projectId={projectId}

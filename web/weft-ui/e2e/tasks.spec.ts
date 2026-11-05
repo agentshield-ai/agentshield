@@ -41,11 +41,11 @@ test('b: find which hand-off in a team fails most', async ({ page }, info) => {
   await page.goto(`/${project()}/sessions`)
   const c = new Clicks(page)
   await c.click(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Teams' }), 'nav “Teams”')
-  await c.click(page.getByRole('list', { name: 'Teams' }).getByRole('link', { name: /Trip planners/ }), 'team “Trip planners”')
-  const callout = page.locator('.callout').filter({ hasText: 'Most failing hand-off' })
-  await expect(callout).toContainText('orchestrator')
-  await expect(callout).toContainText('researcher')
-  await expect(callout).toContainText('60% of 5 hand-offs failed')
+  await c.click(page.locator('.team-row').getByRole('link', { name: /Trip planners/ }), 'team “Trip planners”')
+  // The team's sentence leads with the hand-off that fails most, linking to its failed sessions.
+  const sentence = page.locator('.ph-sentence')
+  await expect(sentence).toContainText('The hand-off that fails most, from orchestrator to researcher, failed 3 of 5 times (60%)')
+  await expect(sentence.getByRole('link', { name: 'from orchestrator to researcher' })).toHaveAttribute('href', /agent=researcher.*status=error|status=error.*agent=researcher/)
   // The hand-off table lists the most failing route first.
   const first = page.locator('table.handoff-table tbody tr').first()
   await expect(first).toContainText('researcher')
@@ -76,8 +76,8 @@ test('c: see what an agent was thinking before a failed tool call', async ({ pag
 test('c2: a failed tool call in a session that went on is one click from the home page', async ({ page }, info) => {
   const errors = watchErrors(page)
   await page.goto(`/${project()}/sessions`)
-  // The sentence counts such sessions, and its clause lists exactly those.
-  await expect(page.locator('.ph-sentence')).toContainText('2 went on after a failed step')
+  // The sentence counts it among those worth a look; its row in "Needs a look" says why.
+  await expect(page.locator('.ph-sentence')).toContainText('2 more finished with something worth a look')
   const row = page.locator('.session-row').filter({ hasText: 'Run the test suite and fix what breaks' })
   await expect(row).toContainText('Finished, but one step failed on the way.')
   const c = new Clicks(page)

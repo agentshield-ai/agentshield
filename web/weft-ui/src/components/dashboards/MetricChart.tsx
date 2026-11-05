@@ -93,7 +93,7 @@ export function MetricChart({ res, panel, height = 200 }: { res: MetricsRes; pan
   const tooltipFmt = (v: number, _n: string, item: { dataKey?: string | number }) => fmtValue(v, kindOf[String(item?.dataKey)] ?? kind)
   const common = (
     <>
-      <CartesianGrid vertical={false} stroke="var(--border)" />
+      <CartesianGrid vertical={false} stroke="var(--separator)" />
       <XAxis dataKey="t" tickFormatter={xTick} tick={AXIS} minTickGap={28} axisLine={false} tickLine={false} />
       <YAxis tick={AXIS} tickFormatter={fmtTick} axisLine={false} tickLine={false} width={54} allowDecimals={kind !== 'number'} />
       <Tooltip {...TOOLTIP} labelFormatter={labelFmt} formatter={tooltipFmt as never} cursor={{ fill: 'var(--panel-2)' }} />

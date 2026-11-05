@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { monitorUrl } from '../../lib/urls'
 import { ErrorBox, Modal } from '../common'
+import { GroupedList, ListRow } from '../ui/GroupedList'
 import { LLMModelInput, usePublish } from '../objects/ObjectForms'
 import { useLLMModels } from '../objects/objectUtils'
 import { createSignal, planSignal, SIGNALS, type SignalCategory, type SignalTemplate } from './signals'
@@ -34,52 +35,51 @@ export function SignalsGallery({ projectId, onCreated }: { projectId: string; on
   // Expanded while the project has no monitors; collapsible afterwards.
   const expanded = open ?? (monitors.isSuccess && (monitors.data?.items.length ?? 0) === 0)
   return (
-    <div className="card" style={{ marginBottom: 16 }}>
-      <div className="card-header row">
-        <b>Signals</b>
-        <span className="muted small grow">Ready-made monitors for common problems. Each creates a scorer and an active monitor you can edit afterwards.</span>
-        <button className="btn sm ghost" onClick={() => setOpen(!expanded)} aria-expanded={expanded}>
+    <section className="obs-signals obs-quiet" aria-labelledby="signals-h">
+      <div className="obs-section-head">
+        <h2 className="view-h" id="signals-h">
+          Ready-made signals
+        </h2>
+        <button type="button" className="linkish" onClick={() => setOpen(!expanded)} aria-expanded={expanded} aria-controls="signals-list">
           {expanded ? 'Hide' : `Show ${SIGNALS.length} signals`}
         </button>
       </div>
+      <p className="quiet-note obs-wrap">Monitors for common problems. Each creates a scorer and an active monitor you can edit afterwards.</p>
       {expanded && (
-        <div className="card-body col" style={{ gap: 12 }}>
+        <div id="signals-list" className="obs-groups" style={{ gap: 20 }}>
           {CATEGORIES.map((cat) => (
-            <div key={cat} className="col" style={{ gap: 6 }}>
-              <div className="faint small" style={{ textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {cat}
-              </div>
-              <div className="card-grid">
-                {SIGNALS.filter((s) => s.category === cat).map((s) => {
-                  const have = installed.get(s.id)
-                  return (
-                    <div key={s.id} className="eval-card" data-signal={s.id}>
-                      <div className="row">
-                        <b className="grow">{s.title}</b>
-                        <span className={`badge ${s.model ? 'accent' : ''}`}>
-                          {s.model === 'judge' ? 'LLM judge' : s.model === 'moderation' ? 'Moderation API' : 'Rule'}
-                        </span>
-                      </div>
-                      <span className="muted small grow">{s.description}</span>
-                      <div className="row" style={{ minWidth: 0 }}>
-                        <span className="faint small mono grow truncate" style={{ minWidth: 0 }} title={`Feedback type weft.scorer.${s.scorer}`}>
-                          weft.scorer.{s.scorer}
-                        </span>
+            <GroupedList key={cat} title={cat}>
+              {SIGNALS.filter((x) => x.category === cat).map((x) => {
+                const have = installed.get(x.id)
+                return (
+                  <ListRow
+                    key={x.id}
+                    className="obs-signal"
+                    title={x.title}
+                    summary={x.description}
+                    meta={
+                      <span title={`Feedback type weft.scorer.${x.scorer}`}>
+                        {x.model === 'judge' ? 'LLM judge' : x.model === 'moderation' ? 'Moderation API' : 'Rule'}
+                        {have ? ' · added' : ''}
+                      </span>
+                    }
+                    trailing={
+                      <span className="obs-row-trailing" data-signal={x.id}>
                         {have ? (
-                          <Link className="btn sm" to={monitorUrl(projectId, have)}>
+                          <Link className="qbtn" to={monitorUrl(projectId, have)} aria-label={`Open the ${x.title} monitor`}>
                             Open
                           </Link>
                         ) : (
-                          <button className="btn sm primary" onClick={() => setPicked(s)}>
-                            + Add
+                          <button type="button" className="qbtn" onClick={() => setPicked(x)} aria-label={`Add the ${x.title} signal`}>
+                            Add
                           </button>
                         )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+                      </span>
+                    }
+                  />
+                )
+              })}
+            </GroupedList>
           ))}
         </div>
       )}
@@ -94,7 +94,7 @@ export function SignalsGallery({ projectId, onCreated }: { projectId: string; on
           }}
         />
       )}
-    </div>
+    </section>
   )
 }
 

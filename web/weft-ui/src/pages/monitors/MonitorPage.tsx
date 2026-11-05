@@ -5,13 +5,20 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { api, ApiError } from '../../api/client'
 import { parseRef } from '../../api/refs'
 import type { Feedback } from '../../api/types'
-import { Empty, ErrorBox, Loading, Section, Spinner } from '../../components/common'
+import { ErrorBox, Loading } from '../../components/common'
+import { Inspector, InspectorDivider, InspectorLinks, KeyValueList } from '../../components/ui/Inspector'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Sentence } from '../../components/ui/Sentence'
+import { monitorSentence } from '../../lib/summaries/dashboards'
+import { monitorWords } from './MonitorsPage'
+import '../observe.css'
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock } from '../../components/ValueView'
 import { DEFAULT_IDLE_SECONDS, MONITOR_SCOPES, MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
 import { monitorNames, monitorScopes } from '../../components/evals/monitorFields'
 import { flattenScores, fmtMetric, objectRefPrefix, seriesColor, toNum } from '../../components/evals/evalUtils'
-import { Stat, Switch } from '../../components/objects/bits'
+import { Switch } from '../../components/objects/bits'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
@@ -49,14 +56,10 @@ export function MonitorPage() {
   if (obj.isLoading) return <Loading />
   if (obj.error || !obj.data)
     return (
-      <div className="page">
-        <div className="breadcrumbs">
-          <Link to={`/${projectId}/monitors`}>Monitors</Link> <span>/</span> <span>{objectId}</span>
-        </div>
+      <div className="page-frame detail obs-page">
+        <PageHeader variant="detail" back={{ to: `/${projectId}/monitors`, label: 'Monitors' }} title={objectId} help="evaluations.md#monitors" helpTopic="Monitors" />
         {obj.error instanceof ApiError && obj.error.status === 404 ? (
-          <div className="card">
-            <Empty>Monitor “{objectId}” was not found.</Empty>
-          </div>
+          <p className="quiet-empty">Monitor “{objectId}” was not found.</p>
         ) : (
           <ErrorBox error={obj.error ?? 'Not found'} />
         )}
@@ -68,181 +71,168 @@ export function MonitorPage() {
   const fb = results.data ?? []
   const scorerNames = [...new Set(fb.map(scorerOf))]
   const shown = scorerFilter ? fb.filter((f) => scorerOf(f) === scorerFilter) : fb
+  const sentence = monitorSentence(monitorWords(v), {
+    total: fb.length,
+    capped: fb.length >= 1000,
+    lastAt: fb[0]?.created_at ?? null,
+    averages: results.data ? scorerNames.slice(0, 3).map((s) => ({ scorer: s, text: summarize(fb.filter((f) => scorerOf(f) === s)) })) : [],
+  })
 
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={`/${projectId}/monitors`}>Monitors</Link>
-        <span>/</span>
-        <span>{objectId}</span>
-      </div>
-      <div className="page-header">
-        <Switch on={!!v.active} disabled={pending === o.name} onChange={() => void toggle(o)} title={v.active ? 'Pause monitor' : 'Activate monitor'} />
-        <h1 className="truncate">{objectId}</h1>
-        <span className={`badge ${v.active ? 'success' : ''}`}>{v.active ? 'Active' : 'Paused'}</span>
-        <span className="spacer" />
-        <Link className="btn ghost" to={objectVersionsUrl(projectId, objectId)}>
-          v{o.version} · history
-        </Link>
-        <button className="btn primary" onClick={() => setEditing(true)}>
+    <div className="page-frame detail obs-page">
+      <PageHeader
+        variant="detail"
+        back={{ to: `/${projectId}/monitors`, label: 'Monitors' }}
+        title={objectId}
+        help="evaluations.md#monitors"
+        helpTopic="Monitors"
+        sentence={results.isLoading ? undefined : <Sentence size="detail" parts={[sentence]} />}
+        meta={
+          <>
+            {v.description ? <>{v.description} · </> : null}
+            <span title={fmtDate(o.created_at)}>updated {fmtRelative(o.created_at)}</span> · <Link to={objectVersionsUrl(projectId, objectId)}>version {o.version} and its history</Link>
+          </>
+        }
+      />
+      <div className="obs-actions">
+        <label className="obs-check obs-toolbar">
+          <Switch on={!!v.active} disabled={pending === o.name} onChange={() => void toggle(o)} title={v.active ? 'Pause monitor' : 'Activate monitor'} />
+          {v.active ? 'Active' : 'Paused'}
+        </label>
+        <span style={{ flex: 1 }} />
+        <button type="button" className="qbtn primary" onClick={() => setEditing(true)}>
           Edit
         </button>
       </div>
-      {v.description && <p className="muted" style={{ margin: 0 }}>{v.description}</p>}
 
-      <div className="grid-2">
-        <Section title="Configuration">
-          <div className="kv">
-            <div className="k">span names</div>
-            <div className="v chips">
-              {monitorNames(v).length ? (
-                monitorNames(v).map((n) => (
-                  <span key={n} className="chip mono">
-                    {n}
-                  </span>
-                ))
-              ) : (
-                <span className="faint">all root spans</span>
+      <div className="obs-detail-grid">
+        <div className="obs-groups">
+          <ScoreChart feedback={fb} />
+          <section className="obs-quiet" aria-labelledby="mon-results-h">
+            <div className="obs-section-head">
+              <h2 className="view-h" id="mon-results-h">
+                Recent results <span className="glist-count">{fb.length >= 1000 ? '1000+' : fb.length}</span>
+              </h2>
+              {scorerNames.length > 1 && (
+                <select className="input" aria-label="Scorer" value={scorerFilter} onChange={(e) => setScorerFilter(e.target.value)}>
+                  <option value="">All scorers</option>
+                  {scorerNames.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
+                </select>
               )}
             </div>
-            <div className="k">sampling</div>
-            <div className="v">
-              <div className="row">
-                <div className="progress grow" style={{ maxWidth: 160 }}>
-                  <span style={{ width: `${(v.sampling_rate ?? 1) * 100}%` }} />
-                </div>
-                <span className="mono">{Math.round((v.sampling_rate ?? 1) * 100)}%</span>
-              </div>
-            </div>
-            <div className="k">scores</div>
-            <div className="v">
-              {monitorScopes(v).length ? (
-                monitorScopes(v).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
-              ) : (
-                <span className="faint">each scorer where it fits (sessions for session judges, spans otherwise)</span>
-              )}
-              <span className="faint small"> · a session is complete after {v.session_idle_seconds ?? DEFAULT_IDLE_SECONDS}s without new spans</span>
-            </div>
-            <div className="k">scorers</div>
-            <div className="v chips">
-              {(v.scorers ?? []).map((s: string) => (
-                <RefChip key={s} refStr={s} />
-              ))}
-            </div>
-            <div className="k">filter</div>
-            <div className="v">{v.query ? <JsonBlock value={v.query} /> : <span className="faint">none</span>}</div>
-            <div className="k">updated</div>
-            <div className="v" title={fmtDate(o.created_at)}>
-              {fmtRelative(o.created_at)} · <Link to={objectUrl(projectId, objectId, o.digest)}>object</Link>
-            </div>
-          </div>
-        </Section>
-        <Section title="Activity">
-          {results.isLoading ? (
-            <Spinner />
-          ) : (
-            <div className="stat-grid">
-              <Stat label="Scores" value={fb.length >= 1000 ? '1000+' : fb.length.toLocaleString()} />
-              <Stat label="Spans scored" value={new Set(fb.map((f) => f.ref)).size.toLocaleString()} />
-              <Stat label="Last score" value={fb[0] ? fmtRelative(fb[0].created_at) : '—'} title={fb[0] ? fmtDate(fb[0].created_at) : undefined} />
-              {scorerNames.slice(0, 3).map((s) => (
-                <Stat key={s} label={s} value={summarize(fb.filter((f) => scorerOf(f) === s))} />
-              ))}
-            </div>
-          )}
-        </Section>
-      </div>
-
-      <ScoreChart feedback={fb} />
-
-      <Section
-        title="Recent results"
-        actions={
-          scorerNames.length > 1 && (
-            <select className="input" style={{ height: 26, fontSize: 12 }} value={scorerFilter} onChange={(e) => setScorerFilter(e.target.value)}>
-              <option value="">All scorers</option>
-              {scorerNames.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
-          )
-        }
-      >
-        <ErrorBox error={results.error} />
-        {results.isLoading ? (
-          <Loading />
-        ) : shown.length === 0 ? (
-          <div className="faint">
-            {v.active ? 'No results yet. Matching spans are scored as they finish.' : 'This monitor is paused. Activate it to start scoring new spans.'}
-          </div>
-        ) : (
-          <div className="table-wrap" style={{ maxHeight: 560 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Span</th>
-                  <th>Scorer</th>
-                  <th>Output</th>
-                  <th>Scorer span</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.slice(0, 300).map((f) => {
-                  const target = parseRef(f.ref)
-                  const sc = f.span_ref ? parseRef(f.span_ref) : null
-                  const out = f.payload?.output
-                  return (
-                    <tr key={f.id}>
-                      <td className="muted" title={fmtDate(f.created_at)}>
-                        {fmtRelative(f.created_at)}
-                      </td>
-                      <td>
-                        {target?.kind === 'span' ? (
-                          <Link className="mono" to={spanUrl(projectId, target.name)}>
-                            {target.name.slice(-8)}
-                          </Link>
-                        ) : (
-                          <RefChip refStr={f.ref} />
-                        )}
-                      </td>
-                      <td>
-                        <span className="chip mono">{scorerOf(f)}</span>
-                      </td>
-                      <td>
-                        <OutputCell v={out} />
-                      </td>
-                      <td>{sc?.kind === 'span' ? <Link to={spanUrl(projectId, sc.name)}>view →</Link> : <span className="faint">—</span>}</td>
+            <ErrorBox error={results.error} />
+            {results.isLoading ? (
+              <Loading />
+            ) : shown.length === 0 ? (
+              <p className="quiet-empty">{v.active ? 'No results yet. Matching spans are scored as they finish.' : 'This monitor is paused. Activate it to start scoring new spans.'}</p>
+            ) : (
+              <>
+                <PlainTable caption="Recent results of this monitor">
+                  <thead>
+                    <tr>
+                      <th scope="col">Time</th>
+                      <th scope="col">Scored</th>
+                      <th scope="col">Scorer</th>
+                      <th scope="col">Result</th>
+                      <th scope="col">
+                        <span title="The scorer's own span (internal term)">Scorer span</span>
+                      </th>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            {shown.length > 300 && <div className="hint" style={{ padding: 8 }}>Showing 300 of {shown.length}.</div>}
-          </div>
-        )}
-      </Section>
+                  </thead>
+                  <tbody>
+                    {shown.slice(0, 300).map((f) => {
+                      const target = parseRef(f.ref)
+                      const sc = f.span_ref ? parseRef(f.span_ref) : null
+                      const out = f.payload?.output
+                      return (
+                        <tr key={f.id}>
+                          <td className="obs-faint" title={fmtDate(f.created_at)} style={{ whiteSpace: 'nowrap' }}>
+                            {fmtRelative(f.created_at)}
+                          </td>
+                          <td>
+                            {target?.kind === 'span' ? (
+                              <Link className="mono" to={spanUrl(projectId, target.name)} title={target.name}>
+                                {target.name.slice(-8)}
+                              </Link>
+                            ) : (
+                              <RefChip refStr={f.ref} />
+                            )}
+                          </td>
+                          <td className="mono">{scorerOf(f)}</td>
+                          <td>
+                            <OutputCell v={out} />
+                          </td>
+                          <td>{sc?.kind === 'span' ? <Link to={spanUrl(projectId, sc.name)}>Open</Link> : <span className="obs-faint">—</span>}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </PlainTable>
+                {shown.length > 300 && <p className="quiet-note">Showing 300 of {shown.length}.</p>}
+              </>
+            )}
+          </section>
+        </div>
+        <Inspector title="Configuration" label="Monitor configuration">
+          <KeyValueList
+            items={[
+              { label: 'Span names', value: monitorNames(v).length ? monitorNames(v).join(', ') : 'All top-level spans', mono: monitorNames(v).length > 0 },
+              { label: 'Sampling', value: `${Math.round((v.sampling_rate ?? 1) * 100)}%`, help: 'The share of matching targets scored.' },
+              {
+                label: 'Scores',
+                value: monitorScopes(v).length
+                  ? monitorScopes(v).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
+                  : 'Each scorer where it fits (sessions for session judges, spans otherwise)',
+              },
+              { label: 'Complete after', value: `${v.session_idle_seconds ?? DEFAULT_IDLE_SECONDS} s without new spans`, help: 'When a session counts as finished.' },
+              {
+                label: 'Scorers',
+                value: (v.scorers ?? []).length ? (
+                  <span className="chips">
+                    {(v.scorers ?? []).map((s: string) => (
+                      <RefChip key={s} refStr={s} />
+                    ))}
+                  </span>
+                ) : (
+                  'None'
+                ),
+              },
+              { label: 'Spans scored', value: new Set(fb.map((f) => f.ref)).size.toLocaleString() },
+            ]}
+          />
+          {v.query && (
+            <>
+              <InspectorDivider />
+              <details className="insp-raw">
+                <summary>Filter</summary>
+                <JsonBlock value={v.query} />
+              </details>
+            </>
+          )}
+          <InspectorDivider />
+          <InspectorLinks>
+            <Link to={objectUrl(projectId, objectId, o.digest)}>The stored object</Link>
+            <Link to={objectVersionsUrl(projectId, objectId)}>Every version</Link>
+          </InspectorLinks>
+        </Inspector>
+      </div>
       {editing && <MonitorEditor projectId={projectId} initial={o} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />}
     </div>
   )
 }
 
 function OutputCell({ v }: { v: unknown }) {
-  if (typeof v === 'boolean') return <span className={`badge ${v ? 'success' : 'error'}`}>{String(v)}</span>
+  if (typeof v === 'boolean') return <span>{String(v)}</span>
   if (typeof v === 'number') return <span className="mono">{fmtMetric(v)}</span>
   if (v && typeof v === 'object' && !Array.isArray(v)) {
     const flat = flattenScores(v)
     const reason = (v as Record<string, unknown>).reason
     return (
       <div className="col" style={{ gap: 2 }}>
-        <span className="chips">
-          {Object.entries(flat).map(([k, x]) => (
-            <span key={k} className={`badge ${typeof x === 'boolean' ? (x ? 'success' : 'error') : ''}`}>
-              {k} {fmtMetric(x)}
-            </span>
-          ))}
-        </span>
-        {typeof reason === 'string' && <span className="faint small cell-preview">{reason}</span>}
+        <span>{Object.entries(flat).map(([k, x]) => `${k} ${fmtMetric(x)}`).join(' · ')}</span>
+        {typeof reason === 'string' && <span className="obs-faint small">{reason}</span>}
       </div>
     )
   }
@@ -258,13 +248,13 @@ function summarize(fs: Feedback[]): string {
     return first === undefined ? null : toNum(first)
   })
   const nums = vals.filter((x): x is number => x != null)
-  if (!nums.length) return `${fs.length}`
+  if (!nums.length) return `gave ${fs.length} result${fs.length === 1 ? '' : 's'}`
   const allBool = fs.every((f) => {
     const out = f.payload?.output
     return typeof out === 'boolean' || typeof Object.values(flattenScores(out))[0] === 'boolean'
   })
   const mean = nums.reduce((a, b) => a + b, 0) / nums.length
-  return allBool ? `${(mean * 100).toFixed(0)}% true` : `avg ${fmtMetric(mean)}`
+  return allBool ? `true ${(mean * 100).toFixed(0)}% of the time` : `averages ${fmtMetric(mean)}`
 }
 
 /** Score over time, bucketed means per numeric/bool series. */
@@ -313,11 +303,15 @@ function ScoreChart({ feedback }: { feedback: Feedback[] }) {
   if (!series.length) return null
   const fmtT = (t: number) => new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   return (
-    <Section title="Scores over time">
-      <div style={{ height: 220 }}>
+    <section className="obs-quiet" aria-labelledby="mon-chart-h">
+      <h2 className="view-h" id="mon-chart-h">
+        Scores over time
+      </h2>
+      <div className="view-panel">
+      <div style={{ height: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
-            <CartesianGrid stroke="var(--border)" vertical={false} />
+            <CartesianGrid stroke="var(--separator)" vertical={false} />
             <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={fmtT} tick={{ fill: 'var(--text-3)', fontSize: 11 }} stroke="var(--border)" />
             <YAxis tick={{ fill: 'var(--text-3)', fontSize: 11 }} stroke="var(--border)" width={48} />
             <Tooltip
@@ -327,12 +321,13 @@ function ScoreChart({ feedback }: { feedback: Feedback[] }) {
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             {series.map((k, i) => (
-              <Line key={k} type="monotone" dataKey={k} stroke={seriesColor(i)} strokeWidth={2} dot={{ r: 2 }} connectNulls isAnimationActive={false} />
+              <Line key={k} type="monotone" dataKey={k} stroke={seriesColor(i)} strokeWidth={1.75} dot={{ r: 2 }} connectNulls isAnimationActive={false} />
             ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <div className="hint">Booleans are plotted as the fraction of true results per time bucket.</div>
-    </Section>
+      <p className="quiet-note">True or false results are plotted as the share that were true in each period.</p>
+      </div>
+    </section>
   )
 }

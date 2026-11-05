@@ -1,3 +1,4 @@
+import { Segmented } from '../ui/Segmented'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -46,14 +47,16 @@ export function HistoryPanel({
           ✕
         </button>
       </div>
-      <div className="seg" role="group" aria-label="History source" style={{ alignSelf: 'flex-start' }}>
-        <button className={tab === 'local' ? 'on' : ''} aria-pressed={tab === 'local'} onClick={() => setTab('local')} title="Runs made in this browser">
-          This browser ({local.length})
-        </button>
-        <button className={tab === 'server' ? 'on' : ''} aria-pressed={tab === 'server'} onClick={() => setTab('server')} title="Tracked playground calls on the server">
-          Tracked calls
-        </button>
-      </div>
+      <Segmented
+        label="History source"
+        size="sm"
+        options={[
+          { id: 'local', label: `This browser (${local.length})`, title: 'Runs made in this browser' },
+          { id: 'server', label: 'Tracked calls', title: 'Tracked playground calls on the server' },
+        ]}
+        value={tab}
+        onChange={(t) => setTab(t as typeof tab)}
+      />
       <input className="input sm" placeholder="Filter by model or text" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter history" />
       {tab === 'server' && server.isLoading && <Spinner label="Loading runs…" />}
       <ErrorBox error={tab === 'server' ? server.error : null} />
@@ -66,7 +69,7 @@ export function HistoryPanel({
         {runs.map((r) => (
           <div key={r.id} className="pg-history-item">
             <div className="row small" style={{ gap: 6 }}>
-              <span className={`badge ${r.mode === 'image' ? 'accent' : ''}`}>{r.mode}</span>
+              <span className="muted">{r.mode === 'image' ? 'Image' : 'Chat'}</span>
               <span className="mono truncate grow" title={r.model}>
                 {r.model}
               </span>

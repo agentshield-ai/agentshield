@@ -93,17 +93,18 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
         <>
           <span className="hint grow">{problem ?? ''}</span>
           <button
-            className="btn"
+            type="button"
+            className="qbtn"
             disabled={!!problem || busy}
             title="Send a sample event to the action now"
             onClick={() => run(async () => setTestRun((await automationsApi.test(projectId, { val: final() })).run))}
           >
             Send test
           </button>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="qbtn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!!problem || busy} onClick={() => run(async () => onSaved(await publish(v.name.trim(), final())))}>
+          <button type="button" className="qbtn primary" disabled={!!problem || busy} onClick={() => run(async () => onSaved(await publish(v.name.trim(), final())))}>
             {busy ? 'Working…' : initial ? 'Save new version' : 'Create automation'}
           </button>
         </>

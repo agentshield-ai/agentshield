@@ -1,20 +1,27 @@
-// Agents: every agent that ran in the project, with its hand-offs,
-// reasoning, errors, AgentShield detection rate and scores.
-import { useMemo } from 'react'
+// Agents (DESIGN.md §7, §7.1 rule 1, §7.2): one sentence answering "which
+// agents are working, and which are in trouble?", naming those that need a
+// look, then the grouped lists "Needs a look" and "Fine". Each row says in
+// one generated line how much the agent ran and what went wrong. The time
+// range, search and filters live in the URL; the chips sit behind "Filter".
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type AgentSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { useSessionScope } from '../../hooks/useSessionScope'
-import { ScopeCapNote } from '../../components/ui/FilterBar'
-import { isFlagged, scoreBelowMatches, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
-import { flaggedOf, fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
-import { agentAnalyticsUrl, agentUrl } from '../../lib/urls'
-import { ErrorBox, Loading } from '../../components/common'
-import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
+import { isEmptyFilter, isFlagged, removeKey, scoreBelowMatches, timeWindow, type FilterState, type TimeRange } from '../../lib/filters'
+import { agentNeedsALook, agentsSentence } from '../../lib/summaries/agentsTeams'
+import { agentAnalyticsUrl } from '../../lib/urls'
+import { ErrorBox } from '../../components/common'
+import { FilterBar, FilterButton, FilterSearchField, ScopeCapNote, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { GuidedEmpty } from '../../components/ui/EmptyState'
-import { AgentChip, DetectionBadges, ScorePill, Tip, CapNote } from '../../components/ui/bits'
-import { HelpLink } from '../../components/ui/PageHeader'
+import { GroupedList } from '../../components/ui/GroupedList'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { CapNote } from '../../components/ui/bits'
+import { AgentRow, RANGES, RowsSkeleton, toSentenceParts } from '../../components/agents/AgentRows'
+import './agents-teams.css'
 
 const DEFAULT_TIME: TimeRange = '24h'
 /** The most agents one page loads (the server's order: most recent activity first). */
@@ -38,6 +45,7 @@ export function agentMatches(a: AgentSummary, s: FilterState): boolean {
 export function AgentsListPage() {
   const pid = useProjectId()
   const [state, setState] = useFilters()
+  const [filterOpen, setFilterOpen] = useState(false)
   const base = { q: state.q, team_id: state.team }
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.agents(pid, { ...base, ...timeWindow({ time: r }, r), limit: 1 })).total_count, [pid, 'agents', base])
   const time = widen.time
@@ -48,10 +56,12 @@ export function AgentsListPage() {
     placeholderData: keepPreviousData,
   })
   const any = useQuery({ queryKey: ['v1', pid, 'agents', 'any'], queryFn: () => v1.agents(pid, { limit: 1 }) })
-  const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000 })
+  const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000, enabled: filterOpen })
   const scope = useSessionScope(pid, 'agents', state, time, widen.ready)
-  const all = q.data?.items ?? []
+  const all = useMemo(() => q.data?.items ?? [], [q.data])
   const rows = all.filter((a) => agentMatches(a, state) && (!scope.active || scope.agents.has(a.agent_name)))
+  const look = rows.filter(agentNeedsALook)
+  const fine = rows.filter((a) => !agentNeedsALook(a))
   const options = useMemo(
     () => ({
       agents: all.map((a) => a.agent_name),
@@ -61,113 +71,101 @@ export function AgentsListPage() {
     }),
     [all, teams.data],
   )
+  const projectEmpty = any.data?.total_count === 0
+  const loading = q.isLoading || !scope.ready || !widen.ready
+  const filtered = !isEmptyFilter({ ...state, time: undefined, from: undefined, to: undefined }, DEFAULT_TIME)
 
-  return (
-    <div className="page wide">
-      <header className="page-head">
-        <div className="grow">
-          <h1>Agents</h1>
-          <p className="page-sub">Who does the work, how they hand it on, and how safely.</p>
-        </div>
-        <Link className="btn ghost sm" to={agentAnalyticsUrl(pid)} title="Charts, span search, signals and agent evaluations">
-          Analytics and spans
-        </Link>
-        <HelpLink doc="agents.md" topic="Agents" />
-      </header>
-      {any.data?.total_count === 0 ? (
+  const header = (
+    <PageHeader
+      title="Agents"
+      help="agents.md"
+      controls={
+        projectEmpty ? undefined : (
+          <>
+            <Segmented
+              label="Time range"
+              options={RANGES}
+              value={(RANGES.some((r) => r.id === time) ? time : null) as TimeRange | null}
+              onChange={(t) => setState({ ...removeKey(state, 'time'), time: t === DEFAULT_TIME && !widen.widened ? undefined : t })}
+            />
+            <FilterSearchField label="Search agents" />
+            <FilterButton open={filterOpen} onToggle={() => setFilterOpen((o) => !o)} defaultTime={DEFAULT_TIME} />
+          </>
+        )
+      }
+      sentence={
+        projectEmpty ? undefined : loading ? (
+          <p className="sentence s-outcome sk-sentence" aria-busy="true">
+            <span className="sr-only">Counting agents…</span>
+            <span className="sk sk-line" aria-hidden />
+          </p>
+        ) : (
+          <Sentence parts={toSentenceParts(agentsSentence({ agents: rows, time, filtered }), pid)} />
+        )
+      }
+    />
+  )
+
+  if (projectEmpty)
+    return (
+      <div className="page-frame">
+        {header}
         <GuidedEmpty projectId={pid} title="No agents yet">
           Agents appear when spans carry an agent name (<span className="mono">gen_ai.agent.name</span> on <span className="mono">invoke_agent</span> spans, or the SDKs'
           conversation API). Hand-offs between them are detected automatically.
         </GuidedEmpty>
+      </div>
+    )
+
+  return (
+    <div className="page-frame">
+      {header}
+      <FilterBar
+        page="agents"
+        search="external"
+        timePicker="none"
+        collapsible
+        open={filterOpen}
+        defaultTime={DEFAULT_TIME}
+        effectiveTime={time}
+        options={options}
+      />
+      {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
+      <ErrorBox error={q.error} />
+      <ErrorBox error={scope.error} />
+      {scope.truncated && <ScopeCapNote total={scope.total} />}
+      {q.data && <CapNote shown={q.data.items.length} total={q.data.total_count} what="agents" why="the most recently active ones; the filters apply to these. Narrow the time range or search by name to see the rest" />}
+      {loading ? (
+        <RowsSkeleton label="Loading agents" />
+      ) : rows.length === 0 ? (
+        <div className="quiet-empty">
+          <p>No agents match these filters.</p>
+          <p className="quiet-note">Try a longer time range, or remove a filter.</p>
+          <button type="button" className="qbtn" onClick={() => setState({})}>
+            Clear filters
+          </button>
+        </div>
       ) : (
         <>
-          <FilterBar page="agents" defaultTime={DEFAULT_TIME} effectiveTime={time} options={options} placeholder="Filter agents…  try has:block or tool:web_search" />
-          {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
-          <ErrorBox error={q.error} />
-          <ErrorBox error={scope.error} />
-          {scope.truncated && <ScopeCapNote total={scope.total} />}
-          {q.data && <CapNote shown={q.data.items.length} total={q.data.total_count} what="agents" why="the most recently active ones; the filters apply to these. Narrow the time range or search by name to see the rest" />}
-          {q.isLoading || !scope.ready ? (
-            <Loading />
-          ) : rows.length === 0 ? (
-            <div className="empty-inline">
-              <strong className="grow">No agents match these filters.</strong>
-              <button className="btn sm" onClick={() => setState({})}>
-                Clear filters
-              </button>
-            </div>
-          ) : (
-            <div className="table-wrap">
-              <table className="table agents-table">
-                <caption className="sr-only">Agents</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Agent</th>
-                    <th scope="col">Sessions</th>
-                    <th scope="col">
-                      Runs <Tip text="Invocations of the agent (invoke_agent spans)." />
-                    </th>
-                    <th scope="col">
-                      Hand-offs <Tip text="In: work handed to this agent. Out: work it handed to others. Returns of control are not counted." />
-                    </th>
-                    <th scope="col">
-                      Reasoning <Tip text="Reasoning steps, and reasoning tokens as reported by the provider." />
-                    </th>
-                    <th scope="col">
-                      Errors <Tip text="Spans of this agent that ended with an error, including tool calls it recovered from." />
-                    </th>
-                    <th scope="col">
-                      Flagged <Tip text="The agent's recorded tool calls that drew a non-allow AgentShield verdict (block, approval or log), out of all its recorded tool calls. A call with several verdicts counts once. Replays are not counted." />
-                    </th>
-                    <th scope="col">Scores</th>
-                    <th scope="col">Cost</th>
-                    <th scope="col">Last seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((a) => (
-                    <tr key={a.agent_name}>
-                      <td>
-                        <AgentChip name={a.agent_name} to={agentUrl(pid, a.agent_name)} />
-                      </td>
-                      <td>{fmtNumber(a.session_count)}</td>
-                      <td>{fmtNumber(a.invocation_count)}</td>
-                      <td className="nowrap">
-                        <span title="handed to this agent">↘ {fmtNumber(a.handoffs_in)}</span> · <span title="handed on by this agent">↗ {fmtNumber(a.handoffs_out)}</span>
-                      </td>
-                      <td className="nowrap">
-                        {fmtNumber(a.reasoning_step_count)} steps{a.reasoning_tokens ? <span className="faint"> · {fmtNumber(a.reasoning_tokens)} tok</span> : null}
-                      </td>
-                      <td className={a.error_count ? 'text-error' : ''}>{fmtNumber(a.error_count)}</td>
-                      <td>
-                        <div className="col" style={{ gap: 2 }}>
-                          <span title={flaggedOf(a.flagged_tool_calls, a.tool_call_count)}>
-                            {a.detection_rate == null ? <span className="faint">—</span> : `${Math.round(a.detection_rate * 100)}%`}
-                          </span>
-                          {a.detection_rate != null && <span className="faint small">{flaggedOf(a.flagged_tool_calls, a.tool_call_count)}</span>}
-                          <DetectionBadges counts={a.detection_counts} />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="row wrap" style={{ gap: 4 }}>
-                          {Object.entries(a.scores ?? {}).map(([k, v]) => (
-                            <ScorePill key={k} scorer={k} value={v.mean} count={v.count} />
-                          ))}
-                          {!Object.keys(a.scores ?? {}).length && <span className="faint">—</span>}
-                        </div>
-                      </td>
-                      <td>{fmtCost(a.total_cost_usd)}</td>
-                      <td className="nowrap" title={fmtDate(a.last_seen)}>
-                        {fmtRelative(a.last_seen)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {look.length > 0 && (
+            <GroupedList title="Needs a look" count={look.length} className="agent-list">
+              {look.map((a) => (
+                <AgentRow key={a.agent_name} pid={pid} a={a} />
+              ))}
+            </GroupedList>
+          )}
+          {fine.length > 0 && (
+            <GroupedList title="Fine" count={fine.length} className="agent-list">
+              {fine.map((a) => (
+                <AgentRow key={a.agent_name} pid={pid} a={a} />
+              ))}
+            </GroupedList>
           )}
         </>
       )}
+      <p className="at-foot">
+        Charts, span search, signals and agent evaluations are in <Link to={agentAnalyticsUrl(pid)}>agent analytics</Link>.
+      </p>
     </div>
   )
 }

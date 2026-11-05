@@ -1,17 +1,28 @@
+// One leaderboard (DESIGN.md §7, §7.2 rule 3): a sentence saying who leads
+// on how many metrics, then a plain ranked table: the rank (average rank
+// across the metrics), the model, and each metric's value from the model's
+// latest finished run, the best in bold. A value opens that run.
 import { dynamicRunIds } from '../../api/leaderboards'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
 import { parseRef } from '../../api/refs'
 import type { LeaderboardComputeRes } from '../../api/types'
-import { Empty, ErrorBox, Loading } from '../../components/common'
+import { ErrorBox, Loading } from '../../components/common'
 import { LeaderboardEditor } from '../../components/evals/LeaderboardEditor'
-import { fmtMetric, toNum } from '../../components/evals/evalUtils'
+import { toNum } from '../../components/evals/evalUtils'
 import { encodeLb } from '../../components/evals/leaderboardUtils'
+import { lbShapes } from '../../components/evals/sentence'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Sentence } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate, fmtRelative } from '../../lib/format'
-import { spanUrl, compareEvaluationsUrl, newEvaluationUrl, objectUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
+import { fmtDate } from '../../lib/format'
+import { relativeTime } from '../../lib/summaries'
+import { leaderboardSentence, metricValue, metricWords } from '../../lib/summaries/evaluate'
+import { compareEvaluationsUrl, newEvaluationUrl, objectUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
+import '../evaluations/evaluate.css'
 
 type Row = LeaderboardComputeRes['rows'][number]
 
@@ -32,13 +43,11 @@ export function LeaderboardPage() {
   const stats = useMemo(() => {
     if (!data) return null
     const best: Record<string, number | null> = {}
-    const range: Record<string, [number, number]> = {}
     const ranks: Record<string, number[]> = {}
     for (const c of data.columns) {
       const k = String(c.index)
       const vals = data.rows.map((r) => toNum(r.values[k]?.value)).filter((v): v is number => v != null)
       best[k] = vals.length ? (c.should_minimize ? Math.min(...vals) : Math.max(...vals)) : null
-      range[k] = vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 0]
       const sorted = [...new Set(vals)].sort((a, b) => (c.should_minimize ? a - b : b - a))
       for (const r of data.rows) {
         const v = toNum(r.values[k]?.value)
@@ -50,7 +59,7 @@ export function LeaderboardPage() {
       const rs = ranks[r.model_ref]
       avgRank[r.model_ref] = rs?.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null
     }
-    return { best, range, avgRank }
+    return { best, avgRank }
   }, [data])
 
   const rows = useMemo(() => {
@@ -71,170 +80,157 @@ export function LeaderboardPage() {
   }, [data, stats, sort])
 
   const clickSort = (col: string, minimize?: boolean) =>
-    setSort((s) => (s.col === col ? { col, dir: (-s.dir as 1 | -1) } : { col, dir: col === 'rank' || col === 'model' || minimize ? 1 : -1 }))
-  const arrow = (col: string) => (sort.col === col ? (sort.dir === 1 ? ' ▲' : ' ▼') : '')
+    setSort((s) => (s.col === col ? { col, dir: -s.dir as 1 | -1 } : { col, dir: col === 'rank' || col === 'model' || minimize ? 1 : -1 }))
+  const ariaSort = (col: string): 'ascending' | 'descending' | undefined => (sort.col === col ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined)
+  const back = { to: `/${projectId}/leaderboards`, label: 'Leaderboards' }
+
+  if (q.isLoading) return <Loading />
+  if (!data)
+    return (
+      <div className="page-frame detail">
+        <PageHeader variant="detail" back={back} title={objectId} help="evaluations.md#leaderboards" helpTopic="Leaderboards" />
+        {q.error instanceof ApiError && q.error.status === 404 ? (
+          <div className="quiet-empty">
+            <p>Leaderboard “{objectId}” was not found.</p>
+          </div>
+        ) : (
+          <ErrorBox error={q.error} />
+        )}
+      </div>
+    )
+  const sh = lbShapes(data)
+  const many = new Set(data.columns.map((c) => c.evaluation_name)).size > 1
+  const runIds = [...new Set(data.rows.flatMap((r) => Object.values(r.values).map((v) => v.evaluation_run_id)))].filter(Boolean)
+  const dyn = dynamicRunIds(data.leaderboard.value)
+  const SortHead = ({ col, label, title, minimize, num }: { col: string; label: ReactNode; title?: string; minimize?: boolean; num?: boolean }) => (
+    <th scope="col" className={num ? 'num' : undefined} aria-sort={ariaSort(col)} title={title}>
+      <button type="button" className="ev-dir" style={{ color: 'inherit' }} onClick={() => clickSort(col, minimize)}>
+        {label}
+        {sort.col === col ? (sort.dir === 1 ? ' ↑' : ' ↓') : ''}
+      </button>
+    </th>
+  )
 
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={`/${projectId}/leaderboards`}>Leaderboards</Link>
-        <span>/</span>
-        <span>{objectId}</span>
-      </div>
-      <div className="page-header">
-        <div className="col" style={{ gap: 2, minWidth: 0 }}>
-          <h1 className="truncate">{objectId}</h1>
-          {data?.leaderboard.value?.description && <span className="muted small">{data.leaderboard.value.description}</span>}
-        </div>
-        <span className="spacer" />
-        {data && (
+    <div className="page-frame detail">
+      <PageHeader
+        variant="detail"
+        back={back}
+        title={objectId}
+        help="evaluations.md#leaderboards"
+        helpTopic="Leaderboards"
+        sentence={<Sentence size="detail" parts={[leaderboardSentence(sh.columns, sh.rows)]} />}
+        meta={[data.leaderboard.value?.description, `each value is the model’s latest finished run`].filter(Boolean).join(' · ')}
+        controls={
           <>
-            <Link className="btn ghost" to={objectVersionsUrl(projectId, objectId)}>
-              v{data.leaderboard.version} · history
-            </Link>
-            {dynamicRunIds(data.leaderboard.value).length > 0 && (
+            <button type="button" className="qbtn" onClick={() => setEditing(true)}>
+              Edit
+            </button>
+            <button type="button" className="qbtn" disabled={!runIds.length} onClick={() => nav(compareEvaluationsUrl(projectId, runIds))} title="Compare the runs behind these values">
+              Compare these runs
+            </button>
+            {dyn.length > 0 && (
               <Link
-                className="btn ghost"
+                className="qbtn"
                 title="Open the evaluation comparison this leaderboard was saved from"
-                to={`${compareEvaluationsUrl(projectId, dynamicRunIds(data.leaderboard.value))}${Array.isArray(data.leaderboard.value.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.value.weft_dynamic.metrics))}` : ''}`}
+                to={`${compareEvaluationsUrl(projectId, dyn)}${Array.isArray(data.leaderboard.value.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.value.weft_dynamic.metrics))}` : ''}`}
               >
                 Source comparison
               </Link>
             )}
-            <button
-              className="btn"
-              disabled={!data.rows.length}
-              onClick={() => {
-                const ids = [...new Set(data.rows.flatMap((r) => Object.values(r.values).map((v) => v.evaluation_run_id)))].filter(Boolean)
-                nav(compareEvaluationsUrl(projectId, ids))
-              }}
-            >
-              Compare runs
-            </button>
-            <button className="btn primary" onClick={() => setEditing(true)}>
-              Edit
-            </button>
+            <Link className="linkish" to={objectVersionsUrl(projectId, objectId)}>
+              Version history
+            </Link>
           </>
-        )}
-      </div>
-      {q.error instanceof ApiError && q.error.status === 404 ? (
-        <div className="card">
-          <Empty>Leaderboard “{objectId}” was not found.</Empty>
+        }
+      />
+      {data.columns.length === 0 ? (
+        <div className="quiet-empty">
+          <p>This leaderboard has no metrics.</p>
+          <button type="button" className="qbtn" onClick={() => setEditing(true)}>
+            Add metrics
+          </button>
         </div>
-      ) : (
-        <ErrorBox error={q.error} />
-      )}
-      {q.isLoading ? (
-        <Loading />
-      ) : data && stats ? (
-        data.columns.length === 0 ? (
-          <div className="card">
-            <Empty>
-              This leaderboard has no columns.{' '}
-              <button className="btn sm" onClick={() => setEditing(true)}>
-                Add columns
-              </button>
-            </Empty>
-          </div>
-        ) : data.rows.length === 0 ? (
-          <div className="card">
-            <Empty>
-              <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-                <div>No finished evaluation runs match these columns yet.</div>
-                <Link className="btn primary" to={`${newEvaluationUrl(projectId)}?evaluation=${encodeURIComponent(data.columns[0].evaluation_object_ref)}`}>
-                  ▷ Run an evaluation
-                </Link>
-              </div>
-            </Empty>
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th className="sortable num" style={{ width: 60 }} onClick={() => clickSort('rank')} title="Average rank across columns">
-                    Rank{arrow('rank')}
-                  </th>
-                  <th className="sortable" onClick={() => clickSort('model')}>
-                    Model{arrow('model')}
-                  </th>
+      ) : data.rows.length === 0 ? (
+        <div className="quiet-empty">
+          <p>No finished evaluation runs match these metrics yet.</p>
+          <Link className="qbtn" to={`${newEvaluationUrl(projectId)}?evaluation=${encodeURIComponent(data.columns[0].evaluation_object_ref)}`}>
+            Run an evaluation
+          </Link>
+        </div>
+      ) : stats ? (
+        <PlainTable caption={`Models ranked on ${objectId}`}>
+          <thead>
+            <tr>
+              <SortHead col="rank" label="Rank" title="Average rank across the metrics" num />
+              <SortHead col="model" label="Model" />
+              {data.columns.map((c) => (
+                <SortHead
+                  key={c.index}
+                  col={String(c.index)}
+                  minimize={c.should_minimize}
+                  num
+                  title={`${c.scorer_name}.${c.summary_metric_path} of ${c.evaluation_name || parseRef(c.evaluation_object_ref)?.name}; ${c.should_minimize ? 'lower' : 'higher'} is better`}
+                  label={
+                    <>
+                      {metricWords(`${c.scorer_name}.${c.summary_metric_path}`)}
+                      {many && <span className="ev-delta">{c.evaluation_name}</span>}
+                    </>
+                  }
+                />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const mp = parseRef(r.model_ref)
+              const ar = stats.avgRank[r.model_ref]
+              return (
+                <tr key={r.model_ref}>
+                  <td className={`num ${ar === 1 ? 'ev-best' : ''}`}>{ar == null ? '—' : Number.isInteger(ar) ? ar : ar.toFixed(1)}</td>
+                  <td>
+                    {mp ? (
+                      <Link to={objectUrl(mp.projectId, mp.name, mp.digest ?? 'latest')} title={r.model_ref}>
+                        {r.model_name}
+                      </Link>
+                    ) : (
+                      r.model_name
+                    )}
+                  </td>
                   {data.columns.map((c) => {
-                    const evalUrl = refUrl(c.evaluation_object_ref)
+                    const k = String(c.index)
+                    const cell = r.values[k]
+                    const v = toNum(cell?.value)
+                    const isBest = v != null && v === stats.best[k] && data.rows.length > 1
+                    const key = `${c.scorer_name}.${c.summary_metric_path}`
                     return (
-                      <th key={c.index} className="sortable num" onClick={() => clickSort(String(c.index), c.should_minimize)} title={c.evaluation_object_ref}>
-                        <div className="faint small" style={{ fontWeight: 400 }}>
-                          {evalUrl ? (
-                            <Link to={evalUrl} onClick={(e) => e.stopPropagation()}>
-                              {c.evaluation_name || parseRef(c.evaluation_object_ref)?.name}
-                            </Link>
-                          ) : (
-                            c.evaluation_name
-                          )}
-                        </div>
-                        <span className="mono">
-                          {c.scorer_name}.{c.summary_metric_path}
-                        </span>{' '}
-                        <span className="faint" title={c.should_minimize ? 'Lower is better' : 'Higher is better'}>
-                          {c.should_minimize ? '↓' : '↑'}
-                        </span>
-                        {arrow(String(c.index))}
-                      </th>
+                      <td key={k} className={`num ${isBest ? 'ev-best' : ''}`}>
+                        {cell ? (
+                          <Link to={compareEvaluationsUrl(projectId, [cell.evaluation_run_id])} title={`Run of ${fmtDate(cell.started_at)}${isBest ? ' (best)' : ''}`}>
+                            {typeof cell.value === 'number' || typeof cell.value === 'boolean' ? metricValue(key, cell.value) : '—'}
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                        {cell && <span className="ev-delta">{relativeTime(cell.started_at)}</span>}
+                      </td>
                     )
                   })}
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const mp = parseRef(r.model_ref)
-                  const ar = stats.avgRank[r.model_ref]
-                  return (
-                    <tr key={r.model_ref}>
-                      <td className="num mono">{ar == null ? '—' : Number.isInteger(ar) ? ar : ar.toFixed(1)}</td>
-                      <td>
-                        {mp ? (
-                          <Link to={objectUrl(mp.projectId, mp.name, mp.digest ?? 'latest')} style={{ fontWeight: 500 }} title={r.model_ref}>
-                            {r.model_name}
-                          </Link>
-                        ) : (
-                          r.model_name
-                        )}
-                        {mp?.digest && <span className="faint small mono"> :{mp.digest.slice(0, 6)}</span>}
-                      </td>
-                      {data.columns.map((c) => {
-                        const k = String(c.index)
-                        const cell = r.values[k]
-                        const v = toNum(cell?.value)
-                        const isBest = v != null && v === stats.best[k] && data.rows.length > 1
-                        const [lo, hi] = stats.range[k]
-                        const frac = v == null ? 0 : hi === lo ? 1 : c.should_minimize ? (hi - v) / (hi - lo) : (v - lo) / (hi - lo)
-                        return (
-                          <td key={k} className={`num ${isBest ? 'best' : ''}`}>
-                            {cell ? (
-                              <Link to={spanUrl(projectId, cell.evaluation_run_id)} title={`Run ${fmtDate(cell.started_at)}`} style={{ color: 'inherit' }}>
-                                <div className="mono">{fmtMetric(cell.value)}</div>
-                                <div style={{ height: 3, background: 'var(--panel-2)', borderRadius: 2, marginTop: 3 }}>
-                                  <div style={{ width: `${Math.max(4, frac * 100)}%`, height: '100%', background: isBest ? 'var(--success)' : 'var(--accent)', borderRadius: 2, opacity: 0.7 }} />
-                                </div>
-                                <div className="faint" style={{ fontSize: 10.5 }}>
-                                  {fmtRelative(cell.started_at)}
-                                </div>
-                              </Link>
-                            ) : (
-                              <span className="faint">—</span>
-                            )}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )
+              )
+            })}
+          </tbody>
+        </PlainTable>
       ) : null}
-      {data && <div className="hint">Each cell is the model’s most recent finished run of that evaluation. Best value per column is highlighted.</div>}
-      {editing && data && (
+      {(() => {
+        const ev = data.columns[0]?.evaluation_object_ref
+        return ev && refUrl(ev) ? (
+          <p className="ev-note">
+            Add a model by running it on <Link to={`${newEvaluationUrl(projectId)}?evaluation=${encodeURIComponent(ev)}`}>{data.columns[0].evaluation_name || parseRef(ev)?.name}</Link>.
+          </p>
+        ) : null
+      })()}
+      {editing && (
         <LeaderboardEditor
           projectId={projectId}
           initial={data.leaderboard}

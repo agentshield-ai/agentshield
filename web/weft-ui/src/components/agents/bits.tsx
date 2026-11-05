@@ -1,21 +1,16 @@
 import { Bar, BarChart, Line, LineChart, ResponsiveContainer, YAxis } from 'recharts'
 import { RANGES } from './agentUtils'
+import { Segmented } from '../ui/Segmented'
 import { fmtScore, scoreTone, type TrendPoint } from './signalUtils'
 
 export const TOOLTIP_STYLE = { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text)' }
 
-/** Time window selector shared by the agent tabs. */
+const RANGE_LABEL: Record<string, string> = { '1h': '1 hour', '6h': '6 hours', '24h': '24 hours', '7d': '7 days', '30d': '30 days', all: 'All time' }
+
+/** Time window selector shared by the agent tabs (a segmented control, DESIGN.md §7.2 rule 6). */
 export function RangePicker({ value, onChange, allowAll }: { value: string; onChange: (r: string) => void; allowAll?: boolean }) {
   const ranges: string[] = allowAll ? [...RANGES, 'all'] : [...RANGES]
-  return (
-    <div className="seg" role="group" aria-label="Time range">
-      {ranges.map((r) => (
-        <button key={r} className={r === value ? 'on' : ''} aria-pressed={r === value} onClick={() => onChange(r)}>
-          {r}
-        </button>
-      ))}
-    </div>
-  )
+  return <Segmented label="Time range" size="sm" options={ranges.map((r) => ({ id: r, label: RANGE_LABEL[r] ?? r }))} value={value} onChange={onChange} />
 }
 
 /** Horizontal bar list for top-N breakdowns. */

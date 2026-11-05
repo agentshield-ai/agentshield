@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Span } from '../../api/types'
 import { spanDisplayName } from '../../api/refs'
 import { callLatencyMs, callStatus, callTokens, fmtDuration, fmtNumber } from '../../lib/format'
-import { StatusDot } from '../common'
+import { StatusGlyph } from '../ui/StatusGlyph'
+import { statusGlyph } from '../../lib/summaries/traces'
 import { OpKind } from './OpKind'
 import { callLabel, flattenTree, type TreeNode } from './callUtils'
 
@@ -157,7 +158,7 @@ export function TraceTree({
               >
                 {n.children.length ? (open ? '▾' : '▸') : ''}
               </span>
-              <StatusDot status={st} />
+              <StatusGlyph kind={statusGlyph(st).kind} label={statusGlyph(st).label} size={14} />
               <span className="tree-label" title={c.name}>
                 {callLabel(c)}
                 <OpKind call={c} />

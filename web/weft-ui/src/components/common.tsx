@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import type { SpanStatus } from '../api/types'
+import './common.css'
 
 export function Spinner({ label }: { label?: string }) {
   return (
@@ -61,6 +62,7 @@ export function Modal({
   footer?: ReactNode
   wide?: boolean
 }) {
+  const id = useId()
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', h)
@@ -68,11 +70,15 @@ export function Modal({
   }, [onClose])
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true">
+      <div className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={id}>
         <div className="modal-header">
-          <h2 className="grow">{title}</h2>
-          <button className="btn ghost icon" onClick={onClose} aria-label="Close">
-            ✕
+          <h2 className="grow" id={id}>
+            {title}
+          </h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true" focusable="false">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
           </button>
         </div>
         <div className="modal-body">{children}</div>
@@ -86,14 +92,16 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   const [done, setDone] = useState(false)
   return (
     <button
-      className="btn sm"
+      type="button"
+      className="qbtn sm copy-btn"
+      aria-label={label === 'Copy' ? undefined : label}
       onClick={() => {
-        void navigator.clipboard?.writeText(text)
+        void navigator.clipboard?.writeText(text).catch(() => undefined)
         setDone(true)
         setTimeout(() => setDone(false), 1200)
       }}
     >
-      {done ? 'Copied' : label}
+      {done ? 'Copied' : 'Copy'}
     </button>
   )
 }

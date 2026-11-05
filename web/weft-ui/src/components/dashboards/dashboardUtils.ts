@@ -177,7 +177,16 @@ export function fmtValue(v: number | null | undefined, kind: ValueKind): string 
 export function groupLabel(g: { group: string | null; other?: boolean }, groupBy?: string): string {
   if (g.other) return 'Other'
   if (g.group == null) return groupBy ? '(none)' : 'All'
+  if (groupBy === 'status' && STATUS_WORDS[g.group]) return STATUS_WORDS[g.group]
   return g.group
+}
+
+/** Span statuses in words, for status-grouped charts. */
+const STATUS_WORDS: Record<string, string> = {
+  success: 'Succeeded',
+  error: 'Failed',
+  running: 'Running',
+  descendant_error: 'Succeeded, a span under it failed',
 }
 
 export interface ChartSeries {

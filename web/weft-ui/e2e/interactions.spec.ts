@@ -136,12 +136,16 @@ test('every clause of the Sessions sentence opens exactly the sessions it counts
   await expect(page.locator('main, .main').first()).not.toContainText(/\$\d*\.\d{5,}/)
   const clauses = page.locator('.ph-sentence a')
   await expect(clauses.first()).toBeVisible()
+  // At most two sentences: the serious ones as links, then how many more need a look.
+  expect((await page.locator('.ph-sentence').innerText()).match(/[.!?](\s|$)/g)?.length).toBeLessThanOrEqual(2)
   const n = await clauses.count()
-  expect(n).toBeGreaterThanOrEqual(5)
+  expect(n).toBeGreaterThanOrEqual(4)
   for (let i = 0; i < n; i++) {
     await page.goto(`/${project()}/sessions`)
     const clause = page.locator('.ph-sentence a').nth(i)
     const text = await clause.innerText()
+    // "N more …" points at the "Needs a look" group (checked below).
+    if ((await clause.getAttribute('href'))?.endsWith('#needs-a-look')) continue
     const exact = (await clause.getAttribute('title')) !== 'Lists these sessions together with the blocked ones'
     const count = Number(/^\d+/.exec(text)?.[0])
     await clause.click()
@@ -151,6 +155,17 @@ test('every clause of the Sessions sentence opens exactly the sessions it counts
       await expect(page.locator('.story, .view-section').first(), text).toBeVisible()
     } else if (exact) await expect(page.locator('.session-row'), text).toHaveCount(count)
   }
+  // "N more …" points at "Needs a look": the rows there that the first sentence does not name.
+  await page.goto(`/${project()}/sessions`)
+  const more = page.locator('.ph-sentence').getByRole('link', { name: /more finished with something worth a look/ })
+  const count = Number(/^\d+/.exec(await more.innerText())?.[0])
+  expect(count).toBeGreaterThan(0)
+  await more.click()
+  const look = page.getByRole('region', { name: /^Needs a look/ })
+  await expect(look.getByRole('heading')).toBeInViewport()
+  await expect(page.locator('#needs-a-look')).toBeFocused()
+  const glyphs = await look.locator('.lrow-glyph [role="img"]').evaluateAll((xs) => xs.map((x) => x.getAttribute('aria-label')))
+  expect(glyphs.filter((g) => !['Failed', 'Blocked by AgentShield', 'Needs approval'].includes(g ?? '')).length).toBe(count)
   expect(errors).toEqual([])
 })
 
@@ -166,12 +181,12 @@ test('every page applies every filter, and says when it goes through sessions', 
   await expect(page.locator('.traces-table tbody tr')).toHaveCount(5)
   // Teams by tool: the trip planners never ran Bash.
   await page.goto(`/${project()}/teams?tool=Bash`)
-  await expect(page.getByRole('list', { name: 'Teams' }).getByRole('link', { name: /Code crew/ })).toBeVisible()
-  await expect(page.getByRole('list', { name: 'Teams' }).getByRole('link', { name: /Trip planners/ })).toHaveCount(0)
+  await expect(page.locator('.team-row').getByRole('link', { name: /Code crew/ })).toBeVisible()
+  await expect(page.locator('.team-row').getByRole('link', { name: /Trip planners/ })).toHaveCount(0)
   await expect(page.getByRole('note')).toContainText('showing teams with a session that matches')
   // Agents by a session status: the agents of sessions that went on after a failed step.
   await page.goto(`/${project()}/agents?status=failed_step`)
-  await expect(page.locator('table.agents-table tbody tr')).toHaveCount(2)
+  await expect(page.locator('.agent-row')).toHaveCount(2)
   // Security by team: the trip planners have no detections.
   await page.goto(`/${project()}/security?team=trip-planners`)
   await expect(page.getByRole('button', { name: 'Remove filter Team' })).toBeVisible()
@@ -186,12 +201,15 @@ test('Traces defaults to the last 24 hours, widens when empty, and saves views',
   await expect(page.getByRole('status').filter({ hasText: 'because nothing happened in the last 24 hours' })).toBeVisible()
   await expect(page.locator('.traces-table tbody tr')).toHaveCount(1)
   await page.goto(`/${project()}/traces?status=error&cols=output`)
+  // Add filter and Views sit behind the Filter button, as on Sessions.
+  await page.getByRole('button', { name: /^Filter/ }).click()
   await page.getByRole('button', { name: /Views/ }).click()
   await page.getByRole('button', { name: 'Save current filters as a view…' }).click()
   await page.getByRole('textbox', { name: 'View name' }).fill('Failed traces')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page).toHaveURL(/view=traces-failed-traces/)
   await page.goto(`/${project()}/traces`)
+  await page.getByRole('button', { name: /^Filter/ }).click()
   await page.getByRole('button', { name: /Views/ }).click()
   await page.getByRole('button', { name: 'Failed traces', exact: true }).click()
   await expect(page).toHaveURL(/status=error/)
@@ -304,6 +322,7 @@ test('Traces: text finds any span, field conditions live in Add filter', async (
   // One filter button: field conditions are an "Add filter" option.
   await page.goto(`/${project()}/traces?time=all`)
   await expect(page.getByRole('button', { name: '+ Filter' })).toHaveCount(0)
+  await page.getByRole('button', { name: /^Filter/ }).click()
   await page.getByRole('button', { name: 'Add filter' }).click()
   await page.getByRole('tab', { name: 'Advanced: field condition' }).click()
   await page.getByRole('combobox', { name: 'Field', exact: true }).fill('name')
@@ -330,12 +349,12 @@ test('Agents and Teams say when they show only the first 500', async ({ page }) 
   const P = process.env.WEFT_E2E_MANY!
   await page.goto(`/${P}/agents`)
   await expect(page.getByRole('status').filter({ hasText: 'Showing the first 500 of 501 agents' })).toBeVisible()
-  await expect(page.locator('table.agents-table tbody tr')).toHaveCount(500)
+  await expect(page.locator('.agent-row')).toHaveCount(500)
   await page.goto(`/${P}/teams`)
   await expect(page.getByRole('status').filter({ hasText: 'Showing the first 500 of 501 teams' })).toBeVisible()
   // Below the cap there is no note.
   await page.goto(`/${project()}/agents?time=all`)
-  await expect(page.locator('table.agents-table tbody tr').first()).toBeVisible()
+  await expect(page.locator('.agent-row').first()).toBeVisible()
   await expect(page.getByText(/Showing the first \d+ of/)).toHaveCount(0)
   expect(errors).toEqual([])
 })

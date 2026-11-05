@@ -1,15 +1,21 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dashboardsApi, type DashboardVal } from '../../api/dashboards'
-import { Empty, ErrorBox, Loading, Modal } from '../../components/common'
+import { ErrorBox, Loading, Modal } from '../../components/common'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { SearchField } from '../../components/ui/SearchField'
+import { Sentence } from '../../components/ui/Sentence'
+import { dashboardLine, dashboardsSentence, rangeWords } from '../../lib/summaries/dashboards'
+import { relativeTime } from '../../lib/summaries'
+import '../observe.css'
 import { dashboardUrl } from '../../components/dashboards/AddToDashboardModal'
 import { newDashboard, panelTitle, timeRangeLabel } from '../../components/dashboards/dashboardUtils'
 import { slugify } from '../../components/traces/callUtils'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtRelative } from '../../lib/format'
+import { fmtDate } from '../../lib/format'
 import '../../components/dashboards/dashboards.css'
-import { HelpLink } from '../../components/ui/PageHeader'
 
 function NewDashboardModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const nav = useNavigate()
@@ -90,64 +96,68 @@ export function DashboardsPage() {
     const v = o.value as DashboardVal
     return !s || o.name.toLowerCase().includes(s) || (v?.name ?? '').toLowerCase().includes(s) || (v?.description ?? '').toLowerCase().includes(s)
   })
+  const newButton = (
+    <button type="button" className="qbtn primary" onClick={() => setCreating(true)}>
+      New dashboard
+    </button>
+  )
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="col" style={{ gap: 2 }}>
-          <h1>Dashboards</h1>
-          <HelpLink doc="project.md#dashboards" topic="Dashboards" />
-          <span className="muted small">Custom charts of any span metric: latency percentiles, tokens, cost, scores, grouped by name, model or attribute.</span>
-        </div>
-        <span className="spacer" />
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          + New dashboard
-        </button>
-      </div>
-      {all.length > 4 && (
-        <div className="toolbar">
-          <input className="input" style={{ width: 240, maxWidth: '100%' }} placeholder="Search dashboards…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search dashboards" />
-        </div>
-      )}
+    <div className="page-frame obs-page">
+      <PageHeader
+        title="Dashboards"
+        help="project.md#dashboards"
+        controls={
+          <>
+            {all.length > 4 && <SearchField label="Search dashboards" value={q} onChange={setQ} filterInput />}
+            {newButton}
+          </>
+        }
+        sentence={
+          list.data ? (
+            <Sentence parts={[dashboardsSentence(all.map((o) => ({ charts: ((o.value as DashboardVal)?.panels ?? []).length })))]} />
+          ) : (
+            <p className="sentence s-outcome sk-sentence" aria-busy="true">
+              <span className="sr-only">Counting dashboards…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          )
+        }
+      />
       <ErrorBox error={list.error} />
       {list.isLoading ? (
         <Loading />
       ) : all.length === 0 ? (
-        <div className="card">
-          <Empty>
-            <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-              <div style={{ maxWidth: 480 }}>
-                No dashboards yet. Create one from a template, or use <b>Add chart to dashboard</b> above the charts on the Traces page.
-              </div>
-              <button className="btn primary" onClick={() => setCreating(true)}>
-                + New dashboard
-              </button>
-            </div>
-          </Empty>
+        <div className="quiet-empty">
+          <p>A dashboard holds charts of any span figure: counts, latency percentiles, tokens, cost and scores, grouped by name, model or attribute.</p>
+          <p className="quiet-note obs-wrap">
+            Create one from a template with New dashboard, or open Traces, choose More and add a chart of the spans you are looking at.
+          </p>
+        </div>
+      ) : shown.length === 0 ? (
+        <div className="quiet-empty">
+          <p>No dashboard matches “{q}”.</p>
+          <button type="button" className="qbtn" onClick={() => setQ('')}>
+            Clear the search
+          </button>
         </div>
       ) : (
-        <div className="dash-card-list">
+        <GroupedList label="Dashboards">
           {shown.map((o) => {
             const v = o.value as DashboardVal
             const panels = v?.panels ?? []
             return (
-              <Link key={o.name} to={dashboardUrl(projectId, o.name)} className="dash-card">
-                <b className="truncate">{v?.name || o.name}</b>
-                {v?.description && <span className="small muted truncate">{v.description}</span>}
-                <span className="small faint truncate">{panels.length ? panels.slice(0, 4).map(panelTitle).join(' · ') : 'No charts yet'}</span>
-                <span className="row small muted" style={{ gap: 10 }}>
-                  <span>
-                    {panels.length} chart{panels.length === 1 ? '' : 's'}
-                  </span>
-                  <span>{timeRangeLabel(v?.time_range ?? 'all')}</span>
-                  <span className="grow" />
-                  <span title={o.created_at}>
-                    v{o.version} · {fmtRelative(o.created_at)}
-                  </span>
-                </span>
-              </Link>
+              <ListRow
+                key={o.name}
+                title={v?.name || o.name}
+                summary={dashboardLine({ titles: panels.map(panelTitle), range: rangeWords(v?.time_range ?? 'all', timeRangeLabel) })}
+                meta={v?.description || undefined}
+                time={relativeTime(o.created_at)}
+                timeTitle={`Saved ${fmtDate(o.created_at)} (version ${o.version})`}
+                to={dashboardUrl(projectId, o.name)}
+              />
             )
           })}
-        </div>
+        </GroupedList>
       )}
       {creating && <NewDashboardModal projectId={projectId} onClose={() => setCreating(false)} />}
     </div>

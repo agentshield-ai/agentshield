@@ -4,7 +4,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Modal } from '../common'
-import { TableScroll } from './bits'
 
 export const SHORTCUTS: { keys: string[]; what: string; where?: string }[] = [
   { keys: ['?'], what: 'Show this list' },
@@ -73,36 +72,32 @@ export function ShortcutsHost() {
     return () => window.removeEventListener('weft:shortcuts', show)
   }, [])
   if (!open) return null
+  const groups = [...new Set(SHORTCUTS.map((s) => s.where ?? 'Everywhere'))]
   return (
     <Modal title="Keyboard shortcuts" onClose={() => setOpen(false)}>
-      <TableScroll label="Keyboard shortcuts">
-        <table className="table shortcuts">
-          <caption className="sr-only">Keyboard shortcuts</caption>
-          <thead>
-            <tr>
-              <th scope="col">Keys</th>
-              <th scope="col">Action</th>
-              <th scope="col">Where</th>
-            </tr>
-          </thead>
-          <tbody>
-            {SHORTCUTS.map((s) => (
-              <tr key={s.keys.join('+') + s.what}>
-                <td>
-                  {s.keys.map((k, i) => (
-                    <span key={i}>
-                      {i > 0 && <span className="faint"> then </span>}
-                      <kbd className="kbd">{k}</kbd>
-                    </span>
-                  ))}
-                </td>
-                <td>{s.what}</td>
-                <td className="muted">{s.where ?? 'Everywhere'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableScroll>
+      <div className="shortcut-groups">
+        {groups.map((g) => (
+          <section key={g} className="shortcut-group" aria-label={g}>
+            <h3>{g}</h3>
+            <ul className="shortcut-list">
+              {SHORTCUTS.filter((s) => (s.where ?? 'Everywhere') === g).map((s) => (
+                <li key={s.keys.join('+') + s.what}>
+                  <span>{s.what}</span>
+                  <span className="shortcut-keys">
+                    <span className="sr-only">{s.keys.join(' then ')}</span>
+                    {s.keys.map((k, i) => (
+                      <span key={i} aria-hidden="true">
+                        {i > 0 && <span> then </span>}
+                        <kbd>{k}</kbd>
+                      </span>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
     </Modal>
   )
 }

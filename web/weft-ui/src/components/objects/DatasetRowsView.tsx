@@ -3,7 +3,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { isRef, tableRef } from '../../api/refs'
 import type { Any, WeftObject, TableRow, TableUpdate } from '../../api/types'
-import { Empty, ErrorBox, Loading, Pager, Spinner } from '../common'
+import { ErrorBox, Loading, Pager, Spinner } from '../common'
+import { PlainTable } from '../ui/PlainTable'
 import { RefChip } from '../RefChip'
 import { ValueView } from '../ValueView'
 import { Drawer } from './bits'
@@ -130,22 +131,30 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
   }
 
   const total = count.data ?? null
+  const shownTo = Math.min(offset + LIMIT, total ?? offset + (page.data?.length ?? 0))
   return (
-    <div className="col" style={{ gap: 10 }}>
-      <div className="toolbar">
-        <span className="muted small">
-          {total != null ? `${total.toLocaleString()} rows` : <Spinner />} · {columns.length} columns
+    <div className="col" style={{ gap: 10, minWidth: 0 }}>
+      <div className="rows-bar">
+        <span className="quiet-note">
+          {total != null ? (
+            <>
+              {total.toLocaleString()} {total === 1 ? 'row' : 'rows'}, {columns.length} {columns.length === 1 ? 'column' : 'columns'}
+              {total > LIMIT && `; showing ${(offset + 1).toLocaleString()}–${shownTo.toLocaleString()}`}
+            </>
+          ) : (
+            <Spinner />
+          )}
+          {page.isFetching && !page.isLoading && <Spinner />}
         </span>
-        {page.isFetching && <Spinner />}
-        <span className="grow" />
         {editing ? (
           <>
-            <span className="hint">{dirty ? `${edits.size} edited · ${deleted.size} deleted · ${appended.length} added` : 'Click a cell to edit'}</span>
-            <button className="btn sm" onClick={() => setAppended([...appended, Object.fromEntries(columns.map((c) => [c, '']))])}>
-              + Add row
+            <span className="quiet-note">{dirty ? `${edits.size} edited, ${deleted.size} deleted, ${appended.length} added` : 'Change any cell, then publish'}</span>
+            <button type="button" className="qbtn sm" onClick={() => setAppended([...appended, Object.fromEntries(columns.map((c) => [c, '']))])}>
+              Add a row
             </button>
             <button
-              className="btn sm"
+              type="button"
+              className="qbtn sm"
               onClick={() => {
                 reset()
                 setEditing(false)
@@ -153,25 +162,22 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
             >
               Cancel
             </button>
-            <button className="btn sm primary" disabled={!dirty || saving} onClick={save}>
-              {saving ? 'Publishing…' : 'Publish new version'}
+            <button type="button" className="qbtn sm primary" disabled={!dirty || saving} onClick={save}>
+              {saving ? 'Publishing…' : 'Publish as a new version'}
             </button>
           </>
         ) : (
           <>
-            <select
-              className="input"
-              style={{ height: 26, fontSize: 12 }}
-              value=""
-              disabled={downloading}
-              onChange={(e) => e.target.value && void download(e.target.value as 'json' | 'csv' | 'jsonl')}
-            >
-              <option value="">{downloading ? 'Downloading…' : 'Download…'}</option>
-              <option value="json">JSON</option>
-              <option value="jsonl">JSONL</option>
-              <option value="csv">CSV</option>
-            </select>
-            <button className="btn sm" onClick={() => setEditing(true)}>
+            <label>
+              <span className="sr-only">Download the rows</span>
+              <select className="input" value="" disabled={downloading} onChange={(e) => e.target.value && void download(e.target.value as 'json' | 'csv' | 'jsonl')}>
+                <option value="">{downloading ? 'Downloading…' : 'Download…'}</option>
+                <option value="json">JSON</option>
+                <option value="jsonl">JSONL</option>
+                <option value="csv">CSV</option>
+              </select>
+            </label>
+            <button type="button" className="qbtn sm" onClick={() => setEditing(true)}>
               Edit rows
             </button>
           </>
@@ -181,108 +187,119 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
       {page.isLoading ? (
         <Loading />
       ) : (page.data ?? []).length === 0 && appended.length === 0 ? (
-        <div className="card">
-          <Empty>This dataset has no rows.</Empty>
-        </div>
+        <p className="quiet-note">This dataset has no rows.</p>
       ) : (
-        <div className="table-wrap" style={{ maxHeight: '70vh' }}>
-          <table className={`table ${editing ? 'grid-edit' : ''}`}>
-            <thead>
-              <tr>
-                <th className="num" style={{ width: 44 }}>
-                  #
-                </th>
-                {columns.map((c) => (
-                  <th
-                    key={c}
-                    className="sortable"
-                    onClick={() => {
-                      if (editing) return
-                      setOffset(0)
-                      setSort((s) => (s?.col !== c ? { col: c, dir: 'asc' } : s.dir === 'asc' ? { col: c, dir: 'desc' } : null))
-                    }}
-                  >
-                    {c} {sort?.col === c ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
-                  </th>
-                ))}
-                {editing && <th style={{ width: 40 }} />}
-              </tr>
-            </thead>
-            <tbody>
-              {(page.data ?? []).map((r) => {
-                const isDel = deleted.has(r.index)
-                const edited = edits.get(r.index)
-                const val = asObj(edited ?? r.value)
-                return (
-                  <tr
-                    key={r.digest + r.index}
-                    className={`${isDel ? 'row-deleted' : edited ? 'row-edited' : ''} ${editing ? '' : 'clickable'}`}
-                    onClick={() => !editing && setOpen(r)}
-                  >
-                    <td className="num faint small" style={editing ? { padding: '7px 8px' } : undefined}>
-                      {r.index}
-                    </td>
-                    {columns.map((c) =>
-                      editing ? (
-                        <td key={c}>
-                          <textarea className="cell-input" rows={1} disabled={isDel} value={cellToText(val[c])} onChange={(e) => setCell(r, c, e.target.value)} />
-                        </td>
-                      ) : (
-                        <td key={c}>
-                          <CellValue v={val[c]} projectId={projectId} />
-                        </td>
-                      ),
-                    )}
-                    {editing && (
-                      <td style={{ padding: 4 }}>
-                        <button
-                          className="btn ghost sm icon"
-                          title={isDel ? 'Restore row' : 'Delete row'}
-                          onClick={() => {
-                            const n = new Set(deleted)
-                            if (isDel) n.delete(r.index)
-                            else n.add(r.index)
-                            setDeleted(n)
-                          }}
-                        >
-                          {isDel ? '↺' : '✕'}
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                )
-              })}
-              {appended.map((row, i) => (
-                <tr key={`new-${i}`} className="row-new">
-                  <td className="num faint small" style={{ padding: '7px 8px' }}>
-                    new
-                  </td>
-                  {columns.map((c) => (
-                    <td key={c}>
-                      <textarea
-                        className="cell-input"
-                        rows={1}
-                        value={cellToText(row[c])}
-                        onChange={(e) => setAppended(appended.map((r, j) => (j === i ? { ...r, [c]: textToCell(e.target.value, r[c]) } : r)))}
-                      />
-                    </td>
-                  ))}
-                  <td style={{ padding: 4 }}>
-                    <button className="btn ghost sm icon" title="Remove new row" onClick={() => setAppended(appended.filter((_, j) => j !== i))}>
-                      ✕
+        <PlainTable caption={`Rows of ${obj.name}`} className={`rows-table ${editing ? 'grid-edit' : ''}`}>
+          <thead>
+            <tr>
+              <th scope="col" className="num" style={{ width: 52 }}>
+                Row
+              </th>
+              {columns.map((c) => (
+                <th key={c} scope="col" aria-sort={sort?.col === c ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  {editing ? (
+                    c
+                  ) : (
+                    <button
+                      type="button"
+                      className="sort-btn"
+                      title={`Sort by ${c}`}
+                      onClick={() => {
+                        setOffset(0)
+                        setSort((s) => (s?.col !== c ? { col: c, dir: 'asc' } : s.dir === 'asc' ? { col: c, dir: 'desc' } : null))
+                      }}
+                    >
+                      {c} {sort?.col === c ? (sort.dir === 'asc' ? '↑' : '↓') : ''}
                     </button>
-                  </td>
-                </tr>
+                  )}
+                </th>
               ))}
-            </tbody>
-          </table>
-        </div>
+              {editing && (
+                <th scope="col" style={{ width: 40 }}>
+                  <span className="sr-only">Remove</span>
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {(page.data ?? []).map((r) => {
+              const isDel = deleted.has(r.index)
+              const edited = edits.get(r.index)
+              const val = asObj(edited ?? r.value)
+              return (
+                <tr key={r.digest + r.index} className={isDel ? 'row-deleted' : edited ? 'row-edited' : ''}>
+                  <td className="num">
+                    {editing ? (
+                      r.index + 1
+                    ) : (
+                      <button type="button" className="row-open" onClick={() => setOpen(r)} aria-label={`Open row ${r.index + 1}`}>
+                        {r.index + 1}
+                      </button>
+                    )}
+                  </td>
+                  {columns.map((c) =>
+                    editing ? (
+                      <td key={c}>
+                        <textarea className="cell-input" rows={1} aria-label={`Row ${r.index + 1}, ${c}`} disabled={isDel} value={cellToText(val[c])} onChange={(e) => setCell(r, c, e.target.value)} />
+                      </td>
+                    ) : (
+                      <td key={c}>
+                        <CellValue v={val[c]} projectId={projectId} />
+                      </td>
+                    ),
+                  )}
+                  {editing && (
+                    <td>
+                      <button
+                        type="button"
+                        className="qbtn sm plain"
+                        aria-label={isDel ? `Keep row ${r.index + 1}` : `Remove row ${r.index + 1}`}
+                        title={isDel ? 'Keep this row' : 'Remove this row'}
+                        onClick={() => {
+                          const n = new Set(deleted)
+                          if (isDel) n.delete(r.index)
+                          else n.add(r.index)
+                          setDeleted(n)
+                        }}
+                      >
+                        {isDel ? '↺' : '✕'}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
+            {appended.map((row, i) => (
+              <tr key={`new-${i}`} className="row-new">
+                <td className="num">new</td>
+                {columns.map((c) => (
+                  <td key={c}>
+                    <textarea
+                      className="cell-input"
+                      rows={1}
+                      aria-label={`New row ${i + 1}, ${c}`}
+                      value={cellToText(row[c])}
+                      onChange={(e) => setAppended(appended.map((r, j) => (j === i ? { ...r, [c]: textToCell(e.target.value, r[c]) } : r)))}
+                    />
+                  </td>
+                ))}
+                <td>
+                  <button type="button" className="qbtn sm plain" aria-label={`Remove new row ${i + 1}`} onClick={() => setAppended(appended.filter((_, j) => j !== i))}>
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </PlainTable>
       )}
       {total != null && total > LIMIT && <Pager offset={offset} limit={LIMIT} total={total} onChange={setOffset} />}
       {open && (
-        <Drawer title={`Row ${open.index}`} onClose={() => setOpen(null)}>
-          <div className="hint mono">digest {open.digest}</div>
+        <Drawer title={`Row ${open.index + 1}`} onClose={() => setOpen(null)}>
           <ValueView value={open.value} projectId={projectId} />
+          <p className="quiet-note">
+            Digest <span className="mono">{open.digest}</span>
+          </p>
         </Drawer>
       )}
     </div>

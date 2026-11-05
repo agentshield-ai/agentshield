@@ -8,9 +8,11 @@ import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from 
 import { spanUrl } from '../../lib/urls'
 import { ErrorBox, Section, Spinner } from '../common'
 import { AgentCharts } from './AgentCharts'
-import { compact, errorRate, fmtPct, windowStart } from './agentUtils'
+import { windowStart } from './agentUtils'
 import { RangePicker, TopList, TOOLTIP_STYLE } from './bits'
 import { trendBuckets } from './signalUtils'
+import { Sentence } from '../ui/Sentence'
+import { agentsTotalsSentence } from '../../lib/summaries/agentsTeams'
 import './agents.css'
 
 const plural = (n: number, w: string) => `${fmtNumber(n)} ${w}${n === 1 ? '' : 's'}`
@@ -125,28 +127,19 @@ export function AgentsDashboard({ projectId, range, setRange, onFilterSpans }: {
   return (
     <div className="col" style={{ gap: 16 }}>
       <div className="row wrap">
-        <span className="small muted grow">Health of every agent in this project. All panels use the selected window.</span>
+        <span className="small muted grow">Every panel below uses this window.</span>
         {totals.isFetching && <Spinner />}
         <RangePicker value={range} onChange={setRange} />
       </div>
       <ErrorBox error={totals.error} />
-      <div className="stat-grid">
-        {[
-          ['Spans', t ? fmtNumber(t.spans) : '…', undefined],
-          ['Conversations', t ? fmtNumber(t.conversations) : '…', undefined],
-          ['Tokens', t ? compact(t.tokens) : '…', undefined],
-          ['Cost', t ? fmtCost(t.cost) : '…', undefined],
-          ['Error rate', t ? fmtPct(errorRate(t.failed, t.invocations)) : '…', t && t.failed ? 'var(--error)' : undefined],
-          ['Agents', t ? fmtNumber(t.agents) : '…', undefined],
-        ].map(([label, value, color]) => (
-          <div key={label} className="stat">
-            <div className="label">{label}</div>
-            <div className="value" style={color ? { color } : undefined}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </div>
+      {t ? (
+        <Sentence size="body" parts={[agentsTotalsSentence(t, range)]} />
+      ) : (
+        <p className="sentence s-body sk-sentence" aria-busy="true">
+          <span className="sr-only">Counting…</span>
+          <span className="sk sk-line" aria-hidden />
+        </p>
+      )}
       <AgentCharts projectId={projectId} range={range} />
       <div className="agents-dash-grid">
         <Section

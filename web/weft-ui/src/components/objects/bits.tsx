@@ -29,6 +29,7 @@ export function ConfirmButton({
   return (
     <>
       <button
+        type="button"
         className={className}
         disabled={disabled}
         onClick={(e) => {
@@ -44,12 +45,12 @@ export function ConfirmButton({
           onClose={() => setOpen(false)}
           footer={
             <>
-              <button className="btn" onClick={() => setOpen(false)}>
+              <button type="button" className="qbtn" onClick={() => setOpen(false)}>
                 Cancel
               </button>
               <button
-                className="btn primary"
-                style={{ background: 'var(--error)', borderColor: 'var(--error)' }}
+                type="button"
+                className="qbtn danger-solid"
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true)
@@ -257,12 +258,13 @@ export function Drawer({ title, onClose, children, actions }: { title: ReactNode
   )
 }
 
-export function Switch({ on, onChange, disabled, title }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; title?: string }) {
+export function Switch({ on, onChange, disabled, title, label }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; title?: string; label?: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      aria-label={label}
       title={title}
       className={`switch ${on ? 'on' : ''}`}
       disabled={disabled}

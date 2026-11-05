@@ -7,7 +7,14 @@ import type { Any, Span } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, preview } from '../../lib/format'
 import { spanUrl, compareSpansUrl, tracesUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Loading, StatusBadge } from '../../components/common'
+import { ErrorBox, Loading } from '../../components/common'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
+import { compareSentence, statusGlyph } from '../../lib/summaries/traces'
+import '../observe.css'
 import { ValueView } from '../../components/ValueView'
 import { callLabel } from '../../components/traces/callUtils'
 import { ChatView, isChatMessages } from '../../components/traces/ChatView'
@@ -77,7 +84,11 @@ export function CompareSpansPage() {
     if (!calls.length) return []
     const r: Row[] = [
       { section: 'Span', key: 'name', values: calls.map((c) => spanDisplayName(c.name)), atomic: true },
-      { section: 'Span', key: 'status', values: calls.map(callStatus), render: (v) => <StatusBadge status={v} /> },
+      { section: 'Span', key: 'status', values: calls.map(callStatus), render: (v) => (
+          <span className="row" style={{ gap: 6 }}>
+            <StatusGlyph kind={statusGlyph(v).kind} size={16} decorative /> {statusGlyph(v).label}
+          </span>
+        ) },
       { section: 'Span', key: 'started', values: calls.map((c) => c.started_at), render: (v) => fmtDate(v), time: true },
       { section: 'Span', key: 'latency', values: calls.map(callLatencyMs), render: (v) => fmtDuration(v), num: { fmt: (n) => fmtDuration(n), lowerBetter: true } },
       { section: 'Span', key: 'tokens', values: calls.map((c) => callTokens(c).total), render: (v) => fmtNumber(v), num: { fmt: (n) => fmtNumber(n), lowerBetter: true } },
@@ -95,10 +106,13 @@ export function CompareSpansPage() {
 
   if (ids.length < 1)
     return (
-      <div className="page">
-        <Empty>
-          Select two or more calls on the <Link to={tracesUrl(projectId)}>Traces</Link> page and choose Compare.
-        </Empty>
+      <div className="page-frame detail obs-page">
+        <PageHeader variant="detail" back={{ to: tracesUrl(projectId), label: 'Traces' }} title="Compare spans" help="traces.md" helpTopic="Traces" />
+        <div className="quiet-empty">
+          <p>
+            Select two or more spans on the <Link to={tracesUrl(projectId)}>Traces</Link> page and choose Compare.
+          </p>
+        </div>
       </div>
     )
   if (q.isLoading) return <Loading />
@@ -108,54 +122,54 @@ export function CompareSpansPage() {
   const diffCount = rows.filter(isDiff).length
   let lastSection = ''
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={tracesUrl(projectId)}>Traces</Link>
-        <span>/</span>
-        <span>Compare</span>
-      </div>
-      <div className="page-header">
-        <h1>Compare {calls.length} calls</h1>
-        <span className="badge">{diffCount} differing fields</span>
-        <span className="spacer" />
-        <div className="seg" role="group" aria-label="Display">
-          <button className={mode === 'values' ? 'on' : ''} aria-pressed={mode === 'values'} onClick={() => setParam('mode', null)}>
-            Values
-          </button>
-          <button className={mode === 'diff' ? 'on' : ''} aria-pressed={mode === 'diff'} onClick={() => setParam('mode', 'diff')} title="Show each span's changes against the baseline">
-            Diff vs baseline
-          </button>
-        </div>
-        <div className="seg" role="group" aria-label="Numeric change format">
-          {DELTA_FORMATS.map((f) => (
-            <button key={f.id} className={dfmt === f.id ? 'on' : ''} aria-pressed={dfmt === f.id} title={f.title} onClick={() => setParam('nfmt', f.id === 'both' ? null : f.id)}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <label className="checkbox">
+    <div className="page-frame obs-page obs-wide">
+      <PageHeader
+        variant="detail"
+        back={{ to: tracesUrl(projectId), label: 'Traces' }}
+        title={`Compare ${calls.length} span${calls.length === 1 ? '' : 's'}`}
+        help="traces.md"
+        helpTopic="Traces"
+        sentence={
+          <Sentence
+            size="detail"
+            parts={[compareSentence({ spans: calls.length, fields: rows.length, differ: diffCount, missing: missing.length, baseline: calls[baseIdx] ? callLabel(calls[baseIdx]) : null, diffMode: mode === 'diff' })]}
+          />
+        }
+        meta={missing.length > 0 ? `Not found: ${missing.join(', ')}` : undefined}
+      />
+      <div className="obs-toolbar">
+        <Segmented<Mode>
+          label="Display"
+          size="sm"
+          options={[
+            { id: 'values', label: 'Values' },
+            { id: 'diff', label: 'Diff against the baseline', title: "Show each span's changes against the baseline" },
+          ]}
+          value={mode}
+          onChange={(m) => setParam('mode', m === 'diff' ? 'diff' : null)}
+        />
+        <Segmented label="Numeric change format" size="sm" options={DELTA_FORMATS} value={dfmt} onChange={(f) => setParam('nfmt', f === 'both' ? null : f)} />
+        <label className="obs-check">
           <input type="checkbox" checked={diffOnly} onChange={(e) => setDiffOnly(e.target.checked)} /> Only differences
         </label>
       </div>
       <ErrorBox error={q.error} />
-      {missing.length > 0 && <div className="warn-box">Not found: {missing.join(', ')}</div>}
-      <div className="table-wrap">
-        <table className="table compare-table">
+      <PlainTable caption="Fields of the compared spans" className="compare-table">
           <thead>
             <tr>
-              <th style={{ width: 160 }}>Field</th>
+              <th scope="col" style={{ width: 160 }}>Field</th>
               {calls.map((c, i) => (
-                <th key={c.id} className={i === baseIdx ? 'cmp-baseline-col' : ''}>
+                <th scope="col" key={c.id} className={i === baseIdx ? 'cmp-baseline-col' : ''}>
                   <div className="row wrap" style={{ gap: 6 }}>
                     <Link to={spanUrl(projectId, c.id)}>{callLabel(c)}</Link>
                     <span className="faint mono small">{c.id.slice(-8)}</span>
                     <span className="grow" />
                     {i === baseIdx ? (
-                      <span className="badge accent" title="Other spans are compared against this one">
+                      <span className="obs-faint small" title="Other spans are compared against this one">
                         Baseline
                       </span>
                     ) : (
-                      <button className="btn ghost sm" onClick={() => setParam('baseline', c.id)} title="Compare the other spans against this one">
+                      <button type="button" className="linkish small" onClick={() => setParam('baseline', c.id)} title="Compare the other spans against this one">
                         Set baseline
                       </button>
                     )}
@@ -211,8 +225,7 @@ export function CompareSpansPage() {
               )
             })}
           </tbody>
-        </table>
-      </div>
+      </PlainTable>
     </div>
   )
 }

@@ -1,7 +1,7 @@
 // Shared helpers for object (asset) pages: class detection, value builders
 // for the object conventions in docs/weft/API.md, and small query hooks.
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../../api/client'
+import { api, post } from '../../api/client'
 import { objectRef, parseRef } from '../../api/refs'
 import type { Any, ObjectKind, ObjectsFilter, TableRow, WeftObject } from '../../api/types'
 
@@ -222,6 +222,24 @@ export function useObjectVersions(projectId: string, objectId: string, metadataO
           metadata_only: metadataOnly,
         })
         .then((r) => r.items.slice().sort((a, b) => b.version - a.version)),
+  })
+}
+
+/** Row counts of several tables in one request (POST /api/v1/tables/stats), by table digest. */
+export function useTableCounts(projectId: string, digests: string[]) {
+  const key = [...new Set(digests)].sort()
+  return useQuery({
+    queryKey: ['table-counts', projectId, key],
+    queryFn: async () => {
+      const out = new Map<string, number>()
+      for (let i = 0; i < key.length; i += 1000) {
+        const r = await post<{ items: { digest: string; count: number }[] }>('/api/v1/tables/stats', { project_id: projectId, digests: key.slice(i, i + 1000) })
+        for (const x of r.items) out.set(x.digest, x.count)
+      }
+      return out
+    },
+    enabled: key.length > 0,
+    staleTime: 30_000,
   })
 }
 

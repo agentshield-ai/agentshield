@@ -77,7 +77,7 @@ export function ScatterPanel({
     <div style={{ height }} aria-label={`Scatter of ${fieldLabel(yField)} against ${fieldLabel(xField)}`}>
       <ResponsiveContainer width="100%" height="100%">
         <ScatterChart margin={{ top: 6, right: 8, bottom: 4, left: 0 }}>
-          <CartesianGrid stroke="var(--border)" />
+          <CartesianGrid stroke="var(--separator)" />
           <XAxis type="number" dataKey="x" name={fieldLabel(xField)} tick={AXIS} tickFormatter={(v: number) => fmtValue(v, xKind)} axisLine={false} tickLine={false} />
           <YAxis type="number" dataKey="y" name={fieldLabel(yField)} tick={AXIS} tickFormatter={(v: number) => fmtValue(v, yKind)} axisLine={false} tickLine={false} width={52} />
           <ZAxis range={[28, 28]} />

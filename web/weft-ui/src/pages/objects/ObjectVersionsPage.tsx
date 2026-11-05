@@ -1,134 +1,163 @@
-import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+// Every version of one asset (DESIGN.md §7.1 rule 1, §7.2 rule 3): a sentence
+// ("support-tickets has 3 versions; the latest, version 3, was saved 5 min
+// ago."), a quiet list of the versions, newest first, and a picker to compare
+// two. Deleting one version can be undone for a few seconds; deleting every
+// version asks first.
+import { useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import { Empty, ErrorBox, Loading } from '../../components/common'
-import { AliasEditor, ConfirmButton } from '../../components/objects/bits'
-import { TagEditor } from '../../components/objects/TagEditor'
-import { KIND_META, kindOf, objClass, useObjectVersions } from '../../components/objects/objectUtils'
+import { ErrorBox, Loading } from '../../components/common'
+import { ConfirmButton } from '../../components/objects/bits'
+import { KIND_META, kindOf, rowsDigest, useObjectVersions, useTableCounts } from '../../components/objects/objectUtils'
+import { useUndoDelete } from '../../components/settings/SettingsList'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { Icon } from '../../components/ui/Icons'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtBytes, fmtDate, fmtRelative } from '../../lib/format'
+import { fmtBytes, fmtDate } from '../../lib/format'
+import { joinClauses, plural, relativeTime } from '../../lib/summaries'
+import { kindWords, versionsSentence, versionWords } from '../../lib/summaries/assets'
 import { objectDiffUrl, objectUrl } from '../../lib/urls'
+import './assets.css'
 
 export function ObjectVersionsPage() {
   const projectId = useProjectId()
   const { objectId = '' } = useParams()
   const nav = useNavigate()
   const qc = useQueryClient()
-  const versions = useObjectVersions(projectId, objectId)
-  const [sel, setSel] = useState<string[]>([])
-
-  const latest = versions.data?.[0]
+  // Values too, for datasets' row counts (a few versions; the list is per asset).
+  const versions = useObjectVersions(projectId, objectId, false)
+  const { hidden, remove } = useUndoDelete()
+  const vs = useMemo(() => (versions.data ?? []).filter((v) => !hidden.has(v.digest)), [versions.data, hidden])
+  const latest = vs[0]
   const kind = latest ? kindOf(latest) : 'all'
-  const listUrl = `/${projectId}/${kind === 'all' ? 'objects' : kind}`
+  const listUrl = `/${projectId}/${kind === 'all' ? 'objects' : kind === 'ops' ? 'functions' : kind}`
+  const counts = useTableCounts(projectId, vs.map((v) => rowsDigest(v.value)).filter(Boolean) as string[])
+  const [a, setA] = useState('')
+  const [b, setB] = useState('')
+  const from = a || vs[1]?.digest || ''
+  const to = b || vs[0]?.digest || ''
+  // Who saved them, for the meta line.
+  const savers = useMemo(() => [...new Set(vs.map((v) => v.user_id).filter(Boolean))] as string[], [vs])
 
-  const toggle = (d: string) => setSel((s) => (s.includes(d) ? s.filter((x) => x !== d) : [...s, d].slice(-2)))
-  const compare = () => {
-    if (!versions.data || sel.length !== 2) return
-    const [a, b] = sel
-      .map((d) => versions.data!.find((v) => v.digest === d)!)
-      .sort((x, y) => x.version - y.version)
-    nav(objectDiffUrl(projectId, objectId, a.digest, b.digest))
-  }
+  const sentence: SentencePart[] | null = versions.data
+    ? versionsSentence(objectId, vs).map((p) => (typeof p === 'string' ? p : { text: p.text, to: objectUrl(projectId, objectId, 'latest'), title: 'Open the latest version' }))
+    : null
 
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={listUrl}>{KIND_META[kind].title}</Link>
-        <span>/</span>
-        <span>{objectId}</span>
-      </div>
-      <div className="page-header">
-        <h1 className="mono">{objectId}</h1>
-        {latest && <span className="badge">{objClass(latest)}</span>}
-        {versions.data && <span className="muted small">{versions.data.length} versions</span>}
-        <span className="spacer" />
-        <span className="hint">{sel.length < 2 ? 'Select two versions to compare' : ''}</span>
-        <button className="btn" disabled={sel.length !== 2} onClick={compare}>
-          Compare {sel.length === 2 ? '2 versions' : ''}
-        </button>
-        {latest && (
-          <Link className="btn primary" to={objectUrl(projectId, objectId, 'latest')}>
-            Open latest
-          </Link>
-        )}
-        <ConfirmButton
-          className="btn danger"
-          title={`Delete ${objectId}?`}
-          body={`All ${versions.data?.length ?? ''} versions will be deleted.`}
-          onConfirm={async () => {
-            await api.objectDelete(projectId, objectId)
-            await qc.invalidateQueries({ queryKey: ['objects', projectId] })
-            nav(listUrl)
-          }}
-        >
-          Delete all
-        </ConfirmButton>
-      </div>
+    <div className="page-frame detail">
+      <PageHeader
+        variant="detail"
+        back={{ to: listUrl, label: KIND_META[kind].title }}
+        title={objectId}
+        help="evaluations.md#datasets-models-prompts-and-scorers"
+        helpTopic="Assets"
+        sentence={sentence ? <Sentence parts={sentence} size="detail" /> : undefined}
+        meta={latest ? `${kindWords(latest)[0].toUpperCase()}${kindWords(latest).slice(1)}${savers.length ? ` · saved by ${joinClauses(savers)}` : ''}` : undefined}
+      />
       <ErrorBox error={versions.error} />
       {versions.isLoading ? (
         <Loading />
-      ) : !versions.data?.length ? (
-        <div className="card">
-          <Empty>Object “{objectId}” was not found in this project.</Empty>
+      ) : !vs.length ? (
+        <div className="quiet-empty">
+          <p>{objectId} was not found in this project.</p>
         </div>
       ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 32 }} />
-                <th>Version</th>
-                <th>Digest</th>
-                <th>Created</th>
-                <th>Aliases</th>
-                <th>Tags</th>
-                <th className="num">Size</th>
-                <th style={{ width: 40 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {versions.data.map((v) => (
-                <tr key={v.digest} className={`clickable ${sel.includes(v.digest) ? 'selected' : ''}`} onClick={() => nav(objectUrl(projectId, objectId, v.digest))}>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={sel.includes(v.digest)} onChange={() => toggle(v.digest)} aria-label={`Select v${v.version}`} />
-                  </td>
-                  <td>
-                    <Link to={objectUrl(projectId, objectId, v.digest)} onClick={(e) => e.stopPropagation()} style={{ fontWeight: 500 }}>
-                      v{v.version}
-                    </Link>
-                    {v.is_latest && <span className="badge accent" style={{ marginLeft: 6 }}>latest</span>}
-                  </td>
-                  <td className="mono muted" title={v.digest}>
-                    {v.digest.slice(0, 12)}
-                  </td>
-                  <td title={fmtDate(v.created_at)}>{fmtRelative(v.created_at)}</td>
-                  <td>
-                    <AliasEditor projectId={projectId} objectId={objectId} digest={v.digest} aliases={v.aliases.filter((a) => a !== 'latest')} compact />
-                  </td>
-                  <td>
-                    <TagEditor projectId={projectId} objectId={objectId} digest={v.digest} tags={v.tags ?? []} compact />
-                  </td>
-                  <td className="num muted">{fmtBytes(v.size_bytes)}</td>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <ConfirmButton
-                      className="btn ghost sm icon danger"
-                      title={`Delete ${objectId}:v${v.version}?`}
-                      body="Only this version is deleted. Other versions are kept."
-                      onConfirm={async () => {
-                        await api.objectDelete(projectId, objectId, [v.digest])
-                        await qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
-                        await qc.invalidateQueries({ queryKey: ['objects', projectId] })
-                      }}
-                    >
-                      ✕
-                    </ConfirmButton>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {vs.length > 1 && (
+            <form
+              className="diff-pickers"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const [x, y] = [vs.find((v) => v.digest === from), vs.find((v) => v.digest === to)]
+                if (!x || !y) return
+                const [lo, hi] = x.version <= y.version ? [x, y] : [y, x]
+                nav(objectDiffUrl(projectId, objectId, lo.digest, hi.digest))
+              }}
+            >
+              <label>
+                Compare
+                <select className="input" value={from} onChange={(e) => setA(e.target.value)}>
+                  {vs.map((v) => (
+                    <option key={v.digest} value={v.digest}>
+                      {versionWords(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                with
+                <select className="input" value={to} onChange={(e) => setB(e.target.value)}>
+                  {vs.map((v) => (
+                    <option key={v.digest} value={v.digest}>
+                      {versionWords(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="qbtn" disabled={from === to}>
+                Compare
+              </button>
+            </form>
+          )}
+          <GroupedList title="Versions" count={vs.length}>
+            {vs.map((v) => {
+              const rd = rowsDigest(v.value)
+              const rows = rd ? counts.data?.get(rd) : undefined
+              const aliases = v.aliases.filter((x) => x !== 'latest')
+              const facts = [rows != null ? plural(rows, 'row') : null, fmtBytes(v.size_bytes), v.user_id ? `saved by ${v.user_id}` : null].filter(Boolean).join(', ')
+              const labels = [...aliases.map((x) => `alias ${x}`), ...(v.tags ?? []).map((t) => `#${t}`)].join(' · ')
+              const n = v.version + 1
+              return (
+                <ListRow
+                  key={v.digest}
+                  title={`${versionWords(v)[0].toUpperCase()}${versionWords(v).slice(1)}${v.is_latest ? ' · latest' : ''}`}
+                  summary={facts}
+                  meta={labels || undefined}
+                  time={relativeTime(v.created_at)}
+                  timeTitle={`Saved ${fmtDate(v.created_at)}`}
+                  to={objectUrl(projectId, objectId, v.digest)}
+                  trailing={
+                    vs.length > 1 ? (
+                      <button
+                        type="button"
+                        className="qbtn sm row-action"
+                        aria-label={`Delete version ${n}`}
+                        title={`Delete version ${n}; the others are kept`}
+                        onClick={() =>
+                          remove(v.digest, `Deleted version ${n} of ${objectId}`, async () => {
+                            await api.objectDelete(projectId, objectId, [v.digest])
+                            await qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
+                            await qc.invalidateQueries({ queryKey: ['objects', projectId] })
+                          })
+                        }
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    ) : undefined
+                  }
+                />
+              )
+            })}
+          </GroupedList>
+          <p className="quiet-note">
+            <ConfirmButton
+              className="qbtn sm plain danger"
+              title={`Delete every version of ${objectId}?`}
+              body={`All ${vs.length} versions are deleted. Evaluations, monitors and spans that point at ${objectId} will no longer find it.`}
+              confirmLabel="Delete all"
+              onConfirm={async () => {
+                await api.objectDelete(projectId, objectId)
+                await qc.invalidateQueries({ queryKey: ['objects', projectId] })
+                nav(listUrl)
+              }}
+            >
+              Delete {objectId} and every version
+            </ConfirmButton>
+          </p>
+        </>
       )}
     </div>
   )

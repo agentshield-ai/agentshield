@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import { queuesApi, type AnnotationQueueItem, type AnnotationState } from '../../api/queues'
 import { spanRef, spanDisplayName, parseRef } from '../../api/refs'
 import type { Any, Span, Feedback } from '../../api/types'
-import { Empty, ErrorBox, Loading, Section, Spinner, StatusBadge } from '../../components/common'
+import { ErrorBox, Loading, Spinner } from '../../components/common'
 import { queuesUrl } from '../../components/queues/AddToQueueModal'
 import { ExportQueueModal } from '../../components/queues/ExportQueueModal'
 import { annotationType, displayFieldValues, nextPendingIndex, progressCounts } from '../../components/queues/queueUtils'
@@ -13,9 +13,17 @@ import { CallChatView, extractChat } from '../../components/traces/ChatView'
 import { AnnotationInput, isMine, rememberUserId, useCallFeedback, type FieldSchema } from '../../components/traces/FeedbackPanel'
 import { ValueView } from '../../components/ValueView'
 import { useProjectId } from '../../hooks/useProject'
-import { callStatus, fmtDate, fmtDuration, callLatencyMs } from '../../lib/format'
+import { callStatus, fmtDate, callLatencyMs } from '../../lib/format'
 import { spanUrl, objectUrl } from '../../lib/urls'
 import { undoable } from '../../components/ui/Toasts'
+import { Inspector, InspectorDivider } from '../../components/ui/Inspector'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
+import { relativeTime, shortDuration } from '../../lib/summaries'
+import { reviewSentence } from '../../lib/summaries/evaluate'
+import '../evaluations/evaluate.css'
 
 interface QueueSpec {
   ref: string
@@ -26,11 +34,11 @@ interface QueueSpec {
 }
 
 const STATE_LABEL: Record<AnnotationState, string> = { unstarted: 'Not started', in_progress: 'In progress', completed: 'Done', skipped: 'Skipped' }
-const STATE_COLOR: Record<AnnotationState, string> = {
-  unstarted: 'var(--text-3)',
-  in_progress: 'var(--running)',
-  completed: 'var(--success)',
-  skipped: 'var(--warn)',
+const STATE_GLYPH: Record<AnnotationState, 'unknown' | 'running' | 'check' | 'warning'> = {
+  unstarted: 'unknown',
+  in_progress: 'running',
+  completed: 'check',
+  skipped: 'warning',
 }
 
 const isTyping = (t: EventTarget | null) => {
@@ -130,65 +138,51 @@ export function QueueReviewPage() {
     [list],
   )
 
+  const back = { to: queuesUrl(projectId), label: 'Review queues' }
   if (queue.isLoading || items.isLoading) return <Loading />
   if (queue.error || items.error)
     return (
-      <div className="page">
+      <div className="page-frame detail">
+        <PageHeader variant="detail" back={back} title="Review queue" help="evaluations.md#review-queues" helpTopic="Review queues" />
         <ErrorBox error={queue.error ?? items.error} />
-        <Link to={queuesUrl(projectId)}>← All queues</Link>
       </div>
     )
   const q = queue.data!
   const allDone = list.length > 0 && progress.remaining === 0
+  const sentence = reviewSentence({ position: cur ? (idx ?? 0) + 1 : null, total: progress.total, completed: progress.completed, skipped: progress.skipped })
 
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={queuesUrl(projectId)}>Review queues</Link>
-        <span>/</span>
-        <span>{q.name}</span>
-      </div>
-      <div className="page-header">
-        <div className="col" style={{ gap: 2, minWidth: 0 }}>
-          <h1>{q.name}</h1>
-          {q.description && <span className="muted small">{q.description}</span>}
-        </div>
-        <span className="spacer" />
-        <button className="btn sm" onClick={() => setExporting(true)}>
-          Export to dataset
-        </button>
-      </div>
-      <div className="row" style={{ gap: 12, marginBottom: 14 }} aria-label="Queue progress">
-        <div className="progress grow" title={`${progress.completed} done, ${progress.skipped} skipped, ${progress.remaining} remaining`}>
-          <span style={{ width: `${progress.done * 100}%` }} />
-        </div>
-        <span className="small mono">
-          {progress.completed + progress.skipped}/{progress.total} reviewed
-        </span>
-        {cur && (
-          <span className="small muted">
-            Item {(idx ?? 0) + 1} of {list.length}
-          </span>
-        )}
-      </div>
-      {allDone && (
-        <div className="success-box row" style={{ marginBottom: 14 }}>
-          <span className="grow">You have reviewed every item in this queue.</span>
-          <button className="btn sm" onClick={() => setExporting(true)}>
-            Export to dataset
-          </button>
-        </div>
-      )}
+    <div className="page-frame detail">
+      <PageHeader
+        variant="detail"
+        back={back}
+        title={q.name}
+        help="evaluations.md#review-queues"
+        helpTopic="Review queues"
+        sentence={
+          <Sentence
+            size="detail"
+            parts={allDone ? [sentence, ' ', { text: 'Export the annotations to a dataset', onClick: () => setExporting(true) }, '.'] : [sentence]}
+          />
+        }
+        meta={q.description || undefined}
+        controls={
+          list.length > 0 && !allDone ? (
+            <button type="button" className="qbtn" onClick={() => setExporting(true)}>
+              Export to a dataset
+            </button>
+          ) : undefined
+        }
+      />
       {!list.length ? (
-        <div className="card">
-          <Empty>
-            This queue is empty. Add calls from the Traces page (select rows → <b>Add to queue</b>) or from a call’s page.
-          </Empty>
+        <div className="quiet-empty">
+          <p>This queue is empty.</p>
+          <p className="ev-note">Add steps from the Traces page (select rows, then Add to queue) or from a step’s page.</p>
         </div>
       ) : cur ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(300px, 380px)', gap: 16, alignItems: 'start' }}>
+        <div className="rv-layout">
           <CallPane projectId={projectId} item={cur} />
-          <div className="col" style={{ gap: 12, position: 'sticky', top: 12 }}>
+          <div className="rv-side">
             <AnnotationPane
               key={cur.id}
               projectId={projectId}
@@ -211,7 +205,12 @@ export function QueueReviewPage() {
                 goNextPending(idx!, after)
               }}
             />
-            <ItemList items={list} current={idx ?? 0} onPick={setIdx} onRemove={removeItem} />
+            <details className="ev-more-details">
+              <summary>
+                All items <span className="quiet">{list.length}</span>
+              </summary>
+              <ItemList items={list} current={idx ?? 0} onPick={setIdx} onRemove={removeItem} />
+            </details>
           </div>
         </div>
       ) : (
@@ -224,59 +223,66 @@ export function QueueReviewPage() {
 
 function CallPane({ projectId, item }: { projectId: string; item: AnnotationQueueItem }) {
   const call = useQuery({ queryKey: ['span', projectId, item.span_id], queryFn: () => api.spanFind(projectId, item.span_id) })
-  if (call.isLoading) return <Loading label="Loading span…" />
-  if (call.error) return <ErrorBox error={call.error} />
+  if (call.isLoading) return <div className="rv-item"><Loading label="Loading the step…" /></div>
+  if (call.error) return <div className="rv-item"><ErrorBox error={call.error} /></div>
   const c = call.data as Span | null
-  if (!c) return <div className="card"><Empty>This span no longer exists.</Empty></div>
-  const chat = extractChat(c)
-  const fields = item.display_fields.length ? displayFieldValues(c, item.display_fields) : []
-  return (
-    <div className="col" style={{ gap: 12, minWidth: 0 }}>
-      <div className="card">
-        <div className="card-header row">
-          <b className="mono truncate">{spanDisplayName(c.name)}</b>
-          <StatusBadge status={callStatus(c)} />
-          <span className="spacer grow" />
-          <span className="faint small">{fmtDate(c.started_at)}</span>
-          <span className="faint small">{fmtDuration(callLatencyMs(c))}</span>
-          <Link className="btn sm ghost" to={spanUrl(projectId, c.id)} target="_blank">
-            Open call ↗
-          </Link>
+  if (!c)
+    return (
+      <div className="rv-item">
+        <div className="quiet-empty">
+          <p>This step no longer exists.</p>
         </div>
       </div>
-      {c.error && <div className="error-box mono small">{c.error}</div>}
+    )
+  const chat = extractChat(c)
+  const fields = item.display_fields.length ? displayFieldValues(c, item.display_fields) : []
+  const st = callStatus(c)
+  return (
+    <section className="rv-item" aria-label="The item to review">
+      <div className="rv-head-line">
+        <StatusGlyph kind={st === 'error' ? 'failed' : st === 'running' ? 'running' : 'ok'} size={18} label={st === 'error' ? 'Failed' : st === 'running' ? 'Running' : 'Finished'} />
+        <span className="title">{spanDisplayName(c.name)}</span>
+        <span title={fmtDate(c.started_at)}>{relativeTime(c.started_at)}</span>
+        <span>took {shortDuration(callLatencyMs(c))}</span>
+        <Link to={spanUrl(projectId, c.id)} target="_blank">
+          Open the step
+        </Link>
+      </div>
+      {c.error && <p className="rv-error">{c.error}</p>}
       {fields.length > 0 && (
-        <Section title="Fields">
-          <div className="col" style={{ gap: 10 }}>
-            {fields.map((f) => (
-              <div key={f.path}>
-                <div className="faint small mono">{f.path}</div>
-                <ValueView value={f.value} projectId={projectId} />
-              </div>
-            ))}
-          </div>
-        </Section>
+        <div className="ev-panel">
+          {fields.map((f) => (
+            <div key={f.path} className="rv-block">
+              <h3 className="rv-block-h">{f.path}</h3>
+              <ValueView value={f.value} projectId={projectId} />
+            </div>
+          ))}
+        </div>
       )}
       {chat ? (
-        <Section title="Conversation">
+        <div className="ev-panel">
+          <h3 className="rv-block-h">Conversation</h3>
           <CallChatView chat={chat} projectId={projectId} />
-        </Section>
+        </div>
       ) : (
-        <>
-          <Section title="Inputs">
+        <div className="ev-panel">
+          <div className="rv-block">
+            <h3 className="rv-block-h">Input</h3>
             <ValueView value={Object.fromEntries(Object.entries(c.inputs ?? {}).filter(([k]) => k !== 'self'))} projectId={projectId} />
-          </Section>
-          <Section title="Output">
+          </div>
+          <InspectorDivider />
+          <div className="rv-block">
+            <h3 className="rv-block-h">Output</h3>
             <ValueView value={c.output} projectId={projectId} markdown />
-          </Section>
-        </>
+          </div>
+        </div>
       )}
-    </div>
+    </section>
   )
 }
 
 function Kbd({ children }: { children: string }) {
-  return <span className="kbd-inline">{children}</span>
+  return <kbd>{children}</kbd>
 }
 
 function AnnotationPane({
@@ -362,6 +368,9 @@ function AnnotationPane({
         return
       }
       if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
+      // Arrow keys inside a segmented field pick its value, not the item.
+      const inGroup = !!(e.target as HTMLElement | null)?.closest?.('[role="radiogroup"],[role="tablist"]')
+      if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && inGroup) return
       if (e.key === 'ArrowRight' || e.key === 'j') onNext()
       else if (e.key === 'ArrowLeft' || e.key === 'k') onPrev()
       else if (e.key === 's' && !busy) skip.mutate()
@@ -382,71 +391,81 @@ function AnnotationPane({
 
   const state = item.annotation_state
   return (
-    <div className="card">
-      <div className="card-header row">
-        <b className="grow">Annotate</b>
-        <span className="badge" style={{ color: STATE_COLOR[state] }}>
-          {STATE_LABEL[state]}
-        </span>
-      </div>
-      <div className="card-body col" style={{ gap: 14 }}>
-        {specsLoading || fb.isLoading ? (
-          <Spinner />
-        ) : specs.length === 0 ? (
-          <div className="hint">This queue has no annotation fields. Mark items done or skip them, or edit the queue to add fields.</div>
-        ) : (
-          specs.map((s) => {
-            const others = rows.filter((r) => r.feedback_type === annotationType(s.name) && !isMine(r))
-            return (
-              <div key={s.ref} className="annotation">
-                <div className="row">
-                  {(() => {
-                    const p = parseRef(s.ref)
-                    return p ? (
-                      <Link className="mono small" to={objectUrl(projectId, p.name, p.digest ?? 'latest')} title="Annotation spec">
-                        {s.name}
-                      </Link>
-                    ) : (
-                      <span className="mono small">{s.name}</span>
-                    )
-                  })()}
-                  <span className="grow" />
-                  {mineBySpec.has(s.name) && <span className="faint small">saved</span>}
-                </div>
-                {s.description && <div className="faint small">{s.description}</div>}
-                <AnnotationInput schema={s.schema} value={drafts[s.name] ?? null} onChange={(v) => setDraft(s.name, v)} />
-                {others.length > 0 && (
-                  <div className="faint small">
-                    Others: {others.map((o) => `${JSON.stringify(o.payload?.value)} (${o.creator ?? o.user_id ?? 'anonymous'})`).join(', ')}
-                  </div>
+    <Inspector title="Your review" subtitle={STATE_LABEL[state]} label="Annotation">
+      {specsLoading || fb.isLoading ? (
+        <Spinner />
+      ) : specs.length === 0 ? (
+        <p className="ev-note">This queue asks for nothing: mark each item done or skip it. Edit the queue to add annotation fields.</p>
+      ) : (
+        specs.map((s) => {
+          const others = rows.filter((r) => r.feedback_type === annotationType(s.name) && !isMine(r))
+          const p = parseRef(s.ref)
+          return (
+            <div key={s.ref} className="rv-field">
+              <div className="rv-field-name">
+                {p ? (
+                  <Link to={objectUrl(projectId, p.name, p.digest ?? 'latest')} title="The annotation field’s definition" style={{ color: 'inherit' }}>
+                    {s.name}
+                  </Link>
+                ) : (
+                  <span>{s.name}</span>
                 )}
+                {mineBySpec.has(s.name) && <span className="quiet">saved</span>}
               </div>
-            )
-          })
-        )}
-        <ErrorBox error={submit.error ?? skip.error} />
-        <div className="row" style={{ gap: 6 }}>
-          <button className="btn sm" disabled={isFirst || busy} onClick={onPrev} title="Previous (←)">
-            ← Prev
-          </button>
-          <button className="btn sm" disabled={busy} onClick={() => skip.mutate()} title="Skip (s)">
-            Skip
-          </button>
-          <span className="grow" />
-          <button className="btn sm" disabled={isLast || busy} onClick={onNext} title="Next (→)">
-            Next →
-          </button>
-          <button className="btn sm primary" disabled={busy} onClick={() => submit.mutate()} title="Submit (Ctrl/⌘+Enter)">
-            {submit.isPending ? 'Saving…' : 'Submit'}
-          </button>
-        </div>
-        <div className="faint small" style={{ lineHeight: 1.8 }}>
-          <Kbd>⌘/Ctrl+Enter</Kbd> submit · <Kbd>←</Kbd>/<Kbd>→</Kbd> prev/next · <Kbd>s</Kbd> skip · <Kbd>1</Kbd>–<Kbd>9</Kbd> score ·{' '}
-          <Kbd>y</Kbd>/<Kbd>n</Kbd> yes/no
-        </div>
+              {s.description && <div className="rv-field-help">{s.description}</div>}
+              <FieldInput name={s.name} schema={s.schema} value={drafts[s.name] ?? null} onChange={(v) => setDraft(s.name, v)} />
+              {others.length > 0 && (
+                <div className="rv-field-help">
+                  Others said: {others.map((o) => `${JSON.stringify(o.payload?.value)} (${o.creator ?? o.user_id ?? 'anonymous'})`).join(', ')}
+                </div>
+              )}
+            </div>
+          )
+        })
+      )}
+      <ErrorBox error={submit.error ?? skip.error} />
+      <div className="rv-buttons">
+        <button type="button" className="qbtn primary" disabled={busy} onClick={() => submit.mutate()} title="Submit and go to the next item (Ctrl/⌘+Enter)">
+          {submit.isPending ? 'Saving…' : specs.length ? 'Submit' : 'Mark done'}
+        </button>
+        <button type="button" className="qbtn" disabled={busy} onClick={() => skip.mutate()} title="Skip (s)">
+          Skip
+        </button>
+        <span className="grow" />
+        <button type="button" className="qbtn" disabled={isFirst || busy} onClick={onPrev} title="Previous (← or k)" aria-label="Previous item">
+          ←
+        </button>
+        <button type="button" className="qbtn" disabled={isLast || busy} onClick={onNext} title="Next (→ or j)" aria-label="Next item">
+          →
+        </button>
       </div>
-    </div>
+      <div className="rv-keys">
+        <Kbd>⌘/Ctrl+Enter</Kbd> submit · <Kbd>s</Kbd> skip · <Kbd>←</Kbd> <Kbd>→</Kbd> or <Kbd>k</Kbd> <Kbd>j</Kbd> move · <Kbd>1</Kbd>–<Kbd>9</Kbd> score · <Kbd>y</Kbd>{' '}
+        <Kbd>n</Kbd> yes or no
+      </div>
+    </Inspector>
   )
+}
+
+/** One annotation field: small scales and yes/no as segments (arrow keys move), anything else the shared input. */
+function FieldInput({ name, schema, value, onChange }: { name: string; schema: FieldSchema; value: Any; onChange: (v: Any) => void }) {
+  if (schema.type === 'boolean')
+    return (
+      <Segmented
+        label={name}
+        options={[
+          { id: 'yes', label: 'Yes' },
+          { id: 'no', label: 'No' },
+        ]}
+        value={value === true ? 'yes' : value === false ? 'no' : null}
+        onChange={(id) => onChange(id === 'yes')}
+      />
+    )
+  if (schema.type === 'integer' && schema.minimum != null && schema.maximum != null && schema.maximum - schema.minimum <= 9 && !Array.isArray(schema.enum)) {
+    const opts = Array.from({ length: schema.maximum - schema.minimum + 1 }, (_, i) => String(schema.minimum! + i))
+    return <Segmented label={name} options={opts.map((o) => ({ id: o, label: o }))} value={value == null ? null : String(value)} onChange={(id) => onChange(Number(id))} />
+  }
+  return <AnnotationInput schema={schema} value={value} onChange={onChange} />
 }
 
 function ItemList({
@@ -461,40 +480,26 @@ function ItemList({
   onRemove: (item: AnnotationQueueItem) => void
 }) {
   return (
-    <div className="card">
-      <div className="card-header">
-        <b>Items</b>
-      </div>
-      <div style={{ maxHeight: 280, overflow: 'auto' }}>
-        {items.map((it, i) => (
-          <div
-            key={it.id}
-            className="row small"
-            style={{ gap: 4, paddingRight: 6, background: i === current ? 'var(--accent-2)' : undefined, borderBottom: '1px solid var(--border)' }}
+    <ul className="rv-items glist-box" aria-label="Items in this queue">
+      {items.map((it, i) => (
+        <li key={it.id} className={i === current ? 'current' : undefined}>
+          <button type="button" className="rv-pick" onClick={() => onPick(i)} aria-current={i === current ? 'true' : undefined}>
+            <StatusGlyph kind={STATE_GLYPH[it.annotation_state]} size={14} decorative />
+            <span className="quiet-note">{it.position_in_queue ?? i + 1}</span>
+            <span className="name">{spanDisplayName(it.span_name)}</span>
+            <span className="state">{STATE_LABEL[it.annotation_state]}</span>
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={`Remove ${spanDisplayName(it.span_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
+            title="Remove from the queue (annotations already given are kept; can be undone)"
+            onClick={() => onRemove(it)}
           >
-            <button
-              className="linkish row small grow"
-              style={{ minWidth: 0, gap: 8, padding: '5px 6px 5px 12px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
-              onClick={() => onPick(i)}
-              aria-current={i === current}
-            >
-              <span className="dot" style={{ background: STATE_COLOR[it.annotation_state], width: 8, height: 8, borderRadius: 4, flex: 'none' }} />
-              <span className="mono faint">{it.position_in_queue ?? i + 1}</span>
-              <span className="mono truncate grow">{spanDisplayName(it.span_name)}</span>
-              <span className="faint">{STATE_LABEL[it.annotation_state]}</span>
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label={`Remove ${spanDisplayName(it.span_name)} (item ${it.position_in_queue ?? i + 1}) from the queue`}
-              title="Remove from the queue (annotations already given are kept)"
-              onClick={() => onRemove(it)}
-            >
-              ✕
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
+            ✕
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }

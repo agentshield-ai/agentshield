@@ -1,147 +1,171 @@
-// One team: the delegation graph aggregated over its sessions, a per-agent
-// table, a per-hand-off table (count, error rate, median time, mean score)
-// and recent sessions.
+// One team (DESIGN.md §7, §7.2): a sentence that leads with the hand-off
+// that fails most ("The hand-off that fails most, from orchestrator to
+// researcher, failed 3 of 5 times (60%), usually after 1.3 seconds"), its
+// clauses linking to the failed sessions; one quiet line of figures; then
+// how work flows (the delegation graph), the hand-offs and the agents as
+// plain tables, and the team's recent sessions.
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { v1 } from '../../api/v1'
+import { v1, type TeamDetail } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { filterQueryString } from '../../lib/filters'
-import { fmtCost, fmtNumber, fmtRelative } from '../../lib/format'
+import { fmtCost, fmtNumber } from '../../lib/format'
+import { teamMetaFigures, teamName, teamOutcome } from '../../lib/summaries/agentsTeams'
 import { agentUrl, sessionsUrl, teamsUrl } from '../../lib/urls'
-import { ErrorBox, Loading } from '../../components/common'
+import { ErrorBox } from '../../components/common'
 import { AgentGraphView, HandoffTable } from '../../components/ui/AgentGraphView'
-import { AgentChip, Callout, Crumbs, DetectionBadges, Panel } from '../../components/ui/bits'
-import { Metric } from '../_legacy/Metric'
-import { HelpLink } from '../../components/ui/PageHeader'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Sentence } from '../../components/ui/Sentence'
 import { SessionList } from '../../components/sessions/SessionList'
-import { teamName } from './TeamsPage'
+import { toSentenceParts, useSessionRowContext } from '../../components/agents/AgentRows'
+import '../agents/agents-teams.css'
 
 export function TeamPage() {
   const pid = useProjectId()
   const { teamId = '' } = useParams()
   const t = useQuery({ queryKey: ['v1', pid, 'team', teamId], queryFn: () => v1.team(pid, teamId) })
-  if (t.isLoading) return <Loading />
-  if (t.error)
+  const ctx = useSessionRowContext(pid, t.data?.recent_sessions.slice(0, 10))
+  const back = { to: teamsUrl(pid), label: 'Teams' }
+  const fallbackTitle = teamName({ team_id: teamId, name: '', auto: teamId.startsWith('auto:') })
+  if (t.isLoading)
     return (
-      <div className="page">
-        <Crumbs items={[{ label: 'Teams', to: teamsUrl(pid) }, { label: teamId }]} />
+      <div className="page-frame">
+        <PageHeader
+          variant="detail"
+          back={back}
+          title={fallbackTitle}
+          help="teams.md#find-the-hand-off-that-fails-most"
+          helpTopic="Team"
+          sentence={
+            <p className="sentence s-detail sk-sentence" aria-busy="true">
+              <span className="sr-only">Reading the team…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          }
+        />
+      </div>
+    )
+  if (t.error || !t.data)
+    return (
+      <div className="page-frame">
+        <PageHeader variant="detail" back={back} title={fallbackTitle} help="teams.md#find-the-hand-off-that-fails-most" helpTopic="Team" />
         <ErrorBox error={t.error} />
       </div>
     )
-  const d = t.data!
-  const worst = [...d.handoff_stats].filter((e) => e.errors > 0).sort((a, b) => b.error_rate - a.error_rate || b.errors - a.errors)[0]
-  const failRate = d.session_count ? d.error_session_count / d.session_count : 0
+  const d = t.data
+  const name = teamName(d)
   return (
-    <div className="page wide">
-      <Crumbs items={[{ label: 'Teams', to: teamsUrl(pid) }, { label: teamName(d) }]} />
-      <header className="page-head">
-        <div className="grow">
-          <h1>{teamName(d)}</h1>
-          <div className="row wrap small muted" style={{ gap: 6, marginTop: 6 }}>
-            {d.agents.map((a) => (
-              <AgentChip key={a} name={a} to={agentUrl(pid, a)} size="sm" />
-            ))}
-            <span>{d.auto ? '· grouped automatically from the agents in each session' : ''}</span>
-          </div>
+    <div className="page-frame at-page">
+      <PageHeader
+        variant="detail"
+        back={back}
+        title={name}
+        help="teams.md#find-the-hand-off-that-fails-most"
+        helpTopic="Team"
+        sentence={<Sentence size="detail" parts={toSentenceParts(teamOutcome(d), pid)} />}
+        meta={teamMetaFigures(d).join(' · ')}
+      />
+
+      <section className="at-section" aria-labelledby="flow-h">
+        <h2 id="flow-h" className="at-h">
+          How work flows
+        </h2>
+        <p className="quiet-note">Each agent with its runs; arrows are hand-offs with their count, failures and median time over the team's sessions, dashed arrows returns of control.</p>
+        <div className="at-panel">
+          <AgentGraphView graph={d.graph} agentUrl={(a) => agentUrl(pid, a)} title={`Delegation graph of ${name}`} />
         </div>
-        <HelpLink doc="teams.md#find-the-hand-off-that-fails-most" topic="Team" />
-      </header>
-      <div className="metrics">
-        <Metric label="Sessions" value={fmtNumber(d.session_count)} tip="Sessions this team took part in." />
-        <Metric
-          label="Failed sessions"
-          value={`${(failRate * 100).toFixed(0)}%`}
-          sub={`${d.error_session_count} of ${d.session_count}`}
-          tone={d.error_session_count ? 'error' : undefined}
-          tip="Sessions that ended with an error (a top-level run or an agent invocation failed)."
-        />
-        <Metric label="Hand-offs" value={fmtNumber(d.handoff_count)} tip="Times an agent of this team passed work to another (returns excluded)." />
-        <Metric label="Tokens" value={fmtNumber(d.input_tokens + d.output_tokens)} tip="Input plus output tokens over all the team's sessions." />
-        <Metric label="Cost" value={fmtCost(d.cost_usd)} tip="Token cost over all sessions, priced per model including cached tokens." />
-        <Metric
-          label="Security"
-          value={Object.values(d.detection_count ?? {}).some((v) => (v ?? 0) > 0) ? <DetectionBadges counts={d.detection_count} /> : <span className="muted">nothing flagged</span>}
-          tip="AgentShield verdicts on this team's tool calls."
-        />
-      </div>
-      {worst && (
-        <Callout
-          tone="error"
-          title={
-            <>
-              Most failing hand-off: <AgentChip name={worst.from} size="sm" /> → <AgentChip name={worst.to} size="sm" />
-            </>
-          }
-          actions={
-            <Link className="btn sm" to={sessionsUrl(pid, filterQueryString({ team: d.team_id, agent: worst.to, status: 'error', time: 'all' }))}>
-              Show failed sessions
-            </Link>
-          }
-        >
-          {(worst.error_rate * 100).toFixed(0)}% of {worst.count} hand-offs failed ({worst.errors} failures), typically after{' '}
-          {worst.p50_ms != null ? `${(worst.p50_ms / 1000).toFixed(1)} s` : 'an unknown time'}.
-        </Callout>
-      )}
-      <Panel
-        title="How work flows"
-        tip="Agents sized by how often they ran; arrows are hand-offs labelled with count, failures and median time, aggregated over the team's sessions. Red marks failures or blocked tool calls."
-      >
-        <AgentGraphView graph={d.graph} agentUrl={(a) => agentUrl(pid, a)} title={`Delegation graph of ${teamName(d)}`} />
-      </Panel>
-      <Panel
-        title="Hand-offs"
-        tip="Each route between two agents, most failing first. Error rate: share of hand-offs whose receiving agent ended with an error. Median time: from hand-off to the delegate finishing. Mean score: hand-off quality scores, when scored."
-      >
+      </section>
+
+      <section className="at-section" aria-labelledby="handoffs-h">
+        <h2 id="handoffs-h" className="at-h">
+          Hand-offs
+        </h2>
         <HandoffTable edges={d.handoff_stats} agentUrl={(a) => agentUrl(pid, a)} />
-      </Panel>
-      <Panel title="Agents" tip="Per agent, over this team's sessions.">
-        <div className="table-wrap">
-          <table className="table">
-            <caption className="sr-only">Agents of this team</caption>
-            <thead>
-              <tr>
-                <th scope="col">Agent</th>
-                <th scope="col">Sessions</th>
-                <th scope="col">Runs</th>
-                <th scope="col">Errors</th>
-                <th scope="col">Tool calls</th>
-                <th scope="col">Handed to it</th>
-                <th scope="col">Handed on</th>
-                <th scope="col">Cost</th>
-                <th scope="col">Security</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.agent_stats.map((a) => (
-                <tr key={a.agent}>
-                  <td>
-                    <AgentChip name={a.agent} to={agentUrl(pid, a.agent)} />
-                  </td>
-                  <td>{fmtNumber(a.sessions)}</td>
-                  <td>{fmtNumber(a.calls)}</td>
-                  <td className={a.errors ? 'text-error' : ''}>{fmtNumber(a.errors)}</td>
-                  <td>{fmtNumber(a.tool_calls)}</td>
-                  <td>{fmtNumber(a.handoffs_in)}</td>
-                  <td>{fmtNumber(a.handoffs_out)}</td>
-                  <td>{fmtCost(a.cost_usd)}</td>
-                  <td>{Object.values(a.detections ?? {}).some((v) => (v ?? 0) > 0) ? <DetectionBadges counts={a.detections} /> : <span className="faint">none</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-      <Panel
-        title="Recent sessions"
-        actions={
-          <Link className="small" to={sessionsUrl(pid, filterQueryString({ team: d.team_id, time: 'all' }))}>
+      </section>
+
+      <section className="at-section" aria-labelledby="agents-h">
+        <h2 id="agents-h" className="at-h">
+          Agents
+        </h2>
+        <TeamAgents pid={pid} d={d} />
+      </section>
+
+      <section className="at-section" aria-labelledby="recent-h">
+        <div className="at-h-line">
+          <h2 id="recent-h" className="at-h">
+            Recent sessions
+          </h2>
+          <Link className="at-h-link" to={sessionsUrl(pid, filterQueryString({ team: d.team_id, time: 'all' }))}>
             All sessions of this team
           </Link>
-        }
-      >
-        {d.recent_sessions.length ? <SessionList projectId={pid} sessions={d.recent_sessions.slice(0, 10)} compact /> : <p className="muted small">No sessions.</p>}
-        <p className="faint small">Last activity {fmtRelative(d.last_activity)}.</p>
-      </Panel>
+        </div>
+        {d.recent_sessions.length ? (
+          <SessionList projectId={pid} sessions={d.recent_sessions.slice(0, 10)} ctx={ctx} label={`Recent sessions of ${name}`} />
+        ) : (
+          <p className="quiet-note">No sessions.</p>
+        )}
+      </section>
     </div>
+  )
+}
+
+/** Verdicts as words: "1 blocked, 2 needed approval", or "none". */
+function verdictText(c: Partial<Record<string, number>> | null | undefined): string {
+  const xs: string[] = []
+  if (c?.block) xs.push(`${c.block} blocked`)
+  if (c?.require_approval) xs.push(`${c.require_approval} needed approval`)
+  if (c?.log) xs.push(`${c.log} logged`)
+  return xs.join(', ') || 'none'
+}
+
+function TeamAgents({ pid, d }: { pid: string; d: TeamDetail }) {
+  return (
+    <PlainTable caption={`Agents of ${teamName(d)}, over the team's sessions`} className="team-agents-table">
+      <thead>
+        <tr>
+          <th scope="col">Agent</th>
+          <th scope="col" className="num">
+            Sessions
+          </th>
+          <th scope="col" className="num" title="Invocations of the agent">
+            Runs
+          </th>
+          <th scope="col" className="num" title="Spans of this agent that ended with an error">
+            Errors
+          </th>
+          <th scope="col" className="num">
+            Tool calls
+          </th>
+          <th scope="col" className="num" title="Hand-offs where another agent passed work to this one">
+            Handed to it
+          </th>
+          <th scope="col" className="num" title="Hand-offs where this agent passed work on">
+            Handed on
+          </th>
+          <th scope="col" className="num">
+            Cost
+          </th>
+          <th scope="col">AgentShield</th>
+        </tr>
+      </thead>
+      <tbody>
+        {d.agent_stats.map((a) => (
+          <tr key={a.agent}>
+            <td>
+              <Link to={agentUrl(pid, a.agent)}>{a.agent}</Link>
+            </td>
+            <td className="num">{fmtNumber(a.sessions)}</td>
+            <td className="num">{fmtNumber(a.calls)}</td>
+            <td className={`num ${a.errors ? 'text-error' : ''}`}>{fmtNumber(a.errors)}</td>
+            <td className="num">{fmtNumber(a.tool_calls)}</td>
+            <td className="num">{fmtNumber(a.handoffs_in)}</td>
+            <td className="num">{fmtNumber(a.handoffs_out)}</td>
+            <td className="num">{fmtCost(a.cost_usd)}</td>
+            <td className={a.detections?.block ? 'text-error' : a.detections?.require_approval ? 'text-warn' : 'faint'}>{verdictText(a.detections)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </PlainTable>
   )
 }

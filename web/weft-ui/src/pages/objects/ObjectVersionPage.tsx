@@ -1,16 +1,23 @@
+// One version of an asset (DESIGN.md §7, §7.1 rules 1, 2 and 4, §7.2): a
+// sentence saying which version this is and what changed ("Version 3 of
+// support-tickets, saved 2 days ago. It has 50 rows, 4 more than version
+// 2."), then the value shown readably: rows as a table, prompts as prose,
+// functions as code. Ids, the ref, the digest, aliases and tags live in the
+// inspector beside it, with copy buttons. The views (?tab=) are Contents,
+// Use (SDK snippets) and Raw (the stored JSON).
 import { useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../api/client'
 import { objectRef, parseRef } from '../../api/refs'
 import type { Any, WeftObject } from '../../api/types'
-import { CopyButton, Empty, ErrorBox, Loading, Section, Spinner, Tabs } from '../../components/common'
+import { ErrorBox, Loading, Spinner } from '../../components/common'
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock, ValueView } from '../../components/ValueView'
 import { CallsMiniTable, EvalRunsTable } from '../../components/evals/EvalRunsTable'
 import { useAgentEvalRuns } from '../../components/agents/AgentEvals'
 import { objectRefPrefix, useEvalRuns } from '../../components/evals/evalUtils'
-import { AliasEditor, CodeBlock, MessageList, TemplateText, TemplateVarChips, UsePanel } from '../../components/objects/bits'
+import { AliasEditor, CodeBlock, TemplateText, UsePanel } from '../../components/objects/bits'
 import { DatasetRowsView } from '../../components/objects/DatasetRowsView'
 import { DatasetSources } from '../../components/objects/DatasetSources'
 import { TagEditor } from '../../components/objects/TagEditor'
@@ -27,33 +34,50 @@ import {
   kindOf,
   objClass,
   refOf,
+  rowsDigest,
   SCORER_LABELS,
   useObjectVersions,
+  useTableCounts,
   valClass,
   type ServerScorerClass,
 } from '../../components/objects/objectUtils'
+import { CopyText, Inspector, InspectorDivider, InspectorLinks, KeyValueList } from '../../components/ui/Inspector'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
+import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtBytes, fmtDate, fmtRelative, fmtScore, preview } from '../../lib/format'
+import { fmtBytes, fmtDate, fmtScore, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
-import {
-  spanUrl,
-  compareEvaluationsUrl,
-  leaderboardUrl,
-  monitorUrl,
-  newEvaluationUrl,
-  objectDiffUrl,
-  objectUrl,
-  objectVersionsUrl,
-  playgroundUrl,
-} from '../../lib/urls'
+import { plural, relativeTime } from '../../lib/summaries'
+import { kindWords, sdkName, versionSentence, versionWords, type AssetPart } from '../../lib/summaries/assets'
+import { compareEvaluationsUrl, leaderboardUrl, monitorUrl, newEvaluationUrl, objectDiffUrl, objectUrl, objectVersionsUrl, playgroundUrl, spanUrl } from '../../lib/urls'
+import './assets.css'
 
-type Tab = 'overview' | 'use' | 'json'
+type Tab = 'contents' | 'use' | 'raw'
+const TABS: { id: Tab; label: string; title: string }[] = [
+  { id: 'contents', label: 'Contents', title: 'What this version holds' },
+  { id: 'use', label: 'Use', title: 'Load this version from code' },
+  { id: 'raw', label: 'Raw', title: 'The stored value as JSON' },
+]
+/** Earlier tab names. */
+const LEGACY_TAB: Record<string, Tab> = { overview: 'contents', json: 'raw' }
+
+const listUrl = (projectId: string, kind: ReturnType<typeof kindOf>) => `/${projectId}/${kind === 'all' ? 'objects' : kind === 'ops' ? 'functions' : kind}`
 
 export function ObjectVersionPage() {
   const projectId = useProjectId()
   const { objectId = '', digest = 'latest' } = useParams()
   const nav = useNavigate()
-  const [tab, setTab] = useState<Tab>('overview')
+  const [params, setParams] = useSearchParams()
+  const rawTab = params.get('tab') ?? ''
+  const tab: Tab = LEGACY_TAB[rawTab] ?? (TABS.some((t) => t.id === rawTab) ? (rawTab as Tab) : 'contents')
+  const setTab = (t: Tab) => {
+    const n = new URLSearchParams(params)
+    if (t === 'contents') n.delete('tab')
+    else n.set('tab', t)
+    setParams(n, { replace: true })
+  }
   const [editing, setEditing] = useState(false)
   const obj = useQuery({
     queryKey: ['object', projectId, objectId, digest],
@@ -61,21 +85,27 @@ export function ObjectVersionPage() {
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 1,
   })
   const versions = useObjectVersions(projectId, objectId)
+  const o = obj.data
+  const prev = o ? versions.data?.find((v) => v.version === o.version - 1) : undefined
+  // The previous version's rows, to say how many rows this version added (it is metadata only, so read it).
+  const prevObj = useQuery({
+    queryKey: ['object', projectId, objectId, prev?.digest],
+    queryFn: () => api.objectGet(projectId, objectId, prev!.digest),
+    enabled: !!prev && !!o && isDataset(o),
+  })
+  const digests = [o && isDataset(o) ? rowsDigest(o.value) : null, prevObj.data ? rowsDigest(prevObj.data.value) : null].filter(Boolean) as string[]
+  const counts = useTableCounts(projectId, digests)
 
   if (obj.isLoading) return <Loading />
-  if (obj.error || !obj.data) {
+  if (obj.error || !o) {
     const notFound = obj.error instanceof ApiError && obj.error.status === 404
     return (
-      <div className="page">
-        <div className="breadcrumbs">
-          <Link to={`/${projectId}/objects`}>Objects</Link> <span>/</span> <span>{objectId}</span>
-        </div>
+      <div className="page-frame detail">
+        <PageHeader variant="detail" back={{ to: `/${projectId}/objects`, label: 'All objects' }} title={objectId} help="evaluations.md#datasets-models-prompts-and-scorers" helpTopic="Assets" />
         {notFound ? (
-          <div className="card">
-            <Empty>
-              Version <span className="mono">{digest}</span> of <span className="mono">{objectId}</span> was not found.{' '}
-              <Link to={objectVersionsUrl(projectId, objectId)}>See all versions</Link>
-            </Empty>
+          <div className="quiet-empty">
+            <p>This version of {objectId} was not found. It may have been deleted.</p>
+            <Link to={objectVersionsUrl(projectId, objectId)}>See every version of {objectId}</Link>
           </div>
         ) : (
           <ErrorBox error={obj.error ?? 'Not found'} />
@@ -84,114 +114,152 @@ export function ObjectVersionPage() {
     )
   }
 
-  const o = obj.data
   const kind = kindOf(o)
   const ref = refOf(o)
-  const prev = versions.data?.find((v) => v.version === o.version - 1)
+  const latest = versions.data?.[0]
+  const rowsDigestNow = isDataset(o) ? rowsDigest(o.value) : null
+  const rows = rowsDigestNow ? (counts.data?.get(rowsDigestNow) ?? null) : null
+  const prevRowsDigest = prevObj.data ? rowsDigest(prevObj.data.value) : null
+  const prevRows = prevRowsDigest ? (counts.data?.get(prevRowsDigest) ?? null) : null
   const onPublished = (c: Created) => {
     setEditing(false)
     nav(objectUrl(projectId, objectId, c.digest))
   }
   const editable = isPrompt(o) || isLLMModel(o) || isServerScorer(o)
   const useKind = kind === 'datasets' ? 'dataset' : kind === 'models' ? 'model' : kind === 'prompts' ? 'prompt' : kind === 'ops' ? 'function' : 'other'
+  const parts: SentencePart[] = versionSentence({
+    o,
+    latestVersion: latest?.version ?? null,
+    rows,
+    prevRows: prev ? prevRows : null,
+  }).map((p: AssetPart) => (typeof p === 'string' ? p : { text: p.text, to: objectUrl(projectId, objectId, 'latest'), title: 'Open the latest version' }))
+  const versionCount = versions.data?.length ?? null
+  const cls = objClass(o)
+  const ownPage =
+    cls === 'Leaderboard' || o.kind === 'leaderboard'
+      ? { to: leaderboardUrl(projectId, o.name), label: 'Open the leaderboard' }
+      : cls === 'Monitor' || o.kind === 'monitor'
+        ? { to: monitorUrl(projectId, o.name), label: 'Open the monitor' }
+        : null
+  const aliases = o.aliases.filter((a) => a !== 'latest')
 
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={`/${projectId}/${kind === 'all' ? 'objects' : kind}`}>{KIND_META[kind].title}</Link>
-        <span>/</span>
-        <Link to={objectVersionsUrl(projectId, objectId)}>{objectId}</Link>
-        <span>/</span>
-        <span>v{o.version}</span>
-      </div>
-      <div className="page-header">
-        <h1 className="mono truncate" style={{ maxWidth: '100%' }}>
-          {objectId}
-        </h1>
-        <span className="badge accent">v{o.version}</span>
-        <span className="badge">{objClass(o)}</span>
-        {o.is_latest && <span className="badge success">latest</span>}
-        <span className="spacer" />
-        <select
-          className="input"
-          value={o.digest}
-          onChange={(e) => nav(objectUrl(projectId, objectId, e.target.value))}
-          aria-label="Switch version"
-          style={{ maxWidth: 220 }}
-        >
-          {(versions.data ?? [o]).map((v) => (
-            <option key={v.digest} value={v.digest}>
-              v{v.version} · {fmtRelative(v.created_at)}
-              {v.aliases.filter((a) => a !== 'latest').length ? ` · ${v.aliases.filter((a) => a !== 'latest').join(', ')}` : ''}
-            </option>
-          ))}
-        </select>
-        {prev && (
-          <Link className="btn" to={objectDiffUrl(projectId, objectId, prev.digest, o.digest)}>
-            Diff vs v{prev.version}
-          </Link>
-        )}
+    <div className="page-frame detail">
+      <PageHeader
+        variant="detail"
+        back={{ to: listUrl(projectId, kind), label: KIND_META[kind].title }}
+        title={o.name}
+        help="evaluations.md#datasets-models-prompts-and-scorers"
+        helpTopic="Assets"
+        sentence={<Sentence parts={parts} size="detail" />}
+        meta={
+          <>
+            {capFirst(kindWords(o))}
+            {versionCount != null && (
+              <>
+                {' · '}
+                <Link to={objectVersionsUrl(projectId, objectId)}>{versionCount === 1 ? 'one version' : `${versionCount} versions`}</Link>
+              </>
+            )}
+            {prev && (
+              <>
+                {' · '}
+                <Link to={objectDiffUrl(projectId, objectId, prev.digest, o.digest)}>compare with {versionWords(prev)}</Link>
+              </>
+            )}
+          </>
+        }
+      />
+      <div className="row wrap" style={{ gap: 10 }}>
+        <Segmented label="Views of this version" role="tabs" panelId="asset-view" value={tab} onChange={setTab} options={TABS} className="asset-tabs" />
         {editable && (
-          <button className="btn primary" onClick={() => setEditing(true)}>
+          <button type="button" className="qbtn" onClick={() => setEditing(true)}>
             Edit
           </button>
         )}
       </div>
-      <div className="card">
-        <div className="card-body col" style={{ gap: 6 }}>
-          <div className="row wrap small" style={{ gap: 14 }}>
-            <span className="muted">
-              Created <b title={fmtDate(o.created_at)}>{fmtRelative(o.created_at)}</b>
-            </span>
-            <span className="muted">
-              Size <b>{fmtBytes(o.size_bytes)}</b>
-            </span>
-            {o.user_id && (
-              <span className="muted">
-                By <b>{o.user_id}</b>
-              </span>
-            )}
-            <span className="muted">
-              Digest <span className="mono">{o.digest.slice(0, 16)}</span>
-            </span>
+      <div className="asset-layout">
+        <div className="asset-main" role="tabpanel" id="asset-view" aria-labelledby={segmentedTabId('asset-view', tab)}>
+          {tab === 'contents' && <ClassView o={o} projectId={projectId} onPublished={onPublished} />}
+          {tab === 'use' && (
+            <Block title="Load this version from code">
+              <UsePanel refUri={ref} name={objectId} version={`v${o.version}`} kind={useKind} />
+            </Block>
+          )}
+          {tab === 'raw' && <JsonBlock value={o.value} />}
+        </div>
+        <Inspector title={capFirst(versionWords(o))} subtitle={o.is_latest ? 'The latest version' : latest ? `The latest is ${versionWords(latest)}` : undefined} label="About this version" sticky>
+          <KeyValueList
+            items={[
+              { label: 'Saved', value: <span title={fmtDate(o.created_at)}>{relativeTime(o.created_at)}</span> },
+              o.user_id ? { label: 'By', value: o.user_id } : null,
+              { label: 'Size', value: fmtBytes(o.size_bytes) },
+              { label: 'In code', value: <CopyText text={sdkName(o)} label="name" />, mono: true, help: 'The name and version to pass to weft.get()' },
+              { label: 'Ref', value: <CopyText text={ref} label="ref" />, mono: true, help: 'Ref: the address other assets and spans use to point at this version' },
+              { label: 'Digest', value: <CopyText text={o.digest} label="digest" />, mono: true, help: 'Digest: the SHA-256 of the stored value; it names this exact version' },
+            ]}
+          />
+          <InspectorDivider />
+          <label className="field-stack">
+            Show another version
+            <select className="input insp-select" value={o.digest} onChange={(e) => nav(objectUrl(projectId, objectId, e.target.value))}>
+              {(versions.data ?? [o]).map((v) => (
+                <option key={v.digest} value={v.digest}>
+                  {capFirst(versionWords(v))} · {relativeTime(v.created_at)}
+                  {v.aliases.filter((a) => a !== 'latest').length ? ` · ${v.aliases.filter((a) => a !== 'latest').join(', ')}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="insp-chips">
+            <span className="field-stack">Aliases{aliases.length ? '' : ' (names such as “prod” that point to one version)'}</span>
+            <AliasEditor projectId={projectId} objectId={objectId} digest={o.digest} aliases={aliases} />
           </div>
-          <div className="row" style={{ minWidth: 0 }}>
-            <code className="truncate grow faint" title={ref}>
-              {ref}
-            </code>
-            <CopyButton text={ref} label="Copy ref" />
-          </div>
-          <div className="row wrap">
-            <span className="small muted">Aliases</span>
-            <AliasEditor projectId={projectId} objectId={objectId} digest={o.digest} aliases={o.aliases.filter((a) => a !== 'latest')} />
-          </div>
-          <div className="row wrap">
-            <span className="small muted">Tags</span>
+          <div className="insp-chips">
+            <span className="field-stack">Tags</span>
             <TagEditor projectId={projectId} objectId={objectId} digest={o.digest} tags={o.tags ?? []} />
           </div>
-        </div>
+          {(ownPage || isPrompt(o) || isEvaluation(o) || isLLMModel(o) || (latest && latest.digest !== o.digest)) && (
+            <>
+              <InspectorDivider />
+              <InspectorLinks>
+                {ownPage && <Link to={ownPage.to}>{ownPage.label}</Link>}
+                {isPrompt(o) && <Link to={`${playgroundUrl(projectId)}?prompt=${encodeURIComponent(ref)}`}>Try it in the playground</Link>}
+                {isEvaluation(o) && <Link to={`${newEvaluationUrl(projectId)}?evaluation=${encodeURIComponent(ref)}`}>Run this evaluation</Link>}
+                {isLLMModel(o) && <Link to={`${newEvaluationUrl(projectId)}?model=${encodeURIComponent(ref)}`}>Evaluate this model</Link>}
+                {latest && latest.digest !== o.digest && <Link to={objectDiffUrl(projectId, objectId, o.digest, latest.digest)}>Compare with the latest</Link>}
+              </InspectorLinks>
+            </>
+          )}
+        </Inspector>
       </div>
-      <Tabs<Tab>
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'use', label: 'Use' },
-          { id: 'json', label: 'Raw JSON' },
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
-      {tab === 'overview' && <ClassView o={o} projectId={projectId} onPublished={onPublished} />}
-      {tab === 'use' && (
-        <Section title="Use this object">
-          <UsePanel refUri={ref} name={objectId} version={`v${o.version}`} kind={useKind} />
-        </Section>
-      )}
-      {tab === 'json' && <JsonBlock value={o.value} />}
 
       {editing && isPrompt(o) && <PromptFormModal projectId={projectId} initial={o} onClose={() => setEditing(false)} onCreated={onPublished} />}
       {editing && isLLMModel(o) && <ModelFormModal projectId={projectId} initial={o} onClose={() => setEditing(false)} onCreated={onPublished} />}
       {editing && isServerScorer(o) && <ScorerFormModal projectId={projectId} initial={o} onClose={() => setEditing(false)} onCreated={onPublished} />}
     </div>
+  )
+}
+
+const capFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
+/** A titled block of the main column. */
+function Block({ title, note, actions, children }: { title?: ReactNode; note?: ReactNode; actions?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="asset-section">
+      {(title || actions) && (
+        <div className="asset-section-head">
+          {title && (
+            <h2>
+              {title}
+              {note && <span className="quiet-note" style={{ display: 'inline', marginLeft: 8 }}>{note}</span>}
+            </h2>
+          )}
+          {actions && <div className="row wrap">{actions}</div>}
+        </div>
+      )}
+      {children}
+    </section>
   )
 }
 
@@ -203,38 +271,35 @@ function ClassView({ o, projectId, onPublished }: { o: WeftObject; projectId: st
   if (isLLMModel(o)) return <LLMModelView o={o} projectId={projectId} />
   if (isModel(o)) return <GenericModelView o={o} projectId={projectId} />
   if (isScorer(o)) return <ScorerView o={o} projectId={projectId} />
-  const cls = objClass(o)
-  const link =
-    cls === 'Leaderboard' || o.kind === 'leaderboard'
-      ? { to: leaderboardUrl(projectId, o.name), label: 'Open leaderboard' }
-      : cls === 'Monitor' || o.kind === 'monitor'
-        ? { to: monitorUrl(projectId, o.name), label: 'Open monitor' }
-        : null
   return (
-    <Section title="Value" actions={link && <Link className="btn sm" to={link.to}>{link.label}</Link>}>
-      <ValueView value={o.value} projectId={projectId} />
-    </Section>
+    <Block>
+      <div className="asset-panel">
+        <ValueView value={o.value} projectId={projectId} />
+      </div>
+    </Block>
   )
 }
 
 function Description({ val }: { val: Any }) {
   if (!val?.description) return null
-  return <p className="muted" style={{ margin: 0 }}>{val.description}</p>
+  return <p className="asset-desc">{val.description}</p>
 }
 
 // ------------------------------------------------------------------ dataset
 
 function DatasetView({ o, projectId, onPublished }: { o: WeftObject; projectId: string; onPublished: (c: Created) => void }) {
   return (
-    <div className="col" style={{ gap: 12 }}>
+    <>
       <Description val={o.value} />
-      <DatasetRowsView projectId={projectId} obj={o} onPublished={onPublished} />
+      <Block title="Rows">
+        <DatasetRowsView projectId={projectId} obj={o} onPublished={onPublished} />
+      </Block>
       <DatasetSources projectId={projectId} objectId={o.name} />
-    </div>
+    </>
   )
 }
 
-// ------------------------------------------------------------------ op
+// ------------------------------------------------------------------ function
 
 function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const [allVersions, setAllVersions] = useState(false)
@@ -252,7 +317,7 @@ function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
         .then((r) => r.items),
   })
   const v = o.value ?? {}
-  // Some ops keep their source in a file (files["obj.py"]) instead of val.code.
+  // Some functions keep their source in a file (files["obj.py"]) instead of val.code.
   const fileDigest: string | undefined = !v.code && v.files && typeof v.files === 'object' ? (v.files['obj.py'] ?? Object.values(v.files)[0]) : undefined
   const fileCode = useQuery({
     queryKey: ['op-file', projectId, fileDigest],
@@ -262,31 +327,26 @@ function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
   })
   const code: string | undefined = v.code ?? fileCode.data
   return (
-    <div className="col" style={{ gap: 16 }}>
-      {fileCode.isLoading && <Spinner label="Loading source…" />}
+    <>
+      {fileCode.isLoading && <Spinner label="Loading the source…" />}
       {code ? (
-        <CodeBlock
-          code={code}
-          language={v.language ?? 'python'}
-          title={
-            <span className="mono">
-              {v.name ?? o.name}
-              {v.signature ?? ''}
-            </span>
-          }
-          maxHeight={560}
-        />
+        <div className="asset-code">
+          <CodeBlock code={code} language={v.language ?? 'python'} title={<span className="mono">{`${v.name ?? o.name}${v.signature ?? ''}`}</span>} maxHeight={560} />
+        </div>
       ) : (
-        <Section title="Function">
-          <div className="faint">No source code was captured for this function.</div>
-          <ValueView value={v} projectId={projectId} />
-        </Section>
+        <Block title="Function">
+          <p className="quiet-note">No source code was recorded for this function.</p>
+          <div className="asset-panel">
+            <ValueView value={v} projectId={projectId} />
+          </div>
+        </Block>
       )}
-      <Section
-        title="Recent spans"
+      <Block
+        title="Recent runs"
+        note={calls.data ? (calls.data.length >= 50 ? 'the latest 50' : plural(calls.data.length, 'run')) : undefined}
         actions={
           <label className="checkbox small">
-            <input type="checkbox" checked={allVersions} onChange={(e) => setAllVersions(e.target.checked)} /> All versions
+            <input type="checkbox" checked={allVersions} onChange={(e) => setAllVersions(e.target.checked)} /> Every version
           </label>
         }
       >
@@ -294,49 +354,64 @@ function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
         {calls.isLoading ? (
           <Loading />
         ) : !calls.data?.length ? (
-          <div className="faint">No calls of this op{allVersions ? '' : ' version'} yet.</div>
+          <p className="quiet-note">No runs of this {allVersions ? 'function' : 'version'} yet.</p>
         ) : (
           <CallsMiniTable projectId={projectId} calls={calls.data} />
         )}
-      </Section>
-    </div>
+      </Block>
+    </>
   )
 }
 
 // ------------------------------------------------------------------ prompt
 
+function contentText(c: Any): string {
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : p?.type === 'text' ? p.text : p?.type === 'image_url' ? '[image]' : JSON.stringify(p))).join('\n')
+  return JSON.stringify(c, null, 2)
+}
+
+const ROLE: Record<string, string> = { system: 'System', user: 'User', assistant: 'Assistant', tool: 'Tool', developer: 'Developer' }
+
+/** Chat messages as prose: the role in quiet words, the text with its {placeholders} marked. */
+export function ProseMessages({ messages }: { messages: Any[] }) {
+  if (!messages.length) return <p className="quiet-note">No messages.</p>
+  return (
+    <div className="prose-messages">
+      {messages.map((m, i) => (
+        <div key={i} className="prose-msg">
+          <span className="prose-role">{ROLE[m?.role] ?? m?.role ?? 'Message'}</span>
+          <p className="prose-text">
+            <TemplateText text={contentText(m?.content)} />
+          </p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function PromptView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const v = o.value ?? {}
   const messages = Array.isArray(v.messages) ? v.messages : null
-  const texts: string[] = messages ? messages.map((m: Any) => (typeof m.content === 'string' ? m.content : '')) : [String(v.content ?? '')]
-  const ref = refOf(o)
   return (
-    <div className="col" style={{ gap: 16 }}>
+    <>
       <Description val={v} />
-      <Section
-        title={messages ? `Messages (${messages.length})` : 'Template'}
-        actions={
-          <Link className="btn sm" to={`${playgroundUrl(projectId)}?prompt=${encodeURIComponent(ref)}`}>
-            Open in playground
-          </Link>
-        }
-      >
-        {messages ? (
-          <MessageList messages={messages} />
-        ) : typeof v.content === 'string' ? (
-          <div className="msg">
-            <div className="msg-body">
+      {messages ? (
+        <ProseMessages messages={messages} />
+      ) : typeof v.content === 'string' ? (
+        <div className="prose-messages">
+          <div className="prose-msg">
+            <p className="prose-text">
               <TemplateText text={v.content} />
-            </div>
+            </p>
           </div>
-        ) : (
+        </div>
+      ) : (
+        <div className="asset-panel">
           <ValueView value={v} projectId={projectId} />
-        )}
-      </Section>
-      <Section title="Template variables">
-        <TemplateVarChips texts={texts} />
-      </Section>
-    </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -349,48 +424,52 @@ function EvaluationView({ o, projectId }: { o: WeftObject; projectId: string }) 
   const runIds = useMemo(() => (runs.data ?? []).map((c) => c.id), [runs.data])
   const agentRuns = useAgentEvalRuns(projectId, runIds)
   const [sel, setSel] = useState<string[]>([])
-  const scorers: string[] = Array.isArray(v.scorers) ? v.scorers : []
+  const scorers: Any[] = Array.isArray(v.scorers) ? v.scorers : []
   return (
-    <div className="col" style={{ gap: 16 }}>
+    <>
       <Description val={v} />
-      <div className="grid-2">
-        <Section title="Dataset">
-          {typeof v.dataset === 'string' ? <RefChip refStr={v.dataset} /> : <ValueView value={v.dataset} projectId={projectId} />}
-          {v.trials != null && <div className="small muted" style={{ marginTop: 8 }}>Trials per row: {v.trials}</div>}
-        </Section>
-        <Section title={`Scorers (${scorers.length})`}>
-          {scorers.length === 0 ? (
-            <span className="faint">No scorers</span>
-          ) : (
-            <div className="chips">
-              {scorers.map((s, i) => (typeof s === 'string' ? <RefChip key={i} refStr={s} /> : <span key={i} className="chip">{preview(s, 40)}</span>))}
-            </div>
-          )}
-        </Section>
+      <div className="asset-panel">
+        <KeyValueList
+          items={[
+            { label: 'Dataset', value: typeof v.dataset === 'string' ? <RefChip refStr={v.dataset} /> : <ValueView value={v.dataset} projectId={projectId} /> },
+            {
+              label: 'Scorers',
+              value: scorers.length ? (
+                <span className="row wrap" style={{ gap: 4 }}>
+                  {scorers.map((s, i) => (
+                    <span key={i}>
+                      {typeof s === 'string' ? <RefChip refStr={s} /> : preview(s, 40)}
+                      {i < scorers.length - 1 ? ',' : ''}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                'None'
+              ),
+            },
+            v.trials != null ? { label: 'Trials', value: `${v.trials} per row`, help: 'How many times each row is run' } : null,
+          ]}
+        />
       </div>
-      <Section
-        title="Evaluation runs"
+      <Block
+        title="Runs"
+        note={runs.data ? plural(runs.data.length, 'run') : undefined}
         actions={
-          <>
-            <button className="btn sm" disabled={sel.length < 1} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
-              Compare {sel.length ? `(${sel.length})` : ''}
-            </button>
-            <Link className="btn sm primary" to={`${newEvaluationUrl(projectId)}?evaluation=${encodeURIComponent(refOf(o))}`}>
-              ▷ Run evaluation
-            </Link>
-          </>
+          <button type="button" className="qbtn sm" disabled={sel.length < 1} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
+            Compare{sel.length ? ` ${sel.length}` : ''}
+          </button>
         }
       >
         <ErrorBox error={runs.error} />
         {runs.isLoading ? (
           <Loading />
         ) : !runs.data?.length ? (
-          <div className="faint">This evaluation has not been run yet.</div>
+          <p className="quiet-note">This evaluation has not been run yet.</p>
         ) : (
           <EvalRunsTable projectId={projectId} calls={runs.data} hideEval selected={sel} onSelect={setSel} maxMetrics={8} agentRuns={agentRuns.data} />
         )}
-      </Section>
-    </div>
+      </Block>
+    </>
   )
 }
 
@@ -403,44 +482,36 @@ function ModelRuns({ o, projectId }: { o: WeftObject; projectId: string }) {
   const agentRuns = useAgentEvalRuns(projectId, runIds)
   const [sel, setSel] = useState<string[]>([])
   return (
-    <Section
+    <Block
       title="Evaluations of this model"
+      note={runs.data ? plural(runs.data.length, 'run') : undefined}
       actions={
-        <>
-          <button className="btn sm" disabled={sel.length < 1} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
-            Compare {sel.length ? `(${sel.length})` : ''}
-          </button>
-          {isLLMModel(o) && (
-            <Link className="btn sm primary" to={`${newEvaluationUrl(projectId)}?model=${encodeURIComponent(refOf(o))}`}>
-              ▷ Evaluate
-            </Link>
-          )}
-        </>
+        <button type="button" className="qbtn sm" disabled={sel.length < 1} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
+          Compare{sel.length ? ` ${sel.length}` : ''}
+        </button>
       }
     >
       <ErrorBox error={runs.error} />
       {runs.isLoading ? (
         <Loading />
       ) : !runs.data?.length ? (
-        <div className="faint">No evaluation runs use this model yet.</div>
+        <p className="quiet-note">No evaluation has run this model yet.</p>
       ) : (
         <EvalRunsTable projectId={projectId} calls={runs.data} hideModel selected={sel} onSelect={setSel} maxMetrics={8} agentRuns={agentRuns.data} />
       )}
-    </Section>
+    </Block>
   )
 }
 
-function KV({ items }: { items: [string, ReactNode][] }) {
-  return (
-    <div className="kv">
-      {items.map(([k, v]) => (
-        <div key={k} style={{ display: 'contents' }}>
-          <div className="k">{k}</div>
-          <div className="v">{v}</div>
-        </div>
-      ))}
-    </div>
-  )
+const PARAM_WORDS: Record<string, string> = {
+  temperature: 'Temperature',
+  max_tokens: 'Max tokens',
+  top_p: 'Top p',
+  response_format: 'Response format',
+  frequency_penalty: 'Frequency penalty',
+  presence_penalty: 'Presence penalty',
+  stop: 'Stop',
+  n_times: 'Times',
 }
 
 function LLMModelView({ o, projectId }: { o: WeftObject; projectId: string }) {
@@ -449,40 +520,32 @@ function LLMModelView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const msgs = Array.isArray(p.messages_template) ? p.messages_template : []
   const { messages_template: _m, ...otherParams } = p
   return (
-    <div className="col" style={{ gap: 16 }}>
+    <>
       <Description val={v} />
-      <div className="grid-2">
-        <Section title="Configuration">
-          <KV
-            items={[
-              ['llm_model_id', <span className="mono">{v.llm_model_id ?? '—'}</span>],
-              ...Object.entries(otherParams).map(([k, x]) => [k, <span className="mono">{fmtScore(x)}</span>] as [string, ReactNode]),
-            ]}
-          />
-        </Section>
-        <Section title="Template variables">
-          <TemplateVarChips texts={msgs.map((m: Any) => (typeof m.content === 'string' ? m.content : ''))} />
-          <div className="hint" style={{ marginTop: 8 }}>
-            Each variable is filled from the dataset row with the same column name.
-          </div>
-        </Section>
+      <div className="asset-panel">
+        <KeyValueList
+          items={[
+            { label: 'Model', value: v.llm_model_id ?? '—', mono: true },
+            ...Object.entries(otherParams).map(([k, x]) => ({ label: PARAM_WORDS[k] ?? k.replace(/_/g, ' '), value: fmtScore(x), mono: true })),
+          ]}
+        />
       </div>
-      <Section title={`Messages template (${msgs.length})`}>
-        <MessageList messages={msgs} />
-      </Section>
+      <Block title="Messages" note="placeholders are filled from the dataset row’s columns of the same name">
+        <ProseMessages messages={msgs} />
+      </Block>
       <ModelRuns o={o} projectId={projectId} />
-    </div>
+    </>
   )
 }
 
 function GenericModelView({ o, projectId }: { o: WeftObject; projectId: string }) {
   return (
-    <div className="col" style={{ gap: 16 }}>
-      <Section title="Attributes">
+    <>
+      <div className="asset-panel">
         <ValueView value={o.value} projectId={projectId} />
-      </Section>
+      </div>
       <ModelRuns o={o} projectId={projectId} />
-    </div>
+    </>
   )
 }
 
@@ -506,71 +569,65 @@ function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const runs = useQuery({
     queryKey: ['scorer-calls', projectId, o.name],
     queryFn: () =>
-      api
-        .spansQuery({ project_id: projectId, filter: { names: [`${o.name}.score`] }, sort_by: [{ field: 'started_at', direction: 'desc' }], limit: 20 })
-        .then((r) => r.items),
+      api.spansQuery({ project_id: projectId, filter: { names: [`${o.name}.score`] }, sort_by: [{ field: 'started_at', direction: 'desc' }], limit: 20 }).then((r) => r.items),
   })
   return (
-    <div className="col" style={{ gap: 16 }}>
+    <>
       <Description val={v} />
-      <Section title={cls && cls in SCORER_LABELS ? `${SCORER_LABELS[cls as ServerScorerClass]} scorer` : 'Scorer'}>
-        {cls === 'LLMAsAJudgeScorer' ? (
-          <div className="col" style={{ gap: 10 }}>
-            <KV
+      {!isServerScorer(o) && <p className="quiet-note">This scorer runs in the SDK only; monitors and server-side evaluations cannot run it.</p>}
+      {cls === 'LLMAsAJudgeScorer' ? (
+        <>
+          <div className="asset-panel">
+            <KeyValueList
               items={[
-                ['model', typeof v.model === 'string' && parseRef(v.model) ? <RefChip refStr={v.model} /> : <span className="mono">{String(v.model ?? '—')}</span>],
-                ['response_format', <span className="mono">{v.response_format ?? 'text'}</span>],
+                { label: 'Kind', value: SCORER_LABELS[cls as ServerScorerClass] },
+                { label: 'Model', value: typeof v.model === 'string' && parseRef(v.model) ? <RefChip refStr={v.model} /> : String(v.model ?? '—'), mono: !(typeof v.model === 'string' && parseRef(v.model)) },
+                { label: 'Answers as', value: v.response_format === 'json_object' ? 'JSON' : (v.response_format ?? 'text') },
               ]}
             />
-            <div className="msg">
-              <div className="msg-role">scoring prompt</div>
-              <div className="msg-body">
-                <TemplateText text={String(v.scoring_prompt ?? '')} />
-              </div>
-            </div>
           </div>
-        ) : (
+          <Block title="Scoring prompt">
+            <ProseMessages messages={[{ role: 'Scoring prompt', content: String(v.scoring_prompt ?? '') }]} />
+          </Block>
+        </>
+      ) : (
+        <div className="asset-panel">
+          {cls && cls in SCORER_LABELS && <p className="quiet-note" style={{ marginBottom: 10 }}>{SCORER_LABELS[cls as ServerScorerClass]} scorer</p>}
           <ValueView value={v} projectId={projectId} />
-        )}
-        {!isServerScorer(o) && <div className="hint" style={{ marginTop: 8 }}>This scorer runs in the SDK; the server cannot run it for monitors or server-side evaluations.</div>}
-      </Section>
+        </div>
+      )}
       {!!feedback.data?.length && (
-        <Section title="Recent scores (monitors & feedback)">
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Target</th>
-                  <th>Output</th>
-                </tr>
-              </thead>
-              <tbody>
-                {feedback.data.map((f) => {
-                  const p = parseRef(f.ref)
-                  return (
-                    <tr key={f.id}>
-                      <td className="muted" title={fmtDate(f.created_at)}>
-                        {fmtRelative(f.created_at)}
-                      </td>
-                      <td>{p?.kind === 'span' ? <Link to={spanUrl(projectId, p.name)} className="mono">{p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
-                      <td>
-                        <span className="cell-preview mono small">{preview(f.payload?.output ?? f.payload, 160)}</span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Section>
+        <Block title="Recent scores" note="from monitors and on-demand scoring">
+          <PlainTable caption="Recent scores of this scorer">
+            <thead>
+              <tr>
+                <th scope="col">When</th>
+                <th scope="col">Scored</th>
+                <th scope="col">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {feedback.data.map((f) => {
+                const p = parseRef(f.ref)
+                return (
+                  <tr key={f.id}>
+                    <td title={fmtDate(f.created_at)} style={{ whiteSpace: 'nowrap' }}>
+                      {relativeTime(f.created_at)}
+                    </td>
+                    <td>{p?.kind === 'span' ? <Link to={spanUrl(projectId, p.name)}>step {p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
+                    <td className="mono small">{preview(f.payload?.output ?? f.payload, 160)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </PlainTable>
+        </Block>
       )}
       {!!runs.data?.length && (
-        <Section title="Recent scorer spans">
+        <Block title="Recent scorer runs">
           <CallsMiniTable projectId={projectId} calls={runs.data} />
-        </Section>
+        </Block>
       )}
-    </div>
+    </>
   )
 }
-

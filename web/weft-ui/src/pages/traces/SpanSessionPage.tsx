@@ -6,7 +6,12 @@ import type { Any, Span } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
 import { spanUrl, spanSessionsUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Loading, StatusBadge } from '../../components/common'
+import { ErrorBox, Loading } from '../../components/common'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Sentence } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
+import { spanSessionSentence, statusGlyph } from '../../lib/summaries/traces'
+import '../observe.css'
 import { ValueView } from '../../components/ValueView'
 import { ChatMessageView, ChatView, extractChat, normaliseMessage } from '../../components/traces/ChatView'
 import { callLabel, reactionCounts } from '../../components/traces/callUtils'
@@ -34,13 +39,13 @@ function Turn({ projectId, call, index, fullContext }: { projectId: string; call
   const cost = callCost(call)
   const reactions = reactionCounts(call.feedback)
   return (
-    <div className="turn card">
-      <div className="turn-head">
-        <span className="badge">Turn {index + 1}</span>
+    <section className="obs-turn" aria-label={`Turn ${index + 1}`}>
+      <div className="obs-turn-head">
+        <StatusGlyph kind={statusGlyph(callStatus(call)).kind} label={statusGlyph(callStatus(call)).label} size={18} />
+        <span>Turn {index + 1}</span>
         <Link to={spanUrl(projectId, call.id)} className="call-link">
           {callLabel(call)}
         </Link>
-        <StatusBadge status={callStatus(call)} />
         <span className="grow" />
         {reactions.map(([e, n]) => (
           <span key={e} className="mini-reaction">
@@ -51,9 +56,9 @@ function Turn({ projectId, call, index, fullContext }: { projectId: string; call
         <span className="small muted" title={fmtDate(call.started_at)}>
           {fmtRelative(call.started_at)}
         </span>
-        <span className="small mono">{fmtDuration(callLatencyMs(call))}</span>
-        {tokens > 0 && <span className="small mono">{fmtNumber(tokens)} tok</span>}
-        {cost ? <span className="small mono">{fmtCost(cost)}</span> : null}
+        <span>{fmtDuration(callLatencyMs(call))}</span>
+        {tokens > 0 && <span>{fmtNumber(tokens)} tokens</span>}
+        {cost ? <span>{fmtCost(cost)}</span> : null}
       </div>
       <div className="turn-body">
         {chat ? (
@@ -85,9 +90,9 @@ function Turn({ projectId, call, index, fullContext }: { projectId: string; call
             </div>
           </div>
         )}
-        {call.error && <div className="error-box">{call.error.split('\n')[0]}</div>}
+        {call.error && <div className="obs-error">{call.error.split('\n')[0]}</div>}
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -113,58 +118,44 @@ export function SpanSessionPage() {
   })
   const turns = useMemo(() => pickTurns(callsQ.data?.items ?? []), [callsQ.data])
   const t = summary.data?.items?.[0]
+  const failedTurns = turns.filter((c) => callStatus(c) === 'error').length
   return (
-    <div className="page thread-page">
-      <div className="breadcrumbs">
-        <Link to={spanSessionsUrl(projectId)}>Span sessions</Link>
-        <span>/</span>
-        <span className="mono">{threadId}</span>
-      </div>
-      <div className="page-header">
-        <h1 className="mono" style={{ fontSize: 17, wordBreak: 'break-all' }}>
-          {threadId}
-        </h1>
-        <span className="spacer" />
-        <label className="checkbox small" title="Show the full message history sent with each turn">
-          <input type="checkbox" checked={fullContext} onChange={(e) => setFullContext(e.target.checked)} /> Full context
-        </label>
-      </div>
-      {t && (
-        <div className="meta-row">
-          <span>
-            <span className="faint">Turns</span> {fmtNumber(t.turn_count)}
-          </span>
-          <span>
-            <span className="faint">Spans</span> {fmtNumber(t.span_count)}
-          </span>
-          <span title={fmtDate(t.started_at)}>
-            <span className="faint">Started</span> {fmtDate(t.started_at)}
-          </span>
-          <span title={fmtDate(t.last_updated)}>
-            <span className="faint">Last updated</span> {fmtRelative(t.last_updated)}
-          </span>
-          <span>
-            <span className="faint">p50 / p99 turn</span> {fmtDuration(t.p50_turn_duration_ms)} / {fmtDuration(t.p99_turn_duration_ms)}
-          </span>
-          {t.total_tokens > 0 && (
-            <span>
-              <span className="faint">Tokens</span> {fmtNumber(t.total_tokens)}
-            </span>
-          )}
-          {t.cost_usd > 0 && (
-            <span>
-              <span className="faint">Cost</span> {fmtCost(t.cost_usd)}
-            </span>
-          )}
-        </div>
-      )}
+    <div className="page-frame detail obs-page thread-page">
+      <PageHeader
+        variant="detail"
+        back={{ to: spanSessionsUrl(projectId), label: 'Span sessions' }}
+        title={<span className="mono obs-break">{threadId}</span>}
+        helpTopic="Traces"
+        help="traces.md"
+        sentence={
+          t && callsQ.data ? (
+            <Sentence
+              size="detail"
+              parts={[spanSessionSentence({ turns: turns.length, spans: t.span_count, startedAt: t.started_at, lastAt: t.last_updated, cost: t.cost_usd, failedTurns })]}
+            />
+          ) : undefined
+        }
+        meta={
+          t ? (
+            <>
+              <span title={fmtDate(t.started_at)}>Started {fmtRelative(t.started_at)}</span> · <span title={fmtDate(t.last_updated)}>last updated {fmtRelative(t.last_updated)}</span> · turn
+              time {fmtDuration(t.p50_turn_duration_ms)} (p50), {fmtDuration(t.p99_turn_duration_ms)} (p99){t.total_tokens > 0 ? <> · {fmtNumber(t.total_tokens)} tokens</> : null}
+            </>
+          ) : undefined
+        }
+        controls={
+          <label className="obs-check obs-toolbar" title="Show the full message history sent with each turn">
+            <input type="checkbox" checked={fullContext} onChange={(e) => setFullContext(e.target.checked)} /> Full context
+          </label>
+        }
+      />
       <ErrorBox error={callsQ.error ?? summary.error} />
       {callsQ.isLoading ? (
         <Loading />
       ) : turns.length === 0 ? (
-        <Empty>No spans found for this session.</Empty>
+        <p className="quiet-empty">No spans found for this session.</p>
       ) : (
-        <div className="col" style={{ gap: 14, maxWidth: 980 }}>
+        <div className="obs-turns">
           {turns.map((c, i) => (
             <Turn key={c.id} projectId={projectId} call={c} index={i} fullContext={fullContext} />
           ))}

@@ -21,6 +21,7 @@ import {
   sessionSummaryLine,
   shortDuration,
   type RowContext,
+  type FilterClause,
   type SummaryPart,
 } from './summaries'
 import { ruleWords } from './ruleWords'
@@ -247,26 +248,28 @@ describe('session rows', () => {
 })
 
 describe('the Sessions sentence', () => {
-  it('counts what the attention endpoint counts, and links each clause', () => {
+  it('names the serious ones as linked clauses, then how many more need a look', () => {
     const rows = F.list.items
     const parts = sessionsSentence({ attention: F.attention, time: '24h', filtered: false, rows, total: F.list.total_count })
     expect(text(parts)).toBe(
-      '10 sessions ran in the last 24 hours. 3 failed, 1 was blocked by AgentShield, and 1 kept asking for approval. 2 went on after a failed step, 1 scored below 0.5, and 1 cost at least 3 times the median session. Everything else finished.',
+      'Of the 10 sessions that ran in the last 24 hours, 3 failed, 1 was blocked by AgentShield, and 1 kept asking for approval. 2 more finished with something worth a look.',
     )
     const links = parts.filter((p): p is Exclude<SummaryPart, string> => typeof p !== 'string')
-    expect(links.map((l) => [l.clause, l.count, l.session?.id ?? null, l.exact])).toEqual([
+    expect(links.map((l) => [l.clause, l.count, 'session' in l ? (l.session?.id ?? null) : null, 'exact' in l ? l.exact : null])).toEqual([
       ['failed', 3, null, true],
       ['blocked', 1, 'code-lint-1', true],
       ['approval', 1, 'code-deploy-1', false],
-      ['failed_step', 2, null, true],
-      ['low_score', 1, 'trip-lisbon', true],
-      ['cost', 1, 'trip-oslo-2', true],
+      ['more', 2, null, null],
     ])
-    expect(links[0].filter).toEqual({ status: 'error' })
-    expect(links[1].filter).toEqual({ has: 'block' })
-    expect(links[1].session).toEqual({ id: 'code-lint-1', step: 'problem' })
-    expect(links[3].filter).toEqual({ status: 'failed_step' })
-    expect(links[5].filter).toEqual({ costMin: 0.019 })
+    const [failed, blocked] = links as FilterClause[]
+    expect(failed.filter).toEqual({ status: 'error' })
+    expect(blocked.filter).toEqual({ has: 'block' })
+    expect(blocked.session).toEqual({ id: 'code-lint-1', step: 'problem' })
+    // The "more" clause counts exactly the rows of "Needs a look" that the first sentence does not name.
+    const ctx: RowContext = { costThreshold: F.attention.cost_spike_threshold, lowScore: 0.5, approvalHeavy: 3 }
+    const named = new Set(['code-lint-1', 'code-deploy-1', ...rows.filter((s) => String(s.status) === 'error').map((s) => s.session_id)])
+    expect(rows.filter((s) => needsALook(s, ctx) && !named.has(s.session_id)).map((s) => s.session_id)).toEqual(['code-test-1', 'trip-oslo-2'])
+    expect(links[3]).toMatchObject({ atLeast: false })
   })
 
   const att = (over: Partial<SessionAttention> = {}, counts: Partial<Record<string, number>> = {}): SessionAttention => ({
@@ -286,45 +289,83 @@ describe('the Sessions sentence', () => {
     cost_spike_factor: 3,
     ...over,
   })
+  const lowScored = (over: Partial<SessionSummary> = {}) => session({ scores: { G: { mean: 0.2, count: 1 } }, ...over })
 
   it.each([
-    ['nothing', att(), '24h', false, [], 'No sessions ran in the last 24 hours.'],
-    ['nothing matches', att(), '7d', true, [], 'No sessions match these filters in the last 7 days.'],
-    ['one that finished', att({ sessions: 1 }), '24h', false, [session()], '1 session ran in the last 24 hours. It finished.'],
-    ['one that was blocked', att({ sessions: 1, blocked: 1 }, { security: 1 }), '24h', false, [session({ detection_count: { block: 1 } })], '1 session ran in the last 24 hours. It was blocked by AgentShield.'],
+    ['nothing', att(), '24h', false, [], undefined, 'No sessions ran in the last 24 hours.'],
+    ['nothing matches', att(), '7d', true, [], undefined, 'No sessions match these filters in the last 7 days.'],
+    ['one that finished', att({ sessions: 1 }), '24h', false, [session()], undefined, '1 session ran in the last 24 hours. It finished.'],
+    ['one still running', att({ sessions: 1 }), '24h', false, [session({ status: 'running' })], undefined, '1 session ran in the last 24 hours. It is still running.'],
+    ['one that was blocked', att({ sessions: 1, blocked: 1 }, { security: 1 }), '24h', false, [session({ detection_count: { block: 1 } })], undefined, '1 session ran in the last 24 hours. It was blocked by AgentShield.'],
     [
-      'one that failed and scored low',
+      'one that failed and scored low: the serious one is named, the row says the rest',
       att({ sessions: 1 }, { failed: 1, low_score: 1 }),
       'all',
       false,
-      [session({ status: 'error', scores: { G: { mean: 0.2, count: 1 } } })],
-      '1 session ran. It failed and scored below 0.5.',
+      [lowScored({ status: 'error' })],
+      undefined,
+      '1 session ran. It failed.',
     ],
-    ['all finished', att({ sessions: 3 }), '30d', false, [session(), session(), session()], '3 sessions ran in the last 30 days. All of them finished.'],
+    ['one that scored low', att({ sessions: 1 }, { low_score: 1 }), '24h', false, [lowScored()], undefined, '1 session ran in the last 24 hours. It finished with something worth a look.'],
+    ['all finished', att({ sessions: 3 }), '30d', false, [session(), session(), session()], undefined, '3 sessions ran in the last 30 days. All of them finished.'],
     [
-      'some still running',
+      'some still running: no "the rest finished"',
       att({ sessions: 3 }, { failed: 1 }),
       '24h',
       true,
       [session({ status: 'error' }), session({ status: 'running' }), session()],
-      '3 sessions match these filters in the last 24 hours. 1 failed. 1 is still running and the rest finished.',
+      undefined,
+      'Of the 3 sessions that match these filters in the last 24 hours, 1 failed. 1 is still running.',
     ],
-    ['not every row loaded: no claim about the rest', att({ sessions: 200 }, { failed: 2 }), '24h', false, [session({ status: 'error' })], '200 sessions ran in the last 24 hours. 2 failed.'],
     [
-      'two kinds of severe clause',
+      'nothing serious, some worth a look',
+      att({ sessions: 4 }, { low_score: 1, failed_step: 1 }),
+      '24h',
+      false,
+      [lowScored(), session({ failed_step: true, error_count: 1 }), session(), session()],
+      undefined,
+      '4 sessions ran in the last 24 hours. 2 finished with something worth a look.',
+    ],
+    [
+      'one more, still running, needs a look',
+      att({ sessions: 3 }, { failed: 1, low_score: 1 }),
+      '24h',
+      false,
+      [session({ status: 'error' }), lowScored({ status: 'running' }), session({ status: 'running' })],
+      undefined,
+      'Of the 3 sessions that ran in the last 24 hours, 1 failed. 1 more needs a look and 1 is still running.',
+    ],
+    [
+      'not every row loaded: a lower bound, and no claim about the rest',
+      att({ sessions: 200 }, { failed: 2, low_score: 9 }),
+      '24h',
+      false,
+      [session({ status: 'error' }), lowScored(), lowScored(), session({ status: 'running' })],
+      200,
+      'Of the 200 sessions that ran in the last 24 hours, 2 failed. At least 2 more finished with something worth a look.',
+    ],
+    ['not every row loaded, nothing else loaded needs a look', att({ sessions: 200 }, { failed: 2 }), '24h', false, [session({ status: 'error' })], 200, 'Of the 200 sessions that ran in the last 24 hours, 2 failed.'],
+    [
+      'two kinds of serious clause',
       att({ sessions: 5, blocked: 2, approval_heavy: 0 }, { failed: 1, security: 2 }),
       '1h',
       false,
       [],
-      '5 sessions ran in the last hour. 1 failed and 2 were blocked by AgentShield.',
+      5,
+      'Of the 5 sessions that ran in the last hour, 1 failed and 2 were blocked by AgentShield.',
     ],
-  ] as [string, SessionAttention, '24h' | '7d' | '30d' | 'all' | '1h', boolean, SessionSummary[], string][])('%s', (_n, a, time, filtered, rows, want) => {
-    expect(text(sessionsSentence({ attention: a, time, filtered, rows, total: rows.length || a.sessions }))).toBe(want)
+  ] as [string, SessionAttention, '24h' | '7d' | '30d' | 'all' | '1h', boolean, SessionSummary[], number | undefined, string][])('%s', (_n, a, time, filtered, rows, total, want) => {
+    expect(text(sessionsSentence({ attention: a, time, filtered, rows, total: total ?? (rows.length || a.sessions) }))).toBe(want)
+  })
+
+  it('is at most two sentences', () => {
+    const parts = sessionsSentence({ attention: F.attention, time: '24h', filtered: false, rows: F.list.items, total: F.list.total_count })
+    expect(text(parts).match(/[.!?](\s|$)/g)?.length).toBeLessThanOrEqual(2)
   })
 
   it('links approval-heavy sessions exactly when nothing was blocked', () => {
     const parts = sessionsSentence({ attention: att({ sessions: 4, approval_heavy: 2 }, { security: 2 }), time: '24h', filtered: false, rows: [], total: 4 })
-    const c = parts.find((p) => typeof p !== 'string' && p.clause === 'approval') as Exclude<SummaryPart, string>
+    const c = parts.find((p) => typeof p !== 'string' && p.clause === 'approval') as FilterClause
     expect(c.exact).toBe(true)
     expect(c.filter).toEqual({ has: 'flagged' })
   })

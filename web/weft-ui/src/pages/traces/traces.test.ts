@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRequest, parseState, statusOp } from './TracesPage'
+import { buildRequest, DEFAULT_HIDDEN, hideParam, parseState, statusOp } from './TracesPage'
 
 const ops = (url: string) => {
   const r = buildRequest(parseState(new URLSearchParams(url)))
@@ -23,5 +23,21 @@ describe('Traces filters', () => {
   it('hides AgentShield replay evaluations unless asked', () => {
     expect(ops('')).toContain('summary.weft.replay')
     expect(ops('replay=1')).not.toContain('summary.weft.replay')
+  })
+})
+
+describe('Traces columns and charts', () => {
+  it('shows few columns by default; hide=none shows them all; older hide lists keep their meaning', () => {
+    expect([...parseState(new URLSearchParams('')).hidden].sort()).toEqual([...DEFAULT_HIDDEN].sort())
+    expect(parseState(new URLSearchParams('hide=none')).hidden.size).toBe(0)
+    expect([...parseState(new URLSearchParams('hide=feedback')).hidden]).toEqual(['feedback'])
+    expect(hideParam(new Set(DEFAULT_HIDDEN))).toBeNull()
+    expect(hideParam(new Set())).toBe('none')
+    expect(hideParam(new Set(['cost', 'tokens']))).toBe('cost,tokens')
+  })
+  it('opens charts only on request', () => {
+    expect(parseState(new URLSearchParams('')).charts).toBe(false)
+    expect(parseState(new URLSearchParams('charts=1')).charts).toBe(true)
+    expect(parseState(new URLSearchParams('charts=0')).charts).toBe(false)
   })
 })

@@ -1,16 +1,30 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+// Leaderboards (DESIGN.md §7, §7.2): one sentence saying which model leads,
+// then each leaderboard with who leads it and on how many metrics.
+// Deleting a leaderboard can be undone for a few seconds.
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import type { Any } from '../../api/types'
-import { Empty, ErrorBox, Loading } from '../../components/common'
+import { ErrorBox } from '../../components/common'
 import { LeaderboardEditor } from '../../components/evals/LeaderboardEditor'
-import { ConfirmButton } from '../../components/objects/bits'
+import { lbShapes } from '../../components/evals/sentence'
 import { refName, useObjects } from '../../components/objects/objectUtils'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { SearchField } from '../../components/ui/SearchField'
+import { Sentence } from '../../components/ui/Sentence'
+import { Icon } from '../../components/ui/Icons'
+import { undoable } from '../../components/ui/Toasts'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate, fmtRelative } from '../../lib/format'
-import { leaderboardUrl, objectVersionsUrl } from '../../lib/urls'
-import { HelpLink } from '../../components/ui/PageHeader'
+import { fmtDate } from '../../lib/format'
+import { plural, relativeTime } from '../../lib/summaries'
+import { leaderboardLine, leaderboardsSentence, leaderOf } from '../../lib/summaries/evaluate'
+import { leaderboardUrl } from '../../lib/urls'
+import '../evaluations/evaluate.css'
+
+/** Leaderboards whose leader is worked out for the list (each is one compute request). */
+const COMPUTE_CAP = 30
 
 export function LeaderboardsPage() {
   const projectId = useProjectId()
@@ -19,98 +33,105 @@ export function LeaderboardsPage() {
   const lbs = useObjects(projectId, { kinds: ['leaderboard'] })
   const [creating, setCreating] = useState(false)
   const [search, setSearch] = useState('')
-  const rows = (lbs.data ?? []).filter((o) => !search || o.name.toLowerCase().includes(search.toLowerCase()))
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const items = useMemo(() => (lbs.data ?? []).filter((o) => !hidden.has(o.name)), [lbs.data, hidden])
+  const rows = items.filter((o) => !search || o.name.toLowerCase().includes(search.toLowerCase()) || String(o.value?.description ?? '').toLowerCase().includes(search.toLowerCase()))
+  const computed = useQueries({
+    queries: items.slice(0, COMPUTE_CAP).map((o) => ({
+      queryKey: ['leaderboard', projectId, o.name],
+      queryFn: () => api.leaderboardCompute(projectId, o.name),
+      staleTime: 30_000,
+      retry: false,
+    })),
+  })
+  const shapes = new Map(items.slice(0, COMPUTE_CAP).map((o, i) => [o.name, computed[i]?.data ? lbShapes(computed[i].data!) : null]))
+  const ready = computed.every((c) => !c.isLoading)
+  const del = (name: string) =>
+    undoable({
+      message: `Deleted leaderboard “${name}”`,
+      apply: () => setHidden((h) => new Set(h).add(name)),
+      revert: () =>
+        setHidden((h) => {
+          const n = new Set(h)
+          n.delete(name)
+          return n
+        }),
+      commit: async () => {
+        await api.objectDelete(projectId, name)
+        await qc.invalidateQueries({ queryKey: ['objects', projectId] })
+      },
+    })
+  const empty = !lbs.isLoading && !lbs.error && items.length === 0
+
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="col" style={{ gap: 2 }}>
-          <h1>Leaderboards</h1>
-          <HelpLink doc="evaluations.md#leaderboards" topic="Leaderboards" />
-          <span className="muted small">Rank models across evaluation metrics.</span>
-        </div>
-        <span className="spacer" />
-        {(lbs.data?.length ?? 0) > 0 && <input className="input" style={{ width: 200, maxWidth: '100%' }} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />}
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          + New leaderboard
-        </button>
-      </div>
+    <div className="page-frame">
+      <PageHeader
+        title="Leaderboards"
+        help="evaluations.md#leaderboards"
+        controls={
+          <>
+            {!empty && <SearchField label="Search leaderboards" value={search} onChange={setSearch} filterInput />}
+            <button type="button" className="qbtn primary" onClick={() => setCreating(true)}>
+              New leaderboard
+            </button>
+          </>
+        }
+        sentence={
+          empty ? undefined : lbs.isLoading || !ready ? (
+            <p className="sentence s-outcome sk-sentence" aria-busy="true">
+              <span className="sr-only">Ranking…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          ) : (
+            <Sentence
+              parts={[
+                leaderboardsSentence(
+                  items.slice(0, COMPUTE_CAP).map((o) => {
+                    const sh = shapes.get(o.name)
+                    return { name: o.name, leader: sh ? leaderOf(sh.columns, sh.rows) : null }
+                  }),
+                ) + (items.length > COMPUTE_CAP ? ` (Counted over the ${COMPUTE_CAP} newest.)` : ''),
+              ]}
+            />
+          )
+        }
+      />
       <ErrorBox error={lbs.error} />
-      {lbs.isLoading ? (
-        <Loading />
-      ) : !lbs.data?.length ? (
-        <div className="card">
-          <Empty>
-            <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-              <div>No leaderboards yet. A leaderboard picks metrics from one or more evaluations and ranks every model that has been evaluated on them.</div>
-              <button className="btn primary" onClick={() => setCreating(true)}>
-                + New leaderboard
-              </button>
-            </div>
-          </Empty>
+      {empty ? (
+        <div className="quiet-empty">
+          <p>
+            <strong>No leaderboards yet.</strong> A leaderboard picks metrics from one or more evaluations and ranks every model evaluated on them, using each model’s latest
+            finished run.
+          </p>
+          <p className="ev-note">Create one here, or save one from a comparison of evaluation runs (Rank these runs, then Save as leaderboard).</p>
         </div>
       ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Columns</th>
-                <th>Evaluations</th>
-                <th>Updated</th>
-                <th className="num">Versions</th>
-                <th style={{ width: 40 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((o) => {
-                const cols: Any[] = Array.isArray(o.value?.columns) ? o.value.columns : []
-                const evals = [...new Set(cols.map((c) => refName(c.evaluation_object_ref)))]
-                return (
-                  <tr key={o.name} className="clickable" onClick={() => nav(leaderboardUrl(projectId, o.name))}>
-                    <td>
-                      <Link to={leaderboardUrl(projectId, o.name)} style={{ fontWeight: 500 }} onClick={(e) => e.stopPropagation()}>
-                        {o.name}
-                      </Link>
-                      {o.value?.description && <div className="faint small cell-preview">{o.value.description}</div>}
-                    </td>
-                    <td>
-                      <span className="chips">
-                        {cols.slice(0, 4).map((c, i) => (
-                          <span key={i} className="chip mono">
-                            {c.scorer_name}.{c.summary_metric_path}
-                          </span>
-                        ))}
-                        {cols.length > 4 && <span className="faint small">+{cols.length - 4}</span>}
-                      </span>
-                    </td>
-                    <td className="muted small">{evals.join(', ') || '—'}</td>
-                    <td className="muted" title={fmtDate(o.created_at)}>
-                      {fmtRelative(o.created_at)}
-                    </td>
-                    <td className="num">
-                      <Link to={objectVersionsUrl(projectId, o.name)} onClick={(e) => e.stopPropagation()}>
-                        {o.version_count ?? o.version + 1}
-                      </Link>
-                    </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <ConfirmButton
-                        className="btn ghost sm icon danger"
-                        title={`Delete leaderboard ${o.name}?`}
-                        body="Evaluation runs are not affected."
-                        onConfirm={async () => {
-                          await api.objectDelete(projectId, o.name)
-                          await qc.invalidateQueries({ queryKey: ['objects', projectId] })
-                        }}
-                      >
-                        ✕
-                      </ConfirmButton>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        !lbs.isLoading && (
+          <GroupedList title={search ? 'Matching leaderboards' : 'Leaderboards'} count={rows.length} label="Leaderboards">
+            {rows.map((o) => {
+              const cols: Any[] = Array.isArray(o.value?.columns) ? o.value.columns : []
+              const evals = [...new Set(cols.map((c) => refName(c.evaluation_object_ref)))]
+              const sh = shapes.get(o.name)
+              const line = sh ? leaderboardLine(sh.columns, sh.rows) : `${plural(cols.length, 'metric')}.`
+              return (
+                <ListRow
+                  key={o.name}
+                  title={o.name}
+                  summary={o.value?.description ? `${line} ${o.value.description}` : line}
+                  meta={[evals.length ? `from ${evals.join(', ')}` : '', `version ${o.version_count ?? o.version + 1}`].filter(Boolean).join(' · ')}
+                  time={relativeTime(o.created_at)}
+                  timeTitle={`Updated ${fmtDate(o.created_at)}`}
+                  to={leaderboardUrl(projectId, o.name)}
+                  trailing={
+                    <button type="button" className="icon-btn row-action" aria-label={`Delete leaderboard ${o.name}`} title="Delete this leaderboard (can be undone; evaluation runs are kept)" onClick={() => del(o.name)}>
+                      <Icon name="trash" size={14} />
+                    </button>
+                  }
+                />
+              )
+            })}
+          </GroupedList>
+        )
       )}
       {creating && (
         <LeaderboardEditor

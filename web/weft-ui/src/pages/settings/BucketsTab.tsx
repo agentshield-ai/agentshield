@@ -1,40 +1,43 @@
 // Settings → Buckets: reference buckets ("bring your own bucket"). Media whose
 // URI points into a registered S3 or GCS bucket renders inline in traces and
 // agent conversations, presigned by /api/v1/files/resolve. Registering, testing
-// and deleting need a server admin (the endpoints enforce it); everyone with
+// and removing need a server admin (the endpoints enforce it); everyone with
 // access to the project can see what is registered.
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { bucketRequest, bucketsApi, bucketUri, draftProblem, emptyDraft, type BucketDraft, type BucketTestResult, type ReferenceBucket } from '../../api/buckets'
 import { iamApi } from '../../api/iam'
-import { ErrorBox, Loading, Modal, Section } from '../../components/common'
+import { ErrorBox, Modal, Spinner } from '../../components/common'
 import { ConfirmButton } from '../../components/objects/bits'
+import { SettingsEmpty, SettingsRow, SettingsSection, SettingsSentence, StatusWords } from '../../components/settings/SettingsList'
 import { uriResolver } from '../../components/media/useResolvedUri'
-import { fmtRelative } from '../../lib/format'
+import { fmtDate } from '../../lib/format'
+import { relativeTime } from '../../lib/summaries'
+import { bucketsSentence } from '../../lib/summaries/project'
 
 type TestState = { busy: true } | ({ busy: false } & BucketTestResult)
 
-/** The read and CORS parts of a test result, as short lines. */
+/** The read and CORS parts of a test result, as short lines with a glyph each. */
 export function TestResult({ r }: { r: BucketTestResult }) {
   const parts: { label: string; ok: boolean; error: string | null }[] = []
   if (r.read) parts.push({ label: 'Read', ok: r.read.ok, error: r.read.error })
   if (r.cors) parts.push({ label: `CORS for ${r.cors.origin ?? 'this origin'}`, ok: r.cors.ok, error: r.cors.error?.replace(/^CORS: /, '') ?? null })
-  if (!parts.length) return <span style={{ color: 'var(--error)' }}>{r.error ?? 'test failed'}</span>
+  if (!parts.length) return <StatusWords tone="error">{r.error ?? 'test failed'}</StatusWords>
   return (
-    <div className="col" style={{ gap: 2 }}>
+    <span className="col" style={{ gap: 2, alignItems: 'flex-start' }}>
       {parts.map((p) =>
         p.ok ? (
-          <span key={p.label}>
-            <span className="badge success">{p.label}: passed</span>
-          </span>
+          <StatusWords key={p.label} tone="ok">
+            {p.label}: passed
+          </StatusWords>
         ) : (
-          <span key={p.label} style={{ color: 'var(--error)' }}>
+          <StatusWords key={p.label} tone="error">
             {p.label}: {p.error ?? 'failed'}
-          </span>
+          </StatusWords>
         ),
       )}
-    </div>
+    </span>
   )
 }
 
@@ -53,6 +56,7 @@ export function retestRequest(b: ReferenceBucket) {
   }
 }
 
+/** The registered buckets as settings rows: where, for whom, how it signs in, the last test; Test and Remove for admins. */
 export function BucketsTable({
   buckets,
   canManage,
@@ -66,93 +70,79 @@ export function BucketsTable({
   onTest: (b: ReferenceBucket) => void
   onDelete: (b: ReferenceBucket) => Promise<unknown>
 }) {
-  if (!buckets.length) return <div className="faint small">No buckets are registered for this project or its team.</div>
+  if (!buckets.length) return <SettingsEmpty>No buckets are registered for this project or its team.</SettingsEmpty>
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>URI prefix</th>
-            <th>Scope</th>
-            <th>Location</th>
-            <th>Credentials</th>
-            <th>Status</th>
-            {canManage && <th style={{ width: 140 }} />}
-          </tr>
-        </thead>
-        <tbody>
-          {buckets.map((b) => {
-            const t = tests[b.id]
-            return (
-              <tr key={b.id}>
-                <td className="mono small" style={{ overflowWrap: 'anywhere' }}>
-                  {bucketUri(b)}
-                </td>
-                <td>
-                  {b.scope === 'project' ? (
-                    <span className="badge" title={b.project_id ?? ''}>
-                      project
-                    </span>
-                  ) : (
-                    <span className="badge accent" title={`every project of team ${b.entity}`}>
-                      team {b.entity}
-                    </span>
-                  )}
-                </td>
-                <td className="small">
-                  {b.provider === 'gcs' ? 'Google Cloud Storage' : 'S3'}
-                  {b.region && <span className="muted"> · {b.region}</span>}
-                  {b.endpoint && (
-                    <div className="mono faint" style={{ overflowWrap: 'anywhere' }}>
-                      {b.endpoint}
-                      {b.path_style ? ' (path-style)' : ''}
-                    </div>
-                  )}
-                </td>
-                <td className="mono small">{b.secret_name || <span className="faint">server environment (AWS)</span>}</td>
-                <td className="small">
-                  {t?.busy ? (
-                    <span className="faint">testing…</span>
-                  ) : t ? (
-                    t.ok ? (
-                      <span className="badge success" title={t.cors?.origin ? `read and CORS for ${t.cors.origin} passed` : undefined}>
-                        test passed
-                      </span>
-                    ) : (
-                      <TestResult r={t} />
-                    )
-                  ) : b.verified_at ? (
-                    <span className="badge success" title={b.verified_at}>
-                      verified {fmtRelative(b.verified_at)}
-                    </span>
-                  ) : (
-                    <span className="badge warn">not tested</span>
-                  )}
-                </td>
-                {canManage && (
-                  <td>
-                    <div className="row" style={{ justifyContent: 'flex-end' }}>
-                      <button className="btn sm" disabled={t?.busy} onClick={() => onTest(b)} title={`Read ${b.test_object_key} through a presigned URL and check the bucket's CORS rules for this origin`}>
-                        Test
-                      </button>
-                      <ConfirmButton
-                        className="btn sm ghost danger"
-                        title={`Remove ${bucketUri(b)}?`}
-                        body="Media in this bucket stops rendering; the URIs show as text again. Nothing in the bucket is deleted."
-                        confirmLabel="Remove"
-                        onConfirm={() => onDelete(b)}
-                      >
-                        Remove
-                      </ConfirmButton>
-                    </div>
-                  </td>
+    <>
+      {buckets.map((b) => {
+        const t = tests[b.id]
+        return (
+          <SettingsRow
+            key={b.id}
+            label={<span className="mono">{bucketUri(b)}</span>}
+            detail={
+              <>
+                <span title={b.scope === 'project' ? (b.project_id ?? '') : `every project of team ${b.entity}`}>{b.scope === 'project' ? 'This project' : `team ${b.entity}`}</span>
+                {' · '}
+                {b.provider === 'gcs' ? 'Google Cloud Storage' : 'S3'}
+                {b.region && ` · ${b.region}`}
+                {b.endpoint && (
+                  <>
+                    {' · '}
+                    <span className="mono">{b.endpoint}</span>
+                    {b.path_style ? ' (path-style)' : ''}
+                  </>
                 )}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+                {' · '}
+                {b.secret_name ? (
+                  <>
+                    credentials in <span className="mono">{b.secret_name}</span>
+                  </>
+                ) : (
+                  'credentials from the server environment (AWS)'
+                )}
+              </>
+            }
+            control={
+              <>
+                {t?.busy ? (
+                  <span className="quiet-note">testing…</span>
+                ) : t ? (
+                  t.ok ? (
+                    <span title={t.cors?.origin ? `read and CORS for ${t.cors.origin} passed` : undefined}>
+                      <StatusWords tone="ok">test passed</StatusWords>
+                    </span>
+                  ) : (
+                    <TestResult r={t} />
+                  )
+                ) : b.verified_at ? (
+                  <span title={fmtDate(b.verified_at)}>
+                    <StatusWords tone="ok">verified {relativeTime(b.verified_at)}</StatusWords>
+                  </span>
+                ) : (
+                  <StatusWords tone="warn">not tested</StatusWords>
+                )}
+                {canManage && (
+                  <>
+                    <button type="button" className="qbtn sm" disabled={t?.busy} onClick={() => onTest(b)} title={`Read ${b.test_object_key} through a presigned URL and check the bucket's CORS rules for this origin`}>
+                      Test
+                    </button>
+                    <ConfirmButton
+                      className="qbtn sm plain danger"
+                      title={`Remove ${bucketUri(b)}?`}
+                      body="Media in this bucket stops rendering; the URIs show as text again. Nothing in the bucket is deleted."
+                      confirmLabel="Remove"
+                      onConfirm={() => onDelete(b)}
+                    >
+                      Remove
+                    </ConfirmButton>
+                  </>
+                )}
+              </>
+            }
+          />
+        )
+      })}
+    </>
   )
 }
 
@@ -179,50 +169,51 @@ export function BucketsTab({ projectId }: { projectId: string }) {
     }
   }
   return (
-    <div className="col" style={{ gap: 12 }}>
-      <Section
+    <>
+      {list.data && <SettingsSentence>{bucketsSentence(list.data)}</SettingsSentence>}
+      <SettingsSection
         title="Reference buckets"
-        actions={
+        action={
           admin ? (
-            <button className="btn primary sm" onClick={() => setAdding(true)}>
-              + Register bucket
+            <button type="button" className="qbtn primary" onClick={() => setAdding(true)}>
+              Register a bucket
             </button>
           ) : null
         }
+        note={
+          <>
+            Log media that already lives in your own bucket by its URI: put <span className="mono">s3://bucket/key.png</span> or{' '}
+            <span className="mono">gs://bucket/key.mp4</span> in any input, output or tool result. Once the bucket is registered here, for team{' '}
+            <span className="mono">{entity}</span> or for this project, images, video, audio and PDFs show inline through short-lived presigned URLs; other files
+            show as a download link. The bytes never pass through Weft. The bucket's CORS rules must allow <span className="mono">GET</span> and{' '}
+            <span className="mono">HEAD</span> from <span className="mono">{origin}</span>; Test checks them and reads the test object.
+            {!admin && me.data && ' Registering, testing and removing buckets needs a server admin.'}
+          </>
+        }
       >
-        <div className="col" style={{ gap: 10 }}>
-          <div className="hint">
-            Media that already lives in your own S3 or Google Cloud Storage bucket can be logged by URI: put{' '}
-            <span className="mono">s3://bucket/key.png</span> or <span className="mono">gs://bucket/key.mp4</span> as a value in any call input, output
-            or agent tool result. Once the bucket is registered here, for team <span className="mono">{entity}</span> or for this project, images,
-            video, audio and PDFs render inline through short-lived presigned URLs; other files show as a download link. The bytes never pass through
-            Weft. Until then the URIs show as text.
-          </div>
-          <div className="hint">
-            The bucket's CORS rules must allow <span className="mono">GET</span> and <span className="mono">HEAD</span> from this Weft origin (
-            <span className="mono">{origin}</span>). Registering and <b>Test</b> read the test object and check those rules (a preflight from this origin
-            and the object's <span className="mono">Access-Control-Allow-Origin</span>).
-          </div>
-          {!admin && me.data && <div className="hint">Registering, testing and removing buckets needs a server admin.</div>}
-          <ErrorBox error={list.error} />
-          {list.isLoading ? (
-            <Loading />
-          ) : (
-            list.data && (
-              <BucketsTable
-                buckets={list.data}
-                canManage={admin}
-                tests={tests}
-                onTest={(b) => void test(b)}
-                onDelete={async (b) => {
-                  await bucketsApi.delete(b.id)
-                  changed()
-                }}
-              />
-            )
-          )}
-        </div>
-      </Section>
+        {list.error ? (
+          <SettingsEmpty>
+            <ErrorBox error={list.error} />
+          </SettingsEmpty>
+        ) : list.isLoading ? (
+          <SettingsEmpty>
+            <Spinner />
+          </SettingsEmpty>
+        ) : (
+          list.data && (
+            <BucketsTable
+              buckets={list.data}
+              canManage={admin}
+              tests={tests}
+              onTest={(b) => void test(b)}
+              onDelete={async (b) => {
+                await bucketsApi.delete(b.id)
+                changed()
+              }}
+            />
+          )
+        )}
+      </SettingsSection>
       {adding && (
         <BucketModal
           projectId={projectId}
@@ -233,7 +224,7 @@ export function BucketsTab({ projectId }: { projectId: string }) {
           }}
         />
       )}
-    </div>
+    </>
   )
 }
 
@@ -277,13 +268,13 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
           <label className="checkbox small grow">
             <input type="checkbox" checked={skipTest} onChange={(e) => setSkipTest(e.target.checked)} /> Register without testing
           </label>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="qbtn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn" disabled={!!problem || !!busy} onClick={() => void run('test')}>
+          <button type="button" className="qbtn" disabled={!!problem || !!busy} onClick={() => void run('test')}>
             {busy === 'test' ? 'Testing…' : 'Test connection'}
           </button>
-          <button className="btn primary" disabled={!!problem || !!busy} onClick={() => void run('save')}>
+          <button type="button" className="qbtn primary" disabled={!!problem || !!busy} onClick={() => void run('save')}>
             {busy === 'save' ? 'Registering…' : 'Register'}
           </button>
         </>

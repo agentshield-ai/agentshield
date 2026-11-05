@@ -1,12 +1,19 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { agentsApi, agentsUrl, conversationUrl, eqQuery, type SpanGroup } from '../../api/agents'
+import { agentsApi, conversationUrl, eqQuery, type SpanGroup } from '../../api/agents'
 import type { Query } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { tracesUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Pager, Section, Spinner, Tabs } from '../../components/common'
+import { Empty, ErrorBox, Pager, Section, Spinner } from '../../components/common'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { RangePicker } from '../../components/agents/bits'
+import { agentStatsSentence } from '../../lib/summaries/agentsTeams'
+import { agentUrl as agentDetailUrl } from '../../lib/urls'
+import './agents-teams.css'
 import { SpansTable } from '../../components/agents/SpansTable'
 import { SignalsView } from '../../components/agents/SignalsView'
 import { AgentEvalsView } from '../../components/agents/AgentEvals'
@@ -274,51 +281,58 @@ export function AgentPage() {
   })
   const a = summary.data?.agents.find((x) => x.agent_name === agentName)
   const query = eqQuery({ agent_name: agentName })
-  const rate = a ? errorRate(a.invocation_error_count, a.invocation_count) : null
+  const TABS: { id: AgentTab; label: string; title: string }[] = [
+    { id: 'overview', label: 'Overview', title: 'Charts, tools, models, versions and conversations' },
+    { id: 'spans', label: 'Spans', title: "Search and group this agent's spans" },
+    { id: 'signals', label: 'Signals', title: 'Ratings and tags computed over its conversations' },
+    { id: 'evals', label: 'Evaluations', title: 'Evaluations of this agent' },
+  ]
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={agentsUrl(projectId)}>Agents</Link>
-        <span>/</span>
-        <span>{agentName}</span>
-      </div>
-      <div className="page-header">
-        <h1>{agentName}</h1>
-        {a && (
-          <span className="small muted" title={fmtDate(a.last_seen)}>
-            last seen {fmtRelative(a.last_seen)}
-          </span>
-        )}
-        <span className="spacer" />
-        <Link className="btn sm" to={tracesUrl(projectId)}>
-          Traces
-        </Link>
-        {tab === 'overview' && (
-          <div className="seg" role="group" aria-label="Time range">
-            {RANGES.map((r) => (
-              <button key={r} className={r === range ? 'on' : ''} onClick={() => setParams((p) => (p.set('range', r), p), { replace: true })}>
-                {r}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <Tabs<AgentTab>
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'spans', label: 'Spans' },
-          { id: 'signals', label: 'Signals' },
-          { id: 'evals', label: 'Evals' },
-        ]}
-        value={tab}
-        onChange={(t) => {
-          const n = new URLSearchParams()
-          if (t !== 'overview') n.set('tab', t)
-          if (params.get('range') && (params.get('range') !== 'all' || t === 'spans')) n.set('range', params.get('range')!)
-          setParams(n)
-        }}
+    <div className="page-frame detail analytics-page">
+      <PageHeader
+        variant="detail"
+        back={{ to: agentDetailUrl(projectId, agentName), label: agentName }}
+        title={<span className="at-title">Analytics of {agentName}</span>}
+        help="agents.md#look-at-one-agent"
+        helpTopic="Agent analytics"
+        sentence={
+          summary.isLoading ? (
+            <p className="sentence s-detail sk-sentence" aria-busy="true">
+              <span className="sr-only">Reading the agent…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          ) : a ? (
+            <Sentence size="detail" parts={[agentStatsSentence(a)]} />
+          ) : undefined
+        }
+        meta={
+          a ? (
+            <>
+              {(a.models ?? []).length > 0 && <>{(a.models ?? []).join(', ')} · </>}
+              <span title={fmtDate(a.last_seen)}>last seen {fmtRelative(a.last_seen)}</span> · <Link to={tracesUrl(projectId)}>Traces</Link>
+            </>
+          ) : undefined
+        }
       />
+      <div className="analytics-bar">
+        <Segmented
+          label="Views of this agent"
+          role="tabs"
+          panelId="agent-analytics-view"
+          className="segmented-views"
+          options={TABS}
+          value={tab}
+          onChange={(t) => {
+            const n = new URLSearchParams()
+            if (t !== 'overview') n.set('tab', t)
+            if (params.get('range') && (params.get('range') !== 'all' || t === 'spans')) n.set('range', params.get('range')!)
+            setParams(n)
+          }}
+        />
+        {tab === 'overview' && <RangePicker value={range} onChange={(r) => setParams((p) => (p.set('range', r), p), { replace: true })} />}
+      </div>
       <ErrorBox error={summary.error} />
+      <div role="tabpanel" id="agent-analytics-view" aria-labelledby={segmentedTabId('agent-analytics-view', tab)} className="analytics-panel">
       {tab === 'spans' ? (
         <SpansTable projectId={projectId} params={params} update={update} agent={agentName} />
       ) : tab === 'signals' ? (
@@ -331,44 +345,6 @@ export function AgentPage() {
         <Empty>No spans recorded for agent “{agentName}”.</Empty>
       ) : (
         <>
-          <div className="stat-grid">
-            <div className="stat">
-              <div className="label">Conversations</div>
-              <div className="value">{fmtNumber(a.conversation_count)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Invocations</div>
-              <div className="value">{fmtNumber(a.invocation_count)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Error rate</div>
-              <div className="value" style={rate ? { color: 'var(--error)' } : undefined}>
-                {fmtPct(rate)}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Failed spans</div>
-              <div className="value" style={a.error_count ? { color: 'var(--error)' } : undefined}>
-                {fmtNumber(a.error_count)}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Latency p50 / p95</div>
-              <div className="value">
-                {fmtDuration(a.latency_ms_p50)} / {fmtDuration(a.latency_ms_p95)}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Tokens in / out</div>
-              <div className="value">
-                {compact(a.total_input_tokens)} / {compact(a.total_output_tokens)}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Cost</div>
-              <div className="value">{fmtCost(a.total_cost_usd)}</div>
-            </div>
-          </div>
           <AgentCharts projectId={projectId} query={query} range={range} />
           <div className="grid-2">
             <Section title="Tool usage">
@@ -386,6 +362,7 @@ export function AgentPage() {
           </Section>
         </>
       )}
+      </div>
     </div>
   )
 }

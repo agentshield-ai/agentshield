@@ -3,12 +3,16 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { dashboardsApi, type DashboardPanel, type DashboardVal } from '../../api/dashboards'
-import { Empty, ErrorBox, Loading, Modal, Spinner } from '../../components/common'
+import { ErrorBox, Loading, Modal, Spinner } from '../../components/common'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Sentence } from '../../components/ui/Sentence'
+import { dashboardSentence, rangeWords } from '../../lib/summaries/dashboards'
+import '../observe.css'
 import { dashboardsUrl } from '../../components/dashboards/AddToDashboardModal'
 import { PanelChart } from '../../components/dashboards/MetricChart'
 import { PanelEditor } from '../../components/dashboards/PanelEditor'
 import { TimeRangePicker } from '../../components/dashboards/TimeRangePicker'
-import { blankPanel, movePanel, newPanelId, panelTitle } from '../../components/dashboards/dashboardUtils'
+import { blankPanel, movePanel, newPanelId, panelTitle, timeRangeLabel } from '../../components/dashboards/dashboardUtils'
 import { ConfirmModal, Dropdown, MenuItem } from '../../components/traces/Menu'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtRelative } from '../../lib/format'
@@ -59,9 +63,9 @@ export function DashboardPage() {
   if (q.isLoading) return <Loading />
   if (q.error || !q.data)
     return (
-      <div className="page">
+      <div className="page-frame detail obs-page">
+        <PageHeader variant="detail" back={{ to: dashboardsUrl(projectId), label: 'Dashboards' }} title={objectId} help="project.md#dashboards" helpTopic="Dashboards" />
         <ErrorBox error={q.error ?? 'Dashboard not found'} />
-        <Link to={dashboardsUrl(projectId)}>Back to dashboards</Link>
       </div>
     )
   const val: DashboardVal = { ...q.data.value, panels: q.data.value.panels ?? [] }
@@ -86,26 +90,42 @@ export function DashboardPage() {
   const roots = val.filter?.trace_roots_only ?? false
 
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={dashboardsUrl(projectId)}>Dashboards</Link>
-        <span>/</span>
-        <span>{val.name || objectId}</span>
-      </div>
-      <div className="page-header">
-        <div className="col" style={{ gap: 2, minWidth: 0 }}>
-          <h1 className="truncate">{val.name || objectId}</h1>
-          {val.description && <span className="muted small">{val.description}</span>}
-        </div>
-        <span className="spacer" />
+    <div className="page-frame detail obs-page obs-wide">
+      <PageHeader
+        variant="detail"
+        back={{ to: dashboardsUrl(projectId), label: 'Dashboards' }}
+        title={val.name || objectId}
+        help="project.md#dashboards"
+        helpTopic="Dashboards"
+        sentence={
+          <Sentence
+            size="detail"
+            parts={[
+              dashboardSentence({
+                charts: val.panels.length,
+                names: val.filter?.names ?? [],
+                roots,
+                range: rangeWords(range, timeRangeLabel),
+                refreshSeconds: refresh,
+              }),
+            ]}
+          />
+        }
+        meta={
+          <>
+            {val.description ? <>{val.description} · </> : null}
+            <span title={q.data.created_at}>
+              saved {fmtRelative(q.data.created_at)} (version {q.data.version})
+            </span>
+          </>
+        }
+      />
+      <div className="obs-actions">
         {save.isPending && <Spinner label="Saving…" />}
-        <span className="small faint" title={q.data.created_at}>
-          v{q.data.version} · saved {fmtRelative(q.data.created_at)}
-        </span>
-        <button className="btn primary" onClick={() => setEditing(blankPanel())}>
-          + Add chart
+        <button type="button" className="qbtn primary" onClick={() => setEditing(blankPanel())}>
+          Add chart
         </button>
-        <Dropdown label="⋯" align="right" className="btn" title="Dashboard actions">
+        <Dropdown label="More" className="qbtn" title="Dashboard actions">
           {(close) => (
             <>
               <MenuItem
@@ -114,7 +134,7 @@ export function DashboardPage() {
                   close()
                 }}
               >
-                Rename / describe…
+                Rename or describe…
               </MenuItem>
               <MenuItem
                 danger
@@ -130,7 +150,7 @@ export function DashboardPage() {
         </Dropdown>
       </div>
 
-      <div className="toolbar dash-filters">
+      <div className="obs-toolbar dash-filters">
         <TimeRangePicker value={range} onChange={(v) => setParam('range', v === (val.time_range ?? '7d') ? null : v)} />
         <select className="input" aria-label="Span name filter" value={op} onChange={(e) => update({ filter: { ...val.filter, names: e.target.value ? [e.target.value] : undefined } })} style={{ maxWidth: 220 }}>
           <option value="">All names</option>
@@ -139,11 +159,11 @@ export function DashboardPage() {
           ))}
           {op && !opNames.includes(op) && <option>{op}</option>}
         </select>
-        <label className="checkbox small" title="Charts count only the root span of each trace unless a chart overrides it">
-          <input type="checkbox" checked={roots} onChange={(e) => update({ filter: { ...val.filter, trace_roots_only: e.target.checked } })} /> Roots only
+        <label className="obs-check" title="Charts count only the top-level span of each trace unless a chart overrides it">
+          <input type="checkbox" checked={roots} onChange={(e) => update({ filter: { ...val.filter, trace_roots_only: e.target.checked } })} /> Top-level spans only
         </label>
         <span className="grow" />
-        <label className="row small muted" style={{ gap: 6 }}>
+        <label className="obs-check">
           Auto-refresh
           <select className="input" value={refresh} onChange={(e) => setParam('refresh', Number(e.target.value) === (val.refresh_seconds ?? 0) ? null : e.target.value)}>
             {REFRESH.map((r) => (
@@ -153,12 +173,13 @@ export function DashboardPage() {
             ))}
           </select>
         </label>
-        <button className="btn sm" title="Refresh now" aria-label="Refresh now" onClick={() => void qc.invalidateQueries({ queryKey: ['calls-metrics', projectId] })}>
+        <button type="button" className="qbtn" title="Refresh now" aria-label="Refresh now" onClick={() => void qc.invalidateQueries({ queryKey: ['calls-metrics', projectId] })}>
           ↻
         </button>
         {dirtyView && (
           <button
-            className="btn sm"
+            type="button"
+            className="qbtn"
             title="Make this time range and refresh rate the dashboard's default"
             onClick={() => {
               update({ time_range: range, refresh_seconds: refresh })
@@ -172,24 +193,17 @@ export function DashboardPage() {
       <ErrorBox error={save.error} />
 
       {val.panels.length === 0 ? (
-        <div className="card">
-          <Empty>
-            <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-              <div>This dashboard has no charts yet.</div>
-              <button className="btn primary" onClick={() => setEditing(blankPanel())}>
-                + Add chart
-              </button>
-            </div>
-          </Empty>
+        <div className="quiet-empty">
+          <p>This dashboard has no charts yet. Add chart picks a figure (count, latency, tokens, cost or a score), how to group it and how to draw it.</p>
         </div>
       ) : (
-        <div className="dash-grid">
+        <div className="dash-grid obs-dash-grid">
           {val.panels.map((p, i) => (
             <div key={p.id} className={`dash-panel w${p.width ?? 1}`}>
               <div className="dash-panel-head">
                 <h3 title={panelTitle(p)}>{panelTitle(p)}</h3>
-                {p.time_range && <span className="badge">{p.time_range.startsWith('custom:') ? 'custom range' : p.time_range}</span>}
-                <Dropdown label="⋯" align="right" className="btn ghost sm icon" title="Chart actions">
+                {p.time_range && <span className="obs-faint small">{p.time_range.startsWith('custom:') ? 'custom range' : p.time_range}</span>}
+                <Dropdown label={<span aria-label={`Actions for ${panelTitle(p)}`}>⋯</span>} align="right" className="btn ghost sm icon" title="Chart actions">
                   {(close) => (
                     <>
                       <MenuItem
@@ -247,7 +261,7 @@ export function DashboardPage() {
                           close()
                         }}
                       >
-                        View calls
+                        View these spans on Traces
                       </MenuItem>
                       <div className="dd-sep" />
                       <MenuItem

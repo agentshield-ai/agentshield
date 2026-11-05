@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { Any } from '../../api/types'
 import { preview } from '../../lib/format'
+import { PlainTable } from '../ui/PlainTable'
 
 // ------------------------------------------------------------- line diff (LCS)
 
@@ -122,25 +123,25 @@ export function TextDiff({ left, right, mode, context = 3 }: { left: string; rig
   const blocks = useMemo(() => collapse(ops, context), [ops, context])
   const [opened, setOpened] = useState<Set<number>>(new Set())
   const changed = ops.some((o) => o.type !== 'ctx')
-  if (!changed) return <div className="faint small">No differences.</div>
+  if (!changed) return <p className="quiet-note">No differences.</p>
   return (
-    <div className="code-block" style={{ padding: 0, maxHeight: 'none' }}>
+    <div className="diff-box code-block" style={{ padding: 0, maxHeight: 'none' }} tabIndex={0} role="region" aria-label={mode === 'split' ? 'Side-by-side comparison' : 'Line comparison'}>
       {blocks.map((b, bi) => {
         if (b.kind === 'gap' && !opened.has(b.id))
           return (
-            <div key={bi} className="diff-gap" onClick={() => setOpened(new Set([...opened, b.id]))}>
-              ⋯ {b.ops.length} unchanged lines
-            </div>
+            <button key={bi} type="button" className="diff-gap" onClick={() => setOpened(new Set([...opened, b.id]))}>
+              Show {b.ops.length} unchanged lines
+            </button>
           )
         if (mode === 'unified') return b.ops.map((op, i) => <Line key={`${bi}-${i}`} op={op} />)
         return (
-          <div key={bi} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
+          <div key={bi} className="diff-split">
             {sideRows(b.ops).map(([l, r], i) => (
               <Fragment key={i}>
-                <div style={{ borderRight: '1px solid var(--border)', minWidth: 0 }}>
+                <div>
                   <Line op={l && l.type === 'add' ? null : l} side="a" />
                 </div>
-                <div style={{ minWidth: 0 }}>
+                <div>
                   <Line op={r && r.type === 'del' ? null : r} side="b" />
                 </div>
               </Fragment>
@@ -183,41 +184,41 @@ export function pathDiff(a: Any, b: Any): PathChange[] {
   return out.sort((x, y) => x.path.localeCompare(y.path, undefined, { numeric: true }))
 }
 
+const CHANGE_WORD: Record<PathChange['kind'], string> = { added: 'Added', removed: 'Removed', changed: 'Changed' }
+
+/** Each changed field: where, what happened (words with a mark, never colour alone), before and after. */
 export function PathChangesTable({ changes }: { changes: PathChange[] }) {
-  if (!changes.length) return <div className="faint small">No differences.</div>
+  if (!changes.length) return <p className="quiet-note">No differences.</p>
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Path</th>
-            <th>Change</th>
-            <th>Before</th>
-            <th>After</th>
+    <PlainTable caption="Changed fields">
+      <thead>
+        <tr>
+          <th scope="col">Field</th>
+          <th scope="col">Change</th>
+          <th scope="col">Before</th>
+          <th scope="col">After</th>
+        </tr>
+      </thead>
+      <tbody>
+        {changes.map((c) => (
+          <tr key={c.path}>
+            <td className="mono small">{c.path}</td>
+            <td>
+              <span className={`change-word ${c.kind}`}>
+                <span aria-hidden="true">{c.kind === 'added' ? '+' : c.kind === 'removed' ? '−' : '~'}</span>
+                {CHANGE_WORD[c.kind]}
+              </span>
+            </td>
+            <td className="diff-val before" title={JSON.stringify(c.a)}>
+              {c.kind === 'added' ? '—' : preview(JSON.stringify(c.a), 140)}
+            </td>
+            <td className="diff-val" title={JSON.stringify(c.b)}>
+              {c.kind === 'removed' ? '—' : preview(JSON.stringify(c.b), 140)}
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {changes.map((c) => (
-            <tr key={c.path}>
-              <td className="mono small">{c.path}</td>
-              <td>
-                <span className={`badge ${c.kind === 'added' ? 'success' : c.kind === 'removed' ? 'error' : 'warn'}`}>{c.kind}</span>
-              </td>
-              <td className="mono small" style={{ color: c.kind === 'added' ? 'var(--text-3)' : 'var(--error)' }}>
-                <span className="cell-preview" title={JSON.stringify(c.a)}>
-                  {c.kind === 'added' ? '—' : preview(JSON.stringify(c.a), 140)}
-                </span>
-              </td>
-              <td className="mono small" style={{ color: c.kind === 'removed' ? 'var(--text-3)' : 'var(--success)' }}>
-                <span className="cell-preview" title={JSON.stringify(c.b)}>
-                  {c.kind === 'removed' ? '—' : preview(JSON.stringify(c.b), 140)}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </PlainTable>
   )
 }
 

@@ -4,7 +4,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { leaderboardsApi } from '../../api/leaderboards'
 import type { CompareEvaluation, CompareMetric } from '../../api/types'
 import { leaderboardUrl } from '../../lib/urls'
-import { ErrorBox, Modal, Section } from '../common'
+import { ErrorBox, Modal } from '../common'
+import { PlainTable } from '../ui/PlainTable'
+import { metricWords } from '../../lib/summaries/evaluate'
 import { classVal } from '../objects/objectUtils'
 import { slugify } from '../traces/callUtils'
 import { fmtMetric, toNum } from './evalUtils'
@@ -144,135 +146,113 @@ export function InlineLeaderboard({
   if (evals.length < 2 || !numeric.length) return null
   const active = selected.filter((s) => s.weight > 0)
   return (
-    <Section
-      title="Leaderboard"
-      actions={
-        <div className="row" style={{ gap: 6 }}>
-          {value.length > 0 && (
-            <button className="btn ghost sm" onClick={() => onChange([])} title="Back to the default metrics">
-              Reset
-            </button>
-          )}
-          <button className="btn sm" aria-expanded={configuring} onClick={() => setConfiguring((c) => !c)}>
-            {configuring ? 'Done' : 'Metrics & weights'}
+    <div className="ev-section">
+      <div className="ev-controls">
+        <span className="quiet-note">Each run gets 0 to 100 per metric, from the worst run to the best, and the weighted mean ranks them.</span>
+        <button type="button" className="qbtn" aria-expanded={configuring} onClick={() => setConfiguring((c) => !c)}>
+          {configuring ? 'Done' : 'Metrics and weights'}
+        </button>
+        {value.length > 0 && (
+          <button type="button" className="linkish" onClick={() => onChange([])} title="Back to the default metrics">
+            Reset
           </button>
-          {projectId && (
-            <button className="btn sm" disabled={!active.length} onClick={() => setSaving(true)} title="Save these metrics as a Leaderboard object">
-              Save as leaderboard
-            </button>
-          )}
-        </div>
-      }
-    >
-      <div className="col" style={{ gap: 12 }}>
-        {configuring && (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 28 }} />
-                  <th>Metric</th>
-                  <th>Better</th>
-                  <th style={{ width: 110 }}>Weight</th>
-                </tr>
-              </thead>
-              <tbody>
-                {numeric.map((m) => {
-                  const s = selected.find((x) => x.key === m.key)
-                  return (
-                    <tr key={m.key}>
-                      <td>
-                        <input type="checkbox" aria-label={`Rank by ${m.key}`} checked={!!s} onChange={(e) => set(m.key, e.target.checked ? {} : null)} />
-                      </td>
-                      <td className="mono small">{m.key}</td>
-                      <td>
-                        <button className="btn ghost sm" disabled={!s} onClick={() => s && set(m.key, { lowerBetter: !s.lowerBetter })}>
-                          {(s?.lowerBetter ?? lowerBetter(m.key)) ? '↓ lower' : '↑ higher'}
-                        </button>
-                      </td>
-                      <td>
-                        <input
-                          className="input"
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={0.5}
-                          disabled={!s}
-                          aria-label={`Weight for ${m.key}`}
-                          value={s?.weight ?? 1}
-                          onChange={(e) => set(m.key, { weight: Math.max(0, Number(e.target.value) || 0) })}
-                          style={{ width: 80 }}
-                        />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
         )}
-        {active.length === 0 ? (
-          <div className="faint small">Pick at least one metric with a weight above 0.</div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 48 }}>Rank</th>
-                  <th>Run</th>
-                  <th style={{ minWidth: 140 }} title="Weighted mean of each metric scaled 0–100% between the worst and best run">
-                    Score
-                  </th>
-                  {active.map((s) => (
-                    <th key={s.key} className="num" title={`${s.key} · weight ${s.weight} · ${s.lowerBetter ? 'lower' : 'higher'} is better`}>
-                      <span className="mono small">{s.key}</span>
-                      <span className="faint small">
-                        {' '}
-                        {s.lowerBetter ? '↓' : '↑'}
-                        {s.weight !== 1 ? ` ×${s.weight}` : ''}
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {ranked.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <span className={`badge ${r.rank === 1 && r.score != null ? 'accent' : ''}`}>#{r.rank}</span>
-                    </td>
-                    <td>
-                      <span className="row" style={{ gap: 6, minWidth: 0 }}>
-                        <span className="swatch" style={{ background: colorOf[r.id] }} />
-                        <span className="truncate">{labels[r.id]}</span>
-                      </span>
-                    </td>
-                    <td>
-                      {r.score == null ? (
-                        <span className="faint">—</span>
-                      ) : (
-                        <div className="row" style={{ gap: 8 }}>
-                          <div style={{ flex: 1, height: 6, background: 'var(--panel-2)', borderRadius: 3, minWidth: 60 }} aria-hidden>
-                            <div style={{ width: `${Math.round(r.score * 100)}%`, height: '100%', background: colorOf[r.id], borderRadius: 3 }} />
-                          </div>
-                          <span className="mono small">{(r.score * 100).toFixed(0)}</span>
-                        </div>
-                      )}
-                      {r.missing.length > 0 && <div className="small faint">missing {r.missing.length}</div>}
-                    </td>
-                    {active.map((s) => (
-                      <td key={s.key} className={`num mono ${r.parts[s.key] === 1 && ranked.some((o) => (o.parts[s.key] ?? 0) < 1) ? 'best' : ''}`}>
-                        {fmtVal(byKey[s.key]?.values[r.id], byKey[s.key]?.kind ?? 'other')}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {projectId && (
+          <button type="button" className="qbtn" disabled={!active.length} onClick={() => setSaving(true)} title="Save these metrics as a Leaderboard object">
+            Save as leaderboard
+          </button>
         )}
       </div>
+      {configuring && (
+        <PlainTable caption="Metrics to rank by">
+          <thead>
+            <tr>
+              <th scope="col">
+                <span className="sr-only">Use</span>
+              </th>
+              <th scope="col">Metric</th>
+              <th scope="col">Better</th>
+              <th scope="col">Weight</th>
+            </tr>
+          </thead>
+          <tbody>
+            {numeric.map((m) => {
+              const s = selected.find((x) => x.key === m.key)
+              return (
+                <tr key={m.key}>
+                  <td>
+                    <input type="checkbox" aria-label={`Rank by ${metricWords(m.key)}`} checked={!!s} onChange={(e) => set(m.key, e.target.checked ? {} : null)} />
+                  </td>
+                  <td title={m.key}>{metricWords(m.key)}</td>
+                  <td>
+                    <button type="button" className="ev-dir" disabled={!s} onClick={() => s && set(m.key, { lowerBetter: !s.lowerBetter })}>
+                      {(s?.lowerBetter ?? lowerBetter(m.key)) ? 'Lower' : 'Higher'}
+                    </button>
+                  </td>
+                  <td>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.5}
+                      disabled={!s}
+                      aria-label={`Weight for ${metricWords(m.key)}`}
+                      value={s?.weight ?? 1}
+                      onChange={(e) => set(m.key, { weight: Math.max(0, Number(e.target.value) || 0) })}
+                      style={{ width: 80 }}
+                    />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </PlainTable>
+      )}
+      {active.length === 0 ? (
+        <p className="quiet-note">Pick at least one metric with a weight above 0.</p>
+      ) : (
+        <PlainTable caption="Runs ranked by the chosen metrics">
+          <thead>
+            <tr>
+              <th scope="col" className="num">
+                Rank
+              </th>
+              <th scope="col">Run</th>
+              <th scope="col" className="num" title="Weighted mean of each metric scaled 0–100 between the worst and best run">
+                Score
+              </th>
+              {active.map((s) => (
+                <th key={s.key} scope="col" className="num" title={`${s.key} · weight ${s.weight} · ${s.lowerBetter ? 'lower' : 'higher'} is better`}>
+                  {metricWords(s.key)}
+                  {s.weight !== 1 ? ` ×${s.weight}` : ''}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ranked.map((r) => (
+              <tr key={r.id}>
+                <td className={`num ${r.rank === 1 && r.score != null ? 'ev-best' : ''}`}>{r.rank}</td>
+                <td>
+                  <span className="ev-swatch" style={{ background: colorOf[r.id] }} aria-hidden />
+                  {labels[r.id]}
+                </td>
+                <td className="num">
+                  {r.score == null ? '—' : (r.score * 100).toFixed(0)}
+                  {r.missing.length > 0 && <span className="ev-delta">missing {r.missing.length}</span>}
+                </td>
+                {active.map((s) => (
+                  <td key={s.key} className={`num ${r.parts[s.key] === 1 && ranked.some((o) => (o.parts[s.key] ?? 0) < 1) ? 'ev-best' : ''}`}>
+                    {fmtVal(byKey[s.key]?.values[r.id], byKey[s.key]?.kind ?? 'other')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </PlainTable>
+      )}
       {saving && projectId && <SaveLeaderboardModal projectId={projectId} evals={evals} selected={active} metrics={numeric} onClose={() => setSaving(false)} />}
-    </Section>
+    </div>
   )
 }

@@ -66,7 +66,7 @@ export function CallCharts({ projectId, filter, query, search }: { projectId: st
   const fmt = tickFormatter(s.bucket_seconds)
   const labelFmt = (iso: string) => new Date(iso).toLocaleString()
   const xAxis = <XAxis dataKey="start" tickFormatter={fmt} tick={AXIS} minTickGap={24} axisLine={false} tickLine={false} />
-  const grid = <CartesianGrid vertical={false} stroke="var(--border)" />
+  const grid = <CartesianGrid vertical={false} stroke="var(--separator)" />
   const errPct = s.totals.count ? (s.totals.error_count / s.totals.count) * 100 : 0
   return (
     <div className="chart-strip">

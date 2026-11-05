@@ -7,7 +7,15 @@ import type { Any, Span } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtBytes, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
 import { spanUrl, playgroundUrl, refUrl, spanSessionUrl, tracesUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Loading, Section, StatusBadge, StatusDot, Tabs } from '../../components/common'
+import { ErrorBox, Loading, Section } from '../../components/common'
+import { CopyText, KeyValueList } from '../../components/ui/Inspector'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
+import { spanSentence, statusGlyph } from '../../lib/summaries/traces'
+import '../observe.css'
 import { JsonBlock, ValueView } from '../../components/ValueView'
 import { RefChip } from '../../components/RefChip'
 import { CallChatView, extractChat, findInputMessages } from '../../components/traces/ChatView'
@@ -101,16 +109,18 @@ export function SpanPage() {
   if (callQ.isLoading) return <Loading />
   if (callQ.error)
     return (
-      <div className="page">
+      <div className="page-frame detail obs-page">
+        <PageHeader variant="detail" back={{ to: tracesUrl(projectId), label: 'Traces' }} title="Span" help="traces.md" helpTopic="Traces" />
         <ErrorBox error={callQ.error} />
       </div>
     )
   if (!call)
     return (
-      <div className="page">
-        <Empty>
-          Span <code>{callId}</code> was not found. It may have been deleted. <Link to={tracesUrl(projectId)}>Back to traces</Link>
-        </Empty>
+      <div className="page-frame detail obs-page">
+        <PageHeader variant="detail" back={{ to: tracesUrl(projectId), label: 'Traces' }} title="Span not found" help="traces.md" helpTopic="Traces" />
+        <p className="quiet-note">
+          Span <span className="mono">{callId}</span> was not found. It may have been deleted. <Link to={tracesUrl(projectId)}>Back to traces</Link>
+        </p>
       </div>
     )
 
@@ -119,10 +129,12 @@ export function SpanPage() {
 
   return (
     <div className="split call-split">
-      <div className={`pane-left ${leftView !== 'tree' ? 'wide' : ''}`}>
-        <div className="row pane-head">
-          <Tabs<LeftView>
-            tabs={[
+      <div className={`pane-left obs-span-tree ${leftView !== 'tree' ? 'wide' : ''}`} role="region" aria-label="Spans in this trace">
+        <div className="obs-span-tree-head">
+          <Segmented<LeftView>
+            label="How to show the trace"
+            size="sm"
+            options={[
               { id: 'tree', label: 'Tree' },
               { id: 'code', label: 'Code' },
               { id: 'flame', label: 'Flame' },
@@ -133,8 +145,8 @@ export function SpanPage() {
             onChange={setLeftView}
           />
           <span className="grow" />
-          <span className="faint small" style={{ whiteSpace: 'nowrap' }}>
-            {traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} call${traceCalls.length === 1 ? '' : 's'}`}
+          <span className="obs-faint small" style={{ whiteSpace: 'nowrap' }}>
+            {traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} span${traceCalls.length === 1 ? '' : 's'}`}
           </span>
         </div>
         <ErrorBox error={traceQ.error} />
@@ -182,8 +194,8 @@ function DisplayNameEditor({ projectId, call }: { projectId: string; call: Span 
   })
   if (!editing)
     return (
-      <button className="linkish display-name" onClick={() => setEditing(true)} title="Edit display name">
-        {call.display_name ? <span>{call.display_name}</span> : <span className="faint">Add display name</span>} <span className="faint">✎</span>
+      <button type="button" className="linkish obs-display-name" onClick={() => setEditing(true)} title="Edit display name">
+        {call.display_name ? <span>Display name: {call.display_name}</span> : <span>Add a display name</span>} <span aria-hidden>✎</span>
       </button>
     )
   return (
@@ -208,10 +220,10 @@ function DisplayNameEditor({ projectId, call }: { projectId: string; call: Span 
         placeholder="Display name"
         aria-label="Display name"
       />
-      <button className="btn sm primary" type="submit" disabled={save.isPending}>
+      <button className="qbtn" type="submit" disabled={save.isPending}>
         Save
       </button>
-      <button className="btn sm" type="button" onClick={() => setEditing(false)}>
+      <button className="qbtn" type="button" onClick={() => setEditing(false)}>
         Cancel
       </button>
       <ErrorBox error={save.error} />
@@ -254,92 +266,83 @@ function CallDetail({
     },
   })
 
-  const opRef = parseRef(call.name)
+  const g = statusGlyph(st)
+  const below = (call.summary?.status_counts?.success ?? 0) + (call.summary?.status_counts?.error ?? 0)
+  const isRoot = !root || root.id === call.id
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'span', label: 'Span' },
+    { id: 'feedback', label: fbCount ? `Feedback ${fbCount}` : 'Feedback' },
+    { id: 'scores', label: scoreCount ? `Scores ${scoreCount}` : 'Scores' },
+    { id: 'summary', label: 'Usage' },
+    { id: 'attributes', label: 'Attributes' },
+    { id: 'code', label: 'Code' },
+    { id: 'use', label: 'Use' },
+    { id: 'raw', label: 'Raw' },
+  ]
   return (
-    <div className="page call-detail">
-      <div className="col" style={{ gap: 6 }}>
-        <div className="breadcrumbs">
-          <Link to={tracesUrl(projectId)}>Traces</Link>
-          {root && root.id !== call.id && (
-            <>
-              <span>/</span>
-              <Link to={spanUrl(projectId, root.id)}>{callLabel(root)}</Link>
-            </>
-          )}
-          {call.parent_id && root && call.parent_id !== root.id && (
-            <>
-              <span>/</span>
-              <span>…</span>
-            </>
-          )}
-        </div>
-        <div className="page-header">
-          <StatusDot status={st} />
-          <h1 className="call-title" title={call.name}>
-            {spanDisplayName(call.name)}
-          </h1>
-          {opRef && <RefChip refStr={call.name} />}
-          <StatusBadge status={st} />
-          <span className="spacer" />
-          {chatInputs && (
-            <Link className="btn sm" to={playgroundUrl(projectId, call.id)}>
-              Open in playground
-            </Link>
-          )}
-          <button className="btn sm" onClick={() => setModal('dataset')}>
-            Add to dataset
-          </button>
-          <AddToQueueButton projectId={projectId} callIds={[call.id]} />
-          <button className="btn sm danger" onClick={() => setModal('delete')}>
-            Delete
-          </button>
-        </div>
-        <DisplayNameEditor projectId={projectId} call={call} />
-        <div className="meta-row">
-          <span title={fmtDate(call.started_at)}>
-            <span className="faint">Started</span> {fmtDate(call.started_at)} <span className="faint">({fmtRelative(call.started_at)})</span>
-          </span>
-          <span>
-            <span className="faint">Latency</span> {fmtDuration(callLatencyMs(call))}
-          </span>
-          {tokens.total > 0 && (
-            <span title={`${fmtNumber(tokens.prompt)} prompt · ${fmtNumber(tokens.completion)} completion`}>
-              <span className="faint">Tokens</span> {fmtNumber(tokens.total)}
-            </span>
-          )}
-          {cost != null && cost > 0 && (
-            <span>
-              <span className="faint">Cost</span> {fmtCost(cost)}
-            </span>
-          )}
-          {call.parent_id && <Link to={spanUrl(projectId, call.parent_id)}>↑ Parent</Link>}
-          {root && root.id !== call.id && <Link to={spanUrl(projectId, root.id)}>⤒ Trace root</Link>}
-          {call.session_id && <Link to={spanSessionUrl(projectId, call.session_id)}>Session {call.session_id.slice(0, 12)}</Link>}
-          {call.user_id && (
-            <span>
-              <span className="faint">User</span> {call.user_id}
-            </span>
-          )}
-        </div>
-        {fb.data && <Reactions projectId={projectId} callId={call.id} feedback={fb.data.items} />}
-      </div>
-
-      <Tabs<Tab>
-        tabs={[
-          { id: 'span', label: 'Span' },
-          { id: 'feedback', label: <>Feedback{fbCount > 0 && <span className="tab-count">{fbCount}</span>}</> },
-          { id: 'scores', label: <>Scores{scoreCount > 0 && <span className="tab-count">{scoreCount}</span>}</> },
-          { id: 'summary', label: 'Summary' },
-          { id: 'attributes', label: 'Attributes' },
-          { id: 'code', label: 'Code' },
-          { id: 'use', label: 'Use' },
-          { id: 'raw', label: 'Raw' },
-        ]}
-        value={tab}
-        onChange={setTab}
+    <div className="page-frame detail obs-page call-detail">
+      <PageHeader
+        variant="detail"
+        back={isRoot ? { to: tracesUrl(projectId), label: 'Traces' } : { to: spanUrl(projectId, root!.id), label: callLabel(root!) }}
+        title={
+          <>
+            <StatusGlyph kind={g.kind} label={g.label} size={24} className="obs-title-glyph" /> <span title={call.name}>{spanDisplayName(call.name)}</span>
+          </>
+        }
+        helpTopic="Traces"
+        help="traces.md"
+        sentence={
+          <Sentence
+            size="detail"
+            parts={[
+              spanSentence({
+                status: st,
+                latencyMs: callLatencyMs(call),
+                error: call.error,
+                below,
+                belowFailed: call.summary?.status_counts?.error ?? 0,
+                tokens: tokens.total,
+                cost,
+              }),
+            ]}
+          />
+        }
+        meta={
+          <>
+            <span title={fmtDate(call.started_at)}>Started {fmtRelative(call.started_at)}</span>
+            {call.session_id && (
+              <>
+                {' · '}
+                <Link to={spanSessionUrl(projectId, call.session_id)}>in session {call.session_id.length > 24 ? call.session_id.slice(0, 23) + '…' : call.session_id}</Link>
+              </>
+            )}
+            {call.user_id && <> · user {call.user_id}</>}
+          </>
+        }
       />
+      <div className="obs-actions">
+        <DisplayNameEditor projectId={projectId} call={call} />
+        <span className="grow" style={{ flex: 1 }} />
+        {chatInputs && (
+          <Link className="qbtn" to={playgroundUrl(projectId, call.id)}>
+            Open in playground
+          </Link>
+        )}
+        <button type="button" className="qbtn" onClick={() => setModal('dataset')}>
+          Add to dataset
+        </button>
+        <AddToQueueButton projectId={projectId} callIds={[call.id]} className="qbtn" />
+        <button type="button" className="qbtn danger" onClick={() => setModal('delete')}>
+          Delete
+        </button>
+      </div>
+      {fb.data && <Reactions projectId={projectId} callId={call.id} feedback={fb.data.items} />}
 
-      {tab === 'span' && <CallTab projectId={projectId} call={call} node={node} />}
+      <div className="obs-tabs-scroll">
+        <Segmented label="Views of this span" role="tabs" panelId="span-view" options={tabs} value={tab} onChange={setTab} />
+      </div>
+      <div role="tabpanel" id="span-view" aria-labelledby={segmentedTabId('span-view', tab)} className="obs-tabpanel">
+      {tab === 'span' && <CallTab projectId={projectId} call={call} node={node} root={root} />}
       {tab === 'feedback' && <FeedbackPanel projectId={projectId} call={call} />}
       {tab === 'scores' && <ScoresPanel projectId={projectId} call={call} />}
       {tab === 'summary' && <SummaryTab call={call} />}
@@ -347,6 +350,7 @@ function CallDetail({
       {tab === 'code' && <OpCodeView call={call} />}
       {tab === 'use' && <UseTab projectId={projectId} call={call} />}
       {tab === 'raw' && <JsonBlock value={call} />}
+      </div>
 
       {modal === 'delete' && (
         <ConfirmModal
@@ -377,101 +381,154 @@ function ExceptionBox({ exception }: { exception: string }) {
   const [first, ...rest] = exception.split('\n')
   const [open, setOpen] = useState(rest.length < 15)
   return (
-    <div className="error-box exception">
-      <div className="row">
-        <b className="grow">{first}</b>
+    <div className="obs-error" role="group" aria-label="Error">
+      <div className="obs-io-head">
+        <b>{first}</b>
         {rest.length > 0 && (
-          <button className="btn ghost sm" onClick={() => setOpen((o) => !o)}>
+          <button type="button" className="linkish" onClick={() => setOpen((o) => !o)}>
             {open ? 'Hide stack' : `Show stack (${rest.length} lines)`}
           </button>
         )}
       </div>
-      {open && rest.length > 0 && <pre className="mono small" style={{ marginTop: 6 }}>{rest.join('\n')}</pre>}
+      {open && rest.length > 0 && <pre className="mono">{rest.join('\n')}</pre>}
     </div>
   )
 }
 
-function CallTab({ projectId, call, node }: { projectId: string; call: Span; node?: TreeNode }) {
+const OWN_STATUS_WORDS: Record<ReturnType<typeof callStatus>, string> = {
+  success: 'Succeeded',
+  error: 'Failed',
+  running: 'Running',
+  descendant_error: 'Succeeded; a span under it failed',
+}
+
+function CallTab({ projectId, call, node, root }: { projectId: string; call: Span; node?: TreeNode; root?: Span }) {
   const chat = useMemo(() => extractChat(call), [call])
   const [mode, setMode] = useState<IOMode>(chat ? 'chat' : 'tree')
   useEffect(() => setMode((m) => (m === 'chat' && !chat ? 'tree' : m)), [chat])
   const inputs = Object.fromEntries(Object.entries(call.inputs ?? {}).filter(([k]) => k !== 'self'))
   const self = call.inputs?.self
+  const st = callStatus(call)
+  const tokens = callTokens(call)
+  const cost = callCost(call)
+  const models = Object.keys(call.summary?.usage ?? {})
+  const opRef = parseRef(call.name)
+  const modes: { id: IOMode; label: string }[] = chat
+    ? [
+        { id: 'chat', label: 'Chat' },
+        { id: 'tree', label: 'Tree' },
+        { id: 'json', label: 'JSON' },
+      ]
+    : [
+        { id: 'tree', label: 'Tree' },
+        { id: 'json', label: 'JSON' },
+      ]
   return (
-    <div className="col" style={{ gap: 14 }}>
+    <div className="col" style={{ gap: 20 }}>
       {call.error && <ExceptionBox exception={call.error} />}
-      <div className="row">
-        <div className="seg" role="group" aria-label="Display mode">
-          {(['chat', 'tree', 'json'] as IOMode[]).map((m) => (
-            <button key={m} className={mode === m ? 'on' : ''} disabled={m === 'chat' && !chat} onClick={() => setMode(m)} aria-pressed={mode === m}>
-              {m === 'chat' ? 'Chat' : m === 'tree' ? 'Tree' : 'JSON'}
-            </button>
-          ))}
-        </div>
-        {self != null && (
-          <span className="small muted">
-            self: <ValueView value={self} projectId={projectId} />
-          </span>
-        )}
+      <div className="obs-kv-panel">
+        <KeyValueList
+          items={[
+            { label: 'Name', value: opRef ? <RefChip refStr={call.name} /> : call.name, mono: !opRef, help: 'The span name (internal term: op). A ref links to the function that made it.' },
+            { label: 'Status', value: OWN_STATUS_WORDS[st], tone: st === 'error' ? 'error' : st === 'descendant_error' ? 'warn' : undefined },
+            { label: 'Started', value: fmtDate(call.started_at) },
+            { label: 'Ended', value: call.ended_at ? fmtDate(call.ended_at) : 'Not yet' },
+            { label: 'Latency', value: fmtDuration(callLatencyMs(call)) },
+            tokens.total > 0 && { label: 'Tokens', value: `${fmtNumber(tokens.prompt)} in · ${fmtNumber(tokens.completion)} out`, help: 'Prompt and completion tokens of this span and every span under it.' },
+            cost != null && cost > 0 && { label: 'Cost', value: fmtCost(cost), help: 'Priced from the token counts with the project’s or the built-in prices.' },
+            models.length > 0 && { label: models.length === 1 ? 'Model' : 'Models', value: models.join(', '), mono: true },
+            self != null && { label: 'Self', value: <ValueView value={self} projectId={projectId} /> },
+            !!call.parent_id && { label: 'Parent', value: <Link to={spanUrl(projectId, call.parent_id)}>Open the parent span</Link> },
+            root && root.id !== call.id && { label: 'Trace root', value: <Link to={spanUrl(projectId, root.id)}>{callLabel(root)}</Link> },
+            !!call.session_id && { label: 'Session', value: <Link to={spanSessionUrl(projectId, call.session_id)}>{call.session_id}</Link>, mono: true },
+            !!call.user_id && { label: 'User', value: call.user_id },
+            { label: 'Span id', value: <CopyText text={call.id} label="span id" />, mono: true },
+            { label: 'Trace id', value: <CopyText text={call.trace_id} label="trace id" />, mono: true },
+          ]}
+        />
       </div>
-      {mode === 'chat' && chat ? (
-        <Section title="Conversation">
-          <ChatParams projectId={projectId} inputs={inputs} />
-          <CallChatView chat={chat} projectId={projectId} />
-          {!chat.output && call.output != null && (
-            <div style={{ marginTop: 12 }}>
-              <div className="small muted">Output</div>
-              <ValueView value={call.output} projectId={projectId} markdown />
-            </div>
-          )}
-        </Section>
-      ) : (
-        <>
-          <Section title="Inputs">
-            {Object.keys(inputs).length ? <ValueView value={inputs} projectId={projectId} mode={mode === 'json' ? 'json' : 'tree'} markdown /> : <span className="faint">No inputs</span>}
-          </Section>
-          <Section title="Output">
-            {call.output === null || call.output === undefined ? (
-              <span className="faint">{call.ended_at ? 'None' : 'Running…'}</span>
-            ) : (
-              <ValueView value={call.output} projectId={projectId} mode={mode === 'json' ? 'json' : 'tree'} markdown />
+      <section className="obs-io" aria-labelledby="span-io-h">
+        <div className="obs-io-head">
+          <h2 className="view-h" id="span-io-h">
+            {mode === 'chat' && chat ? 'Conversation' : 'Inputs and output'}
+          </h2>
+          <Segmented label="Display mode" size="sm" options={modes} value={mode} onChange={setMode} />
+        </div>
+        {mode === 'chat' && chat ? (
+          <div className="view-panel">
+            <ChatParams projectId={projectId} inputs={inputs} />
+            <CallChatView chat={chat} projectId={projectId} />
+            {!chat.output && call.output != null && (
+              <div style={{ marginTop: 12 }}>
+                <div className="small muted">Output</div>
+                <ValueView value={call.output} projectId={projectId} markdown />
+              </div>
             )}
-          </Section>
-        </>
-      )}
+          </div>
+        ) : (
+          <>
+            <div className="view-panel">
+              <h3 className="replay-h">Inputs</h3>
+              {Object.keys(inputs).length ? <ValueView value={inputs} projectId={projectId} mode={mode === 'json' ? 'json' : 'tree'} markdown /> : <span className="obs-faint">No inputs</span>}
+            </div>
+            <div className="view-panel">
+              <h3 className="replay-h">Output</h3>
+              {call.output === null || call.output === undefined ? (
+                <span className="obs-faint">{call.ended_at ? 'None' : 'Running…'}</span>
+              ) : (
+                <ValueView value={call.output} projectId={projectId} mode={mode === 'json' ? 'json' : 'tree'} markdown />
+              )}
+            </div>
+          </>
+        )}
+      </section>
       {node && node.children.length > 0 && (
-        <Section title={`Child spans (${node.children.length})`}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 20 }} />
-                  <th>Name</th>
-                  <th>Started</th>
-                  <th className="num">Latency</th>
-                  <th className="num">Tokens</th>
-                </tr>
-              </thead>
-              <tbody>
-                {node.children.map((ch) => (
+        <section className="obs-io" aria-labelledby="span-children-h">
+          <h2 className="view-h" id="span-children-h">
+            Spans under it <span className="glist-count">{node.children.length}</span>
+          </h2>
+          <PlainTable caption="Spans directly under this one" className="obs-nowrap">
+            <thead>
+              <tr>
+                <th scope="col">
+                  <span className="sr-only">Status</span>
+                </th>
+                <th scope="col">Name</th>
+                <th scope="col">Started</th>
+                <th scope="col" className="num">
+                  Latency
+                </th>
+                <th scope="col" className="num">
+                  Tokens
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {node.children.map((ch) => {
+                const cg = statusGlyph(callStatus(ch.call))
+                return (
                   <tr key={ch.call.id}>
-                    <td>
-                      <StatusDot status={callStatus(ch.call)} />
+                    <td style={{ width: 24 }}>
+                      <StatusGlyph kind={cg.kind} label={cg.label} size={16} />
                     </td>
                     <td>
                       <Link to={spanUrl(projectId, ch.call.id)}>{callLabel(ch.call)}</Link>
-                      {ch.children.length > 0 && <span className="faint small"> · {ch.children.length} children</span>}
+                      {ch.children.length > 0 && <span className="obs-faint small"> · {ch.children.length} under it</span>}
                     </td>
                     <td title={fmtDate(ch.call.started_at)}>+{fmtDuration(new Date(ch.call.started_at).getTime() - new Date(call.started_at).getTime())}</td>
                     <td className="num">{fmtDuration(callLatencyMs(ch.call))}</td>
                     <td className="num">{callTokens(ch.call).total ? fmtNumber(callTokens(ch.call).total) : '—'}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Section>
+                )
+              })}
+            </tbody>
+          </PlainTable>
+        </section>
       )}
+      <details className="obs-details">
+        <summary>Raw JSON</summary>
+        <JsonBlock value={call} />
+      </details>
     </div>
   )
 }
@@ -515,20 +572,24 @@ function SummaryTab({ call }: { call: Span }) {
   const rest = Object.fromEntries(Object.entries(call.summary ?? {}).filter(([k]) => !['usage', 'status_counts', 'weft'].includes(k)))
   return (
     <div className="col" style={{ gap: 14 }}>
-      <div className="stat-grid">
-        <Stat label="Latency" value={fmtDuration(callLatencyMs(call))} />
-        <Stat label="Total tokens" value={fmtNumber(callTokens(call).total)} />
-        <Stat label="Cost" value={fmtCost(totalCost)} />
-        <Stat label="Successful spans" value={fmtNumber(sc?.success ?? 0)} />
-        <Stat label="Errored spans" value={fmtNumber(sc?.error ?? 0)} tone={sc?.error ? 'error' : undefined} />
-        {call.storage_size_bytes != null && <Stat label="Storage" value={fmtBytes(call.storage_size_bytes)} />}
+      <div className="obs-kv-panel">
+        <KeyValueList
+          items={[
+            { label: 'Latency', value: fmtDuration(callLatencyMs(call)) },
+            { label: 'Tokens', value: fmtNumber(callTokens(call).total), help: 'Prompt and completion tokens of this span and every span under it.' },
+            { label: 'Cost', value: fmtCost(totalCost), help: 'Priced from the token counts with the project’s or the built-in prices.' },
+            { label: 'Spans', value: `${fmtNumber(sc?.success ?? 0)} succeeded · ${fmtNumber(sc?.error ?? 0)} failed`, tone: sc?.error ? 'error' : undefined, help: 'Spans under this one (status counts).' },
+            call.storage_size_bytes != null && { label: 'Storage', value: fmtBytes(call.storage_size_bytes) },
+            { label: 'Started at', value: call.started_at, mono: true },
+            { label: 'Ended at', value: call.ended_at ?? '—', mono: true },
+          ]}
+        />
       </div>
       <Section title="Usage by model">
         {models.length === 0 ? (
           <span className="faint">No LLM usage recorded in this span or its descendants.</span>
         ) : (
-          <div className="table-wrap">
-            <table className="table">
+          <PlainTable caption="Usage by model">
               <thead>
                 <tr>
                   <th>Model</th>
@@ -551,7 +612,7 @@ function SummaryTab({ call }: { call: Span }) {
                     <tr key={m}>
                       <td className="mono" style={{ whiteSpace: 'nowrap' }}>
                         {m}
-                        {c?.pricing_level === 'project' && <span className="badge accent" style={{ marginLeft: 6 }}>project price</span>}
+                        {c?.pricing_level === 'project' && <span className="obs-faint"> (project price)</span>}
                       </td>
                       <td className="num">{fmtNumber(u.requests ?? c?.requests)}</td>
                       <td className="num">{fmtNumber(p)}</td>
@@ -568,40 +629,14 @@ function SummaryTab({ call }: { call: Span }) {
                   )
                 })}
               </tbody>
-            </table>
-          </div>
+          </PlainTable>
         )}
-      </Section>
-      <Section title="Timing">
-        <div className="kv">
-          <div className="k">started_at</div>
-          <div className="v mono">{call.started_at}</div>
-          <div className="k">ended_at</div>
-          <div className="v mono">{call.ended_at ?? '—'}</div>
-          <div className="k">latency</div>
-          <div className="v">{fmtDuration(callLatencyMs(call))}</div>
-          <div className="k">status</div>
-          <div className="v">
-            <StatusBadge status={callStatus(call)} />
-          </div>
-        </div>
       </Section>
       {Object.keys(rest).length > 0 && (
         <Section title="Other summary fields">
           <ValueView value={rest} projectId={call.project_id} />
         </Section>
       )}
-    </div>
-  )
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'error' }) {
-  return (
-    <div className="stat">
-      <div className="label">{label}</div>
-      <div className="value" style={tone === 'error' ? { color: 'var(--error)' } : undefined}>
-        {value}
-      </div>
     </div>
   )
 }

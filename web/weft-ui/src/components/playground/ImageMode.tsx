@@ -51,8 +51,8 @@ export function ImageMode({
   })
   const images = result?.response?.data ?? []
   return (
-    <div className="pg-image card">
-      <div className="card-body col" style={{ gap: 10 }}>
+    <div className="pg-image ev-panel">
+      <div className="col" style={{ gap: 10 }}>
         <div className="row wrap">
           <label className="small muted row" style={{ gap: 4 }}>
             Model
@@ -78,7 +78,7 @@ export function ImageMode({
             <input className="input sm" type="number" min={1} max={4} style={{ width: 56 }} value={n} onChange={(e) => setN(Math.max(1, Math.min(4, Number(e.target.value) || 1)))} aria-label="Number of images" />
           </label>
           <span className="grow" />
-          <button className="btn primary sm" disabled={!prompt.trim() || !chosen || run.isPending} onClick={() => run.mutate()}>
+          <button className="qbtn primary" disabled={!prompt.trim() || !chosen || run.isPending} onClick={() => run.mutate()}>
             {run.isPending ? 'Generating…' : 'Generate'}
           </button>
         </div>

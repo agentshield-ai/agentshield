@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { v1 } from '../../api/v1'
 import { CopyButton } from '../common'
+import '../common.css'
 import { Icon } from './Icons'
 import { helpUrl } from './PageHeader'
 import { notify } from './Toasts'
@@ -143,7 +144,7 @@ export function Snippets({ projectId, only, initial }: { projectId: string; only
   )
 }
 
-export function SendTestSession({ projectId, label = 'Send a test session', className = 'btn primary' }: { projectId: string; label?: string; className?: string }) {
+export function SendTestSession({ projectId, label = 'Send a test session', className = 'qbtn primary' }: { projectId: string; label?: string; className?: string }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const send = useMutation({

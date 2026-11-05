@@ -3,9 +3,13 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { agentsApi, agentsUrl, agentUrl } from '../../api/agents'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtCost, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
+import { fmtCost, fmtDate, fmtRelative } from '../../lib/format'
 import { spanSessionUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Spinner } from '../../components/common'
+import { Empty, ErrorBox } from '../../components/common'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Sentence } from '../../components/ui/Sentence'
+import { conversationSentence } from '../../lib/summaries/agentsTeams'
+import './agents-teams.css'
 import { TurnView } from '../../components/agents/AgentTimeline'
 import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
 import { compact } from '../../components/agents/agentUtils'
@@ -38,82 +42,56 @@ export function ConversationPage() {
     if (!c || !location.hash) return
     document.getElementById(location.hash.slice(1))?.scrollIntoView()
   }, [c, location.hash])
+  const title = c?.conversation_name || conversationId
+  const first = c?.agent_names?.[0]
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={agentsUrl(projectId)}>Agents</Link>
-        {c?.agent_names?.[0] && (
-          <>
-            <span>/</span>
-            <Link to={agentUrl(projectId, c.agent_names[0])}>{c.agent_names[0]}</Link>
-          </>
-        )}
-        <span>/</span>
-        <span>Conversation</span>
-      </div>
-      <div className="page-header">
-        <h1 className="mono" style={{ fontSize: 18 }}>
-          {c?.conversation_name || conversationId}
-        </h1>
-        {c && c.agent_names.length > 1 && (
-          <span className="chips">
-            {c.agent_names.map((a) => (
-              <Link key={a} to={agentUrl(projectId, a)} className="chip">
-                {a}
-              </Link>
-            ))}
-          </span>
-        )}
-        {chat.isFetching && <Spinner />}
-        <span className="spacer" />
-        <Link className="btn sm" to={spanSessionUrl(projectId, conversationId)}>
-          View as thread
-        </Link>
-      </div>
+    <div className="page-frame detail analytics-page">
+      <PageHeader
+        variant="detail"
+        back={first ? { to: agentUrl(projectId, first), label: first } : { to: agentsUrl(projectId), label: 'Agents' }}
+        title={<span className="at-title mono-title">{title}</span>}
+        helpTopic="Conversation"
+        help="agents.md"
+        sentence={
+          chat.isLoading ? (
+            <p className="sentence s-detail sk-sentence" aria-busy="true">
+              <span className="sr-only">Reading the conversation…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          ) : c && c.total_turns > 0 ? (
+            <Sentence size="detail" parts={[conversationSentence(c)]} />
+          ) : undefined
+        }
+        meta={
+          c && c.total_turns > 0 ? (
+            <>
+              {c.agent_names.length > 1 && (
+                <>
+                  {c.agent_names.map((a, i) => (
+                    <span key={a}>
+                      {i > 0 && ', '}
+                      <Link to={agentUrl(projectId, a)}>{a}</Link>
+                    </span>
+                  ))}
+                  {' · '}
+                </>
+              )}
+              {compact(c.total_input_tokens)} in / {compact(c.total_output_tokens)} out tokens · cost {fmtCost(c.total_cost_usd)} ·{' '}
+              <span title={fmtDate(c.started_at)}>started {fmtRelative(c.started_at)}</span> · <span title={fmtDate(c.last_activity)}>last activity {fmtRelative(c.last_activity)}</span>
+            </>
+          ) : undefined
+        }
+        controls={
+          <Link className="qbtn" to={spanSessionUrl(projectId, conversationId)}>
+            View as thread
+          </Link>
+        }
+      />
       <ErrorBox error={chat.error} />
-      {chat.isLoading ? (
-        <div className="empty">
-          <Spinner label="Loading conversation…" />
-        </div>
-      ) : !c || c.total_turns === 0 ? (
+      {chat.isLoading ? null : !c || c.total_turns === 0 ? (
         <Empty>No spans recorded for conversation “{conversationId}”.</Empty>
       ) : (
         <>
-          <div className="stat-grid">
-            <div className="stat">
-              <div className="label">Turns</div>
-              <div className="value">{fmtNumber(c.total_turns)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Spans</div>
-              <div className="value">
-                {fmtNumber(c.span_count)}
-                {c.error_count > 0 && <span style={{ color: 'var(--error)', fontSize: 13, marginLeft: 6 }}>{c.error_count} failed</span>}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Tokens in / out</div>
-              <div className="value">
-                {compact(c.total_input_tokens)} / {compact(c.total_output_tokens)}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Cost</div>
-              <div className="value">{fmtCost(c.total_cost_usd)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Started</div>
-              <div className="value" title={fmtDate(c.started_at)} style={{ fontSize: 15 }}>
-                {c.started_at ? new Date(c.started_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Last activity</div>
-              <div className="value" title={fmtDate(c.last_activity)} style={{ fontSize: 15 }}>
-                {fmtRelative(c.last_activity)}
-              </div>
-            </div>
-          </div>
           <ConversationEvals projectId={projectId} runs={evals.data?.evaluations ?? []} />
           {spans.data?.conversations[0]?.spans.length ? (
             <div className="col" style={{ gap: 4 }}>

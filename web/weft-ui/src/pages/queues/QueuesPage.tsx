@@ -1,17 +1,30 @@
+// Review queues (DESIGN.md §7, §7.1 rules 1 and 11, §7.2): one sentence
+// answering "what is waiting for me to review?", then each queue with how
+// much is left, in words. A queue opens its one-item-at-a-time review;
+// export, edit and delete sit in each row's menu (deleting can be undone).
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { queuesApi, type AnnotationQueue } from '../../api/queues'
 import { parseRef } from '../../api/refs'
-import { Empty, ErrorBox, Loading, Modal } from '../../components/common'
-import { undoable } from '../../components/ui/Toasts'
+import { ErrorBox, Modal } from '../../components/common'
+import { toSentence } from '../../components/evals/sentence'
 import { queueUrl } from '../../components/queues/AddToQueueModal'
 import { ExportQueueModal } from '../../components/queues/ExportQueueModal'
 import { SpecPicker } from '../../components/queues/SpecPicker'
+import { Dropdown, MenuItem } from '../../components/traces/Menu'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { SearchField } from '../../components/ui/SearchField'
+import { Sentence } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
+import { undoable } from '../../components/ui/Toasts'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate, fmtRelative } from '../../lib/format'
+import { fmtDate } from '../../lib/format'
+import { joinClauses, relativeTime } from '../../lib/summaries'
+import { queueLine, queuesSentence } from '../../lib/summaries/evaluate'
 import { tracesUrl } from '../../lib/urls'
-import { HelpLink } from '../../components/ui/PageHeader'
+import '../evaluations/evaluate.css'
 
 export function QueuesPage() {
   const projectId = useProjectId()
@@ -28,158 +41,150 @@ export function QueuesPage() {
     queryFn: () => queuesApi.stats(projectId, ids).then((r) => new Map(r.stats.map((s) => [s.queue_id, s]))),
     enabled: ids.length > 0,
   })
-  const shown = (queues.data ?? []).filter((q) => !hiddenQueues.has(q.id)).filter((q) => !search || q.name.toLowerCase().includes(search.toLowerCase()))
-  const totals = [...(stats.data?.values() ?? [])].reduce((a, s) => ({ items: a.items + s.total_items, done: a.done + s.completed_items }), { items: 0, done: 0 })
+  const live = (queues.data ?? []).filter((q) => !hiddenQueues.has(q.id))
+  const shown = live.filter((q) => !search || q.name.toLowerCase().includes(search.toLowerCase()) || q.description.toLowerCase().includes(search.toLowerCase()))
+  const counts = (id: string) => {
+    const s = stats.data?.get(id)
+    return { total: s?.total_items ?? 0, done: s?.completed_items ?? 0 }
+  }
+  const waiting = shown.filter((q) => counts(q.id).total - counts(q.id).done > 0)
+  const done = shown.filter((q) => !(counts(q.id).total - counts(q.id).done > 0))
+  const empty = !queues.isLoading && !queues.error && live.length === 0
+  const remove = (q: AnnotationQueue) =>
+    undoable({
+      message: `Deleted queue “${q.name}”`,
+      apply: () => setHiddenQueues((h) => new Set(h).add(q.id)),
+      revert: () =>
+        setHiddenQueues((h) => {
+          const n = new Set(h)
+          n.delete(q.id)
+          return n
+        }),
+      commit: async () => {
+        await queuesApi.remove(projectId, q.id)
+        await qc.invalidateQueries({ queryKey: ['annotation-queues', projectId] })
+      },
+    })
+
+  const row = (q: AnnotationQueue) => {
+    const c = counts(q.id)
+    const left = c.total - c.done
+    const fields = q.scorer_refs.map((r) => parseRef(r)?.name ?? r)
+    return (
+      <ListRow
+        key={q.id}
+        glyph={left > 0 ? <StatusGlyph kind="approval" label={`${left} left to review`} /> : <StatusGlyph kind="ok" label={c.total ? 'All reviewed' : 'Empty'} />}
+        title={q.name}
+        summary={stats.data ? queueLine(c) : 'Counting…'}
+        meta={[q.description, fields.length ? `asks for ${joinClauses(fields)}` : 'no annotation fields', q.created_by && q.created_by !== 'anonymous' ? `by ${q.created_by}` : ''].filter(Boolean).join(' · ')}
+        time={relativeTime(q.updated_at)}
+        timeTitle={`Updated ${fmtDate(q.updated_at)}`}
+        to={queueUrl(projectId, q.id)}
+        ariaLabel={`${q.name}: ${stats.data ? queueLine(c) : ''}`}
+        trailing={
+          <span className="ev-actions">
+            <Dropdown
+              align="right"
+              className="icon-btn"
+              label={
+                <>
+                  <span aria-hidden>⋯</span>
+                  <span className="sr-only">More for {q.name}</span>
+                </>
+              }
+            >
+              {(close) => (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      setExporting(q)
+                      close()
+                    }}
+                  >
+                    Export to a dataset…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setEditing(q)
+                      close()
+                    }}
+                  >
+                    Edit queue…
+                  </MenuItem>
+                  <div className="dd-sep" />
+                  <MenuItem
+                    onClick={() => {
+                      remove(q)
+                      close()
+                    }}
+                  >
+                    Delete queue (annotations are kept)
+                  </MenuItem>
+                </>
+              )}
+            </Dropdown>
+          </span>
+        }
+      />
+    )
+  }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="col" style={{ gap: 2 }}>
-          <h1>Review queues</h1>
-          <HelpLink doc="evaluations.md#review-queues" topic="Review queues" />
-          <span className="muted small">Collect agent steps and spans for human review, then work through them one at a time with structured annotation fields.</span>
-        </div>
-        <span className="spacer" />
-        <button className="btn primary" onClick={() => setEditing('new')}>
-          + New queue
-        </button>
-      </div>
+    <div className="page-frame">
+      <PageHeader
+        title="Review queues"
+        help="evaluations.md#review-queues"
+        helpTopic="Review queues"
+        controls={
+          <>
+            {!empty && <SearchField label="Search queues" value={search} onChange={setSearch} filterInput />}
+            <button type="button" className="qbtn primary" onClick={() => setEditing('new')}>
+              New queue
+            </button>
+          </>
+        }
+        sentence={
+          empty ? undefined : !queues.data || (ids.length > 0 && !stats.data) ? (
+            <p className="sentence s-outcome sk-sentence" aria-busy="true">
+              <span className="sr-only">Counting the items…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          ) : (
+            <Sentence
+              parts={toSentence(
+                queuesSentence(live.map((q) => ({ id: q.id, name: q.name, ...counts(q.id) }))),
+                (l) => (l.kind === 'queue' ? { to: queueUrl(projectId, l.id), title: 'Start reviewing' } : null),
+              )}
+            />
+          )
+        }
+      />
       <ErrorBox error={queues.error ?? stats.error} />
-      {queues.isLoading ? (
-        <Loading />
-      ) : !queues.data?.length ? (
-        <div className="card">
-          <Empty>
-            <div className="col" style={{ alignItems: 'center', gap: 10 }}>
-              <div style={{ maxWidth: 520 }}>
-                No review queues yet. Create a queue, then add spans from the <Link to={tracesUrl(projectId)}>Traces</Link> page (select rows → Add to queue) or
-                from a span’s page.
-              </div>
-              <button className="btn primary" onClick={() => setEditing('new')}>
-                + New queue
-              </button>
-            </div>
-          </Empty>
+      {empty ? (
+        <div className="quiet-empty">
+          <p>
+            <strong>No review queues yet.</strong> A queue collects agent steps for people to review one at a time, with the annotation fields you choose.
+          </p>
+          <p className="ev-note">
+            Create a queue, then add steps from <Link to={tracesUrl(projectId)}>Traces</Link> (select rows, then Add to queue) or from a step’s page.
+          </p>
+        </div>
+      ) : queues.isLoading ? null : shown.length === 0 ? (
+        <div className="quiet-empty">
+          <p>No queues match “{search}”.</p>
         </div>
       ) : (
         <>
-          <div className="stat-grid" style={{ marginBottom: 14 }}>
-            <div className="stat">
-              <div className="label">Queues</div>
-              <div className="value">{queues.data.length}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Items</div>
-              <div className="value">{totals.items}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Reviewed</div>
-              <div className="value">
-                {totals.done} <span className="faint small">{totals.items ? `${Math.round((100 * totals.done) / totals.items)}%` : ''}</span>
-              </div>
-            </div>
-          </div>
-          <div className="toolbar" style={{ marginBottom: 10 }}>
-            <input className="input" style={{ maxWidth: 260 }} placeholder="Search queues…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Fields</th>
-                  <th style={{ width: 220 }}>Progress</th>
-                  <th>Created by</th>
-                  <th>Updated</th>
-                  <th style={{ width: 210 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((q) => {
-                  const st = stats.data?.get(q.id)
-                  const pct = st && st.total_items ? st.completed_items / st.total_items : 0
-                  return (
-                    <tr key={q.id} className="clickable" onClick={() => nav(queueUrl(projectId, q.id))}>
-                      <td>
-                        <Link to={queueUrl(projectId, q.id)} style={{ fontWeight: 500 }} onClick={(e) => e.stopPropagation()}>
-                          {q.name}
-                        </Link>
-                        {q.description && <div className="faint small cell-preview">{q.description}</div>}
-                      </td>
-                      <td>
-                        <span className="chips">
-                          {q.scorer_refs.length === 0 ? (
-                            <span className="faint small">none</span>
-                          ) : (
-                            q.scorer_refs.map((r) => (
-                              <span key={r} className="chip mono">
-                                {parseRef(r)?.name ?? r}
-                              </span>
-                            ))
-                          )}
-                        </span>
-                      </td>
-                      <td>
-                        {st ? (
-                          <div className="row" style={{ gap: 8 }}>
-                            <div className="progress grow" title={`${st.completed_items} of ${st.total_items} reviewed`}>
-                              <span style={{ width: `${pct * 100}%` }} />
-                            </div>
-                            <span className="small mono">
-                              {st.completed_items}/{st.total_items}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="faint small">…</span>
-                        )}
-                      </td>
-                      <td className="muted">{q.created_by}</td>
-                      <td className="muted" title={fmtDate(q.updated_at)}>
-                        {fmtRelative(q.updated_at)}
-                      </td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
-                          <Link className="btn sm primary" to={queueUrl(projectId, q.id)}>
-                            Review
-                          </Link>
-                          <button className="btn sm" onClick={() => setExporting(q)}>
-                            Export
-                          </button>
-                          <button className="btn sm ghost" onClick={() => setEditing(q)} title="Edit queue">
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="btn ghost sm icon danger"
-                            aria-label={`Delete queue ${q.name}`}
-                            title={`Delete queue ${q.name} (annotations already given are kept)`}
-                            onClick={() =>
-                              undoable({
-                                message: `Deleted queue “${q.name}”`,
-                                apply: () => setHiddenQueues((h) => new Set(h).add(q.id)),
-                                revert: () =>
-                                  setHiddenQueues((h) => {
-                                    const n = new Set(h)
-                                    n.delete(q.id)
-                                    return n
-                                  }),
-                                commit: async () => {
-                                  await queuesApi.remove(projectId, q.id)
-                                  await qc.invalidateQueries({ queryKey: ['annotation-queues', projectId] })
-                                },
-                              })
-                            }
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          {waiting.length > 0 && (
+            <GroupedList title="Waiting for review" count={waiting.length} className="ev-menu-list">
+              {waiting.map(row)}
+            </GroupedList>
+          )}
+          {done.length > 0 && (
+            <GroupedList title={waiting.length ? 'Done or empty' : 'Queues'} count={done.length} className="ev-menu-list">
+              {done.map(row)}
+            </GroupedList>
+          )}
         </>
       )}
       {editing && (

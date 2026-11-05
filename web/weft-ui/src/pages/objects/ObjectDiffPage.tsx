@@ -1,28 +1,49 @@
+// Two versions of one asset side by side (DESIGN.md §7.1 rule 1, §7.2): the
+// sentence says what changed ("From version 2 to version 3, 1 value changed.
+// The rows went from 46 to 50: 4 added, none removed."); then the changed
+// fields, the whole value side by side or as one column, and for datasets
+// the rows added and removed. ?a= and ?b= name the versions (digests).
 import { useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { Any, WeftObject, TableRow } from '../../api/types'
-import { Empty, ErrorBox, Loading, Section } from '../../components/common'
-import { Stat } from '../../components/objects/bits'
+import type { Any, TableRow, WeftObject } from '../../api/types'
+import { ErrorBox, Loading } from '../../components/common'
 import { columnsOf } from '../../components/objects/csv'
 import { CellValue } from '../../components/objects/DatasetRowsView'
 import { pathDiff, PathChangesTable, stableJson, TextDiff } from '../../components/objects/JsonDiff'
-import { fetchAllRows, isDataset, KIND_META, kindOf, rowsDigest, useObjectVersions } from '../../components/objects/objectUtils'
+import { fetchAllRows, isDataset, rowsDigest, useObjectVersions } from '../../components/objects/objectUtils'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtRelative } from '../../lib/format'
+import { relativeTime } from '../../lib/summaries'
+import { diffSentence, versionWords } from '../../lib/summaries/assets'
 import { objectUrl, objectVersionsUrl } from '../../lib/urls'
+import './assets.css'
 
 type View = 'changes' | 'split' | 'unified'
+const VIEWS: { id: View; label: string; title: string }[] = [
+  { id: 'changes', label: 'Changed fields', title: 'Only the fields that differ' },
+  { id: 'split', label: 'Side by side', title: 'The whole value, both versions' },
+  { id: 'unified', label: 'One column', title: 'The whole value, with lines removed and added' },
+]
+
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
 export function ObjectDiffPage() {
   const projectId = useProjectId()
   const { objectId = '' } = useParams()
   const [params, setParams] = useSearchParams()
-  const a = params.get('a') ?? ''
   const b = params.get('b') ?? 'latest'
-  const [view, setView] = useState<View>('split')
   const versions = useObjectVersions(projectId, objectId)
+  // Without ?a=, compare with the version before ?b= (or the one before the latest).
+  const vs = versions.data ?? []
+  const bVersion = vs.find((v) => v.digest === b) ?? (b === 'latest' ? vs[0] : undefined)
+  const a = params.get('a') || (bVersion ? (vs.find((v) => v.version === bVersion.version - 1)?.digest ?? '') : '')
+  const rawView = params.get('view')
+  const view: View = VIEWS.some((v) => v.id === rawView) ? (rawView as View) : 'changes'
   const read = (d: string) => ({
     queryKey: ['object', projectId, objectId, d],
     queryFn: () => api.objectGet(projectId, objectId, d),
@@ -30,178 +51,172 @@ export function ObjectDiffPage() {
   })
   const qa = useQuery(read(a))
   const qb = useQuery(read(b))
-  const setSide = (k: 'a' | 'b', d: string) => {
+  const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(params)
-    p.set(k, d)
+    if (v) p.set(k, v)
+    else p.delete(k)
     setParams(p, { replace: true })
   }
 
   const changes = useMemo(() => (qa.data && qb.data ? pathDiff(qa.data.value, qb.data.value) : []), [qa.data, qb.data])
   const left = useMemo(() => (qa.data ? stableJson(qa.data.value) : ''), [qa.data])
   const right = useMemo(() => (qb.data ? stableJson(qb.data.value) : ''), [qb.data])
-  const kind = qb.data ? kindOf(qb.data) : 'all'
+  const datasets = !!qa.data && !!qb.data && isDataset(qa.data) && isDataset(qb.data)
+  const rows = useRowDiff(projectId, datasets ? qa.data! : null, datasets ? qb.data! : null)
 
-  const picker = (side: 'a' | 'b', cur: WeftObject | undefined) => (
-    <select className="input" value={cur?.digest ?? (side === 'a' ? a : b)} onChange={(e) => setSide(side, e.target.value)} style={{ maxWidth: 240 }}>
-      {!cur && <option value={side === 'a' ? a : b}>{side === 'a' ? a || 'choose…' : b}</option>}
-      {(versions.data ?? []).map((v) => (
-        <option key={v.digest} value={v.digest}>
-          v{v.version} · {v.digest.slice(0, 8)} · {fmtRelative(v.created_at)}
-        </option>
-      ))}
-    </select>
+  const picker = (side: 'a' | 'b', cur: WeftObject | undefined, label: string) => (
+    <label>
+      {label}
+      <select className="input" value={cur?.digest ?? (side === 'a' ? a : b)} onChange={(e) => set(side, e.target.value)}>
+        {!cur && <option value={side === 'a' ? a : b}>{side === 'a' ? (a ? 'this version' : 'choose…') : b}</option>}
+        {(versions.data ?? []).map((v) => (
+          <option key={v.digest} value={v.digest}>
+            {cap(versionWords(v))} · {relativeTime(v.created_at)}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 
+  const ready = qa.data && qb.data
+  const same = !!ready && qa.data!.digest === qb.data!.digest
+  const sentence = ready
+    ? diffSentence({
+        a: qa.data!,
+        b: qb.data!,
+        same,
+        changed: changes.filter((c) => c.kind === 'changed').length,
+        added: changes.filter((c) => c.kind === 'added').length,
+        removed: changes.filter((c) => c.kind === 'removed').length,
+        rows: rows.data && !rows.data.sameTable ? { a: rows.data.countA, b: rows.data.countB, added: rows.data.added.length, removed: rows.data.removed.length } : null,
+      })
+    : null
+
   return (
-    <div className="page">
-      <div className="breadcrumbs">
-        <Link to={`/${projectId}/${kind === 'all' ? 'objects' : kind}`}>{KIND_META[kind].title}</Link>
-        <span>/</span>
-        <Link to={objectVersionsUrl(projectId, objectId)}>{objectId}</Link>
-        <span>/</span>
-        <span>compare</span>
-      </div>
-      <div className="page-header">
-        <h1>
-          Compare <span className="mono">{objectId}</span>
-        </h1>
-        <span className="spacer" />
-        <div className="row wrap">
-          <span className="badge error">A</span>
-          {picker('a', qa.data)}
-          <button
-            className="btn sm ghost"
-            title="Swap"
-            onClick={() => {
-              const p = new URLSearchParams(params)
-              p.set('a', qb.data?.digest ?? b)
-              p.set('b', qa.data?.digest ?? a)
-              setParams(p, { replace: true })
-            }}
-          >
-            ⇄
-          </button>
-          <span className="badge success">B</span>
-          {picker('b', qb.data)}
-        </div>
+    <div className="page-frame detail">
+      <PageHeader
+        variant="detail"
+        back={{ to: objectVersionsUrl(projectId, objectId), label: `Versions of ${objectId}` }}
+        title={`Compare versions of ${objectId}`}
+        help="evaluations.md#datasets-models-prompts-and-scorers"
+        helpTopic="Assets"
+        sentence={sentence ? <Sentence parts={[sentence]} size="detail" /> : undefined}
+        meta={
+          ready ? (
+            <>
+              <Link to={objectUrl(projectId, objectId, qa.data!.digest)}>Open {versionWords(qa.data!)}</Link>
+              {' · '}
+              <Link to={objectUrl(projectId, objectId, qb.data!.digest)}>Open {versionWords(qb.data!)}</Link>
+            </>
+          ) : undefined
+        }
+      />
+      <div className="diff-pickers">
+        {picker('a', qa.data, 'From')}
+        <button
+          type="button"
+          className="qbtn sm"
+          aria-label="Swap the two versions"
+          title="Swap"
+          onClick={() => {
+            const p = new URLSearchParams(params)
+            p.set('a', qb.data?.digest ?? b)
+            p.set('b', qa.data?.digest ?? a)
+            setParams(p, { replace: true })
+          }}
+        >
+          ⇄
+        </button>
+        {picker('b', qb.data, 'to')}
       </div>
       <ErrorBox error={qa.error ?? qb.error ?? versions.error} />
       {!a ? (
-        <div className="card">
-          <Empty>Choose version A to compare.</Empty>
+        <div className="quiet-empty">
+          <p>Choose the version to compare from.</p>
         </div>
       ) : qa.isLoading || qb.isLoading ? (
         <Loading />
-      ) : qa.data && qb.data ? (
+      ) : ready && !same ? (
         <>
-          <div className="row wrap small muted" style={{ gap: 16 }}>
-            <span>
-              <Link to={objectUrl(projectId, objectId, qa.data.digest)}>v{qa.data.version}</Link> → <Link to={objectUrl(projectId, objectId, qb.data.digest)}>v{qb.data.version}</Link>
-            </span>
-            <span style={{ color: 'var(--success)' }}>+{changes.filter((c) => c.kind === 'added').length} added</span>
-            <span style={{ color: 'var(--error)' }}>−{changes.filter((c) => c.kind === 'removed').length} removed</span>
-            <span style={{ color: 'var(--warn)' }}>~{changes.filter((c) => c.kind === 'changed').length} changed</span>
-            <span className="grow" />
-            <div className="seg">
-              <button className={view === 'split' ? 'on' : ''} onClick={() => setView('split')}>
-                Side by side
-              </button>
-              <button className={view === 'unified' ? 'on' : ''} onClick={() => setView('unified')}>
-                Unified
-              </button>
-              <button className={view === 'changes' ? 'on' : ''} onClick={() => setView('changes')}>
-                Changed paths
-              </button>
-            </div>
+          <Segmented label="How to show the changes" role="tabs" panelId="diff-view" value={view} onChange={(v) => set('view', v === 'changes' ? null : v)} options={VIEWS} />
+          <div role="tabpanel" id="diff-view" aria-labelledby={segmentedTabId('diff-view', view)} style={{ minWidth: 0 }}>
+            {view === 'changes' ? <PathChangesTable changes={changes} /> : <TextDiff left={left} right={right} mode={view} />}
           </div>
-          {qa.data.digest === qb.data.digest ? (
-            <div className="card">
-              <Empty>Both sides are the same version.</Empty>
-            </div>
-          ) : view === 'changes' ? (
-            <PathChangesTable changes={changes} />
-          ) : (
-            <TextDiff left={left} right={right} mode={view} />
-          )}
-          {isDataset(qa.data) && isDataset(qb.data) && <DatasetRowDiff projectId={projectId} a={qa.data} b={qb.data} />}
+          {datasets && <RowChanges projectId={projectId} q={rows} />}
         </>
       ) : null}
     </div>
   )
 }
 
-function DatasetRowDiff({ projectId, a, b }: { projectId: string; a: WeftObject; b: WeftObject }) {
-  const da = rowsDigest(a.value)
-  const db = rowsDigest(b.value)
-  const [show, setShow] = useState<'added' | 'removed'>('added')
-  const q = useQuery({
+function useRowDiff(projectId: string, a: WeftObject | null, b: WeftObject | null) {
+  const da = a ? rowsDigest(a.value) : null
+  const db = b ? rowsDigest(b.value) : null
+  return useQuery({
     queryKey: ['dataset-row-diff', projectId, da, db],
     enabled: !!da && !!db,
     queryFn: async () => {
+      if (da === db) return { sameTable: true, countA: 0, countB: 0, added: [] as TableRow[], removed: [] as TableRow[] }
       const [ra, rb] = await Promise.all([fetchAllRows(projectId, da!, 20_000), fetchAllRows(projectId, db!, 20_000)])
       const sa = new Set(ra.map((r) => r.digest))
       const sb = new Set(rb.map((r) => r.digest))
-      return {
-        countA: ra.length,
-        countB: rb.length,
-        added: rb.filter((r) => !sa.has(r.digest)),
-        removed: ra.filter((r) => !sb.has(r.digest)),
-        same: rb.filter((r) => sa.has(r.digest)).length,
-      }
+      return { sameTable: false, countA: ra.length, countB: rb.length, added: rb.filter((r) => !sa.has(r.digest)), removed: ra.filter((r) => !sb.has(r.digest)) }
     },
   })
+}
+
+function RowChanges({ projectId, q }: { projectId: string; q: ReturnType<typeof useRowDiff> }) {
+  const [show, setShow] = useState<'added' | 'removed'>('added')
+  if (q.isLoading) return <Loading label="Comparing rows…" />
+  if (q.error) return <ErrorBox error={q.error} />
+  if (!q.data) return null
+  if (q.data.sameTable) return <p className="quiet-note">Both versions have the same rows.</p>
   return (
-    <Section title="Row changes">
-      <ErrorBox error={q.error} />
-      {da === db ? (
-        <div className="faint">Both versions point at the same rows table.</div>
-      ) : q.isLoading ? (
-        <Loading label="Comparing rows…" />
-      ) : q.data ? (
-        <div className="col" style={{ gap: 12 }}>
-          <div className="stat-grid">
-            <Stat label="Rows in A" value={q.data.countA.toLocaleString()} />
-            <Stat label="Rows in B" value={q.data.countB.toLocaleString()} />
-            <Stat label="Unchanged" value={q.data.same.toLocaleString()} />
-            <Stat label="Added" value={<span style={{ color: 'var(--success)' }}>+{q.data.added.length}</span>} />
-            <Stat label="Removed" value={<span style={{ color: 'var(--error)' }}>−{q.data.removed.length}</span>} />
-          </div>
-          <div className="seg" style={{ alignSelf: 'flex-start' }}>
-            <button className={show === 'added' ? 'on' : ''} onClick={() => setShow('added')}>
-              Added ({q.data.added.length})
-            </button>
-            <button className={show === 'removed' ? 'on' : ''} onClick={() => setShow('removed')}>
-              Removed ({q.data.removed.length})
-            </button>
-          </div>
-          <RowsTable projectId={projectId} rows={show === 'added' ? q.data.added : q.data.removed} tone={show} />
-          <div className="hint">Rows are matched by content digest, so an edited row appears as one removed and one added row.</div>
-        </div>
-      ) : null}
-    </Section>
+    <section className="asset-section">
+      <div className="asset-section-head">
+        <h2>Rows</h2>
+        <Segmented
+          label="Which rows"
+          role="radio"
+          size="sm"
+          value={show}
+          onChange={setShow}
+          options={[
+            { id: 'added', label: `Added ${q.data.added.length}` },
+            { id: 'removed', label: `Removed ${q.data.removed.length}` },
+          ]}
+        />
+      </div>
+      <RowsTable projectId={projectId} rows={show === 'added' ? q.data.added : q.data.removed} what={show} />
+      <p className="quiet-note">Rows are matched by their content, so an edited row shows as one removed and one added.</p>
+    </section>
   )
 }
 
-function RowsTable({ projectId, rows, tone }: { projectId: string; rows: TableRow[]; tone: 'added' | 'removed' }) {
+function RowsTable({ projectId, rows, what }: { projectId: string; rows: TableRow[]; what: 'added' | 'removed' }) {
   const shown = rows.slice(0, 200)
   const cols = columnsOf(shown.map((r) => r.value))
-  if (!rows.length) return <div className="faint small">None.</div>
+  if (!rows.length) return <p className="quiet-note">No rows were {what}.</p>
   const obj = (v: Any) => (v && typeof v === 'object' && !Array.isArray(v) ? v : { value: v })
   return (
-    <div className="table-wrap" style={{ maxHeight: 480 }}>
-      <table className="table">
+    <>
+      <PlainTable caption={`Rows ${what}`} className="rows-table">
         <thead>
           <tr>
-            <th className="num">#</th>
+            <th scope="col" className="num">
+              Row
+            </th>
             {cols.map((c) => (
-              <th key={c}>{c}</th>
+              <th key={c} scope="col">
+                {c}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {shown.map((r) => (
-            <tr key={r.digest} style={{ background: tone === 'added' ? 'var(--success-bg)' : 'var(--error-bg)' }}>
-              <td className="num faint small">{r.index}</td>
+            <tr key={r.digest}>
+              <td className="num">{r.index + 1}</td>
               {cols.map((c) => (
                 <td key={c}>
                   <CellValue v={obj(r.value)[c]} projectId={projectId} />
@@ -210,8 +225,8 @@ function RowsTable({ projectId, rows, tone }: { projectId: string; rows: TableRo
             </tr>
           ))}
         </tbody>
-      </table>
-      {rows.length > 200 && <div className="hint" style={{ padding: 8 }}>Showing first 200 of {rows.length}.</div>}
-    </div>
+      </PlainTable>
+      {rows.length > 200 && <p className="quiet-note">Showing the first 200 of {rows.length}.</p>}
+    </>
   )
 }

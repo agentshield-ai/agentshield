@@ -1,10 +1,11 @@
 // Sessions, the project home (DESIGN.md §7, §7.1 rule 1, §7.2): one
-// sentence answering "what happened, and what needs a look?", each clause a
-// link to the sessions it counts, then the grouped lists "Needs a look" and
-// "Finished". The time range, search and filters live in the URL (§7.1 rule
+// sentence answering "what happened, and what needs a look?" (at most two
+// short sentences: the serious ones as clauses linking to the sessions they
+// count, then how many more need a look, pointing at that group), then the
+// grouped lists "Needs a look", "Still running" and "Finished". The time range, search and filters live in the URL (§7.1 rule
 // 5); the filter chips sit behind the "Filter" button.
-import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type Detection, type SessionSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
@@ -18,7 +19,8 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { Segmented } from '../../components/ui/Segmented'
 import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { CapNote } from '../../components/ui/bits'
-import { SessionGroups, SessionListSkeleton, type ListContext } from '../../components/sessions/SessionList'
+import { GroupedList } from '../../components/ui/GroupedList'
+import { groupSessions, SessionListSkeleton, SessionRow, type ListContext } from '../../components/sessions/SessionList'
 
 const DEFAULT_TIME: TimeRange = '24h'
 const PAGE = 100
@@ -46,6 +48,7 @@ export function SessionsPage() {
   const sort = SORTS.find((s) => s.id === params.get('sort')) ?? SORTS[0]
   const [limit, setLimit] = useState(PAGE)
   const [filterOpen, setFilterOpen] = useState(false)
+  const location = useLocation()
 
   const serverNoTime = sessionsParams({ ...state, time: 'all', from: undefined, to: undefined }, 'all')
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.sessions(pid, { ...sessionsParams({ ...state, time: r }, r), limit: 1 })).total_count, [
@@ -115,8 +118,17 @@ export function SessionsPage() {
   }, [attention.data, dets.data, complete, rows])
 
   const sentence: SentencePart[] | null = attention.data && list.data
-    ? sessionsSentence({ attention: attention.data, time, filtered, rows, total }).map((p) => toSentencePart(p, pid, state))
+    ? sessionsSentence({ attention: attention.data, time, filtered, rows, total }).map((p) => toSentencePart(p, pid, state, location.search))
     : null
+
+  // "#needs-a-look" (the sentence's "N more" clause) scrolls to that group and focuses its heading.
+  const lookShown = location.hash === `#${LOOK_ID}` && rows.length > 0
+  useEffect(() => {
+    if (!lookShown) return
+    const el = document.getElementById(LOOK_ID)
+    el?.scrollIntoView({ block: 'start' })
+    el?.focus({ preventScroll: true })
+  }, [lookShown, location.key])
 
   const header = (
     <PageHeader
@@ -225,15 +237,44 @@ export function SessionsPage() {
   )
 }
 
-/** A summary part as a sentence part: a clause links to its one session, or to the list it counts. */
-function toSentencePart(p: SummaryPart, pid: string, base: FilterState): SentencePart {
+/** The id of the "Needs a look" group, which the sentence's "N more" clause points at. */
+const LOOK_ID = 'needs-a-look'
+
+/** A summary part as a sentence part: a clause links to its one session, to the list it counts, or to the "Needs a look" group. */
+function toSentencePart(p: SummaryPart, pid: string, base: FilterState, search: string): SentencePart {
   if (typeof p === 'string') return p
+  if (p.clause === 'more') return { text: p.text, to: `${sessionsUrl(pid)}${search}#${LOOK_ID}`, title: 'Show them under “Needs a look”, each with what happened' }
   if (p.session) return { text: p.text, to: sessionUrl(pid, p.session.id, { step: p.session.step, tab: p.session.tab }), title: 'Open this session' }
   return {
     text: p.text,
     to: sessionsUrl(pid, filterQueryString({ ...base, ...p.filter })),
     title: p.exact ? undefined : 'Lists these sessions together with the blocked ones',
   }
+}
+
+/** The lists: Needs a look (the sentence's "N more" clause points at its heading), Still running, Finished. */
+function SessionGroups({ projectId, sessions, ctx }: { projectId: string; sessions: SessionSummary[]; ctx: ListContext }) {
+  const g = groupSessions(sessions, ctx)
+  const group = (title: ReactNode, xs: SessionSummary[]) =>
+    xs.length > 0 && (
+      <GroupedList title={title} count={xs.length}>
+        {xs.map((s) => (
+          <SessionRow key={s.session_id} projectId={projectId} s={s} ctx={ctx} />
+        ))}
+      </GroupedList>
+    )
+  return (
+    <>
+      {group(
+        <span id={LOOK_ID} tabIndex={-1} className="look-anchor">
+          Needs a look
+        </span>,
+        g.look,
+      )}
+      {group('Still running', g.running)}
+      {group('Finished', g.done)}
+    </>
+  )
 }
 
 export function optionsFrom(sessions: SessionSummary[]) {

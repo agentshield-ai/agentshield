@@ -5,7 +5,6 @@ import { api, ApiError } from '../../api/client'
 import { parseRef } from '../../api/refs'
 import type { Any, ChatMessage, CompletionInputs, LLMModelInfo, WeftObject } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDuration, fmtNumber } from '../../lib/format'
 import { spanUrl, settingsUrl } from '../../lib/urls'
 import { ErrorBox, Modal, Spinner } from '../../components/common'
 import { JsonBlock } from '../../components/ValueView'
@@ -16,7 +15,12 @@ import { HistoryPanel } from '../../components/playground/HistoryPanel'
 import { ImageMode } from '../../components/playground/ImageMode'
 import { addRun, loadRuns, saveRuns, type PlaygroundRun } from '../../components/playground/history'
 import type { ImageInputs } from '../../api/playground'
-import { HelpLink } from '../../components/ui/PageHeader'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { shortDuration } from '../../lib/summaries'
+import { playgroundSentence, tokensText } from '../../lib/summaries/evaluate'
+import '../evaluations/evaluate.css'
 
 // ---------------------------------------------------------------- model
 
@@ -464,113 +468,177 @@ export function PlaygroundPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promptQ.data])
 
+  const [editIdx, setEditIdx] = useState(0)
+  const editPanel = panels[Math.min(editIdx, panels.length - 1)]
+  const sentence = playgroundSentence(
+    panels.map((p) => ({
+      model: p.model || 'a model',
+      running: p.result?.running,
+      error: p.result?.error,
+      latencyMs: p.result?.latencyMs,
+      tokens: p.result?.usage ? { total: p.result.usage.total_tokens } : null,
+    })),
+  )
+
   return (
-    <div className="page playground">
-      <div className="page-header">
-        <h1>Playground</h1>
-        <HelpLink doc="evaluations.md#playground" topic="Playground" />
-        <PromptPicker projectId={projectId} onPick={loadPrompt} />
-        <button className="btn sm" onClick={() => setSaveOpen(true)}>
-          Save as prompt
-        </button>
-        <button className="btn sm" onClick={() => setSaveModelOpen(true)} title="Save a panel's model, parameters and messages as a model you can evaluate">
-          Save as model
-        </button>
-        <div className="seg" role="group" aria-label="Playground mode">
-          <button className={mode === 'chat' ? 'on' : ''} aria-pressed={mode === 'chat'} onClick={() => setMode('chat')}>
-            Chat
-          </button>
-          <button className={mode === 'image' ? 'on' : ''} aria-pressed={mode === 'image'} onClick={() => setMode('image')}>
-            Image
-          </button>
-        </div>
-        <button className={`btn sm ${showHistory ? 'primary' : ''}`} aria-pressed={showHistory} onClick={() => toggleHistory(!showHistory)} title="Past runs in this browser and tracked spans">
-          History{history.length ? ` (${history.length})` : ''}
-        </button>
-        <span className="spacer" />
-        {mode === 'chat' && (
-        <>
-        <label className="checkbox small" title="Edit one message list shared by all panels">
-          <input type="checkbox" checked={sync} onChange={(e) => toggleSync(e.target.checked)} /> Sync messages
-        </label>
-        <button className="btn sm" onClick={addPanel} disabled={panels.length >= MAX_PANELS} title={panels.length >= MAX_PANELS ? `Up to ${MAX_PANELS} panels` : 'Compare another model'}>
-          + Add model
-        </button>
-        <button className="btn sm primary" onClick={runAll} title="Run all panels (Ctrl+Enter)">
-          Run{panels.length > 1 ? ' all' : ''} <kbd className="kbd-inline">⌘↵</kbd>
-        </button>
-        </>
-        )}
-      </div>
+    <div className="page-frame detail playground">
+      <PageHeader
+        title="Playground"
+        help="evaluations.md#playground"
+        controls={
+          <>
+            <Segmented
+              label="Playground mode"
+              options={[
+                { id: 'chat', label: 'Chat' },
+                { id: 'image', label: 'Image' },
+              ]}
+              value={mode}
+              onChange={setMode}
+            />
+            <PromptPicker projectId={projectId} onPick={loadPrompt} />
+            <Dropdown label="Save as" className="qbtn" align="right">
+              {(close) => (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      setSaveOpen(true)
+                      close()
+                    }}
+                  >
+                    A prompt (the messages)…
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setSaveModelOpen(true)
+                      close()
+                    }}
+                  >
+                    A model you can evaluate…
+                  </MenuItem>
+                </>
+              )}
+            </Dropdown>
+            <button type="button" className={`qbtn ${showHistory ? 'on' : ''}`} aria-pressed={showHistory} onClick={() => toggleHistory(!showHistory)} title="Past runs in this browser and tracked calls">
+              History{history.length ? <span className="qbtn-count">{history.length}</span> : null}
+            </button>
+            {mode === 'chat' && (
+              <button type="button" className="qbtn primary" onClick={runAll} title="Run every model (Ctrl/⌘+Enter)">
+                Run{panels.length > 1 ? ' all' : ''}
+              </button>
+            )}
+          </>
+        }
+        sentence={mode === 'chat' ? <Sentence parts={[sentence]} /> : <Sentence parts={['Make images from a prompt.']} />}
+      />
       {loadNote && (
-        <div className="info-box row">
-          <span className="grow">{loadNote}</span>
-          <button className="btn ghost sm" onClick={() => setLoadNote(null)} aria-label="Dismiss">
-            ✕
+        <p className="quiet-note" role="status">
+          {loadNote}
+          <button type="button" className="linkish" onClick={() => setLoadNote(null)}>
+            Dismiss
           </button>
-        </div>
+        </p>
       )}
       <ErrorBox error={modelsQ.error ?? callQ.error ?? promptQ.error} />
       <div className={showHistory ? 'pg-layout' : undefined}>
-      <div className="col" style={{ gap: 14, minWidth: 0 }}>
-      {mode === 'image' ? (
-        <ImageMode
-          projectId={projectId}
-          models={models}
-          initial={imageInitial}
-          onRun={(inputs, r) =>
-            record.current({
-              id: r.callId ?? `local-${Date.now()}`,
-              at: new Date().toISOString(),
-              mode: 'image',
-              model: inputs.model,
-              inputs: { ...inputs },
-              output: `${r.response?.data?.length ?? 0} image${r.response?.data?.length === 1 ? '' : 's'}`,
-              callId: r.callId,
-              latencyMs: r.latencyMs,
-              error: r.error,
-              images: r.response?.data?.length ?? 0,
-              source: 'local',
-            })
-          }
-        />
-      ) : (
-      <>
-      <VariablesCard names={templateVars(sync ? shared : panels.flatMap((p) => p.messages))} values={vars} onChange={setVars} />
-      <div className="pg-grid" style={{ gridTemplateColumns: `repeat(${panels.length}, minmax(300px, 1fr))` }}>
-        {panels.map((p, i) => (
-          <PanelView
-            key={p.id}
+        <div className="col" style={{ gap: 16, minWidth: 0 }}>
+          {mode === 'image' ? (
+            <ImageMode
+              projectId={projectId}
+              models={models}
+              initial={imageInitial}
+              onRun={(inputs, r) =>
+                record.current({
+                  id: r.callId ?? `local-${Date.now()}`,
+                  at: new Date().toISOString(),
+                  mode: 'image',
+                  model: inputs.model,
+                  inputs: { ...inputs },
+                  output: `${r.response?.data?.length ?? 0} image${r.response?.data?.length === 1 ? '' : 's'}`,
+                  callId: r.callId,
+                  latencyMs: r.latencyMs,
+                  error: r.error,
+                  images: r.response?.data?.length ?? 0,
+                  source: 'local',
+                })
+              }
+            />
+          ) : (
+            <div className="pg2">
+              <section className="pg2-prompt" aria-labelledby="pg-prompt-h">
+                <div className="ev-section-head">
+                  <h2 className="ev-h" id="pg-prompt-h">
+                    Prompt
+                  </h2>
+                  {panels.length > 1 && (
+                    <label className="checkbox small" title="Edit one message list shared by every model">
+                      <input type="checkbox" checked={sync} onChange={(e) => toggleSync(e.target.checked)} /> Same messages for every model
+                    </label>
+                  )}
+                </div>
+                {!sync && panels.length > 1 && (
+                  <Segmented
+                    label="Messages of"
+                    size="sm"
+                    options={panels.map((p, i) => ({ id: p.id, label: `${i + 1}: ${p.model || 'model'}` }))}
+                    value={editPanel.id}
+                    onChange={(id) => setEditIdx(panels.findIndex((p) => p.id === id))}
+                  />
+                )}
+                <div className="ev-panel">
+                  <MessagesEditor messages={panelMessages(editPanel)} onChange={(m) => setPanelMessages(editPanel, m)} />
+                </div>
+                <VariablesCard names={templateVars(sync ? shared : panels.flatMap((p) => p.messages))} values={vars} onChange={setVars} />
+              </section>
+              <section className="pg2-responses" aria-labelledby="pg-resp-h">
+                <div className="ev-section-head">
+                  <h2 className="ev-h" id="pg-resp-h">
+                    {panels.length > 1 ? 'Responses' : 'Response'}
+                  </h2>
+                  <button
+                    type="button"
+                    className="linkish"
+                    onClick={addPanel}
+                    disabled={panels.length >= MAX_PANELS}
+                    title={panels.length >= MAX_PANELS ? `Up to ${MAX_PANELS} models` : 'Try the same prompt on another model'}
+                  >
+                    Add a model to compare
+                  </button>
+                </div>
+                {panels.map((p, i) => (
+                  <PanelView
+                    key={p.id}
+                    projectId={projectId}
+                    panel={p}
+                    index={i}
+                    count={panels.length}
+                    models={models}
+                    modelsLoading={modelsQ.isLoading}
+                    messages={panelMessages(p)}
+                    onMessages={(m) => setPanelMessages(p, m)}
+                    onChange={(patch) => setPanel(p.id, patch)}
+                    onRemove={panels.length > 1 ? () => setPanels((ps) => ps.filter((x) => x.id !== p.id)) : undefined}
+                    onRun={() => void run(p, panelMessages(p))}
+                    onStop={() => aborts.current.get(p.id)?.abort()}
+                  />
+                ))}
+              </section>
+            </div>
+          )}
+        </div>
+        {showHistory && (
+          <HistoryPanel
             projectId={projectId}
-            panel={p}
-            index={i}
-            models={models}
-            modelsLoading={modelsQ.isLoading}
-            messages={panelMessages(p)}
-            onMessages={(m) => setPanelMessages(p, m)}
-            onChange={(patch) => setPanel(p.id, patch)}
-            onRemove={panels.length > 1 ? () => setPanels((ps) => ps.filter((x) => x.id !== p.id)) : undefined}
-            onRun={() => void run(p, panelMessages(p))}
-            onStop={() => aborts.current.get(p.id)?.abort()}
+            local={history}
+            onOpen={openRun}
+            canAddPanel={panels.length < MAX_PANELS}
+            onClear={() => {
+              setHistory([])
+              saveRuns(projectId, [])
+            }}
+            onClose={() => toggleHistory(false)}
           />
-        ))}
-      </div>
-      </>
-      )}
-      </div>
-      {showHistory && (
-        <HistoryPanel
-          projectId={projectId}
-          local={history}
-          onOpen={openRun}
-          canAddPanel={panels.length < MAX_PANELS}
-          onClear={() => {
-            setHistory([])
-            saveRuns(projectId, [])
-          }}
-          onClose={() => toggleHistory(false)}
-        />
-      )}
+        )}
       </div>
       {saveModelOpen && <SaveModelModal projectId={projectId} panels={panels.map((p) => ({ ...p, messages: panelMessages(p) }))} onClose={() => setSaveModelOpen(false)} />}
       {saveOpen && <SavePromptModal projectId={projectId} messages={sync ? shared : (panels[0]?.messages ?? [])} onClose={() => setSaveOpen(false)} />}
@@ -587,7 +655,7 @@ function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: We
   })
   const list = (prompts.data?.items ?? []).filter((o) => !o.deleted_at)
   return (
-    <Dropdown label="Load prompt ▾" className="btn sm">
+    <Dropdown label="Load prompt" className="qbtn">
       {(close) => (
         <>
           {prompts.isLoading && <div className="dd-note">Loading…</div>}
@@ -613,23 +681,16 @@ function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: We
 function VariablesCard({ names, values, onChange }: { names: string[]; values: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
   if (!names.length) return null
   return (
-    <div className="card">
-      <div className="card-header">
-        <h3 className="grow">Variables</h3>
-        <span className="small faint">Filled into {'{placeholders}'} when you run; saved prompts and models keep the placeholders.</span>
+    <div className="ev-panel">
+      <div className="ev-insp-block">
+        <h3 className="rv-block-h">Variables</h3>
+        <p className="ev-note">Filled into the {'{placeholders}'} when you run; saved prompts and models keep the placeholders.</p>
       </div>
-      <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+      <div className="pg2-vars">
         {names.map((n) => (
           <label key={n} className="field">
             <span className="mono">{n}</span>
-            <textarea
-              className="input"
-              style={{ minHeight: 34 }}
-              rows={1}
-              value={values[n] ?? ''}
-              onChange={(e) => onChange({ ...values, [n]: e.target.value })}
-              placeholder={`Value for {${n}}`}
-            />
+            <textarea className="input" style={{ minHeight: 34 }} rows={1} value={values[n] ?? ''} onChange={(e) => onChange({ ...values, [n]: e.target.value })} placeholder={`Value for {${n}}`} />
           </label>
         ))}
       </div>
@@ -834,7 +895,7 @@ function ParamsEditor({ params, onChange, maxTokens }: { params: Params; onChang
     }
   }
   return (
-    <div className="pg-params">
+    <div className="pg2-params">
       <NumParam label="Temperature" value={params.temperature} onChange={(v) => set('temperature', v)} min={0} max={2} step={0.05} />
       <NumParam label="Max tokens" value={params.max_tokens} onChange={(v) => set('max_tokens', Math.round(v))} min={1} max={maxTokens} step={1} />
       <NumParam label="Top P" value={params.top_p} onChange={(v) => set('top_p', v)} min={0} max={1} step={0.01} />
@@ -856,7 +917,7 @@ function ParamsEditor({ params, onChange, maxTokens }: { params: Params; onChang
           placeholder='[{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}]'
           style={{ minHeight: 60 }}
         />
-        {toolsError && <span style={{ color: 'var(--error)' }}>{toolsError}</span>}
+        {toolsError && <span className="pg2-note error">{toolsError}</span>}
       </label>
     </div>
   )
@@ -872,7 +933,7 @@ function MessagesEditor({ messages, onChange }: { messages: EditMsg[]; onChange:
     onChange(next)
   }
   return (
-    <div className="col pg-messages">
+    <div className="pg2-msgs">
       {messages.map((m, i) => {
         const lines = m.content.split('\n').length
         let jsonErr = false
@@ -882,25 +943,26 @@ function MessagesEditor({ messages, onChange }: { messages: EditMsg[]; onChange:
           } catch {
             jsonErr = true
           }
+        const calls = (m.extra?.tool_calls as Any[] | undefined)?.length ?? 0
         return (
-          <div key={m.id} className={`pg-msg role-${m.role}`}>
-            <div className="row">
-              <select className="input pg-role" value={m.role} onChange={(e) => update(i, { role: e.target.value })} aria-label="Role">
+          <div key={m.id} className={`pg2-msg role-${m.role}`}>
+            <div className="pg2-msg-head">
+              <select className="input" value={m.role} onChange={(e) => update(i, { role: e.target.value })} aria-label={`Role of message ${i + 1}`}>
                 {[...new Set([...ROLES, m.role])].map((r) => (
                   <option key={r}>{r}</option>
                 ))}
               </select>
-              {m.json && <span className={`badge ${jsonErr ? 'error' : ''}`}>{jsonErr ? 'invalid JSON' : 'JSON parts'}</span>}
-              {m.extra?.tool_calls && <span className="badge accent" title={JSON.stringify(m.extra.tool_calls)}>{(m.extra.tool_calls as Any[]).length} tool call(s)</span>}
-              {m.extra?.tool_call_id && <span className="faint small mono">↩ {String(m.extra.tool_call_id)}</span>}
+              {m.json && <span className={jsonErr ? 'pg2-note error' : 'pg2-note'}>{jsonErr ? 'not valid JSON' : 'content parts, as JSON'}</span>}
+              {calls > 0 && <span className="pg2-note" title={JSON.stringify(m.extra?.tool_calls)}>{calls === 1 ? 'one tool call' : `${calls} tool calls`}</span>}
+              {m.extra?.tool_call_id != null && <span className="pg2-note mono">answers {String(m.extra.tool_call_id)}</span>}
               <span className="grow" />
-              <button className="btn ghost sm icon" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move up" title="Move up">
+              <button type="button" className="pg2-icon" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`Move message ${i + 1} up`} title="Move up">
                 ↑
               </button>
-              <button className="btn ghost sm icon" onClick={() => move(i, 1)} disabled={i === messages.length - 1} aria-label="Move down" title="Move down">
+              <button type="button" className="pg2-icon" onClick={() => move(i, 1)} disabled={i === messages.length - 1} aria-label={`Move message ${i + 1} down`} title="Move down">
                 ↓
               </button>
-              <button className="btn ghost sm icon" onClick={() => onChange(messages.filter((_, j) => j !== i))} aria-label="Remove message" title="Remove">
+              <button type="button" className="pg2-icon" onClick={() => onChange(messages.filter((_, j) => j !== i))} aria-label={`Remove message ${i + 1}`} title="Remove">
                 ✕
               </button>
             </div>
@@ -915,9 +977,9 @@ function MessagesEditor({ messages, onChange }: { messages: EditMsg[]; onChange:
           </div>
         )
       })}
-      <div className="row">
-        <button className="btn sm" onClick={() => onChange([...messages, { id: uid(), role: messages[messages.length - 1]?.role === 'user' ? 'assistant' : 'user', content: '' }])}>
-          + Message
+      <div>
+        <button type="button" className="qbtn" onClick={() => onChange([...messages, { id: uid(), role: messages[messages.length - 1]?.role === 'user' ? 'assistant' : 'user', content: '' }])}>
+          Add a message
         </button>
       </div>
     </div>
@@ -928,6 +990,7 @@ function PanelView({
   projectId,
   panel,
   index,
+  count,
   models,
   modelsLoading,
   messages,
@@ -940,6 +1003,7 @@ function PanelView({
   projectId: string
   panel: Panel
   index: number
+  count: number
   models: LLMModelInfo[]
   modelsLoading: boolean
   messages: EditMsg[]
@@ -955,85 +1019,76 @@ function PanelView({
   const r = panel.result
   const hasContent = !!r?.message && ((typeof r.message.content === 'string' && r.message.content.length > 0) || !!r.message.tool_calls?.length || Array.isArray(r.message.content))
   return (
-    <div className="card pg-panel">
-      <div className="card-header">
-        <span className="faint small">{index + 1}</span>
+    <div className="ev-panel pg2-panel" aria-label={count > 1 ? `Model ${index + 1}` : 'Model'} role="group">
+      <div className="pg2-model">
+        {count > 1 && <span className="pg2-note">{index + 1}</span>}
         <ModelSelect models={models} value={panel.model} onChange={(model) => onChange({ model })} loading={modelsLoading} />
-        <button className={`btn sm ${panel.showParams ? 'primary' : ''}`} onClick={() => onChange({ showParams: !panel.showParams })} aria-expanded={panel.showParams} title="Parameters">
-          ⚙
+        <button type="button" className={`qbtn ${panel.showParams ? 'on' : ''}`} onClick={() => onChange({ showParams: !panel.showParams })} aria-expanded={panel.showParams}>
+          Settings
         </button>
         {onRemove && (
-          <button className="btn ghost sm icon" onClick={onRemove} aria-label="Remove panel" title="Remove panel">
+          <button type="button" className="pg2-icon" onClick={onRemove} aria-label={`Remove model ${index + 1}`} title="Remove this model">
             ✕
           </button>
         )}
       </div>
-      <div className="card-body col" style={{ gap: 12 }}>
-        {unavailable && (
-          <div className="warn-box small">
-            No API key configured for {info.provider}. <Link to={settingsUrl(projectId, 'secrets')}>Add one in Settings</Link>, or use <code>mock/echo</code>.
-          </div>
-        )}
-        {!info && panel.model && !modelsLoading && (
-          <div className="warn-box small">
-            <code>{panel.model}</code> is not in this server's model list. It runs only if the server can route it (for example a <code>&lt;provider&gt;/&lt;model&gt;</code> id for a
-            configured provider).
-          </div>
-        )}
-        {panel.showParams && <ParamsEditor params={panel.params} onChange={(params) => onChange({ params })} maxTokens={info?.max_tokens || 32768} />}
-        <MessagesEditor messages={messages} onChange={onMessages} />
-        <div className="row">
-          {r?.running ? (
-            <button className="btn sm" onClick={onStop}>
-              Stop
-            </button>
-          ) : (
-            <button className="btn sm primary" onClick={onRun} disabled={!panel.model || unavailable || messages.length === 0}>
-              Run
-            </button>
-          )}
-          {r?.running && <Spinner label="Generating…" />}
-          <span className="grow" />
-          {r && !r.running && r.latencyMs != null && <span className="small mono muted">{fmtDuration(r.latencyMs)}</span>}
-          {r?.usage?.total_tokens != null && (
-            <span className="small mono muted" title={`${r.usage.prompt_tokens ?? 0} prompt · ${r.usage.completion_tokens ?? 0} completion`}>
-              {fmtNumber(r.usage.total_tokens)} tok
-            </span>
-          )}
+      {unavailable && (
+        <p className="pg2-note warn">
+          No API key is set for {info.provider}. <Link to={settingsUrl(projectId, 'secrets')}>Add one in Settings</Link>, or use mock/echo.
+        </p>
+      )}
+      {!info && panel.model && !modelsLoading && (
+        <p className="pg2-note warn">
+          {panel.model} is not in this server’s model list. It runs only if the server can route it (for example a provider/model id for a configured provider).
+        </p>
+      )}
+      {panel.showParams && <ParamsEditor params={panel.params} onChange={(params) => onChange({ params })} maxTokens={info?.max_tokens || 32768} />}
+      <div className="pg2-actions">
+        {r?.running ? (
+          <button type="button" className="qbtn" onClick={onStop}>
+            Stop
+          </button>
+        ) : count > 1 ? (
+          <button type="button" className="qbtn" onClick={onRun} disabled={!panel.model || unavailable || messages.length === 0}>
+            Run this one
+          </button>
+        ) : null}
+        {r?.running && <Spinner label="Generating…" />}
+        <span className="grow" />
+        <span className="pg2-figures">
+          {r && !r.running && r.latencyMs != null && <span>{shortDuration(r.latencyMs)}</span>}
+          {r?.usage?.total_tokens != null && <span title="Prompt and completion tokens the provider reported">{tokensText(r.usage)}</span>}
+          {r?.finishReason && <span title="Why the model stopped">stopped: {r.finishReason}</span>}
           {r?.callId && (
-            <Link className="small" to={spanUrl(projectId, r.callId)}>
-              View call
+            <Link to={spanUrl(projectId, r.callId)} title="The recorded call, with its inputs, output and attributes">
+              Recorded call
             </Link>
           )}
-        </div>
-        {r && (
-          <div className="pg-response">
-            {r.error && <div className={r.error === 'Stopped' ? 'warn-box small' : 'error-box'}>{r.error}</div>}
-            {hasContent && (
-              <>
-                <div className="row">
-                  <span className="small muted grow">Response{r.finishReason ? ` · finish: ${r.finishReason}` : ''}</span>
-                  {!r.running && (
-                    <>
-                      <button className="btn ghost sm" onClick={() => setRaw((x) => !x)}>
-                        {raw ? 'Formatted' : 'Raw'}
-                      </button>
-                      <button
-                        className="btn ghost sm"
-                        title="Append this response as an assistant message"
-                        onClick={() => onMessages([...messages, toEditMsg({ ...r.message, role: 'assistant' }), { id: uid(), role: 'user', content: '' }])}
-                      >
-                        + Add to conversation
-                      </button>
-                    </>
-                  )}
-                </div>
-                {raw ? <JsonBlock value={r.raw ?? r.message} /> : <ChatMessageView message={normaliseMessage(r.message)} projectId={projectId} />}
-              </>
-            )}
-          </div>
-        )}
+        </span>
       </div>
+      {r?.error && <p className={r.error === 'Stopped' ? 'pg2-note warn' : 'pg2-note error'}>{r.error === 'Stopped' ? 'Stopped.' : r.error}</p>}
+      {hasContent ? (
+        <div className="pg2-response-text">
+          {raw ? <JsonBlock value={r!.raw ?? r!.message} /> : <ChatMessageView message={normaliseMessage(r!.message!)} projectId={projectId} />}
+        </div>
+      ) : (
+        !r && <p className="pg2-empty">The answer appears here. Run with Ctrl/⌘+Enter.</p>
+      )}
+      {hasContent && !r!.running && (
+        <div className="pg2-actions">
+          <button type="button" className="linkish" onClick={() => setRaw((x) => !x)}>
+            {raw ? 'Show formatted' : 'Show raw'}
+          </button>
+          <button
+            type="button"
+            className="linkish"
+            title="Append this answer as an assistant message, then a new user message"
+            onClick={() => onMessages([...messages, toEditMsg({ ...r!.message, role: 'assistant' }), { id: uid(), role: 'user', content: '' }])}
+          >
+            Add to the conversation
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,28 +1,65 @@
-// Security (DESIGN.md §7): AgentShield's verdicts on the agents' tool calls:
-// detections over time by action and severity, top rules, per-agent rates,
-// approval fatigue and override escalation, replay jobs with their diffs,
-// and a guided setup when the engine is not connected yet.
+// Security (DESIGN.md §7, §7.2): answers "what did AgentShield stop or
+// question, and why?". One generated sentence (what it blocked, asked
+// approval for and logged, and how much was overridden), then the
+// detections grouped by rule, each rule in plain words with its severity
+// and its detections as rows that open the step in the session's story.
+// Approval fatigue and override escalation follow as quiet sentences when
+// present; the chart over time is small; "Rules changed? Replay" lists the
+// replay jobs with what each would change. A guided setup shows while the
+// engine is not connected.
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { v1, type Detection, type DetectionAction, type DetectionStats } from '../../api/v1'
+import { v1, type Detection, type DetectionStats } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { SCOPE_LIMIT, sessionScopeParams, useSessionScope, type SessionScope } from '../../hooks/useSessionScope'
-import { timeWindow, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
-import { flaggedOf, fmtDate, fmtNumber, fmtRelative } from '../../lib/format'
-import { agentUrl, sessionUrl } from '../../lib/urls'
+import { filterQueryString, isEmptyFilter, removeKey, timeWindow, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
+import { fmtDate, flaggedOf } from '../../lib/format'
+import { relativeTime } from '../../lib/summaries'
+import {
+  crossAgentSentences,
+  detectionGlyph,
+  detectionLine,
+  detectionMeta,
+  fatigueSentence,
+  groupCounts,
+  linkedSentence,
+  overrideSentence,
+  rangePhrase,
+  replayGlyph,
+  replayLine,
+  replayMeta,
+  ruleGroups,
+  securitySentence,
+  type RuleGroup,
+  type SecPart,
+} from '../../lib/summaries/security'
+import { agentUrl, securityUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
-import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
+import { FilterBar, FilterButton, FilterSearchField, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { Snippets } from '../../components/ui/EmptyState'
-import { ActionBadge, AgentChip, Bar, Callout, CapNote, CopyId, Panel, SeverityText, TableScroll, Tip } from '../../components/ui/bits'
-import { Metric } from '../_legacy/Metric'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { CapNote, Tip } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
-import { HelpLink, helpUrl } from '../../components/ui/PageHeader'
+import { PageHeader, helpUrl } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence, type SentencePart } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
 import { notify } from '../../components/ui/Toasts'
 import { bucketize, StackedBars } from '../../components/ui/StackedBars'
 import { ReplayResult } from '../sessions/SessionPage'
+import '../observe.css'
 
 const DEFAULT_TIME: TimeRange = '24h'
+/** Rows a rule group shows before "Show more". */
+const GROUP_ROWS = 5
+
+const RANGES: { id: TimeRange; label: string }[] = [
+  { id: '24h', label: '24 hours' },
+  { id: '7d', label: '7 days' },
+  { id: '30d', label: '30 days' },
+]
 
 /**
  * /api/v1/detections parameters. `sessionFilter` holds the /api/v1/sessions
@@ -108,6 +145,7 @@ export function SecurityPage() {
   const pid = useProjectId()
   const [state, setState] = useFilters()
   const [params, setParams] = useSearchParams()
+  const [filterOpen, setFilterOpen] = useState(false)
   const status = useQuery({ queryKey: ['v1', pid, 'shield-status'], queryFn: () => v1.shieldStatus(pid), staleTime: 60_000 })
   const ever = useQuery({ queryKey: ['v1', pid, 'detections', 'ever'], queryFn: () => v1.detectionStats(pid, { source: 'engine' }) })
   const noTime = detectionParams({ ...state, time: 'all' }, 'all')
@@ -117,7 +155,7 @@ export function SecurityPage() {
   // The server resolves those sessions for detections and their figures.
   const dp = detectionParams(state, time, sessionScopeParams('security', state, time))
   const ready = widen.ready
-  // The matching sessions themselves (at most SCOPE_LIMIT) narrow the approval-fatigue panels and pick what a replay covers.
+  // The matching sessions themselves (at most SCOPE_LIMIT) narrow the approval-fatigue sentences and pick what a replay covers.
   const scope = useSessionScope(pid, 'security', state, time, widen.ready)
   const serverStats = useQuery({ queryKey: ['v1', pid, 'detections', 'stats', dp], queryFn: () => v1.detectionStats(pid, dp), enabled: ready, placeholderData: keepPreviousData })
   const list = useQuery({
@@ -133,376 +171,334 @@ export function SecurityPage() {
     enabled: widen.ready,
     placeholderData: keepPreviousData,
   })
-  const [by, setBy] = useState<'action' | 'severity'>('action')
-  const dets = (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q))
+  const dets = useMemo(() => (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q)), [list.data, state.q])
   // The text filter runs here, so the figures are counted from the matching detections.
-  const stats = {
-    data: state.q && list.data ? statsFromDetections(dets, serverStats.data) : serverStats.data,
-    error: serverStats.error,
-  }
-  const buckets = useMemo(() => {
-    const now = Date.now()
-    const from = w.from ? new Date(w.from).getTime() : Math.min(now - 86400e3, ...dets.map((d) => new Date(d.created_at).getTime()))
-    const to = w.to ? new Date(w.to).getTime() : now
-    return bucketize(
-      dets,
-      (d) => new Date(d.created_at).getTime(),
-      (d) => (by === 'action' ? d.action : (d.severity || 'none').toLowerCase()),
-      from,
-      to,
-    )
-  }, [dets, by, w.from, w.to])
+  const st = state.q && list.data ? statsFromDetections(dets, serverStats.data) : serverStats.data
+  const ruleFilter = params.get('rule')
+  const groups = useMemo(() => {
+    const gs = ruleGroups(dets)
+    return ruleFilter ? gs.filter((g) => g.id === ruleFilter || g.detections.some((d) => d.rules.some((r) => r.id === ruleFilter))) : gs
+  }, [dets, ruleFilter])
 
   const connected = (ever.data?.total ?? 0) > 0
-  const st = stats.data
-  const ruleFilter = params.get('rule')
+  const filtered = !isEmptyFilter({ ...state, time: undefined, from: undefined, to: undefined }, DEFAULT_TIME)
+  const keep = (s: { session_id: string; agents: string[] }) => (!scope.active || scope.ids.has(s.session_id)) && (!state.agent || s.agents.includes(state.agent))
+
+  const toPart = (p: SecPart): SentencePart => {
+    if (typeof p === 'string') return p
+    if (p.session) return { text: p.text, to: sessionUrl(pid, p.session.id, { step: p.session.step }), title: 'Open this session at the step' }
+    return { text: p.text, to: securityUrl(pid, filterQueryString({ ...state, ...p.filter })), title: 'Show only these detections' }
+  }
+
+  const header = (
+    <PageHeader
+      title="Security"
+      help="security.md"
+      controls={
+        connected ? (
+          <>
+            <Segmented
+              label="Time range"
+              options={RANGES}
+              value={(RANGES.some((r) => r.id === time) ? time : null) as TimeRange | null}
+              onChange={(t) => setState({ ...removeKey(state, 'time'), time: t === DEFAULT_TIME && !widen.widened ? undefined : t })}
+            />
+            <FilterSearchField label="Search detections" />
+            <FilterButton open={filterOpen} onToggle={() => setFilterOpen((o) => !o)} defaultTime={DEFAULT_TIME} />
+          </>
+        ) : undefined
+      }
+      sentence={
+        !connected ? (
+          ever.data ? (
+            <Sentence parts={['AgentShield has not sent any verdicts to this project yet.']} />
+          ) : undefined
+        ) : st && list.data ? (
+          <Sentence parts={securitySentence({ stats: st, time, filtered }).map(toPart)} />
+        ) : (
+          <p className="sentence s-outcome sk-sentence" aria-busy="true">
+            <span className="sr-only">Counting verdicts…</span>
+            <span className="sk sk-line" aria-hidden />
+          </p>
+        )
+      }
+    />
+  )
+
+  if (ever.isLoading)
+    return (
+      <div className="page-frame obs-page">
+        {header}
+        <Loading />
+      </div>
+    )
+  if (!connected)
+    return (
+      <div className="page-frame obs-page">
+        {header}
+        <ErrorBox error={ever.error} />
+        <SetupGuide pid={pid} replay={status.data?.replay_enabled ?? false} />
+      </div>
+    )
 
   return (
-    <div className="page wide">
-      <header className="page-head">
-        <div className="grow">
-          <h1>Security</h1>
-          <p className="page-sub">What AgentShield blocked, flagged or asked approval for, and why.</p>
-        </div>
-        <HelpLink doc="security.md" topic="Security" />
-      </header>
-      {ever.isLoading ? (
-        <Loading />
-      ) : !connected ? (
-        <SetupGuide pid={pid} replay={status.data?.replay_enabled ?? false} />
-      ) : (
-        <>
-          <FilterBar
-            page="security"
-            defaultTime={DEFAULT_TIME}
-            effectiveTime={time}
-            options={{ agents: st?.by_agent.map((a) => a.agent) }}
-            placeholder="Filter by rule, tool, agent or session…"
-          />
-          {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
-          <ErrorBox error={stats.error ?? list.error ?? scope.error} />
-          {list.data && (
-            <CapNote
-              shown={list.data.items.length}
-              total={list.data.total_count}
-              what="detections"
-              why={state.q ? 'the newest ones; the text filter, the chart, the figures and the list use only these' : 'the newest ones in the chart and the list; the figures count them all'}
-            />
-          )}
-          <div className="metrics">
-            <Metric
-              label="Verdicts"
-              value={fmtNumber(st?.total)}
-              tip={`AgentShield verdicts other than allow in the ${TIME_LABEL[time].toLowerCase()}. Replays are not counted.`}
-            />
-            <Metric
-              label="Blocked"
-              value={fmtNumber(st?.by_action.block ?? 0)}
-              tone={(st?.by_action.block ?? 0) > 0 ? 'error' : undefined}
-              tip="Tool calls AgentShield stopped (enforce mode)."
-            />
-            <Metric
-              label="Needs approval"
-              value={fmtNumber(st?.by_action.require_approval ?? 0)}
-              tone={(st?.by_action.require_approval ?? 0) > 0 ? 'warn' : undefined}
-              tip="Tool calls a person had to approve."
-            />
-            <Metric label="Logged" value={fmtNumber(st?.by_action.log ?? 0)} tip="Alerts recorded while the call ran (audit mode, or low severity)." />
-            <Metric
-              label="Overridden"
-              value={fmtNumber(st?.overridden ?? 0)}
-              tip="Verdicts a user overrode (approved, or ran anyway). Repeated overrides are a sign of escalation."
-            />
-            <Metric
-              label="Linked to a step"
-              value={st && st.total ? `${Math.round((st.linked / st.total) * 100)}%` : '—'}
-              tip="Verdicts attached to the exact tool call, by tool-call id or by tool name within ±5 s. Unlinked ones stay on the session."
-            />
-          </div>
-          <div className="grid-2">
-            <Panel
-              title="Over time"
-              tip="Verdicts per hour (ranges up to two days) or per day."
-              actions={
-                <div className="seg" role="group" aria-label="Colour by">
-                  <button type="button" className={by === 'action' ? 'on' : ''} aria-pressed={by === 'action'} onClick={() => setBy('action')}>
-                    By action
-                  </button>
-                  <button type="button" className={by === 'severity' ? 'on' : ''} aria-pressed={by === 'severity'} onClick={() => setBy('severity')}>
-                    By severity
-                  </button>
-                </div>
-              }
-            >
-              <StackedBars buckets={buckets} series={by === 'action' ? ACTION_SERIES : SEVERITY_SERIES} caption={`Detections over time by ${by}`} />
-            </Panel>
-            <Panel title="Rules that fire most" tip="Each rule with how many verdicts it produced. A verdict can match several rules.">
-              {!st?.by_rule.length ? (
-                <p className="muted small">No rules matched.</p>
-              ) : (
-                <TableScroll label="Top rules">
-                  <table className="table compact-table">
-                    <caption className="sr-only">Top rules</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Rule</th>
-                        <th scope="col">Level</th>
-                        <th scope="col">Verdicts</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {st.by_rule.slice(0, 8).map((r) => (
-                        <tr key={r.rule_id} className={ruleFilter === r.rule_id ? 'selected' : ''}>
-                          <td>
-                            <button
-                              type="button"
-                              className="linkish left"
-                              onClick={() => {
-                                const n = new URLSearchParams(params)
-                                if (ruleFilter === r.rule_id) n.delete('rule')
-                                else n.set('rule', r.rule_id)
-                                setParams(n, { replace: true })
-                              }}
-                              aria-pressed={ruleFilter === r.rule_id}
-                              title="Show only this rule's detections below"
-                            >
-                              {r.title || r.rule_id}
-                            </button>
-                          </td>
-                          <td>
-                            <SeverityText level={r.level} />
-                          </td>
-                          <td>
-                            <span className="row" style={{ gap: 6 }}>
-                              <Bar value={r.count} max={st.by_rule[0].count} tone={r.by_action.block ? 'error' : 'warn'} label={`${r.count} verdicts`} /> {r.count}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </TableScroll>
-              )}
-            </Panel>
-          </div>
-          <div className="grid-2">
-            <Panel
-              title="By agent"
-              tip="Flagged: the agent's recorded tool calls with at least one verdict other than allow (a call with several verdicts counts once), out of all its recorded tool calls. Verdicts also counts those not linked to a recorded tool call."
-            >
-              {!st?.by_agent.length ? (
-                <p className="muted small">No agents flagged.</p>
-              ) : (
-                <TableScroll label="Detections by agent">
-                  <table className="table compact-table">
-                    <caption className="sr-only">Detections by agent</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Agent</th>
-                        <th scope="col">Verdicts</th>
-                        <th scope="col">Flagged tool calls</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {st.by_agent.map((a) => (
-                        <tr key={a.agent}>
-                          <td>
-                            <AgentChip name={a.agent} to={agentUrl(pid, a.agent)} size="sm" />
-                          </td>
-                          <td>{a.count}</td>
-                          <td>
-                            <span className="row wrap" style={{ gap: 6 }}>
-                              <span className="small">{flaggedOf(a.flagged_tool_calls, a.tool_calls)}</span>
-                              <Bar value={a.detection_rate ?? 0} max={1} tone="warn" label={`${Math.round((a.detection_rate ?? 0) * 100)}%`} />
-                              {a.detection_rate == null ? '—' : `${Math.round(a.detection_rate * 100)}%`}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </TableScroll>
-              )}
-            </Panel>
-            <FatiguePanels pid={pid} insights={insights.data} keep={(s) => (!scope.active || scope.ids.has(s.session_id)) && (!state.agent || s.agents.includes(state.agent))} />
-            {scope.truncated && (
-              <CapNote shown={SCOPE_LIMIT} total={scope.total} what="matching sessions" why="the approval-fatigue panels and replay use the most recent ones" />
-            )}
-          </div>
-          <RecentDetections
-            pid={pid}
-            dets={ruleFilter ? dets.filter((d) => d.rules.some((r) => r.id === ruleFilter)) : dets}
-            ruleFilter={ruleFilter}
-            onClearRule={() => {
+    <div className="page-frame obs-page security-page">
+      {header}
+      <FilterBar
+        page="security"
+        search="external"
+        timePicker="none"
+        collapsible
+        open={filterOpen}
+        defaultTime={DEFAULT_TIME}
+        effectiveTime={time}
+        options={{ agents: st?.by_agent.map((a) => a.agent) }}
+      />
+      {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
+      <ErrorBox error={serverStats.error ?? list.error ?? scope.error} />
+      {list.data && (
+        <CapNote
+          shown={list.data.items.length}
+          total={list.data.total_count}
+          what="detections"
+          why={state.q ? 'the newest ones; the text filter, the groups, the chart and the sentence use only these' : 'the newest ones in the groups and the chart; the sentence counts them all'}
+        />
+      )}
+      {ruleFilter && (
+        <p className="quiet-note">
+          Showing one rule.{' '}
+          <button
+            type="button"
+            className="linkish"
+            onClick={() => {
               const n = new URLSearchParams(params)
               n.delete('rule')
               setParams(n, { replace: true })
             }}
-          />
-          <ReplayPanel pid={pid} enabled={status.data?.replay_enabled ?? false} state={state} time={time} scope={scope} />
-        </>
+          >
+            Show every rule
+          </button>
+        </p>
       )}
+
+      {list.isLoading || !ready ? (
+        <Loading />
+      ) : groups.length === 0 ? (
+        <div className="quiet-empty">
+          <p>{filtered || ruleFilter ? 'Nothing matches these filters.' : `AgentShield flagged nothing ${rangePhrase(time) || 'yet'}.`}</p>
+          {(filtered || ruleFilter) && (
+            <button type="button" className="qbtn" onClick={() => setParams(new URLSearchParams(time === DEFAULT_TIME ? {} : { time }))}>
+              Clear filters
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="obs-groups">
+          {groups.map((g) => (
+            <RuleGroupList key={g.id || 'none'} pid={pid} group={g} />
+          ))}
+          {st && st.linked < st.total && <p className="quiet-note">{linkedSentence(st)}</p>}
+        </div>
+      )}
+
+      <Patterns pid={pid} insights={insights.data} keep={keep} toPart={toPart} />
+      {scope.truncated && <CapNote shown={SCOPE_LIMIT} total={scope.total} what="matching sessions" why="the approval sentences and replay use the most recent ones" />}
+
+      {dets.length > 0 && <OverTime dets={dets} from={w.from} to={w.to} />}
+      {st && st.by_agent.length > 0 && <ByAgent pid={pid} stats={st} />}
+
+      <ReplaySection pid={pid} enabled={status.data?.replay_enabled ?? false} state={state} time={time} scope={scope} />
     </div>
   )
 }
 
-/** A session labelled by its name or first request, its id in the tooltip and copyable. */
-function SessionLink({ pid, id, title, step }: { pid: string; id: string; title?: string; step?: string }) {
-  const t = title?.trim()
+/** One rule: its plain words and severity, then its detections, each opening the step. */
+function RuleGroupList({ pid, group: g }: { pid: string; group: RuleGroup }) {
+  const [n, setN] = useState(GROUP_ROWS)
+  const id = `rule-${(g.id || 'none').replace(/[^a-zA-Z0-9_-]/g, '-')}`
   return (
-    <span className="session-link">
-      <Link to={sessionUrl(pid, id, step ? { step } : undefined)} className={t ? 'small' : 'mono small'} title={`Session ${id}`}>
-        {t ? (t.length > 60 ? t.slice(0, 59) + '…' : t) : id}
-      </Link>
-      {t && <CopyId id={id} label="Session ID" short={8} />}
-    </span>
+    <section className="obs-group" aria-labelledby={id}>
+      <div className="obs-group-head">
+        <h2 className="glist-h" id={id}>
+          {g.heading}
+          <span className="glist-count"> {g.count.toLocaleString()}</span>
+        </h2>
+        <p className="obs-group-why">
+          {g.reason}
+          {g.ruleTitle && <span className="obs-rule-title"> Rule: {g.ruleTitle}.</span>} <span className="obs-rule-title">{groupCounts(g)}.</span>
+        </p>
+      </div>
+      <GroupedList
+        label={`Detections of ${g.heading}`}
+        footer={
+          g.detections.length > n ? (
+            <button type="button" className="qbtn obs-more" onClick={() => setN((x) => x + 25)}>
+              Show {Math.min(25, g.detections.length - n)} more of {g.detections.length - n}
+            </button>
+          ) : undefined
+        }
+      >
+        {g.detections.slice(0, n).map((d) => {
+          const meta = detectionMeta(d)
+          return (
+            <ListRow
+              key={d.id}
+              className="det-row"
+              glyph={<StatusGlyph kind={detectionGlyph(d)} label={d.action === 'log' ? 'Logged' : undefined} />}
+              title={d.session_title?.trim() || `Session ${d.session_id}`}
+              summary={detectionLine(d)}
+              meta={meta || undefined}
+              time={relativeTime(d.created_at)}
+              timeTitle={fmtDate(d.created_at)}
+              to={sessionUrl(pid, d.session_id, { step: d.span_id ? `tool:${d.span_id}` : 'problem' })}
+            />
+          )
+        })}
+      </GroupedList>
+    </section>
   )
 }
 
-function FatiguePanels({
-  pid,
+/** Approval fatigue, override escalation and correlated agents, each a sentence, only when present. */
+function Patterns({
   insights,
   keep,
+  toPart,
 }: {
   pid: string
   insights?: Awaited<ReturnType<typeof v1.insights>>
-  /** The filters, as far as they apply to a session. */
   keep: (s: { session_id: string; agents: string[] }) => boolean
+  toPart: (p: SecPart) => SentencePart
 }) {
-  const fatigue = insights?.approval_fatigue
-  const esc = insights?.override_escalation
-  const tired = (fatigue?.by_session ?? []).filter((s) => (s.fatigued || s.require_approval >= 3) && keep(s))
-  const escalating = (esc?.by_session ?? []).filter((s) => (s.escalating || s.overrides > 0) && keep(s))
+  if (!insights) return null
+  const fatigue = fatigueSentence(insights.approval_fatigue.by_session.filter(keep), insights.approval_fatigue.threshold)
+  const overrides = overrideSentence(insights.override_escalation.by_session.filter(keep))
+  const cross = crossAgentSentences(insights.cross_agent ?? [])
+  if (!fatigue && !overrides && !cross.length) return null
   return (
-    <div className="col" style={{ gap: 16 }}>
-      <Panel
-        title="Approval fatigue"
-        tip={`Sessions that asked a person for approval ${fatigue?.threshold ?? 5} or more times are flagged: people start approving without reading. “Approved” counts approvals a user overrode.`}
-      >
-        {!tired.length ? (
-          <p className="muted small">No session asked for approval often.</p>
-        ) : (
-          <ul className="plain insight-list">
-            {tired.slice(0, 6).map((s) => (
-              <li key={s.session_id}>
-                <SessionLink pid={pid} id={s.session_id} title={s.session_title} step="problem" />{' '}
-                {s.agents.map((a) => (
-                  <AgentChip key={a} name={a} size="sm" />
-                ))}{' '}
-                <span className="small">
-                  <strong>{s.require_approval}</strong> approval requests, {s.approved} approved
-                </span>
-                {s.fatigued && (
-                  <span className="pill warn">
-                    <Icon name="approval" size={12} /> fatigue
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
-      <Panel title="Override escalation" tip={`Sessions where users overrode verdicts ${esc?.threshold ?? 3} or more times, or overrode two blocks, are escalating.`}>
-        {!escalating.length ? (
-          <p className="muted small">No overrides.</p>
-        ) : (
-          <ul className="plain insight-list">
-            {escalating.slice(0, 6).map((s) => (
-              <li key={s.session_id}>
-                <SessionLink pid={pid} id={s.session_id} title={s.session_title} step="problem" />{' '}
-                <span className="small">
-                  <strong>{s.overrides}</strong> overrides ({s.overridden_blocks} blocks, {s.overridden_approvals} approvals)
-                </span>
-                {s.escalating && (
-                  <span className="pill error">
-                    <Icon name="error" size={12} /> escalating
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
-      {(insights?.cross_agent ?? []).some((c) => c.correlated) && (
-        <Panel title="Across agents" tip="Teams where the same rules fired for two or more agents close together in time.">
-          <ul className="plain insight-list">
-            {insights!.cross_agent
-              .filter((c) => c.correlated)
-              .map((c) => (
-                <li key={c.team_id}>
-                  {c.agents_with_detections.map((a) => (
-                    <AgentChip key={a} name={a} size="sm" />
-                  ))}{' '}
-                  <span className="small">
-                    {c.incidents.length} incident{c.incidents.length === 1 ? '' : 's'}, {c.shared_rules.map((r) => r.title).join(', ')}
-                  </span>
-                </li>
-              ))}
-          </ul>
-        </Panel>
+    <div className="obs-quiet-sections">
+      {fatigue && (
+        <section className="obs-quiet" aria-labelledby="sec-fatigue">
+          <h2 className="view-h" id="sec-fatigue">
+            Approval fatigue
+          </h2>
+          <Sentence size="body" parts={fatigue.map(toPart)} />
+        </section>
+      )}
+      {overrides && (
+        <section className="obs-quiet" aria-labelledby="sec-overrides">
+          <h2 className="view-h" id="sec-overrides">
+            Overrides
+          </h2>
+          <Sentence size="body" parts={overrides.map(toPart)} />
+        </section>
+      )}
+      {cross.length > 0 && (
+        <section className="obs-quiet" aria-labelledby="sec-cross">
+          <h2 className="view-h" id="sec-cross">
+            Across agents
+          </h2>
+          {cross.map((c) => (
+            <p key={c} className="sentence s-body">
+              {c}
+            </p>
+          ))}
+        </section>
       )}
     </div>
   )
 }
 
-function RecentDetections({ pid, dets, ruleFilter, onClearRule }: { pid: string; dets: Detection[]; ruleFilter: string | null; onClearRule: () => void }) {
-  const [n, setN] = useState(25)
+/** The verdicts over time, small and quiet, by action or by severity. */
+function OverTime({ dets, from, to }: { dets: Detection[]; from?: string; to?: string }) {
+  const [by, setBy] = useState<'action' | 'severity'>('action')
+  const buckets = useMemo(() => {
+    const now = Date.now()
+    const f = from ? new Date(from).getTime() : Math.min(now - 86400e3, ...dets.map((d) => new Date(d.created_at).getTime()))
+    const t = to ? new Date(to).getTime() : now
+    return bucketize(
+      dets,
+      (d) => new Date(d.created_at).getTime(),
+      (d) => (by === 'action' ? d.action : (d.severity || 'none').toLowerCase()),
+      f,
+      t,
+    )
+  }, [dets, by, from, to])
   return (
-    <Panel
-      title={`Detections (${dets.length})`}
-      tip="Newest first. “Show step” opens the session timeline at the tool call, with the reasoning that led to it."
-      actions={
-        ruleFilter ? (
-          <button className="btn sm" onClick={onClearRule}>
-            Show all rules
-          </button>
-        ) : undefined
-      }
-    >
-      {!dets.length ? (
-        <p className="muted small">Nothing matches these filters.</p>
-      ) : (
-        <ul className="det-list">
-          {dets.slice(0, n).map((d) => (
-            <li key={d.id} className="det-row">
-              <ActionBadge action={d.action as DetectionAction} overridden={d.overridden} />
-              <span className="det-rule">
-                <strong>{d.rules[0]?.title ?? 'No rule recorded'}</strong>
-                {d.rules.length > 1 && <span className="faint small"> +{d.rules.length - 1} more</span>} <SeverityText level={d.severity} />
-              </span>
-              <span className="det-ctx small">
-                <AgentChip name={d.agent_name} size="sm" /> <span className="mono">{d.tool_name}</span> in{' '}
-                <SessionLink pid={pid} id={d.session_id} title={d.session_title} />
-                <span className="faint" title={fmtDate(d.created_at)}>
-                  {' '}
-                  · {fmtRelative(d.created_at)}
-                </span>
-              </span>
-              <Link className="btn sm" to={sessionUrl(pid, d.session_id, { step: d.span_id ? `tool:${d.span_id}` : 'problem' })}>
-                Show step <Icon name="chevron" size={12} />
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-      {dets.length > n && (
-        <button className="btn sm" onClick={() => setN((x) => x + 50)}>
-          Show more
-        </button>
-      )}
-    </Panel>
+    <section className="obs-quiet obs-chart" aria-labelledby="sec-time">
+      <div className="obs-section-head">
+        <h2 className="view-h" id="sec-time">
+          Over time
+        </h2>
+        <Segmented
+          label="Colour by"
+          size="sm"
+          options={[
+            { id: 'action', label: 'By action' },
+            { id: 'severity', label: 'By severity' },
+          ]}
+          value={by}
+          onChange={setBy}
+        />
+      </div>
+      <div className="view-panel">
+        <StackedBars buckets={buckets} series={by === 'action' ? ACTION_SERIES : SEVERITY_SERIES} caption={`Detections over time by ${by}`} height={72} />
+      </div>
+    </section>
   )
 }
 
-function ReplayPanel({ pid, enabled, state, time, scope }: { pid: string; enabled: boolean; state: FilterState; time: TimeRange; scope: SessionScope }) {
+/** Per-agent figures, behind a disclosure: verdicts and the share of each agent's tool calls flagged. */
+function ByAgent({ pid, stats }: { pid: string; stats: DetectionStats }) {
+  return (
+    <details className="obs-details">
+      <summary>By agent</summary>
+      <p className="quiet-note obs-wrap" style={{ marginBottom: 10 }}>
+        Flagged tool calls: the agent's recorded tool calls with at least one verdict other than allow (a call with several verdicts counts once), out of all its recorded tool calls.
+        Verdicts also counts those not linked to a recorded tool call.
+      </p>
+      <PlainTable caption="Detections by agent">
+        <thead>
+          <tr>
+            <th scope="col">Agent</th>
+            <th scope="col" className="num">
+              Verdicts
+            </th>
+            <th scope="col" className="num">
+              Flagged tool calls
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {stats.by_agent.map((a) => (
+            <tr key={a.agent}>
+              <td>
+                <Link to={agentUrl(pid, a.agent)}>{a.agent}</Link>
+              </td>
+              <td className="num">{a.count}</td>
+              <td className="num">
+                {flaggedOf(a.flagged_tool_calls, a.tool_calls)}
+                {a.detection_rate != null && <span className="obs-faint"> ({Math.round(a.detection_rate * 100)}%)</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </PlainTable>
+    </details>
+  )
+}
+
+/** "Rules changed? Replay": the replay button, the jobs as a list, and the selected job's differences. */
+function ReplaySection({ pid, enabled, state, time, scope }: { pid: string; enabled: boolean; state: FilterState; time: TimeRange; scope: SessionScope }) {
   const qc = useQueryClient()
+  const [params] = useSearchParams()
   const jobs = useQuery({
     queryKey: ['v1', pid, 'replay-jobs'],
     queryFn: () => v1.replayJobs(pid, { limit: 20 }),
     refetchInterval: (q) => (q.state.data?.items.some((j) => j.status === 'running' || j.status === 'queued') ? 1000 : false),
   })
-  const [sel, setSel] = useState<string | null>(null)
-  const selected = sel ?? jobs.data?.items[0]?.job_id ?? null
+  const [started, setStarted] = useState<string | null>(null)
+  const selected = params.get('replay') ?? started ?? jobs.data?.items[0]?.job_id ?? null
   const job = useQuery({
     queryKey: ['v1', pid, 'replay', selected],
     queryFn: () => v1.replayJob(pid, selected!),
@@ -520,56 +516,72 @@ function ReplayPanel({ pid, enabled, state, time, scope }: { pid: string; enable
       return v1.replayStart({ project_id: pid, filter, label })
     },
     onSuccess: async (r) => {
-      setSel(r.job_id)
+      setStarted(r.job_id)
       await qc.invalidateQueries({ queryKey: ['v1', pid, 'replay-jobs'] })
     },
     onError: (e) => notify(`Replay failed to start: ${e instanceof Error ? e.message : String(e)}`, 'error', 8000),
   })
+  const jobUrl = (id: string) => {
+    const n = new URLSearchParams(params)
+    n.set('replay', id)
+    return `?${n.toString()}`
+  }
+  const what = scope.active
+    ? `${scope.ids.size} matching session${scope.ids.size === 1 ? '' : 's'}`
+    : time === 'all'
+      ? 'all recorded tool calls'
+      : time === 'custom'
+        ? 'this time range'
+        : TIME_LABEL[time].toLowerCase().replace(/^last/, 'the last')
   return (
-    <Panel
-      title="Rules changed? Replay recorded tool calls"
-      tip="Re-runs the recorded tool calls through the current rules in shadow mode and compares with the verdicts recorded at the time. Your agents are not affected."
-      actions={
-        <button className="btn sm primary" disabled={!enabled || start.isPending || (scope.active && !scope.ids.size)} onClick={() => start.mutate()}>
-          <Icon name="replay" size={13} />{' '}
-          {scope.active ? `Replay ${scope.ids.size} matching session${scope.ids.size === 1 ? '' : 's'}` : `Replay the ${TIME_LABEL[time].toLowerCase()}`}
+    <section className="obs-replay" aria-labelledby="sec-replay">
+      <div className="obs-section-head">
+        <h2 className="view-h" id="sec-replay">
+          Rules changed? Replay
+        </h2>
+        <button type="button" className="qbtn primary" disabled={!enabled || start.isPending || (scope.active && !scope.ids.size)} onClick={() => start.mutate()}>
+          <Icon name="replay" size={13} /> Replay {what}
           {state.agent ? ` for ${state.agent}` : ''}
         </button>
-      }
-    >
+      </div>
+      <p className="quiet-note obs-wrap">
+        Replay runs the recorded tool calls through the current rules in shadow mode and lists what would change. Your agents are not affected.
+      </p>
       {!enabled && (
-        <Callout tone="info" title="Replay is not configured on this server">
-          Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or <span className="mono">--shield-url</span>{' '}
-          to use a running engine.{' '}
+        <p className="quiet-note obs-wrap">
+          Replay is off on this server: start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or{' '}
+          <span className="mono">--shield-url</span> to use a running engine.{' '}
           <Link to={helpUrl('security.md#replay-recorded-tool-calls-after-a-rule-change')}>How replay works</Link>
-        </Callout>
+        </p>
       )}
       {jobs.data && jobs.data.items.length > 0 && (
-        <div className="replay-grid">
-          <ul className="plain job-list" aria-label="Replay jobs">
-            {jobs.data.items.map((j) => (
-              <li key={j.job_id}>
-                <button type="button" className={`job ${selected === j.job_id ? 'on' : ''}`} aria-pressed={selected === j.job_id} onClick={() => setSel(j.job_id)}>
-                  <span className="mono small">{j.label}</span>
-                  <span className="faint small">
-                    {j.status} · {fmtRelative(j.created_at)}
-                  </span>
-                  {j.summary && (
-                    <span className="small">
-                      {j.summary.newly_blocked} newly blocked · {j.summary.no_longer_blocked} unblocked
-                    </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="grow">{job.data ? <ReplayResult pid={pid} job={job.data} /> : job.isLoading ? <Loading /> : null}</div>
+        <GroupedList label="Replay jobs" className="obs-jobs">
+          {jobs.data.items.map((listed) => {
+            // The list may leave out the figures; the selected job's own record has them.
+            const j = job.data?.job_id === listed.job_id ? { ...listed, ...job.data } : listed
+            return (
+            <ListRow
+              key={j.job_id}
+              className={selected === j.job_id ? 'obs-selected' : ''}
+              glyph={<StatusGlyph kind={replayGlyph(j)} label={j.status === 'done' ? 'Finished' : j.status === 'failed' ? 'Failed' : 'Running'} />}
+              title={<span className="mono">{j.label}</span>}
+              summary={replayLine(j)}
+              meta={[replayMeta(j), selected === j.job_id ? 'shown below' : ''].filter(Boolean).join(' · ') || undefined}
+              time={relativeTime(j.created_at)}
+              timeTitle={fmtDate(j.created_at)}
+              to={jobUrl(j.job_id)}
+            />
+            )
+          })}
+        </GroupedList>
+      )}
+      {selected && (job.data || job.isLoading) && (
+        <div className="view-panel obs-replay-result" aria-label="Replay result">
+          {job.data ? <ReplayResult pid={pid} job={job.data} /> : <Loading />}
         </div>
       )}
-      {enabled && jobs.data?.items.length === 0 && (
-        <p className="muted small">No replays yet. Replaying shows what your current rules would block in the sessions you already recorded.</p>
-      )}
-    </Panel>
+      {enabled && jobs.data?.items.length === 0 && <p className="quiet-note obs-wrap">No replays yet. A replay shows what your current rules would block in the sessions you already recorded.</p>}
+    </section>
   )
 }
 
@@ -581,9 +593,9 @@ function SetupGuide({ pid, replay }: { pid: string; replay: boolean }) {
           <Icon name="shield" size={20} />
         </div>
         <div className="grow">
-          <h2>AgentShield is not sending verdicts to this project yet</h2>
+          <h2>Connect AgentShield to this project</h2>
           <p className="muted">
-            Once it does, every blocked, logged or approval-gated tool call appears here and on the exact step of the session timeline. Point the engine at Weft in one of two ways:
+            Once it does, every blocked, logged or approval-gated tool call appears here and on the exact step of the session's story. Point the engine at Weft in one of two ways:
           </p>
         </div>
       </div>

@@ -1,10 +1,12 @@
 // Sign-in screen: single sign-on (when the server has OIDC configured)
-// alongside API-key entry.
+// alongside API-key entry. One white panel on the page, the new look
+// (DESIGN.md §7.2): the mark, a title, one sentence, then the one way in.
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { setApiKey } from '../api/client'
 import { ssoInfo, ssoLoginUrl } from '../api/session'
 import { Logo } from './Layout'
+import './common.css'
 
 export function LoginScreen({ onKey }: { onKey: (key: string) => void }) {
   const sso = useQuery({ queryKey: ['sso-info'], queryFn: ssoInfo, retry: false, staleTime: 60_000 })
@@ -12,47 +14,55 @@ export function LoginScreen({ onKey }: { onKey: (key: string) => void }) {
   const params = new URLSearchParams(window.location.search)
   const ssoError = params.get('sso_error')
   const returnTo = window.location.pathname === '/' ? '/' : window.location.pathname + window.location.search
+  const on = !!sso.data?.enabled
+  let host = ''
+  try {
+    host = sso.data?.issuer ? new URL(sso.data.issuer).host : ''
+  } catch {
+    host = sso.data?.issuer ?? ''
+  }
   return (
-    <div className="empty" style={{ maxWidth: 420, margin: '10vh auto' }}>
-      <div className="col" style={{ alignItems: 'center', gap: 14, width: '100%' }}>
-        <Logo />
-        <h2>Sign in to Weft</h2>
+    <main className="login">
+      <div className="login-card">
+        <div className="login-head">
+          <Logo size={34} />
+          <h1>Sign in to Weft</h1>
+          <p>{on ? `Use your organisation's sign-in${host ? ` (${host})` : ''}, or an API key.` : 'This server needs an API key. Ask an admin for one, or create one with the server’s admin key.'}</p>
+        </div>
         {ssoError && (
-          <div className="error-box" role="alert" style={{ width: '100%' }}>
+          <div className="error-box" role="alert">
             {ssoError}
           </div>
         )}
-        {sso.data?.enabled && (
+        {on && (
           <>
-            <a className="btn primary" style={{ width: '100%', justifyContent: 'center' }} href={ssoLoginUrl(returnTo)} data-testid="sso-login" onClick={() => setApiKey(null)}>
+            <a className="qbtn primary" href={ssoLoginUrl(returnTo)} data-testid="sso-login" onClick={() => setApiKey(null)}>
               Sign in with SSO
             </a>
-            {sso.data.issuer && <div className="faint small">{new URL(sso.data.issuer).host}</div>}
-            <div className="muted small">or use an API key</div>
+            <p className="login-or">or use an API key</p>
           </>
         )}
         <form
-          className="row"
-          style={{ width: '100%' }}
           onSubmit={(e) => {
             e.preventDefault()
             if (key.trim()) onKey(key.trim())
           }}
         >
           <input
-            className="input grow"
+            className="input"
             type="password"
             placeholder="API key"
             aria-label="API key"
+            autoComplete="off"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            autoFocus={!sso.data?.enabled}
+            autoFocus={!on}
           />
-          <button className={`btn ${sso.data?.enabled ? '' : 'primary'}`} type="submit" disabled={!key.trim()}>
+          <button className={`qbtn ${on ? '' : 'primary'}`} type="submit" disabled={!key.trim()}>
             Continue
           </button>
         </form>
       </div>
-    </div>
+    </main>
   )
 }

@@ -8,7 +8,7 @@ import type { Any, Span, SpansFilter, Operation, Query, SortBy } from '../../api
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
 import { spanUrl, compareSpansUrl, spanSessionsUrl } from '../../lib/urls'
-import { Empty, ErrorBox, Pager, Spinner, StatusDot } from '../../components/common'
+import { ErrorBox, Pager, Spinner } from '../../components/common'
 import { CallCharts } from '../../components/traces/CallCharts'
 import { extractChat, messageText, normaliseMessage } from '../../components/traces/ChatView'
 import { BASE_FILTER_FIELDS, clauseToOperation, clauseValid, decodeClauses, encodeClauses, type FilterClause } from '../../components/traces/FilterBuilder'
@@ -20,11 +20,17 @@ import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/Expo
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 import '../../components/traces/columns.css'
-import { FilterBar, ScopeCapNote, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
-import { FILTER_PARAMS, parseFilters, STATUS_LABEL as RUN_STATUS_LABEL, timeWindow, type FilterState, type StatusFilter, type TimeRange } from '../../lib/filters'
+import { FilterBar, FilterButton, FilterSearchField, ScopeCapNote, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
+import { FILTER_PARAMS, isEmptyFilter, parseFilters, STATUS_LABEL as RUN_STATUS_LABEL, timeWindow, type FilterState, type StatusFilter, type TimeRange } from '../../lib/filters'
 import { useTraceScope } from '../../hooks/useTraceScope'
 import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
-import { HelpLink } from '../../components/ui/PageHeader'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence, type SentencePart } from '../../components/ui/Sentence'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
+import { statusGlyph, tracesSentence } from '../../lib/summaries/traces'
+import '../observe.css'
 
 // ---------------------------------------------------------------- URL state
 
@@ -32,7 +38,7 @@ const BASE_COLS = ['status', 'name', 'started', 'latency', 'tokens', 'cost', 'fe
 type BaseCol = (typeof BASE_COLS)[number]
 const BASE_COL_LABEL: Record<BaseCol, string> = {
   status: 'Status',
-  name: 'Op / name',
+  name: 'Name',
   started: 'Started',
   latency: 'Latency',
   tokens: 'Tokens',
@@ -51,6 +57,20 @@ const PAGE_SIZES = [25, 50, 100, 200]
 /** The shared status chip's values (filters.ts StatusFilter). */
 const STATUSES = ['ok', 'error', 'failed_step', 'running', 'unknown'] as const
 const DEFAULT_TIME: TimeRange = '24h'
+/** Columns hidden until chosen (DESIGN.md §7.1 rule 6: few columns by default). `hide=none` shows them all. */
+export const DEFAULT_HIDDEN: BaseCol[] = ['tokens', 'cost', 'feedback']
+const RANGES: { id: TimeRange; label: string }[] = [
+  { id: '24h', label: '24 hours' },
+  { id: '7d', label: '7 days' },
+  { id: '30d', label: '30 days' },
+]
+
+/** The `hide` parameter for a set of hidden columns (null when it is the default). */
+export function hideParam(hidden: Set<string>): string | null {
+  const xs = [...hidden].sort()
+  if (xs.join(',') === [...DEFAULT_HIDDEN].sort().join(',')) return null
+  return xs.length ? xs.join(',') : 'none'
+}
 /** URL parameters a saved Traces view keeps besides the shared filters. */
 const VIEW_KEYS = ['roots', 'system', 'replay', 'op', 'f', 'expr', 'sort', 'cols', 'order', 'pin', 'hide', 'limit', 'charts']
 
@@ -100,10 +120,11 @@ export function parseState(p: URLSearchParams): ViewState {
     cols: (p.get('cols') ?? '').split(',').filter(Boolean),
     order: decodeIds(p.get('order')),
     pin: decodeIds(p.get('pin')),
-    hidden: new Set((p.get('hide') ?? '').split(',').filter(Boolean)),
+    hidden: p.get('hide') == null ? new Set(DEFAULT_HIDDEN) : new Set((p.get('hide') ?? '').split(',').filter((c) => c && c !== 'none')),
     offset: Math.max(0, Number(p.get('offset') ?? 0) || 0),
     limit: PAGE_SIZES.includes(Number(p.get('limit'))) ? Number(p.get('limit')) : 50,
-    charts: p.get('charts') !== '0',
+    // Charts open on request (older links said charts=0 to hide them).
+    charts: p.get('charts') === '1',
     live: p.get('live') === '1',
     view: p.get('view') ?? '',
   }
@@ -469,64 +490,90 @@ export function TracesPage() {
   const selCalls = [...selected.values()]
   const exportTargets = selCalls.length ? selCalls : rows
 
+  // The sentence: how many traces (or spans), and how many of them failed.
+  const failedReq = useMemo(() => (s.status ? null : buildRequest({ ...s, status: 'error' }, shared, time, scope.traceIds)), [s, shared, time, scope.traceIds])
+  const failed = useQuery({
+    queryKey: ['spans', projectId, 'count', 'failed', failedReq],
+    queryFn: () => api.spansCount({ project_id: projectId, ...failedReq! }),
+    enabled: ready && !!failedReq,
+    placeholderData: keepPreviousData,
+    refetchInterval,
+  })
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filtered = !!(s.op || s.status || s.q || s.clauses.length || s.expr) || !isEmptyFilter({ ...shared, time: undefined, from: undefined, to: undefined }, DEFAULT_TIME)
+  const statusLink = (st: StatusFilter) => {
+    const n = new URLSearchParams(params)
+    n.set('status', st)
+    n.delete('offset')
+    return `?${n.toString()}`
+  }
+  const sentence: SentencePart[] | null =
+    total != null && (!failedReq || failed.data != null)
+      ? tracesSentence({ total, failed: failedReq ? (failed.data ?? 0) : null, roots: s.roots, time, filtered }).map((p) =>
+          typeof p === 'string' ? p : { text: p.text, to: statusLink(p.status), title: 'Show only these' },
+        )
+      : null
+  const toggleColumn = (c: string) => {
+    const h = new Set(s.hidden)
+    if (h.has(c)) h.delete(c)
+    else h.add(c)
+    update({ hide: hideParam(h) }, false)
+  }
+
   return (
-    <div className="page page-fill">
-      <div className="page-header">
-        <h1>Traces</h1>
-        <HelpLink doc="traces.md" topic="Traces" />
-        <Link className="btn sm ghost" to={spanSessionsUrl(projectId)} title="Spans grouped by session id">
-          Span sessions
-        </Link>
-        {(hasFilters || s.view || s.cols.length > 0) && (
-          <button className="btn sm ghost" onClick={() => setParams(new URLSearchParams())} title="Clear filters, columns and sort">
-            Reset view
-          </button>
-        )}
-        <span className="spacer" />
-        <span className="small muted">
-          {total != null ? `${fmtNumber(total)} ${s.roots ? 'traces' : 'spans'}` : count.isLoading ? '' : ''}
-          {(calls.isFetching || count.isFetching) && <span style={{ marginLeft: 6 }}><Spinner /></span>}
-        </span>
-        <label className="checkbox small" title="Refresh every 5 seconds">
-          <input type="checkbox" checked={s.live} onChange={(e) => update({ live: e.target.checked ? '1' : null }, false)} /> Auto-refresh
-        </label>
-        <button className="btn sm" onClick={() => void qc.invalidateQueries({ queryKey: ['spans', projectId] })} title="Refresh">
-          ↻
-        </button>
-        <button className="btn sm" onClick={() => update({ charts: s.charts ? '0' : null }, false)} aria-expanded={s.charts}>
-          {s.charts ? 'Hide charts' : 'Show charts'}
-        </button>
-        {s.charts && (
-          <button className="btn sm" onClick={() => setExtraModal('chart')} title="Build a custom chart from the current filters and add it to a dashboard">
-            + Add chart to dashboard
-          </button>
-        )}
-      </div>
+    <div className="page-frame obs-page obs-wide traces-page">
+      <PageHeader
+        title="Traces"
+        help="traces.md"
+        controls={
+          <>
+            <Segmented
+              label="Time range"
+              options={RANGES}
+              value={(RANGES.some((r) => r.id === time) ? time : null) as TimeRange | null}
+              onChange={(t) => update({ time: t === DEFAULT_TIME && !widen.widened ? null : t, from: null, to: null })}
+            />
+            <FilterSearchField label="Search traces" />
+            <FilterButton open={filterOpen} onToggle={() => setFilterOpen((o) => !o)} defaultTime={DEFAULT_TIME} />
+          </>
+        }
+        sentence={
+          sentence ? (
+            <Sentence parts={sentence} />
+          ) : (
+            <p className="sentence s-outcome sk-sentence" aria-busy="true">
+              <span className="sr-only">Counting traces…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          )
+        }
+      />
 
       <FilterBar
         page="traces"
+        search="external"
+        timePicker="none"
+        collapsible
+        open={filterOpen}
         defaultTime={DEFAULT_TIME}
         effectiveTime={time}
         viewKeys={VIEW_KEYS}
         viewDefinition={viewDefinition}
         legacyView={legacyTraceView}
-        placeholder="Filter traces…  try agent:researcher or tool:Bash"
         advanced={{ fields: filterFields, clauses: s.clauses, onChange: (cs) => update({ f: encodeClauses(cs) || null }) }}
       />
       {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => update({ time: DEFAULT_TIME })} />}
       <ErrorBox error={scope.error} />
       {scope.sessionsTruncated && <ScopeCapNote total={scope.sessionsTotal} />}
 
-      {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
-
-      <div className="toolbar">
-        <label className="checkbox small" title="Only show the top-level span of each trace">
-          <input type="checkbox" checked={s.roots} onChange={(e) => update({ roots: e.target.checked ? null : '0' })} /> Roots only
+      <div className="obs-toolbar" role="group" aria-label="What the table lists">
+        <label className="obs-check" title="Only show the top-level span of each trace">
+          <input type="checkbox" checked={s.roots} onChange={(e) => update({ roots: e.target.checked ? null : '0' })} /> Top-level spans only
         </label>
-        <label className="checkbox small" title="Include scorer spans made by monitors and other internal server spans">
+        <label className="obs-check" title="Include scorer spans made by monitors and other internal server spans">
           <input type="checkbox" checked={s.system} onChange={(e) => update({ system: e.target.checked ? '1' : null })} /> System spans
         </label>
-        <label className="checkbox small" title="Include the engine traces of AgentShield replays (re-evaluations of recorded tool calls). They are not agent activity, so they are hidden by default.">
+        <label className="obs-check" title="Include the engine traces of AgentShield replays (re-evaluations of recorded tool calls). They are not agent activity, so they are hidden by default.">
           <input type="checkbox" checked={s.replay} onChange={(e) => update({ replay: e.target.checked ? '1' : null })} /> Replay evaluations
         </label>
         {s.expr && (
@@ -538,20 +585,23 @@ export function TracesPage() {
           </span>
         )}
         <span className="grow" />
-        <Dropdown label="Columns ▾" align="right">
+        {(calls.isFetching || count.isFetching) && <Spinner />}
+        <Link to={spanSessionsUrl(projectId)} title="Spans grouped by session id">
+          Span sessions
+        </Link>
+        {(hasFilters || s.view || s.cols.length > 0 || params.has('hide') || params.has('order') || params.has('pin')) && (
+          <button type="button" className="linkish" onClick={() => setParams(new URLSearchParams())} title="Clear filters, columns and sort">
+            Reset view
+          </button>
+        )}
+        <button type="button" className={`qbtn ${s.charts ? 'on' : ''}`} onClick={() => update({ charts: s.charts ? null : '1' }, false)} aria-pressed={s.charts}>
+          Charts
+        </button>
+        <Dropdown label="Columns" align="right" className="qbtn">
           <div className="dd-section">Columns</div>
           {BASE_COLS.map((c) => (
             <label key={c} className="dd-check">
-              <input
-                type="checkbox"
-                checked={!s.hidden.has(c)}
-                onChange={() => {
-                  const h = new Set(s.hidden)
-                  if (h.has(c)) h.delete(c)
-                  else h.add(c)
-                  update({ hide: [...h].join(',') || null }, false)
-                }}
-              />
+              <input type="checkbox" checked={!s.hidden.has(c)} onChange={() => toggleColumn(c)} />
               {BASE_COL_LABEL[c]}
             </label>
           ))}
@@ -574,7 +624,7 @@ export function TracesPage() {
             {slots.map((c, i) => (
               <div key={c.id} className="dd-check col-order-row">
                 <span className={`grow truncate ${c.id.includes('.') ? 'mono small' : ''}`} title={c.id}>
-                  {(BASE_COL_LABEL as Record<string, string>)[c.id] || (c.id === 'status' ? 'Status' : c.id)}
+                  {(BASE_COL_LABEL as Record<string, string>)[c.id] || c.id}
                 </span>
                 <button className="btn ghost sm icon" aria-label={`Move ${c.id} left`} disabled={i === 0} onClick={() => setOrder(moveStep(slotIds, c.id, -1))}>
                   ↑
@@ -594,23 +644,50 @@ export function TracesPage() {
             </button>
           )}
         </Dropdown>
+        <Dropdown label="More" align="right" className="qbtn" title="Refresh, auto-refresh, charts on a dashboard">
+          {(close) => (
+            <>
+              <label className="dd-check" title="Refresh every 5 seconds">
+                <input type="checkbox" checked={s.live} onChange={(e) => update({ live: e.target.checked ? '1' : null }, false)} /> Auto-refresh
+              </label>
+              <MenuItem
+                onClick={() => {
+                  void qc.invalidateQueries({ queryKey: ['spans', projectId] })
+                  close()
+                }}
+              >
+                Refresh now
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  setExtraModal('chart')
+                  close()
+                }}
+              >
+                Add a chart of these spans to a dashboard…
+              </MenuItem>
+            </>
+          )}
+        </Dropdown>
       </div>
 
+      {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
+
       {selected.size > 0 && (
-        <div className="selection-bar" role="toolbar" aria-label="Selection actions">
+        <div className="obs-selection" role="toolbar" aria-label="Selection actions">
           <b>{selected.size} selected</b>
-          <button className="btn sm" onClick={() => setSelected(new Map())}>
+          <button type="button" className="linkish" onClick={() => setSelected(new Map())}>
             Clear
           </button>
           <span className="grow" />
-          <button className="btn sm" disabled={selected.size < 2} title={selected.size < 2 ? 'Select at least two spans' : undefined} onClick={() => navigate(compareSpansUrl(projectId, [...selected.keys()]))}>
+          <button type="button" className="qbtn" disabled={selected.size < 2} title={selected.size < 2 ? 'Select at least two spans' : undefined} onClick={() => navigate(compareSpansUrl(projectId, [...selected.keys()]))}>
             Compare
           </button>
-          <button className="btn sm" onClick={() => setModal('dataset')}>
+          <button type="button" className="qbtn" onClick={() => setModal('dataset')}>
             Add to dataset
           </button>
-          <AddToQueueButton projectId={projectId} callIds={[...selected.keys()]} />
-          <Dropdown label="Export ▾" align="right">
+          <AddToQueueButton projectId={projectId} callIds={[...selected.keys()]} className="qbtn" />
+          <Dropdown label="Export" align="right" className="qbtn">
             {(close) =>
               (['json', 'jsonl', 'csv'] as const).map((f) => (
                 <MenuItem
@@ -625,7 +702,7 @@ export function TracesPage() {
               ))
             }
           </Dropdown>
-          <button className="btn sm danger" onClick={() => setModal('delete')}>
+          <button type="button" className="qbtn danger" onClick={() => setModal('delete')}>
             Delete
           </button>
         </div>
@@ -633,109 +710,102 @@ export function TracesPage() {
 
       <ErrorBox error={calls.error} />
 
-      {calls.isLoading ? (
-        <div className="table-wrap grow-table">
-          <div className="empty">
-            <Spinner label="Loading spans…" />
-          </div>
+      {calls.isLoading || !ready ? (
+        <div className="quiet-empty">
+          <Spinner label="Loading spans…" />
         </div>
       ) : rows.length === 0 ? (
         hasFilters ? (
-          <Empty>
-            No spans match these filters.{' '}
-            <button className="btn sm" onClick={() => setParams(new URLSearchParams())}>
+          <div className="quiet-empty">
+            <p>No spans match these filters.</p>
+            <button type="button" className="qbtn" onClick={() => setParams(new URLSearchParams())}>
               Clear filters
             </button>
-          </Empty>
-        ) : (
-          <div className="card">
-            <div className="card-header">
-              <h3>No traces yet</h3>
-            </div>
-            <div className="card-body">
-              <GettingStarted projectId={projectId} />
-            </div>
           </div>
+        ) : (
+          <section className="guided-empty" aria-label="Getting started">
+            <h2>No traces yet</h2>
+            <GettingStarted projectId={projectId} />
+          </section>
         )
       ) : (
-        <div className="table-wrap grow-table">
-          <table className="table traces-table">
-            <thead>
-              <tr ref={headRef}>
-                <th style={{ width: 28 }} className={s.pin.length ? 'col-pinned col-lead' : ''}>
-                  <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select page" />
-                </th>
-                {slots.map((slot) => {
-                  if (!(BASE_COLS as readonly string[]).includes(slot.id)) {
-                    const p = slot.id
-                    const hp = colHeadProps(slot)
-                    return (
-                      <th key={p} {...hp} className={`sortable mono ${hp.className}`} onClick={() => setSort(p)}>
-                        {colLabel(p)}
-                        {sortArrow(p)}
-                        <button
-                          className="th-x"
-                          aria-label={`Remove column ${p}`}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            update({ cols: s.cols.filter((x) => x !== p).join(',') || null }, false)
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </th>
-                    )
-                  }
-                  const c = slot.id as BaseCol
+        <PlainTable caption={`${s.roots ? 'Traces' : 'Spans'}, newest first`} className="traces-table">
+          <thead>
+            <tr ref={headRef}>
+              <th scope="col" style={{ width: 28 }} className={s.pin.length ? 'col-pinned col-lead' : ''}>
+                <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select page" />
+              </th>
+              {slots.map((slot) => {
+                if (!(BASE_COLS as readonly string[]).includes(slot.id)) {
+                  const p = slot.id
                   const hp = colHeadProps(slot)
-                  const sf = SORT_FIELD[c]
-                  const num = c === 'latency' || c === 'tokens' || c === 'cost'
                   return (
-                    <th
-                      key={c}
-                      {...hp}
-                      className={`${sf ? 'sortable' : ''} ${num ? 'num' : ''} ${hp.className}`}
-                      onClick={sf ? () => setSort(sf) : undefined}
-                      aria-sort={sf && s.sort.field === sf ? (s.sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
-                    >
-                      {c === 'status' ? '' : BASE_COL_LABEL[c]}
-                      {sf && sortArrow(sf)}
+                    <th scope="col" key={p} {...hp} className={`sortable mono ${hp.className}`} onClick={() => setSort(p)}>
+                      {colLabel(p)}
+                      {sortArrow(p)}
+                      <button
+                        className="th-x"
+                        aria-label={`Remove column ${p}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          update({ cols: s.cols.filter((x) => x !== p).join(',') || null }, false)
+                        }}
+                      >
+                        ✕
+                      </button>
                     </th>
                   )
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c, i) => (
-                <CallRow
-                  key={c.id}
-                  call={c}
-                  index={i}
-                  projectId={projectId}
-                  slots={slots}
-                  offsets={offsets}
-                  leadPinned={s.pin.length > 0}
-                  selected={selected.has(c.id)}
-                  focused={cursor === i}
-                  onToggle={() => toggleSel(c)}
-                  onOpen={() => navigate(spanUrl(projectId, c.id))}
-                  onFilterOp={(op) => update({ op })}
-                  provisionalRoot={s.roots && !!c.parent_id}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+                }
+                const c = slot.id as BaseCol
+                const hp = colHeadProps(slot)
+                const sf = SORT_FIELD[c]
+                const num = c === 'latency' || c === 'tokens' || c === 'cost'
+                return (
+                  <th
+                    scope="col"
+                    key={c}
+                    {...hp}
+                    className={`${sf ? 'sortable' : ''} ${num ? 'num' : ''} ${hp.className}`}
+                    onClick={sf ? () => setSort(sf) : undefined}
+                    aria-sort={sf && s.sort.field === sf ? (s.sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
+                  >
+                    {c === 'status' ? <span className="sr-only">Status</span> : BASE_COL_LABEL[c]}
+                    {sf && sortArrow(sf)}
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c, i) => (
+              <CallRow
+                key={c.id}
+                call={c}
+                index={i}
+                projectId={projectId}
+                slots={slots}
+                offsets={offsets}
+                leadPinned={s.pin.length > 0}
+                selected={selected.has(c.id)}
+                focused={cursor === i}
+                onToggle={() => toggleSel(c)}
+                onOpen={() => navigate(spanUrl(projectId, c.id))}
+                onFilterOp={(op) => update({ op })}
+                provisionalRoot={s.roots && !!c.parent_id}
+              />
+            ))}
+          </tbody>
+        </PlainTable>
       )}
 
       {rows.length > 0 && (
-        <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-          <div className="row small muted">
+        <div className="obs-foot">
+          <div className="row">
             <span className="kbd-hint">
               <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> open · <kbd>x</kbd> select · <kbd>/</kbd> search
             </span>
             {!selected.size && (
-              <Dropdown label="Export ▾" className="btn ghost sm">
+              <Dropdown label="Export" className="qbtn">
                 {(close) => (
                   <>
                     <div className="dd-section">This page</div>
@@ -798,15 +868,9 @@ export function TracesPage() {
         />
       )}
       {modal === 'dataset' && <AddToDatasetModal projectId={projectId} calls={selCalls} onClose={() => setModal(null)} />}
-      {extraModal === 'serverExport' && (
-        <ServerExportModal spec={{ projectId, ...req, sortBy }} columns={s.cols} onClose={() => setExtraModal(null)} />
-      )}
-      {extraModal === 'code' && (
-        <CopyAsCodeModal spec={{ projectId, ...req, sortBy }} authRequired={!!server.data?.auth_required} onClose={() => setExtraModal(null)} />
-      )}
-      {extraModal === 'chart' && (
-        <AddToDashboardModal projectId={projectId} filter={req.filter} query={req.query} search={req.search} onClose={() => setExtraModal(null)} />
-      )}
+      {extraModal === 'serverExport' && <ServerExportModal spec={{ projectId, ...req, sortBy }} columns={s.cols} onClose={() => setExtraModal(null)} />}
+      {extraModal === 'code' && <CopyAsCodeModal spec={{ projectId, ...req, sortBy }} authRequired={!!server.data?.auth_required} onClose={() => setExtraModal(null)} />}
+      {extraModal === 'chart' && <AddToDashboardModal projectId={projectId} filter={req.filter} query={req.query} search={req.search} onClose={() => setExtraModal(null)} />}
     </div>
   )
 }
@@ -853,8 +917,8 @@ function CallRow({
     switch (col) {
       case 'status':
         return (
-          <td key={col} style={{ width: 20 }}>
-            {runStatus ? <RunStatusDot status={runStatus} own={st} /> : <StatusDot status={st} />}
+          <td key={col} style={{ width: 24 }}>
+            <RunStatusGlyph status={runStatus} own={st} />
           </td>
         )
       case 'name':
@@ -863,7 +927,7 @@ function CallRow({
             <Link to={spanUrl(projectId, c.id)} onClick={(e) => e.stopPropagation()} className="call-link">
               {label}
             </Link>
-            <div className="row small faint" style={{ gap: 6, whiteSpace: 'nowrap' }}>
+            <div className="name-sub">
               {label !== opBase && (
                 <button
                   className="linkish"
@@ -884,7 +948,7 @@ function CallRow({
               {childCounts && (childCounts.success ?? 0) + (childCounts.error ?? 0) > 0 && (
                 <span title="Descendant spans">
                   {plural((childCounts.success ?? 0) + (childCounts.error ?? 0), 'span')}
-                  {childCounts.error ? <span style={{ color: 'var(--error)' }}> · {childCounts.error} err</span> : null}
+                  {childCounts.error ? <span> · {childCounts.error} failed</span> : null}
                 </span>
               )}
             </div>
@@ -948,8 +1012,7 @@ function CallRow({
               // Red only when the run failed: a failed step the run went on
               // after (or a verdict record of such a session) is not a failure.
               <span
-                className="cell-preview"
-                style={!runStatus || runStatus === 'error' ? { color: 'var(--error)' } : undefined}
+                className={`cell-preview ${!runStatus || runStatus === 'error' ? 'failed' : ''}`}
                 title={runStatus && runStatus !== 'error' ? `This span failed. Run: ${RUN_STATUS_LABEL[runStatus]}` : undefined}
               >
                 {c.error}
@@ -984,13 +1047,6 @@ function CallRow({
   )
 }
 
-const RUN_STATUS_COLOR: Record<StatusFilter, string> = {
-  ok: 'var(--success)',
-  error: 'var(--error)',
-  failed_step: 'var(--warn)',
-  running: 'var(--running)',
-  unknown: 'var(--text-3)',
-}
 const OWN_STATUS_LABEL: Record<ReturnType<typeof callStatus>, string> = {
   success: 'succeeded',
   error: 'failed',
@@ -999,14 +1055,17 @@ const OWN_STATUS_LABEL: Record<ReturnType<typeof callStatus>, string> = {
 }
 
 /**
- * A row's run status (summary.weft.run_status, what the status chip keeps),
- * with the span's own status in the tooltip: a failed sub-agent run is a
- * failed step of its caller, and a trace whose top-level span has not
- * arrived is running.
+ * A row's run status (summary.weft.run_status, what the status chip keeps)
+ * as a glyph, with the span's own status in the tooltip: a failed sub-agent
+ * run is a failed step of its caller, and a trace whose top-level span has
+ * not arrived is running. Without a run status, the span's own.
  */
-function RunStatusDot({ status, own }: { status: StatusFilter; own: ReturnType<typeof callStatus> }) {
-  const label = `${RUN_STATUS_LABEL[status]} (this span ${OWN_STATUS_LABEL[own]})`
+function RunStatusGlyph({ status, own }: { status?: StatusFilter; own: ReturnType<typeof callStatus> }) {
+  const g = statusGlyph(status ?? own)
+  const label = status ? `${RUN_STATUS_LABEL[status]} (this span ${OWN_STATUS_LABEL[own]})` : g.label
   return (
-    <span className="dot" style={{ background: RUN_STATUS_COLOR[status] }} title={label} role="img" aria-label={label} data-run-status={status} />
+    <span className="obs-glyph-cell" title={label} role="img" aria-label={label} data-run-status={status}>
+      <StatusGlyph kind={g.kind} size={16} decorative />
+    </span>
   )
 }

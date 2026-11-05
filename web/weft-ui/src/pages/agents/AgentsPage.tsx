@@ -5,7 +5,14 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { agentsApi, agentUrl, conversationUrl, type AgentStats, type SearchResult } from '../../api/agents'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
-import { Empty, ErrorBox, Spinner, Tabs } from '../../components/common'
+import { Empty, ErrorBox, Spinner } from '../../components/common'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { agentsUrlFor } from '../../lib/urls'
+import { agentsTotalsSentence } from '../../lib/summaries/agentsTeams'
+import './agents-teams.css'
 import { AgentsDashboard } from '../../components/agents/AgentsDashboard'
 import { SpansTable } from '../../components/agents/SpansTable'
 import { SignalsView } from '../../components/agents/SignalsView'
@@ -25,62 +32,88 @@ const SORTS: { id: string; label: string; field: string; direction: 'asc' | 'des
 
 const TOOLTIP_STYLE = { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text)' }
 
-function Metric({ label, value, bad, title }: { label: string; value: string; bad?: boolean; title?: string }) {
+/** Invocations per day over the last 14 days, as a tiny bar chart. */
+function Activity({ data }: { data?: { day: string; n: number }[] }) {
+  if (!data || !data.some((d) => d.n > 0)) return <span className="faint">—</span>
   return (
-    <div className="agent-metric" title={title}>
-      <div className="label">{label}</div>
-      <div className={`value ${bad ? 'bad' : ''}`}>{value}</div>
+    <div style={{ height: 26, width: 96 }} role="img" aria-label={`Runs per day over the last 14 days: ${data.map((d) => d.n).join(', ')}`}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+          <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'var(--panel-2)' }} labelFormatter={(_, p) => String(p?.[0]?.payload?.day ?? '')} />
+          <Bar dataKey="n" name="Runs" fill="var(--text-muted)" isAnimationActive={false} radius={[2, 2, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   )
 }
 
-function AgentCard({ projectId, a, activity }: { projectId: string; a: AgentStats; activity?: { day: string; n: number }[] }) {
-  const rate = errorRate(a.invocation_error_count, a.invocation_count)
+function AgentTable({ projectId, agents, activity }: { projectId: string; agents: AgentStats[]; activity: Map<string, { day: string; n: number }[]> }) {
   return (
-    <Link to={agentUrl(projectId, a.agent_name)} className="agent-card">
-      <div className="row" style={{ alignItems: 'baseline' }}>
-        <span className="agent-name grow" title={a.agent_name}>
-          {a.agent_name}
-        </span>
-        <span className="small faint" title={fmtDate(a.last_seen)}>
-          {fmtRelative(a.last_seen)}
-        </span>
-      </div>
-      <div className="chips" style={{ minHeight: 20 }}>
-        {(a.versions ?? []).filter(Boolean).slice(0, 4).map((v) => (
-          <span key={v} className="chip mono">
-            {v}
-          </span>
-        ))}
-        {a.version_count > 4 && <span className="chip">+{a.version_count - 4}</span>}
-        {(a.models ?? []).slice(0, 2).map((m) => (
-          <span key={m} className="chip faint mono">
-            {m}
-          </span>
-        ))}
-      </div>
-      {activity && activity.some((d) => d.n > 0) && (
-        <div style={{ height: 34 }} aria-label="Invocations per day">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={activity} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'var(--panel-2)' }} labelFormatter={(_, p) => String(p?.[0]?.payload?.day ?? '')} />
-              <Bar dataKey="n" name="Invocations" fill="var(--c1)" isAnimationActive={false} radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-      <div className="agent-metrics">
-        <Metric label="Conversations" value={fmtNumber(a.conversation_count)} />
-        <Metric label="Invocations" value={fmtNumber(a.invocation_count)} />
-        <Metric label="Calls" value={fmtNumber(a.span_count)} title={`${a.llm_call_count} LLM · ${a.tool_call_count} tool`} />
-        <Metric label="Error rate" value={fmtPct(rate)} bad={!!rate} title={`${a.invocation_error_count} failed invocations · ${a.error_count} failed spans`} />
-        <Metric label="p50 / p95" value={`${fmtDuration(a.latency_ms_p50)} / ${fmtDuration(a.latency_ms_p95)}`} />
-        <Metric label="Failed spans" value={fmtNumber(a.error_count)} bad={a.error_count > 0} title="LLM, tool and agent spans that ended in an error" />
-        <Metric label="Tokens" value={`${compact(a.total_input_tokens)} / ${compact(a.total_output_tokens)}`} title="input / output" />
-        <Metric label="Cost" value={fmtCost(a.total_cost_usd)} />
-        <Metric label="Tools" value={fmtNumber(a.tool_call_count)} />
-      </div>
-    </Link>
+    <PlainTable caption="Agents, with their runs, failures, timing, tokens and cost" className="analytics-agents-table">
+      <thead>
+        <tr>
+          <th scope="col">Agent</th>
+          <th scope="col">Last 14 days</th>
+          <th scope="col" className="num">
+            Conversations
+          </th>
+          <th scope="col" className="num" title="Invocations of the agent">
+            Runs
+          </th>
+          <th scope="col" className="num" title="Failed runs, out of all runs">
+            Failed
+          </th>
+          <th scope="col" className="num" title="Median and 95th percentile time of one run">
+            p50 / p95
+          </th>
+          <th scope="col" className="num" title="LLM, tool and agent spans that ended in an error">
+            Failed spans
+          </th>
+          <th scope="col" className="num" title="Input / output tokens">
+            Tokens
+          </th>
+          <th scope="col" className="num">
+            Cost
+          </th>
+          <th scope="col">Versions and models</th>
+          <th scope="col">Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {agents.map((a) => {
+          const rate = errorRate(a.invocation_error_count, a.invocation_count)
+          return (
+            <tr key={a.agent_name}>
+              <td>
+                <Link to={agentUrl(projectId, a.agent_name)}>{a.agent_name}</Link>
+              </td>
+              <td>
+                <Activity data={activity.get(a.agent_name)} />
+              </td>
+              <td className="num">{fmtNumber(a.conversation_count)}</td>
+              <td className="num" title={`${a.llm_call_count} LLM calls · ${a.tool_call_count} tool calls · ${a.span_count} spans`}>
+                {fmtNumber(a.invocation_count)}
+              </td>
+              <td className={`num ${rate ? 'text-error' : ''}`}>{fmtPct(rate)}</td>
+              <td className="num nowrap">
+                {fmtDuration(a.latency_ms_p50)} / {fmtDuration(a.latency_ms_p95)}
+              </td>
+              <td className={`num ${a.error_count ? 'text-error' : ''}`}>{fmtNumber(a.error_count)}</td>
+              <td className="num nowrap">
+                {compact(a.total_input_tokens)} / {compact(a.total_output_tokens)}
+              </td>
+              <td className="num">{fmtCost(a.total_cost_usd)}</td>
+              <td className="small mono">
+                {[...(a.versions ?? []).filter(Boolean).slice(0, 4), ...(a.version_count > 4 ? [`+${a.version_count - 4}`] : []), ...(a.models ?? []).slice(0, 2)].join(', ') || <span className="faint">—</span>}
+              </td>
+              <td className="nowrap" title={fmtDate(a.last_seen)}>
+                {fmtRelative(a.last_seen)}
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </PlainTable>
   )
 }
 
@@ -197,16 +230,6 @@ function AgentsGrid() {
   }, [activity.data])
 
   const agents = q.data?.agents ?? []
-  const totals = agents.reduce(
-    (t, a) => ({
-      conv: t.conv + a.conversation_count,
-      inv: t.inv + a.invocation_count,
-      err: t.err + a.invocation_error_count,
-      tok: t.tok + a.total_input_tokens + a.total_output_tokens,
-      cost: t.cost + (a.total_cost_usd ?? 0),
-    }),
-    { conv: 0, inv: 0, err: 0, tok: 0, cost: 0 },
-  )
   return (
     <div className="col" style={{ gap: 16 }}>
       <div className="row wrap">
@@ -253,34 +276,6 @@ function AgentsGrid() {
         </Empty>
       ) : (
         <>
-          <div className="stat-grid">
-            <div className="stat">
-              <div className="label">Agents</div>
-              <div className="value">{fmtNumber(q.data?.total_count)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Conversations</div>
-              <div className="value">{fmtNumber(totals.conv)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Invocations</div>
-              <div className="value">{fmtNumber(totals.inv)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Error rate</div>
-              <div className="value" style={totals.err ? { color: 'var(--error)' } : undefined}>
-                {fmtPct(errorRate(totals.err, totals.inv))}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Tokens</div>
-              <div className="value">{compact(totals.tok)}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Cost</div>
-              <div className="value">{fmtCost(totals.cost)}</div>
-            </div>
-          </div>
           <div className="toolbar row">
             <input className="input" style={{ width: 220 }} placeholder="Filter agents by name" value={name} onChange={(e) => set({ name: e.target.value })} aria-label="Filter agents by name" />
             <span className="grow" />
@@ -298,11 +293,7 @@ function AgentsGrid() {
           {agents.length === 0 ? (
             <Empty>No agents match “{name}”.</Empty>
           ) : (
-            <div className="agent-grid">
-              {agents.map((a) => (
-                <AgentCard key={a.agent_name} projectId={projectId} a={a} activity={perAgent.get(a.agent_name)} />
-              ))}
-            </div>
+            <AgentTable projectId={projectId} agents={agents} activity={perAgent} />
           )}
         </>
       )}
@@ -311,19 +302,23 @@ function AgentsGrid() {
 }
 
 type AgentsTab = 'dashboard' | 'agents' | 'spans' | 'signals' | 'evals'
-const AGENT_TABS: { id: AgentsTab; label: string }[] = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'agents', label: 'Agents' },
-  { id: 'spans', label: 'Spans' },
-  { id: 'signals', label: 'Signals' },
-  { id: 'evals', label: 'Evals' },
+const AGENT_TABS: { id: AgentsTab; label: string; title: string }[] = [
+  { id: 'dashboard', label: 'Dashboard', title: 'Activity, failures, tools and models over a time window' },
+  { id: 'agents', label: 'Agents', title: 'Every agent with its runs, timing, tokens and cost; search messages' },
+  { id: 'spans', label: 'Spans', title: 'Search and group every agent span' },
+  { id: 'signals', label: 'Signals', title: 'Ratings and tags computed over conversations' },
+  { id: 'evals', label: 'Evaluations', title: 'Evaluations of agents' },
 ]
 
-/** Agents: project dashboard, agent cards, cross-agent spans and signals. */
+/** Agent analytics, the developer view behind Agents: dashboard, every agent's figures, spans, signals and evaluations. */
 export function AgentsPage() {
   const projectId = useProjectId()
   const [params, setParams] = useSearchParams()
   const tab = (AGENT_TABS.some((t) => t.id === params.get('tab')) ? params.get('tab') : 'dashboard') as AgentsTab
+  const all = useQuery({
+    queryKey: ['agents', projectId, 'recent', ''],
+    queryFn: () => agentsApi.query({ project_id: projectId, include_costs: true, limit: 200, sort_by: [{ field: 'last_seen', direction: 'desc' }] }),
+  })
   const update = (patch: Record<string, string | null>) =>
     setParams(
       (p) => {
@@ -343,18 +338,52 @@ export function AgentsPage() {
     setParams(n)
   }
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1>Agents</h1>
+    <div className="page-frame detail analytics-page">
+      <PageHeader
+        variant="detail"
+        back={{ to: agentsUrlFor(projectId), label: 'Agents' }}
+        title="Agent analytics"
+        help="agents.md"
+        helpTopic="Agent analytics"
+        sentence={
+          all.data ? (
+            <Sentence size="detail" parts={[allAgentsSentence(all.data.agents, all.data.total_count)]} />
+          ) : (
+            <p className="sentence s-detail sk-sentence" aria-busy="true">
+              <span className="sr-only">Counting agents…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          )
+        }
+      />
+      <ErrorBox error={all.error} />
+      <Segmented label="Views" role="tabs" panelId="analytics-view" className="segmented-views" options={AGENT_TABS} value={tab} onChange={(t) => switchTab(t)} />
+      <div role="tabpanel" id="analytics-view" aria-labelledby={segmentedTabId('analytics-view', tab)} className="analytics-panel">
+        {tab === 'dashboard' && (
+          <AgentsDashboard projectId={projectId} range={params.get('range') ?? '24h'} setRange={(r) => update({ range: r === '24h' ? null : r })} onFilterSpans={(patch) => switchTab('spans', patch)} />
+        )}
+        {tab === 'agents' && <AgentsGrid />}
+        {tab === 'spans' && <SpansTable projectId={projectId} params={params} update={update} />}
+        {tab === 'signals' && <SignalsView projectId={projectId} params={params} update={update} />}
+        {tab === 'evals' && <AgentEvalsView projectId={projectId} />}
       </div>
-      <Tabs<AgentsTab> tabs={AGENT_TABS} value={tab} onChange={(t) => switchTab(t)} />
-      {tab === 'dashboard' && (
-        <AgentsDashboard projectId={projectId} range={params.get('range') ?? '24h'} setRange={(r) => update({ range: r === '24h' ? null : r })} onFilterSpans={(patch) => switchTab('spans', patch)} />
-      )}
-      {tab === 'agents' && <AgentsGrid />}
-      {tab === 'spans' && <SpansTable projectId={projectId} params={params} update={update} />}
-      {tab === 'signals' && <SignalsView projectId={projectId} params={params} update={update} />}
-      {tab === 'evals' && <AgentEvalsView projectId={projectId} />}
     </div>
   )
+}
+
+/** The header sentence: every agent's runs, failures, tokens and cost over all time. */
+function allAgentsSentence(agents: AgentStats[], total: number): string {
+  const t = agents.reduce(
+    (t, a) => ({
+      spans: t.spans + a.span_count,
+      invocations: t.invocations + a.invocation_count,
+      failed: t.failed + a.invocation_error_count,
+      tokens: t.tokens + a.total_input_tokens + a.total_output_tokens,
+      cost: t.cost + (a.total_cost_usd ?? 0),
+    }),
+    { spans: 0, invocations: 0, failed: 0, tokens: 0, cost: 0 },
+  )
+  // Conversations are not summed: several agents can share one.
+  const s = agentsTotalsSentence({ agents: total, conversations: 0, ...t }, 'all')
+  return total > agents.length ? `${s} (Figures for the ${agents.length} most recently active.)` : s
 }

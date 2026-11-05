@@ -4,7 +4,14 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { parseRef } from '../../api/refs'
 import type { Any, EvalStatus } from '../../api/types'
-import { ErrorBox, Loading, Section, Spinner } from '../../components/common'
+import { ErrorBox, Loading, Spinner } from '../../components/common'
+import { Dropdown, MenuItem } from '../../components/traces/Menu'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { plural } from '../../lib/summaries'
+import { metricWords } from '../../lib/summaries/evaluate'
+import './evaluate.css'
 import { RefChip } from '../../components/RefChip'
 import { CreateDatasetModal } from '../../components/objects/CreateDatasetModal'
 import { columnsOf } from '../../components/objects/csv'
@@ -114,32 +121,31 @@ export function NewEvaluationPage() {
   const canRun = mode === 'existing' && !!evalRef && modelRefs.length > 0 && !launching && nonRunnable.length === 0
 
   return (
-    <div className="page" style={{ maxWidth: 1100 }}>
-      <div className="breadcrumbs">
-        <Link to={evaluationsUrl(projectId)}>Evaluations</Link>
-        <span>/</span>
-        <span>New</span>
-      </div>
-      <div className="page-header">
-        <div className="col" style={{ gap: 2 }}>
-          <h1>Run an evaluation</h1>
-          <span className="muted small">The server runs each model over every dataset row and scores the outputs. LLM completion models, remote models (a predict URL) and runtime-bound models run on the server, with built-in scorers.</span>
+    <div className="page-frame detail">
+      <PageHeader
+        variant="detail"
+        back={{ to: evaluationsUrl(projectId), label: 'Evaluations' }}
+        title="New evaluation"
+        help="evaluations.md#evaluations"
+        helpTopic="Evaluations"
+        sentence={<Sentence size="detail" parts={[newEvalSentence(details.data ?? null, evalRef, modelRefs.length)]} />}
+        meta="LLM completion models, remote models (a predict URL) and runtime models run on the server, with the built-in scorers."
+      />
+      <div className="ev-steps">
+      <section className="ev-section" aria-labelledby="ne-1">
+        <div className="ev-step-head">
+          <h2 className="ev-step-h" id="ne-1">
+            1. The evaluation
+          </h2>
+          <Segmented
+            label="Evaluation"
+            size="sm"
+            options={evals.data?.length ? [{ id: 'existing', label: 'Use one' }, { id: 'new', label: 'Create one' }] : [{ id: 'new', label: 'Create one' }]}
+            value={mode}
+            onChange={setMode}
+          />
         </div>
-      </div>
-
-      <Section
-        title="1 · Evaluation"
-        actions={
-          <div className="seg">
-            <button className={mode === 'existing' ? 'on' : ''} onClick={() => setMode('existing')} disabled={!evals.data?.length}>
-              Existing
-            </button>
-            <button className={mode === 'new' ? 'on' : ''} onClick={() => setMode('new')}>
-              Create new
-            </button>
-          </div>
-        }
-      >
+        <div className="ev-panel">
         <ErrorBox error={evals.error} />
         {mode === 'existing' ? (
           evals.isLoading ? (
@@ -156,36 +162,31 @@ export function NewEvaluationPage() {
               <ErrorBox error={details.error} />
               {details.isLoading && <Spinner label="Loading evaluation…" />}
               {details.data && (
-                <div className="kv">
-                  <div className="k">dataset</div>
-                  <div className="v row wrap">
+                <dl className="ev-facts">
+                  <dt>Dataset</dt>
+                  <dd>
                     {typeof details.data.ev.dataset === 'string' ? <RefChip refStr={details.data.ev.dataset} /> : '—'}
-                    {details.data.rowCount != null && <span className="muted small">{details.data.rowCount} rows</span>}
-                  </div>
-                  <div className="k">columns</div>
-                  <div className="v chips">
-                    {details.data.columns.map((c) => (
-                      <span key={c} className="chip mono">
-                        {c}
+                    {details.data.rowCount != null && <span className="ev-note"> {details.data.rowCount} rows</span>}
+                  </dd>
+                  <dt>Columns</dt>
+                  <dd className="mono">{details.data.columns.join(', ') || '—'}</dd>
+                  <dt>Scorers</dt>
+                  <dd>
+                    {details.data.scorers.map((sc, i) => (
+                      <span key={sc.ref}>
+                        {i > 0 && ', '}
+                        <RefChip refStr={sc.ref} />
+                        {!sc.runnable && <span className="ev-error"> (the server cannot run it)</span>}
                       </span>
                     ))}
-                  </div>
-                  <div className="k">scorers</div>
-                  <div className="v chips">
-                    {details.data.scorers.map((s) => (
-                      <span key={s.ref} className="row" style={{ gap: 4 }}>
-                        <RefChip refStr={s.ref} />
-                        {!s.runnable && <span className="badge error">not server-runnable</span>}
-                      </span>
-                    ))}
-                    {details.data.scorers.length === 0 && <span className="faint small">none</span>}
-                  </div>
-                  <div className="k">trials</div>
-                  <div className="v">{details.data.ev.trials ?? 1}</div>
-                </div>
+                    {details.data.scorers.length === 0 && 'none: only latency and tokens are measured'}
+                  </dd>
+                  <dt>Trials</dt>
+                  <dd>{details.data.ev.trials ?? 1} per example</dd>
+                </dl>
               )}
               {nonRunnable.length > 0 && (
-                <div className="error-box">
+                <div className="ev-note ev-error">
                   This evaluation uses scorers the server cannot run ({nonRunnable.map((s) => parseRef(s.ref)?.name).join(', ')}). Create a new evaluation with built-in
                   scorers, or run it from the SDK.
                 </div>
@@ -201,74 +202,74 @@ export function NewEvaluationPage() {
             }}
           />
         )}
-      </Section>
+        </div>
+      </section>
 
-      <Section
-        title={`2 · Models${modelRefs.length ? ` (${modelRefs.length} selected)` : ''}`}
-        actions={
-          <div className="row" style={{ gap: 6 }}>
-            <button className="btn sm" onClick={() => setCreatingModel(true)} title="A chat model with a prompt template">
-              + LLM model
-            </button>
-            <button className="btn sm" onClick={() => setCreatingModel('remote')} title="Your own HTTP endpoint that predicts one row at a time">
-              + Remote model
-            </button>
-            <button className="btn sm" onClick={() => setCreatingModel('runtime')} title="A model served by a registered custom runtime">
-              + Runtime model
-            </button>
-          </div>
-        }
-      >
+      <section className="ev-section" aria-labelledby="ne-2">
+        <div className="ev-step-head">
+          <h2 className="ev-step-h" id="ne-2">
+            2. The models{modelRefs.length ? <span className="glist-count"> {modelRefs.length} chosen</span> : null}
+          </h2>
+          <Dropdown label="New model" className="qbtn" align="right">
+            {(close) => (
+              <>
+                <MenuItem onClick={() => (setCreatingModel(true), close())}>An LLM model with a prompt template…</MenuItem>
+                <MenuItem onClick={() => (setCreatingModel('remote'), close())}>A remote model (your HTTP endpoint)…</MenuItem>
+                <MenuItem onClick={() => (setCreatingModel('runtime'), close())}>A model served by a custom runtime…</MenuItem>
+              </>
+            )}
+          </Dropdown>
+        </div>
+        <div className="ev-panel">
         <ErrorBox error={models.error} />
         {models.isLoading ? (
           <Loading />
         ) : models.error ? null : modelOptions.length === 0 ? (
-          <div className="faint">
+          <p className="ev-note">
             No server-runnable models yet.{' '}
-            <button className="btn sm" onClick={() => setCreatingModel(true)}>
+            <button type="button" className="linkish" onClick={() => setCreatingModel(true)}>
               Create one
             </button>
-          </div>
+          </p>
         ) : (
-          <div className="pick-list" style={{ maxHeight: 320 }}>
+          <ul className="ev-pick-list" aria-label="Models">
             {modelOptions.map((m) => {
               const vars = m.value ? templateVars(...(m.value.default_params?.messages_template ?? []).map((x: Any) => (typeof x.content === 'string' ? x.content : ''))) : []
               const missing = details.data?.columns.length ? vars.filter((v) => !details.data!.columns.includes(v.split('.')[0])) : []
               return (
-                <label key={m.ref}>
-                  <input type="checkbox" checked={modelRefs.includes(m.ref)} onChange={() => setModelRefs(modelRefs.includes(m.ref) ? modelRefs.filter((x) => x !== m.ref) : [...modelRefs, m.ref])} />
-                  <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
-                    <span className="row" style={{ gap: 6, minWidth: 0 }}>
-                      <span className="mono truncate">{m.name}</span>
-                      {m.kind && m.kind !== 'llm' && <span className="badge">{m.kind}</span>}
+                <li key={m.ref}>
+                  <label>
+                    <input type="checkbox" checked={modelRefs.includes(m.ref)} onChange={() => setModelRefs(modelRefs.includes(m.ref) ? modelRefs.filter((x) => x !== m.ref) : [...modelRefs, m.ref])} />
+                    <span className="ev-pick-text">
+                      <span className="name">
+                        {m.name}
+                        {m.kind && m.kind !== 'llm' && <span className="ev-note"> · {m.kind} model</span>}
+                      </span>
+                      <span className="sub">{m.sub}</span>
+                      {missing.length > 0 && <span className="sub ev-warn">Its template uses {missing.map((v) => `{${v}}`).join(' ')}, which the dataset does not have.</span>}
                     </span>
-                    <span className="hint truncate">{m.sub}</span>
-                  </span>
-                  {missing.length > 0 && (
-                    <span className="badge warn" title="These template variables are not dataset columns">
-                      missing {missing.map((v) => `{${v}}`).join(' ')}
-                    </span>
-                  )}
-                </label>
+                  </label>
+                </li>
               )
             })}
-          </div>
+          </ul>
         )}
-      </Section>
-
-      <Section title="3 · Run">
-        <div className="col" style={{ gap: 12 }}>
-          <div className="row wrap">
-            <button className="btn primary" disabled={!canRun} onClick={run}>
-              {launching ? 'Starting…' : `▷ Run ${modelRefs.length > 1 ? `${modelRefs.length} evaluations` : 'evaluation'}`}
-            </button>
-            {!evalRef && <span className="hint">Choose or create an evaluation.</span>}
-            {evalRef && modelRefs.length === 0 && <span className="hint">Select at least one model.</span>}
-          </div>
-          {launched.length > 0 && <RunProgress projectId={projectId} launched={launched} />}
         </div>
-      </Section>
-
+      </section>
+      <section className="ev-section" aria-labelledby="ne-3">
+        <h2 className="ev-step-h" id="ne-3">
+          3. Run
+        </h2>
+        <div className="pg2-actions">
+          <button type="button" className="qbtn primary" disabled={!canRun} onClick={run}>
+            {launching ? 'Starting…' : `Run ${modelRefs.length > 1 ? `${modelRefs.length} evaluations` : 'the evaluation'}`}
+          </button>
+          {!evalRef && <span className="ev-note">Choose or create an evaluation.</span>}
+          {evalRef && modelRefs.length === 0 && <span className="ev-note">Choose at least one model.</span>}
+        </div>
+        {launched.length > 0 && <RunProgress projectId={projectId} launched={launched} />}
+      </section>
+      </div>
       {(creatingModel === 'remote' || creatingModel === 'runtime') &&
         (() => {
           const Form = creatingModel === 'remote' ? RemoteModelModal : RuntimeModelModal
@@ -333,19 +334,20 @@ function NewEvaluationForm({ projectId, onCreated }: { projectId: string; onCrea
               </option>
             ))}
           </select>
-          <button className="btn sm" onClick={() => setUploading(true)}>
-            + New dataset
+          <button type="button" className="qbtn" onClick={() => setUploading(true)}>
+            New dataset
           </button>
         </div>
       </label>
-      <div className="field" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+      <div className="field">
         Scorers
         <ScorerPicker projectId={projectId} value={scorers} onChange={setScorers} />
       </div>
       <ErrorBox error={err} />
       <div className="row">
         <button
-          className="btn primary"
+          type="button"
+          className="qbtn"
           disabled={!name || !dsRef || busy}
           onClick={async () => {
             setBusy(true)
@@ -371,7 +373,7 @@ function NewEvaluationForm({ projectId, onCreated }: { projectId: string; onCrea
         >
           {busy ? 'Publishing…' : 'Create evaluation'}
         </button>
-        {scorers.length === 0 && <span className="hint">Without scorers only latency and tokens are measured.</span>}
+        {scorers.length === 0 && <span className="ev-note">Without scorers only latency and tokens are measured.</span>}
       </div>
       {uploading && (
         <CreateDatasetModal
@@ -405,49 +407,53 @@ function RunProgress({ projectId, launched }: { projectId: string; launched: Lau
         const pct = s && s.total_rows ? Math.round((s.completed_rows / s.total_rows) * 100) : s?.code === 'complete' ? 100 : 0
         const p = parseRef(l.modelRef)
         return (
-          <div key={l.modelRef} className="col" style={{ gap: 4 }}>
-            <div className="row small">
-              <Link to={objectUrl(projectId, p?.name ?? '', p?.digest ?? 'latest')} className="mono">
-                {p?.name ?? l.modelRef}
-              </Link>
+          <div key={l.modelRef} className="ev-progress-row">
+            <div className="ev-progress-top">
+              <Link to={objectUrl(projectId, p?.name ?? '', p?.digest ?? 'latest')}>{p?.name ?? l.modelRef}</Link>
               <span className="grow" />
               {l.error ? (
-                <span className="badge error">failed to start</span>
+                <span className="ev-error">Did not start</span>
               ) : !s ? (
                 <Spinner />
               ) : (
-                <>
-                  <span className="muted">
-                    {s.completed_rows}/{s.total_rows} rows
-                  </span>
-                  <span className={`badge ${s.code === 'complete' ? 'success' : s.code === 'failed' ? 'error' : s.code === 'running' ? 'running' : ''}`}>{s.code}</span>
-                </>
+                <span className={s.code === 'failed' ? 'ev-error' : 'ev-note'}>
+                  {s.completed_rows} of {s.total_rows} examples · {s.code === 'complete' ? 'finished' : s.code === 'failed' ? 'failed' : s.code === 'running' ? 'running' : s.code}
+                </span>
               )}
-              {l.callId && <Link to={spanUrl(projectId, l.callId)}>trace →</Link>}
+              {l.callId && <Link to={spanUrl(projectId, l.callId)}>Raw run</Link>}
             </div>
-            <div className={`progress ${s?.code === 'complete' ? 'success' : s?.code === 'failed' || l.error ? 'error' : ''}`}>
-              <span style={{ width: `${l.error ? 100 : pct}%` }} />
+            <div className="ev-meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={l.error ? 0 : pct} aria-label={`${p?.name ?? 'Model'} progress`}>
+              <span style={{ width: `${l.error ? 0 : pct}%` }} />
             </div>
-            {(l.error || s?.error) && <div className="small" style={{ color: 'var(--error)' }}>{l.error ?? s?.error}</div>}
+            {(l.error || s?.error) && <div className="ev-note ev-error">{l.error ?? s?.error}</div>}
           </div>
         )
       })}
-      <div className="row">
+      <div className="pg2-actions">
         {done ? (
           ok.length > 0 ? (
-            <Link className="btn primary" to={compareEvaluationsUrl(projectId, ok)}>
-              {ok.length > 1 ? 'Compare results →' : 'View results →'}
+            <Link className="qbtn" to={compareEvaluationsUrl(projectId, ok)}>
+              {ok.length > 1 ? 'Compare the results' : 'See the results'}
             </Link>
           ) : (
-            <span className="muted small">No evaluation completed.</span>
+            <span className="ev-note">No evaluation finished.</span>
           )
         ) : (
-          <span className="muted small">Running… you can leave this page; runs continue on the server.</span>
+          <span className="ev-note">Running. You can leave this page; runs go on on the server.</span>
         )}
-        <Link className="btn ghost" to={evaluationsUrl(projectId)}>
-          All evaluations
-        </Link>
+        <Link to={evaluationsUrl(projectId)}>All evaluations</Link>
       </div>
     </div>
   )
+}
+
+/** "support-eval runs 10 examples through each model you choose, scored by exact and similarity." */
+function newEvalSentence(d: { ev: Any; rowCount: number | null; scorers: { ref: string }[] } | null, evalRef: string | null, models: number): string {
+  if (!evalRef || !d) return 'Choose an evaluation (a dataset and its scorers), then the models to run on it.'
+  const name = parseRef(evalRef)?.name ?? 'This evaluation'
+  const rows = d.rowCount != null ? plural(d.rowCount, 'example') : 'every example'
+  const sc = d.scorers.map((x) => metricWords(parseRef(x.ref)?.name ?? x.ref))
+  const scored = sc.length ? `, scored by ${sc.length > 2 ? `${sc.slice(0, -1).join(', ')}, and ${sc[sc.length - 1]}` : sc.join(' and ')}` : ''
+  const who = models === 0 ? 'each model you choose' : models === 1 ? 'the model you chose' : `the ${models} models you chose`
+  return `${name} runs ${rows} through ${who}${scored}.`
 }
