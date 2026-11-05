@@ -14,9 +14,10 @@ import { agentUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { Snippets } from '../../components/ui/EmptyState'
-import { ActionBadge, AgentChip, Bar, Callout, CapNote, CopyId, Metric, Panel, SeverityText, TableScroll, Tip } from '../../components/ui/bits'
+import { ActionBadge, AgentChip, Bar, Callout, CapNote, CopyId, Panel, SeverityText, TableScroll, Tip } from '../../components/ui/bits'
+import { Metric } from '../_legacy/Metric'
 import { Icon } from '../../components/ui/Icons'
-import { docsUrl, usePageHelp } from '../../components/ui/PageHelp'
+import { HelpLink, helpUrl } from '../../components/ui/PageHeader'
 import { notify } from '../../components/ui/Toasts'
 import { bucketize, StackedBars } from '../../components/ui/StackedBars'
 import { ReplayResult } from '../sessions/SessionPage'
@@ -107,16 +108,6 @@ export function SecurityPage() {
   const pid = useProjectId()
   const [state, setState] = useFilters()
   const [params, setParams] = useSearchParams()
-  const help = usePageHelp(
-    'security',
-    'Security',
-    <>
-      AgentShield checks every tool call your agents make against its rules and answers <strong>allow</strong>, <strong>log</strong>, <strong>needs approval</strong> or{' '}
-      <strong>block</strong>. Weft stores those verdicts as <strong>detections</strong> on the exact tool call. This page shows trends, the rules that fire most, agents that trip
-      them, signs of approval fatigue, and lets you replay recorded tool calls when the rules change.
-    </>,
-    'security.md',
-  )
   const status = useQuery({ queryKey: ['v1', pid, 'shield-status'], queryFn: () => v1.shieldStatus(pid), staleTime: 60_000 })
   const ever = useQuery({ queryKey: ['v1', pid, 'detections', 'ever'], queryFn: () => v1.detectionStats(pid, { source: 'engine' }) })
   const noTime = detectionParams({ ...state, time: 'all' }, 'all')
@@ -173,9 +164,8 @@ export function SecurityPage() {
           <h1>Security</h1>
           <p className="page-sub">What AgentShield blocked, flagged or asked approval for, and why.</p>
         </div>
-        {help.button}
+        <HelpLink doc="security.md" topic="Security" />
       </header>
-      {help.panel}
       {ever.isLoading ? (
         <Loading />
       ) : !connected ? (
@@ -551,7 +541,7 @@ function ReplayPanel({ pid, enabled, state, time, scope }: { pid: string; enable
         <Callout tone="info" title="Replay is not configured on this server">
           Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> to replay in-process with AgentShield's rules, or <span className="mono">--shield-url</span>{' '}
           to use a running engine.{' '}
-          <Link to={docsUrl('security.md#replay-recorded-tool-calls-after-a-rule-change')}>How replay works</Link>
+          <Link to={helpUrl('security.md#replay-recorded-tool-calls-after-a-rule-change')}>How replay works</Link>
         </Callout>
       )}
       {jobs.data && jobs.data.items.length > 0 && (
@@ -614,7 +604,7 @@ function SetupGuide({ pid, replay }: { pid: string; replay: boolean }) {
       </ol>
       <p className="small muted">
         Replay of recorded tool calls is {replay ? <strong>available on this server</strong> : 'off on this server (start Weft with --shield-rules-dir to turn it on)'}.{' '}
-        <Link to={docsUrl('security.md#connect-agentshield')}>Full guide</Link>
+        <Link to={helpUrl('security.md#connect-agentshield')}>Full guide</Link>
       </p>
     </section>
   )

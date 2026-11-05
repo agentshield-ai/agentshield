@@ -7,23 +7,15 @@ import { useProjectId } from '../../hooks/useProject'
 import { flaggedOf, fmtCost, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentAnalyticsUrl, agentsUrlFor, agentUrl, sessionsUrl, teamUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
-import { AgentChip, AgentDot, Bar, Crumbs, humanScorer, Metric, Panel, ScorePill, TableScroll } from '../../components/ui/bits'
-import { usePageHelp } from '../../components/ui/PageHelp'
+import { AgentChip, AgentDot, Bar, Crumbs, humanScorer, Panel, ScorePill, TableScroll } from '../../components/ui/bits'
+import { Metric } from '../_legacy/Metric'
+import { HelpLink } from '../../components/ui/PageHeader'
 import { SessionList } from '../../components/sessions/SessionList'
 import { filterQueryString } from '../../lib/filters'
 
 export function AgentDetailPage() {
   const pid = useProjectId()
   const { agentName = '' } = useParams()
-  const help = usePageHelp(
-    'agent',
-    'Agent',
-    <>
-      One agent across every session: how often it runs and fails, who delegates to it and whom it delegates to, which tools it calls, how often AgentShield flags them, and how its
-      work scores.
-    </>,
-    'agents.md#look-at-one-agent',
-  )
   const a = useQuery({ queryKey: ['v1', pid, 'agent', agentName], queryFn: () => v1.agent(pid, agentName) })
   const sessions = useQuery({ queryKey: ['v1', pid, 'sessions', { agent: agentName }], queryFn: () => v1.sessions(pid, { agent: agentName, limit: 10 }) })
   if (a.isLoading) return <Loading />
@@ -58,9 +50,8 @@ export function AgentDetailPage() {
         <Link className="btn ghost sm" to={agentAnalyticsUrl(pid, agentName)} title="Charts, spans, signals and agent evaluations for this agent">
           Analytics and spans
         </Link>
-        {help.button}
+        <HelpLink doc="agents.md#look-at-one-agent" topic="Agent" />
       </header>
-      {help.panel}
       <div className="metrics">
         <Metric label="Sessions" value={fmtNumber(d.session_count)} tip="Sessions in which this agent ran at least once." />
         <Metric

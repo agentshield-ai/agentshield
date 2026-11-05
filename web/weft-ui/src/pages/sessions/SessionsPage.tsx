@@ -1,38 +1,35 @@
-// Sessions, the project home (DESIGN.md §7.1 rule 1): what happened
-// recently, and what needs attention.
+// Sessions, the project home (DESIGN.md §7, §7.1 rule 1, §7.2): one
+// sentence answering "what happened, and what needs a look?", each clause a
+// link to the sessions it counts, then the grouped lists "Needs a look" and
+// "Finished". The time range, search and filters live in the URL (§7.1 rule
+// 5); the filter chips sit behind the "Filter" button.
 import { useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { v1, type SessionSummary } from '../../api/v1'
+import { v1, type Detection, type SessionSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
-import { attentionCards, type AttentionCard } from '../../lib/attention'
-import { filterQueryString, isEmptyFilter, sessionsParams, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
-import { sessionsUrl } from '../../lib/urls'
+import { filterQueryString, isEmptyFilter, removeKey, sessionsParams, type FilterState, type TimeRange } from '../../lib/filters'
+import { medianCost, sessionsSentence, type SummaryPart } from '../../lib/summaries'
+import { sessionsUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox } from '../../components/common'
-import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
+import { FilterBar, FilterButton, FilterSearchField, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { GuidedEmpty, SendTestSession } from '../../components/ui/EmptyState'
-import { Icon } from '../../components/ui/Icons'
-import { usePageHelp } from '../../components/ui/PageHelp'
-import { CapNote, Tip } from '../../components/ui/bits'
-import { SessionList, SessionListSkeleton } from '../../components/sessions/SessionList'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { Segmented } from '../../components/ui/Segmented'
+import { Sentence, type SentencePart } from '../../components/ui/Sentence'
+import { CapNote } from '../../components/ui/bits'
+import { SessionGroups, SessionListSkeleton, type ListContext } from '../../components/sessions/SessionList'
 
 const DEFAULT_TIME: TimeRange = '24h'
 const PAGE = 100
 /** The most sessions the list shows (the API's largest page). */
 const MAX_LIST = 1000
 
-/** Cards shown (as "…") until the server's counts arrive. */
-const PLACEHOLDER_CARDS = attentionCards({
-  items: [],
-  sessions: 0,
-  blocked: 0,
-  approval_heavy: 0,
-  lowest_score: null,
-  cost_spike_threshold: null,
-  approval_heavy_threshold: 3,
-  low_score_threshold: 0.5,
-  cost_spike_factor: 3,
-})
+const RANGES: { id: TimeRange; label: string }[] = [
+  { id: '24h', label: '24 hours' },
+  { id: '7d', label: '7 days' },
+  { id: '30d', label: '30 days' },
+]
 
 const SORTS: { id: string; label: string; field: string }[] = [
   { id: 'recent', label: 'Most recent', field: '-last_activity' },
@@ -48,15 +45,7 @@ export function SessionsPage() {
   const [params, setParams] = useSearchParams()
   const sort = SORTS.find((s) => s.id === params.get('sort')) ?? SORTS[0]
   const [limit, setLimit] = useState(PAGE)
-  const help = usePageHelp(
-    'sessions',
-    'Sessions',
-    <>
-      A <strong>session</strong> is one conversation with your agents, from the user's first request to the final answer, including every hand-off between agents, their reasoning
-      and their tool calls. The cards at the top count the sessions that need a look; click one to list them. Open a session to see exactly what happened, step by step.
-    </>,
-    'sessions.md',
-  )
+  const [filterOpen, setFilterOpen] = useState(false)
 
   const serverNoTime = sessionsParams({ ...state, time: 'all', from: undefined, to: undefined }, 'all')
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.sessions(pid, { ...sessionsParams({ ...state, time: r }, r), limit: 1 })).total_count, [
@@ -74,7 +63,7 @@ export function SessionsPage() {
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   })
-  // Attention cards are counted on the server over every session in the range (with the other filters).
+  // The sentence's counts: the server counts them over every session in the range (with the other filters).
   const attention = useQuery({
     queryKey: ['v1', pid, 'sessions', 'attention', server],
     queryFn: () => v1.sessionsAttention(pid, server),
@@ -86,7 +75,7 @@ export function SessionsPage() {
   const pool = useQuery({
     queryKey: ['v1', pid, 'sessions', 'options', server],
     queryFn: () => v1.sessions(pid, { ...server, limit: 200 }),
-    enabled: widen.ready,
+    enabled: widen.ready && filterOpen,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   })
@@ -95,144 +84,156 @@ export function SessionsPage() {
     queryFn: () => v1.sessions(pid, { limit: 1 }),
     staleTime: 10_000,
   })
-  const filterOptions = useMemo(() => optionsFrom(pool.data?.items ?? []), [pool.data])
-  const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000 })
+  const teams = useQuery({ queryKey: ['v1', pid, 'teams', 'options'], queryFn: () => v1.teams(pid, { limit: 200 }), staleTime: 60_000, enabled: filterOpen })
 
   const total = list.data?.total_count ?? 0
-  const rows = list.data?.items ?? []
-  const cards = attention.data ? attentionCards(attention.data) : PLACEHOLDER_CARDS
+  const rows = useMemo(() => list.data?.items ?? [], [list.data])
+  // The rules behind blocks and approval requests, for the rows' summaries.
+  const flaggedIds = useMemo(() => rows.filter((s) => (s.detection_count?.block ?? 0) + (s.detection_count?.require_approval ?? 0) > 0).map((s) => s.session_id), [rows])
+  const dets = useQuery({
+    queryKey: ['v1', pid, 'detections', 'rows', flaggedIds],
+    queryFn: () => v1.detections(pid, { session_ids: flaggedIds, action: 'block,require_approval', source: 'engine', limit: 1000 }),
+    enabled: flaggedIds.length > 0,
+    staleTime: 15_000,
+  })
+  const filterOptions = useMemo(() => optionsFrom(pool.data?.items ?? []), [pool.data])
   const projectEmpty = anyData.data?.total_count === 0
-  const filtered = !isEmptyFilter(state, DEFAULT_TIME)
+  const filtered = !isEmptyFilter({ ...state, time: undefined, from: undefined, to: undefined }, DEFAULT_TIME)
+  const complete = !!list.data && rows.length === total
 
-  return (
-    <div className="page wide">
-      <header className="page-head">
-        <div className="grow">
-          <h1>Sessions</h1>
-          <p className="page-sub">What happened recently, and what needs your attention.</p>
-        </div>
-        {help.button}
-      </header>
-      {help.panel}
-      {projectEmpty ? (
+  const ctx: ListContext = useMemo(() => {
+    const byId = new Map<string, Detection[]>()
+    for (const d of dets.data?.items ?? []) byId.set(d.session_id, [...(byId.get(d.session_id) ?? []), d])
+    return {
+      costThreshold: attention.data?.cost_spike_threshold ?? null,
+      costFactor: attention.data?.cost_spike_factor,
+      lowScore: attention.data?.low_score_threshold,
+      approvalHeavy: attention.data?.approval_heavy_threshold,
+      medianCost: complete ? medianCost(rows) : null,
+      detections: byId,
+    }
+  }, [attention.data, dets.data, complete, rows])
+
+  const sentence: SentencePart[] | null = attention.data && list.data
+    ? sessionsSentence({ attention: attention.data, time, filtered, rows, total }).map((p) => toSentencePart(p, pid, state))
+    : null
+
+  const header = (
+    <PageHeader
+      title="Sessions"
+      help="sessions.md"
+      controls={
+        projectEmpty ? undefined : (
+          <>
+            <Segmented
+              label="Time range"
+              options={RANGES}
+              value={(RANGES.some((r) => r.id === time) ? time : null) as TimeRange | null}
+              onChange={(t) => setState({ ...removeKey(state, 'time'), time: t === DEFAULT_TIME && !widen.widened ? undefined : t })}
+            />
+            <FilterSearchField label="Search sessions" />
+            <FilterButton open={filterOpen} onToggle={() => setFilterOpen((o) => !o)} defaultTime={DEFAULT_TIME} />
+          </>
+        )
+      }
+      sentence={
+        projectEmpty ? undefined : sentence ? (
+          <Sentence parts={sentence} />
+        ) : (
+          <p className="sentence s-outcome sk-sentence" aria-busy="true">
+            <span className="sr-only">Counting sessions…</span>
+            <span className="sk sk-line" aria-hidden />
+          </p>
+        )
+      }
+    />
+  )
+
+  if (projectEmpty)
+    return (
+      <div className="page-frame">
+        {header}
         <GuidedEmpty projectId={pid} title="No sessions yet">
           Sessions appear here as soon as your agents send traces to <span className="mono">{pid}</span>: each conversation, with its agents, hand-offs, reasoning, tool calls and
           security verdicts.
         </GuidedEmpty>
+      </div>
+    )
+
+  return (
+    <div className="page-frame">
+      {header}
+      <FilterBar
+        page="sessions"
+        search="external"
+        timePicker="none"
+        collapsible
+        open={filterOpen}
+        defaultTime={DEFAULT_TIME}
+        effectiveTime={time}
+        options={{ ...filterOptions, teams: (teams.data?.items ?? []).filter((t) => !t.auto).map((t) => ({ id: t.team_id, name: t.name })) }}
+        extra={
+          <label className="sort-pick">
+            <span className="sr-only">Sort</span>
+            <select
+              className="input"
+              value={sort.id}
+              onChange={(e) => {
+                const n = new URLSearchParams(params)
+                if (e.target.value === 'recent') n.delete('sort')
+                else n.set('sort', e.target.value)
+                setParams(n, { replace: true })
+              }}
+            >
+              {SORTS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  Sort: {s.label.toLowerCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+        }
+      />
+      {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
+      <ErrorBox error={list.error ?? attention.error} />
+      {list.isLoading || !widen.ready ? (
+        <SessionListSkeleton />
+      ) : rows.length === 0 ? (
+        <div className="quiet-empty">
+          <p>No sessions match these filters.</p>
+          <p className="quiet-note">Try a longer time range, or remove a filter.</p>
+          <button type="button" className="qbtn" onClick={() => setState({})}>
+            Clear filters
+          </button>
+        </div>
       ) : (
         <>
-          <FilterBar
-            page="sessions"
-            defaultTime={DEFAULT_TIME}
-            effectiveTime={time}
-            options={{ ...filterOptions, teams: (teams.data?.items ?? []).filter((t) => !t.auto).map((t) => ({ id: t.team_id, name: t.name })) }}
-            placeholder="Search messages, reasoning and tool calls…  or try has:block agent:researcher"
-          />
-          {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => setState({ ...state, time: DEFAULT_TIME })} />}
-          <section aria-labelledby="attention-h">
-            <h2 id="attention-h" className="section-title">
-              Needs attention <span className="faint small">in the {TIME_LABEL[time].toLowerCase()}</span>
-            </h2>
-            <div className="attn-grid">
-              {cards.map((c) => (
-                <AttentionCardView key={c.id} card={c} pid={pid} base={state} loading={attention.isLoading} />
-              ))}
-            </div>
-          </section>
-          <section aria-labelledby="list-h" className="col" style={{ gap: 10 }}>
-            <div className="row wrap" style={{ justifyContent: 'space-between' }}>
-              <h2 id="list-h" className="section-title">
-                {filtered ? 'Matching sessions' : 'Recent sessions'}{' '}
-                <span className="faint small">{list.data ? `${total} session${total === 1 ? '' : 's'}` : ''}</span>
-              </h2>
-              <label className="row small muted">
-                Sort
-                <select
-                  className="input"
-                  value={sort.id}
-                  onChange={(e) => {
-                    const n = new URLSearchParams(params)
-                    if (e.target.value === 'recent') n.delete('sort')
-                    else n.set('sort', e.target.value)
-                    setParams(n, { replace: true })
-                  }}
-                >
-                  {SORTS.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <ErrorBox error={list.error ?? attention.error} />
-            {list.isLoading || !widen.ready ? (
-              <SessionListSkeleton />
-            ) : rows.length === 0 ? (
-              <div className="empty-inline">
-                <Icon name="filter" size={18} />
-                <div className="grow">
-                  <strong>No sessions match these filters.</strong>
-                  <div className="muted small">Try a longer time range, or remove a filter.</div>
-                </div>
-                <button className="btn sm" onClick={() => setState({})}>
-                  Clear filters
-                </button>
-              </div>
-            ) : (
-              <>
-                <SessionList projectId={pid} sessions={rows} />
-                {total > rows.length && limit < MAX_LIST ? (
-                  <button className="btn" onClick={() => setLimit((l) => Math.min(MAX_LIST, l + PAGE))} style={{ alignSelf: 'center' }}>
-                    Show more ({total - rows.length} more)
-                  </button>
-                ) : (
-                  <CapNote shown={rows.length} total={total} what="sessions" why="narrow the filters or the time range to see the rest" />
-                )}
-              </>
-            )}
-          </section>
-          <footer className="row wrap muted small" style={{ gap: 12 }}>
-            <span>Want to see how a session looks end to end?</span>
-            <SendTestSession projectId={pid} className="btn sm" />
-          </footer>
+          <SessionGroups projectId={pid} sessions={rows} ctx={ctx} />
+          {total > rows.length && limit < MAX_LIST ? (
+            <button type="button" className="qbtn" onClick={() => setLimit((l) => Math.min(MAX_LIST, l + PAGE))} style={{ alignSelf: 'center' }}>
+              Show {Math.min(PAGE, total - rows.length)} more of {total - rows.length}
+            </button>
+          ) : (
+            <CapNote shown={rows.length} total={total} what="sessions" why="narrow the filters or the time range to see the rest" />
+          )}
         </>
       )}
+      <p className="quiet-note sessions-foot">
+        Want to see how a session looks end to end? <SendTestSession projectId={pid} className="linkish" />
+      </p>
     </div>
   )
 }
 
-function AttentionCardView({ card, pid, base, loading }: { card: AttentionCard; pid: string; base: FilterState; loading: boolean }) {
-  const quiet = card.count === 0
-  const to = sessionsUrl(pid, filterQueryString({ ...base, ...card.filter }))
-  const head = (
-    <div className="attn-top">
-      <span className="attn-title">{card.title}</span>
-      <Tip text={card.explain} label={`How “${card.title}” is counted`} />
-    </div>
-  )
-  const figures = (
-    <>
-      <div className="attn-count">{loading ? '…' : card.count}</div>
-      <div className="attn-detail">{card.detail}</div>
-    </>
-  )
-  return (
-    <div className={`attn-card tone-${card.tone} ${quiet ? 'quiet' : ''}`}>
-      {head}
-      {quiet || !Object.keys(card.filter).length ? (
-        <div className="attn-body">{figures}</div>
-      ) : (
-        <Link to={to} className="attn-link">
-          <span className="sr-only">{card.title}: </span>
-          {figures}
-          <span className="attn-cta">
-            Show {card.count === 1 ? 'it' : 'them'} <Icon name="chevron" size={12} />
-          </span>
-        </Link>
-      )}
-    </div>
-  )
+/** A summary part as a sentence part: a clause links to its one session, or to the list it counts. */
+function toSentencePart(p: SummaryPart, pid: string, base: FilterState): SentencePart {
+  if (typeof p === 'string') return p
+  if (p.session) return { text: p.text, to: sessionUrl(pid, p.session.id, { step: p.session.step, tab: p.session.tab }), title: 'Open this session' }
+  return {
+    text: p.text,
+    to: sessionsUrl(pid, filterQueryString({ ...base, ...p.filter })),
+    title: p.exact ? undefined : 'Lists these sessions together with the blocked ones',
+  }
 }
 
 export function optionsFrom(sessions: SessionSummary[]) {

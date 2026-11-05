@@ -12,6 +12,7 @@ import { usePublish } from '../../components/objects/ObjectForms'
 import { errMsg, useObjects } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtRelative } from '../../lib/format'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 export function AutomationsPage() {
   const projectId = useProjectId()
@@ -34,6 +35,7 @@ export function AutomationsPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Automations</h1>
+          <HelpLink doc="project.md#automations" topic="Automations" />
           <span className="muted small">Send a Slack message or a webhook when a score crosses a threshold, the error rate climbs, or feedback arrives.</span>
         </div>
         <span className="spacer" />

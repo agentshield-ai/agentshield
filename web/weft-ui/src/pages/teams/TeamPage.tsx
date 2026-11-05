@@ -10,23 +10,15 @@ import { fmtCost, fmtNumber, fmtRelative } from '../../lib/format'
 import { agentUrl, sessionsUrl, teamsUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { AgentGraphView, HandoffTable } from '../../components/ui/AgentGraphView'
-import { AgentChip, Callout, Crumbs, DetectionBadges, Metric, Panel } from '../../components/ui/bits'
-import { usePageHelp } from '../../components/ui/PageHelp'
+import { AgentChip, Callout, Crumbs, DetectionBadges, Panel } from '../../components/ui/bits'
+import { Metric } from '../_legacy/Metric'
+import { HelpLink } from '../../components/ui/PageHeader'
 import { SessionList } from '../../components/sessions/SessionList'
 import { teamName } from './TeamsPage'
 
 export function TeamPage() {
   const pid = useProjectId()
   const { teamId = '' } = useParams()
-  const help = usePageHelp(
-    'team',
-    'Team',
-    <>
-      How work flows through this team across all its sessions. The graph shows each agent and the hand-offs between them; the hand-off table is sorted with the most failing route
-      first, so problems between agents stand out.
-    </>,
-    'teams.md#find-the-hand-off-that-fails-most',
-  )
   const t = useQuery({ queryKey: ['v1', pid, 'team', teamId], queryFn: () => v1.team(pid, teamId) })
   if (t.isLoading) return <Loading />
   if (t.error)
@@ -52,9 +44,8 @@ export function TeamPage() {
             <span>{d.auto ? '· grouped automatically from the agents in each session' : ''}</span>
           </div>
         </div>
-        {help.button}
+        <HelpLink doc="teams.md#find-the-hand-off-that-fails-most" topic="Team" />
       </header>
-      {help.panel}
       <div className="metrics">
         <Metric label="Sessions" value={fmtNumber(d.session_count)} tip="Sessions this team took part in." />
         <Metric

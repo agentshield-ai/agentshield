@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { NavLink, Link, Outlet, useLocation, useParams } from 'react-router-dom'
 import { UserMenu } from './UserMenu'
 import { Icon, type IconName } from './ui/Icons'
-import { RouteHelp } from './ui/RouteHelp'
 import { ShortcutsHost } from './ui/Shortcuts'
 import { ToastHost } from './ui/Toasts'
 
@@ -80,7 +79,7 @@ function ThemeSwitch() {
   return (
     <button
       type="button"
-      className="btn ghost sm side-btn"
+      className="side-foot-btn"
       onClick={() => {
         const n = order[(order.indexOf(t) + 1) % order.length]
         applyTheme(n)
@@ -93,15 +92,21 @@ function ThemeSwitch() {
   )
 }
 
-export function Logo() {
+/** Weft's mark: a dark rounded square with a W (DESIGN.md §7.2: no colour beyond the accent). */
+export function Logo({ size = 26 }: { size?: number }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="7" fill="var(--accent)" />
-      <path d="M7 10h18M7 16h18M7 22h18M11 6v20M16 6v20M21 6v20" stroke="var(--accent-text)" strokeWidth="2" opacity=".9" />
-    </svg>
+    <span className="weft-mark" aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.54) }}>
+      W
+    </span>
   )
 }
 
+/**
+ * The app shell (DESIGN.md §7.2 rule 2): a light grey sidebar with the
+ * project switcher at the top, plain text items under section labels, and
+ * the theme and keyboard shortcuts at the bottom. Under 900 px the sidebar
+ * becomes a drawer behind a top bar.
+ */
 export function ProjectLayout() {
   const { entity, project } = useParams()
   const [open, setOpen] = useState(false)
@@ -124,30 +129,29 @@ export function ProjectLayout() {
           <Icon name={open ? 'close' : 'menu'} size={18} />
         </button>
         <Link to={`/${entity}/${project}/sessions`} className="brand">
-          <Logo /> Weft
+          <Logo size={22} /> Weft
         </Link>
-        <span className="topbar-project mono small">
-          {entity}/{project}
+        <span className="topbar-project">
+          {project}
         </span>
       </header>
       {open && <div className="nav-scrim" onClick={() => setOpen(false)} aria-hidden />}
       <nav className="sidebar" id="sidebar" aria-label="Main">
-        <Link to="/" className="brand">
-          <Logo /> Weft
-        </Link>
         <Link to="/" className="project-switch" title="Switch project">
-          <span className="faint small">{entity}</span>
-          <span className="project-name-side">{project}</span>
-          <span className="faint small">Switch project</span>
+          <Logo />
+          <span className="project-switch-text">
+            <span className="project-name-side">{project}</span>
+            <span className="project-entity">{entity}</span>
+          </span>
+          <span className="sr-only">: switch project</span>
         </Link>
         {NAV.map((s) => (
-          <div key={s.section} role="group" aria-labelledby={`nav-${s.section}`}>
+          <div key={s.section} className="nav-group" role="group" aria-labelledby={`nav-${s.section}`}>
             <div className="nav-section" id={`nav-${s.section}`}>
               {s.section}
             </div>
             {s.items.map((it) => (
               <NavLink key={it.to} to={`/${entity}/${project}/${it.to}`} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title={it.hint}>
-                <Icon name={it.icon} size={16} />
                 {it.label}
               </NavLink>
             ))}
@@ -155,14 +159,13 @@ export function ProjectLayout() {
         ))}
         <div className="side-foot">
           <ThemeSwitch />
-          <button type="button" className="btn ghost sm side-btn" onClick={() => window.dispatchEvent(new Event('weft:shortcuts'))}>
+          <button type="button" className="side-foot-btn" onClick={() => window.dispatchEvent(new Event('weft:shortcuts'))}>
             <Icon name="keyboard" size={14} /> Keyboard shortcuts <kbd className="kbd">?</kbd>
           </button>
         </div>
         <UserMenu />
       </nav>
       <main className="main" id="main" tabIndex={-1}>
-        <RouteHelp />
         <Outlet />
       </main>
       <ShortcutsHost />

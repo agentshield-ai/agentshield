@@ -1,504 +1,221 @@
-// One session: summary figures, then Timeline, Graph, Reasoning, Security,
-// Scores and Raw spans (DESIGN.md §7). Breadcrumbs show Session › Agent ›
-// Turn › Step for the focused step.
-import { useEffect, useMemo, useState } from 'react'
+// One session (DESIGN.md §7 "Session page", §7.2): the title, one generated
+// sentence giving the outcome, one quiet line of figures, and a segmented
+// control for Story (the session as a conversation, with the inspector),
+// Team (the delegation graph and the same data as tables), Scores and Raw
+// spans. The step responsible for a failure or block is selected and
+// scrolled into view on arrival (§7.1 rule 3); ?step=<key> deep-links any
+// step; j/k move between steps.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import { SCORERS_BY_SCOPE, v1, type Detection, type ReplayJob, type Score } from '../../api/v1'
+import { SCORERS_BY_SCOPE, v1, type Detection, type Score } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
-import { buildTimeline, findStep, oneLine, STEP_LABEL, stepTitle, type BuiltTimeline } from '../../lib/timeline'
-import { agentUrl, spanUrl, sessionsUrl, sessionUrl, teamUrl, traceSpansUrl } from '../../lib/urls'
+import { buildStory, entryFor, moveEntry } from '../../lib/story'
+import { sessionMetaFigures, sessionOutcome, sessionTitle, scorerWords, relativeTime } from '../../lib/summaries'
+import { buildTimeline, currentFocus, oneLine, STEP_LABEL, stepTitle, type BuiltTimeline } from '../../lib/timeline'
+import { agentUrl, sessionsUrl, spanUrl, traceSpansUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { AgentGraphView } from '../../components/ui/AgentGraphView'
-import {
-  ActionBadge,
-  AgentChip,
-  Callout,
-  CopyId,
-  Crumbs,
-  DetectionBadges,
-  humanScorer,
-  Metric,
-  Panel,
-  ScorePill,
-  SeverityText,
-  StatusPill,
-  type Crumb,
-} from '../../components/ui/bits'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { CopyText } from '../../components/ui/Inspector'
+import { PageHeader } from '../../components/ui/PageHeader'
+import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
+import { Sentence } from '../../components/ui/Sentence'
+import { isTyping } from '../../components/ui/Shortcuts'
+import { humanScorer } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
-import { usePageHelp } from '../../components/ui/PageHelp'
 import { notify, undoable } from '../../components/ui/Toasts'
-import { sessionTitle, VerdictsOnlyNote } from '../../components/sessions/SessionList'
-import { DetectionDetails, TimelineView } from '../../components/sessions/TimelineView'
+import { StoryView, useReplay } from '../../components/sessions/TimelineView'
+import './session.css'
 
-type Tab = 'timeline' | 'graph' | 'reasoning' | 'security' | 'scores' | 'raw'
+/** The replay result, shared with the Security page. */
+export { ReplayResult } from '../../components/sessions/TimelineView'
+
+type View = 'story' | 'team' | 'scores' | 'raw'
+const VIEWS: { id: View; label: string; title: string }[] = [
+  { id: 'story', label: 'Story', title: 'What happened, step by step' },
+  { id: 'team', label: 'Team', title: 'Who handed work to whom' },
+  { id: 'scores', label: 'Scores', title: 'Scores and the scorers’ reasons' },
+  { id: 'raw', label: 'Raw spans', title: 'The spans the story is built from' },
+]
+/** Earlier views' URLs: the Timeline, Reasoning and Security tabs are now the Story; the Graph tab is Team. */
+const LEGACY_VIEW: Record<string, View> = { timeline: 'story', reasoning: 'story', security: 'story', graph: 'team' }
 
 export function SessionPage() {
   const pid = useProjectId()
   const { sessionId = '' } = useParams()
   const [params, setParams] = useSearchParams()
-  const tab = (params.get('tab') as Tab) || 'timeline'
+  const rawView = params.get('tab')
+  const view: View = (LEGACY_VIEW[rawView ?? ''] ?? (VIEWS.some((v) => v.id === rawView) ? rawView : 'story')) as View
   const stepParam = params.get('step')
-  const help = usePageHelp(
-    'session',
-    'Session',
-    <>
-      Everything one session did, in order. The <strong>Timeline</strong> shows each agent's reasoning right before the tool call or hand-off it led to, and AgentShield's verdict
-      on that tool call. Indentation shows which agent was in control. Click a step to see its details; use <kbd className="kbd">j</kbd> and <kbd className="kbd">k</kbd> to move.
-    </>,
-    'sessions.md#read-a-session',
-  )
+
+  // Old view names keep working: rewrite the URL once.
+  useEffect(() => {
+    if (!rawView || !(rawView in LEGACY_VIEW)) return
+    const n = new URLSearchParams(params)
+    if (LEGACY_VIEW[rawView] === 'story') n.delete('tab')
+    else n.set('tab', LEGACY_VIEW[rawView])
+    setParams(n, { replace: true })
+  }, [rawView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const summary = useQuery({ queryKey: ['v1', pid, 'session', sessionId], queryFn: () => v1.session(pid, sessionId), refetchInterval: 15_000 })
   const timeline = useQuery({ queryKey: ['v1', pid, 'timeline', sessionId], queryFn: () => v1.timeline(pid, sessionId), refetchInterval: 15_000 })
   const detections = useQuery({ queryKey: ['v1', pid, 'detections', 'session', sessionId], queryFn: () => v1.detections(pid, { session_id: sessionId, limit: 1000 }) })
   const scores = useQuery({ queryKey: ['v1', pid, 'scores', sessionId], queryFn: () => v1.scores(pid, { session_id: sessionId, limit: 500 }) })
+  const replay = useReplay(pid, sessionId)
 
-  const engineDets = useMemo(() => (detections.data?.items ?? []).filter((d) => d.source === 'engine'), [detections.data])
-  const tl = useMemo(() => buildTimeline(timeline.data?.items ?? [], engineDets), [timeline.data, engineDets])
+  const allDets = useMemo(() => detections.data?.items ?? [], [detections.data])
+  // Engine verdicts mark the steps; replay verdicts are shown with the step they re-checked.
+  const tl = useMemo(() => {
+    const x = buildTimeline(timeline.data?.items ?? [], allDets.filter((d) => d.source === 'engine'))
+    attachReplays(x, allDets)
+    return x
+  }, [timeline.data, allDets])
+  const story = useMemo(() => buildStory(tl), [tl])
+  const ready = !!timeline.data && !detections.isLoading
 
-  // ?step=problem focuses the most important problem, ?step=error the most
-  // important failed step; ?step=<key or span id> the matching step.
-  const focusKey = useMemo(() => {
-    if (!stepParam) return null
-    if (stepParam === 'problem') return tl.problems[0]?.key ?? null
-    if (stepParam === 'error') return (tl.problems.find((p) => p.problem === 'error') ?? tl.problems[0])?.key ?? null
-    return findStep(tl, stepParam)?.key ?? null
-  }, [stepParam, tl])
+  // The selected step: the deep link's, else the step responsible for a failure or block.
+  const selected = useMemo(() => {
+    if (!ready) return null
+    if (stepParam === 'problem') return tl.problems[0] ? (entryFor(story, tl.problems[0].key)?.key ?? null) : null
+    if (stepParam === 'error') {
+      const p = tl.problems.find((x) => x.problem === 'error') ?? tl.problems[0]
+      return p ? (entryFor(story, p.key)?.key ?? null) : null
+    }
+    if (stepParam) return entryFor(story, stepParam)?.key ?? null
+    return tl.problems[0] ? (entryFor(story, tl.problems[0].key)?.key ?? null) : null
+  }, [ready, stepParam, story, tl])
 
-  const setFocus = (key: string | null, _scroll: boolean) => {
+  // Scroll to the selected step once on arrival, and on every j/k.
+  const [scrollKey, setScrollKey] = useState<string | null>(null)
+  const arrived = useRef(false)
+  useEffect(() => {
+    if (!ready || arrived.current || view !== 'story') return
+    arrived.current = true
+    if (selected) setScrollKey(selected)
+  }, [ready, selected, view])
+
+  const select = (key: string | null) => {
     const n = new URLSearchParams(params)
     if (key) n.set('step', key)
     else n.delete('step')
     n.delete('tab')
     setParams(n, { replace: true })
   }
-  const setTab = (t: Tab) => {
+  const setView = (v: View) => {
     const n = new URLSearchParams(params)
-    if (t === 'timeline') n.delete('tab')
-    else n.set('tab', t)
+    if (v === 'story') n.delete('tab')
+    else n.set('tab', v)
     setParams(n, { replace: false })
   }
+
+  // j / k: keys can arrive faster than the URL (and so `selected`) updates.
+  const pending = useRef<{ key: string | null; at: number } | null>(null)
+  useEffect(() => {
+    if (pending.current && pending.current.key === selected) pending.current = null
+  }, [selected])
+  useEffect(() => {
+    if (view !== 'story') return
+    const h = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e) || document.querySelector('.modal')) return
+      if (e.key !== 'j' && e.key !== 'k') return
+      e.preventDefault()
+      const next = moveEntry(story, currentFocus(pending.current, selected), e.key === 'j' ? 1 : -1)
+      pending.current = { key: next, at: Date.now() }
+      setScrollKey(next)
+      select(next)
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  })
 
   if (summary.isLoading) return <Loading label="Loading session…" />
   if (summary.error)
     return (
-      <div className="page">
-        <Crumbs items={[{ label: 'Sessions', to: sessionsUrl(pid) }, { label: sessionId }]} />
+      <div className="page-frame detail">
+        <PageHeader variant="detail" back={{ to: sessionsUrl(pid), label: 'Sessions' }} title={`Session ${sessionId}`} help="sessions.md#read-a-session" helpTopic="Reading a session" />
         <ErrorBox error={summary.error} />
-        <p className="muted">
-          This session does not exist in <span className="mono">{pid}</span>, or it has no spans yet. <Link to={sessionsUrl(pid)}>Back to sessions</Link>
+        <p className="quiet-note">
+          This session does not exist in {pid}, or it has no spans yet. <Link to={sessionsUrl(pid)}>Back to sessions</Link>
         </p>
       </div>
     )
   const s = summary.data!
-  const focused = focusKey ? tl.byKey.get(focusKey) : undefined
-  const crumbs: Crumb[] = [
-    { label: 'Sessions', to: sessionsUrl(pid) },
-    { label: oneLine(sessionTitle(s), 48), to: sessionUrl(pid, s.session_id), title: sessionTitle(s) },
-  ]
-  if (focused) {
-    if (focused.agent) crumbs.push({ label: <AgentChip name={focused.agent} size="sm" />, to: agentUrl(pid, focused.agent), title: `Agent ${focused.agent}` })
-    const turnStep = tl.steps.find((x) => x.type === 'turn' && x.turn === focused.turn)
-    crumbs.push({ label: `Turn ${focused.turn}`, to: turnStep ? sessionUrl(pid, s.session_id, { step: turnStep.key }) : undefined })
-    crumbs.push({ label: `${STEP_LABEL[focused.type]}: ${oneLine(stepTitle(focused), 40)}` })
-  }
-  const sessionStart = new Date(s.started_at).getTime()
-  const scoreCount = scores.data?.total_count ?? 0
-  const detCount = Object.values(s.detection_count ?? {}).reduce((a, b) => a + (b ?? 0), 0)
-  const sessionScores = Object.entries(s.scores ?? {})
 
   return (
-    <div className="page wide session-page">
-      <Crumbs items={crumbs} />
-      <header className="page-head">
-        <div className="grow" style={{ minWidth: 0 }}>
-          <div className="row wrap" style={{ gap: 8 }}>
-            <StatusPill status={s.status} />
-            <DetectionBadges counts={s.detection_count} />
-          </div>
-          <h1 className="session-h1">{sessionTitle(s)}</h1>
-          <div className="row wrap small muted" style={{ gap: 10 }}>
-            <span>
-              Session <CopyId id={s.session_id} label="Session id" short={24} />
-            </span>
-            {s.team_id && (
-              <Link to={teamUrl(pid, s.team_id)}>
-                <Icon name="teams" size={12} /> {s.team_name || s.team_id}
-              </Link>
-            )}
-            <span title={fmtDate(s.started_at)}>started {fmtRelative(s.started_at)}</span>
-            {s.verdicts_only && <VerdictsOnlyNote />}
-            <span className="row" style={{ gap: 4 }}>
-              {s.agents.map((a) => (
-                <AgentChip key={a} name={a} to={agentUrl(pid, a)} size="sm" />
-              ))}
-            </span>
-          </div>
-        </div>
-        {help.button}
-      </header>
-      {help.panel}
-      <div className="metrics">
-        <Metric
-          label="Duration"
-          value={fmtDuration(s.duration_ms)}
-          tip={
-            s.verdicts_only
-              ? 'Unknown: only AgentShield verdicts were recorded for this session, and verdict times say when tool calls were checked, not how long the session ran.'
-              : "From the first span's start to the last span's end, across every trace of the session."
-          }
-        />
-        <Metric label="Turns" value={fmtNumber(s.turn_count)} tip="User requests the agents answered: turn spans, or else one per trace." />
-        <Metric
-          label="Steps"
-          value={fmtNumber(s.llm_call_count + s.tool_call_count)}
-          sub={`${s.llm_call_count} model · ${s.tool_call_count} tool`}
-          tip="Model calls plus tool calls. Hand-offs and reasoning are counted separately."
-        />
-        <Metric label="Hand-offs" value={fmtNumber(s.handoff_count)} tip="Times one agent passed work to another. Returns of control are not counted." />
-        <Metric
-          label="Reasoning"
-          value={fmtNumber(s.reasoning_step_count)}
-          sub={s.reasoning_tokens ? `${fmtNumber(s.reasoning_tokens)} tokens` : undefined}
-          tip="Reasoning steps (thinking blocks, reasoning summaries) the models produced. Reasoning tokens are reported by the provider and are part of output tokens."
-        />
-        <Metric
-          label="Tokens"
-          value={fmtNumber(s.input_tokens + s.output_tokens)}
-          sub={`${fmtNumber(s.input_tokens)} in · ${fmtNumber(s.output_tokens)} out`}
-          tip="Input plus output tokens of every model call in the session. Input includes cached tokens."
-        />
-        <Metric
-          label="Cost"
-          value={fmtCost(s.cost_usd)}
-          tip="Each model call's tokens times the model's price: input, output, and cached reads and writes at their own prices. Calls to models without a known price are left out; “—” means no price was known."
-        />
-        <Metric
-          label="Errors"
-          value={fmtNumber(s.error_count)}
-          tone={s.error_count ? 'error' : undefined}
-          tip="Spans that ended with an error status, including tool calls the agents recovered from."
-        />
-        {sessionScores.length > 0 && (
-          <Metric
-            label="Scores"
-            value={
-              <span className="row wrap" style={{ gap: 4 }}>
-                {sessionScores.map(([k, v]) => (
-                  <ScorePill key={k} scorer={k} value={v.mean} count={v.count} />
-                ))}
-              </span>
-            }
-            tip="Session-level scores: the mean of each scorer's results, from 0 (bad) to 1 (good). The Scores tab shows each result with its reason."
-          />
-        )}
-      </div>
-      {tl.problems.length > 0 && tab === 'timeline' && <ProblemsCallout tl={tl} focus={focusKey} onGo={(k) => setFocus(k, true)} />}
-      <div className="tabs tabs-scroll" role="tablist" aria-label="Session views">
-        {(
-          [
-            ['timeline', 'Timeline', null],
-            ['graph', 'Graph', s.agents.length],
-            ['reasoning', 'Reasoning', s.reasoning_step_count],
-            ['security', 'Security', detCount],
-            ['scores', 'Scores', scoreCount],
-            ['raw', 'Raw spans', s.span_count],
-          ] as [Tab, string, number | null][]
-        ).map(([id, label, n]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
-            {label}
-            {n != null && n > 0 && <span className="tab-count">{n}</span>}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" aria-label={tab}>
-        {tab === 'timeline' && (timeline.isLoading ? <Loading /> : <TimelineView pid={pid} tl={tl} focus={focusKey} onFocus={setFocus} sessionStart={sessionStart} />)}
-        {tab === 'graph' && <GraphTab pid={pid} sessionId={s.session_id} />}
-        {tab === 'reasoning' && <ReasoningTab pid={pid} sessionId={s.session_id} tl={tl} />}
-        {tab === 'security' && <SecurityTab pid={pid} sessionId={s.session_id} dets={detections.data?.items ?? []} tl={tl} />}
-        {tab === 'scores' && <ScoresTab pid={pid} sessionId={s.session_id} scores={scores.data?.items ?? []} agents={s.agents} />}
-        {tab === 'raw' && <RawTab pid={pid} traceIds={s.trace_ids ?? []} tl={tl} sessionId={s.session_id} />}
+    <div className="page-frame detail session-page">
+      <PageHeader
+        variant="detail"
+        back={{ to: sessionsUrl(pid), label: 'Sessions' }}
+        title={sessionTitle(s)}
+        help="sessions.md#read-a-session"
+        helpTopic="Reading a session"
+        sentence={
+          ready ? (
+            <Sentence size="detail" parts={[sessionOutcome({ summary: s, tl, detections: allDets })]} />
+          ) : (
+            <p className="sentence s-detail sk-sentence" aria-busy="true">
+              <span className="sr-only">Reading the session…</span>
+              <span className="sk sk-line" aria-hidden />
+            </p>
+          )
+        }
+        meta={sessionMetaFigures(s)}
+      />
+      <Segmented label="Views of this session" role="tabs" panelId="session-view" className="segmented-views" options={VIEWS} value={view} onChange={setView} />
+      <div role="tabpanel" id="session-view" aria-labelledby={segmentedTabId('session-view', view)}>
+        {view === 'story' &&
+          (!ready ? (
+            <Loading />
+          ) : (
+            <StoryView pid={pid} summary={s} tl={tl} story={story} selected={selected} onSelect={(k) => select(k)} scrollKey={scrollKey} replay={replay} />
+          ))}
+        {view === 'team' && <TeamView pid={pid} sessionId={s.session_id} />}
+        {view === 'scores' && <ScoresView pid={pid} sessionId={s.session_id} scores={scores.data?.items ?? []} agents={s.agents} />}
+        {view === 'raw' && <RawView pid={pid} traceIds={s.trace_ids ?? []} tl={tl} sessionId={s.session_id} />}
       </div>
     </div>
   )
 }
 
-function ProblemsCallout({ tl, focus, onGo }: { tl: BuiltTimeline; focus: string | null; onGo: (k: string) => void }) {
-  const items = tl.problems.slice(0, 3)
-  const title =
-    tl.problems[0].problem === 'block'
-      ? 'AgentShield blocked a tool call in this session'
-      : tl.problems[0].problem === 'approval'
-        ? 'AgentShield asked for approval in this session'
-        : 'Something failed in this session'
-  return (
-    <Callout tone={tl.problems[0].problem === 'approval' ? 'warn' : 'error'} title={title}>
-      <ul className="problem-list">
-        {items.map((p) => {
-          const d = p.detections.find((x) => x.action === 'block' || x.action === 'require_approval')
-          return (
-            <li key={p.key}>
-              <span className="problem-what">
-                {d ? <ActionBadge action={d.action} /> : <StatusPill status="error" />} <AgentChip name={p.agent} size="sm" />{' '}
-                <span className="mono small">{oneLine(stepTitle(p), 70)}</span>
-                {d?.rules[0] && (
-                  <span className="small">
-                    {' '}
-                    — rule <strong>{d.rules[0].title}</strong>
-                  </span>
-                )}
-              </span>
-              <button type="button" className="btn sm" onClick={() => onGo(p.key)} aria-current={focus === p.key ? 'step' : undefined}>
-                Show step <Icon name="chevron" size={12} />
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-      {tl.problems.length > 3 && <div className="small muted">and {tl.problems.length - 3} more (tick “Only problems” to list them)</div>}
-    </Callout>
-  )
+/** Replay verdicts join the tool call they re-checked (shown in its inspector). */
+function attachReplays(tl: BuiltTimeline, dets: Detection[]) {
+  for (const d of dets) {
+    if (d.source !== 'replay' || !d.span_id) continue
+    const s = tl.steps.find((x) => x.type === 'tool_call' && x.item.span_id === d.span_id)
+    if (s && !s.detections.includes(d)) s.detections.push(d)
+  }
 }
 
-function GraphTab({ pid, sessionId }: { pid: string; sessionId: string }) {
+function TeamView({ pid, sessionId }: { pid: string; sessionId: string }) {
   const g = useQuery({ queryKey: ['v1', pid, 'graph', sessionId], queryFn: () => v1.graph(pid, sessionId) })
   if (g.isLoading) return <Loading />
   if (g.error) return <ErrorBox error={g.error} />
   return (
-    <Panel
-      title="Who handed work to whom"
-      tip="Each circle is an agent, sized by how many times it ran. Arrows are hand-offs, labelled with their count, failures and median time; dashed arrows are returns of control. Red marks errors or blocked tool calls."
-    >
-      <AgentGraphView graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} />
-    </Panel>
-  )
-}
-
-function ReasoningTab({ pid, sessionId, tl }: { pid: string; sessionId: string; tl: BuiltTimeline }) {
-  const [text, setText] = useState('')
-  const [q, setQ] = useState('')
-  useEffect(() => {
-    const t = setTimeout(() => setQ(text.trim()), 300)
-    return () => clearTimeout(t)
-  }, [text])
-  const r = useQuery({ queryKey: ['v1', pid, 'reasoning', sessionId, q], queryFn: () => v1.reasoning(pid, sessionId, q ? { q } : {}), placeholderData: keepPreviousData })
-  const search = (
-    <label className="filter-text reasoning-search">
-      <Icon name="search" size={14} />
-      <span className="sr-only">Search this session's reasoning</span>
-      <input className="filter-input" value={text} placeholder="Search the reasoning…" onChange={(e) => setText(e.target.value)} />
-    </label>
-  )
-  if (r.isLoading) return <Loading />
-  if (r.error) return <ErrorBox error={r.error} />
-  const items = r.data?.items ?? []
-  if (!items.length && q)
-    return (
-      <div className="col" style={{ gap: 10 }}>
-        {search}
-        <p className="muted">No reasoning step mentions “{q}”.</p>
+    <section className="view-section" aria-labelledby="team-h">
+      <h2 id="team-h" className="view-h">
+        Who handed work to whom
+      </h2>
+      <p className="quiet-note">
+        Each agent with its runs; arrows are hand-offs with their count, failures and median time, dashed arrows returns of control. The table shows the same figures.
+      </p>
+      <div className="view-panel">
+        <AgentGraphView graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} />
       </div>
-    )
-  if (!items.length)
-    return (
-      <p className="muted">
-        No reasoning was recorded. Models that think (Anthropic thinking, OpenAI reasoning summaries, Gemini thoughts) are picked up automatically; with the SDK, call{' '}
-        <span className="mono">weft.reasoning(text)</span> inside a span.
-      </p>
-    )
-  return (
-    <div className="col" style={{ gap: 10 }}>
-      {search}
-      <ol className="reasoning-list">
-        {items.map((x) => {
-          const target = x.next_span_id ? tl.steps.find((s) => s.item.span_id === x.next_span_id && (s.type === 'tool_call' || s.type === 'handoff')) : undefined
-          return (
-            <li key={x.id} className="reasoning-item">
-              <div className="row wrap" style={{ gap: 8 }}>
-                <AgentChip name={x.agent_name} to={x.agent_name ? agentUrl(pid, x.agent_name) : undefined} size="sm" />
-                <span className="small muted">
-                  {x.kind === 'summary' ? 'summary' : x.kind === 'redacted' ? 'redacted' : 'thinking'}
-                  {x.tokens != null ? ` · ${fmtNumber(x.tokens)} tokens` : ''} · {fmtRelative(x.started_at)}
-                </span>
-                <span className="grow" />
-                <Link className="small" to={sessionUrl(pid, sessionId, { step: `reasoning:${x.id}` })}>
-                  Show in timeline
-                </Link>
-              </div>
-              <p className="pre">{x.kind === 'redacted' ? <em className="muted">Hidden by the provider.</em> : x.text}</p>
-              {target ? (
-                <Link className="led-to inline" to={sessionUrl(pid, sessionId, { step: target.key })}>
-                  <Icon name="chevron" size={12} /> led to <strong>{stepTitle(target)}</strong>
-                  {target.problem && (
-                    <span className={`text-${target.problem === 'approval' ? 'warn' : 'error'}`}>
-                      {' '}
-                      ({target.problem === 'block' ? 'blocked' : target.problem === 'approval' ? 'needed approval' : 'failed'})
-                    </span>
-                  )}
-                </Link>
-              ) : (
-                <span className="small faint">did not lead to a tool call or hand-off</span>
-              )}
-            </li>
-          )
-        })}
-      </ol>
-    </div>
+    </section>
   )
 }
 
-function SecurityTab({ pid, sessionId, dets, tl }: { pid: string; sessionId: string; dets: Detection[]; tl: BuiltTimeline }) {
-  const qc = useQueryClient()
-  const status = useQuery({ queryKey: ['v1', pid, 'shield-status'], queryFn: () => v1.shieldStatus(pid), staleTime: 60_000 })
-  const [jobId, setJobId] = useState<string | null>(null)
-  const start = useMutation({
-    mutationFn: () => v1.replayStart({ project_id: pid, session_ids: [sessionId], label: `session-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}` }),
-    onSuccess: (r) => setJobId(r.job_id),
-    onError: (e) => notify(`Replay failed to start: ${e instanceof Error ? e.message : String(e)}`, 'error'),
-  })
-  const job = useQuery({
-    queryKey: ['v1', pid, 'replay', jobId],
-    queryFn: () => v1.replayJob(pid, jobId!),
-    enabled: !!jobId,
-    refetchInterval: (q) => (q.state.data && (q.state.data.status === 'done' || q.state.data.status === 'failed') ? false : 800),
-  })
-  useEffect(() => {
-    if (job.data?.status === 'done') void qc.invalidateQueries({ queryKey: ['v1', pid, 'detections'] })
-  }, [job.data?.status, qc, pid])
-  const engine = dets.filter((d) => d.source === 'engine')
-  const replay = dets.filter((d) => d.source === 'replay')
-  const stepFor = (d: Detection) => (d.span_id ? tl.steps.find((s) => s.type === 'tool_call' && s.item.span_id === d.span_id)?.key : undefined)
-  return (
-    <div className="col" style={{ gap: 16 }}>
-      <Panel
-        title="Re-check with the current rules"
-        tip="Replays every tool call of this session through AgentShield's rules in shadow mode and compares the result with the verdicts recorded at the time. Nothing is blocked or changed in your agents."
-        actions={
-          <button className="btn sm primary" disabled={!status.data?.replay_enabled || start.isPending || job.data?.status === 'running'} onClick={() => start.mutate()}>
-            <Icon name="replay" size={13} /> {start.isPending ? 'Starting…' : 'Replay with current rules'}
-          </button>
-        }
-      >
-        {status.data && !status.data.replay_enabled && (
-          <p className="muted small">
-            Replay is off on this server. Start Weft with <span className="mono">--shield-rules-dir rules/rules</span> (AgentShield's Sigma rules) or{' '}
-            <span className="mono">--shield-url</span> pointing at a running engine.
-          </p>
-        )}
-        {status.data?.replay_enabled && !jobId && <p className="muted small">Shows which tool calls would now be blocked, no longer blocked, or judged differently.</p>}
-        {job.data && <ReplayResult pid={pid} job={job.data} />}
-      </Panel>
-      <Panel title={`Verdicts recorded by AgentShield (${engine.length})`} tip="What the AgentShield engine decided when the agents ran, linked to the exact tool call.">
-        {engine.length === 0 ? (
-          <p className="muted">AgentShield recorded no verdicts for this session. Either nothing matched a rule, or the engine is not sending verdicts to Weft (see Security).</p>
-        ) : (
-          <DetectionTable pid={pid} sessionId={sessionId} dets={engine} stepFor={stepFor} />
-        )}
-      </Panel>
-      {replay.length > 0 && (
-        <Panel
-          title={`Replay verdicts (${replay.length})`}
-          tip="Verdicts produced by re-running the rules on the recorded tool calls (shadow mode). They never affected the agents."
-        >
-          <DetectionTable pid={pid} sessionId={sessionId} dets={replay} stepFor={stepFor} />
-        </Panel>
-      )}
-    </div>
-  )
-}
-
-function DetectionTable({ pid, sessionId, dets, stepFor }: { pid: string; sessionId: string; dets: Detection[]; stepFor: (d: Detection) => string | undefined }) {
-  return (
-    <ul className="det-list">
-      {dets.map((d) => {
-        const key = stepFor(d)
-        return (
-          <li key={d.id} className="det-item">
-            <div className="row wrap" style={{ gap: 8 }}>
-              <ActionBadge action={d.action} overridden={d.overridden} />
-              <AgentChip name={d.agent_name} size="sm" />
-              <span className="mono small">{d.tool_name}</span>
-              <span className="faint small">{fmtRelative(d.created_at)}</span>
-              <span className="grow" />
-              {key ? (
-                <Link className="btn sm" to={sessionUrl(pid, sessionId, { step: key })}>
-                  Show step <Icon name="chevron" size={12} />
-                </Link>
-              ) : (
-                <span className="small faint" title="No tool span with the same session and tool-call id (or tool name within ±5 s) was found">
-                  not linked to a step
-                </span>
-              )}
-            </div>
-            <DetectionDetails pid={pid} dets={[d]} />
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-export function ReplayResult({ pid, job }: { pid: string; job: ReplayJob }) {
-  if (job.status === 'queued' || job.status === 'running')
-    return (
-      <p className="muted small">
-        <span className="spinner" /> Replaying… ({job.status})
-      </p>
-    )
-  if (job.status === 'failed') return <ErrorBox error={job.error ?? 'Replay failed'} />
-  const sm = job.summary
-  const groups: [string, string, NonNullable<ReplayJob['newly_blocked']>][] = [
-    ['Newly blocked', 'Tool calls the current rules would block that were not blocked at the time.', job.newly_blocked ?? []],
-    ['No longer blocked', 'Tool calls that were blocked at the time but would now be allowed.', job.no_longer_blocked ?? []],
-    ['Changed', 'A different action or a different set of rules, otherwise.', job.changed ?? []],
-  ]
-  return (
-    <div className="col" style={{ gap: 10 }}>
-      {sm && (
-        <p className="small">
-          Checked <strong>{sm.evaluated}</strong> of {sm.tool_calls} tool calls with <span className="mono">{job.ruleset}</span> ({job.rules_loaded ?? '?'} rules):{' '}
-          <strong>{sm.newly_blocked}</strong> newly blocked, <strong>{sm.no_longer_blocked}</strong> no longer blocked, <strong>{sm.changed}</strong> changed, {sm.unchanged}{' '}
-          unchanged.
-        </p>
-      )}
-      {groups.map(([title, help, xs]) =>
-        xs.length ? (
-          <div key={title}>
-            <h3 className="small-h" title={help}>
-              {title} ({xs.length})
-            </h3>
-            <ul className="plain diff-list">
-              {xs.map((c) => (
-                <li key={c.span_id}>
-                  <AgentChip name={c.agent_name} size="sm" /> <span className="mono small">{c.tool_name}</span>{' '}
-                  <span className="small">
-                    {c.before ? <ActionBadge action={c.before.action} /> : <span className="faint">no verdict</span>} →{' '}
-                    {c.after ? <ActionBadge action={c.after.action} /> : <span className="faint">allowed</span>}
-                  </span>{' '}
-                  <Link className="small" to={sessionUrl(pid, c.session_id, { step: `tool:${c.span_id}` })}>
-                    Show step
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null,
-      )}
-      {job.truncated && <p className="small muted">Lists are cut at 500 items.</p>}
-    </div>
-  )
-}
-
-function ScoresTab({ pid, sessionId, scores, agents }: { pid: string; sessionId: string; scores: Score[]; agents: string[] }) {
+function ScoresView({ pid, sessionId, scores, agents }: { pid: string; sessionId: string; scores: Score[]; agents: string[] }) {
   const qc = useQueryClient()
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [scope, setScope] = useState<'session' | 'agent' | 'handoff'>('session')
   const [picked, setPicked] = useState<Set<string>>(new Set(['GoalCompletionJudge']))
   const [model, setModel] = useState('gpt-4o-mini')
   const [agent, setAgent] = useState('')
+  const [open, setOpen] = useState(false)
   const run = useMutation({
     mutationFn: () =>
       v1.runScores({
@@ -538,165 +255,173 @@ function ScoresTab({ pid, sessionId, scores, agents }: { pid: string; sessionId:
     })
   const scorerOptions = SCORERS_BY_SCOPE[scope]
   return (
-    <div className="col" style={{ gap: 16 }}>
-      <Panel
-        title="Run scorers"
-        tip="Scores the session, each agent, or each hand-off with LLM judges or the tool-safety replay. Results are stored and shown below with the judge's reason."
-      >
-        <form
-          className="col"
-          style={{ gap: 10 }}
-          onSubmit={(e) => {
-            e.preventDefault()
-            run.mutate()
-          }}
-        >
-          <div className="row wrap" style={{ gap: 12 }}>
-            <fieldset className="radios inline">
-              <legend className="small muted">Score each</legend>
-              {(['session', 'agent', 'handoff'] as const).map((sc) => (
-                <label key={sc} className="checkbox">
+    <div className="view-section">
+      {shown.length === 0 ? (
+        <p className="quiet-note">No scores yet. Run a scorer below, or let a monitor score new sessions automatically.</p>
+      ) : (
+        <GroupedList title="Scores" count={shown.length}>
+          {shown.map((x) => (
+            <ListRow
+              key={x.id}
+              className="score-row"
+              title={`${scorerWords(x.scorer).replace(/^./, (c) => c.toUpperCase())} ${x.value == null ? '—' : x.value.toFixed(2)}`}
+              summary={x.reason || 'No reason given.'}
+              meta={`${x.scope === 'session' ? 'The session' : x.scope === 'agent' ? `Agent ${x.agent ?? ''}` : x.scope === 'handoff' ? 'A hand-off' : x.scope}${x.model ? ` · judged by ${x.model}` : ''}`}
+              time={relativeTime(x.created_at)}
+              trailing={
+                <button type="button" className="icon-btn row-action" aria-label={`Delete ${humanScorer(x.scorer)} score`} onClick={() => del(x)}>
+                  <Icon name="trash" size={14} />
+                </button>
+              }
+            />
+          ))}
+        </GroupedList>
+      )}
+      <section className="view-panel" aria-labelledby="run-h">
+        <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
+          <h2 id="run-h" className="view-h">
+            Run scorers
+          </h2>
+          <button type="button" className="qbtn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            {open ? 'Hide' : 'Choose scorers'}
+          </button>
+        </div>
+        <p className="quiet-note">Scores the session, each agent or each hand-off with LLM judges or the tool-safety replay. Judges need a provider key (Settings); mock/json works offline.</p>
+        {open && (
+          <form
+            className="col"
+            style={{ gap: 12 }}
+            onSubmit={(e) => {
+              e.preventDefault()
+              run.mutate()
+            }}
+          >
+            <div className="row wrap" style={{ gap: 12 }}>
+              <fieldset className="radios inline">
+                <legend className="small muted">Score each</legend>
+                {(['session', 'agent', 'handoff'] as const).map((sc) => (
+                  <label key={sc} className="checkbox">
+                    <input
+                      type="radio"
+                      name="scope"
+                      checked={scope === sc}
+                      onChange={() => {
+                        setScope(sc)
+                        setPicked(new Set([SCORERS_BY_SCOPE[sc][0].name]))
+                      }}
+                    />
+                    {sc === 'session' ? 'Session' : sc === 'agent' ? 'Agent' : 'Hand-off'}
+                  </label>
+                ))}
+              </fieldset>
+              {scope === 'agent' && (
+                <label className="field">
+                  Agent
+                  <select className="input" value={agent} onChange={(e) => setAgent(e.target.value)}>
+                    <option value="">Every agent</option>
+                    {agents.map((a) => (
+                      <option key={a}>{a}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label className="field">
+                Judge model
+                <input className="input" value={model} onChange={(e) => setModel(e.target.value)} list="judge-models" />
+                <datalist id="judge-models">
+                  <option value="gpt-4o-mini" />
+                  <option value="claude-3-5-haiku-latest" />
+                  <option value="mock/json" />
+                </datalist>
+              </label>
+            </div>
+            <fieldset className="scorer-picks">
+              <legend className="small muted">Scorers</legend>
+              {scorerOptions.map((o) => (
+                <label key={o.name} className="checkbox scorer-pick">
                   <input
-                    type="radio"
-                    name="scope"
-                    checked={scope === sc}
-                    onChange={() => {
-                      setScope(sc)
-                      setPicked(new Set([SCORERS_BY_SCOPE[sc][0].name]))
-                    }}
+                    type="checkbox"
+                    checked={picked.has(o.name)}
+                    onChange={(e) =>
+                      setPicked((p) => {
+                        const n = new Set(p)
+                        if (e.target.checked) n.add(o.name)
+                        else n.delete(o.name)
+                        return n
+                      })
+                    }
                   />
-                  {sc === 'session' ? 'Session' : sc === 'agent' ? 'Agent' : 'Hand-off'}
+                  <span>
+                    <strong>{o.label}</strong> <span className="muted small">{o.help}</span>
+                  </span>
                 </label>
               ))}
             </fieldset>
-            {scope === 'agent' && (
-              <label className="field">
-                Agent
-                <select className="input" value={agent} onChange={(e) => setAgent(e.target.value)}>
-                  <option value="">Every agent</option>
-                  {agents.map((a) => (
-                    <option key={a}>{a}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label className="field">
-              Judge model
-              <input className="input" value={model} onChange={(e) => setModel(e.target.value)} list="judge-models" />
-              <datalist id="judge-models">
-                <option value="gpt-4o-mini" />
-                <option value="claude-3-5-haiku-latest" />
-                <option value="mock/json" />
-              </datalist>
-            </label>
-          </div>
-          <fieldset className="scorer-picks">
-            <legend className="small muted">Scorers</legend>
-            {scorerOptions.map((o) => (
-              <label key={o.name} className="checkbox scorer-pick">
-                <input
-                  type="checkbox"
-                  checked={picked.has(o.name)}
-                  onChange={(e) =>
-                    setPicked((p) => {
-                      const n = new Set(p)
-                      if (e.target.checked) n.add(o.name)
-                      else n.delete(o.name)
-                      return n
-                    })
-                  }
-                />
-                <span>
-                  <strong>{o.label}</strong> <span className="muted small">{o.help}</span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-          <div className="row">
-            <button className="btn primary" type="submit" disabled={run.isPending || ![...picked].some((n) => scorerOptions.some((x) => x.name === n))}>
-              {run.isPending ? 'Scoring…' : 'Run scorers'}
-            </button>
-            <span className="small muted">Judges need a provider key for the model (Settings → Secrets); mock/json works offline.</span>
-          </div>
-        </form>
-      </Panel>
-      <Panel title={`Scores (${shown.length})`} tip="Each score with its scope, scorer, value (0 to 1) and the scorer's reason.">
-        {shown.length === 0 ? (
-          <p className="muted">No scores yet. Run a scorer above, or let a monitor score new sessions automatically.</p>
-        ) : (
-          <ul className="score-list">
-            {shown.map((x) => (
-              <li key={x.id} className="score-item">
-                <ScorePill value={x.value} scorer={x.scorer} />
-                <span className="small muted">
-                  {x.scope === 'session' ? 'Session' : x.scope === 'agent' ? `Agent ${x.agent ?? ''}` : x.scope === 'handoff' ? 'Hand-off' : x.scope}
-                  {x.model ? ` · judged by ${x.model}` : ''} · {fmtRelative(x.created_at)}
-                </span>
-                <span className="grow score-reason">{x.reason || <span className="faint">no reason given</span>}</span>
-                <button type="button" className="icon-btn" aria-label={`Delete ${humanScorer(x.scorer)} score`} onClick={() => del(x)}>
-                  <Icon name="trash" size={13} />
-                </button>
-              </li>
-            ))}
-          </ul>
+            <div className="row">
+              <button className="qbtn primary" type="submit" disabled={run.isPending || ![...picked].some((n) => scorerOptions.some((x) => x.name === n))}>
+                {run.isPending ? 'Scoring…' : 'Run scorers'}
+              </button>
+            </div>
+          </form>
         )}
-      </Panel>
+      </section>
     </div>
   )
 }
 
-function RawTab({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: string[]; tl: BuiltTimeline; sessionId: string }) {
+function RawView({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: string[]; tl: BuiltTimeline; sessionId: string }) {
   const spans = new Map<string, { type: string; name: string; agent: string | null }>()
   for (const s of tl.steps) {
     if (!s.item.span_id || s.type === 'reasoning' || s.type === 'message' || s.type === 'detection') continue
     if (!spans.has(s.item.span_id)) spans.set(s.item.span_id, { type: STEP_LABEL[s.type], name: stepTitle(s), agent: s.agent })
   }
   return (
-    <div className="col" style={{ gap: 16 }}>
-      <Panel title="Traces" tip="A trace is the tree of spans one request produced. A session can span several traces (one per turn, for example).">
+    <div className="view-section">
+      <section className="view-panel" aria-labelledby="traces-h">
+        <h2 id="traces-h" className="view-h" title="A trace is the tree of spans one request produced. A session can span several traces (one per turn, for example).">
+          Traces
+        </h2>
         <ul className="plain">
           {traceIds.map((t) => (
-            <li key={t} className="row wrap" style={{ gap: 8 }}>
-              <CopyId id={t} label="Trace id" short={16} />
+            <li key={t} className="row wrap" style={{ gap: 12 }}>
+              <span className="mono small">
+                <CopyText text={t} label="trace id" />
+              </span>
               <Link to={traceSpansUrl(pid, t)}>Open in the span explorer</Link>
             </li>
           ))}
-          {!traceIds.length && <li className="muted">No trace ids recorded.</li>}
+          {!traceIds.length && <li className="quiet-note">No trace ids recorded.</li>}
         </ul>
-        <p className="small muted">
+        <p className="quiet-note">
           The older turn-by-turn view is still available: <Link to={`/${pid}/conversations/${encodeURIComponent(sessionId)}`}>turn view</Link>.
         </p>
-      </Panel>
-      <Panel title={`Spans (${spans.size})`} tip="Spans are the raw records the timeline is built from. Open one for its inputs, outputs, attributes and feedback.">
-        <div className="table-wrap">
-          <table className="table">
-            <caption className="sr-only">Spans of this session</caption>
-            <thead>
-              <tr>
-                <th scope="col">Kind</th>
-                <th scope="col">Agent</th>
-                <th scope="col">What</th>
-                <th scope="col">Span</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...spans.entries()].map(([id, x]) => (
-                <tr key={id}>
-                  <td>{x.type}</td>
-                  <td>{x.agent ? <AgentChip name={x.agent} size="sm" /> : '—'}</td>
-                  <td className="mono small">{oneLine(x.name, 80)}</td>
-                  <td>
-                    <Link to={spanUrl(pid, id)} className="mono small">
-                      {id}
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
+      </section>
+      <PlainTable caption={`Spans of this session (${spans.size})`} captionVisible>
+        <thead>
+          <tr>
+            <th scope="col">Kind</th>
+            <th scope="col">Agent</th>
+            <th scope="col">What</th>
+            <th scope="col" title="A span is one recorded operation; open it for its inputs, outputs and attributes.">
+              Span
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...spans.entries()].map(([id, x]) => (
+            <tr key={id}>
+              <td>{x.type}</td>
+              <td>{x.agent ?? '—'}</td>
+              <td className="mono small">{oneLine(x.name, 80)}</td>
+              <td>
+                <Link to={spanUrl(pid, id)} className="mono small">
+                  {id}
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </PlainTable>
     </div>
   )
 }
-

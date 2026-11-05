@@ -21,19 +21,6 @@ export function Tip({ text, label = 'How is this computed?' }: { text: ReactNode
   )
 }
 
-export function Metric({ label, value, tip, sub, tone }: { label: string; value: ReactNode; tip?: ReactNode; sub?: ReactNode; tone?: 'error' | 'warn' | 'ok' }) {
-  return (
-    <div className={`metric ${tone ? `tone-${tone}` : ''}`}>
-      <div className="metric-label">
-        {label}
-        {tip && <Tip text={tip} label={`About ${label.toLowerCase()}`} />}
-      </div>
-      <div className="metric-value">{value}</div>
-      {sub && <div className="metric-sub">{sub}</div>}
-    </div>
-  )
-}
-
 // TableScroll holds a table that can be wider than its column (a narrow
 // screen, a wide font or letter spacing, a long unbroken name): the table
 // scrolls inside it instead of widening the page. While it scrolls it is a

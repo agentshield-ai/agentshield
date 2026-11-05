@@ -11,6 +11,7 @@ import { SpecPicker } from '../../components/queues/SpecPicker'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative } from '../../lib/format'
 import { tracesUrl } from '../../lib/urls'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 export function QueuesPage() {
   const projectId = useProjectId()
@@ -35,6 +36,7 @@ export function QueuesPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Review queues</h1>
+          <HelpLink doc="evaluations.md#review-queues" topic="Review queues" />
           <span className="muted small">Collect agent steps and spans for human review, then work through them one at a time with structured annotation fields.</span>
         </div>
         <span className="spacer" />

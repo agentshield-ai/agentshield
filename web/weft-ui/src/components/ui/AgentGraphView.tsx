@@ -2,13 +2,15 @@
 // edges with counts, errors and median latency; coloured by errors and
 // detections. The same data is rendered as a table for screen readers and
 // for exact numbers.
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Graph } from '../../api/v1'
-import { agentColor, agentInitials } from '../../lib/agentColor'
+import { Link } from 'react-router-dom'
 import { edgeTone, layoutGraph, nodeTone } from '../../lib/agentGraph'
 import { fmtCost, fmtDuration, fmtNumber } from '../../lib/format'
-import { AgentChip, DetectionBadges, ScorePill } from './bits'
+import { Segmented } from './Segmented'
+import { monogramLetter } from './Monogram'
+import { PlainTable } from './PlainTable'
 
 export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: { graph: Graph; agentUrl?: (a: string) => string; title?: string }) {
   const layout = useMemo(() => layoutGraph(graph), [graph])
@@ -37,14 +39,16 @@ export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: 
             <span className="lg-ring error" aria-hidden /> errors
           </li>
         </ul>
-        <div className="seg" role="group" aria-label="Show as">
-          <button type="button" className={view === 'graph' ? 'on' : ''} aria-pressed={view === 'graph'} onClick={() => setView('graph')}>
-            Graph
-          </button>
-          <button type="button" className={view === 'table' ? 'on' : ''} aria-pressed={view === 'table'} onClick={() => setView('table')}>
-            Table
-          </button>
-        </div>
+        <Segmented
+          label="Show as"
+          size="sm"
+          options={[
+            { id: 'graph', label: 'Graph' },
+            { id: 'table', label: 'Table' },
+          ]}
+          value={view}
+          onChange={setView}
+        />
       </div>
       {view === 'graph' && (
         <svg
@@ -78,11 +82,9 @@ export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: 
           })}
           {layout.nodes.map((n) => {
             const tone = nodeTone(n)
-            const style = { '--ac': agentColor(n.agent) } as CSSProperties
             const inner = (
               <g
                 className={`node ${tone} ${hover && hover !== n.agent ? 'dim' : ''}`}
-                style={style}
                 onMouseEnter={() => setHover(n.agent)}
                 onMouseLeave={() => setHover(null)}
                 onFocus={() => setHover(n.agent)}
@@ -91,7 +93,7 @@ export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: 
                 <circle cx={n.x} cy={n.y} r={n.r} className="node-fill" />
                 {tone !== 'ok' && <circle cx={n.x} cy={n.y} r={n.r + 4} className={`node-ring ${tone}`} />}
                 <text x={n.x} y={n.y + 4} textAnchor="middle" className="node-initials" aria-hidden>
-                  {agentInitials(n.agent)}
+                  {monogramLetter(n.agent)}
                 </text>
                 <text x={n.x + n.r + 10} y={n.y - 2} className="node-label">
                   {n.agent}
@@ -126,40 +128,51 @@ export function AgentGraphView({ graph, agentUrl, title = 'Delegation graph' }: 
   )
 }
 
+/** A name that links to its agent page when a URL is given. */
+function AgentName({ name, agentUrl }: { name: string; agentUrl?: (a: string) => string }) {
+  return agentUrl ? <Link to={agentUrl(name)}>{name}</Link> : <span>{name}</span>
+}
+
+/** Verdicts as words: "1 blocked, 2 needed approval". */
+function verdictWords(d: Graph['nodes'][number]['detections'] | undefined): string {
+  const xs: string[] = []
+  if (d?.block) xs.push(`${d.block} blocked`)
+  if (d?.require_approval) xs.push(`${d.require_approval} needed approval`)
+  if (d?.log) xs.push(`${d.log} logged`)
+  return xs.join(', ') || 'none'
+}
+
 export function GraphTables({ graph, agentUrl }: { graph: Graph; agentUrl?: (a: string) => string }) {
   return (
-    <div className="col" style={{ gap: 12 }}>
-      <div className="table-wrap">
-        <table className="table">
-          <caption className="sr-only">Agents</caption>
-          <thead>
-            <tr>
-              <th scope="col">Agent</th>
-              <th scope="col">Runs</th>
-              <th scope="col">Errors</th>
-              <th scope="col">Tool calls</th>
-              <th scope="col">Tokens</th>
-              <th scope="col">Cost</th>
-              <th scope="col">Security</th>
+    <div className="col" style={{ gap: 16 }}>
+      <PlainTable caption="Agents">
+        <thead>
+          <tr>
+            <th scope="col">Agent</th>
+            <th scope="col" className="num">Runs</th>
+            <th scope="col" className="num">Errors</th>
+            <th scope="col" className="num">Tool calls</th>
+            <th scope="col" className="num">Tokens</th>
+            <th scope="col" className="num">Cost</th>
+            <th scope="col">AgentShield</th>
+          </tr>
+        </thead>
+        <tbody>
+          {graph.nodes.map((n) => (
+            <tr key={n.agent}>
+              <td>
+                <AgentName name={n.agent} agentUrl={agentUrl} />
+              </td>
+              <td className="num">{fmtNumber(n.calls)}</td>
+              <td className={`num ${n.errors ? 'text-error' : ''}`}>{fmtNumber(n.errors)}</td>
+              <td className="num">{fmtNumber(n.tool_calls ?? 0)}</td>
+              <td className="num">{fmtNumber(n.tokens)}</td>
+              <td className="num">{fmtCost(n.cost_usd)}</td>
+              <td className={n.detections?.block ? 'text-error' : n.detections?.require_approval ? 'text-warn' : 'faint'}>{verdictWords(n.detections)}</td>
             </tr>
-          </thead>
-          <tbody>
-            {graph.nodes.map((n) => (
-              <tr key={n.agent}>
-                <td>
-                  <AgentChip name={n.agent} to={agentUrl?.(n.agent)} />
-                </td>
-                <td>{fmtNumber(n.calls)}</td>
-                <td>{fmtNumber(n.errors)}</td>
-                <td>{fmtNumber(n.tool_calls ?? 0)}</td>
-                <td>{fmtNumber(n.tokens)}</td>
-                <td>{fmtCost(n.cost_usd)}</td>
-                <td>{Object.values(n.detections ?? {}).some((v) => (v ?? 0) > 0) ? <DetectionBadges counts={n.detections} /> : <span className="faint">none</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </PlainTable>
       <HandoffTable edges={graph.edges} agentUrl={agentUrl} />
     </div>
   )
@@ -169,48 +182,45 @@ export function HandoffTable({ edges, agentUrl, caption = 'Hand-offs' }: { edges
   const rows = edges.filter((e) => e.kind !== 'return').sort((a, b) => b.error_rate - a.error_rate || b.count - a.count)
   if (!rows.length) return <p className="muted">No hand-offs between agents.</p>
   return (
-    <div className="table-wrap">
-      <table className="table handoff-table">
-        <caption className="sr-only">{caption}, most failing first</caption>
-        <thead>
-          <tr>
-            <th scope="col">From</th>
-            <th scope="col">To</th>
-            <th scope="col" title="How many times control was handed over">
-              Count
-            </th>
-            <th scope="col" title="Share of hand-offs whose receiving agent ended with an error">
-              Error rate
-            </th>
-            <th scope="col" title="Median time from hand-off to the delegate finishing">
-              Median time
-            </th>
-            <th scope="col" title="Mean of hand-off-level scores (e.g. Hand-off quality)">
-              Mean score
-            </th>
+    <PlainTable caption={`${caption}, most failing first`} className="handoff-table">
+      <thead>
+        <tr>
+          <th scope="col">From</th>
+          <th scope="col">To</th>
+          <th scope="col" className="num" title="How many times control was handed over">
+            Count
+          </th>
+          <th scope="col" className="num" title="Share of hand-offs whose receiving agent ended with an error">
+            Error rate
+          </th>
+          <th scope="col" className="num" title="Median time from hand-off to the delegate finishing">
+            Median time
+          </th>
+          <th scope="col" className="num" title="Mean of hand-off-level scores (e.g. Hand-off quality)">
+            Mean score
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((e) => (
+          <tr key={`${e.from}>${e.to}:${e.kind}`}>
+            <td>
+              <AgentName name={e.from} agentUrl={agentUrl} />
+            </td>
+            <td>
+              <AgentName name={e.to} agentUrl={agentUrl} /> <span className="faint small">{e.kind === 'delegate' ? 'delegated' : 'handed off'}</span>
+            </td>
+            <td className="num">{fmtNumber(e.count)}</td>
+            <td className="num">
+              <span className={e.errors ? 'text-error' : ''}>
+                {(e.error_rate * 100).toFixed(0)}%{e.errors ? ` (${e.errors} failed)` : ''}
+              </span>
+            </td>
+            <td className="num">{fmtDuration(e.p50_ms)}</td>
+            <td className="num">{e.mean_score == null ? <span className="faint">not scored</span> : e.mean_score.toFixed(2)}</td>
           </tr>
-        </thead>
-        <tbody>
-          {rows.map((e) => (
-            <tr key={`${e.from}>${e.to}:${e.kind}`} className={e.errors ? 'row-error' : ''}>
-              <td>
-                <AgentChip name={e.from} to={agentUrl?.(e.from)} size="sm" />
-              </td>
-              <td>
-                <AgentChip name={e.to} to={agentUrl?.(e.to)} size="sm" /> <span className="faint small">{e.kind === 'delegate' ? 'delegated' : 'handed off'}</span>
-              </td>
-              <td>{fmtNumber(e.count)}</td>
-              <td>
-                <span className={e.errors ? 'text-error' : ''}>
-                  {(e.error_rate * 100).toFixed(0)}%{e.errors ? ` (${e.errors} failed)` : ''}
-                </span>
-              </td>
-              <td>{fmtDuration(e.p50_ms)}</td>
-              <td>{e.mean_score == null ? <span className="faint">not scored</span> : <ScorePill value={e.mean_score} />}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </PlainTable>
   )
 }

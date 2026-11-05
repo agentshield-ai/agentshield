@@ -12,7 +12,7 @@ import { ErrorBox, Loading } from '../../components/common'
 import { GuidedEmpty } from '../../components/ui/EmptyState'
 import { AgentChip, humanScorer, ScorePill } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
-import { usePageHelp } from '../../components/ui/PageHelp'
+import { HelpLink } from '../../components/ui/PageHeader'
 import { undoable } from '../../components/ui/Toasts'
 
 const SCOPES = [
@@ -30,15 +30,6 @@ export function ScoresPage() {
   const [scope, setScope] = useState('')
   const [scorer, setScorer] = useState('')
   const [hidden, setHidden] = useState<Set<string>>(new Set())
-  const help = usePageHelp(
-    'scores',
-    'Scores',
-    <>
-      Scores say how well something went, from 0 (bad) to 1 (good). They are given to a whole <strong>session</strong>, one <strong>agent</strong> in a session, or one{' '}
-      <strong>hand-off</strong>, by LLM judges, the tool-safety replay, monitors, or your own code. Run scorers from a session's Scores tab.
-    </>,
-    'evaluations.md#scores',
-  )
   const q = useQuery({
     queryKey: ['v1', pid, 'scores', 'all', scope, scorer],
     queryFn: () => v1.scores(pid, { scope: scope || undefined, scorer: scorer || undefined, limit: 500 }),
@@ -69,9 +60,8 @@ export function ScoresPage() {
           <h1>Scores</h1>
           <p className="page-sub">How well sessions, agents and hand-offs did, and why.</p>
         </div>
-        {help.button}
+        <HelpLink doc="evaluations.md#scores" topic="Scores" />
       </header>
-      {help.panel}
       {all.data?.total_count === 0 ? (
         <GuidedEmpty projectId={pid} title="No scores yet" doc="evaluations.md#scores" showTest>
           Open a session and use its <strong>Scores</strong> tab to run the goal-completion, reasoning-consistency or hand-off-quality judges, or create a monitor that scores new

@@ -24,6 +24,7 @@ import { FilterBar, ScopeCapNote, useWidenedTime, WidenedNote } from '../../comp
 import { FILTER_PARAMS, parseFilters, STATUS_LABEL as RUN_STATUS_LABEL, timeWindow, type FilterState, type StatusFilter, type TimeRange } from '../../lib/filters'
 import { useTraceScope } from '../../hooks/useTraceScope'
 import { decodeIds, encodeIds, layoutColumns, moveBefore, moveStep, pinnedOffsets, togglePin, type ColumnSlot } from '../../components/traces/columnLayout'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 // ---------------------------------------------------------------- URL state
 
@@ -472,6 +473,7 @@ export function TracesPage() {
     <div className="page page-fill">
       <div className="page-header">
         <h1>Traces</h1>
+        <HelpLink doc="traces.md" topic="Traces" />
         <Link className="btn sm ghost" to={spanSessionsUrl(projectId)} title="Spans grouped by session id">
           Span sessions
         </Link>

@@ -28,12 +28,14 @@ test('`/` focuses the filter, `?` lists shortcuts, filter syntax becomes chips i
 
 test('saved views can be saved, applied and deleted with undo', async ({ page }) => {
   await page.goto(`/${project()}/sessions?status=error`)
+  await page.getByRole('button', { name: /^Filter/ }).click()
   await page.getByRole('button', { name: /Views/ }).click()
   await page.getByRole('button', { name: 'Save current filters as a view…' }).click()
   await page.getByRole('textbox', { name: 'View name' }).fill('Failures')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page).toHaveURL(/view=sessions-failures/)
   await page.goto(`/${project()}/sessions`)
+  await page.getByRole('button', { name: /^Filter/ }).click()
   await page.getByRole('button', { name: /Views/ }).click()
   await page.getByRole('button', { name: 'Failures', exact: true }).click()
   await expect(page).toHaveURL(/status=error/)
@@ -46,37 +48,45 @@ test('saved views can be saved, applied and deleted with undo', async ({ page })
   await expect(page.getByRole('button', { name: 'Delete view Failures' })).toBeVisible()
 })
 
-test('j/k move through the timeline and deep links survive reload', async ({ page }) => {
+test('j/k move through the story and deep links survive reload', async ({ page }) => {
   await page.goto(`/${project()}/sessions/code-lint-1`)
-  const steps = page.locator('.tl-list > li.tl-step')
+  const steps = page.locator('.story-step')
   await expect(steps.first()).toBeVisible()
-  // Three quick presses, without waiting for the URL in between, move three steps.
+  // On arrival the blocked step (the second) is selected.
+  await expect(steps.nth(1)).toHaveAttribute('aria-current', 'step')
+  // Three quick presses, without waiting for the URL in between, move three steps (into the hand-off and out).
   await page.keyboard.press('j')
   await page.keyboard.press('j')
   await page.keyboard.press('j')
-  const focused = page.locator('.tl-step[aria-current="step"]')
+  const focused = page.locator('.story-step[aria-current="step"]')
   await expect(focused).toHaveCount(1)
-  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step')
+  await expect(steps.nth(4)).toHaveAttribute('aria-current', 'step')
   const key = new URL(page.url()).searchParams.get('step')
   expect(key).toBeTruthy()
-  // Four quick presses back stop at the first step (a turn).
-  for (let i = 0; i < 4; i++) await page.keyboard.press('k')
+  // Six quick presses back stop at the first step, the user's request.
+  for (let i = 0; i < 6; i++) await page.keyboard.press('k')
   await expect(steps.first()).toHaveAttribute('aria-current', 'step')
-  await expect(steps.first()).toHaveClass(/tl-turn/)
-  const turnKey = new URL(page.url()).searchParams.get('step')
-  expect(turnKey).toMatch(/^turn:/)
-  expect(turnKey).not.toBe(key)
-  // A deep link to a turn is restored as the current step after a reload.
+  await expect(steps.first()).toHaveClass(/bubble user/)
+  const userKey = new URL(page.url()).searchParams.get('step')
+  expect(userKey).toMatch(/^message:user:/)
+  expect(userKey).not.toBe(key)
+  // A deep link to a step is restored as the selected step after a reload.
   await page.reload()
-  await expect(page.locator('.tl-step[aria-current="step"]')).toHaveCount(1)
+  await expect(page.locator('.story-step[aria-current="step"]')).toHaveCount(1)
   await expect(steps.first()).toHaveAttribute('aria-current', 'step')
-  // So is a deep link to a later step.
+  // So is a deep link to a later step, scrolled into view.
   await page.goto(`/${project()}/sessions/code-lint-1?step=${encodeURIComponent(key!)}`)
-  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step')
-  await expect(page.locator('.tl-step[aria-current="step"]')).toBeInViewport()
+  await expect(steps.nth(4)).toHaveAttribute('aria-current', 'step')
+  await expect(page.locator('.story-step[aria-current="step"]')).toBeInViewport()
   await page.reload()
-  await expect(steps.nth(2)).toHaveAttribute('aria-current', 'step')
-  await expect(page.locator('.tl-step[aria-current="step"]')).toBeInViewport()
+  await expect(steps.nth(4)).toHaveAttribute('aria-current', 'step')
+  await expect(page.locator('.story-step[aria-current="step"]')).toBeInViewport()
+  // The old Timeline, Reasoning and Security tabs open the Story.
+  for (const tab of ['timeline', 'reasoning', 'security']) {
+    await page.goto(`/${project()}/sessions/code-lint-1?tab=${tab}`)
+    await expect(page.getByRole('tab', { name: 'Story' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page).not.toHaveURL(/tab=/)
+  }
 })
 
 test('deleting a score can be undone', async ({ page }) => {
@@ -100,10 +110,12 @@ test('the default range widens when the last 24 hours are empty, and explains wh
   await expect(page.locator('.session-row')).toHaveCount(1)
 })
 
-test('graph tab draws agents and offers the same data as a table', async ({ page }) => {
+test('team view draws agents and offers the same data as a table; the old graph URL opens it', async ({ page }) => {
   await page.goto(`/${project()}/sessions/code-lint-1?tab=graph`)
+  await expect(page).toHaveURL(/tab=team/)
+  await expect(page.getByRole('tab', { name: 'Team' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('group', { name: /Delegation graph: 2 agents/ })).toBeVisible()
-  await page.getByRole('button', { name: 'Table' }).click()
+  await page.getByRole('radio', { name: 'Table' }).click()
   await expect(page.locator('table').first()).toContainText('coder')
   await expect(page.locator('table.handoff-table')).toContainText('reviewer')
 })
@@ -111,29 +123,33 @@ test('graph tab draws agents and offers the same data as a table', async ({ page
 test('replay with current rules shows a diff', async ({ page }) => {
   const status = await (await page.request.get(`/api/v1/shield/status?project_id=${encodeURIComponent(project())}`)).json()
   test.skip(!status.replay_enabled, 'server started without --shield-rules-dir')
-  await page.goto(`/${project()}/sessions/code-lint-1?tab=security`)
-  await page.getByRole('button', { name: /Replay with current rules/ }).click()
+  await page.goto(`/${project()}/sessions/code-lint-1`)
+  await page.getByRole('complementary', { name: 'Selected step' }).getByRole('button', { name: 'Replay with the current rules' }).click()
   await expect(page.getByText(/Checked \d+ of \d+ tool calls/)).toBeVisible({ timeout: 20_000 })
 })
 
-test('every attention card opens exactly the sessions it counts, with money shown plainly', async ({ page }) => {
+test('every clause of the Sessions sentence opens exactly the sessions it counts, with money shown plainly', async ({ page }) => {
   const errors = watchErrors(page)
   await page.goto(`/${project()}/sessions`)
   await expect(page.locator('.session-row').first()).toBeVisible()
   // No floating-point noise in any amount.
   await expect(page.locator('main, .main').first()).not.toContainText(/\$\d*\.\d{5,}/)
-  const cards = page.locator('a.attn-link')
-  // The cards load after the list; count them once they are there.
-  await expect(cards.first()).toBeVisible()
-  const n = await cards.count()
-  expect(n).toBeGreaterThanOrEqual(3)
+  const clauses = page.locator('.ph-sentence a')
+  await expect(clauses.first()).toBeVisible()
+  const n = await clauses.count()
+  expect(n).toBeGreaterThanOrEqual(5)
   for (let i = 0; i < n; i++) {
     await page.goto(`/${project()}/sessions`)
-    const card = page.locator('a.attn-link').nth(i)
-    const title = await card.locator('xpath=..').locator('.attn-title').innerText()
-    const count = Number(await card.locator('.attn-count').innerText())
-    await card.click()
-    await expect(page.locator('.session-row'), title).toHaveCount(count)
+    const clause = page.locator('.ph-sentence a').nth(i)
+    const text = await clause.innerText()
+    const exact = (await clause.getAttribute('title')) !== 'Lists these sessions together with the blocked ones'
+    const count = Number(/^\d+/.exec(text)?.[0])
+    await clause.click()
+    if (/\/sessions\/[^/?]+/.test(new URL(page.url()).pathname)) {
+      // A clause that counts one session opens it.
+      expect(count, text).toBe(1)
+      await expect(page.locator('.story, .view-section').first(), text).toBeVisible()
+    } else if (exact) await expect(page.locator('.session-row'), text).toHaveCount(count)
   }
   expect(errors).toEqual([])
 })
@@ -305,8 +321,7 @@ test('Sessions text search finds tool errors; the projects page has help', async
   await page.goto(`/${project()}/sessions?q=${encodeURIComponent('3 tests failed')}&time=all`)
   await expect(page.locator('.session-row')).toHaveCount(1)
   await page.goto('/')
-  await expect(page.getByRole('complementary', { name: 'About Projects' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Read the guide' })).toHaveAttribute('href', '/help/setup.md')
+  await expect(page.getByRole('link', { name: 'Guide: Projects' })).toHaveAttribute('href', '/help/setup.md')
   expect(errors).toEqual([])
 })
 

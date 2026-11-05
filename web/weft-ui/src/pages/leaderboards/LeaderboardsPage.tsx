@@ -10,6 +10,7 @@ import { refName, useObjects } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative } from '../../lib/format'
 import { leaderboardUrl, objectVersionsUrl } from '../../lib/urls'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 export function LeaderboardsPage() {
   const projectId = useProjectId()
@@ -24,6 +25,7 @@ export function LeaderboardsPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Leaderboards</h1>
+          <HelpLink doc="evaluations.md#leaderboards" topic="Leaderboards" />
           <span className="muted small">Rank models across evaluation metrics.</span>
         </div>
         <span className="spacer" />

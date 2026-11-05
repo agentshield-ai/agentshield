@@ -4,7 +4,7 @@
 // (falling back to this browser when the project is read-only). Every page
 // applies every chip, on its own rows or through the sessions that match
 // (lib/filters.ts FILTER_SUPPORT), and says so under the chips.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -34,6 +34,7 @@ import {
 } from '../../lib/filters'
 import { Icon } from './Icons'
 import { CapNote } from './bits'
+import { SearchField } from './SearchField'
 import { SCOPE_LIMIT } from '../../hooks/useSessionScope'
 import { undoable, notify } from './Toasts'
 import { ClauseEditor, clauseLabel, type FilterClause } from '../traces/FilterBuilder'
@@ -193,8 +194,19 @@ export function FilterBar({
   viewDefinition,
   legacyView,
   advanced,
+  search = 'inline',
+  timePicker = 'select',
+  collapsible = false,
+  open = true,
 }: {
   page: FilterPage
+  /** "external": the page shows its own <FilterSearchField> (e.g. in its header). */
+  search?: 'inline' | 'external'
+  /** "none": the page shows its own time control (e.g. a segmented control). */
+  timePicker?: 'select' | 'none'
+  /** Behind a "Filter" button (<FilterButton>): the Add filter and Views row shows only while `open`; active chips always show. */
+  collapsible?: boolean
+  open?: boolean
   /** Field conditions (Traces), folded into "Add filter". */
   advanced?: AdvancedFilter
   /** Other URL parameters a saved view keeps on this page (Traces: columns, sort, …). */
@@ -221,25 +233,10 @@ export function FilterBar({
   // The advanced clause being edited (-1: a new one).
   const [clauseIdx, setClauseIdx] = useState(-1)
   const clauses = advanced?.clauses ?? []
-  const [text, setText] = useState(state.q ?? '')
-  useEffect(() => setText(state.q ?? ''), [state.q])
   const { views, save, remove } = useSavedViews(pid, page, legacyView)
   const [viewsOpen, setViewsOpen] = useState(false)
   const [naming, setNaming] = useState<string | null>(null)
   const currentView = params.get('view')
-
-  // Plain text filters as you type; `key:value` tokens apply on Enter.
-  useEffect(() => {
-    if ((text || '') === (state.q ?? '')) return
-    if (/\b(agent|team|status|has|model|tool|time|score|cost)\s*[:<>=]/i.test(text)) return
-    const t = setTimeout(() => setState({ ...state, q: text.trim() || undefined }), 350)
-    return () => clearTimeout(t)
-  }, [text]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const applyText = () => {
-    const { q: _q, ...rest } = state
-    setState(parseFilterText(text, rest))
-  }
 
   const timeValue: TimeRange = state.time ?? effectiveTime ?? defaultTime
   const filterParams = () => {
@@ -253,32 +250,11 @@ export function FilterBar({
   const addable = keys.filter((k) => k !== 'time' && k !== 'q')
 
   return (
-    <div className="filterbar" role="search" aria-label="Filters">
+    <div className={`filterbar ${collapsible ? 'collapsible' : ''}`} role="search" aria-label="Filters" id="filter-tray">
+      {(!collapsible || open) && (
       <div className="filterbar-row">
-        <label className="filter-text">
-          <Icon name="search" size={14} />
-          <span className="sr-only">Filter</span>
-          <input
-            data-filter-input
-            className="filter-input"
-            value={text}
-            placeholder={placeholder ?? 'Filter…  try agent:coder has:block'}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') applyText()
-              if (e.key === 'Escape') {
-                setText('')
-                setState({ ...state, q: undefined })
-                e.currentTarget.blur()
-              }
-            }}
-            aria-describedby="filter-syntax-help"
-          />
-          <kbd className="kbd kbd-hint" aria-hidden>
-            /
-          </kbd>
-        </label>
-        {keys.includes('time') && (
+        {search === 'inline' && <InlineFilterText placeholder={placeholder} />}
+        {timePicker === 'select' && keys.includes('time') && (
           <label className="time-pick">
             <Icon name="clock" size={14} />
             <span className="sr-only">Time range</span>
@@ -376,6 +352,7 @@ export function FilterBar({
         </div>
         {extra}
       </div>
+      )}
       {(chips.length > 0 || clauses.length > 0 || state.time === 'custom') && (
         <ul className="chips-row" aria-label="Active filters">
           {chips.map((c) => (
@@ -466,6 +443,74 @@ export function FilterBar({
         model:name, tool:name, cost&gt;0.1, time:7d and press Enter.
       </p>
     </div>
+  )
+}
+
+/** The filter text box's state: plain text filters as you type; `key:value` tokens apply on Enter; Escape clears. */
+function useFilterText() {
+  const [state, setState] = useFilters()
+  const [text, setText] = useState(state.q ?? '')
+  useEffect(() => setText(state.q ?? ''), [state.q])
+  useEffect(() => {
+    if ((text || '') === (state.q ?? '')) return
+    if (/\b(agent|team|status|has|model|tool|time|score|cost)\s*[:<>=]/i.test(text)) return
+    const t = setTimeout(() => setState({ ...state, q: text.trim() || undefined }), 350)
+    return () => clearTimeout(t)
+  }, [text]) // eslint-disable-line react-hooks/exhaustive-deps
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      const { q: _q, ...rest } = state
+      setState(parseFilterText(text, rest))
+    }
+    if (e.key === 'Escape') {
+      setText('')
+      setState({ ...state, q: undefined })
+      e.currentTarget.blur()
+    }
+  }
+  return { text, setText, onKeyDown }
+}
+
+function InlineFilterText({ placeholder }: { placeholder?: string }) {
+  const t = useFilterText()
+  return (
+    <label className="filter-text">
+      <Icon name="search" size={14} />
+      <span className="sr-only">Filter</span>
+      <input
+        data-filter-input
+        className="filter-input"
+        value={t.text}
+        placeholder={placeholder ?? 'Filter…  try agent:coder has:block'}
+        onChange={(e) => t.setText(e.target.value)}
+        onKeyDown={t.onKeyDown}
+        aria-describedby="filter-syntax-help"
+      />
+      <kbd className="kbd kbd-hint" aria-hidden>
+        /
+      </kbd>
+    </label>
+  )
+}
+
+/**
+ * The page's search box for the shared filter (DESIGN.md §7.2 rule 6): the
+ * same text and `key:value` syntax as the filter bar's, as a <SearchField>.
+ * Use with <FilterBar search="external">; `/` focuses it.
+ */
+export function FilterSearchField({ label, placeholder = 'Search', width }: { label: string; placeholder?: string; width?: number | string }) {
+  const t = useFilterText()
+  return <SearchField label={label} value={t.text} onChange={t.setText} onKeyDown={t.onKeyDown} filterInput placeholder={placeholder} width={width} aria-describedby="filter-syntax-help" />
+}
+
+/** The "Filter" button that opens a collapsible <FilterBar>; it counts the active chips. */
+export function FilterButton({ open, onToggle, defaultTime }: { open: boolean; onToggle: () => void; defaultTime?: TimeRange }) {
+  const [state] = useFilters()
+  const n = chipsOf(state, { defaultTime }).filter((c) => c.key !== 'q' && c.key !== 'time').length
+  return (
+    <button type="button" className={`qbtn ${n ? 'on' : ''}`} aria-expanded={open} aria-controls="filter-tray" onClick={onToggle}>
+      <Icon name="filter" size={14} /> Filter{n ? <span className="qbtn-count"> · {n}</span> : null}
+    </button>
   )
 }
 

@@ -25,13 +25,13 @@ describe('guide anchors and links', () => {
   })
 })
 
-// Every "Read the guide" link points at a user guide, at a heading it has.
+// Every "?" and guide link points at a user guide, at a heading it has.
 describe('page help links', () => {
   const guides = import.meta.glob('../../../../docs/weft/guides/*.md', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
   const sources = import.meta.glob(['../**/*.{ts,tsx}', '!../**/*.test.*'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
   const guide = (name: string) => Object.entries(guides).find(([p]) => p.endsWith(`/guides/${name}`))?.[1]
   const links = Object.entries(sources).flatMap(([f, src]) =>
-    [...src.matchAll(/(?:\bdoc\s*[:=]\s*|docsUrl\(|^\s*)['"]([A-Za-z0-9_-]+\.md)(#[a-z0-9-]+)?['"]/gm)].map((m) => ({ f, doc: m[1], hash: m[2] })),
+    [...src.matchAll(/(?:\b(?:doc|help)\s*[:=]\s*|helpUrl\(|^\s*)['"]([A-Za-z0-9_-]+\.md)(#[a-z0-9-]+)?['"]/gm)].map((m) => ({ f, doc: m[1], hash: m[2] })),
   )
 
   it('finds the links', () => {

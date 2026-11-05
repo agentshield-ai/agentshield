@@ -9,6 +9,7 @@ import { slugify } from '../../components/traces/callUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtRelative } from '../../lib/format'
 import '../../components/dashboards/dashboards.css'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 function NewDashboardModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const nav = useNavigate()
@@ -94,6 +95,7 @@ export function DashboardsPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Dashboards</h1>
+          <HelpLink doc="project.md#dashboards" topic="Dashboards" />
           <span className="muted small">Custom charts of any span metric: latency percentiles, tokens, cost, scores, grouped by name, model or attribute.</span>
         </div>
         <span className="spacer" />

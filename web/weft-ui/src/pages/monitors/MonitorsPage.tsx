@@ -11,6 +11,7 @@ import { refName, useObjects } from '../../components/objects/objectUtils'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative } from '../../lib/format'
 import { monitorUrl } from '../../lib/urls'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 export function MonitorsPage() {
   const projectId = useProjectId()
@@ -24,6 +25,7 @@ export function MonitorsPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Monitors</h1>
+          <HelpLink doc="evaluations.md#monitors" topic="Monitors" />
           <span className="muted small">Score production spans automatically as they arrive. Results are stored as feedback on each span.</span>
         </div>
         <span className="spacer" />

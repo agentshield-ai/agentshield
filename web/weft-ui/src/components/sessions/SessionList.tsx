@@ -1,130 +1,97 @@
-// A plain list of sessions with one-line summaries (DESIGN.md §7.1 rule 1):
-// the first user request, the agents, the outcome, duration, cost,
-// AgentShield verdicts and scores.
-import { Link } from 'react-router-dom'
-import type { SessionSummary } from '../../api/v1'
-import { fmtCost, fmtDate, fmtDuration, fmtRelative } from '../../lib/format'
-import { agentUrl, sessionUrl, teamUrl } from '../../lib/urls'
-import { AgentChip, DetectionBadges, ScorePill, StatusPill } from '../ui/bits'
-import { Icon } from '../ui/Icons'
+// Sessions as grouped lists (DESIGN.md §7, §7.2 rule 3): each row a status
+// glyph, the first request as the title, one generated line saying what
+// happened (lib/summaries.ts), the team and agents, and the time. The whole
+// row opens the session, where the step responsible for a failure or block
+// is selected on arrival.
+import type { Detection, SessionSummary } from '../../api/v1'
+import { fmtDate } from '../../lib/format'
+import { needsALook, relativeTime, rowGlyph, sessionMetaLine, sessionSummaryLine, sessionTitle, type RowContext } from '../../lib/summaries'
+import { sessionUrl } from '../../lib/urls'
+import { GroupedList, ListRow } from '../ui/GroupedList'
+import { StatusGlyph } from '../ui/StatusGlyph'
 
-export function sessionTitle(s: Pick<SessionSummary, 'title' | 'name' | 'session_id'>): string {
-  return s.title?.trim() || s.name?.trim() || `Session ${s.session_id}`
+export { sessionTitle }
+
+/** Row context shared by a list, plus each session's detections when loaded. */
+export interface ListContext extends Omit<RowContext, 'detections'> {
+  detections?: Map<string, Detection[]>
 }
 
-export function SessionList({ projectId, sessions, compact }: { projectId: string; sessions: SessionSummary[]; compact?: boolean }) {
+const rowCtx = (ctx: ListContext | undefined, id: string): RowContext => ({ ...ctx, detections: ctx?.detections?.get(id) })
+
+export function SessionRow({ projectId, s, ctx }: { projectId: string; s: SessionSummary; ctx?: ListContext }) {
+  const c = rowCtx(ctx, s.session_id)
+  const g = rowGlyph(s, c)
   return (
-    <ul className={`session-list ${compact ? 'compact' : ''}`} aria-label="Sessions">
+    <ListRow
+      className={`session-row status-${s.status}`}
+      glyph={<StatusGlyph kind={g.kind} label={g.label} />}
+      title={sessionTitle(s)}
+      summary={sessionSummaryLine(s, c)}
+      meta={sessionMetaLine(s)}
+      time={relativeTime(s.last_activity)}
+      timeTitle={fmtDate(s.last_activity)}
+      to={sessionUrl(projectId, s.session_id)}
+    />
+  )
+}
+
+/** One grouped list of sessions, without a heading (Team and Agent pages). */
+export function SessionList({ projectId, sessions, ctx, label = 'Sessions', title }: { projectId: string; sessions: SessionSummary[]; ctx?: ListContext; label?: string; title?: string; compact?: boolean }) {
+  return (
+    <GroupedList label={label} title={title}>
       {sessions.map((s) => (
-        <SessionRow key={s.session_id} projectId={projectId} s={s} />
+        <SessionRow key={s.session_id} projectId={projectId} s={s} ctx={ctx} />
       ))}
-    </ul>
+    </GroupedList>
   )
 }
 
-export function SessionRow({ projectId, s }: { projectId: string; s: SessionSummary }) {
-  const det = s.detection_count ?? {}
-  const hasSecurity = (det.block ?? 0) > 0 || (det.require_approval ?? 0) > 0
-  const scores = Object.entries(s.scores ?? {})
-  const steps = s.tool_call_count + s.llm_call_count
-  return (
-    <li className={`session-row status-${s.status}`}>
-      <div className="session-main">
-        <div className="session-title-line">
-          <StatusPill status={s.status} />
-          <Link className="session-title" to={sessionUrl(projectId, s.session_id)}>
-            {sessionTitle(s)}
-          </Link>
-        </div>
-        <div className="session-meta">
-          <span className="agents">
-            {s.agents.length ? s.agents.map((a) => <AgentChip key={a} name={a} to={agentUrl(projectId, a)} size="sm" />) : <span className="faint">no agents recorded</span>}
-          </span>
-          {s.verdicts_only && <VerdictsOnlyNote />}
-          {s.team_id && !s.team_id.startsWith('auto:') && (
-            <Link className="team-link small" to={teamUrl(projectId, s.team_id)}>
-              <Icon name="teams" size={12} /> {s.team_name || s.team_id}
-            </Link>
-          )}
-          <span className="faint small" title={fmtDate(s.last_activity)}>
-            {fmtRelative(s.last_activity)}
-          </span>
-        </div>
-      </div>
-      <dl className="session-figures">
-        <div>
-          <dt>Duration</dt>
-          <dd title={s.verdicts_only ? 'Unknown: only security verdicts were recorded for this session' : undefined}>{fmtDuration(s.duration_ms)}</dd>
-        </div>
-        <div>
-          <dt>Steps</dt>
-          <dd title={`${s.llm_call_count} model calls, ${s.tool_call_count} tool calls, ${s.handoff_count} hand-offs`}>
-            {steps}
-            {s.handoff_count ? (
-              <span className="faint">
-                {' '}
-                · {s.handoff_count} hand-off{s.handoff_count === 1 ? '' : 's'}
-              </span>
-            ) : null}
-          </dd>
-        </div>
-        <div>
-          <dt>Cost</dt>
-          <dd>{fmtCost(s.cost_usd)}</dd>
-        </div>
-      </dl>
-      <div className="session-flags">
-        {hasSecurity && (
-          <Link className="flag-link" to={sessionUrl(projectId, s.session_id, { step: 'problem' })} title={`Go to the ${det.block ? 'blocked' : 'flagged'} step`}>
-            <DetectionBadges counts={det} />
-            <span className="sr-only">
-              : go to the {det.block ? 'blocked' : 'flagged'} step in {sessionTitle(s)}
-            </span>
-          </Link>
-        )}
-        {!hasSecurity && <DetectionBadges counts={det} />}
-        {s.status === 'error' && (
-          <Link className="flag-link small" to={sessionUrl(projectId, s.session_id, { step: 'error' })}>
-            Go to the failure <Icon name="chevron" size={12} />
-          </Link>
-        )}
-        {s.status !== 'error' && (s.failed_step || s.error_count > 0) && (
-          <Link
-            className="flag-link pill warn step-failed"
-            to={sessionUrl(projectId, s.session_id, { step: 'error' })}
-            title="A tool call, model call, hand-off or linked sub-agent run failed, but the session went on. Click to see the failed step."
-          >
-            <Icon name="error" size={12} /> {s.error_count > 0 ? `${s.error_count} failed step${s.error_count === 1 ? '' : 's'}` : 'A step failed'}
-            <span className="sr-only">: go to the failed step in {sessionTitle(s)}</span>
-          </Link>
-        )}
-        {scores.map(([name, v]) => (
-          <ScorePill key={name} scorer={name} value={v.mean} count={v.count} />
+/** Splits sessions into "Needs a look", "Still running" and "Finished", keeping their order. */
+export function groupSessions(sessions: SessionSummary[], ctx?: ListContext) {
+  const look: SessionSummary[] = []
+  const running: SessionSummary[] = []
+  const done: SessionSummary[] = []
+  for (const s of sessions) {
+    if (needsALook(s, rowCtx(ctx, s.session_id))) look.push(s)
+    else if (String(s.status) === 'running') running.push(s)
+    else done.push(s)
+  }
+  return { look, running, done }
+}
+
+/** The Sessions page lists: Needs a look, then Still running, then Finished (empty groups are left out). */
+export function SessionGroups({ projectId, sessions, ctx }: { projectId: string; sessions: SessionSummary[]; ctx?: ListContext }) {
+  const g = groupSessions(sessions, ctx)
+  const group = (title: string, xs: SessionSummary[]) =>
+    xs.length > 0 && (
+      <GroupedList title={title} count={xs.length}>
+        {xs.map((s) => (
+          <SessionRow key={s.session_id} projectId={projectId} s={s} ctx={ctx} />
         ))}
-      </div>
-    </li>
-  )
-}
-
-/** A session known only from AgentShield verdicts: no agent spans were recorded. */
-export function VerdictsOnlyNote() {
+      </GroupedList>
+    )
   return (
-    <span
-      className="pill verdicts-only"
-      title="AgentShield checked tool calls in this session, but no agent spans were sent to Weft, so steps, duration and cost are unknown. Instrument the agent (see Help) to record them."
-    >
-      <Icon name="shield" size={12} /> Verdicts only — no agent spans recorded
-    </span>
+    <>
+      {group('Needs a look', g.look)}
+      {group('Still running', g.running)}
+      {group('Finished', g.done)}
+    </>
   )
 }
 
 export function SessionListSkeleton({ rows = 5 }: { rows?: number }) {
   return (
-    <ul className="session-list" aria-busy="true" aria-label="Loading sessions">
+    <ul className="glist-box" aria-busy="true" aria-label="Loading sessions">
       {Array.from({ length: rows }, (_, i) => (
-        <li key={i} className="session-row skeleton">
-          <div className="sk sk-line" style={{ width: `${50 + ((i * 13) % 40)}%` }} />
-          <div className="sk sk-line short" />
+        <li key={i} className="lrow">
+          <div className="lrow-link static">
+            <span className="sk sk-dot" />
+            <span className="lrow-text">
+              <span className="sk sk-line" style={{ width: `${50 + ((i * 13) % 40)}%` }} />
+              <span className="sk sk-line short" />
+            </span>
+          </div>
         </li>
       ))}
     </ul>

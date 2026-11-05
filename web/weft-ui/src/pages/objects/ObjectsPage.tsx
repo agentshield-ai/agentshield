@@ -12,6 +12,7 @@ import { KIND_META, objClass, useObjects, type ObjectPageKind } from '../../comp
 import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtDate, fmtRelative, preview } from '../../lib/format'
 import { leaderboardUrl, monitorUrl, objectUrl, objectVersionsUrl } from '../../lib/urls'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 const CREATE_LABEL: Partial<Record<ObjectPageKind, string>> = {
   datasets: 'New dataset',
@@ -80,6 +81,7 @@ export function ObjectsPage({ kind }: { kind: ObjectPageKind }) {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>{meta.title}</h1>
+          <HelpLink doc="evaluations.md#datasets-models-prompts-and-scorers" topic={meta.title} />
           <span className="muted small">{meta.blurb}</span>
         </div>
         <span className="spacer" />

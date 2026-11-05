@@ -14,6 +14,7 @@ import { objectUrl } from '../../lib/urls'
 import { ApiKeysTab, DeleteProjectTab, RetentionTab, SamplingTab, SensitiveDataTab } from './AdminTabs'
 import { AuditLogTab, MembersTab } from './IamTabs'
 import { BucketsTab } from './BucketsTab'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 type Tab = 'general' | 'costs' | 'secrets' | 'buckets' | 'annotations' | 'integrations' | 'apikeys' | 'members' | 'audit' | 'retention' | 'sampling' | 'sensitive' | 'delete'
 const TABS: { id: Tab; label: string }[] = [
@@ -41,6 +42,7 @@ export function SettingsPage() {
     <div className="page">
       <div className="page-header">
         <h1>Settings</h1>
+        <HelpLink doc="project.md#settings" topic="Settings" />
         <span className="muted small mono">{projectId}</span>
       </div>
       <div className="tabs-scroll">

@@ -1,0 +1,237 @@
+/* Weft design tokens (docs/weft/DESIGN.md §7.2). Loaded before every other
+   stylesheet; components use these custom properties, never raw colours.
+
+   Light and dark follow the same rules: near-black text and one grey, one
+   accent (links and selection), red only for failed or blocked, amber only
+   for warnings and approvals, green only for a success glyph. Every text
+   pair meets WCAG 2.1 AA (4.5:1) in both themes; glyphs meet 3:1.
+
+   The theme is the system's unless the user picked one (Layout.tsx
+   applyTheme sets <html data-theme="light|dark">), hence the selectors
+   below: the dark values apply under prefers-color-scheme: dark unless
+   light was picked, and always when dark was picked. */
+
+:root {
+  /* Type: Inter (bundled, @fontsource-variable/inter), then the system UI font. */
+  --font: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono: 'SF Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --fs-title: 30px; /* page title (list pages) */
+  --fs-title-detail: 28px; /* page title (one session, agent, …) */
+  --fs-outcome: 21px; /* the sentence under a list page's title */
+  --fs-outcome-detail: 19px; /* the outcome sentence of a detail page */
+  --fs-body: 15px;
+  --fs-secondary: 14px;
+  --fs-meta: 13px;
+  --fs-label: 12px;
+
+  /* Surfaces */
+  --bg: #fbfbfd; /* the page */
+  --sidebar-bg: #f0f0f3;
+  --sidebar-hover: #e6e6eb;
+  --sidebar-active: #e3e3e8;
+  --panel: #ffffff; /* grouped lists, panels, the inspector */
+  --panel-2: #f5f5f7; /* fills inside a panel: code, hand-off replies, row hover */
+  --fill: #f0f0f3; /* the user's message bubble */
+  --control-bg: #e9e9ee; /* segmented controls, search fields */
+  --control-selected: #ffffff;
+  --code-bg: #f5f5f7;
+  --hairline: #e5e5ea; /* the 1px edge of a panel (as a box-shadow ring) */
+  --separator: #ebebef; /* inset row separators */
+  --border: #e5e5ea;
+  --border-strong: #d2d2d7;
+
+  /* Text */
+  --text: #1d1d1f;
+  --text-secondary: #3a3a3c; /* summary lines, inactive segments */
+  --text-muted: #6e6e73; /* meta, labels, times (5.1:1 on white, 4.9:1 on the page) */
+  --text-muted-on-fill: #636366; /* muted text on the sidebar and controls (4.7:1) */
+  --text-2: var(--text-muted);
+  --text-3: var(--text-muted);
+
+  /* Accent: links and selection only */
+  --accent: #0066cc;
+  --accent-hover: #004c99;
+  --accent-2: #edf4fc; /* a selected row's tint (muted text stays AA on it) */
+  --accent-text: #ffffff;
+  --accent-bubble: #0066cc; /* the final answer's bubble, white text on it */
+  --focus: #0066cc;
+
+  /* Status: colour plus a glyph and words, never colour alone */
+  --error: #c00013; /* text */
+  --error-glyph: #d70015;
+  --error-bg: #fff0f1;
+  --warn: #a15c00; /* amber: warnings and approvals (text and glyph) */
+  --warn-bg: #fff6e5;
+  --success: #1b7a36; /* success words (AA on white and on --success-bg) */
+  --success-glyph: #1e8e3e; /* the success glyph */
+  --success-bg: #ebf7ee;
+  --running: #0066cc;
+  --running-bg: #edf4fc;
+  --info: #3a3a3c;
+  --info-bg: #f5f5f7;
+
+  /* Severity words (text) */
+  --sev-critical: #c00013;
+  --sev-high: #c00013;
+  --sev-medium: #a15c00;
+  --sev-low: #3a3a3c;
+
+  /* Shape */
+  --radius-panel: 14px;
+  --radius-control: 9px;
+  --radius-control-inner: 7px;
+  --radius-code: 8px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --ring: 0 0 0 1px var(--hairline);
+  --ring-selected: 0 0 0 2px var(--accent);
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.12); /* a selected segment */
+  --shadow: var(--ring);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.14);
+  --sidebar-w: 220px;
+
+  /* Chart series (charts only; agents are told apart by name and monogram) */
+  --c1: #0066cc;
+  --c2: #0e8a8a;
+  --c3: #c2570c;
+  --c4: #a1309f;
+  --c5: #4f7d0f;
+  --c6: #5856d6;
+  /* Deprecated: agent colours, still read by pages not yet redesigned. */
+  --agent-0: #5856d6;
+  --agent-1: #0f766e;
+  --agent-2: #c2410c;
+  --agent-3: #a21caf;
+  --agent-4: #4d7c0f;
+  --agent-5: #0369a1;
+  --agent-6: #92400e;
+  --agent-7: #be185d;
+  --agent-8: #6d28d9;
+  --agent-9: #0e7490;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #151517;
+    --sidebar-bg: #1d1d20;
+    --sidebar-hover: #2a2a2e;
+    --sidebar-active: #2e2e33;
+    --panel: #1e1e21;
+    --panel-2: #29292d;
+    --fill: #2c2c30;
+    --control-bg: #2c2c30;
+    --control-selected: #48484e;
+    --code-bg: #29292d;
+    --hairline: #333338;
+    --separator: #2e2e33;
+    --border: #333338;
+    --border-strong: #48484e;
+    --text: #f5f5f7;
+    --text-secondary: #d1d1d6;
+    --text-muted: #a1a1a6;
+    --text-muted-on-fill: #a1a1a6;
+    --accent: #4da3ff;
+    --accent-hover: #7ab8ff;
+    --accent-2: #1a2c42;
+    --accent-text: #0b0b0c;
+    --accent-bubble: #0a6bd8;
+    --focus: #4da3ff;
+    --error: #ff8a84;
+    --error-glyph: #ff6961;
+    --error-bg: #3a1d1f;
+    --warn: #ffb340;
+    --warn-bg: #3a2c14;
+    --success: #30d158;
+    --success-glyph: #30d158;
+    --success-bg: #17301e;
+    --running: #4da3ff;
+    --running-bg: #1a2c42;
+    --info: #d1d1d6;
+    --info-bg: #29292d;
+    --sev-critical: #ff8a84;
+    --sev-high: #ff8a84;
+    --sev-medium: #ffb340;
+    --sev-low: #d1d1d6;
+    --lift: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.55);
+    --c1: #4da3ff;
+    --c2: #2dd4bf;
+    --c3: #fb923c;
+    --c4: #e879f9;
+    --c5: #a3e635;
+    --c6: #a5a3ff;
+    --agent-0: #a5a3ff;
+    --agent-1: #2dd4bf;
+    --agent-2: #fb923c;
+    --agent-3: #e879f9;
+    --agent-4: #a3e635;
+    --agent-5: #38bdf8;
+    --agent-6: #fbbf24;
+    --agent-7: #f472b6;
+    --agent-8: #a78bfa;
+    --agent-9: #22d3ee;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #151517;
+  --sidebar-bg: #1d1d20;
+  --sidebar-hover: #2a2a2e;
+  --sidebar-active: #2e2e33;
+  --panel: #1e1e21;
+  --panel-2: #29292d;
+  --fill: #2c2c30;
+  --control-bg: #2c2c30;
+  --control-selected: #48484e;
+  --code-bg: #29292d;
+  --hairline: #333338;
+  --separator: #2e2e33;
+  --border: #333338;
+  --border-strong: #48484e;
+  --text: #f5f5f7;
+  --text-secondary: #d1d1d6;
+  --text-muted: #a1a1a6;
+  --text-muted-on-fill: #a1a1a6;
+  --accent: #4da3ff;
+  --accent-hover: #7ab8ff;
+  --accent-2: #1a2c42;
+  --accent-text: #0b0b0c;
+  --accent-bubble: #0a6bd8;
+  --focus: #4da3ff;
+  --error: #ff8a84;
+  --error-glyph: #ff6961;
+  --error-bg: #3a1d1f;
+  --warn: #ffb340;
+  --warn-bg: #3a2c14;
+  --success: #30d158;
+  --success-glyph: #30d158;
+  --success-bg: #17301e;
+  --running: #4da3ff;
+  --running-bg: #1a2c42;
+  --info: #d1d1d6;
+  --info-bg: #29292d;
+  --sev-critical: #ff8a84;
+  --sev-high: #ff8a84;
+  --sev-medium: #ffb340;
+  --sev-low: #d1d1d6;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --c1: #4da3ff;
+  --c2: #2dd4bf;
+  --c3: #fb923c;
+  --c4: #e879f9;
+  --c5: #a3e635;
+  --c6: #a5a3ff;
+  --agent-0: #a5a3ff;
+  --agent-1: #2dd4bf;
+  --agent-2: #fb923c;
+  --agent-3: #e879f9;
+  --agent-4: #a3e635;
+  --agent-5: #38bdf8;
+  --agent-6: #fbbf24;
+  --agent-7: #f472b6;
+  --agent-8: #a78bfa;
+  --agent-9: #22d3ee;
+  color-scheme: dark;
+}

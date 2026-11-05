@@ -1,6 +1,6 @@
 // Global keyboard shortcuts (DESIGN.md §7.1 rule 10): `?` lists them, `/`
 // focuses the filter, `g` then a letter jumps to a page. Pages add their own
-// (j/k on the session timeline).
+// (j/k on the session story).
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Modal } from '../common'
@@ -8,10 +8,10 @@ import { TableScroll } from './bits'
 
 export const SHORTCUTS: { keys: string[]; what: string; where?: string }[] = [
   { keys: ['?'], what: 'Show this list' },
-  { keys: ['/'], what: 'Focus the filter box' },
-  { keys: ['j'], what: 'Next step', where: 'Session timeline' },
-  { keys: ['k'], what: 'Previous step', where: 'Session timeline' },
-  { keys: ['Enter'], what: 'Expand or collapse the focused step', where: 'Session timeline' },
+  { keys: ['/'], what: 'Focus the search box' },
+  { keys: ['j'], what: 'Next step', where: 'Session story' },
+  { keys: ['k'], what: 'Previous step', where: 'Session story' },
+  { keys: ['Enter'], what: 'Select the focused step', where: 'Session story' },
   { keys: ['g', 's'], what: 'Go to Sessions' },
   { keys: ['g', 'a'], what: 'Go to Agents' },
   { keys: ['g', 't'], what: 'Go to Teams' },

@@ -1,0 +1,2215 @@
+{
+ "sessions": {
+  "code-lint-1": {
+   "session_id": "code-lint-1",
+   "name": "",
+   "title": "Install the project's linter and fix the lint errors in src/",
+   "started_at": "2026-11-05T18:03:43.450000Z",
+   "last_activity": "2026-11-05T18:03:52.450000Z",
+   "duration_ms": 9000,
+   "verdicts_only": false,
+   "agents": [
+    "coder",
+    "reviewer"
+   ],
+   "team_id": "code-crew",
+   "team_name": "Code crew",
+   "turn_count": 1,
+   "trace_count": 1,
+   "span_count": 8,
+   "llm_call_count": 3,
+   "tool_call_count": 3,
+   "handoff_count": 1,
+   "reasoning_step_count": 3,
+   "detection_count": {
+    "block": 1
+   },
+   "error_count": 1,
+   "input_tokens": 600,
+   "output_tokens": 360,
+   "reasoning_tokens": 0,
+   "cost_usd": 0.0072,
+   "status": "ok",
+   "failed_step": true,
+   "models": [
+    "claude-sonnet-4"
+   ],
+   "tools": [
+    "Bash",
+    "delegate_review"
+   ],
+   "scores": {
+    "GoalCompletionJudge": {
+     "mean": 0.6,
+     "count": 1
+    }
+   },
+   "trace_ids": [
+    "9733fedd476a4f00fe06082f235144a1"
+   ]
+  },
+  "trip-lisbon": {
+   "session_id": "trip-lisbon",
+   "name": "",
+   "title": "Plan a weekend in Lisbon with two museum visits",
+   "started_at": "2026-11-05T16:53:43.341000Z",
+   "last_activity": "2026-11-05T16:53:47.341000Z",
+   "duration_ms": 4000,
+   "verdicts_only": false,
+   "agents": [
+    "orchestrator",
+    "researcher"
+   ],
+   "team_id": "trip-planners",
+   "team_name": "Trip planners",
+   "turn_count": 1,
+   "trace_count": 1,
+   "span_count": 7,
+   "llm_call_count": 3,
+   "tool_call_count": 2,
+   "handoff_count": 1,
+   "reasoning_step_count": 3,
+   "detection_count": {},
+   "error_count": 4,
+   "input_tokens": 680,
+   "output_tokens": 280,
+   "reasoning_tokens": 0,
+   "cost_usd": 0.00624,
+   "status": "error",
+   "failed_step": false,
+   "models": [
+    "claude-sonnet-4"
+   ],
+   "tools": [
+    "delegate_researcher",
+    "web_search"
+   ],
+   "scores": {
+    "GoalCompletionJudge": {
+     "mean": 0.1,
+     "count": 1
+    }
+   },
+   "trace_ids": [
+    "e6a168631da9f04e48c4716fa22f3570"
+   ]
+  },
+  "code-test-1": {
+   "session_id": "code-test-1",
+   "name": "",
+   "title": "Run the test suite and fix what breaks",
+   "started_at": "2026-11-05T13:53:43.487000Z",
+   "last_activity": "2026-11-05T13:53:49.487000Z",
+   "duration_ms": 6000,
+   "verdicts_only": false,
+   "agents": [
+    "coder"
+   ],
+   "team_id": "code-crew",
+   "team_name": "Code crew",
+   "turn_count": 1,
+   "trace_count": 1,
+   "span_count": 5,
+   "llm_call_count": 2,
+   "tool_call_count": 2,
+   "handoff_count": 0,
+   "reasoning_step_count": 2,
+   "detection_count": {},
+   "error_count": 1,
+   "input_tokens": 400,
+   "output_tokens": 240,
+   "reasoning_tokens": 0,
+   "cost_usd": 0.0048,
+   "status": "ok",
+   "failed_step": true,
+   "models": [
+    "claude-sonnet-4"
+   ],
+   "tools": [
+    "Bash"
+   ],
+   "scores": {},
+   "trace_ids": [
+    "45322b1ef4cb30b0607ac80cf212b34e"
+   ]
+  },
+  "code-deploy-1": {
+   "session_id": "code-deploy-1",
+   "name": "",
+   "title": "Find out why deploys fail on staging",
+   "started_at": "2026-11-05T15:53:43.465000Z",
+   "last_activity": "2026-11-05T15:54:13.465000Z",
+   "duration_ms": 30000,
+   "verdicts_only": false,
+   "agents": [
+    "coder"
+   ],
+   "team_id": "code-crew",
+   "team_name": "Code crew",
+   "turn_count": 1,
+   "trace_count": 1,
+   "span_count": 11,
+   "llm_call_count": 5,
+   "tool_call_count": 5,
+   "handoff_count": 0,
+   "reasoning_step_count": 5,
+   "detection_count": {
+    "require_approval": 5
+   },
+   "error_count": 0,
+   "input_tokens": 1000,
+   "output_tokens": 600,
+   "reasoning_tokens": 0,
+   "cost_usd": 0.012,
+   "status": "ok",
+   "failed_step": false,
+   "models": [
+    "claude-sonnet-4"
+   ],
+   "tools": [
+    "Read"
+   ],
+   "scores": {},
+   "trace_ids": [
+    "00ea7df66f3990a4cd9e018fa8dda93e"
+   ]
+  },
+  "trip-oslo": {
+   "session_id": "trip-oslo",
+   "name": "",
+   "title": "Find three facts about Oslo and summarise them",
+   "started_at": "2026-11-05T18:33:43.289000Z",
+   "last_activity": "2026-11-05T18:33:47.289000Z",
+   "duration_ms": 4000,
+   "verdicts_only": false,
+   "agents": [
+    "orchestrator",
+    "researcher"
+   ],
+   "team_id": "trip-planners",
+   "team_name": "Trip planners",
+   "turn_count": 1,
+   "trace_count": 1,
+   "span_count": 7,
+   "llm_call_count": 3,
+   "tool_call_count": 2,
+   "handoff_count": 1,
+   "reasoning_step_count": 3,
+   "detection_count": {},
+   "error_count": 0,
+   "input_tokens": 680,
+   "output_tokens": 280,
+   "reasoning_tokens": 0,
+   "cost_usd": 0.00624,
+   "status": "ok",
+   "failed_step": false,
+   "models": [
+    "claude-sonnet-4"
+   ],
+   "tools": [
+    "delegate_researcher",
+    "web_search"
+   ],
+   "scores": {
+    "GoalCompletionJudge": {
+     "mean": 0.9,
+     "count": 1
+    }
+   },
+   "trace_ids": [
+    "919175052abdf7a9ba32b60e6f2f485a"
+   ]
+  }
+ },
+ "timelines": {
+  "code-lint-1": [
+   {
+    "type": "turn",
+    "span_id": "38242de6c6d7ad26",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:43.450000Z",
+    "ended_at": "2026-11-05T18:03:52.450000Z",
+    "payload": {
+     "duration_ms": 9000,
+     "input_preview": "Install the project's linter and fix the lint errors in src/",
+     "name": "invoke_agent coder",
+     "output_preview": "Installed eslint with npm.",
+     "status": "OK"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "38242de6c6d7ad26",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:43.450000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "user",
+     "text": "Install the project's linter and fix the lint errors in src/"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "12241ed576b6cf33",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:43.500000Z",
+    "ended_at": "2026-11-05T18:03:44.400000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 900,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"command\":\"curl -sSL https://get.lint.example/install.sh | sh\"}",
+       "id": "toolu_bash_install",
+       "name": "Bash"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "12241ed576b6cf33",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:43.500000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 0,
+     "kind": "thinking",
+     "next_span_id": "12fd114a25621536",
+     "source": "output",
+     "step_id": "12241ed576b6cf33#0",
+     "text": "The linter isn't installed. The quickest way is the vendor's install script piped to sh.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "12fd114a25621536",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:44.450000Z",
+    "ended_at": "2026-11-05T18:03:44.600000Z",
+    "payload": {
+     "arguments": "curl -sSL https://get.lint.example/install.sh | sh",
+     "duration_ms": 150,
+     "result": "",
+     "status": "ERROR",
+     "tool_call_id": "toolu_bash_install",
+     "tool_name": "Bash"
+    }
+   },
+   {
+    "type": "error",
+    "span_id": "12fd114a25621536",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:44.450000Z",
+    "ended_at": "2026-11-05T18:03:44.600000Z",
+    "payload": {
+     "error_type": "",
+     "message": "Blocked by AgentShield: Remote Code Execution via Piped Script Download",
+     "name": "execute_tool Bash",
+     "operation": "execute_tool"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "740fb8729f7ea37c",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:44.750000Z",
+    "ended_at": "2026-11-05T18:03:45.450000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 700,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"question\":\"How to install safely?\"}",
+       "id": "toolu_review",
+       "name": "delegate_review"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "740fb8729f7ea37c",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:44.750000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 1,
+     "kind": "thinking",
+     "next_span_id": "19be59f4c30e9b3a",
+     "source": "output",
+     "step_id": "740fb8729f7ea37c#0",
+     "text": "That was blocked. I'll ask the reviewer for a safer way.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "19be59f4c30e9b3a",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:45.550000Z",
+    "ended_at": "2026-11-05T18:03:48.550000Z",
+    "payload": {
+     "arguments": "How to install safely?",
+     "duration_ms": 3000,
+     "result": "Use npm",
+     "status": "OK",
+     "tool_call_id": "toolu_review",
+     "tool_name": "delegate_review"
+    }
+   },
+   {
+    "type": "handoff",
+    "span_id": "566eab8febc20550",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:45.650000Z",
+    "ended_at": "2026-11-05T18:03:48.450000Z",
+    "payload": {
+     "duration_ms": 2800,
+     "from_agent": "coder",
+     "from_span_id": "38242de6c6d7ad26",
+     "handoff_id": "e52dd3c305889e6f3fae7d9d66169fb9",
+     "input_preview": "How to install safely?",
+     "kind": "delegate",
+     "output_preview": "Use npm i -D eslint.",
+     "source": "nested",
+     "status": "ok",
+     "to_agent": "reviewer",
+     "to_span_id": "566eab8febc20550"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "b3abfcbbb7e7ddbe",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "reviewer",
+    "started_at": "2026-11-05T18:03:45.750000Z",
+    "ended_at": "2026-11-05T18:03:46.650000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 900,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "Use npm i -D eslint.",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": []
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "b3abfcbbb7e7ddbe",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "reviewer",
+    "started_at": "2026-11-05T18:03:45.750000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 2,
+     "kind": "thinking",
+     "next_span_id": null,
+     "source": "output",
+     "step_id": "b3abfcbbb7e7ddbe#0",
+     "text": "Piping a remote script to a shell is unsafe; recommend the package manager.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "handoff",
+    "span_id": "566eab8febc20550",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "reviewer",
+    "started_at": "2026-11-05T18:03:48.450000Z",
+    "ended_at": "2026-11-05T18:03:48.450000Z",
+    "payload": {
+     "duration_ms": 0,
+     "from_agent": "reviewer",
+     "from_span_id": "566eab8febc20550",
+     "handoff_id": "2f1d441e86861697f83ca50ced9c74ef",
+     "input_preview": "",
+     "kind": "return",
+     "output_preview": "Use npm i -D eslint.",
+     "source": "return",
+     "status": "ok",
+     "to_agent": "coder",
+     "to_span_id": "38242de6c6d7ad26"
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "4b7d25509a46244b",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:48.750000Z",
+    "ended_at": "2026-11-05T18:03:51.250000Z",
+    "payload": {
+     "arguments": "npm i -D eslint",
+     "duration_ms": 2500,
+     "result": "added 98 packages",
+     "status": "OK",
+     "tool_call_id": "toolu_bash_npm",
+     "tool_name": "Bash"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "38242de6c6d7ad26",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T18:03:52.450000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "assistant",
+     "text": "Installed eslint with npm."
+    }
+   }
+  ],
+  "trip-lisbon": [
+   {
+    "type": "turn",
+    "span_id": "5990b35339a702bf",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:43.341000Z",
+    "ended_at": "2026-11-05T16:53:47.341000Z",
+    "payload": {
+     "duration_ms": 4000,
+     "input_preview": "Plan a weekend in Lisbon with two museum visits",
+     "name": "invoke_agent orchestrator",
+     "output_preview": "",
+     "status": "ERROR"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "5990b35339a702bf",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:43.341000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "user",
+     "text": "Plan a weekend in Lisbon with two museum visits"
+    }
+   },
+   {
+    "type": "error",
+    "span_id": "5990b35339a702bf",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:43.341000Z",
+    "ended_at": "2026-11-05T16:53:47.341000Z",
+    "payload": {
+     "error_type": "",
+     "message": "researcher did not return a result",
+     "name": "invoke_agent orchestrator",
+     "operation": "invoke_agent"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "4fdb7ae6e5df2565",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:43.391000Z",
+    "ended_at": "2026-11-05T16:53:44.191000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 800,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"task\":\"Plan a weekend in Lisbon with two museum visits\"}",
+       "id": "toolu_trip-lisbon_d",
+       "name": "delegate_researcher"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "4fdb7ae6e5df2565",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:43.391000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 0,
+     "kind": "thinking",
+     "next_span_id": "f272994ac1608d87",
+     "source": "output",
+     "step_id": "4fdb7ae6e5df2565#0",
+     "text": "The researcher agent should handle this part.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "f272994ac1608d87",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:44.241000Z",
+    "ended_at": "2026-11-05T16:53:45.741000Z",
+    "payload": {
+     "arguments": "Plan a weekend in Lisbon with two museum visits",
+     "duration_ms": 1500,
+     "result": "",
+     "status": "ERROR",
+     "tool_call_id": "toolu_trip-lisbon_d",
+     "tool_name": "delegate_researcher"
+    }
+   },
+   {
+    "type": "error",
+    "span_id": "f272994ac1608d87",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:44.241000Z",
+    "ended_at": "2026-11-05T16:53:45.741000Z",
+    "payload": {
+     "error_type": "",
+     "message": "researcher did not return a result",
+     "name": "execute_tool delegate_researcher",
+     "operation": "execute_tool"
+    }
+   },
+   {
+    "type": "handoff",
+    "span_id": "a1356dc3eccab5ea",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:44.341000Z",
+    "ended_at": "2026-11-05T16:53:45.641000Z",
+    "payload": {
+     "duration_ms": 1300,
+     "from_agent": "orchestrator",
+     "from_span_id": "5990b35339a702bf",
+     "handoff_id": "0f6c56ce27746bc21fddaa5ec0c34952",
+     "input_preview": "Plan a weekend in Lisbon with two museum visits",
+     "kind": "delegate",
+     "output_preview": "",
+     "source": "nested",
+     "status": "error",
+     "to_agent": "researcher",
+     "to_span_id": "a1356dc3eccab5ea"
+    }
+   },
+   {
+    "type": "error",
+    "span_id": "a1356dc3eccab5ea",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T16:53:44.341000Z",
+    "ended_at": "2026-11-05T16:53:45.641000Z",
+    "payload": {
+     "error_type": "",
+     "message": "tool web_search failed: upstream timeout",
+     "name": "invoke_agent researcher",
+     "operation": "invoke_agent"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "f385627e1bf526a7",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T16:53:44.441000Z",
+    "ended_at": "2026-11-05T16:53:44.741000Z",
+    "payload": {
+     "cost_usd": 0.00129,
+     "duration_ms": 300,
+     "input_tokens": 80,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 70,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"q\":\"Plan a weekend in Lisbon with two museum visits\"}",
+       "id": "call_trip-lisbon_t",
+       "name": "web_search"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "f385627e1bf526a7",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T16:53:44.441000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 1,
+     "kind": "thinking",
+     "next_span_id": "f34e6dd6c482b9f7",
+     "source": "output",
+     "step_id": "f385627e1bf526a7#0",
+     "text": "I should call web_search to answer this question.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "f34e6dd6c482b9f7",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T16:53:44.791000Z",
+    "ended_at": "2026-11-05T16:53:45.191000Z",
+    "payload": {
+     "arguments": "Plan a weekend in Lisbon with two museum visits",
+     "duration_ms": 400,
+     "result": "",
+     "status": "ERROR",
+     "tool_call_id": "call_trip-lisbon_t",
+     "tool_name": "web_search"
+    }
+   },
+   {
+    "type": "error",
+    "span_id": "f34e6dd6c482b9f7",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T16:53:44.791000Z",
+    "ended_at": "2026-11-05T16:53:45.191000Z",
+    "payload": {
+     "error_type": "",
+     "message": "upstream timeout after 400 ms (HTTP 504)",
+     "name": "execute_tool web_search",
+     "operation": "execute_tool"
+    }
+   },
+   {
+    "type": "handoff",
+    "span_id": "a1356dc3eccab5ea",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T16:53:45.641000Z",
+    "ended_at": "2026-11-05T16:53:45.641000Z",
+    "payload": {
+     "duration_ms": 0,
+     "from_agent": "researcher",
+     "from_span_id": "a1356dc3eccab5ea",
+     "handoff_id": "29603c991d4a1c221ee1673bbb02e540",
+     "input_preview": "",
+     "kind": "return",
+     "output_preview": "",
+     "source": "return",
+     "status": "error",
+     "to_agent": "orchestrator",
+     "to_span_id": "5990b35339a702bf"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "6be792800fc832fe",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:45.841000Z",
+    "ended_at": "2026-11-05T16:53:46.841000Z",
+    "payload": {
+     "cost_usd": 0.00255,
+     "duration_ms": 1000,
+     "input_tokens": 400,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "Sorry, the search timed out.",
+     "output_tokens": 90,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": []
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "6be792800fc832fe",
+    "trace_id": "e6a168631da9f04e48c4716fa22f3570",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T16:53:45.841000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 2,
+     "kind": "thinking",
+     "next_span_id": null,
+     "source": "output",
+     "step_id": "6be792800fc832fe#0",
+     "text": "Summarise the result for the user.",
+     "tokens": null
+    }
+   }
+  ],
+  "code-test-1": [
+   {
+    "type": "turn",
+    "span_id": "66b3cdc7f17b386f",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:43.487000Z",
+    "ended_at": "2026-11-05T13:53:49.487000Z",
+    "payload": {
+     "duration_ms": 6000,
+     "input_preview": "Run the test suite and fix what breaks",
+     "name": "invoke_agent coder",
+     "output_preview": "All 42 tests pass.",
+     "status": "OK"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "66b3cdc7f17b386f",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:43.487000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "user",
+     "text": "Run the test suite and fix what breaks"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "b3ed2186996a6136",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:43.537000Z",
+    "ended_at": "2026-11-05T13:53:44.137000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 600,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"command\":\"npm test\"}",
+       "id": "toolu_test_1",
+       "name": "Bash"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "b3ed2186996a6136",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:43.537000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 0,
+     "kind": "thinking",
+     "next_span_id": "bfa1c16b009b676d",
+     "source": "output",
+     "step_id": "b3ed2186996a6136#0",
+     "text": "Start by running the whole test suite to see what breaks.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "bfa1c16b009b676d",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:44.187000Z",
+    "ended_at": "2026-11-05T13:53:45.987000Z",
+    "payload": {
+     "arguments": "npm test",
+     "duration_ms": 1800,
+     "result": "",
+     "status": "ERROR",
+     "tool_call_id": "toolu_test_1",
+     "tool_name": "Bash"
+    }
+   },
+   {
+    "type": "error",
+    "span_id": "bfa1c16b009b676d",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:44.187000Z",
+    "ended_at": "2026-11-05T13:53:45.987000Z",
+    "payload": {
+     "error_type": "",
+     "message": "exit status 1: 3 tests failed (DATABASE_URL is not set)",
+     "name": "execute_tool Bash",
+     "operation": "execute_tool"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "8f1e941c54ec55f4",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:46.087000Z",
+    "ended_at": "2026-11-05T13:53:46.587000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 500,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"command\":\"DATABASE_URL=sqlite::memory: npm test\"}",
+       "id": "toolu_test_2",
+       "name": "Bash"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "8f1e941c54ec55f4",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:46.087000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 1,
+     "kind": "thinking",
+     "next_span_id": "3f443f10a21382c2",
+     "source": "output",
+     "step_id": "8f1e941c54ec55f4#0",
+     "text": "The failures come from a missing DATABASE_URL; rerun with the test database.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "3f443f10a21382c2",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:46.687000Z",
+    "ended_at": "2026-11-05T13:53:49.087000Z",
+    "payload": {
+     "arguments": "DATABASE_URL=sqlite::memory: npm test",
+     "duration_ms": 2400,
+     "result": "42 passed",
+     "status": "OK",
+     "tool_call_id": "toolu_test_2",
+     "tool_name": "Bash"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "66b3cdc7f17b386f",
+    "trace_id": "45322b1ef4cb30b0607ac80cf212b34e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T13:53:49.487000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "assistant",
+     "text": "All 42 tests pass."
+    }
+   }
+  ],
+  "code-deploy-1": [
+   {
+    "type": "turn",
+    "span_id": "54a796f9061390be",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:43.465000Z",
+    "ended_at": "2026-11-05T15:54:13.465000Z",
+    "payload": {
+     "duration_ms": 30000,
+     "input_preview": "Find out why deploys fail on staging",
+     "name": "invoke_agent coder",
+     "output_preview": "The deploy key is expired.",
+     "status": "OK"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "54a796f9061390be",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:43.465000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "user",
+     "text": "Find out why deploys fail on staging"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "9d6f13c1f28565c5",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:43.965000Z",
+    "ended_at": "2026-11-05T15:53:44.665000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 700,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"file_path\":\"~/.ssh/config\"}",
+       "id": "toolu_read_0",
+       "name": "Read"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "9d6f13c1f28565c5",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:43.965000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 0,
+     "kind": "thinking",
+     "next_span_id": "d7f7dc1583910610",
+     "source": "output",
+     "step_id": "9d6f13c1f28565c5#0",
+     "text": "I need to check ~/.ssh/config.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "d7f7dc1583910610",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:44.765000Z",
+    "ended_at": "2026-11-05T15:53:44.885000Z",
+    "payload": {
+     "arguments": "~/.ssh/config",
+     "duration_ms": 120,
+     "result": "(contents)",
+     "status": "OK",
+     "tool_call_id": "toolu_read_0",
+     "tool_name": "Read"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "db83845e99ec2473",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:47.965000Z",
+    "ended_at": "2026-11-05T15:53:48.665000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 700,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"file_path\":\"~/.ssh/known_hosts\"}",
+       "id": "toolu_read_1",
+       "name": "Read"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "db83845e99ec2473",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:47.965000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 1,
+     "kind": "thinking",
+     "next_span_id": "0b917ef718fe5f1c",
+     "source": "output",
+     "step_id": "db83845e99ec2473#0",
+     "text": "I need to check ~/.ssh/known_hosts.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "0b917ef718fe5f1c",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:48.765000Z",
+    "ended_at": "2026-11-05T15:53:48.885000Z",
+    "payload": {
+     "arguments": "~/.ssh/known_hosts",
+     "duration_ms": 120,
+     "result": "(contents)",
+     "status": "OK",
+     "tool_call_id": "toolu_read_1",
+     "tool_name": "Read"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "1b3e7c8a7343ac65",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:51.965000Z",
+    "ended_at": "2026-11-05T15:53:52.665000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 700,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"file_path\":\"~/.aws/credentials\"}",
+       "id": "toolu_read_2",
+       "name": "Read"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "1b3e7c8a7343ac65",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:51.965000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 2,
+     "kind": "thinking",
+     "next_span_id": "0ba61d0f2a4e8bf1",
+     "source": "output",
+     "step_id": "1b3e7c8a7343ac65#0",
+     "text": "I need to check ~/.aws/credentials.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "0ba61d0f2a4e8bf1",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:52.765000Z",
+    "ended_at": "2026-11-05T15:53:52.885000Z",
+    "payload": {
+     "arguments": "~/.aws/credentials",
+     "duration_ms": 120,
+     "result": "(contents)",
+     "status": "OK",
+     "tool_call_id": "toolu_read_2",
+     "tool_name": "Read"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "8e18895f1033cd0d",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:55.965000Z",
+    "ended_at": "2026-11-05T15:53:56.665000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 700,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"file_path\":\"~/.netrc\"}",
+       "id": "toolu_read_3",
+       "name": "Read"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "8e18895f1033cd0d",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:55.965000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 3,
+     "kind": "thinking",
+     "next_span_id": "ecb24a8087d86c4a",
+     "source": "output",
+     "step_id": "8e18895f1033cd0d#0",
+     "text": "I need to check ~/.netrc.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "ecb24a8087d86c4a",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:56.765000Z",
+    "ended_at": "2026-11-05T15:53:56.885000Z",
+    "payload": {
+     "arguments": "~/.netrc",
+     "duration_ms": 120,
+     "result": "(contents)",
+     "status": "OK",
+     "tool_call_id": "toolu_read_3",
+     "tool_name": "Read"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "8ef3f99484da3e5e",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:59.965000Z",
+    "ended_at": "2026-11-05T15:54:00.665000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 700,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"file_path\":\"~/.ssh/id_ed25519\"}",
+       "id": "toolu_read_4",
+       "name": "Read"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "8ef3f99484da3e5e",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:53:59.965000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 4,
+     "kind": "thinking",
+     "next_span_id": "4125a0cd7a2993fc",
+     "source": "output",
+     "step_id": "8ef3f99484da3e5e#0",
+     "text": "I need to check ~/.ssh/id_ed25519.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "4125a0cd7a2993fc",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:54:00.765000Z",
+    "ended_at": "2026-11-05T15:54:00.885000Z",
+    "payload": {
+     "arguments": "~/.ssh/id_ed25519",
+     "duration_ms": 120,
+     "result": "(contents)",
+     "status": "OK",
+     "tool_call_id": "toolu_read_4",
+     "tool_name": "Read"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "54a796f9061390be",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "agent_name": "coder",
+    "started_at": "2026-11-05T15:54:13.465000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "assistant",
+     "text": "The deploy key is expired."
+    }
+   }
+  ],
+  "trip-oslo": [
+   {
+    "type": "turn",
+    "span_id": "d49154fba3342179",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:43.289000Z",
+    "ended_at": "2026-11-05T18:33:47.289000Z",
+    "payload": {
+     "duration_ms": 4000,
+     "input_preview": "Find three facts about Oslo and summarise them",
+     "name": "invoke_agent orchestrator",
+     "output_preview": "Here is what I found.",
+     "status": "OK"
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "d49154fba3342179",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:43.289000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "user",
+     "text": "Find three facts about Oslo and summarise them"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "6199e1779d2c156f",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:43.339000Z",
+    "ended_at": "2026-11-05T18:33:44.139000Z",
+    "payload": {
+     "cost_usd": 0.0024000000000000002,
+     "duration_ms": 800,
+     "input_tokens": 200,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 120,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"task\":\"Find three facts about Oslo and summarise them\"}",
+       "id": "toolu_trip-oslo_d",
+       "name": "delegate_researcher"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "6199e1779d2c156f",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:43.339000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 0,
+     "kind": "thinking",
+     "next_span_id": "6810fb88a8a11d4e",
+     "source": "output",
+     "step_id": "6199e1779d2c156f#0",
+     "text": "The researcher agent should handle this part.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "6810fb88a8a11d4e",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:44.189000Z",
+    "ended_at": "2026-11-05T18:33:45.689000Z",
+    "payload": {
+     "arguments": "Find three facts about Oslo and summarise them",
+     "duration_ms": 1500,
+     "result": "",
+     "status": "OK",
+     "tool_call_id": "toolu_trip-oslo_d",
+     "tool_name": "delegate_researcher"
+    }
+   },
+   {
+    "type": "handoff",
+    "span_id": "8d60fea9d0401360",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:44.289000Z",
+    "ended_at": "2026-11-05T18:33:45.589000Z",
+    "payload": {
+     "duration_ms": 1300,
+     "from_agent": "orchestrator",
+     "from_span_id": "d49154fba3342179",
+     "handoff_id": "f6285c465d8af3a56469cd224088415d",
+     "input_preview": "Find three facts about Oslo and summarise them",
+     "kind": "delegate",
+     "output_preview": "three facts",
+     "source": "nested",
+     "status": "ok",
+     "to_agent": "researcher",
+     "to_span_id": "8d60fea9d0401360"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "28224a27df161676",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T18:33:44.389000Z",
+    "ended_at": "2026-11-05T18:33:44.689000Z",
+    "payload": {
+     "cost_usd": 0.00129,
+     "duration_ms": 300,
+     "input_tokens": 80,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "",
+     "output_tokens": 70,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": [
+      {
+       "arguments": "{\"q\":\"Find three facts about Oslo and summarise them\"}",
+       "id": "call_trip-oslo_t",
+       "name": "web_search"
+      }
+     ]
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "28224a27df161676",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T18:33:44.389000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 1,
+     "kind": "thinking",
+     "next_span_id": "1c5cd6b385ee17f7",
+     "source": "output",
+     "step_id": "28224a27df161676#0",
+     "text": "I should call web_search to answer this question.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "tool_call",
+    "span_id": "1c5cd6b385ee17f7",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T18:33:44.739000Z",
+    "ended_at": "2026-11-05T18:33:45.139000Z",
+    "payload": {
+     "arguments": "Find three facts about Oslo and summarise them",
+     "duration_ms": 400,
+     "result": "three facts",
+     "status": "OK",
+     "tool_call_id": "call_trip-oslo_t",
+     "tool_name": "web_search"
+    }
+   },
+   {
+    "type": "handoff",
+    "span_id": "8d60fea9d0401360",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "researcher",
+    "started_at": "2026-11-05T18:33:45.589000Z",
+    "ended_at": "2026-11-05T18:33:45.589000Z",
+    "payload": {
+     "duration_ms": 0,
+     "from_agent": "researcher",
+     "from_span_id": "8d60fea9d0401360",
+     "handoff_id": "63c3aab05100991724ebffde0e229ed3",
+     "input_preview": "",
+     "kind": "return",
+     "output_preview": "three facts",
+     "source": "return",
+     "status": "ok",
+     "to_agent": "orchestrator",
+     "to_span_id": "d49154fba3342179"
+    }
+   },
+   {
+    "type": "llm",
+    "span_id": "f8670e0fb7991002",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:45.789000Z",
+    "ended_at": "2026-11-05T18:33:46.789000Z",
+    "payload": {
+     "cost_usd": 0.00255,
+     "duration_ms": 1000,
+     "input_tokens": 400,
+     "model": "claude-sonnet-4",
+     "name": "chat claude-sonnet-4",
+     "output_preview": "Here is what I found.",
+     "output_tokens": 90,
+     "provider": "anthropic",
+     "reasoning_tokens": 0,
+     "status": "OK",
+     "tool_calls": []
+    }
+   },
+   {
+    "type": "reasoning",
+    "span_id": "f8670e0fb7991002",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:45.789000Z",
+    "ended_at": null,
+    "payload": {
+     "index": 2,
+     "kind": "thinking",
+     "next_span_id": null,
+     "source": "output",
+     "step_id": "f8670e0fb7991002#0",
+     "text": "Summarise the result for the user.",
+     "tokens": null
+    }
+   },
+   {
+    "type": "message",
+    "span_id": "d49154fba3342179",
+    "trace_id": "919175052abdf7a9ba32b60e6f2f485a",
+    "agent_name": "orchestrator",
+    "started_at": "2026-11-05T18:33:47.289000Z",
+    "ended_at": null,
+    "payload": {
+     "role": "assistant",
+     "text": "Here is what I found."
+    }
+   }
+  ]
+ },
+ "detections": {
+  "code-lint-1": [
+   {
+    "id": "01a1ad0f-4ca7-7158-8901-a2f734b04755",
+    "project_id": "e2ex1/agents",
+    "event_id": "e2ex1/agents-code-lint-1-1",
+    "session_id": "code-lint-1",
+    "session_title": "Install the project's linter and fix the lint errors in src/",
+    "span_id": "12fd114a25621536",
+    "trace_id": "9733fedd476a4f00fe06082f235144a1",
+    "link": "tool_call_id",
+    "engine_span_id": null,
+    "tool_call_id": "toolu_bash_install",
+    "tool_name": "Bash",
+    "agent_name": "coder",
+    "action": "block",
+    "mode": "enforce",
+    "severity": "critical",
+    "rules": [
+     {
+      "id": "c65a9620-e989-5a2c-b993-c81a6c049a84",
+      "title": "Remote Code Execution via Piped Script Download",
+      "level": "critical",
+      "tags": [
+       "attack.execution"
+      ]
+     }
+    ],
+    "source": "engine",
+    "ruleset": "",
+    "event_source": "",
+    "overridden": false,
+    "overridden_at": null,
+    "replay_job_id": null,
+    "created_at": "2026-11-05T18:03:44.450000Z",
+    "ingested_at": "2026-11-05T18:53:43.463041Z"
+   }
+  ],
+  "trip-lisbon": [],
+  "code-test-1": [],
+  "code-deploy-1": [
+   {
+    "id": "01a1ad0f-4cbe-70ab-b8f7-602889cb2e57",
+    "project_id": "e2ex1/agents",
+    "event_id": "e2ex1/agents-code-deploy-1-4",
+    "session_id": "code-deploy-1",
+    "session_title": "Find out why deploys fail on staging",
+    "span_id": "4125a0cd7a2993fc",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "link": "tool_call_id",
+    "engine_span_id": null,
+    "tool_call_id": "toolu_read_4",
+    "tool_name": "Read",
+    "agent_name": "coder",
+    "action": "require_approval",
+    "mode": "enforce",
+    "severity": "medium",
+    "rules": [
+     {
+      "id": "aeed6c47-bf96-5c29-81b7-a37cefb9b409",
+      "title": "Credential File Access Attempt",
+      "level": "medium",
+      "tags": []
+     }
+    ],
+    "source": "engine",
+    "ruleset": "",
+    "event_source": "",
+    "overridden": false,
+    "overridden_at": null,
+    "replay_job_id": null,
+    "created_at": "2026-11-05T15:54:00.765000Z",
+    "ingested_at": "2026-11-05T18:53:43.486035Z"
+   },
+   {
+    "id": "01a1ad0f-4cbd-7df2-a2fb-60e12f8445c3",
+    "project_id": "e2ex1/agents",
+    "event_id": "e2ex1/agents-code-deploy-1-3",
+    "session_id": "code-deploy-1",
+    "session_title": "Find out why deploys fail on staging",
+    "span_id": "ecb24a8087d86c4a",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "link": "tool_call_id",
+    "engine_span_id": null,
+    "tool_call_id": "toolu_read_3",
+    "tool_name": "Read",
+    "agent_name": "coder",
+    "action": "require_approval",
+    "mode": "enforce",
+    "severity": "medium",
+    "rules": [
+     {
+      "id": "aeed6c47-bf96-5c29-81b7-a37cefb9b409",
+      "title": "Credential File Access Attempt",
+      "level": "medium",
+      "tags": []
+     }
+    ],
+    "source": "engine",
+    "ruleset": "",
+    "event_source": "",
+    "overridden": false,
+    "overridden_at": null,
+    "replay_job_id": null,
+    "created_at": "2026-11-05T15:53:56.765000Z",
+    "ingested_at": "2026-11-05T18:53:43.485905Z"
+   },
+   {
+    "id": "01a1ad0f-4cbd-7bdd-a85d-77fd1d466a66",
+    "project_id": "e2ex1/agents",
+    "event_id": "e2ex1/agents-code-deploy-1-2",
+    "session_id": "code-deploy-1",
+    "session_title": "Find out why deploys fail on staging",
+    "span_id": "0ba61d0f2a4e8bf1",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "link": "tool_call_id",
+    "engine_span_id": null,
+    "tool_call_id": "toolu_read_2",
+    "tool_name": "Read",
+    "agent_name": "coder",
+    "action": "require_approval",
+    "mode": "enforce",
+    "severity": "medium",
+    "rules": [
+     {
+      "id": "aeed6c47-bf96-5c29-81b7-a37cefb9b409",
+      "title": "Credential File Access Attempt",
+      "level": "medium",
+      "tags": []
+     }
+    ],
+    "source": "engine",
+    "ruleset": "",
+    "event_source": "",
+    "overridden": true,
+    "overridden_at": "2026-11-05T18:53:43.486370Z",
+    "replay_job_id": null,
+    "created_at": "2026-11-05T15:53:52.765000Z",
+    "ingested_at": "2026-11-05T18:53:43.485768Z"
+   },
+   {
+    "id": "01a1ad0f-4cbd-799d-9a8e-a27842a7f99e",
+    "project_id": "e2ex1/agents",
+    "event_id": "e2ex1/agents-code-deploy-1-1",
+    "session_id": "code-deploy-1",
+    "session_title": "Find out why deploys fail on staging",
+    "span_id": "0b917ef718fe5f1c",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "link": "tool_call_id",
+    "engine_span_id": null,
+    "tool_call_id": "toolu_read_1",
+    "tool_name": "Read",
+    "agent_name": "coder",
+    "action": "require_approval",
+    "mode": "enforce",
+    "severity": "medium",
+    "rules": [
+     {
+      "id": "aeed6c47-bf96-5c29-81b7-a37cefb9b409",
+      "title": "Credential File Access Attempt",
+      "level": "medium",
+      "tags": []
+     }
+    ],
+    "source": "engine",
+    "ruleset": "",
+    "event_source": "",
+    "overridden": true,
+    "overridden_at": "2026-11-05T18:53:43.486356Z",
+    "replay_job_id": null,
+    "created_at": "2026-11-05T15:53:48.765000Z",
+    "ingested_at": "2026-11-05T18:53:43.485620Z"
+   },
+   {
+    "id": "01a1ad0f-4cbd-76bf-9b0d-f537b5b0d69e",
+    "project_id": "e2ex1/agents",
+    "event_id": "e2ex1/agents-code-deploy-1-0",
+    "session_id": "code-deploy-1",
+    "session_title": "Find out why deploys fail on staging",
+    "span_id": "d7f7dc1583910610",
+    "trace_id": "00ea7df66f3990a4cd9e018fa8dda93e",
+    "link": "tool_call_id",
+    "engine_span_id": null,
+    "tool_call_id": "toolu_read_0",
+    "tool_name": "Read",
+    "agent_name": "coder",
+    "action": "require_approval",
+    "mode": "enforce",
+    "severity": "medium",
+    "rules": [
+     {
+      "id": "aeed6c47-bf96-5c29-81b7-a37cefb9b409",
+      "title": "Credential File Access Attempt",
+      "level": "medium",
+      "tags": []
+     }
+    ],
+    "source": "engine",
+    "ruleset": "",
+    "event_source": "",
+    "overridden": true,
+    "overridden_at": "2026-11-05T18:53:43.486300Z",
+    "replay_job_id": null,
+    "created_at": "2026-11-05T15:53:44.765000Z",
+    "ingested_at": "2026-11-05T18:53:43.485414Z"
+   }
+  ],
+  "trip-oslo": []
+ },
+ "list": {
+  "items": [
+   {
+    "session_id": "trip-oslo",
+    "name": "",
+    "title": "Find three facts about Oslo and summarise them",
+    "started_at": "2026-11-05T18:33:43.289000Z",
+    "last_activity": "2026-11-05T18:33:47.289000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "researcher"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 0,
+    "input_tokens": 680,
+    "output_tokens": 280,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.00624,
+    "status": "ok",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_researcher",
+     "web_search"
+    ],
+    "scores": {
+     "GoalCompletionJudge": {
+      "mean": 0.9,
+      "count": 1
+     }
+    }
+   },
+   {
+    "session_id": "code-lint-1",
+    "name": "",
+    "title": "Install the project's linter and fix the lint errors in src/",
+    "started_at": "2026-11-05T18:03:43.450000Z",
+    "last_activity": "2026-11-05T18:03:52.450000Z",
+    "duration_ms": 9000,
+    "verdicts_only": false,
+    "agents": [
+     "coder",
+     "reviewer"
+    ],
+    "team_id": "code-crew",
+    "team_name": "Code crew",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 8,
+    "llm_call_count": 3,
+    "tool_call_count": 3,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {
+     "block": 1
+    },
+    "error_count": 1,
+    "input_tokens": 600,
+    "output_tokens": 360,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.0072,
+    "status": "ok",
+    "failed_step": true,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "Bash",
+     "delegate_review"
+    ],
+    "scores": {
+     "GoalCompletionJudge": {
+      "mean": 0.6,
+      "count": 1
+     }
+    }
+   },
+   {
+    "session_id": "trip-lisbon",
+    "name": "",
+    "title": "Plan a weekend in Lisbon with two museum visits",
+    "started_at": "2026-11-05T16:53:43.341000Z",
+    "last_activity": "2026-11-05T16:53:47.341000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "researcher"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 4,
+    "input_tokens": 680,
+    "output_tokens": 280,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.00624,
+    "status": "error",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_researcher",
+     "web_search"
+    ],
+    "scores": {
+     "GoalCompletionJudge": {
+      "mean": 0.1,
+      "count": 1
+     }
+    }
+   },
+   {
+    "session_id": "code-deploy-1",
+    "name": "",
+    "title": "Find out why deploys fail on staging",
+    "started_at": "2026-11-05T15:53:43.465000Z",
+    "last_activity": "2026-11-05T15:54:13.465000Z",
+    "duration_ms": 30000,
+    "verdicts_only": false,
+    "agents": [
+     "coder"
+    ],
+    "team_id": "code-crew",
+    "team_name": "Code crew",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 11,
+    "llm_call_count": 5,
+    "tool_call_count": 5,
+    "handoff_count": 0,
+    "reasoning_step_count": 5,
+    "detection_count": {
+     "require_approval": 5
+    },
+    "error_count": 0,
+    "input_tokens": 1000,
+    "output_tokens": 600,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.012,
+    "status": "ok",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "Read"
+    ],
+    "scores": {}
+   },
+   {
+    "session_id": "trip-kyoto",
+    "name": "",
+    "title": "Which temples in Kyoto open before 8am?",
+    "started_at": "2026-11-05T14:53:43.359000Z",
+    "last_activity": "2026-11-05T14:53:47.359000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "researcher"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 4,
+    "input_tokens": 680,
+    "output_tokens": 280,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.00624,
+    "status": "error",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_researcher",
+     "web_search"
+    ],
+    "scores": {}
+   },
+   {
+    "session_id": "code-test-1",
+    "name": "",
+    "title": "Run the test suite and fix what breaks",
+    "started_at": "2026-11-05T13:53:43.487000Z",
+    "last_activity": "2026-11-05T13:53:49.487000Z",
+    "duration_ms": 6000,
+    "verdicts_only": false,
+    "agents": [
+     "coder"
+    ],
+    "team_id": "code-crew",
+    "team_name": "Code crew",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 5,
+    "llm_call_count": 2,
+    "tool_call_count": 2,
+    "handoff_count": 0,
+    "reasoning_step_count": 2,
+    "detection_count": {},
+    "error_count": 1,
+    "input_tokens": 400,
+    "output_tokens": 240,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.0048,
+    "status": "ok",
+    "failed_step": true,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "Bash"
+    ],
+    "scores": {}
+   },
+   {
+    "session_id": "trip-rome",
+    "name": "",
+    "title": "Draft a two-line postcard from Rome",
+    "started_at": "2026-11-05T11:53:43.378000Z",
+    "last_activity": "2026-11-05T11:53:47.378000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "writer"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 0,
+    "input_tokens": 680,
+    "output_tokens": 280,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.00624,
+    "status": "ok",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_writer",
+     "web_search"
+    ],
+    "scores": {}
+   },
+   {
+    "session_id": "trip-paris",
+    "name": "",
+    "title": "Summarise the best day trips from Paris",
+    "started_at": "2026-11-05T09:53:43.394000Z",
+    "last_activity": "2026-11-05T09:53:47.394000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "writer"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 0,
+    "input_tokens": 680,
+    "output_tokens": 280,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.00624,
+    "status": "ok",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_writer",
+     "web_search"
+    ],
+    "scores": {}
+   },
+   {
+    "session_id": "trip-oslo-2",
+    "name": "",
+    "title": "Compare hotel prices in Oslo for next weekend",
+    "started_at": "2026-11-05T07:53:43.413000Z",
+    "last_activity": "2026-11-05T07:53:47.413000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "researcher"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 0,
+    "input_tokens": 27200,
+    "output_tokens": 11200,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.2496,
+    "status": "ok",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_researcher",
+     "web_search"
+    ],
+    "scores": {}
+   },
+   {
+    "session_id": "trip-bergen",
+    "name": "",
+    "title": "Find the ferry times from Bergen to Flam",
+    "started_at": "2026-11-05T04:53:43.431000Z",
+    "last_activity": "2026-11-05T04:53:47.431000Z",
+    "duration_ms": 4000,
+    "verdicts_only": false,
+    "agents": [
+     "orchestrator",
+     "researcher"
+    ],
+    "team_id": "trip-planners",
+    "team_name": "Trip planners",
+    "turn_count": 1,
+    "trace_count": 1,
+    "span_count": 7,
+    "llm_call_count": 3,
+    "tool_call_count": 2,
+    "handoff_count": 1,
+    "reasoning_step_count": 3,
+    "detection_count": {},
+    "error_count": 4,
+    "input_tokens": 680,
+    "output_tokens": 280,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.00624,
+    "status": "error",
+    "failed_step": false,
+    "models": [
+     "claude-sonnet-4"
+    ],
+    "tools": [
+     "delegate_researcher",
+     "web_search"
+    ],
+    "scores": {}
+   }
+  ],
+  "total_count": 10
+ },
+ "attention": {
+  "items": [
+   {
+    "id": "failed",
+    "count": 3,
+    "filter": {
+     "status": "error"
+    },
+    "latest": {
+     "session_id": "trip-lisbon",
+     "title": "Plan a weekend in Lisbon with two museum visits"
+    }
+   },
+   {
+    "id": "failed_step",
+    "count": 2,
+    "filter": {
+     "status": "failed_step"
+    },
+    "latest": {
+     "session_id": "code-lint-1",
+     "title": "Install the project's linter and fix the lint errors in src/"
+    }
+   },
+   {
+    "id": "security",
+    "count": 2,
+    "filter": {
+     "has_detection": "flagged"
+    },
+    "latest": {
+     "session_id": "code-lint-1",
+     "title": "Install the project's linter and fix the lint errors in src/"
+    }
+   },
+   {
+    "id": "low_score",
+    "count": 1,
+    "filter": {
+     "score_below": "0.5"
+    },
+    "latest": {
+     "session_id": "trip-lisbon",
+     "title": "Plan a weekend in Lisbon with two museum visits"
+    }
+   },
+   {
+    "id": "cost",
+    "count": 1,
+    "filter": {
+     "cost_min": "0.019"
+    },
+    "latest": {
+     "session_id": "trip-oslo-2",
+     "title": "Compare hotel prices in Oslo for next weekend"
+    }
+   }
+  ],
+  "sessions": 10,
+  "blocked": 1,
+  "approval_heavy": 1,
+  "lowest_score": 0.1,
+  "cost_spike_threshold": 0.019,
+  "approval_heavy_threshold": 3,
+  "low_score_threshold": 0.5,
+  "cost_spike_factor": 3
+ }
+}

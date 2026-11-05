@@ -14,7 +14,7 @@ import { ErrorBox, Loading } from '../../components/common'
 import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../components/ui/FilterBar'
 import { GuidedEmpty } from '../../components/ui/EmptyState'
 import { AgentChip, DetectionBadges, ScorePill, Tip, CapNote } from '../../components/ui/bits'
-import { usePageHelp } from '../../components/ui/PageHelp'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 const DEFAULT_TIME: TimeRange = '24h'
 /** The most agents one page loads (the server's order: most recent activity first). */
@@ -38,15 +38,6 @@ export function agentMatches(a: AgentSummary, s: FilterState): boolean {
 export function AgentsListPage() {
   const pid = useProjectId()
   const [state, setState] = useFilters()
-  const help = usePageHelp(
-    'agents',
-    'Agents',
-    <>
-      Each <strong>agent</strong> that took part in a session: how often it ran, who handed work to it and whom it handed work to, how much it reasoned, how often AgentShield
-      flagged its tool calls, and its scores. Click an agent for its tools and recent sessions.
-    </>,
-    'agents.md',
-  )
   const base = { q: state.q, team_id: state.team }
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.agents(pid, { ...base, ...timeWindow({ time: r }, r), limit: 1 })).total_count, [pid, 'agents', base])
   const time = widen.time
@@ -81,9 +72,8 @@ export function AgentsListPage() {
         <Link className="btn ghost sm" to={agentAnalyticsUrl(pid)} title="Charts, span search, signals and agent evaluations">
           Analytics and spans
         </Link>
-        {help.button}
+        <HelpLink doc="agents.md" topic="Agents" />
       </header>
-      {help.panel}
       {any.data?.total_count === 0 ? (
         <GuidedEmpty projectId={pid} title="No agents yet">
           Agents appear when spans carry an agent name (<span className="mono">gen_ai.agent.name</span> on <span className="mono">invoke_agent</span> spans, or the SDKs'

@@ -12,6 +12,7 @@ import { useAgentEvalRuns } from '../../components/agents/AgentEvals'
 import { useProjectId } from '../../hooks/useProject'
 import { callStatus } from '../../lib/format'
 import { compareEvaluationsUrl, newEvaluationUrl } from '../../lib/urls'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 export function EvaluationsPage() {
   const projectId = useProjectId()
@@ -79,6 +80,7 @@ export function EvaluationsPage() {
       <div className="page-header">
         <div className="col" style={{ gap: 2 }}>
           <h1>Evaluations</h1>
+          <HelpLink doc="evaluations.md#evaluations" topic="Evaluations" />
           <span className="muted small">Runs of an evaluation (dataset + scorers) against a model. Select runs to compare them.</span>
         </div>
         <Dropdown label={<>{activeView ? (activeView.value?.label ?? activeView.name) : 'Saved views'} ▾</>} className="btn sm">

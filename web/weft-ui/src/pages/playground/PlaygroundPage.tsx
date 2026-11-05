@@ -16,6 +16,7 @@ import { HistoryPanel } from '../../components/playground/HistoryPanel'
 import { ImageMode } from '../../components/playground/ImageMode'
 import { addRun, loadRuns, saveRuns, type PlaygroundRun } from '../../components/playground/history'
 import type { ImageInputs } from '../../api/playground'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 // ---------------------------------------------------------------- model
 
@@ -467,6 +468,7 @@ export function PlaygroundPage() {
     <div className="page playground">
       <div className="page-header">
         <h1>Playground</h1>
+        <HelpLink doc="evaluations.md#playground" topic="Playground" />
         <PromptPicker projectId={projectId} onPick={loadPrompt} />
         <button className="btn sm" onClick={() => setSaveOpen(true)}>
           Save as prompt

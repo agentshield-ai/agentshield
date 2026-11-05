@@ -8,7 +8,7 @@ import { api } from '../../api/client'
 import { v1 } from '../../api/v1'
 import { CopyButton } from '../common'
 import { Icon } from './Icons'
-import { docsUrl } from './PageHelp'
+import { helpUrl } from './PageHeader'
 import { notify } from './Toasts'
 
 export function serverOrigin(): string {
@@ -200,7 +200,7 @@ export function GuidedEmpty({
         <span>or connect your agents</span>
       </div>
       <Snippets projectId={projectId} only={only} initial={initial} />
-      <Link className="help-link" to={docsUrl(doc)}>
+      <Link className="help-link" to={helpUrl(doc)}>
         Full setup guide
       </Link>
     </section>

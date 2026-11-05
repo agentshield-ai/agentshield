@@ -1,0 +1,1 @@
+import{j as n}from"./index-RE8iL3pa.js";function a(t){const r=Array.from((t??"").trim())[0];return r?r.toLocaleUpperCase():"?"}function m({name:t,variant:r="agent",size:o=30}){return n.jsx("span",{className:`monogram mg-${r}`,"aria-hidden":"true",style:{width:o,height:o,fontSize:Math.round(o*.43)},children:a(t)})}export{m as M,a as m};

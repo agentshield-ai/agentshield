@@ -14,7 +14,7 @@ import { FilterBar, useFilters, useWidenedTime, WidenedNote } from '../../compon
 import { GuidedEmpty } from '../../components/ui/EmptyState'
 import { AgentChip, DetectionBadges, Tip, CapNote } from '../../components/ui/bits'
 import { Icon } from '../../components/ui/Icons'
-import { usePageHelp } from '../../components/ui/PageHelp'
+import { HelpLink } from '../../components/ui/PageHeader'
 
 const DEFAULT_TIME: TimeRange = '24h'
 /** The most teams one page loads (the server's order: most recent activity first). */
@@ -34,15 +34,6 @@ export function teamName(t: Pick<TeamSummary, 'team_id' | 'name' | 'auto'>): str
 export function TeamsPage() {
   const pid = useProjectId()
   const [state, setState] = useFilters()
-  const help = usePageHelp(
-    'teams',
-    'Teams',
-    <>
-      A <strong>team</strong> is a set of agents that work together in sessions. Name one by putting <span className="mono">weft.team.id</span> on a span; otherwise Weft groups the
-      agents that took part in each session. Open a team to see how work flows between its agents and which hand-offs fail.
-    </>,
-    'teams.md',
-  )
   const base = { q: state.q, agent: state.agent }
   const widen = useWidenedTime(state, DEFAULT_TIME, async (r) => (await v1.teams(pid, { ...base, ...timeWindow({ time: r }, r), limit: 1 })).total_count, [pid, 'teams', base])
   const time = widen.time
@@ -63,9 +54,8 @@ export function TeamsPage() {
           <h1>Teams</h1>
           <p className="page-sub">Agents that work together, and how well they hand work to each other.</p>
         </div>
-        {help.button}
+        <HelpLink doc="teams.md" topic="Teams" />
       </header>
-      {help.panel}
       {any.data?.total_count === 0 ? (
         <GuidedEmpty projectId={pid} title="No teams yet">
           Teams appear once a session has agents. Add <span className="mono">weft.team.id</span> and <span className="mono">weft.team.name</span> to any span to name the team.
