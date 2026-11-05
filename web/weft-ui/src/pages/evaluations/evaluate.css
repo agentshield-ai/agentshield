@@ -943,3 +943,7 @@ details.ev-more-details[open] > summary {
   align-items: center;
   gap: 10px;
 }
+.ev-block .ev-note a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
