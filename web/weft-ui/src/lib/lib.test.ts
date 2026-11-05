@@ -40,9 +40,9 @@ describe('refs', () => {
 describe('format', () => {
   it('formats durations and costs', () => {
     expect(fmtDuration(null)).toBe('—')
-    expect(fmtDuration(250)).toBe('250ms')
-    expect(fmtDuration(1500)).toBe('1.50s')
-    expect(fmtDuration(125_000)).toBe('2m 5s')
+    expect(fmtDuration(250)).toBe('250 ms')
+    expect(fmtDuration(1500)).toBe('1.5 s')
+    expect(fmtDuration(125_000)).toBe('2 min 5 s')
     expect(fmtCost(0)).toBe('$0')
     expect(fmtCost(0.00001)).toBe('<$0.0001')
     expect(fmtCost(2.5)).toBe('$2.50')

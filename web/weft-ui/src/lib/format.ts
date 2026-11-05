@@ -1,13 +1,21 @@
 import type { Span, SpanStatus } from '../api/types'
 
+/** A short duration, the one format for figures everywhere: "<1 ms",
+ * "150 ms", "2.5 s", "9 s", "1 min 5 s", "2 h 3 min". */
 export function fmtDuration(ms: number | null | undefined): string {
-  if (ms == null || Number.isNaN(ms)) return '—'
-  if (ms < 1) return '<1ms'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`
-  const m = Math.floor(ms / 60_000)
-  const s = Math.round((ms % 60_000) / 1000)
-  return `${m}m ${s}s`
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1) return '<1 ms'
+  if (ms < 1000) return `${Math.round(ms)} ms`
+  const trim = (x: number, d: number) => String(Number(x.toFixed(d)))
+  if (ms < 60_000) return `${trim(ms / 1000, ms < 10_000 ? 1 : 0)} s`
+  const totalS = Math.round(ms / 1000)
+  if (totalS < 3600) {
+    const m = Math.floor(totalS / 60)
+    const s = totalS % 60
+    return s ? `${m} min ${s} s` : `${m} min`
+  }
+  const totalM = Math.round(totalS / 60)
+  return totalM % 60 ? `${Math.floor(totalM / 60)} h ${totalM % 60} min` : `${Math.floor(totalM / 60)} h`
 }
 
 export function fmtDate(iso: string | null | undefined): string {
@@ -16,16 +24,28 @@ export function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-export function fmtRelative(iso: string | null | undefined): string {
+/** A relative time, the one format everywhere: "just now", "50 min ago",
+ * "2 h ago", "1 day ago", "12 days ago". */
+export function fmtRelative(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '—'
-  const diff = Date.now() - new Date(iso).getTime()
-  const s = Math.round(diff / 1000)
-  if (s < 60) return `${s}s ago`
-  const m = Math.round(s / 60)
-  if (m < 60) return `${m}m ago`
+  const diff = Math.max(0, now - new Date(iso).getTime())
+  const m = Math.round(diff / 60_000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
   const h = Math.round(m / 60)
-  if (h < 48) return `${h}h ago`
-  return `${Math.round(h / 24)}d ago`
+  if (h < 24) return `${h} h ago`
+  const d = Math.round(h / 24)
+  return `${d} ${d === 1 ? 'day' : 'days'} ago`
+}
+
+/** A saved version as people read it. The API counts from 0 (`v0`); people
+ * count from 1, so API version 2 is "version 3". Use this wherever a version
+ * is shown in words; the exact ref (`name:v2`) appears only where code is
+ * shown (the inspector's "In code" row). */
+export function versionLabel(v: number | string | null | undefined): string {
+  const n = typeof v === 'string' ? Number(v.replace(/^v/, '')) : v
+  if (n == null || !Number.isFinite(n)) return ''
+  return `version ${n + 1}`
 }
 
 export function fmtNumber(n: number | null | undefined, digits = 0): string {

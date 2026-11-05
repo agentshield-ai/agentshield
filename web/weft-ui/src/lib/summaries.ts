@@ -7,7 +7,7 @@
 // showed. Table-driven tests: summaries.test.ts.
 import type { Detection, SessionAttention, SessionSummary } from '../api/v1'
 import { APPROVAL_HEAVY, filterFromSessionsParams, type FilterState, type TimeRange } from './filters'
-import { fmtCost } from './format'
+import { fmtCost, fmtDuration, fmtRelative } from './format'
 import { ruleWords } from './ruleWords'
 import { oneLine, type BuiltTimeline, type Step } from './timeline'
 
@@ -52,17 +52,7 @@ export function durationWords(ms: number | null | undefined): string {
 
 /** A short duration for figures: "150 ms", "2.5 s", "9 s", "1 min 5 s", "2 h 3 min". */
 export function shortDuration(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—'
-  if (ms < 1000) return `${Math.round(ms)} ms`
-  if (ms < 60_000) return `${trimNum(ms / 1000, ms < 10_000 ? 1 : 0)} s`
-  const totalS = Math.round(ms / 1000)
-  if (totalS < 3600) {
-    const m = Math.floor(totalS / 60)
-    const s = totalS % 60
-    return s ? `${m} min ${s} s` : `${m} min`
-  }
-  const totalM = Math.round(totalS / 60)
-  return totalM % 60 ? `${Math.floor(totalM / 60)} h ${totalM % 60} min` : `${Math.floor(totalM / 60)} h`
+  return fmtDuration(ms)
 }
 
 /** How far into a session something happened: "0.05 s", "1.3 s", "9 s", "1 min 5 s". */
@@ -75,13 +65,7 @@ export function offsetText(ms: number): string {
 /** A relative time for list rows: "just now", "50 min ago", "2 h ago", "3 days ago". */
 export function relativeTime(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return ''
-  const diff = Math.max(0, now - new Date(iso).getTime())
-  const m = Math.round(diff / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m} min ago`
-  const h = Math.round(m / 60)
-  if (h < 48) return `${h} h ago`
-  return plural(Math.round(h / 24), 'day') + ' ago'
+  return fmtRelative(iso, now)
 }
 
 /** "GoalCompletionJudge" → "goal completion"; "tool_safety" → "tool safety". */
