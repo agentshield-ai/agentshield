@@ -74,7 +74,7 @@ jobs:
     # server's embedded UI, built from this commit; no Vite server.
     name: Web UI in a browser
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
