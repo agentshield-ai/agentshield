@@ -110,12 +110,11 @@ test('the default range widens when the last 24 hours are empty, and explains wh
   await expect(page.locator('.session-row')).toHaveCount(1)
 })
 
-test('team view draws agents and offers the same data as a table; the old graph URL opens it', async ({ page }) => {
+test('team view draws agents with the same data in tables below; the old graph URL opens it', async ({ page }) => {
   await page.goto(`/${project()}/sessions/code-lint-1?tab=graph`)
   await expect(page).toHaveURL(/tab=team/)
   await expect(page.getByRole('tab', { name: 'Team' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('group', { name: /Delegation graph: 2 agents/ })).toBeVisible()
-  await page.getByRole('radio', { name: 'Table' }).click()
   await expect(page.locator('table').first()).toContainText('coder')
   await expect(page.locator('table.handoff-table')).toContainText('reviewer')
 })
@@ -136,8 +135,8 @@ test('every clause of the Sessions sentence opens exactly the sessions it counts
   await expect(page.locator('main, .main').first()).not.toContainText(/\$\d*\.\d{5,}/)
   const clauses = page.locator('.ph-sentence a')
   await expect(clauses.first()).toBeVisible()
-  // At most two sentences: the serious ones as links, then how many more need a look.
-  expect((await page.locator('.ph-sentence').innerText()).match(/[.!?](\s|$)/g)?.length).toBeLessThanOrEqual(2)
+  // At most three short sentences: how many ran, the serious ones as links, then how many more need a look.
+  expect((await page.locator('.ph-sentence').innerText()).match(/[.!?](\s|$)/g)?.length).toBeLessThanOrEqual(3)
   const n = await clauses.count()
   expect(n).toBeGreaterThanOrEqual(4)
   for (let i = 0; i < n; i++) {

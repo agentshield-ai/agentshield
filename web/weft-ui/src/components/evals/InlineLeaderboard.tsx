@@ -11,6 +11,9 @@ import { classVal } from '../objects/objectUtils'
 import { slugify } from '../traces/callUtils'
 import { fmtMetric, toNum } from './evalUtils'
 import { leaderboardColumns, rankRuns, type LbMetric } from './leaderboardUtils'
+import { useNarrow } from './useNarrow'
+
+const cap = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x)
 
 function SaveLeaderboardModal({
   projectId,
@@ -120,6 +123,7 @@ export function InlineLeaderboard({
   value: LbMetric[]
   onChange: (m: LbMetric[]) => void
 }) {
+  const narrow = useNarrow()
   const [configuring, setConfiguring] = useState(false)
   const [saving, setSaving] = useState(false)
   const numeric = useMemo(() => metrics.filter((m) => evals.some((e) => toNum(m.values[e.id]) != null)), [metrics, evals])
@@ -163,7 +167,44 @@ export function InlineLeaderboard({
           </button>
         )}
       </div>
-      {configuring && (
+      {configuring && narrow && (
+        <ul className="ev-panel ev-block-rows ev-pick-rows" aria-label="Metrics to rank by">
+          {numeric.map((m) => {
+            const s = selected.find((x) => x.key === m.key)
+            return (
+              <li key={m.key}>
+                <label className="ev-pick-metric">
+                  <input type="checkbox" checked={!!s} onChange={(e) => set(m.key, e.target.checked ? {} : null)} /> {cap(metricWords(m.key))}
+                </label>
+                <span className="ev-pick-controls">
+                  <button
+                    type="button"
+                    className="ev-dir"
+                    disabled={!s}
+                    aria-label={`${metricWords(m.key)}: ${(s?.lowerBetter ?? lowerBetter(m.key)) ? 'lower' : 'higher'} is better; flip`}
+                    onClick={() => s && set(m.key, { lowerBetter: !s.lowerBetter })}
+                  >
+                    {(s?.lowerBetter ?? lowerBetter(m.key)) ? 'Lower' : 'Higher'}
+                  </button>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    disabled={!s}
+                    aria-label={`Weight for ${metricWords(m.key)}`}
+                    value={s?.weight ?? 1}
+                    onChange={(e) => set(m.key, { weight: Math.max(0, Number(e.target.value) || 0) })}
+                    style={{ width: 70 }}
+                  />
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {configuring && !narrow && (
         <PlainTable caption="Metrics to rank by" className="ev-wide">
           <thead>
             <tr>
@@ -211,6 +252,28 @@ export function InlineLeaderboard({
       )}
       {active.length === 0 ? (
         <p className="quiet-note">Pick at least one metric with a weight above 0.</p>
+      ) : narrow ? (
+        <ol className="ev-blocks" aria-label="Runs ranked by the chosen metrics">
+          {ranked.map((r) => (
+            <li key={r.id} className="ev-panel ev-block">
+              <span className="ev-block-head">
+                {r.rank}. {labels[r.id]}
+                <span className="ev-delta">score {r.score == null ? '—' : (r.score * 100).toFixed(0)}{r.missing.length > 0 ? `, missing ${r.missing.length}` : ''}</span>
+              </span>
+              <dl className="ev-block-rows">
+                {active.map((s) => (
+                  <div key={s.key}>
+                    <dt>
+                      {cap(metricWords(s.key))}
+                      {s.weight !== 1 ? ` ×${s.weight}` : ''}
+                    </dt>
+                    <dd>{fmtVal(byKey[s.key]?.values[r.id], byKey[s.key]?.kind ?? 'other')}</dd>
+                  </div>
+                ))}
+              </dl>
+            </li>
+          ))}
+        </ol>
       ) : (
         <PlainTable caption="Runs ranked by the chosen metrics" className="ev-wide">
           <thead>

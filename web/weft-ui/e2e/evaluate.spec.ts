@@ -127,7 +127,7 @@ for (const cfg of [
     test('ev-example-selected', async ({ page }) => {
       const errors = watchErrors(page)
       await page.goto(`/${P}/evaluations/compare?ids=${runs.join(',')}`)
-      await page.locator('tr.ev-row').first().click()
+      await page.locator('[data-ex]').first().click()
       await expect(page.getByRole('complementary', { name: 'Selected example' })).toBeVisible()
       await check(page, 'ev-example-selected', `${cfg.width}-${cfg.scheme}`)
       expect(errors).toEqual([])

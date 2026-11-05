@@ -44,12 +44,15 @@ test('b: find which hand-off in a team fails most', async ({ page }, info) => {
   await c.click(page.locator('.team-row').getByRole('link', { name: /Trip planners/ }), 'team “Trip planners”')
   // The team's sentence leads with the hand-off that fails most, linking to its failed sessions.
   const sentence = page.locator('.ph-sentence')
-  await expect(sentence).toContainText('The hand-off that fails most, from orchestrator to researcher, failed 3 of 5 times (60%)')
-  await expect(sentence.getByRole('link', { name: 'from orchestrator to researcher' })).toHaveAttribute('href', /agent=researcher.*status=error|status=error.*agent=researcher/)
-  // The hand-off table lists the most failing route first.
+  await expect(sentence).toContainText('3 failed, each time at the hand-off from orchestrator to researcher, which failed 3 of 5 times')
+  await expect(sentence.getByRole('link', { name: 'the hand-off from orchestrator to researcher' })).toHaveAttribute('href', /agent=researcher.*status=error|status=error.*agent=researcher/)
+  // The hand-off table lists the most failing route first, with the same figures.
   const first = page.locator('table.handoff-table tbody tr').first()
   await expect(first).toContainText('researcher')
-  await expect(first).toContainText('60%')
+  await expect(first.locator('td').nth(1)).toHaveText('5')
+  await expect(first.locator('td').nth(2)).toHaveText('3')
+  // The graph and the agents table count failed runs as the Agents page does.
+  await expect(page.locator('.graph-svg')).toContainText('5 runs · 3 failed')
   recordTask('b_most_failing_handoff', c, 2, info)
   expect(errors).toEqual([])
 })

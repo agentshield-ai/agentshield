@@ -638,3 +638,75 @@
 .obs-page .compare-table .cmp-delta {
   color: var(--text-secondary);
 }
+/* Compare at phone widths: one block per span, its fields as rows. */
+.cmp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.cmp-block {
+  background: var(--panel);
+  box-shadow: var(--ring);
+  border-radius: var(--radius-panel);
+  padding: 12px 14px;
+  min-width: 0;
+}
+.cmp-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.cmp-block-head .grow {
+  flex: 1;
+}
+.cmp-section {
+  margin: 10px 0 2px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text);
+}
+.cmp-fields {
+  margin: 0;
+}
+.cmp-field-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 34%) minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 4px;
+  border-top: 1px solid var(--separator);
+  min-width: 0;
+}
+.cmp-field-row dt {
+  color: var(--text-secondary);
+  font-size: var(--fs-meta);
+  overflow-wrap: anywhere;
+}
+.cmp-field-row.diff-row dt {
+  color: var(--text);
+  font-weight: 600;
+}
+.cmp-field-row.diff-cell {
+  background: var(--fill);
+  border-radius: 4px;
+}
+.cmp-field-row dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cmp-block .cmp-delta {
+  color: var(--text-secondary);
+}
+/* Quiet text on the neutral "differs" tint keeps AA contrast. */
+.obs-page .diff-cell .faint,
+.obs-page .diff-cell .tdiff-del,
+.obs-page .diff-cell .cmp-leaf-path {
+  color: var(--text-secondary);
+}
+.cmp-block-head .small {
+  font-weight: 400;
+}

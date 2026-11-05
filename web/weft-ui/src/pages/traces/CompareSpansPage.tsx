@@ -165,7 +165,6 @@ export function CompareSpansPage() {
         // Phone widths: one block per span, its fields as rows (no sideways scrolling).
         <div className="cmp-stack">
           {calls.map((c, i) => {
-            let last = ''
             return (
               <section key={c.id} className="cmp-block" aria-label={`${callLabel(c)}, ${i === baseIdx ? 'the baseline' : `span ${i + 1}`}`}>
                 <div className="cmp-block-head">
@@ -189,35 +188,39 @@ export function CompareSpansPage() {
                     </Link>
                   )}
                 </div>
-                <dl className="cmp-fields">
-                  {shown.map((r) => {
-                    const d = isDiff(r)
-                    const head = r.section !== last
-                    last = r.section
-                    const base = r.values[baseIdx]
-                    const v = r.values[i]
-                    const changed = d && i !== baseIdx && stable(v) !== stable(base)
-                    return (
-                      <div key={`${r.section}.${r.key}`} className={`cmp-field-row ${d ? 'diff-row' : ''} ${changed ? 'diff-cell' : ''}`}>
-                        {head && <div className="cmp-section">{r.section}</div>}
-                        <dt className={`cmp-field ${r.label ? '' : 'cmp-key'}`}>
-                          {r.label ?? r.key}
-                          {d && <span className="sr-only"> (differs)</span>}
-                        </dt>
-                        <dd>
-                          {mode === 'diff' && i !== baseIdx ? (
-                            <DiffCell row={r} base={base} value={v} projectId={projectId} dfmt={dfmt} />
-                          ) : (
-                            <>
-                              <PlainValue row={r} value={v} projectId={projectId} />
-                              {r.num && i !== baseIdx && <NumDelta base={base} value={v} num={r.num} dfmt={dfmt} />}
-                            </>
-                          )}
-                        </dd>
-                      </div>
-                    )
-                  })}
-                </dl>
+                {[...new Set(shown.map((r) => r.section))].map((sec) => (
+                  <div key={sec} className="cmp-sec">
+                    <h3 className="cmp-section">{sec}</h3>
+                    <dl className="cmp-fields">
+                      {shown
+                        .filter((r) => r.section === sec)
+                        .map((r) => {
+                          const d = isDiff(r)
+                          const base = r.values[baseIdx]
+                          const v = r.values[i]
+                          const changed = d && i !== baseIdx && stable(v) !== stable(base)
+                          return (
+                            <div key={r.key} className={`cmp-field-row ${d ? 'diff-row' : ''} ${changed ? 'diff-cell' : ''}`}>
+                              <dt className={`cmp-field ${r.label ? '' : 'cmp-key'}`}>
+                                {r.label ?? r.key}
+                                {d && <span className="sr-only"> (differs)</span>}
+                              </dt>
+                              <dd>
+                                {mode === 'diff' && i !== baseIdx ? (
+                                  <DiffCell row={r} base={base} value={v} projectId={projectId} dfmt={dfmt} />
+                                ) : (
+                                  <>
+                                    <PlainValue row={r} value={v} projectId={projectId} />
+                                    {r.num && i !== baseIdx && <NumDelta base={base} value={v} num={r.num} dfmt={dfmt} />}
+                                  </>
+                                )}
+                              </dd>
+                            </div>
+                          )
+                        })}
+                    </dl>
+                  </div>
+                ))}
               </section>
             )
           })}

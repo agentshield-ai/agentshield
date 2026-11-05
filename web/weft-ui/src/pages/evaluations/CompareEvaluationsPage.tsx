@@ -17,6 +17,7 @@ import { ErrorBox, Loading } from '../../components/common'
 import { ValueView } from '../../components/ValueView'
 import { defaultLowerIsBetter, evalRunInfo, flattenScores, fmtMetric, seriesColor, sortMetricKeys, toNum, useEvalRuns } from '../../components/evals/evalUtils'
 import { InlineLeaderboard } from '../../components/evals/InlineLeaderboard'
+import { useNarrow } from '../../components/evals/useNarrow'
 import { toSentence } from '../../components/evals/sentence'
 import { LinkedCallsFor } from '../../components/traces/LinkedCalls'
 import { EvalAgentLinks, PredictionAgentLinks, useAgentEvalRuns } from '../../components/agents/AgentEvals'
@@ -425,6 +426,19 @@ function RunsSection({
   onRemove: (id: string) => void
   onAdd: (id: string) => void
 }) {
+  const narrow = useNarrow()
+  const actions = (e: CompareEvaluation) => (
+    <span className="ev-runs-actions">
+      {e.id !== baselineId && (
+        <button type="button" className="linkish" onClick={() => setBaseline(e.id)}>
+          Make baseline
+        </button>
+      )}
+      <button type="button" className="linkish" onClick={() => onRemove(e.id)} aria-label={`Remove ${labels[e.id]} from the comparison`}>
+        Remove
+      </button>
+    </span>
+  )
   return (
     <section className="ev-section" aria-labelledby="runs-h">
       <div className="ev-section-head">
@@ -434,6 +448,29 @@ function RunsSection({
         </h2>
         <AddRun projectId={projectId} ids={ids} onAdd={onAdd} />
       </div>
+      {narrow ? (
+        <ul className="ev-blocks" aria-label="Runs in this comparison">
+          {evals.map((e) => {
+            const g = glyphOf(e.status)
+            const modelUrl = e.model_ref ? refUrl(e.model_ref) : null
+            const evalUrl = e.evaluation_ref ? refUrl(e.evaluation_ref) : null
+            return (
+              <li key={e.id} className="ev-panel ev-block">
+                <span className="ev-block-head">
+                  <StatusGlyph kind={g.kind} size={18} label={g.label} />
+                  {modelUrl ? <Link to={modelUrl}>{labels[e.id]}</Link> : labels[e.id]}
+                  {e.id === baselineId && <span className="ev-delta">baseline</span>}
+                </span>
+                <span className="ev-note">
+                  {evalUrl ? <Link to={evalUrl}>{e.evaluation_name}</Link> : e.evaluation_name} · {g.label.toLowerCase()} · started{' '}
+                  <span title={fmtDate(e.started_at)}>{fmtRelative(e.started_at)}</span>
+                </span>
+                {actions(e)}
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
       <PlainTable caption="Runs in this comparison" className="ev-wide">
         <thead>
           <tr>
@@ -466,25 +503,13 @@ function RunsSection({
                   </span>
                 </td>
                 <td title={fmtDate(e.started_at)}>{fmtRelative(e.started_at)}</td>
-                {evals.length > 1 && (
-                  <td>
-                    <span className="ev-runs-actions">
-                      {e.id !== baselineId && (
-                        <button type="button" className="linkish" onClick={() => setBaseline(e.id)}>
-                          Make baseline
-                        </button>
-                      )}
-                      <button type="button" className="linkish" onClick={() => onRemove(e.id)} aria-label={`Remove ${labels[e.id]} from the comparison`}>
-                        Remove
-                      </button>
-                    </span>
-                  </td>
-                )}
+                {evals.length > 1 && <td>{actions(e)}</td>}
               </tr>
             )
           })}
         </tbody>
       </PlainTable>
+      )}
     </section>
   )
 }
@@ -552,6 +577,7 @@ function MetricsSection({
 }) {
   const [dparams, setDparams] = useSearchParams()
   const dfmt = parseChangeFormat(dparams.get('nfmt'))
+  const narrow = useNarrow()
   const keys = new Set(metrics.map((m) => m.key))
   // true_count is the same fact as true_fraction.
   const shown = metrics.filter((m) => !(m.key.endsWith('.true_count') && keys.has(m.key.replace(/true_count$/, 'true_fraction'))))
@@ -599,6 +625,63 @@ function MetricsSection({
           </label>
         )}
       </div>
+      {narrow ? (
+        <>
+          <div className="ev-blocks">
+            {evals.map((e) => (
+              <section key={e.id} className="ev-panel ev-block" aria-label={many ? `Scores of ${labels[e.id]}` : 'Scores of the run'}>
+                {many && (
+                  <h3 className="ev-block-head">
+                    {labels[e.id]}
+                    {e.id === baselineId && <span className="ev-delta">baseline</span>}
+                  </h3>
+                )}
+                <dl className="ev-block-rows">
+                  {shown.map((m) => {
+                    const base = toNum(m.values[baselineId])
+                    const lower = lowerBetter(m.key)
+                    const nums = evals.map((x) => toNum(m.values[x.id])).filter((x): x is number => x != null)
+                    const best = nums.length > 1 && new Set(nums).size > 1 ? (lower ? Math.min(...nums) : Math.max(...nums)) : null
+                    const v = toNum(m.values[e.id])
+                    return (
+                      <div key={m.key}>
+                        <dt>
+                          {cap(metricWords(m.key))}
+                          {isRunFigure(m.key) && <span className="ev-delta">not a score</span>}
+                        </dt>
+                        <dd className={best != null && v === best ? 'ev-best' : undefined}>
+                          {fmtMetricValue(m.key, m.values[e.id])}
+                          {many && e.id !== baselineId && <Delta k={m.key} v={v} base={base} lower={lower} fmt={dfmt} />}
+                        </dd>
+                      </div>
+                    )
+                  })}
+                </dl>
+              </section>
+            ))}
+          </div>
+          <details className="ev-more-details">
+            <summary>
+              Which way is better <span className="quiet">for each metric</span>
+            </summary>
+            <dl className="ev-panel ev-block-rows">
+              {shown.map((m) => {
+                const lower = lowerBetter(m.key)
+                return (
+                  <div key={m.key}>
+                    <dt>{cap(metricWords(m.key))}</dt>
+                    <dd>
+                      <button type="button" className="ev-dir" onClick={() => toggleLower(m.key)} title="Flip which way is better" aria-label={`${metricWords(m.key)}: ${lower ? 'lower' : 'higher'} is better; flip`}>
+                        {lower ? 'Lower' : 'Higher'}
+                      </button>
+                    </dd>
+                  </div>
+                )
+              })}
+            </dl>
+          </details>
+        </>
+      ) : (
       <PlainTable caption="Scores of each run" className="ev-wide">
         <thead>
           <tr>
@@ -645,6 +728,7 @@ function MetricsSection({
           })}
         </tbody>
       </PlainTable>
+      )}
       {numeric.length > 0 && (
         <details className="ev-more-details">
           <summary>
@@ -897,6 +981,7 @@ function ExamplesSection({
 }) {
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
+  const narrow = useNarrow()
   const many = evals.length > 1
   const counts: Record<ExampleFilter, number> = {
     all: examples.length,
@@ -966,6 +1051,49 @@ function ExamplesSection({
             {many ? 'Failed and worse examples first.' : 'Failed examples first.'} Select one for its details; j and k move between them.
             {total > examples.length ? ` ${total} results in all, ${examples.length} examples.` : ''}
           </p>
+          {narrow ? (
+            <ul className="ev-blocks" aria-label="Examples and each run’s answer">
+              {shown.map((x) => {
+                const sel = x.r.row_key === selectedKey
+                return (
+                  <li key={x.r.row_key + x.idx} data-ex={x.r.row_key}>
+                    <button type="button" className="ev-panel ev-ex-item" aria-pressed={sel} onClick={() => onSelect(x.r.row_key)}>
+                      <span className="ev-ex-top">
+                        Example {x.idx + 1}
+                        {x.failedAny ? ' · failed' : ''}
+                        {many && x.regressed ? ' · worse than the baseline' : ''}
+                        {many && x.improved ? ' · better than the baseline' : ''}
+                      </span>
+                      <span className="ev-cell-text">{inputsText(x.r.inputs)}</span>
+                      {evals.map((e) => {
+                        const res = x.r.results[e.id]
+                        return (
+                          <span key={e.id} className="ev-ex-run">
+                            <span className="ev-ex-run-label">{many ? labels[e.id] : 'Answer'}</span>
+                            {!res?.length ? (
+                              <span className="ev-note">no result</span>
+                            ) : (
+                              <>
+                                <span className="ev-cell-text">
+                                  {x.cmp.failed[e.id] && (
+                                    <span className="ev-fail" style={{ marginRight: 6 }}>
+                                      <StatusGlyph kind="failed" size={14} label="Failed" />
+                                    </span>
+                                  )}
+                                  {preview(res[0].output, 240) || <span className="ev-note">empty</span>}
+                                </span>
+                                <ScoreText aggs={x.aggs} id={e.id} baselineId={baselineId} keys={x.scoreKeys} lowerFor={lowerFor} />
+                              </>
+                            )}
+                          </span>
+                        )
+                      })}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
           <PlainTable caption="Examples and each run’s answer" className="ev-wide">
             <thead>
               <tr>
@@ -1031,6 +1159,7 @@ function ExamplesSection({
               })}
             </tbody>
           </PlainTable>
+          )}
           {rows.length > PAGE && (
             <div className="ev-pager">
               <button type="button" className="qbtn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
