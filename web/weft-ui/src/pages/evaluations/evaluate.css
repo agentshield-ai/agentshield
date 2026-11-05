@@ -720,3 +720,19 @@ details.ev-more-details[open] > summary {
 .ev-menu-list .lrow:last-child .lrow-link {
   border-bottom-left-radius: var(--radius-panel);
 }
+
+/* Visually hidden words inside a scrolling table stay inside its box. */
+.ev-main .plain-table td,
+.ev-main .plain-table th,
+.ev-section .plain-table td,
+.ev-section .plain-table th {
+  position: relative;
+}
+
+/* Tables compared across columns keep readable columns and scroll inside their box on a phone. */
+.plain-table.ev-wide {
+  min-width: 560px;
+}
+.plain-table.ev-wide td {
+  overflow-wrap: break-word;
+}

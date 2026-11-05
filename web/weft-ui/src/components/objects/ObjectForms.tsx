@@ -84,13 +84,13 @@ export function MessagesEditor({ value, onChange }: { value: ChatMessage[]; onCh
               ))}
             </select>
             <span className="grow" />
-            <button className="btn ghost sm" disabled={i === 0} onClick={() => onChange(swap(value, i, i - 1))} title="Move up">
+            <button className="qbtn sm plain" disabled={i === 0} onClick={() => onChange(swap(value, i, i - 1))} title="Move up">
               ↑
             </button>
-            <button className="btn ghost sm" disabled={i === value.length - 1} onClick={() => onChange(swap(value, i, i + 1))} title="Move down">
+            <button className="qbtn sm plain" disabled={i === value.length - 1} onClick={() => onChange(swap(value, i, i + 1))} title="Move down">
               ↓
             </button>
-            <button className="btn ghost sm danger" onClick={() => onChange(value.filter((_, j) => j !== i))} title="Remove message">
+            <button className="qbtn sm plain danger" onClick={() => onChange(value.filter((_, j) => j !== i))} title="Remove message">
               ✕
             </button>
           </div>
@@ -104,7 +104,7 @@ export function MessagesEditor({ value, onChange }: { value: ChatMessage[]; onCh
         </div>
       ))}
       <div className="row">
-        <button className="btn sm" onClick={() => onChange([...value, { role: value.length === 0 ? 'system' : 'user', content: '' }])}>
+        <button className="qbtn sm" onClick={() => onChange([...value, { role: value.length === 0 ? 'system' : 'user', content: '' }])}>
           + Add message
         </button>
         <VarsHint texts={value.map((m) => (typeof m.content === 'string' ? m.content : ''))} />
@@ -184,11 +184,11 @@ function FormModal({
       wide={wide}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="qbtn" onClick={onClose}>
             Cancel
           </button>
           <button
-            className="btn primary"
+            className="qbtn primary"
             disabled={disabled || busy}
             onClick={async () => {
               setBusy(true)

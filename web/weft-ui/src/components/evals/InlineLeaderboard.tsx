@@ -164,7 +164,7 @@ export function InlineLeaderboard({
         )}
       </div>
       {configuring && (
-        <PlainTable caption="Metrics to rank by">
+        <PlainTable caption="Metrics to rank by" className="ev-wide">
           <thead>
             <tr>
               <th scope="col">
@@ -212,7 +212,7 @@ export function InlineLeaderboard({
       {active.length === 0 ? (
         <p className="quiet-note">Pick at least one metric with a weight above 0.</p>
       ) : (
-        <PlainTable caption="Runs ranked by the chosen metrics">
+        <PlainTable caption="Runs ranked by the chosen metrics" className="ev-wide">
           <thead>
             <tr>
               <th scope="col" className="num">

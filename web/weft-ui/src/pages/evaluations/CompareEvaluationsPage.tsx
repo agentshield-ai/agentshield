@@ -333,12 +333,17 @@ function CompareBody({
             filter={(params.get('show') as ExampleFilter | null) ?? 'all'}
             setFilter={(f) => setParam('show', f === 'all' ? null : f)}
             selectedKey={selected?.r.row_key ?? null}
-            onSelect={(k) => select(k === selected?.r.row_key ? null : k)}
+            onSelect={(k) => {
+              select(k === selected?.r.row_key ? null : k)
+              // On a narrow screen the inspector sits below the examples: bring it into view.
+              if (k !== selected?.r.row_key && window.matchMedia('(max-width: 900px)').matches)
+                setTimeout(() => document.getElementById('ev-inspector')?.scrollIntoView({ block: 'start' }), 50)
+            }}
             onOrder={setOrder}
             total={rowsTotal}
           />
         </div>
-        <div className="ev-side">
+        <div className="ev-side" id="ev-inspector">
           {selected ? (
             <ExampleInspector
               projectId={projectId}
@@ -405,7 +410,7 @@ function RunsSection({
         </h2>
         <AddRun projectId={projectId} ids={ids} onAdd={onAdd} />
       </div>
-      <PlainTable caption="Runs in this comparison">
+      <PlainTable caption="Runs in this comparison" className="ev-wide">
         <thead>
           <tr>
             <th scope="col">Model</th>
@@ -571,7 +576,7 @@ function MetricsSection({
           />
         )}
       </div>
-      <PlainTable caption="Scores of each run">
+      <PlainTable caption="Scores of each run" className="ev-wide">
         <thead>
           <tr>
             <th scope="col">Metric</th>
@@ -939,7 +944,7 @@ function ExamplesSection({
             {many ? 'Failed and worse examples first.' : 'Failed examples first.'} Select one for its details; j and k move between them.
             {total > examples.length ? ` ${total} results in all, ${examples.length} examples.` : ''}
           </p>
-          <PlainTable caption="Examples and each run’s answer">
+          <PlainTable caption="Examples and each run’s answer" className="ev-wide">
             <thead>
               <tr>
                 <th scope="col" className="num">

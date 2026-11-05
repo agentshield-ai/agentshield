@@ -513,3 +513,29 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+.obs-page .compare-table td.diff-cell {
+  background: color-mix(in srgb, var(--warn-bg) 45%, transparent);
+}
+.obs-page .compare-table .cmp-baseline-col {
+  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+}
+/* Messages on these pages: no coloured left borders (§7.2 rule 2); the role is in words. */
+.obs-page .chat-msg,
+.obs-page .chat-msg.role-user,
+.obs-page .chat-msg.role-human,
+.obs-page .chat-msg.role-assistant,
+.obs-page .chat-msg.role-model,
+.obs-page .chat-msg.role-ai,
+.obs-page .chat-msg.role-tool,
+.obs-page .chat-msg.role-function {
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.obs-page .chat-msg.role-system {
+  border: 0;
+  background: var(--fill);
+}
+.thread-page .ph-title .mono {
+  font-size: 24px;
+}

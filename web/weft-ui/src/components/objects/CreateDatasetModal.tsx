@@ -60,14 +60,14 @@ export function RowsGrid({ rows, columns, onChange }: { rows: Row[]; columns: st
                 <th key={c + ci}>
                   <div className="row" style={{ gap: 2 }}>
                     <input defaultValue={c} onBlur={(e) => renameCol(ci, e.target.value.trim())} aria-label={`Column ${ci + 1} name`} />
-                    <button className="btn ghost sm icon" onClick={() => removeCol(ci)} title="Remove column">
+                    <button className="qbtn sm plain" onClick={() => removeCol(ci)} title="Remove column">
                       ✕
                     </button>
                   </div>
                 </th>
               ))}
               <th style={{ width: 40 }}>
-                <button className="btn ghost sm icon" onClick={addCol} title="Add column">
+                <button className="qbtn sm plain" onClick={addCol} title="Add column">
                   +
                 </button>
               </th>
@@ -85,7 +85,7 @@ export function RowsGrid({ rows, columns, onChange }: { rows: Row[]; columns: st
                   </td>
                 ))}
                 <td style={{ padding: '4px' }}>
-                  <button className="btn ghost sm icon danger" onClick={() => onChange(rows.filter((_, i) => i !== ri), columns)} title="Delete row">
+                  <button className="qbtn sm plain danger" onClick={() => onChange(rows.filter((_, i) => i !== ri), columns)} title="Delete row">
                     ✕
                   </button>
                 </td>
@@ -102,7 +102,7 @@ export function RowsGrid({ rows, columns, onChange }: { rows: Row[]; columns: st
         </table>
       </div>
       <div className="row">
-        <button className="btn sm" onClick={() => onChange([...rows, Object.fromEntries(columns.map((c) => [c, '']))], columns)}>
+        <button className="qbtn sm" onClick={() => onChange([...rows, Object.fromEntries(columns.map((c) => [c, '']))], columns)}>
           + Add row
         </button>
         <span className="hint">
@@ -162,11 +162,11 @@ export function CreateDatasetModal({ projectId, onClose, onCreated }: { projectI
       footer={
         <>
           <span className="hint grow">{rows.length ? `${rows.length} rows will be uploaded` : ''}</span>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="qbtn" onClick={onClose}>
             Cancel
           </button>
           <button
-            className="btn primary"
+            className="qbtn primary"
             disabled={!name || rows.length === 0 || busy}
             onClick={async () => {
               setBusy(true)

@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import type { Any, ChatMessage } from '../../api/types'
 import { CopyButton, ErrorBox, Modal } from '../common'
 import { errMsg, templateVars } from './objectUtils'
+import { Segmented } from '../ui/Segmented'
 
 /** Button that asks for confirmation in a modal before running an async action. */
 export function ConfirmButton({
@@ -248,7 +249,7 @@ export function Drawer({ title, onClose, children, actions }: { title: ReactNode
         <div className="drawer-header">
           <h2 className="grow truncate">{title}</h2>
           {actions}
-          <button className="btn ghost icon" onClick={onClose} aria-label="Close">
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>
@@ -305,23 +306,24 @@ export function UsePanel({ refUri, name, version, kind }: { refUri: string; name
     `import * as weft from 'weft'\n\nawait weft.init('${refUri.split('/').slice(3, 5).join('/')}')\n` +
     `const obj = await weft.get('${short}')\n`
   return (
-    <div className="col">
-      <div className="row">
-        <div className="seg">
-          <button className={lang === 'python' ? 'on' : ''} onClick={() => setLang('python')}>
-            Python
-          </button>
-          <button className={lang === 'typescript' ? 'on' : ''} onClick={() => setLang('typescript')}>
-            TypeScript
-          </button>
-          <button className={lang === 'ref' ? 'on' : ''} onClick={() => setLang('ref')}>
-            Ref URI
-          </button>
-        </div>
+    <div className="col" style={{ gap: 10 }}>
+      <Segmented
+        label="Language"
+        role="radio"
+        size="sm"
+        value={lang}
+        onChange={setLang}
+        options={[
+          { id: 'python', label: 'Python' },
+          { id: 'typescript', label: 'TypeScript' },
+          { id: 'ref', label: 'Ref' },
+        ]}
+      />
+      <div className="asset-code">
+        {lang === 'python' && <CodeBlock code={py} language="python" />}
+        {lang === 'typescript' && <CodeBlock code={ts} language="typescript" />}
+        {lang === 'ref' && <CodeBlock code={refUri} language="ref" title="Pass this ref anywhere an asset is accepted" />}
       </div>
-      {lang === 'python' && <CodeBlock code={py} language="python" />}
-      {lang === 'typescript' && <CodeBlock code={ts} language="typescript" />}
-      {lang === 'ref' && <CodeBlock code={refUri} language="ref" title="Pass this ref anywhere an object is accepted" />}
     </div>
   )
 }

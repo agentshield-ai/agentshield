@@ -152,7 +152,7 @@ export function NewEvaluationPage() {
             <Loading />
           ) : evals.error ? null : (
             <div className="col" style={{ gap: 10 }}>
-              <select className="input" value={evalRef ?? ''} onChange={(e) => setEvalRef(e.target.value)} style={{ maxWidth: 480 }}>
+              <select className="input" aria-label="Evaluation to run" value={evalRef ?? ''} onChange={(e) => setEvalRef(e.target.value)} style={{ maxWidth: 480 }}>
                 {evalOptions.map((o) => (
                   <option key={o.ref} value={o.ref}>
                     {o.label}

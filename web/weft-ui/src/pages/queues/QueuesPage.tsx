@@ -80,7 +80,6 @@ export function QueuesPage() {
         time={relativeTime(q.updated_at)}
         timeTitle={`Updated ${fmtDate(q.updated_at)}`}
         to={queueUrl(projectId, q.id)}
-        ariaLabel={`${q.name}: ${stats.data ? queueLine(c) : ''}`}
         trailing={
           <span className="ev-actions">
             <Dropdown

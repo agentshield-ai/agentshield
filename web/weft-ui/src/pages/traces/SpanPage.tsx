@@ -425,7 +425,8 @@ function CallTab({ projectId, call, node, root }: { projectId: string; call: Spa
       ]
   return (
     <div className="col" style={{ gap: 20 }}>
-      {call.error && <ExceptionBox exception={call.error} />}
+      {/* A one-line error is told in the sentence; a stack trace is shown here. */}
+      {call.error && call.error.trim().includes('\n') && <ExceptionBox exception={call.error} />}
       <div className="obs-kv-panel">
         <KeyValueList
           items={[

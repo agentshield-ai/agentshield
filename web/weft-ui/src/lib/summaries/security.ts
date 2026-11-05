@@ -268,7 +268,7 @@ export function replayLine(j: Pick<ReplayJob, 'status' | 'summary' | 'error'>): 
   if (j.status === 'running') return 'Replaying the recorded tool calls…'
   if (j.status === 'failed') return `Failed${j.error ? `: ${j.error.split('\n')[0]}` : '.'}`
   const s = j.summary
-  if (!s) return 'Finished.'
+  if (!s) return 'Finished; open it to see what would change.'
   const head = `Checked ${s.evaluated === s.tool_calls ? plural(s.tool_calls, 'tool call') : `${s.evaluated} of ${plural(s.tool_calls, 'tool call')}`}`
   const changes = [s.newly_blocked ? `${s.newly_blocked} newly blocked` : '', s.no_longer_blocked ? `${s.no_longer_blocked} no longer blocked` : '', s.changed ? `${s.changed} changed otherwise` : ''].filter(
     Boolean,

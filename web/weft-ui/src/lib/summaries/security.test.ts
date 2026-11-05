@@ -220,7 +220,7 @@ describe('replay jobs', () => {
     [{ status: 'failed', error: 'engine down\nstack' }, 'Failed: engine down'],
     [{ summary: sm }, 'Checked 24 tool calls: 13 newly blocked and 1 changed otherwise.'],
     [{ summary: { ...sm, evaluated: 20, newly_blocked: 0, changed: 0 } }, 'Checked 20 of 24 tool calls; nothing would change.'],
-    [{}, 'Finished.'],
+    [{}, 'Finished; open it to see what would change.'],
   ]
   for (const [over, want] of cases) it(want, () => expect(replayLine(job(over))).toBe(want))
   it('meta', () => {

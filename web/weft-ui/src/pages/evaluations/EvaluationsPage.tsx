@@ -320,7 +320,6 @@ function RunRow({
       time={relativeTime(c.started_at)}
       timeTitle={fmtDate(c.started_at)}
       to={compareEvaluationsUrl(projectId, [c.id])}
-      ariaLabel={`${g.label}: ${run.evaluation}, ${runLine(run, prev)}`}
       trailing={
         <label className="ev-pick" title="Select to compare">
           <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Select the ${run.model} run of ${run.evaluation} (${relativeTime(c.started_at)}) to compare`} />

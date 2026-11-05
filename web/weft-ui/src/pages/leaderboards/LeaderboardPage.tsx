@@ -159,7 +159,7 @@ export function LeaderboardPage() {
           </Link>
         </div>
       ) : stats ? (
-        <PlainTable caption={`Models ranked on ${objectId}`}>
+        <PlainTable caption={`Models ranked on ${objectId}`} className="ev-wide">
           <thead>
             <tr>
               <SortHead col="rank" label="Rank" title="Average rank across the metrics" num />

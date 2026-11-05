@@ -164,7 +164,7 @@ function TreeNode({
   const summary = Array.isArray(value) ? `${value.length} ${value.length === 1 ? 'item' : 'items'}` : `${entries.length} ${entries.length === 1 ? 'field' : 'fields'}`
   return (
     <div style={{ paddingLeft: pad }}>
-      <button type="button" className="vv-tree-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="vv-tree-toggle" aria-expanded={open} aria-label={label ? undefined : `${open ? 'Collapse' : 'Expand'} ${summary}`} onClick={() => setOpen((o) => !o)}>
         <span className="faint mono" aria-hidden="true" style={{ display: 'inline-block', width: 12 }}>
           {open ? '▾' : '▸'}
         </span>
