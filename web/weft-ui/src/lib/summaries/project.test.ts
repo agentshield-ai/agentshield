@@ -61,11 +61,11 @@ describe('automations', () => {
   const run = (min: number, status: 'success' | 'error' = 'success', test = false) => ({ status, test, created_at: ago(min) })
   it.each([
     ['none', [], [], false, 'No automations yet.'],
-    ['quiet', [{ name: 'a', enabled: true }], [run(2 * DAYS)], false, '1 automation, on. It did not fire in the last 24 hours.'],
-    ['mixed', [{ name: 'a', enabled: true }, { name: 'b', enabled: false }], [run(5), run(10, 'error'), run(20), run(30, 'success', true)], false, '2 automations, 1 on. In the last 24 hours they fired 3 times; 1 delivery failed.'],
-    ['all ok', [{ name: 'a', enabled: true }, { name: 'b', enabled: true }], [run(5)], false, '2 automations, both on. In the last 24 hours they fired once, and every delivery went through.'],
-    ['all failed, capped', [{ name: 'a', enabled: false }], [run(5, 'error'), run(6, 'error')], true, '1 automation, off. In the last 24 hours it fired at least 2 times; every delivery failed.'],
-    ['three off', [{ name: 'a', enabled: false }, { name: 'b', enabled: false }, { name: 'c', enabled: false }], [], false, '3 automations, all off. They did not fire in the last 24 hours.'],
+    ['quiet', [{ name: 'a', enabled: true }], [run(2 * DAYS)], false, '1 automation is on. It has not fired in the last 24 hours.'],
+    ['mixed', [{ name: 'a', enabled: true }, { name: 'b', enabled: false }], [run(5), run(10, 'error'), run(20), run(30, 'success', true)], false, '2 automations; 1 is on. In the last 24 hours they fired 3 times; 1 delivery failed.'],
+    ['all ok', [{ name: 'a', enabled: true }, { name: 'b', enabled: true }], [run(5)], false, 'Both automations are on. In the last 24 hours they fired once, and every delivery went through.'],
+    ['all failed, capped', [{ name: 'a', enabled: false }], [run(5, 'error'), run(6, 'error')], true, '1 automation is off. In the last 24 hours it fired at least 2 times; every delivery failed.'],
+    ['three off', [{ name: 'a', enabled: false }, { name: 'b', enabled: false }, { name: 'c', enabled: false }], [], false, 'All 3 automations are off. They have not fired in the last 24 hours.'],
   ])('automationsSentence %s', (_, automations, runs, capped, want) => expect(automationsSentence({ automations, runs, capped, now: NOW })).toBe(want))
 })
 

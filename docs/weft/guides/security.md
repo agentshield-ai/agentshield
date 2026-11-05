@@ -7,24 +7,25 @@ tried to do, why, and what AgentShield decided.
 
 ## Find why a session was blocked
 
-From the Sessions page, either click the **Blocked** badge on a session, or
-open the **Blocked or needing approval** card and then the session. Weft
-opens the timeline at the blocked tool call, with the rule that fired and the
+On the Sessions page a blocked session is listed under **Needs a look**, and
+the sentence's "blocked by AgentShield" links to it. Open it: Weft opens the
+session at the blocked tool call, with the rule that fired and the
 reasoning that led the agent there.
 
 ## Read the Security page
 
-- **Figures:** verdicts in the time range, by action, and how many a person
-  overrode.
-- **Over time:** verdicts per hour or day, by action or by severity.
-- **Rules that fire most:** click a rule to list only its detections.
-- **By agent:** each agent's verdicts out of its tool calls. Like the rate,
-  the counts are AgentShield's live verdicts; replays are not counted.
+- **The sentence** at the top: how many tool calls AgentShield blocked and
+  how many times it asked for approval in the time range, and how many of
+  those requests people approved.
+- **Detections, by rule:** each rule that fired, in plain words, with why it
+  matters and its detections under it, newest first. Open one to see the
+  session at that tool call.
 - **Approval fatigue:** sessions that asked a person for approval many times.
   People start approving without reading.
-- **Override escalation:** sessions where people kept overriding verdicts.
-- **Detections:** the newest first. **Show step** opens the session at the
-  tool call.
+- **Overrides:** sessions where people kept going past AgentShield's verdicts.
+- **Over time:** verdicts per hour or day, by action or by severity.
+- **By agent:** each agent's verdicts out of its tool calls. The counts are
+  AgentShield's live verdicts; replays are not counted.
 
 The filter bar narrows all of it. Filters about a session as a whole, such as
 `team:` or `status:failed`, keep the detections in matching sessions. See

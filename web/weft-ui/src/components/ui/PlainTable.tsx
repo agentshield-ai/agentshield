@@ -12,12 +12,28 @@
 import type { ReactNode } from 'react'
 import { TableScroll } from './bits'
 
-export function PlainTable({ caption, children, className, captionVisible }: { caption: string; children: ReactNode; className?: string; captionVisible?: boolean }) {
+export function PlainTable({
+  caption,
+  children,
+  className,
+  captionVisible,
+  count,
+}: {
+  caption: string
+  children: ReactNode
+  className?: string
+  captionVisible?: boolean
+  /** Shown as a quiet grey number after a visible caption (never "(8)"). */
+  count?: number
+}) {
   return (
     <div className="plain-table-box">
       <TableScroll label={caption}>
         <table className={`plain-table ${className ?? ''}`}>
-          <caption className={captionVisible ? 'plain-caption' : 'sr-only'}>{caption}</caption>
+          <caption className={captionVisible ? 'plain-caption' : 'sr-only'}>
+            {caption}
+            {count != null && <span className="glist-count"> {count.toLocaleString()}</span>}
+          </caption>
           {children}
         </table>
       </TableScroll>

@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { queuesApi, type AnnotationQueueItem, type AnnotationState } from '../../api/queues'
-import { spanRef, spanDisplayName, parseRef } from '../../api/refs'
+import { isRef, spanRef, spanDisplayName, parseRef } from '../../api/refs'
 import type { Any, Span, Feedback } from '../../api/types'
 import { ErrorBox, Loading, Spinner } from '../../components/common'
 import { queuesUrl } from '../../components/queues/AddToQueueModal'
@@ -11,18 +11,17 @@ import { ExportQueueModal } from '../../components/queues/ExportQueueModal'
 import { annotationType, displayFieldValues, nextPendingIndex, progressCounts } from '../../components/queues/queueUtils'
 import { CallChatView, extractChat } from '../../components/traces/ChatView'
 import { AnnotationInput, isMine, rememberUserId, useCallFeedback, type FieldSchema } from '../../components/traces/FeedbackPanel'
-import { ValueView } from '../../components/ValueView'
 import { useProjectId } from '../../hooks/useProject'
-import { callStatus, fmtDate, callLatencyMs } from '../../lib/format'
-import { spanUrl, objectUrl } from '../../lib/urls'
+import { callStatus, fmtDate, fmtDuration, fmtRelative, callLatencyMs } from '../../lib/format'
+import { spanUrl, objectUrl, refUrl } from '../../lib/urls'
 import { undoable } from '../../components/ui/Toasts'
-import { Inspector, InspectorDivider } from '../../components/ui/Inspector'
+import { Icon } from '../../components/ui/Icons'
+import { CopyText, Inspector, KeyValueList } from '../../components/ui/Inspector'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Segmented } from '../../components/ui/Segmented'
 import { Sentence } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
-import { relativeTime, shortDuration } from '../../lib/summaries'
-import { reviewSentence } from '../../lib/summaries/evaluate'
+import { plainText, reviewSentence, reviewView } from '../../lib/summaries/evaluate'
 import '../evaluations/evaluate.css'
 
 interface QueueSpec {
@@ -221,11 +220,42 @@ export function QueueReviewPage() {
   )
 }
 
+/** Refs in a step's inputs that point at dataset rows ("…/object/support-tickets:…/attr/rows/id/…"); they are read so the row can be shown. */
+const rowRefs = (inputs: Record<string, Any> | null | undefined) =>
+  Object.entries(inputs ?? {})
+    .filter(([k, v]) => k !== 'self' && isRef(v) && /\/attr\/rows\//.test(v))
+    .map(([, v]) => v as string)
+
+/** "inputs.question" → "Question"; "quality" → "Quality". */
+const sentenceCase = (s: string) => {
+  const w = s
+    .replace(/^(inputs|output|attributes)\./, '')
+    .replace(/[._-]+/g, ' ')
+    .trim()
+  return w ? w[0].toUpperCase() + w.slice(1) : s
+}
+
+/**
+ * The item to judge, read the way a person reviews it: the question and the answer first, then the expected answer and the scores as
+ * text. When, how long and which step sit in a Details disclosure.
+ */
 function CallPane({ projectId, item }: { projectId: string; item: AnnotationQueueItem }) {
   const call = useQuery({ queryKey: ['span', projectId, item.span_id], queryFn: () => api.spanFind(projectId, item.span_id) })
-  if (call.isLoading) return <div className="rv-item"><Loading label="Loading the step…" /></div>
-  if (call.error) return <div className="rv-item"><ErrorBox error={call.error} /></div>
-  const c = call.data as Span | null
+  const c = call.data as Span | null | undefined
+  const refs = useMemo(() => rowRefs(c?.inputs), [c])
+  const rows = useQuery({ queryKey: ['refs', refs], queryFn: () => api.refsRead(refs).then((r) => r.items), enabled: refs.length > 0, staleTime: Infinity })
+  if (call.isLoading || (refs.length > 0 && rows.isLoading))
+    return (
+      <div className="rv-item">
+        <Loading label="Loading the step…" />
+      </div>
+    )
+  if (call.error)
+    return (
+      <div className="rv-item">
+        <ErrorBox error={call.error} />
+      </div>
+    )
   if (!c)
     return (
       <div className="rv-item">
@@ -237,25 +267,31 @@ function CallPane({ projectId, item }: { projectId: string; item: AnnotationQueu
   const chat = extractChat(c)
   const fields = item.display_fields.length ? displayFieldValues(c, item.display_fields) : []
   const st = callStatus(c)
+  // The step's inputs with its dataset rows read in place of their refs, and readable names for the other refs.
+  const read = new Map(refs.map((r, i) => [r, rows.data?.[i]]))
+  const raw = (c.inputs ?? {}) as Record<string, Any>
+  const inputs = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, isRef(v) && read.get(v) && typeof read.get(v) === 'object' ? read.get(v) : v]))
+  const names = Object.fromEntries(Object.values(raw).filter(isRef).map((r) => [r, parseRef(r)?.name ?? r]))
+  const v = reviewView(inputs, c.output, names)
+  const modelRef = isRef(raw.model) ? raw.model : null
+  const rowRef = refs[0] ?? null
+  const dataset = rowRef ? parseRef(rowRef)?.name : null
+  const title = v.model ? `Answer by ${v.model}` : spanDisplayName(c.name)
+  const latency = callLatencyMs(c)
   return (
     <section className="rv-item" aria-label="The item to review">
       <div className="rv-head-line">
-        <StatusGlyph kind={st === 'error' ? 'failed' : st === 'running' ? 'running' : 'ok'} size={18} label={st === 'error' ? 'Failed' : st === 'running' ? 'Running' : 'Finished'} />
-        <span className="title">{spanDisplayName(c.name)}</span>
-        <span title={fmtDate(c.started_at)}>{relativeTime(c.started_at)}</span>
-        <span>took {shortDuration(callLatencyMs(c))}</span>
-        <Link to={spanUrl(projectId, c.id)} target="_blank">
-          Open the step
-        </Link>
+        {st !== 'success' && <StatusGlyph kind={st === 'error' ? 'failed' : 'running'} size={18} label={st === 'error' ? 'Failed' : 'Running'} />}
+        <span className="title">{title}</span>
+        {dataset && <span>on an example from {dataset}</span>}
       </div>
       {c.error && <p className="rv-error">{c.error}</p>}
       {fields.length > 0 && (
         <div className="ev-panel">
           {fields.map((f) => (
-            <div key={f.path} className="rv-block">
-              <h3 className="rv-block-h">{f.path}</h3>
-              <ValueView value={f.value} projectId={projectId} />
-            </div>
+            <p key={f.path} className="rv-qa">
+              <span className="rv-qa-label">{sentenceCase(f.path)}:</span> {plainText(f.value)}
+            </p>
           ))}
         </div>
       )}
@@ -265,24 +301,85 @@ function CallPane({ projectId, item }: { projectId: string; item: AnnotationQueu
           <CallChatView chat={chat} projectId={projectId} />
         </div>
       ) : (
-        <div className="ev-panel">
-          <div className="rv-block">
-            <h3 className="rv-block-h">Input</h3>
-            <ValueView value={Object.fromEntries(Object.entries(c.inputs ?? {}).filter(([k]) => k !== 'self'))} projectId={projectId} />
-          </div>
-          <InspectorDivider />
-          <div className="rv-block">
-            <h3 className="rv-block-h">Output</h3>
-            <ValueView value={c.output} projectId={projectId} markdown />
-          </div>
+        <div className="ev-panel rv-read">
+          {v.asked.map((f) => (
+            <p key={f.label} className="rv-qa">
+              <span className="rv-qa-label">{f.label}:</span> {f.text}
+            </p>
+          ))}
+          {v.answer && (
+            <p className="rv-qa rv-answer">
+              <span className="rv-qa-label">{v.answer.label}:</span> {v.answer.text}
+            </p>
+          )}
+          {(v.expected.length > 0 || v.scores) && (
+            <dl className="rv-facts">
+              {v.expected.map((f) => (
+                <div key={f.label}>
+                  <dt>{f.label}</dt>
+                  <dd>{f.text}</dd>
+                </div>
+              ))}
+              {v.scores && (
+                <div>
+                  <dt>Scores</dt>
+                  <dd>{v.scores}</dd>
+                </div>
+              )}
+            </dl>
+          )}
+          {!v.asked.length && !v.answer && <p className="ev-note">This step recorded no input or output.</p>}
         </div>
       )}
+      <details className="ev-more-details">
+        <summary>Details</summary>
+        <div className="ev-panel">
+          <KeyValueList
+            items={[
+              { label: 'Started', value: <span title={fmtDate(c.started_at)}>{fmtRelative(c.started_at)}</span> },
+              latency != null ? { label: 'Took', value: fmtDuration(latency) } : null,
+              v.modelLatency != null ? { label: 'Model latency', value: fmtDuration(v.modelLatency * 1000), help: 'How long the model took to answer' } : null,
+              v.model && modelRef && refUrl(modelRef) ? { label: 'Model', value: <Link to={refUrl(modelRef)!}>{v.model}</Link> } : null,
+              dataset && rowRef && refUrl(rowRef) ? { label: 'Dataset', value: <Link to={refUrl(rowRef)!}>{dataset}</Link> } : null,
+              { label: 'Step', value: <Link to={spanUrl(projectId, c.id)}>Open the step</Link> },
+              { label: 'Step id', value: <CopyText text={c.id} label="step id" />, mono: true },
+            ]}
+          />
+        </div>
+      </details>
     </section>
   )
 }
 
-function Kbd({ children }: { children: string }) {
-  return <kbd>{children}</kbd>
+/** The review's keyboard shortcuts, behind a "?" (they work whether it is open or not). */
+function KeyHints() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button type="button" className="qbtn rv-keys-btn" aria-expanded={open} aria-controls="rv-keys" aria-label="Shortcuts for reviewing" title="Shortcuts for reviewing" onClick={() => setOpen((o) => !o)}>
+        ?
+      </button>
+      {open && (
+        <ul className="rv-keys" id="rv-keys" aria-label="Keyboard shortcuts">
+          <li>
+            <kbd>⌘/Ctrl+Enter</kbd> submit
+          </li>
+          <li>
+            <kbd>s</kbd> skip
+          </li>
+          <li>
+            <kbd>←</kbd> <kbd>→</kbd> or <kbd>k</kbd> <kbd>j</kbd> previous and next item
+          </li>
+          <li>
+            <kbd>1</kbd>–<kbd>9</kbd> pick a score
+          </li>
+          <li>
+            <kbd>y</kbd> <kbd>n</kbd> yes or no
+          </li>
+        </ul>
+      )}
+    </>
+  )
 }
 
 function AnnotationPane({
@@ -405,18 +502,18 @@ function AnnotationPane({
               <div className="rv-field-name">
                 {p ? (
                   <Link to={objectUrl(projectId, p.name, p.digest ?? 'latest')} title="The annotation field’s definition" style={{ color: 'inherit' }}>
-                    {s.name}
+                    {sentenceCase(s.name)}
                   </Link>
                 ) : (
-                  <span>{s.name}</span>
+                  <span>{sentenceCase(s.name)}</span>
                 )}
                 {mineBySpec.has(s.name) && <span className="quiet">saved</span>}
               </div>
               {s.description && <div className="rv-field-help">{s.description}</div>}
-              <FieldInput name={s.name} schema={s.schema} value={drafts[s.name] ?? null} onChange={(v) => setDraft(s.name, v)} />
+              <FieldInput name={sentenceCase(s.name)} schema={s.schema} value={drafts[s.name] ?? null} onChange={(v) => setDraft(s.name, v)} />
               {others.length > 0 && (
                 <div className="rv-field-help">
-                  Others said: {others.map((o) => `${JSON.stringify(o.payload?.value)} (${o.creator ?? o.user_id ?? 'anonymous'})`).join(', ')}
+                  Others said: {others.map((o) => `${plainText(o.payload?.value)} (${o.creator ?? o.user_id ?? 'anonymous'})`).join(', ')}
                 </div>
               )}
             </div>
@@ -438,10 +535,7 @@ function AnnotationPane({
         <button type="button" className="qbtn" disabled={isLast || busy} onClick={onNext} title="Next (→ or j)" aria-label="Next item">
           →
         </button>
-      </div>
-      <div className="rv-keys">
-        <Kbd>⌘/Ctrl+Enter</Kbd> submit · <Kbd>s</Kbd> skip · <Kbd>←</Kbd> <Kbd>→</Kbd> or <Kbd>k</Kbd> <Kbd>j</Kbd> move · <Kbd>1</Kbd>–<Kbd>9</Kbd> score · <Kbd>y</Kbd>{' '}
-        <Kbd>n</Kbd> yes or no
+        <KeyHints />
       </div>
     </Inspector>
   )
@@ -496,7 +590,7 @@ function ItemList({
             title="Remove from the queue (annotations already given are kept; can be undone)"
             onClick={() => onRemove(it)}
           >
-            ✕
+            <Icon name="trash" size={14} />
           </button>
         </li>
       ))}

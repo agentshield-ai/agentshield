@@ -235,7 +235,6 @@ export function InlineLeaderboard({
               <tr key={r.id}>
                 <td className={`num ${r.rank === 1 && r.score != null ? 'ev-best' : ''}`}>{r.rank}</td>
                 <td>
-                  <span className="ev-swatch" style={{ background: colorOf[r.id] }} aria-hidden />
                   {labels[r.id]}
                 </td>
                 <td className="num">

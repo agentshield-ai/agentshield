@@ -186,6 +186,30 @@ export function pathDiff(a: Any, b: Any): PathChange[] {
 
 const CHANGE_WORD: Record<PathChange['kind'], string> = { added: 'Added', removed: 'Removed', changed: 'Changed' }
 
+/** A field path in words: "messages.0.content" → "Message 1 › content"; "default_params.temperature" → "default params › temperature". */
+export function pathWords(path: string): string {
+  const parts = path.split('.')
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]
+    const next = parts[i + 1]
+    if (next != null && /^\d+$/.test(next) && !/^\d+$/.test(p)) {
+      out.push(`${p.replace(/_/g, ' ').replace(/s$/, '')} ${Number(next) + 1}`)
+      i++
+    } else out.push(/^\d+$/.test(p) ? `item ${Number(p) + 1}` : p.replace(/_/g, ' '))
+  }
+  const s = out
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .join(' › ')
+  return s ? s[0].toUpperCase() + s.slice(1) : path
+}
+
+/** A changed value as text: strings as they are (no quotes), anything else as compact JSON. */
+function valueText(v: Any): string {
+  return typeof v === 'string' ? preview(v, 240) : preview(JSON.stringify(v), 240)
+}
+
 /** Each changed field: where, what happened (words with a mark, never colour alone), before and after. */
 export function PathChangesTable({ changes }: { changes: PathChange[] }) {
   if (!changes.length) return <p className="quiet-note">No differences.</p>
@@ -202,18 +226,15 @@ export function PathChangesTable({ changes }: { changes: PathChange[] }) {
       <tbody>
         {changes.map((c) => (
           <tr key={c.path}>
-            <td className="mono small">{c.path}</td>
+            <td title={c.path}>{pathWords(c.path)}</td>
             <td>
-              <span className={`change-word ${c.kind}`}>
-                <span aria-hidden="true">{c.kind === 'added' ? '+' : c.kind === 'removed' ? '−' : '~'}</span>
-                {CHANGE_WORD[c.kind]}
-              </span>
+              <span className={`change-word ${c.kind}`}>{CHANGE_WORD[c.kind]}</span>
             </td>
             <td className="diff-val before" title={JSON.stringify(c.a)}>
-              {c.kind === 'added' ? '—' : preview(JSON.stringify(c.a), 140)}
+              {c.kind === 'added' ? '—' : valueText(c.a)}
             </td>
             <td className="diff-val" title={JSON.stringify(c.b)}>
-              {c.kind === 'removed' ? '—' : preview(JSON.stringify(c.b), 140)}
+              {c.kind === 'removed' ? '—' : valueText(c.b)}
             </td>
           </tr>
         ))}

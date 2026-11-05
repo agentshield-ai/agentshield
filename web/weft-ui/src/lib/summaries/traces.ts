@@ -1,9 +1,10 @@
 // Generated words for the developer view (Traces, a span, span sessions,
 // a comparison) (DESIGN.md §7.1 rule 1, §7.2 rule 8). Pure functions of
 // what the API returns; table-driven tests in traces.test.ts.
-import type { SpanStatus } from '../../api/types'
+import type { SpanSession, SpanStatus } from '../../api/types'
 import type { StatusFilter, TimeRange } from '../filters'
-import { fmtCost } from '../format'
+import { fmtCost, fmtDuration } from '../format'
+import { oneLine } from '../timeline'
 import { countWord, durationWords, plural, relativeTime } from '../summaries'
 import { rangePhrase } from './security'
 
@@ -98,6 +99,54 @@ export function spanSessionsSentence(i: { shown: number; more: boolean; offset: 
   const n = i.offset + i.shown
   const head = i.more ? `More than ${num(n)} sessions have spans with a session id.` : `${nplural(n, 'session')} ${n === 1 ? 'has' : 'have'} spans with a session id.`
   return i.latest ? `${head} The latest was updated ${relativeTime(i.latest, i.now)}.` : head
+}
+
+/** The page that groups spans by their session id, as people see it named (nav, back links). */
+export const SPAN_SESSIONS_TITLE = 'Sessions by id'
+
+const NAME_KEYS = ['question', 'query', 'input', 'prompt', 'message', 'text', 'task', 'request', 'content']
+
+/** A message's text: a string, or the text parts of a content list. */
+function messageText(m: unknown): string {
+  if (!m || typeof m !== 'object') return ''
+  const c = (m as { content?: unknown }).content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) return c.map((p) => (typeof p === 'string' ? p : p && typeof p === 'object' && typeof (p as { text?: unknown }).text === 'string' ? (p as { text: string }).text : '')).join(' ')
+  return ''
+}
+
+/**
+ * A turn named by what was asked: the question-like input, else the last
+ * user message, else the first text input. Empty when nothing reads as words.
+ */
+export function turnName(inputs: Record<string, unknown> | null | undefined, n = 90): string {
+  const xs = Object.entries(inputs ?? {}).filter(([k]) => k !== 'self')
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? oneLine(v, n) : '')
+  for (const k of NAME_KEYS) {
+    const hit = xs.find(([key]) => key.toLowerCase() === k)
+    if (hit && str(hit[1])) return str(hit[1])
+  }
+  for (const [, v] of xs) {
+    if (Array.isArray(v) && v.some((m) => m && typeof m === 'object' && 'role' in m)) {
+      const user = [...v].reverse().find((m) => (m as { role?: string }).role === 'user')
+      const t = str(messageText(user))
+      if (t) return t
+    }
+  }
+  for (const [, v] of xs) if (str(v)) return str(v)
+  return ''
+}
+
+/** A session-by-id row: "4 turns, 12 spans. Turns take about 1.4 s, up to 3.7 s. $0.0034." (median and 99th percentile) */
+export function spanSessionLine(t: Pick<SpanSession, 'turn_count' | 'span_count' | 'p50_turn_duration_ms' | 'p99_turn_duration_ms' | 'cost_usd'>): string {
+  const xs = [`${nplural(t.turn_count, 'turn')}, ${nplural(t.span_count, 'span')}.`]
+  if (t.p50_turn_duration_ms != null) {
+    const p50 = fmtDuration(t.p50_turn_duration_ms)
+    const p99 = t.p99_turn_duration_ms != null ? fmtDuration(t.p99_turn_duration_ms) : ''
+    xs.push(t.turn_count > 1 && p99 && p99 !== p50 ? `Turns take about ${p50}, up to ${p99}.` : `${t.turn_count === 1 ? 'The turn took' : 'Turns take about'} ${p50}.`)
+  }
+  if (t.cost_usd) xs.push(`${fmtCost(t.cost_usd)}.`)
+  return xs.join(' ')
 }
 
 /** One span session: "4 turns and 41 spans over 12 minutes, costing $0.02. One turn failed." */

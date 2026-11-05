@@ -15,7 +15,7 @@ import { TimeRangePicker } from '../../components/dashboards/TimeRangePicker'
 import { blankPanel, movePanel, newPanelId, panelTitle, timeRangeLabel } from '../../components/dashboards/dashboardUtils'
 import { ConfirmModal, Dropdown, MenuItem } from '../../components/traces/Menu'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtRelative } from '../../lib/format'
+import { fmtDate, fmtRelative, versionLabel } from '../../lib/format'
 import { tracesUrl } from '../../lib/urls'
 import '../../components/dashboards/dashboards.css'
 
@@ -114,8 +114,8 @@ export function DashboardPage() {
         meta={
           <>
             {val.description ? <>{val.description} · </> : null}
-            <span title={q.data.created_at}>
-              saved {fmtRelative(q.data.created_at)} (version {q.data.version})
+            <span title={fmtDate(q.data.created_at)}>
+              saved {fmtRelative(q.data.created_at)} ({versionLabel(q.data.version)})
             </span>
           </>
         }

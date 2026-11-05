@@ -4,15 +4,15 @@
 // then who hands work to it and whom it hands work to, the tools it calls
 // (a plain table), its scores and its recent sessions.
 import type { ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { v1, type AgentDetail } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { filterQueryString } from '../../lib/filters'
 import { fmtNumber } from '../../lib/format'
-import { scorerWords, shortDuration } from '../../lib/summaries'
+import { scorerWords } from '../../lib/summaries'
 import { agentMetaFigures, agentOutcome, handoffWords, teamName } from '../../lib/summaries/agentsTeams'
-import { agentAnalyticsUrl, agentsUrlFor, agentUrl, sessionsUrl, teamUrl } from '../../lib/urls'
+import { agentAnalyticsUrl, agentsUrlFor, agentUrl, sessionsUrl, sessionUrl, teamUrl } from '../../lib/urls'
 import { ErrorBox } from '../../components/common'
 import { GroupedList, ListRow } from '../../components/ui/GroupedList'
 import { Monogram } from '../../components/ui/Monogram'
@@ -23,7 +23,18 @@ import { SessionList, SessionListSkeleton } from '../../components/sessions/Sess
 import { toSentenceParts, useSessionRowContext } from '../../components/agents/AgentRows'
 import './agents-teams.css'
 
+/** Tabs the agent page had before its analytics moved to their own page: their URLs open it. */
+const ANALYTICS_TABS = ['overview', 'spans', 'signals', 'evals']
+
 export function AgentDetailPage() {
+  const [params] = useSearchParams()
+  const pid = useProjectId()
+  const { agentName = '' } = useParams()
+  if (ANALYTICS_TABS.includes(params.get('tab') ?? '')) return <Navigate replace to={`${agentAnalyticsUrl(pid, agentName)}?${params}`} />
+  return <AgentDetail />
+}
+
+function AgentDetail() {
   const pid = useProjectId()
   const { agentName = '' } = useParams()
   const a = useQuery({ queryKey: ['v1', pid, 'agent', agentName], queryFn: () => v1.agent(pid, agentName) })
@@ -80,8 +91,8 @@ export function AgentDetailPage() {
       />
 
       <div className="at-two">
-        <HandoffList pid={pid} title="Who hands work to it" items={d.handoffs_from} none="Nobody: it is started directly (for example, by the user)." />
-        <HandoffList pid={pid} title="Whom it hands work to" items={d.handoffs_to} none="Nobody: it does its work itself." />
+        <HandoffList pid={pid} title="Who hands work to it" items={d.handoffs_from} none="It is started directly (for example, by the user)." />
+        <HandoffList pid={pid} title="Whom it hands work to" items={d.handoffs_to} none="It does its work itself." />
       </div>
 
       <section className="at-section" aria-labelledby="tools-h">
@@ -112,7 +123,7 @@ export function AgentDetailPage() {
                     </Link>
                   </td>
                   <td className="num">{fmtNumber(t.count)}</td>
-                  <td className={`num ${t.errors ? 'text-error' : ''}`}>{fmtNumber(t.errors)}</td>
+                  <td className="num">{fmtNumber(t.errors)}</td>
                 </tr>
               ))}
             </tbody>
@@ -125,7 +136,14 @@ export function AgentDetailPage() {
           Scores
         </h2>
         {Object.keys(d.scores ?? {}).length === 0 ? (
-          <p className="quiet-note">Not scored yet. Open one of its sessions and run “Reasoning consistency” for each agent from the session's Scores view.</p>
+          <p className="quiet-note">
+            Not scored yet.{' '}
+            {sessions.data?.items[0] && (
+              <>
+                <Link to={sessionUrl(pid, sessions.data.items[0].session_id, { tab: 'scores' })}>Score it from its latest session</Link>.
+              </>
+            )}
+          </p>
         ) : (
           <PlainTable caption="Agent-level scores: each scorer's mean for this agent, from 0 to 1">
             <thead>
@@ -143,7 +161,7 @@ export function AgentDetailPage() {
               {Object.entries(d.scores).map(([k, v]) => (
                 <tr key={k}>
                   <td title={k}>{scorerWords(k)}</td>
-                  <td className={`num ${v.mean < 0.5 ? 'text-error' : ''}`}>{v.mean.toFixed(2)}</td>
+                  <td className="num">{v.mean.toFixed(2)}</td>
                   <td className="num">{fmtNumber(v.count)}</td>
                 </tr>
               ))}
@@ -171,18 +189,17 @@ export function AgentDetailPage() {
         <ErrorBox error={sessions.error} />
       </section>
       <p className="at-foot">
-        Charts, spans, signals and agent evaluations of {d.agent_name} are in <Link to={agentAnalyticsUrl(pid, agentName)}>its analytics</Link>.
+        Charts of its work, every step it took, its ratings and the evaluations it ran in: <Link to={agentAnalyticsUrl(pid, agentName)}>analytics of {d.agent_name}</Link>.
       </p>
     </div>
   )
 }
 
-/** The quiet line of figures: models · median run · teams (linked) · reasoning · cost · last seen. */
+/** The quiet line of figures: models · teams (linked) · reasoning · cost · last seen (the sentence says how long a run takes). */
 function metaLine(pid: string, d: AgentDetail, names: Map<string, string>): ReactNode {
   const figs = agentMetaFigures(d)
   const items: ReactNode[] = []
   if (d.models?.length) items.push(figs.shift())
-  if (d.latency_ms_p50 != null) items.push(<span title="The median time one run takes">median run {shortDuration(d.latency_ms_p50)}</span>)
   for (const t of d.teams ?? [])
     items.push(
       <Link to={teamUrl(pid, t)} title="Open this team">
@@ -198,20 +215,16 @@ function metaLine(pid: string, d: AgentDetail, names: Map<string, string>): Reac
   ))
 }
 
+/** Who hands work to the agent, or whom it hands work to: a grouped list either way, with one plain row when nobody does. */
 function HandoffList({ pid, title, items, none }: { pid: string; title: string; items: AgentDetail['handoffs_from']; none: string }) {
   const rows = items.filter((h) => h.kind !== 'return')
-  if (!rows.length)
-    return (
-      <section className="at-section" aria-label={title}>
-        <h2 className="at-h">{title}</h2>
-        <p className="quiet-note">{none}</p>
-      </section>
-    )
   return (
     <GroupedList title={title} className="handoff-list">
-      {rows.map((h) => (
-        <ListRow key={h.agent + h.kind} glyph={<Monogram name={h.agent} size={26} />} title={h.agent} summary={handoffWords(h)} to={agentUrl(pid, h.agent)} />
-      ))}
+      {rows.length ? (
+        rows.map((h) => <ListRow key={h.agent + h.kind} glyph={<Monogram name={h.agent} size={26} />} title={h.agent} summary={handoffWords(h)} to={agentUrl(pid, h.agent)} />)
+      ) : (
+        <ListRow title="Nobody" summary={none} />
+      )}
     </GroupedList>
   )
 }

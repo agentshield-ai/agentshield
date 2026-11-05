@@ -344,6 +344,13 @@ func TestAPIv1EndToEnd(t *testing.T) {
 		len(team["agent_stats"].([]any)) != 2 || len(team["graph"].(map[string]any)["edges"].([]any)) != 2 {
 		t.Fatalf("team %v", team)
 	}
+	// A team's failed runs per agent are counted as the agents list counts them.
+	for _, r := range team["agent_stats"].([]any) {
+		row := r.(map[string]any)
+		if _, ok := row["failed_calls"]; !ok || v1Num(row["failed_calls"]) != v1Num(ag[row["agent"].(string)]["invocation_error_count"]) {
+			t.Fatalf("team agent row %v, agent %v", row, ag[row["agent"].(string)])
+		}
+	}
 	s2 := e.v1Get("/api/v1/sessions/e2e-1?" + P)
 	if _, ok := s2["scores"].(map[string]any)["GoalCompletionJudge"]; !ok {
 		t.Fatalf("session scores %v", s2["scores"])

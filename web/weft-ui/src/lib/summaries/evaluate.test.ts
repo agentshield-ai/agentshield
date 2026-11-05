@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   biggestDifference,
+  changeText,
   columnLeaders,
   compareSentence,
   evaluationsSentence,
@@ -17,6 +18,11 @@ import {
   leaderboardLine,
   leaderboardsSentence,
   leaderOf,
+  onMetrics,
+  plainText,
+  queueAsks,
+  reviewView,
+  times,
   leaderboardSentence,
   metricText,
   metricValue,
@@ -33,6 +39,7 @@ import {
   scoreSubject,
   scoresSentence,
   scoreTitle,
+  scoreValue,
   tokensText,
   type CmpExample,
   type CmpRun,
@@ -56,7 +63,7 @@ const RUNS: RunInfo[] = [
 
 describe('metric words and values', () => {
   it.each([
-    ['exact.true_fraction', 'exact'],
+    ['exact.true_fraction', 'exact match'],
     ['similarity.mean', 'similarity'],
     ['GoalCompletionJudge.score.mean', 'goal completion score'],
     ['model_latency.mean', 'model latency'],
@@ -75,7 +82,19 @@ describe('metric words and values', () => {
     ['x', null, '—'],
   ] as const)('metricValue(%s, %s) = %s', (k, v, out) => expect(metricValue(k, v)).toBe(out))
 
-  it('metricText', () => expect(metricText('exact.true_fraction', 0.5)).toBe('exact 50%'))
+  it.each([
+    ['exact.true_fraction', 0, 0.75, 'both', '+75 pts'],
+    ['exact.true_fraction', 0.8, 0.75, 'both', '−5 pts'],
+    ['model_latency.mean', 0.015, 0.0237, 'both', '+9 ms (+58%)'],
+    ['model_latency.mean', 0.015, 0.0237, 'absolute', '+9 ms'],
+    ['similarity.mean', 0.594, 0.791, 'both', '+0.20 (+33%)'],
+    ['similarity.mean', 0.594, 0.791, 'percent', '+33%'],
+    ['similarity.mean', 0.5, 0.75, 'ratio', '1.5×'],
+    ['similarity.mean', 0, 0.75, 'percent', '+0.75'],
+    ['similarity.mean', 0.5, 0.5, 'both', 'no change'],
+  ] as const)('changeText(%s, %s, %s, %s) = %s', (k, b, v, f, out) => expect(changeText(k, b, v, f)).toBe(out))
+
+  it('metricText', () => expect(metricText('exact.true_fraction', 0.5)).toBe('exact match 50%'))
 
   it.each([
     ['model_latency.mean', true],
@@ -117,22 +136,22 @@ describe('the Evaluations list', () => {
   })
 
   it.each([
-    ['better than the previous run, by another model', run({ model: 'support-v2', summary: sum(8, 10, 0.8) }), run({ model: 'support-v1', summary: sum(0, 10, 0.6) }), 10, 'support-v2 scored exact 80%, up from 0% in the previous run (support-v1); 2 of 10 examples failed.'],
-    ['the same', run({ summary: sum(8, 10, 0.8) }), run({ summary: sum(8, 10, 0.5) }), null, 'support-v1 scored exact 80%, the same as the previous run; 2 of 10 examples failed.'],
-    ['worse', run({ summary: sum(5, 10, 0.8) }), run({ summary: sum(8, 10, 0.5) }), null, 'support-v1 scored exact 50%, down from 80% in the previous run; 5 of 10 examples failed.'],
-    ['no previous run, every example passed', run({ summary: sum(10, 10, 1) }), null, null, 'support-v1 scored exact 100%; all 10 examples passed.'],
-    ['a mean only', run({ summary: { similarity: { mean: 0.846 } } }), null, null, 'support-v1 scored similarity 0.85.'],
-    ['no scores', run({ summary: { model_latency: { mean: 0.1 } } }), null, null, 'support-v1 finished with no scores.'],
-    ['running', run({ status: 'running' }), null, null, 'support-v1 is running.'],
-    ['failed with an error', run({ status: 'error', error: 'model not found\nstack' }), null, null, 'support-v1 failed: model not found.'],
-    ['failed without one', run({ status: 'error' }), null, null, 'support-v1 failed.'],
-    ['some examples raised errors', run({ status: 'descendant_error', summary: { similarity: { mean: 0.5 } } }), null, null, 'support-v1 scored similarity 0.50; some examples raised errors.'],
+    ['better than the previous run, by another model', run({ model: 'support-v2', summary: sum(8, 10, 0.8) }), run({ model: 'support-v1', summary: sum(0, 10, 0.6) }), 10, 'Scored exact match 80%, up from 0% in the previous run (support-v1); 2 of 10 examples failed.'],
+    ['the same', run({ summary: sum(8, 10, 0.8) }), run({ summary: sum(8, 10, 0.5) }), null, 'Scored exact match 80%, the same as the previous run; 2 of 10 examples failed.'],
+    ['worse', run({ summary: sum(5, 10, 0.8) }), run({ summary: sum(8, 10, 0.5) }), null, 'Scored exact match 50%, down from 80% in the previous run; 5 of 10 examples failed.'],
+    ['no previous run, every example passed', run({ summary: sum(10, 10, 1) }), null, null, 'Scored exact match 100%; all 10 examples passed.'],
+    ['a mean only', run({ summary: { similarity: { mean: 0.846 } } }), null, null, 'Scored similarity 0.85.'],
+    ['no scores', run({ summary: { model_latency: { mean: 0.1 } } }), null, null, 'Finished with no scores.'],
+    ['running', run({ status: 'running' }), null, null, 'Still running.'],
+    ['failed with an error', run({ status: 'error', error: 'model not found\nstack' }), null, null, 'Failed: model not found.'],
+    ['failed without one', run({ status: 'error' }), null, null, 'Failed.'],
+    ['some examples raised errors', run({ status: 'descendant_error', summary: { similarity: { mean: 0.5 } } }), null, null, 'Scored similarity 0.50; some examples raised errors.'],
     [
       'two boolean scorers name the worst',
       run({ summary: { a: { true_count: 9, true_fraction: 0.9 }, b: { true_count: 5, true_fraction: 0.5 } } }),
       null,
       null,
-      'support-v1 scored a 90%; 5 of 10 examples failed on b.',
+      'Scored a 90%; 5 of 10 examples failed on b.',
     ],
   ])('runLine: %s', (_n, r, prev, rows, out) => expect(runLine({ ...r, rows }, prev)).toBe(out))
 
@@ -159,20 +178,43 @@ describe('the Evaluations list', () => {
   it.each<[string, RunInfo[], boolean, string]>([
     ['nothing ran', [], false, 'No evaluation has run yet.'],
     ['nothing matches', [], true, 'No runs match these filters.'],
-    ['one evaluation got better', RUNS.slice(1), false, '3 runs of 2 evaluations. Since its previous run, support-eval got better (exact 0% → 80%).'],
+    ['one evaluation got better', RUNS.slice(1), false, '3 runs of 2 evaluations. Since its previous run, support-eval got better (exact match 0% → 80%).'],
     ['the same score', RUNS, false, '4 runs of 2 evaluations. support-eval scored the same as in its previous run.'],
-    ['single runs', [RUNS[1]], false, '1 run of tone-check. None has a previous run to compare with yet.'],
+    ['single runs', [RUNS[1]], false, 'tone-check ran once. The latest run, with support-v2, scored 0.85 on similarity.'],
     [
       'failed and running runs',
       [run({ id: 'x', status: 'error' }), run({ id: 'y', status: 'running' }), run({ id: 'z', status: 'running' })],
       false,
-      '3 runs of support-eval. 1 run failed and 2 are still running.',
+      'support-eval ran 3 times. 1 run failed and 2 are still running.',
     ],
-    ['filtered', RUNS.slice(2), true, '2 runs of support-eval match. Since its previous run, support-eval got better (exact 0% → 80%).'],
+    ['filtered', RUNS.slice(2), true, '2 runs of support-eval match. The latest run, with support-v2, scored 80% on exact match, up from 0%.'],
   ])('evaluationsSentence: %s', (_n, runs, filtered, out) => expect(partsText(evaluationsSentence(runs, filtered))).toBe(out))
 
+  it.each<[string, RunInfo[], string]>([
+    ['got better', [run({ id: 'b', model: 'support-v2', summary: sum(3, 4, 0.79) }), run({ id: 'a', summary: sum(0, 4, 0.59) })], 'support-eval ran twice. The latest run, with support-v2, scored 75% on exact match, up from 0%.'],
+    ['got worse', [run({ id: 'b', summary: sum(1, 4, 0.5) }), run({ id: 'a', summary: sum(3, 4, 0.5) })], 'support-eval ran twice. The latest run, with support-v1, scored 25% on exact match, down from 75%.'],
+    ['the same', [run({ id: 'b', summary: sum(1, 4, 0.5) }), run({ id: 'a', summary: sum(1, 4, 0.9) })], 'support-eval ran twice. The latest run, with support-v1, scored 25% on exact match, the same as the run before.'],
+    [
+      'the newest run failed',
+      [run({ id: 'c', status: 'error' }), run({ id: 'b', summary: sum(1, 4, 0.5) }), run({ id: 'a', summary: sum(3, 4, 0.5) })],
+      'support-eval ran 3 times. The latest finished run, with support-v1, scored 25% on exact match, down from 75%. 1 run failed.',
+    ],
+    ['no scores', [run({ id: 'a', summary: { model_latency: { mean: 0.1 } } })], 'support-eval ran once. The latest run, with support-v1, finished with no scores.'],
+  ])('evaluationsSentence, one evaluation: %s', (_n, runs, out) => expect(partsText(evaluationsSentence(runs))).toBe(out))
+
+  it('the one-evaluation sentence links the latest run to its comparison with the one before, or to itself', () => {
+    expect(links(evaluationsSentence([run({ id: 'b', summary: sum(3, 4, 0.5) }), run({ id: 'a', summary: sum(0, 4, 0.5) })])).map((l) => l[1])).toEqual([{ kind: 'compare', ids: ['a', 'b'], baseline: 'a' }])
+    expect(links(evaluationsSentence([run({ id: 'a', summary: sum(0, 4, 0.5) })])).map((l) => l[1])).toEqual([{ kind: 'compare', ids: ['a'] }])
+  })
+
+  it.each([
+    [1, 'once'],
+    [2, 'twice'],
+    [12, '12 times'],
+  ])('times(%s) = %s', (n, out) => expect(times(n)).toBe(out))
+
   it('evaluationsSentence links each change to its comparison, and the failed runs to their filter', () => {
-    expect(links(evaluationsSentence(RUNS.slice(1)))).toEqual([['support-eval got better (exact 0% → 80%)', { kind: 'compare', ids: ['r1', 'r2'], baseline: 'r1' }]])
+    expect(links(evaluationsSentence(RUNS.slice(1)))).toEqual([['support-eval got better (exact match 0% → 80%)', { kind: 'compare', ids: ['r1', 'r2'], baseline: 'r1' }]])
     expect(links(evaluationsSentence([run({ id: 'x', status: 'error' })]))).toEqual([['1 run failed', { kind: 'runs', status: 'error' }]])
   })
 
@@ -222,18 +264,18 @@ describe('an evaluation run and its comparison', () => {
     [
       'two runs',
       { runs, baseline: 'r1', metrics, examples, lower },
-      'support-v2 did better than support-v1 on 2 of 2 metrics. The biggest difference is exact: 80% against 0%. 1 example got worse and 1 got better.',
+      'support-v2 did better than support-v1 on both metrics. The biggest difference is exact match: 80% against 0%. 1 example got worse and 1 got better.',
     ],
     [
       'the other way round',
       { runs, baseline: 'r4', metrics, examples, lower },
-      'support-v1 did worse than support-v2 on 2 of 2 metrics. The biggest difference is exact: 0% against 80%. 1 example got worse and 1 got better.',
+      'support-v1 did worse than support-v2 on both metrics. The biggest difference is exact match: 0% against 80%. 1 example got worse and 1 got better.',
     ],
-    ['one run', { runs: [runs[1]], baseline: 'r4', metrics, examples, lower }, 'support-v2 scored exact 80% and similarity 0.85 on support-eval. 2 of 3 examples failed.'],
+    ['one run', { runs: [runs[1]], baseline: 'r4', metrics, examples, lower }, 'support-v2 scored exact match 80% and similarity 0.85 on support-eval. 2 of 3 examples failed.'],
     [
       'one run, every example passed',
       { runs: [runs[1]], baseline: 'r4', metrics, examples: [examples[0]], lower },
-      'support-v2 scored exact 80% and similarity 0.85 on support-eval. The one example passed.',
+      'support-v2 scored exact match 80% and similarity 0.85 on support-eval. The one example passed.',
     ],
     ['one run still running', { runs: [{ ...runs[1], status: 'running' }], baseline: 'r4', metrics, examples: [], lower }, 'support-v2 is still running on support-eval.'],
     [
@@ -253,7 +295,7 @@ describe('an evaluation run and its comparison', () => {
         examples: [],
         lower,
       },
-      'Against support-v1, the other runs did better on: support-v2 on 2 of 2 and support-v3 on 1 of 2 metrics. The biggest difference is exact: 90% for support-v3 against 0% for support-v1.',
+      'Against support-v1, the other runs did better on: support-v2 on 2 of 2 and support-v3 on 1 of 2 metrics. The biggest difference is exact match: 90% for support-v3 against 0% for support-v1.',
     ],
   ])('compareSentence: %s', (_n, input, out) => expect(partsText(compareSentence(input))).toBe(out))
 
@@ -281,10 +323,32 @@ describe('scores', () => {
     ['none low', S.slice(1, 3), true, '2 scores from 1 scorer on 2 sessions match. None is below 0.5. Goal completion averages 0.75.'],
   ])('scoresSentence: %s', (_n, s, f, out) => expect(partsText(scoresSentence(s, f))).toBe(out))
 
+  it('scoresSentence counts step scores on their steps', () => {
+    const steps = [
+      { scorer: 'helpfulness-judge', value: 5, span_id: 's1', scope: 'span' },
+      { scorer: 'helpfulness-judge', value: 4, span_id: 's2', scope: 'span' },
+    ]
+    expect(partsText(scoresSentence(steps))).toBe('2 scores from 1 scorer on 2 steps. None is below 0.5. Helpfulness judge averages 4.50.')
+    expect(partsText(scoresSentence([...S.slice(0, 1), ...steps]))).toBe('3 scores from 2 scorers on 1 session and 2 steps. One is below 0.5. Helpfulness judge averages 4.50.')
+  })
+
+
   it.each([
     [{ scorer: 'GoalCompletionJudge', value: 0.1 }, 'Goal completion 0.10'],
     [{ scorer: 'tool_safety', value: null }, 'Tool safety —'],
+    [{ scorer: 'helpfulness-judge', value: 4 }, 'Helpfulness judge 4'],
   ])('scoreTitle %#', (s, t) => expect(scoreTitle(s)).toBe(t))
+
+  it.each([
+    [0.4, 0.4],
+    [true, 1],
+    [false, 0],
+    [{ score: 5, correct: false, reasoning: 'x' }, 5],
+    [{ correct: false, reasoning: 'x' }, 0],
+    [{ b: 2, a: 'text', c: true }, 2],
+    ['text', null],
+    [null, null],
+  ])('scoreValue %#', (v, out) => expect(scoreValue(v)).toBe(out))
 
   it.each([
     [{ scope: 'session' }, 'The session'],
@@ -312,6 +376,8 @@ describe('leaderboards', () => {
   it.each<[string, typeof cols, typeof rows, string]>([
     ['mixed leaders', cols, rows, 'v2 leads on 2 of 3 metrics; v1 leads on similarity. 3 models ranked.'],
     ['one leader everywhere', cols.slice(0, 1), rows.slice(1, 2).concat(rows.slice(0, 1)), 'v2 leads on the one metric. 2 models ranked.'],
+    ['both metrics', cols.slice(0, 2), [rows[1], { model: 'v4', values: { '0': 0.1, '1': 0.1, '2': 0 } }], 'v2 leads on both metrics. 2 models ranked.'],
+    ['all three', cols, [rows[1], { model: 'v4', values: { '0': 0.1, '1': 0.1, '2': 1 } }], 'v2 leads on all 3 metrics. 2 models ranked.'],
     ['one model', cols, rows.slice(0, 1), 'Only v1 has finished runs for these metrics.'],
     ['no rows', cols, [], 'No model has a finished run of these evaluations yet.'],
     ['no columns', [], [], 'This leaderboard has no metrics yet.'],
@@ -319,9 +385,18 @@ describe('leaderboards', () => {
 
   it.each<[typeof cols, typeof rows, string]>([
     [cols, rows, 'v2 leads on 2 of 3 metrics, among 3 models.'],
+    [cols.slice(0, 2), [rows[1], { model: 'v4', values: { '0': 0.1, '1': 0.1, '2': 0 } }], 'v2 leads on both metrics, among 2 models.'],
     [cols, [], '3 metrics; no finished runs yet.'],
     [[], [], 'No metrics yet.'],
   ])('leaderboardLine %#', (c, r, out) => expect(leaderboardLine(c, r)).toBe(out))
+
+  it.each([
+    [1, 1, 'the one metric'],
+    [2, 2, 'both metrics'],
+    [3, 3, 'all 3 metrics'],
+    [2, 3, '2 of 3 metrics'],
+    [1, 2, '1 of 2 metrics'],
+  ])('onMetrics(%s, %s) = %s', (n, t, out) => expect(onMetrics(n, t)).toBe(out))
 
   it('leaderOf', () => {
     expect(leaderOf(cols, rows)).toBe('v2')
@@ -361,6 +436,30 @@ describe('review queues', () => {
     ['empty', [{ id: 'q1', name: 'Weekly', total: 0, done: 0 }], 'The queue is empty.'],
   ])('queuesSentence: %s', (_n, q, out) => expect(partsText(queuesSentence(q))).toBe(out))
 
+  it.each<[string, Parameters<typeof queueAsks>[0], string]>([
+    [
+      'a scale and a yes/no',
+      [
+        { name: 'quality', schema: { type: 'integer' } },
+        { name: 'correct', schema: { type: 'boolean' } },
+      ],
+      'asks reviewers to rate quality and say whether it is correct',
+    ],
+    [
+      'every kind',
+      [
+        { name: 'tone', schema: { type: 'number' } },
+        { name: 'helpfulness', schema: { type: 'integer' } },
+        { name: 'is_safe', schema: { type: 'boolean' } },
+        { name: 'category', schema: { type: 'string', enum: ['a', 'b'] } },
+        { name: 'notes', schema: { type: 'string' } },
+      ],
+      'asks reviewers to rate tone and helpfulness, say whether it is safe, choose the category, and add notes',
+    ],
+    ['not read yet', [{ name: 'quality' }], 'asks reviewers about quality'],
+    ['nothing', [], 'asks for nothing: reviewers mark each item done or skip it'],
+  ])('queueAsks: %s', (_n, f, out) => expect(queueAsks(f)).toBe(out))
+
   it.each([
     [{ total: 6, done: 2 }, '4 of 6 items left to review.'],
     [{ total: 6, done: 6 }, 'All 6 items reviewed.'],
@@ -374,6 +473,46 @@ describe('review queues', () => {
     [{ position: 2, total: 3, completed: 2, skipped: 1 }, 'You have reviewed every item: 2 done, 1 skipped.'],
     [{ position: null, total: 0, completed: 0, skipped: 0 }, 'This queue is empty.'],
   ])('reviewSentence %#', (p, out) => expect(reviewSentence(p)).toBe(out))
+})
+
+describe('one review item', () => {
+  it.each([
+    ['text', 'text'],
+    [true, 'yes'],
+    [0.1666666, '0.1667'],
+    [1200, '1,200'],
+    [['a', 'b'], 'a, b'],
+    [{ answer: 'Go to Account', sources: ['kb://faq'] }, 'Answer: Go to Account\nSources: kb://faq'],
+    [null, '—'],
+  ])('plainText %#', (v, out) => expect(plainText(v)).toBe(out))
+
+  it('an evaluation step: the row’s question first, the answer, the expected answer and the scores as text', () => {
+    const v = reviewView(
+      { example: { question: 'Do you support SSO?', expected: 'Yes, on the Team plan.' }, model: 'weft:///p/q/object/support-v2:abc', self: 'weft:///p/q/object/support-eval:def' },
+      { model_latency: 0.024, output: 'Do you support SSO?', scores: { exact: false, similarity: 1 } },
+      { 'weft:///p/q/object/support-v2:abc': 'support-v2' },
+    )
+    expect(v).toEqual({
+      asked: [{ label: 'Question', text: 'Do you support SSO?' }],
+      answer: { label: 'Answer', text: 'Do you support SSO?' },
+      expected: [{ label: 'Expected', text: 'Yes, on the Team plan.' }],
+      scores: 'exact match failed · similarity 1',
+      model: 'support-v2',
+      modelLatency: 0.024,
+    })
+  })
+
+  it('any other step: its inputs and output as text; refs that were not read are left out', () => {
+    expect(reviewView({ user_message: 'Hi', doc: 'weft:///p/q/object/x:1' }, 'Hello!')).toEqual({
+      asked: [{ label: 'User message', text: 'Hi' }],
+      answer: { label: 'Answer', text: 'Hello!' },
+      expected: [],
+      scores: null,
+      model: null,
+      modelLatency: null,
+    })
+    expect(reviewView(null, null).answer).toBeNull()
+  })
 })
 
 describe('playground', () => {

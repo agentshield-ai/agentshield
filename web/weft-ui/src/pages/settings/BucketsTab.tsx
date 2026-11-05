@@ -15,6 +15,8 @@ import { uriResolver } from '../../components/media/useResolvedUri'
 import { fmtDate } from '../../lib/format'
 import { relativeTime } from '../../lib/summaries'
 import { bucketsSentence } from '../../lib/summaries/project'
+import { HelpLink } from '../../components/ui/PageHeader'
+import { Icon } from '../../components/ui/Icons'
 
 type TestState = { busy: true } | ({ busy: false } & BucketTestResult)
 
@@ -70,7 +72,7 @@ export function BucketsTable({
   onTest: (b: ReferenceBucket) => void
   onDelete: (b: ReferenceBucket) => Promise<unknown>
 }) {
-  if (!buckets.length) return <SettingsEmpty>No buckets are registered for this project or its team.</SettingsEmpty>
+  if (!buckets.length) return <SettingsEmpty>Register a bucket to show the media stored in it inline.</SettingsEmpty>
   return (
     <>
       {buckets.map((b) => {
@@ -131,9 +133,11 @@ export function BucketsTable({
                       title={`Remove ${bucketUri(b)}?`}
                       body="Media in this bucket stops rendering; the URIs show as text again. Nothing in the bucket is deleted."
                       confirmLabel="Remove"
+                      ariaLabel={`Remove ${bucketUri(b)}`}
+                      tooltip="Remove this bucket"
                       onConfirm={() => onDelete(b)}
                     >
-                      Remove
+                      <Icon name="trash" size={14} />
                     </ConfirmButton>
                   </>
                 )}
@@ -153,7 +157,6 @@ export function BucketsTab({ projectId }: { projectId: string }) {
   const [adding, setAdding] = useState(false)
   const [tests, setTests] = useState<Record<string, TestState | undefined>>({})
   const admin = me.data?.server_admin === true
-  const entity = projectId.split('/')[0]
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const changed = () => {
     uriResolver.invalidate()
@@ -172,7 +175,11 @@ export function BucketsTab({ projectId }: { projectId: string }) {
     <>
       {list.data && <SettingsSentence>{bucketsSentence(list.data)}</SettingsSentence>}
       <SettingsSection
-        title="Reference buckets"
+        title={
+          <>
+            Reference buckets <HelpLink doc="project.md#buckets" topic="Buckets" />
+          </>
+        }
         action={
           admin ? (
             <button type="button" className="qbtn primary" onClick={() => setAdding(true)}>
@@ -182,12 +189,7 @@ export function BucketsTab({ projectId }: { projectId: string }) {
         }
         note={
           <>
-            Log media that already lives in your own bucket by its URI: put <span className="mono">s3://bucket/key.png</span> or{' '}
-            <span className="mono">gs://bucket/key.mp4</span> in any input, output or tool result. Once the bucket is registered here, for team{' '}
-            <span className="mono">{entity}</span> or for this project, images, video, audio and PDFs show inline through short-lived presigned URLs; other files
-            show as a download link. The bytes never pass through Weft. The bucket's CORS rules must allow <span className="mono">GET</span> and{' '}
-            <span className="mono">HEAD</span> from <span className="mono">{origin}</span>; Test checks them and reads the test object.
-            {!admin && me.data && ' Registering, testing and removing buckets needs a server admin.'}
+            Its CORS rules must allow GET and HEAD from <span className="mono">{origin}</span>.{!admin && me.data && ' Registering buckets needs a server admin.'}
           </>
         }
       >

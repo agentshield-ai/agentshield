@@ -5,9 +5,10 @@ import { agentEvalsApi, agentsApi, agentUrl, conversationUrl, signalsApi, type A
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { spanUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Pager, Spinner } from '../common'
-import { compact, errorRate, fmtPct, kindClass, windowStartOrAll } from './agentUtils'
+import { compact, windowStartOrAll } from './agentUtils'
 import { EvalFilterBanner, ScoreChips } from './AgentEvals'
-import { RangePicker, ScorePill } from './bits'
+import { ScoreText } from './bits'
+import { StatusGlyph } from '../ui/StatusGlyph'
 import {
   activeFilterCount,
   EMPTY_SPAN_FILTERS,
@@ -132,21 +133,19 @@ function FilterChips({ f, set, pinnedAgent }: { f: SpanFilterState; set: (f: Spa
 function SignalsCell({ rs }: { rs: SignalResult[] | undefined }) {
   if (!rs?.length) return <span className="faint">—</span>
   return (
-    <div className="chips" style={{ flexWrap: 'wrap' }}>
-      {rs.map((r) =>
-        r.kind === 'rating' ? (
-          <span key={r.feedback_id + r.signal} className="row small" style={{ gap: 4 }} title={r.reason ?? undefined}>
-            <span className="muted">{r.signal}</span>
-            <ScorePill value={r.score} confidence={r.confidence} reason={r.reason} />
-          </span>
-        ) : (
-          r.tags.map((t) => (
-            <span key={r.feedback_id + t} className="chip tag-chip" title={[r.reason, r.confidence != null ? `confidence ${Math.round(r.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
-              {t}
-            </span>
-          ))
-        ),
-      )}
+    <div className="small">
+      {rs.map((r, i) => (
+        <span key={r.feedback_id + r.signal}>
+          {i > 0 && ' · '}
+          {r.kind === 'rating' ? (
+            <>
+              {r.signal} <ScoreText value={r.score} confidence={r.confidence} reason={r.reason} />
+            </>
+          ) : (
+            <span title={[r.reason, r.confidence != null ? `confidence ${Math.round(r.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>{r.tags.join(', ')}</span>
+          )}
+        </span>
+      ))}
     </div>
   )
 }
@@ -269,7 +268,6 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
   return (
     <div className="col" style={{ gap: 10 }}>
       <div className="toolbar row wrap">
-        <RangePicker value={range} allowAll onChange={(r) => update({ range: r === '24h' ? null : r, offset: null })} />
         {!agent && <FilterSelect label="Agent" value={f.agent} options={facets.data?.agents ?? []} onChange={(v) => setF({ ...f, agent: v })} />}
         <FilterSelect label="Operation" value={f.op} options={facets.data?.ops ?? []} onChange={(v) => setF({ ...f, op: v })} />
         <FilterSelect label="Model" value={f.model} options={facets.data?.models ?? []} onChange={(v) => setF({ ...f, model: v })} />
@@ -282,8 +280,9 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
             <option value="error">Error</option>
           </select>
         </label>
-        <button className={`btn sm ${showFilters ? 'primary' : ''}`} aria-expanded={showFilters} onClick={() => setShowFilters((s) => !s)}>
-          Signal filters{f.tags.length + f.ratings.length + (f.sentiment.length ? 1 : 0) ? ` (${f.tags.length + f.ratings.length + (f.sentiment.length ? 1 : 0)})` : ''}
+        <button type="button" className="qbtn" aria-expanded={showFilters} onClick={() => setShowFilters((s) => !s)}>
+          Rating and tag filters
+          {f.tags.length + f.ratings.length + (f.sentiment.length ? 1 : 0) ? <span className="glist-count"> {f.tags.length + f.ratings.length + (f.sentiment.length ? 1 : 0)}</span> : null}
         </button>
         <span className="grow" />
         <label className="small muted row" style={{ gap: 4 }}>
@@ -348,11 +347,10 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
                 >
                   <td style={{ maxWidth: 280 }}>
                     <div className="row" style={{ gap: 6 }}>
-                      <span className={`kind-dot ${kindClass(s.operation_name, s.status_code)}`} />
                       <Link to={spanUrl(projectId, s.span_id)} className="mono small truncate" onClick={(e) => e.stopPropagation()}>
                         {s.display_name}
                       </Link>
-                      {s.is_turn && <span className="badge">turn</span>}
+                      {s.is_turn && <span className="faint small">turn</span>}
                     </div>
                     <div className="small faint mono truncate">
                       trace {s.trace_id.slice(0, 12)}
@@ -391,8 +389,8 @@ export function SpansTable({ projectId, params, update, agent }: { projectId: st
                   <td className="small mono">{s.finish_reasons?.length ? s.finish_reasons.join(', ') : <span className="faint">—</span>}</td>
                   <td>
                     {s.status_code === 'ERROR' ? (
-                      <span className="badge error" title={s.status_message ?? undefined}>
-                        {s.error_type || 'error'}
+                      <span className="row small" style={{ gap: 4 }} title={s.status_message ?? undefined}>
+                        <StatusGlyph kind="failed" size={14} decorative /> {s.error_type || 'failed'}
                       </span>
                     ) : (
                       <span className="small muted">{s.status_code === 'OK' ? 'ok' : 'unset'}</span>
@@ -488,9 +486,7 @@ function GroupTable({
                   </td>
                 )}
                 <td className="num">{fmtNumber(g.span_count)}</td>
-                <td className="num" style={g.error_count ? { color: 'var(--error)' } : undefined}>
-                  {fmtNumber(g.error_count)} <span className="faint small">({fmtPct(errorRate(g.error_count, g.span_count))})</span>
-                </td>
+                <td className="num">{fmtNumber(g.error_count)}</td>
                 <td className="small truncate" style={{ maxWidth: 160 }}>
                   {g.agent_names.join(', ') || <span className="faint">—</span>}
                 </td>

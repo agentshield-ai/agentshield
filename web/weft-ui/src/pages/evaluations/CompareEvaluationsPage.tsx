@@ -21,7 +21,6 @@ import { toSentence } from '../../components/evals/sentence'
 import { LinkedCallsFor } from '../../components/traces/LinkedCalls'
 import { EvalAgentLinks, PredictionAgentLinks, useAgentEvalRuns } from '../../components/agents/AgentEvals'
 import type { AgentEvalRun } from '../../api/agents'
-import { DELTA_FORMATS, fmtDeltaAs, parseDeltaFormat, type DeltaFormat } from '../../components/traces/diffUtils'
 import { decodeLb, encodeLb } from '../../components/evals/leaderboardUtils'
 import { CopyText, Inspector, InspectorDivider, InspectorLinks, KeyValueList } from '../../components/ui/Inspector'
 import { PageHeader } from '../../components/ui/PageHeader'
@@ -32,15 +31,21 @@ import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { isTyping } from '../../components/ui/Shortcuts'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtCost, fmtDate, fmtNumber, preview } from '../../lib/format'
-import { relativeTime, shortDuration, plural } from '../../lib/summaries'
+import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
+import { plural, scorerWords } from '../../lib/summaries'
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 import {
+  CHANGE_FORMATS,
+  changeText,
   compareSentence,
   exampleChange,
   hasFailingScore,
   isRunFigure,
   metricValue,
   metricWords,
+  plainText,
+  type ChangeFormat,
   type CmpExample,
   type ExampleFilter,
 } from '../../lib/summaries/evaluate'
@@ -59,7 +64,7 @@ function useLabels(evals: CompareEvaluation[]) {
   return useMemo(() => {
     const counts: Record<string, number> = {}
     evals.forEach((e) => (counts[e.model_name] = (counts[e.model_name] ?? 0) + 1))
-    return Object.fromEntries(evals.map((e) => [e.id, counts[e.model_name] > 1 ? `${e.model_name} · ${relativeTime(e.started_at)}` : e.model_name || e.id.slice(-8)]))
+    return Object.fromEntries(evals.map((e) => [e.id, counts[e.model_name] > 1 ? `${e.model_name} · ${fmtRelative(e.started_at)}` : e.model_name || e.id.slice(-8)]))
   }, [evals])
 }
 
@@ -236,7 +241,7 @@ function CompareBody({
     }),
     (l) => (l.kind === 'examples' ? { onClick: () => setParam('show', l.filter), title: 'Show these examples' } : null),
   )
-  if (previous) sentenceParts.push(' ', { text: 'Compare with the previous run', to: `${compareEvaluationsUrl(projectId, [previous.id, one!.id])}&baseline=${previous.id}`, title: `${evalRunInfo(previous).modelName}, ${relativeTime(previous.started_at)}` }, '.')
+  if (previous) sentenceParts.push(' ', { text: 'Compare with the previous run', to: `${compareEvaluationsUrl(projectId, [previous.id, one!.id])}&baseline=${previous.id}`, title: `${evalRunInfo(previous).modelName}, ${fmtRelative(previous.started_at)}` }, '.')
 
   const evalNames = [...new Set(evals.map((e) => e.evaluation_name))]
   const title = !evals.length
@@ -247,8 +252,16 @@ function CompareBody({
         ? `${evalNames[0]}: ${evals.map((e) => labels[e.id]).join(' vs ')}`
         : `Comparing ${evals.length} runs`
   const rowsTotal = Math.max(0, ...evals.map((e) => e.row_count))
+  // One run: when it ran, how long it took and what it cost (the sentence has its scores and examples; the inspector its ids and links).
   const meta = one
-    ? [plural(data.rows.length, 'example'), `started ${relativeTime(one.started_at)}`, evalDurationMs(one) != null ? `took ${shortDuration(evalDurationMs(one))}` : 'still running'].join(' · ')
+    ? [
+        `started ${fmtRelative(one.started_at)}`,
+        evalDurationMs(one) != null ? `took ${fmtDuration(evalDurationMs(one))}` : '',
+        one.total_tokens ? plural(one.total_tokens, 'token') : '',
+        one.cost_usd ? fmtCost(one.cost_usd) : '',
+      ]
+        .filter(Boolean)
+        .join(' · ')
     : [plural(evals.length, 'run'), plural(data.rows.length, 'example'), `baseline ${labels[baseline.id]}`].join(' · ')
 
   // The selected example (?ex=<row key>), and j/k through the shown examples.
@@ -291,10 +304,20 @@ function CompareBody({
 
   return (
     <div className="page-frame detail">
-      <PageHeader variant="detail" back={back} title={title} help="evaluations.md#evaluations" helpTopic="Evaluations" sentence={<Sentence size="detail" parts={sentenceParts} />} meta={meta} />
+      <PageHeader
+        variant="detail"
+        back={back}
+        title={title}
+        help="evaluations.md#evaluations"
+        helpTopic="Evaluations"
+        sentence={<Sentence size="detail" parts={sentenceParts} />}
+        meta={meta}
+        controls={one ? <AddRun projectId={projectId} ids={ids} onAdd={(id) => setIds([...ids, id])} /> : undefined}
+      />
       <div className="ev-layout">
         <div className="ev-main">
           {datasets.size > 1 && <p className="ev-note">These runs use different datasets, so their examples may not line up.</p>}
+          {!one && (
           <RunsSection
             projectId={projectId}
             evals={evals}
@@ -306,6 +329,7 @@ function CompareBody({
             onRemove={(id) => setIds(ids.filter((x) => x !== id))}
             onAdd={(id) => setIds([...ids, id])}
           />
+          )}
           <MetricsSection
             evals={evals}
             metrics={metrics}
@@ -432,7 +456,6 @@ function RunsSection({
             return (
               <tr key={e.id}>
                 <td>
-                  {evals.length > 1 && <span className="ev-swatch" style={{ background: colorOf[e.id] }} aria-hidden />}
                   {modelUrl ? <Link to={modelUrl}>{labels[e.id]}</Link> : labels[e.id]}
                   {evals.length > 1 && e.id === baselineId && <span className="ev-delta">baseline</span>}
                 </td>
@@ -442,7 +465,7 @@ function RunsSection({
                     <StatusGlyph kind={g.kind} size={16} decorative /> {g.label}
                   </span>
                 </td>
-                <td title={fmtDate(e.started_at)}>{relativeTime(e.started_at)}</td>
+                <td title={fmtDate(e.started_at)}>{fmtRelative(e.started_at)}</td>
                 {evals.length > 1 && (
                   <td>
                     <span className="ev-runs-actions">
@@ -479,7 +502,7 @@ function AddRun({ projectId, ids, onAdd }: { projectId: string; ids: string[]; o
           const i = evalRunInfo(c)
           return (
             <option key={c.id} value={c.id}>
-              {i.evalName} · {i.modelName} · {relativeTime(c.started_at)}
+              {i.evalName} · {i.modelName} · {fmtRelative(c.started_at)}
             </option>
           )
         })}
@@ -490,28 +513,21 @@ function AddRun({ projectId, ids, onAdd }: { projectId: string; ids: string[]; o
 
 // ---------------------------------------------------------------- metrics
 
-function Delta({ v, base, lower, kind, dfmt = 'both' }: { v: number | null; base: number | null; lower: boolean; kind: CompareMetric['kind']; dfmt?: DeltaFormat }) {
+function Delta({ k, v, base, lower, fmt = 'both' }: { k: string; v: number | null; base: number | null; lower: boolean; fmt?: ChangeFormat }) {
   if (v == null || base == null) return null
   const d = v - base
-  if (Math.abs(d) < 1e-12) return <span className="ev-delta">{dfmt === 'ratio' ? '1×' : 'no change'}</span>
+  if (Math.abs(d) < 1e-12) return <span className="ev-delta">{changeText(k, base, v, fmt)}</span>
   const good = lower ? d < 0 : d > 0
-  const abs = kind === 'fraction' ? `${d > 0 ? '+' : ''}${(d * 100).toFixed(1)} pts` : `${d > 0 ? '+' : ''}${fmtMetric(d)}`
-  let txt = abs
-  let rel = base !== 0 && kind !== 'fraction' ? ` (${d > 0 ? '+' : ''}${((d / Math.abs(base)) * 100).toFixed(0)}%)` : ''
-  if (dfmt !== 'both') {
-    // Fractions in absolute mode keep percentage points; the other formats are relative.
-    txt = dfmt === 'absolute' ? abs : (fmtDeltaAs(base, v, dfmt) ?? abs)
-    rel = ''
-  }
   return (
     <span className={`ev-delta ${good ? 'better' : 'worse'}`}>
       <span aria-hidden>{good ? '▲' : '▼'} </span>
-      {txt}
-      {rel}
+      {changeText(k, base, v, fmt)}
       <span className="sr-only"> ({good ? 'better' : 'worse'} than the baseline)</span>
     </span>
   )
 }
+
+const parseChangeFormat = (x: string | null): ChangeFormat => (CHANGE_FORMATS.some((f) => f.id === x) ? (x as ChangeFormat) : 'both')
 
 function fmtMetricValue(key: string, v: unknown) {
   return typeof v === 'number' || typeof v === 'boolean' ? metricValue(key, v) : fmtMetric(v)
@@ -535,7 +551,7 @@ function MetricsSection({
   toggleLower: (k: string) => void
 }) {
   const [dparams, setDparams] = useSearchParams()
-  const dfmt = parseDeltaFormat(dparams.get('nfmt'))
+  const dfmt = parseChangeFormat(dparams.get('nfmt'))
   const keys = new Set(metrics.map((m) => m.key))
   // true_count is the same fact as true_fraction.
   const shown = metrics.filter((m) => !(m.key.endsWith('.true_count') && keys.has(m.key.replace(/true_count$/, 'true_fraction'))))
@@ -557,23 +573,30 @@ function MetricsSection({
           Scores
         </h2>
         {many && (
-          <Segmented
-            label="Change against the baseline as"
-            size="sm"
-            options={DELTA_FORMATS.map((f) => ({ id: f.id, label: f.label, title: f.title }))}
-            value={dfmt}
-            onChange={(id) =>
-              setDparams(
-                (p) => {
-                  const n = new URLSearchParams(p)
-                  if (id === 'both') n.delete('nfmt')
-                  else n.set('nfmt', id)
-                  return n
-                },
-                { replace: true },
-              )
-            }
-          />
+          <label className="ev-controls">
+            <span className="ev-note">Show changes as</span>
+            <select
+              className="input"
+              value={dfmt}
+              onChange={(e) =>
+                setDparams(
+                  (p) => {
+                    const n = new URLSearchParams(p)
+                    if (e.target.value === 'both') n.delete('nfmt')
+                    else n.set('nfmt', e.target.value)
+                    return n
+                  },
+                  { replace: true },
+                )
+              }
+            >
+              {CHANGE_FORMATS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
       <PlainTable caption="Scores of each run" className="ev-wide">
@@ -585,7 +608,6 @@ function MetricsSection({
             </th>
             {evals.map((e) => (
               <th key={e.id} scope="col" className="num">
-                {many && <span className="ev-swatch" style={{ background: colorOf[e.id] }} aria-hidden />}
                 {many ? labels[e.id] : 'Value'}
               </th>
             ))}
@@ -600,7 +622,7 @@ function MetricsSection({
             return (
               <tr key={m.key}>
                 <td title={m.key}>
-                  {metricWords(m.key)}
+                  {cap(metricWords(m.key))}
                   {isRunFigure(m.key) && <span className="ev-delta">not a score</span>}
                 </td>
                 <td>
@@ -614,7 +636,7 @@ function MetricsSection({
                   return (
                     <td key={e.id} className={`num ${best != null && v === best ? 'ev-best' : ''}`}>
                       {fmtMetricValue(m.key, raw)}
-                      {many && e.id !== baselineId && <Delta v={v} base={base} lower={lower} kind={m.kind} dfmt={dfmt} />}
+                      {many && e.id !== baselineId && <Delta k={m.key} v={v} base={base} lower={lower} fmt={dfmt} />}
                     </td>
                   )
                 })}
@@ -636,13 +658,13 @@ function MetricsSection({
                 return (
                   <figure key={m.key} className="ev-chart ev-panel" style={{ margin: 0, padding: 14 }}>
                     <figcaption className="ev-chart-title" title={m.key}>
-                      {metricWords(m.key)} <span className="ev-note" style={{ display: 'inline' }}>({lowerBetter(m.key) ? 'lower' : 'higher'} is better)</span>
+                      {cap(metricWords(m.key))} <span className="ev-note" style={{ display: 'inline' }}>({lowerBetter(m.key) ? 'lower' : 'higher'} is better)</span>
                     </figcaption>
-                    <div style={{ height: 110 }}>
+                    <div style={{ height: 130 }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={rows} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
                           <CartesianGrid vertical={false} stroke="var(--separator)" />
-                          <XAxis dataKey="name" tick={false} axisLine={{ stroke: 'var(--border)' }} height={4} />
+                          <XAxis dataKey="name" tick={tick} tickLine={false} interval={0} axisLine={{ stroke: 'var(--border)' }} height={20} />
                           <YAxis tick={tick} axisLine={false} tickLine={false} width={40} domain={m.kind === 'fraction' ? [0, 1] : [0, 'auto']} tickFormatter={(v: number) => (m.kind === 'fraction' ? `${Math.round(v * 100)}%` : fmtMetric(v))} />
                           <Tooltip {...tooltipStyle} cursor={{ fill: 'var(--panel-2)' }} formatter={(v: number) => fmtMetricValue(m.key, v)} />
                           <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={false}>
@@ -705,7 +727,7 @@ function ScatterChartView({
       <select className="input" value={v} onChange={(e) => set(e.target.value)}>
         {keys.map((k) => (
           <option key={k} value={k}>
-            {metricWords(k)}
+            {cap(metricWords(k))}
           </option>
         ))}
       </select>
@@ -720,8 +742,8 @@ function ScatterChartView({
   }
 
   let series: { id: string; name: string; color: string; points: { x: number; y: number; row: number }[] }[] = []
-  let xLabel = metricWords(xKey)
-  let yLabel = metricWords(yKey)
+  let xLabel = cap(metricWords(xKey))
+  let yLabel = cap(metricWords(yKey))
   if (mode === 'metrics' || !challengerId) {
     series = evals.map((e) => ({
       id: e.id,
@@ -732,8 +754,8 @@ function ScatterChartView({
         .filter((p): p is { x: number; y: number; row: number } => p.x != null && p.y != null),
     }))
   } else {
-    xLabel = `${metricWords(xKey)} · ${labels[baselineId]}`
-    yLabel = `${metricWords(xKey)} · ${labels[challengerId]}`
+    xLabel = `${cap(metricWords(xKey))} · ${labels[baselineId]}`
+    yLabel = `${cap(metricWords(xKey))} · ${labels[challengerId]}`
     series = [
       {
         id: challengerId,
@@ -953,7 +975,6 @@ function ExamplesSection({
                 <th scope="col">Input</th>
                 {evals.map((e) => (
                   <th key={e.id} scope="col">
-                    {many && <span className="ev-swatch" style={{ background: colorOf[e.id] }} aria-hidden />}
                     {many ? labels[e.id] : 'Answer'}
                   </th>
                 ))}
@@ -1037,13 +1058,24 @@ function ExamplesSection({
   )
 }
 
+/** An example's inputs as labelled lines, the expected answer last: [["Question", "…"], ["Expected", "…"]]. */
+function inputLines(inputs: Any): [string, string][] {
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return [['Input', plainText(inputs)]]
+  const entries = Object.entries(inputs as Record<string, unknown>)
+  return [...entries.filter(([k]) => !EXPECTED_KEY.test(k)), ...entries.filter(([k]) => EXPECTED_KEY.test(k))].map(([k, v]) => [cap(scorerWords(k)), plainText(v)])
+}
+
+const EXPECTED_KEY = /^(expected|expected_output|expected_answer|target|reference|ground_truth|gold|label|ideal|correct_answer)$/i
+
+/** An example's inputs on one line: "Question: Cancel my subscription · Expected: Your subscription ends…" (the expected answer last). */
 function inputsText(inputs: Any): string {
   if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return preview(inputs, 200)
   const entries = Object.entries(inputs)
   if (entries.length === 1) return preview(entries[0][1], 200)
-  return entries
+  const expected = (k: string) => EXPECTED_KEY.test(k)
+  return [...entries.filter(([k]) => !expected(k)), ...entries.filter(([k]) => expected(k))]
     .slice(0, 4)
-    .map(([k, v]) => `${k}: ${preview(v, 120)}`)
+    .map(([k, v]) => `${cap(scorerWords(k))}: ${preview(v, 120)}`)
     .join(' · ')
 }
 
@@ -1076,7 +1108,7 @@ function ScoreText({
         return (
           <span key={k} title={`${k}: ${fmtMetric(v)}${id !== baselineId && nb != null ? ` (baseline ${fmtMetric(b[k])})` : ''}`}>
             {i > 0 && ' · '}
-            {metricWords(k)} {typeof v === 'boolean' ? (v ? 'pass' : 'fail') : metricValue(k, v)}
+            {metricWords(k)} {typeof v === 'boolean' ? (v ? 'passed' : 'failed') : metricValue(k, v)}
             {dir && (
               <span className={dir} title={`${dir === 'better' ? 'Better' : 'Worse'} than the baseline`}>
                 {' '}
@@ -1137,7 +1169,11 @@ function ExampleInspector({
       </div>
       <div className="ev-insp-block">
         <span className="ev-insp-label">Input</span>
-        <ValueView value={ex.r.inputs} projectId={projectId} />
+        {inputLines(ex.r.inputs).map(([k, v]) => (
+          <p key={k} className="rv-qa ev-insp-text">
+            <span className="rv-qa-label">{k}:</span> {v}
+          </p>
+        ))}
       </div>
       <InspectorDivider />
       {evals.map((e) => {
@@ -1145,7 +1181,6 @@ function ExampleInspector({
         return (
           <div key={e.id} className="ev-insp-run">
             <span className="ev-insp-label">
-              {many && <span className="ev-swatch" style={{ background: colorOf[e.id] }} aria-hidden />}
               {labels[e.id]}
               {many && e.id === baselineId ? ' (baseline)' : ''}
               {ex.cmp.failed[e.id] ? ' · failed' : ''}
@@ -1154,11 +1189,11 @@ function ExampleInspector({
             {res.map((t, ti) => (
               <div key={t.span_id || ti} className="ev-insp-block">
                 {res.length > 1 && <span className="ev-note">Trial {t.trial + 1}</span>}
-                <ValueView value={t.output} projectId={projectId} markdown />
+                <p className="rv-qa ev-insp-text">{plainText(t.output)}</p>
                 <ScoreText aggs={{ [e.id]: rowAgg([t]), [baselineId]: ex.aggs[baselineId] }} id={e.id} baselineId={baselineId} keys={ex.scoreKeys} lowerFor={lowerFor} />
                 <KeyValueList
                   items={[
-                    { label: 'Latency', value: t.model_latency != null ? shortDuration(t.model_latency * 1000) : '—', help: 'How long the model took to answer' },
+                    { label: 'Latency', value: t.model_latency != null ? fmtDuration(t.model_latency * 1000) : '—', help: 'How long the model took to answer' },
                     { label: 'Tokens', value: fmtNumber(t.total_tokens) },
                     t.span_id ? { label: 'Step id', value: <CopyText text={t.span_id} label="step id" />, mono: true } : null,
                   ]}
@@ -1191,7 +1226,6 @@ function RunsInspector({
   projectId,
   evals,
   labels,
-  colorOf,
   baselineId,
   agentRuns,
 }: {
@@ -1203,38 +1237,32 @@ function RunsInspector({
   agentRuns?: Map<string, AgentEvalRun>
 }) {
   const many = evals.length > 1
+  // Ids and links only: the status, start, scores and latency are on the page already (in the sentence, the meta line or the tables).
   return (
     <Inspector title={many ? 'The runs' : 'This run'} subtitle="Select an example for its details." label="Run details" sticky>
       {evals.map((e) => {
-        const ml = toNum((e.summary as Any)?.model_latency?.mean)
         const a = agentRuns?.get(e.id)
-        const g = glyphOf(e.status)
         return (
           <div key={e.id} className="ev-insp-run">
             {many && (
               <span className="ev-insp-label">
-                <span className="ev-swatch" style={{ background: colorOf[e.id] }} aria-hidden />
                 {labels[e.id]}
                 {e.id === baselineId ? ' (baseline)' : ''}
               </span>
             )}
             <KeyValueList
               items={[
-                { label: 'Status', value: g.label, tone: g.kind === 'failed' ? 'error' : g.kind === 'warning' ? 'warn' : undefined },
-                { label: 'Started', value: fmtDate(e.started_at) },
-                { label: 'Duration', value: evalDurationMs(e) != null ? shortDuration(evalDurationMs(e)) : 'still running' },
-                { label: 'Examples', value: fmtNumber(e.row_count), help: 'Results recorded (examples × trials)' },
-                { label: 'Tokens', value: fmtNumber(e.total_tokens) },
-                { label: 'Cost', value: fmtCost(e.cost_usd), help: 'From the project’s price table' },
-                ml != null ? { label: 'Latency', value: shortDuration(ml * 1000), help: 'The model’s mean time per example' } : null,
-                a ? { label: 'Agents', value: `${plural(a.conversation_count, 'conversation')}, ${plural(a.span_count, 'span')}${a.error_count ? `, ${a.error_count} failed` : ''}` } : null,
+                many && evalDurationMs(e) != null ? { label: 'Took', value: fmtDuration(evalDurationMs(e)) } : null,
+                many && e.total_tokens ? { label: 'Tokens', value: fmtNumber(e.total_tokens) } : null,
+                many && e.cost_usd ? { label: 'Cost', value: fmtCost(e.cost_usd), help: 'From the project’s price table' } : null,
+                a ? { label: 'Agents', value: `${plural(a.conversation_count, 'session')}, ${plural(a.span_count, 'step')}${a.error_count ? `, ${a.error_count} failed` : ''}` } : null,
                 { label: 'Run id', value: <CopyText text={e.id} label="run id" />, mono: true },
               ]}
             />
             <InspectorLinks>
               {e.evaluation_ref && refUrl(e.evaluation_ref) && <Link to={refUrl(e.evaluation_ref)!}>The evaluation, {e.evaluation_name}</Link>}
               {e.model_ref && refUrl(e.model_ref) && <Link to={refUrl(e.model_ref)!}>The model, {e.model_name}</Link>}
-              <Link to={spanUrl(projectId, e.id)} title="The Evaluation.evaluate span, with every prediction under it">
+              <Link to={spanUrl(projectId, e.id)} title="The run’s step, with every prediction under it">
                 Show the raw run
               </Link>
               {a && <EvalAgentLinks projectId={projectId} runId={e.id} />}

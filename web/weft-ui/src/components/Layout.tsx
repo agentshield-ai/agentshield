@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Link, Outlet, useLocation, useParams } from 'react-router-dom'
+import { Link, Outlet, useLocation, useParams } from 'react-router-dom'
 import { UserMenu } from './UserMenu'
 import { Icon, type IconName } from './ui/Icons'
+import { navSection, useNavHint } from './ui/navHint'
 import { ShortcutsHost } from './ui/Shortcuts'
 import { ToastHost } from './ui/Toasts'
 
@@ -112,6 +113,11 @@ export function ProjectLayout() {
   const [open, setOpen] = useState(false)
   const loc = useLocation()
   useEffect(() => setOpen(false), [loc.pathname])
+  // The highlighted item: the one the page's back link leads to when it names one, else the URL's.
+  const base = `/${entity}/${project}`
+  const items = NAV.flatMap((s) => s.items.map((it) => it.to))
+  const hinted = navSection(useNavHint() ?? '', base)
+  const current = hinted && items.includes(hinted) ? hinted : navSection(loc.pathname, base)
   return (
     <div className={`app ${open ? 'nav-open' : ''}`}>
       <a href="#main" className="skip-link">
@@ -151,9 +157,15 @@ export function ProjectLayout() {
               {s.section}
             </div>
             {s.items.map((it) => (
-              <NavLink key={it.to} to={`/${entity}/${project}/${it.to}`} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title={it.hint}>
+              <Link
+                key={it.to}
+                to={`${base}/${it.to}`}
+                className={`nav-link ${current === it.to ? 'active' : ''}`}
+                aria-current={current === it.to ? 'page' : undefined}
+                title={it.hint}
+              >
                 {it.label}
-              </NavLink>
+              </Link>
             ))}
           </div>
         ))}

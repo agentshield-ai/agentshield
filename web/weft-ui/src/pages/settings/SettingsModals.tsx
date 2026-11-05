@@ -31,7 +31,7 @@ export function CostModal({ projectId, entry, override, onClose, onSaved }: { pr
     llmId && inPrice !== '' && outPrice !== '' && !Number.isNaN(Number(inPrice)) && !Number.isNaN(Number(outPrice)) && optValid(cacheRead) && optValid(cacheWrite)
   return (
     <Modal
-      title={isEdit ? `Edit price for ${entry!.llm_id}` : override ? `Override price for ${entry!.llm_id}` : 'Add model price'}
+      title={isEdit ? `Edit price for ${entry!.llm_id}` : override ? `Set a project price for ${entry!.llm_id}` : 'Add model price'}
       onClose={onClose}
       footer={
         <>

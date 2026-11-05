@@ -13,16 +13,17 @@ import { Dropdown, MenuItem } from '../../components/traces/Menu'
 import { slugify } from '../../components/traces/callUtils'
 import { evalRunInfo, useDatasetSizes, useEvalRuns } from '../../components/evals/evalUtils'
 import { useAgentEvalRuns } from '../../components/agents/AgentEvals'
+import { GuidedEmpty } from '../../components/ui/EmptyState'
+import { EvalSnippet } from '../../components/evals/EvalSnippet'
 import { GroupedList, ListRow } from '../../components/ui/GroupedList'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { SearchField } from '../../components/ui/SearchField'
 import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
 import { useProjectId } from '../../hooks/useProject'
-import { callCost, callStatus, fmtDate } from '../../lib/format'
+import { callCost, callStatus, fmtDate, fmtRelative } from '../../lib/format'
 import { evaluationSentenceParts, runInfoOf } from '../../components/evals/sentence'
 import { previousRun, runGlyph, runLine, runMeta, type RunInfo } from '../../lib/summaries/evaluate'
-import { relativeTime } from '../../lib/summaries'
 import { compareEvaluationsUrl, newEvaluationUrl } from '../../lib/urls'
 import './evaluate.css'
 
@@ -219,15 +220,16 @@ export function EvaluationsPage() {
       {runs.isLoading ? (
         <RunsSkeleton />
       ) : empty ? (
-        <div className="quiet-empty">
-          <p>
-            <strong>No evaluation runs yet.</strong> An evaluation runs a model over every example of a dataset and scores each answer; its runs, and whether each did better
-            than the one before, appear here.
-          </p>
-          <p className="ev-note">
-            Start one on the server with New evaluation, or from the SDK with <code>await evaluation.evaluate(model)</code>.
-          </p>
-        </div>
+        <GuidedEmpty
+          projectId={projectId}
+          title="No evaluations yet"
+          doc="evaluations.md#evaluations"
+          showTest={false}
+          setup={<EvalSnippet projectId={projectId} />}
+        >
+          An evaluation runs a model over every example of a dataset and scores each answer. Each run appears here, with whether it did better than the one before. Start
+          one with New evaluation.
+        </GuidedEmpty>
       ) : filtered.length === 0 ? (
         <div className="quiet-empty">
           <p>No runs match these filters.</p>
@@ -309,20 +311,24 @@ function RunRow({
   onToggle: () => void
 }) {
   const g = runGlyph(run, prev)
-  const meta = [runMeta(run, callCost(c)), agents ? `${agents} agent conversation${agents === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
+  // The run's own name when someone gave it one (the server's default is "<model> · <evaluation>"), else the model it ran.
+  const custom = !!c.display_name && !c.display_name.includes(run.model) && !c.display_name.includes(run.evaluation)
+  const name = custom ? c.display_name! : run.model
+  const meta = [run.evaluation, runMeta(run, callCost(c)), agents ? `${agents} agent session${agents === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
   return (
     <ListRow
       className={`ev-run-row ${selected ? 'selected' : ''}`}
       glyph={<StatusGlyph kind={g.kind} label={g.label} />}
-      title={run.evaluation}
+      title={name}
       summary={runLine(run, prev)}
       meta={meta || undefined}
-      time={relativeTime(c.started_at)}
+      time={fmtRelative(c.started_at)}
       timeTitle={fmtDate(c.started_at)}
       to={compareEvaluationsUrl(projectId, [c.id])}
       trailing={
-        <label className="ev-pick" title="Select to compare">
-          <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Select the ${run.model} run of ${run.evaluation} (${relativeTime(c.started_at)}) to compare`} />
+        <label className="ev-pick" title="Tick runs to compare them">
+          <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Compare the ${name} run of ${run.evaluation} (${fmtRelative(c.started_at)})`} />
+          <span aria-hidden>Compare</span>
         </label>
       }
     />

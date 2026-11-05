@@ -4,7 +4,7 @@
 // one generated line how much the agent ran and what went wrong. The time
 // range, search and filters live in the URL; the chips sit behind "Filter".
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { v1, type AgentSummary } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
@@ -42,7 +42,17 @@ export function agentMatches(a: AgentSummary, s: FilterState): boolean {
   return true
 }
 
+/** Tabs the Agents page had before analytics moved to its own page: their URLs open it. */
+const ANALYTICS_TABS = ['dashboard', 'agents', 'spans', 'signals', 'evals']
+
 export function AgentsListPage() {
+  const [params] = useSearchParams()
+  const pid = useProjectId()
+  if (ANALYTICS_TABS.includes(params.get('tab') ?? '')) return <Navigate replace to={`${agentAnalyticsUrl(pid)}?${params}`} />
+  return <AgentsList />
+}
+
+function AgentsList() {
   const pid = useProjectId()
   const [state, setState] = useFilters()
   const [filterOpen, setFilterOpen] = useState(false)
@@ -111,8 +121,7 @@ export function AgentsListPage() {
       <div className="page-frame">
         {header}
         <GuidedEmpty projectId={pid} title="No agents yet">
-          Agents appear when spans carry an agent name (<span className="mono">gen_ai.agent.name</span> on <span className="mono">invoke_agent</span> spans, or the SDKs'
-          conversation API). Hand-offs between them are detected automatically.
+          Agents appear here once your agents send their name with each run; the setup snippets do this for you. Hand-offs between them are found automatically.
         </GuidedEmpty>
       </div>
     )

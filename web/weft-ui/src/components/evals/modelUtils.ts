@@ -31,6 +31,25 @@ export function serverModelSummary(o: { value?: Any }): string {
   return 'not runnable on the server'
 }
 
+/** Offline test models, in words. */
+const MOCK_WORDS: Record<string, string> = { 'mock/echo': 'an offline test model that repeats the prompt', 'mock/json': 'an offline test judge' }
+
+/** How a model runs, in plain words for the model picker: "calls gpt-4o-mini", "an offline test model…", "calls your endpoint at …", "runs on runtime x". */
+export function serverModelWords(o: { value?: Any }): string {
+  const v = o.value ?? {}
+  switch (serverModelKind(o)) {
+    case 'llm': {
+      const id = String(v.llm_model_id ?? '')
+      return MOCK_WORDS[id] ?? (id ? `calls ${id}` : 'calls an AI provider')
+    }
+    case 'remote':
+      return `calls your endpoint at ${v.predict_url}`
+    case 'runtime':
+      return `runs on the ${String(v.runtime).replace(/^weft:\/\/\/[^/]+\/[^/]+\/object\//, '').replace(/:.*$/, '')} runtime`
+  }
+  return 'cannot run on the server'
+}
+
 /** Validates a predict URL for a remote model. */
 export function predictUrlError(u: string): string | null {
   if (!u.trim()) return 'Enter the URL the server should POST rows to.'

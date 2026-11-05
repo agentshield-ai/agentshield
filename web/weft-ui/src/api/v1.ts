@@ -64,6 +64,8 @@ export interface TimelineItem {
 export interface GraphNode {
   agent: string
   calls: number
+  /** Runs (invocations) that ended with an error; `errors` counts every failed span. */
+  failed_calls?: number
   spans?: number
   errors: number
   tokens: number
@@ -166,6 +168,7 @@ export interface TeamDetail extends TeamSummary {
   agent_stats: {
     agent: string
     calls: number
+    failed_calls?: number
     errors: number
     tool_calls: number
     tokens: number

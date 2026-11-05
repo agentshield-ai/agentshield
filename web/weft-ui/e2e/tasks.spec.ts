@@ -18,7 +18,7 @@ test('a: from the home page, find why the blocked session was blocked', async ({
   await expect(step).toContainText('whoever controls that address could run anything')
   await expect(step).toBeInViewport()
   const inspector = page.getByRole('complementary', { name: 'Selected step' })
-  await expect(inspector).toContainText('Remote Code Execution via Piped Script Download')
+  await expect(inspector).toContainText('Remote code execution via piped script download')
   await expect(inspector).toContainText('coder · step 2 of 6')
   // The reasoning that led to the blocked call sits directly above it.
   await expect(page.locator('.story-entry', { has: step }).locator('.se-thought')).toContainText("The linter isn't installed")
@@ -32,7 +32,7 @@ test("a2: the blocked session's row opens it at the blocked step", async ({ page
   await c.click(page.getByRole('link', { name: /Blocked by AgentShield Install the project's linter/ }), 'the blocked session’s row')
   const step = page.locator('.story-step[aria-current="step"]')
   await expect(step).toContainText('Blocked by AgentShield')
-  await expect(page.getByRole('complementary', { name: 'Selected step' })).toContainText('Remote Code Execution via Piped Script Download')
+  await expect(page.getByRole('complementary', { name: 'Selected step' })).toContainText('Remote code execution via piped script download')
   recordTask('a2_blocked_via_badge', c, 1, info)
 })
 
@@ -77,7 +77,7 @@ test('c2: a failed tool call in a session that went on is one click from the hom
   const errors = watchErrors(page)
   await page.goto(`/${project()}/sessions`)
   // The sentence counts it among those worth a look; its row in "Needs a look" says why.
-  await expect(page.locator('.ph-sentence')).toContainText('2 more finished with something worth a look')
+  await expect(page.locator('.ph-sentence')).toContainText('2 more finished with a failed step or a cost spike')
   const row = page.locator('.session-row').filter({ hasText: 'Run the test suite and fix what breaks' })
   await expect(row).toContainText('Finished, but one step failed on the way.')
   const c = new Clicks(page)

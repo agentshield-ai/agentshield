@@ -1,9 +1,9 @@
 // Automations (DESIGN.md §7, §7.1 rules 1 and 11, §7.2): one sentence says how
-// many there are, how many are on and how the last day went ("2 automations,
-// 1 on. In the last 24 hours they fired 3 times; 1 delivery failed."). Each
+// many there are, how many are on and how the last day went ("2 automations;
+// 1 is on. In the last 24 hours they fired 3 times; 1 delivery failed."). Each
 // automation is a row in plain words ("When polite scores below 0.5, post
-// to Slack") with its switch, Test, Edit and Delete on the right; deleting
-// can be undone for a few seconds. Below, the recent runs (?runs=<name>
+// to Slack") with its switch and a menu (Send a test, Show its runs, Edit,
+// Delete) on the right; deleting can be undone for a few seconds. Below, the recent runs (?runs=<name>
 // narrows them to one automation).
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -19,6 +19,7 @@ import { usePublish } from '../../components/objects/ObjectForms'
 import { errMsg, useObjects } from '../../components/objects/objectUtils'
 import { SettingsRow, SettingsSection, useUndoDelete } from '../../components/settings/SettingsList'
 import { Icon } from '../../components/ui/Icons'
+import { Dropdown, MenuItem } from '../../components/traces/Menu'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Sentence } from '../../components/ui/Sentence'
 import { notify } from '../../components/ui/Toasts'
@@ -126,34 +127,66 @@ export function AutomationsPage() {
                         <br />
                       </>
                     )}
-                    {automationLine(v)} {enabled ? lastRunLine(lastRun(o.name)) : 'Off.'}
+                    {automationLine(v)}
+                    {lastRun(o.name) ? ` ${lastRunLine(lastRun(o.name))}` : ''}
                   </>
                 }
                 control={
                   <>
-                    <button type="button" className="qbtn sm" disabled={test.isPending && test.variables === o.name} onClick={() => test.mutate(o.name)} title="Send a sample event now">
-                      {test.isPending && test.variables === o.name ? 'Sending…' : 'Test'}
-                    </button>
-                    <button type="button" className="qbtn sm" aria-pressed={filter === o.name} onClick={() => setFilter(filter === o.name ? '' : o.name)}>
-                      {filter === o.name ? 'All runs' : 'Runs'}
-                    </button>
-                    <button type="button" className="qbtn sm" onClick={() => setEditing(o)}>
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="qbtn sm plain danger"
-                      aria-label={`Delete ${o.name}`}
-                      title="Delete (its run history is kept)"
-                      onClick={() =>
-                        remove(o.name, `Deleted automation ${o.name}`, async () => {
-                          await api.objectDelete(projectId, o.name)
-                          await qc.invalidateQueries({ queryKey: ['objects', projectId] })
-                        })
+                    <Dropdown
+                      align="right"
+                      className="qbtn sm row-menu"
+                      title={`Actions for ${o.name}`}
+                      label={
+                        <>
+                          <span aria-hidden="true">{test.isPending && test.variables === o.name ? 'Sending…' : '•••'}</span>
+                          <span className="sr-only">Actions for {o.name}</span>
+                        </>
                       }
                     >
-                      <Icon name="trash" size={14} />
-                    </button>
+                      {(close) => (
+                        <>
+                          <MenuItem
+                            disabled={test.isPending && test.variables === o.name}
+                            onClick={() => {
+                              close()
+                              test.mutate(o.name)
+                            }}
+                          >
+                            Send a test
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() => {
+                              close()
+                              setFilter(filter === o.name ? '' : o.name)
+                            }}
+                          >
+                            {filter === o.name ? 'Show every automation’s runs' : 'Show its runs'}
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() => {
+                              close()
+                              setEditing(o)
+                            }}
+                          >
+                            Edit
+                          </MenuItem>
+                          <div className="dd-sep" />
+                          <MenuItem
+                            danger
+                            onClick={() => {
+                              close()
+                              remove(o.name, `Deleted automation ${o.name}`, async () => {
+                                await api.objectDelete(projectId, o.name)
+                                await qc.invalidateQueries({ queryKey: ['objects', projectId] })
+                              })
+                            }}
+                          >
+                            <Icon name="trash" size={14} /> Delete
+                          </MenuItem>
+                        </>
+                      )}
+                    </Dropdown>
                     <Switch
                       on={enabled}
                       disabled={toggling === o.name}

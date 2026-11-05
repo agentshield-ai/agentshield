@@ -157,7 +157,7 @@ test('every clause of the Sessions sentence opens exactly the sessions it counts
   }
   // "N more …" points at "Needs a look": the rows there that the first sentence does not name.
   await page.goto(`/${project()}/sessions`)
-  const more = page.locator('.ph-sentence').getByRole('link', { name: /more finished with something worth a look/ })
+  const more = page.locator('.ph-sentence').getByRole('link', { name: /more finished with/ })
   const count = Number(/^\d+/.exec(await more.innerText())?.[0])
   expect(count).toBeGreaterThan(0)
   await more.click()

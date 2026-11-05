@@ -11,9 +11,16 @@ are in `ui.css` (loaded globally).
 ## Page frame
 
 ```tsx
-<div className="page-frame">           {/* list page: 920 px column, 36/40 px padding */}
-<div className="page-frame detail">    {/* detail page with an inspector: 1120 px */}
+<div className="page-frame">              {/* list page: 920 px column, centred, 36/40 px padding */}
+<div className="page-frame detail">       {/* detail page: the same 920 px column, a back link above the title */}
+<div className="page-frame detail wide">  {/* a page with an inspector beside its content: 1120 px, centred */}
 ```
+
+A detail page that holds an `<aside class="inspector">` gets 1120 px without
+`wide`; add `wide` when the inspector comes and goes (as on a session's
+Story view) so the column does not change width between views. The sidebar
+highlights the list a page's `PageHeader` `back` link leads to (a dataset
+at `/objects/…` highlights Datasets), else the one its URL names.
 
 ## Components
 
@@ -29,7 +36,8 @@ are in `ui.css` (loaded globally).
 | `SearchField` | `SearchField.tsx` | A list's search box. For the shared filter use `FilterSearchField` from `FilterBar.tsx` (same `key:value` syntax, `/` focuses it). |
 | `FilterBar` + `FilterButton` + `FilterSearchField` | `FilterBar.tsx` | The one filter model (§7.1 rule 5). On a redesigned list page: `<FilterBar search="external" timePicker="none" collapsible open={open} …/>` under the header, `FilterSearchField` and `FilterButton` in the header's controls. Active chips always show; Add filter and Views open with the button. |
 | `Inspector`, `KeyValueList`, `InspectorDivider`, `InspectorLinks`, `CopyText` | `Inspector.tsx` | Detail on demand beside the content (ids with copy, token counts, decisions, links to raw records). `sticky` keeps it in view. |
-| `PlainTable` | `PlainTable.tsx` | Data compared across columns: hairline rows, grey headings, `className="num"` on numeric cells. Scrolls inside its own box. |
+| `AgentGraphView`, `GraphTables`, `HandoffTable` | `AgentGraphView.tsx` | The delegation graph (runs and failed runs per agent, hand-offs with failures and median time). Under 560 px it shows tables instead; pass `tablesOnPage` when the page lists the same figures in its own tables (no second copy, a note at narrow widths). |
+| `PlainTable` | `PlainTable.tsx` | Data compared across columns: hairline rows, grey headings, `className="num"` on numeric cells. Scrolls inside its own box. `count` adds a grey number after a visible caption. |
 | `qbtn` (class) | `ui.css` | Quiet buttons (`qbtn`, `qbtn primary` for the one primary action a page may have). |
 | `quiet-note` (class) | `ui.css` | A small grey line for notes (widened range, caps). Not a banner. |
 
@@ -41,18 +49,38 @@ Never write a summary by hand in a component: add a tested function to
 - `sessionSummaryLine(s, ctx)` the one line under a session row; `rowGlyph`, `needsALook`, `sessionMetaLine`.
 - `sessionsSentence({ attention, time, filtered, rows, total })` the Sessions sentence as parts; clauses carry the filter (or the one session) they count.
 - `sessionOutcome({ summary, tl, detections })` and `sessionMetaFigures(s)` for a session page.
-- Helpers: `plural`, `countWord`, `joinClauses` (serial comma), `durationWords` ("4 seconds"), `shortDuration` ("150 ms", "9 s"), `offsetText`, `relativeTime` ("50 min ago"), `scoreText` ("goal completion 0.60"), `scorerWords`.
+- Helpers: `plural`, `countWord`, `joinClauses` (serial comma; the Sessions sentence lists without one), `durationWords` ("4 seconds"), `shortDuration` ("150 ms", "9 s"), `offsetText`, `relativeTime` ("50 min ago"), `scoreText` ("goal completion 0.60"), `scorerWords`.
 - `src/lib/ruleWords.ts` turns an AgentShield rule into plain words (a noun, a purpose and a one-sentence reason), falling back to the rule's title.
 
 ## Rules of thumb (§7.2)
 
-- One sentence answers the page's question; no rows of number tiles. The old
-  tile (`pages/_legacy/Metric.tsx`) is only for pages not yet redesigned:
-  remove it from a page when you redo it, and delete the file with its last user.
-- Say a fact once: not in a banner, a badge and a field list.
-- Status is a glyph plus words; no coloured pills for status, agents or scores
-  (`StatusPill`, `AgentChip`, `ScorePill`, `ActionBadge` in `bits.tsx` are the
-  old style; do not use them on redesigned pages). A score is text: `scoreText`.
+- One sentence answers the page's question; no rows of number tiles.
+- Say a fact once: not in a banner, a badge and a field list. If the header
+  sentence states a figure, the page does not repeat it in a table, a meta
+  line and an inspector. The same figure agrees on every page that shows it.
+- Status is a glyph plus words; no coloured pills or badges for status,
+  agents or scores, and no coloured dots that tell runs or agents apart by
+  colour alone. A score is text: `scoreText` ("goal completion 0.60").
+- Versions: people see 1-based "version 3" from `versionLabel()` in
+  `src/lib/format.ts` (API v2 → "version 3"). The exact ref (`name:v2`)
+  appears only where code is shown, in an inspector row labelled "In code".
+  Never "v0", "version 0" or ":v0" anywhere else.
+- Times and durations: `fmtRelative` ("50 min ago", "2 h ago", "3 days ago")
+  and `fmtDuration` ("150 ms", "1.3 s", "1 min 5 s") from `src/lib/format.ts`.
+  No local formatters.
+- Approvals and overrides: an approval request the user allowed is
+  "approved" ("You approved 3 of them" in a session's own text, "Needed
+  approval; approved" in its inspector, "Users approved 3 of those requests"
+  on Security). "Override"/"overrode" is only for going past a block.
+- Colour: values (numbers, booleans, strings, JSON) are near-black text,
+  never syntax-coloured. "Differs" is marked by weight or a neutral tint,
+  never amber. Red, amber and green only for failed, warning and success
+  glyphs. Switches use the accent blue when on. Deletes are a trash icon.
+- Sentence case for headings, labels and rule titles (`sentenceCase` in
+  `ruleWords.ts`). A count is a grey number (`glist-count`), not "(8)". One
+  primary (blue) button per page; secondary actions grey.
 - Ids, raw JSON and token counts go in the inspector or the raw view.
 - Plain words; internal terms (span, op, ref, digest) only in raw views, with a tooltip.
-- Check 390 px: no horizontal page scroll; long unbroken names wrap (`overflow-wrap: anywhere`).
+- Check 390 px: no horizontal page scroll; long unbroken names wrap (`overflow-wrap: anywhere`);
+  long titles wrap to two lines rather than being cut; no table collapses to
+  a letter per column (stack cells into rows, or show a list instead).

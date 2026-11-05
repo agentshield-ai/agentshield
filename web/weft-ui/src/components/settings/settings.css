@@ -344,3 +344,132 @@
 .settings-body .ssection-head .input {
   height: 34px;
 }
+
+/* ---------- a filter tray under a section's search (audit log) ---------- */
+.s-tray {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 0 4px;
+  min-width: 0;
+}
+.s-tray label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+  min-width: 0;
+  max-width: 100%;
+}
+.s-tray .input {
+  height: 32px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* ---------- the audit log ---------- */
+.audit-box {
+  background: var(--panel);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--ring);
+  overflow: hidden;
+  min-width: 0;
+}
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-secondary);
+}
+.audit-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+  padding: 12px 16px 8px;
+  white-space: nowrap;
+}
+.audit-table td {
+  padding: 10px 16px;
+  border-top: 1px solid var(--separator);
+  vertical-align: top;
+  min-width: 0;
+}
+.audit-table .a-when,
+.audit-table .a-res {
+  white-space: nowrap;
+}
+.audit-table .a-actor {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.audit-table .a-req {
+  overflow-wrap: anywhere;
+}
+/* On a phone each entry stacks: when, who and the result on one line, the request under them. */
+@media (max-width: 640px) {
+  .audit-table,
+  .audit-table tbody {
+    display: block;
+  }
+  .audit-table thead {
+    display: none;
+  }
+  .audit-table tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'when who res'
+      'req req req';
+    column-gap: 12px;
+    row-gap: 4px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--separator);
+  }
+  .audit-table tbody tr:first-child {
+    border-top: 0;
+  }
+  .audit-table td {
+    padding: 0;
+    border: 0;
+  }
+  .audit-table .a-when {
+    grid-area: when;
+    color: var(--text-muted);
+  }
+  .audit-table .a-who {
+    grid-area: who;
+    min-width: 0;
+  }
+  .audit-table .a-actor {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .audit-table .a-res {
+    grid-area: res;
+  }
+  .audit-table .a-req {
+    grid-area: req;
+  }
+}
+
+/* ---------- Costs: the model name opens its price ---------- */
+html .plain-table .cost-name {
+  color: var(--accent);
+  font-size: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+html .plain-table .cost-name:hover {
+  text-decoration: underline;
+}
+html .plain-table .cost-name:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

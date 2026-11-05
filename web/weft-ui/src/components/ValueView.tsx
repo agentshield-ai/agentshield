@@ -49,11 +49,11 @@ function StringView({ s, markdown, code }: { s: string; markdown?: boolean; code
   )
 }
 
+/** A plain value in near-black text: values are never syntax-coloured (strings, numbers and booleans read alike). */
 function Scalar({ v }: { v: unknown }) {
-  if (v === null || v === undefined) return <span className="json-null">null</span>
-  if (typeof v === 'boolean') return <span className="json-bool">{String(v)}</span>
-  if (typeof v === 'number') return <span className="json-number mono">{String(v)}</span>
-  return <span className="json-string">{String(v)}</span>
+  if (v === null || v === undefined) return <span className="vv-null">null</span>
+  if (typeof v === 'number') return <span className="vv-value vv-num">{String(v)}</span>
+  return <span className="vv-value">{String(v)}</span>
 }
 
 const isPlain = (v: unknown) => v === null || ['string', 'number', 'boolean'].includes(typeof v)
@@ -115,7 +115,7 @@ function TreeNode({
 }) {
   const isObj = value !== null && typeof value === 'object'
   const [open, setOpen] = useState(depth < 2)
-  const label = name != null ? <span className="json-key mono">{name}: </span> : null
+  const label = name != null ? <span className="vv-key">{name}: </span> : null
   const pad = flat || !depth ? 0 : 14
 
   if (isRef(value)) {

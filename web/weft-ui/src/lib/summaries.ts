@@ -244,8 +244,8 @@ export function sessionSummaryLine(s: SessionSummary, ctx: RowContext = {}): str
     let t = `Asked ${countWord(f.approvals, 'time')}${purpose}.`
     if (f.approvals === 1) t = `Asked once for approval${purpose}.`
     else if (!purpose) t = `Asked for approval ${f.approvals} times.`
-    const overridden = asked.filter((d) => d.overridden).length
-    if (overridden) t += f.approvals === 1 ? ' The user approved it.' : ` The user overrode ${overridden} of them.`
+    const approved = asked.filter((d) => d.overridden).length
+    if (approved) t += f.approvals === 1 ? ' You approved it.' : ` You approved ${approved} of them.`
     return t
   }
 
@@ -346,16 +346,17 @@ export interface SessionsSentenceInput {
 }
 
 /**
- * The Sessions page sentence, at most two short sentences. The first names
- * the serious ones (failed, blocked by AgentShield, kept asking for
- * approval), each clause linking to the sessions it counts: "Of the 10
- * sessions that ran in the last 24 hours, 3 failed, 1 was blocked by
- * AgentShield, and 1 kept asking for approval." The second says how many
- * more need a look (a failed step, a low score, a cost spike), pointing at
- * the "Needs a look" group, whose rows say why, and what is still running:
- * "4 more finished with something worth a look." Counts of the serious
+ * The Sessions page sentence, at most three short sentences: how many
+ * sessions ran ("10 sessions ran in the last 24 hours."), then the serious
+ * ones (failed, blocked by AgentShield, kept asking for approval), each
+ * clause linking to the sessions it counts ("3 failed, 1 was blocked by
+ * AgentShield and 1 kept asking for approval."), then how many more need a
+ * look, naming what they have (a failed step, a low score, a cost spike) and
+ * pointing at the "Needs a look" group, whose rows say why, and what is
+ * still running: "2 more finished with a failed step or a cost spike."
+ * Counts of the serious
  * ones come from the server's attention endpoint over every matching
- * session; the second sentence is counted from the loaded rows, so it is
+ * session; the last sentence is counted from the loaded rows, so it is
  * exact when every matching session is loaded and a lower bound ("at
  * least") otherwise.
  */
@@ -409,10 +410,21 @@ export function sessionsSentence({ attention: a, time, filtered, rows, total }: 
   const unknown = rest.filter((s) => String(s.status) !== 'running' && (String(s.status) === 'unknown' || s.verdicts_only)).length
   const moreFinished = more.every((s) => String(s.status) !== 'running')
 
+  // What the other ones that need a look have, named by kind ("a failed step or a cost spike"), most serious first.
+  const kinds: string[] = []
+  for (const s of more) {
+    const k = serverFailedStep(s) ? 'a failed step' : sessionFlags(s, ctx).lowScore ? 'a low score' : 'a cost spike'
+    if (!kinds.includes(k)) kinds.push(k)
+  }
+  const order = ['a failed step', 'a low score', 'a cost spike']
+  kinds.sort((x, y) => order.indexOf(x) - order.indexOf(y))
+  const kindWords = kinds.length <= 1 ? kinds.join('') : `${kinds.slice(0, -1).join(', ')} or ${kinds[kinds.length - 1]}`
+
   const parts: SummaryPart[] = []
+  // Lists without a serial comma: "3 failed, 1 was blocked by AgentShield and 1 kept asking for approval".
   const list = (cl: SummaryPart[]) =>
     cl.forEach((c, i) => {
-      if (i > 0) parts.push(cl.length === 2 ? ' and ' : i === cl.length - 1 ? ', and ' : ', ')
+      if (i > 0) parts.push(i === cl.length - 1 ? ' and ' : ', ')
       parts.push(c)
     })
 
@@ -423,24 +435,25 @@ export function sessionsSentence({ attention: a, time, filtered, rows, total }: 
       list(severe)
       parts.push('.')
     } else if (more.length) {
-      parts.push(' It ', { text: moreFinished ? 'finished with something worth a look' : 'needs a look', clause: 'more', count: 1, atLeast: false }, '.')
+      parts.push(' It ', { text: moreFinished ? `finished with ${kindWords}` : 'needs a look', clause: 'more', count: 1, atLeast: false }, '.')
     } else if (complete && rows.length === 1) {
       parts.push(running ? ' It is still running.' : unknown ? ' It has only AgentShield verdicts.' : ' It finished.')
     }
     return parts
   }
 
+  parts.push(`${n} sessions ${verb}${where}.`)
   if (severe.length) {
-    parts.push(`Of the ${n} sessions that ${verb}${where}, `)
+    parts.push(' ')
     list(severe)
     parts.push('.')
-  } else parts.push(`${n} sessions ${verb}${where}.`)
+  }
 
   const second: SummaryPart[] = []
   if (more.length) {
     const k = more.length
     const lead = complete ? (severe.length ? `${k} more` : `${k}`) : severe.length ? `At least ${k} more` : `At least ${k}`
-    const tail = moreFinished ? ' finished with something worth a look' : k === 1 ? ' needs a look' : ' need a look'
+    const tail = moreFinished ? ` finished with ${kindWords}` : k === 1 ? ' needs a look' : ' need a look'
     second.push({ text: lead + tail, clause: 'more', count: k, atLeast: !complete })
   }
   if (complete) {
@@ -561,8 +574,8 @@ export function sessionOutcome({ summary: s, tl, detections = [] }: OutcomeInput
   }
   if (approvalCount) {
     out.push(`Finished, after asking for approval ${countWord(approvalCount, 'time')}.`)
-    const overridden = approvals.filter((d) => d.overridden).length
-    if (overridden) out.push(approvalCount === 1 ? 'The user approved it.' : `The user overrode ${overridden} of them.`)
+    const approved = approvals.filter((d) => d.overridden).length
+    if (approved) out.push(approvalCount === 1 ? 'You approved it.' : `You approved ${approved} of them.`)
     if (errors.length) out.push(`${cap(countWord(errors.length, 'step'))} failed on the way.`)
     return out.join(' ')
   }

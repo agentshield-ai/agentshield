@@ -1,7 +1,8 @@
 // One leaderboard (DESIGN.md §7, §7.2 rule 3): a sentence saying who leads
 // on how many metrics, then a plain ranked table: the rank (average rank
 // across the metrics), the model, and each metric's value from the model's
-// latest finished run, the best in bold. A value opens that run.
+// latest finished run, the best in a heavier weight. The model opens the run
+// behind its values.
 import { dynamicRunIds } from '../../api/leaderboards'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -19,9 +20,11 @@ import { PlainTable } from '../../components/ui/PlainTable'
 import { Sentence } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate } from '../../lib/format'
-import { relativeTime } from '../../lib/summaries'
 import { leaderboardSentence, metricValue, metricWords } from '../../lib/summaries/evaluate'
-import { compareEvaluationsUrl, newEvaluationUrl, objectUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
+import { compareEvaluationsUrl, newEvaluationUrl, objectVersionsUrl, refUrl } from '../../lib/urls'
+import { Dropdown, MenuItem } from '../../components/traces/Menu'
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 import '../evaluations/evaluate.css'
 
 type Row = LeaderboardComputeRes['rows'][number]
@@ -123,24 +126,29 @@ export function LeaderboardPage() {
         meta={[data.leaderboard.value?.description, `each value is the model’s latest finished run`].filter(Boolean).join(' · ')}
         controls={
           <>
-            <button type="button" className="qbtn" onClick={() => setEditing(true)}>
-              Edit
-            </button>
-            <button type="button" className="qbtn" disabled={!runIds.length} onClick={() => nav(compareEvaluationsUrl(projectId, runIds))} title="Compare the runs behind these values">
+            <button type="button" className="qbtn primary" disabled={!runIds.length} onClick={() => nav(compareEvaluationsUrl(projectId, runIds))} title="Compare the runs behind these values">
               Compare these runs
             </button>
-            {dyn.length > 0 && (
-              <Link
-                className="qbtn"
-                title="Open the evaluation comparison this leaderboard was saved from"
-                to={`${compareEvaluationsUrl(projectId, dyn)}${Array.isArray(data.leaderboard.value.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.value.weft_dynamic.metrics))}` : ''}`}
-              >
-                Source comparison
-              </Link>
-            )}
-            <Link className="linkish" to={objectVersionsUrl(projectId, objectId)}>
-              Version history
-            </Link>
+            <Dropdown label="More" className="qbtn" align="right">
+              {(close) => (
+                <>
+                  <MenuItem onClick={() => (setEditing(true), close())}>Edit the leaderboard…</MenuItem>
+                  {dyn.length > 0 && (
+                    <MenuItem
+                      onClick={() => {
+                        close()
+                        nav(
+                          `${compareEvaluationsUrl(projectId, dyn)}${Array.isArray(data.leaderboard.value.weft_dynamic.metrics) ? `&lb=${encodeURIComponent(encodeLb(data.leaderboard.value.weft_dynamic.metrics))}` : ''}`,
+                        )
+                      }}
+                    >
+                      Open the comparison it was saved from
+                    </MenuItem>
+                  )}
+                  <MenuItem onClick={() => (close(), nav(objectVersionsUrl(projectId, objectId)))}>Version history</MenuItem>
+                </>
+              )}
+            </Dropdown>
           </>
         }
       />
@@ -173,7 +181,7 @@ export function LeaderboardPage() {
                   title={`${c.scorer_name}.${c.summary_metric_path} of ${c.evaluation_name || parseRef(c.evaluation_object_ref)?.name}; ${c.should_minimize ? 'lower' : 'higher'} is better`}
                   label={
                     <>
-                      {metricWords(`${c.scorer_name}.${c.summary_metric_path}`)}
+                      {cap(metricWords(`${c.scorer_name}.${c.summary_metric_path}`))}
                       {many && <span className="ev-delta">{c.evaluation_name}</span>}
                     </>
                   }
@@ -183,14 +191,15 @@ export function LeaderboardPage() {
           </thead>
           <tbody>
             {rows.map((r) => {
-              const mp = parseRef(r.model_ref)
               const ar = stats.avgRank[r.model_ref]
+              // The row's link: the model's run behind these values (or its runs, compared, when they come from several).
+              const own = [...new Set(Object.values(r.values).map((v) => v.evaluation_run_id).filter(Boolean))]
               return (
                 <tr key={r.model_ref}>
                   <td className={`num ${ar === 1 ? 'ev-best' : ''}`}>{ar == null ? '—' : Number.isInteger(ar) ? ar : ar.toFixed(1)}</td>
                   <td>
-                    {mp ? (
-                      <Link to={objectUrl(mp.projectId, mp.name, mp.digest ?? 'latest')} title={r.model_ref}>
+                    {own.length ? (
+                      <Link to={compareEvaluationsUrl(projectId, own)} title={own.length === 1 ? 'The run behind these values' : 'The runs behind these values, compared'}>
                         {r.model_name}
                       </Link>
                     ) : (
@@ -206,13 +215,12 @@ export function LeaderboardPage() {
                     return (
                       <td key={k} className={`num ${isBest ? 'ev-best' : ''}`}>
                         {cell ? (
-                          <Link to={compareEvaluationsUrl(projectId, [cell.evaluation_run_id])} title={`Run of ${fmtDate(cell.started_at)}${isBest ? ' (best)' : ''}`}>
+                          <span title={`From the run of ${fmtDate(cell.started_at)}${isBest ? ' (the best)' : ''}`}>
                             {typeof cell.value === 'number' || typeof cell.value === 'boolean' ? metricValue(key, cell.value) : '—'}
-                          </Link>
+                          </span>
                         ) : (
                           '—'
                         )}
-                        {cell && <span className="ev-delta">{relativeTime(cell.started_at)}</span>}
                       </td>
                     )
                   })}

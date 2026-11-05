@@ -10,7 +10,10 @@ import { Inspector, InspectorDivider, InspectorLinks, KeyValueList } from '../..
 import { PageHeader } from '../../components/ui/PageHeader'
 import { PlainTable } from '../../components/ui/PlainTable'
 import { Sentence } from '../../components/ui/Sentence'
-import { monitorSentence } from '../../lib/summaries/dashboards'
+import { monitorSentence, scorerResultOf } from '../../lib/summaries/dashboards'
+import { turnName } from '../../lib/summaries/traces'
+import { scorerWords } from '../../lib/summaries'
+import { spanDisplayName } from '../../api/refs'
 import { monitorWords } from './MonitorsPage'
 import '../observe.css'
 import { RefChip } from '../../components/RefChip'
@@ -20,7 +23,7 @@ import { monitorNames, monitorScopes } from '../../components/evals/monitorField
 import { flattenScores, fmtMetric, objectRefPrefix, seriesColor, toNum } from '../../components/evals/evalUtils'
 import { Switch } from '../../components/objects/bits'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate, fmtRelative, preview } from '../../lib/format'
+import { fmtDate, fmtRelative, preview, versionLabel } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
 import { spanUrl, objectUrl, objectVersionsUrl } from '../../lib/urls'
 
@@ -52,6 +55,26 @@ export function MonitorPage() {
     refetchInterval: 15_000,
   })
   const { toggle, pending } = useToggleMonitor(projectId)
+  // The scored spans, named by what was asked (the table shows names, not ids).
+  const targetIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const f of (results.data ?? []).slice(0, 300)) {
+      const t = parseRef(f.ref)
+      if (t?.kind === 'span') ids.add(t.name)
+    }
+    return [...ids].sort()
+  }, [results.data])
+  const targets = useQuery({
+    queryKey: ['spans', projectId, 'monitor-targets', targetIds],
+    queryFn: () => api.spansQuery({ project_id: projectId, filter: { ids: targetIds }, columns: ['id', 'name', 'inputs', 'display_name'], limit: targetIds.length }),
+    enabled: targetIds.length > 0,
+    staleTime: 60_000,
+  })
+  const targetName = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const sp of targets.data?.items ?? []) m.set(sp.id, sp.display_name || turnName(sp.inputs, 70) || spanDisplayName(sp.name))
+    return m
+  }, [targets.data])
 
   if (obj.isLoading) return <Loading />
   if (obj.error || !obj.data)
@@ -75,7 +98,7 @@ export function MonitorPage() {
     total: fb.length,
     capped: fb.length >= 1000,
     lastAt: fb[0]?.created_at ?? null,
-    averages: results.data ? scorerNames.slice(0, 3).map((s) => ({ scorer: s, text: summarize(fb.filter((f) => scorerOf(f) === s)) })) : [],
+    results: results.data ? scorerNames.slice(0, 3).map((s) => scorerResultOf(s, fb.filter((f) => scorerOf(f) === s).map((f) => f.payload?.output))) : [],
   })
 
   return (
@@ -90,7 +113,9 @@ export function MonitorPage() {
         meta={
           <>
             {v.description ? <>{v.description} · </> : null}
-            <span title={fmtDate(o.created_at)}>updated {fmtRelative(o.created_at)}</span> · <Link to={objectVersionsUrl(projectId, objectId)}>version {o.version} and its history</Link>
+            <span title={fmtDate(o.created_at)}>
+              updated {fmtRelative(o.created_at)}, {versionLabel(o.version)}
+            </span>
           </>
         }
       />
@@ -111,13 +136,15 @@ export function MonitorPage() {
           <section className="obs-quiet" aria-labelledby="mon-results-h">
             <div className="obs-section-head">
               <h2 className="view-h" id="mon-results-h">
-                Recent results <span className="glist-count">{fb.length >= 1000 ? '1000+' : fb.length}</span>
+                Recent results
               </h2>
               {scorerNames.length > 1 && (
                 <select className="input" aria-label="Scorer" value={scorerFilter} onChange={(e) => setScorerFilter(e.target.value)}>
                   <option value="">All scorers</option>
                   {scorerNames.map((s) => (
-                    <option key={s}>{s}</option>
+                    <option key={s} value={s}>
+                      {scorerWords(s)}
+                    </option>
                   ))}
                 </select>
               )}
@@ -132,13 +159,10 @@ export function MonitorPage() {
                 <PlainTable caption="Recent results of this monitor">
                   <thead>
                     <tr>
-                      <th scope="col">Time</th>
                       <th scope="col">Scored</th>
-                      <th scope="col">Scorer</th>
+                      {scorerNames.length > 1 && <th scope="col">Scorer</th>}
                       <th scope="col">Result</th>
-                      <th scope="col">
-                        <span title="The scorer's own span (internal term)">Scorer span</span>
-                      </th>
+                      <th scope="col">When</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -148,23 +172,28 @@ export function MonitorPage() {
                       const out = f.payload?.output
                       return (
                         <tr key={f.id}>
-                          <td className="obs-faint" title={fmtDate(f.created_at)} style={{ whiteSpace: 'nowrap' }}>
-                            {fmtRelative(f.created_at)}
-                          </td>
                           <td>
                             {target?.kind === 'span' ? (
-                              <Link className="mono" to={spanUrl(projectId, target.name)} title={target.name}>
-                                {target.name.slice(-8)}
+                              <Link to={spanUrl(projectId, target.name)} title={`Span ${target.name}`}>
+                                {targetName.get(target.name) ?? 'Open the scored span'}
                               </Link>
                             ) : (
                               <RefChip refStr={f.ref} />
                             )}
                           </td>
-                          <td className="mono">{scorerOf(f)}</td>
+                          {scorerNames.length > 1 && <td>{scorerWords(scorerOf(f))}</td>}
                           <td>
                             <OutputCell v={out} />
+                            {sc?.kind === 'span' && (
+                              <Link className="obs-faint small" to={spanUrl(projectId, sc.name)} title="The judge's own run, with its reasoning">
+                                {' '}
+                                Why
+                              </Link>
+                            )}
                           </td>
-                          <td>{sc?.kind === 'span' ? <Link to={spanUrl(projectId, sc.name)}>Open</Link> : <span className="obs-faint">—</span>}</td>
+                          <td className="obs-faint" title={fmtDate(f.created_at)} style={{ whiteSpace: 'nowrap' }}>
+                            {fmtRelative(f.created_at)}
+                          </td>
                         </tr>
                       )
                     })}
@@ -199,7 +228,8 @@ export function MonitorPage() {
                   'None'
                 ),
               },
-              { label: 'Spans scored', value: new Set(fb.map((f) => f.ref)).size.toLocaleString() },
+              // The scores are counted in the sentence; the spans they cover differ when a span was scored more than once.
+              new Set(fb.map((f) => f.ref)).size !== fb.length && { label: 'Spans scored', value: new Set(fb.map((f) => f.ref)).size.toLocaleString() },
             ]}
           />
           {v.query && (
@@ -224,37 +254,19 @@ export function MonitorPage() {
 }
 
 function OutputCell({ v }: { v: unknown }) {
-  if (typeof v === 'boolean') return <span>{String(v)}</span>
-  if (typeof v === 'number') return <span className="mono">{fmtMetric(v)}</span>
+  if (typeof v === 'boolean') return <span>{v ? 'yes' : 'no'}</span>
+  if (typeof v === 'number') return <span>{fmtMetric(v)}</span>
   if (v && typeof v === 'object' && !Array.isArray(v)) {
     const flat = flattenScores(v)
     const reason = (v as Record<string, unknown>).reason
     return (
       <div className="col" style={{ gap: 2 }}>
-        <span>{Object.entries(flat).map(([k, x]) => `${k} ${fmtMetric(x)}`).join(' · ')}</span>
+        <span>{Object.entries(flat).map(([k, x]) => `${k}: ${typeof x === 'boolean' ? (x ? 'yes' : 'no') : fmtMetric(x)}`).join(', ')}</span>
         {typeof reason === 'string' && <span className="obs-faint small">{reason}</span>}
       </div>
     )
   }
-  return <span className="cell-preview small mono">{preview(v, 160)}</span>
-}
-
-function summarize(fs: Feedback[]): string {
-  const vals = fs.map((f) => {
-    const out = f.payload?.output
-    if (typeof out === 'boolean' || typeof out === 'number') return toNum(out)
-    const flat = flattenScores(out)
-    const first = Object.values(flat)[0]
-    return first === undefined ? null : toNum(first)
-  })
-  const nums = vals.filter((x): x is number => x != null)
-  if (!nums.length) return `gave ${fs.length} result${fs.length === 1 ? '' : 's'}`
-  const allBool = fs.every((f) => {
-    const out = f.payload?.output
-    return typeof out === 'boolean' || typeof Object.values(flattenScores(out))[0] === 'boolean'
-  })
-  const mean = nums.reduce((a, b) => a + b, 0) / nums.length
-  return allBool ? `true ${(mean * 100).toFixed(0)}% of the time` : `averages ${fmtMetric(mean)}`
+  return <span className="cell-preview small">{preview(v, 160)}</span>
 }
 
 /** Score over time, bucketed means per numeric/bool series. */

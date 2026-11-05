@@ -28,6 +28,8 @@ export function Dropdown({
   className = 'btn sm',
   disabled,
   title,
+  kind = 'menu',
+  ariaLabel,
 }: {
   label: ReactNode
   children: ReactNode | ((close: () => void) => ReactNode)
@@ -35,6 +37,10 @@ export function Dropdown({
   className?: string
   disabled?: boolean
   title?: string
+  /** 'menu' holds MenuItems; 'dialog' holds any controls (a small popover). */
+  kind?: 'menu' | 'dialog'
+  /** The button's accessible name, when its label is not words. */
+  ariaLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -55,11 +61,17 @@ export function Dropdown({
   const [menuRef, menuStyle] = useFlip(open)
   return (
     <div className="dd" ref={ref}>
-      <button className={className} onClick={() => setOpen((o) => !o)} disabled={disabled} aria-haspopup="menu" aria-expanded={open} title={title}>
+      <button className={className} onClick={() => setOpen((o) => !o)} disabled={disabled} aria-haspopup={kind} aria-expanded={open} title={title} aria-label={ariaLabel}>
         {label}
       </button>
       {open && (
-        <div ref={menuRef} style={menuStyle} className={`dd-menu ${align === 'right' ? 'right' : ''}`} role="menu">
+        <div
+          ref={menuRef}
+          style={menuStyle}
+          className={`dd-menu ${align === 'right' ? 'right' : ''} ${kind === 'dialog' ? 'dd-pop' : ''}`}
+          role={kind}
+          aria-label={kind === 'dialog' ? (ariaLabel ?? (typeof label === 'string' ? label : undefined)) : undefined}
+        >
           {typeof children === 'function' ? children(close) : children}
         </div>
       )}

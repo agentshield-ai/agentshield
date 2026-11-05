@@ -106,3 +106,15 @@
   white-space: nowrap;
   overflow-wrap: normal;
 }
+/* A hand-off's route ("orchestrator → researcher") may wrap between the names. */
+.at-page .plain-table td.route-cell {
+  white-space: normal;
+}
+/* Analytics tables keep names on one line too, and scroll inside their box on a phone. */
+.analytics-page .plain-table th,
+.analytics-page .plain-table td,
+.analytics-page table.table th,
+.analytics-page table.table td {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}

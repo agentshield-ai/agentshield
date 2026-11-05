@@ -1,9 +1,10 @@
 // One team (DESIGN.md §7, §7.2): a sentence that leads with the hand-off
-// that fails most ("The hand-off that fails most, from orchestrator to
-// researcher, failed 3 of 5 times (60%), usually after 1.3 seconds"), its
-// clauses linking to the failed sessions; one quiet line of figures; then
-// how work flows (the delegation graph), the hand-offs and the agents as
-// plain tables, and the team's recent sessions.
+// that fails most ("Trip planners worked in 7 sessions and 3 failed, each
+// time at the hand-off from orchestrator to researcher, which failed 3 of 5
+// times, usually after 1.3 seconds"), its clauses linking to the failed
+// sessions; one quiet line of figures; then how work flows (the delegation
+// graph; on a phone the tables below stand in for it), the hand-offs and
+// the agents as plain tables, and the team's recent sessions.
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { v1, type TeamDetail } from '../../api/v1'
@@ -71,9 +72,8 @@ export function TeamPage() {
         <h2 id="flow-h" className="at-h">
           How work flows
         </h2>
-        <p className="quiet-note">Each agent with its runs; arrows are hand-offs with their count, failures and median time over the team's sessions, dashed arrows returns of control.</p>
         <div className="at-panel">
-          <AgentGraphView graph={d.graph} agentUrl={(a) => agentUrl(pid, a)} title={`Delegation graph of ${name}`} />
+          <AgentGraphView graph={d.graph} agentUrl={(a) => agentUrl(pid, a)} title={`Delegation graph of ${name}`} tablesOnPage />
         </div>
       </section>
 
@@ -119,7 +119,9 @@ function verdictText(c: Partial<Record<string, number>> | null | undefined): str
   return xs.join(', ') || 'none'
 }
 
+/** The team's agents: runs and failed runs (counted as the Agents page counts them), cost, and AgentShield's verdicts when there are any. */
 function TeamAgents({ pid, d }: { pid: string; d: TeamDetail }) {
+  const shield = d.agent_stats.some((a) => (a.detections?.block ?? 0) + (a.detections?.require_approval ?? 0) + (a.detections?.log ?? 0) > 0)
   return (
     <PlainTable caption={`Agents of ${teamName(d)}, over the team's sessions`} className="team-agents-table">
       <thead>
@@ -128,25 +130,16 @@ function TeamAgents({ pid, d }: { pid: string; d: TeamDetail }) {
           <th scope="col" className="num">
             Sessions
           </th>
-          <th scope="col" className="num" title="Invocations of the agent">
+          <th scope="col" className="num">
             Runs
           </th>
-          <th scope="col" className="num" title="Spans of this agent that ended with an error">
-            Errors
-          </th>
-          <th scope="col" className="num">
-            Tool calls
-          </th>
-          <th scope="col" className="num" title="Hand-offs where another agent passed work to this one">
-            Handed to it
-          </th>
-          <th scope="col" className="num" title="Hand-offs where this agent passed work on">
-            Handed on
+          <th scope="col" className="num" title="Runs that failed, counted as the Agents page counts them">
+            Failed
           </th>
           <th scope="col" className="num">
             Cost
           </th>
-          <th scope="col">AgentShield</th>
+          {shield && <th scope="col">AgentShield</th>}
         </tr>
       </thead>
       <tbody>
@@ -157,12 +150,9 @@ function TeamAgents({ pid, d }: { pid: string; d: TeamDetail }) {
             </td>
             <td className="num">{fmtNumber(a.sessions)}</td>
             <td className="num">{fmtNumber(a.calls)}</td>
-            <td className={`num ${a.errors ? 'text-error' : ''}`}>{fmtNumber(a.errors)}</td>
-            <td className="num">{fmtNumber(a.tool_calls)}</td>
-            <td className="num">{fmtNumber(a.handoffs_in)}</td>
-            <td className="num">{fmtNumber(a.handoffs_out)}</td>
+            <td className="num">{fmtNumber(a.failed_calls ?? a.errors)}</td>
             <td className="num">{fmtCost(a.cost_usd)}</td>
-            <td className={a.detections?.block ? 'text-error' : a.detections?.require_approval ? 'text-warn' : 'faint'}>{verdictText(a.detections)}</td>
+            {shield && <td>{verdictText(a.detections)}</td>}
           </tr>
         ))}
       </tbody>

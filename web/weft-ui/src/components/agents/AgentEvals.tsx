@@ -5,7 +5,9 @@ import { agentEvalsApi, conversationUrl, evalSpansUrl, type AgentEvalPrediction,
 import type { Any, SpanStatus } from '../../api/types'
 import { refUrl, spanUrl, compareEvaluationsUrl } from '../../lib/urls'
 import { fmtCost, fmtDate, fmtNumber, fmtRelative, preview, truncate } from '../../lib/format'
-import { Empty, ErrorBox, Pager, Spinner, StatusBadge } from '../common'
+import { Empty, ErrorBox, Pager, Spinner } from '../common'
+import { StatusGlyph } from '../ui/StatusGlyph'
+import { helpUrl } from '../ui/PageHeader'
 import { flattenScores, fmtMetric, sortMetricKeys } from '../evals/evalUtils'
 import { fmtScoreValue, predictionsByTrace, summaryMetrics } from './agentEvalUtils'
 
@@ -20,26 +22,37 @@ import './agents.css'
 const LIMIT = 50
 const CALL_STATUSES: SpanStatus[] = ['success', 'error', 'running', 'descendant_error']
 
-export function EvalStatus({ status }: { status: string }) {
-  return CALL_STATUSES.includes(status as SpanStatus) ? <StatusBadge status={status as SpanStatus} /> : <span className="small faint">{status || 'unknown'}</span>
+const STATUS_WORDS: Record<string, { kind: 'ok' | 'failed' | 'running' | 'warning'; label: string }> = {
+  success: { kind: 'ok', label: 'Finished' },
+  error: { kind: 'failed', label: 'Failed' },
+  running: { kind: 'running', label: 'Running' },
+  descendant_error: { kind: 'warning', label: 'A step failed' },
 }
 
-/** Score chips for a prediction's scores (`{scorer: value | {field: value}}`). */
+/** An evaluation's status as a glyph and words (no badge). */
+export function EvalStatus({ status }: { status: string }) {
+  const w = CALL_STATUSES.includes(status as SpanStatus) ? STATUS_WORDS[status] : undefined
+  if (!w) return <span className="small faint">{status || 'unknown'}</span>
+  return (
+    <span className="row small" style={{ gap: 4, display: 'inline-flex' }}>
+      <StatusGlyph kind={w.kind} size={14} decorative /> {w.label}
+    </span>
+  )
+}
+
+/** A prediction's scores (`{scorer: value | {field: value}}`) as text: "exact 0.75 · correct yes". */
 export function ScoreChips({ scores, max = 6 }: { scores: Any; max?: number }) {
   const flat = flattenScores(scores ?? {})
   const keys = sortMetricKeys(Object.keys(flat)).slice(0, max)
   if (!keys.length) return <span className="faint small">no scores</span>
   return (
-    <span className="chips" style={{ flexWrap: 'wrap' }}>
-      {keys.map((k) => {
-        const v = flat[k]
-        const cls = typeof v === 'boolean' ? (v ? 'success' : 'error') : ''
-        return (
-          <span key={k} className={`badge ${cls}`} title={`${k}: ${fmtMetric(v)}`}>
-            <span style={{ opacity: 0.75 }}>{k}</span> {fmtScoreValue(k, v)}
-          </span>
-        )
-      })}
+    <span className="small">
+      {keys.map((k, i) => (
+        <span key={k} title={`${k}: ${fmtMetric(flat[k])}`}>
+          {i > 0 && ' · '}
+          <span className="muted">{k}</span> {fmtScoreValue(k, flat[k])}
+        </span>
+      ))}
     </span>
   )
 }
@@ -55,32 +68,32 @@ function RefName({ refStr, name }: { refStr: string | null; name: string }) {
   )
 }
 
-/** "View spans" / "View conversations" for an evaluation run (or one prediction); `compact` renders text links for table cells. */
+/** "Steps" / "Sessions" for an evaluation run (or one prediction); `compact` renders text links for table cells. */
 export function EvalAgentLinks({ projectId, runId, pred, agent, compact: small }: { projectId: string; runId: string; pred?: string; agent?: string; compact?: boolean }) {
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
   const spans = evalSpansUrl(projectId, runId, { pred, agent })
   const convs = evalSpansUrl(projectId, runId, { pred, agent, conversations: true })
-  const spansTitle = 'Open the Agents Spans view filtered to this evaluation'
-  const convsTitle = "The conversations this evaluation's predictions recorded or linked"
+  const spansTitle = "The agents' steps in this evaluation"
+  const convsTitle = "The sessions this evaluation's predictions recorded or linked"
   if (small)
     return (
       <span className="small eval-agent-textlinks">
         <Link to={spans} onClick={stop} title={spansTitle}>
-          Spans
+          Steps
         </Link>
         <span className="faint"> · </span>
         <Link to={convs} onClick={stop} title={convsTitle}>
-          Conversations
+          Sessions
         </Link>
       </span>
     )
   return (
     <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-      <Link className="btn sm" to={spans} onClick={stop} title={spansTitle}>
-        View spans
+      <Link className="qbtn" to={spans} onClick={stop} title={spansTitle}>
+        Agents' steps
       </Link>
-      <Link className="btn sm" to={convs} onClick={stop} title={convsTitle}>
-        View conversations
+      <Link className="qbtn" to={convs} onClick={stop} title={convsTitle}>
+        Sessions
       </Link>
     </span>
   )
@@ -100,9 +113,7 @@ export function useAgentEvalRuns(projectId: string, runIds: string[]) {
 
 const LINK_HELP = (
   <span className="small">
-    Run the agent inside <code>with ev.log_prediction(inputs) as pred:</code> of an <code>EvaluationLogger</code> (its spans get <code>weft.eval.*</code>{' '}
-    attributes), link turns or conversations you already recorded with <code>ev.log_prediction(inputs, call=conversation)</code>, or set{' '}
-    <code>weft.eval.run_id</code> and <code>weft.eval.prediction_span_id</code> on your own OpenTelemetry spans.
+    <Link to={helpUrl('evaluations.md')}>How to run an evaluation of an agent</Link>
   </span>
 )
 
@@ -139,16 +150,17 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
     <div className="col" style={{ gap: 10 }}>
       <div className="toolbar row wrap">
         <span className="small muted grow" style={{ minWidth: 200 }}>
-          Evaluation runs whose predictions recorded or linked {agent ? <b>{agent}</b> : 'agent'} spans. Totals cover {agent ? "this agent's" : 'the linked'} spans.
+          Evaluations that ran {agent ? agent : 'these agents'}.
         </span>
         {q.isFetching && <Spinner />}
         {sel.length > 0 && (
-          <button className="btn sm ghost" onClick={() => setSel([])}>
+          <button type="button" className="qbtn" onClick={() => setSel([])}>
             Clear selection
           </button>
         )}
-        <button className="btn sm" disabled={!sel.length} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
-          Compare{sel.length ? ` (${sel.length})` : ''}
+        <button type="button" className="qbtn" disabled={!sel.length} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
+          Compare
+          {sel.length ? <span className="glist-count"> {sel.length}</span> : null}
         </button>
       </div>
       <ErrorBox error={q.error} />
@@ -174,8 +186,8 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
                 <th className="num" title="Predictions with agent spans">
                   Predictions
                 </th>
-                <th className="num">Conversations</th>
-                <th className="num">Spans</th>
+                <th className="num">Sessions</th>
+                <th className="num">Steps</th>
                 {!agent && <th>Agents</th>}
                 {metricKeys.map((k) => {
                   const i = k.indexOf('.')
@@ -227,11 +239,7 @@ export function AgentEvalsView({ projectId, agent }: { projectId: string; agent?
                     <td className="num">{fmtNumber(r.conversation_count)}</td>
                     <td className="num" style={{ whiteSpace: 'nowrap' }}>
                       {fmtNumber(r.span_count)}
-                      {r.error_count > 0 && (
-                        <span className="badge error" style={{ marginLeft: 6 }} title={`${r.error_count} failed spans`}>
-                          {r.error_count}
-                        </span>
-                      )}
+                      {r.error_count > 0 && <span className="faint small">, {fmtNumber(r.error_count)} failed</span>}
                     </td>
                     {!agent && (
                       <td className="small" style={{ maxWidth: 180 }}>
@@ -269,20 +277,20 @@ export function EvalFilterBanner({ projectId, runId, pred, agent, onClear }: { p
   const r = runId ? q.data?.get(runId) : undefined
   return (
     <div className="eval-filter-banner" role="status">
-      <span className="badge accent">Evaluation</span>
+      <span className="muted">Evaluation:</span>
       {runId ? (
         <span className="row wrap grow" style={{ gap: 6, minWidth: 0 }}>
           <b className="truncate">{r ? r.evaluation_name || r.display_name || runId : runId}</b>
           {r?.model_name && <span className="muted small truncate">· {r.model_name}</span>}
           {r && <EvalStatus status={r.status} />}
           {pred && (
-            <Link to={spanUrl(projectId, pred)} className="chip mono" title="The prediction (predict_and_score span)">
+            <Link to={spanUrl(projectId, pred)} className="small" title="The prediction (predict_and_score span)">
               prediction {pred.slice(-8)}
             </Link>
           )}
           {r && (
             <span className="small muted">
-              {fmtNumber(r.span_count)} spans · {fmtNumber(r.conversation_count)} conversations · {fmtNumber(r.prediction_count)} predictions
+              {fmtNumber(r.span_count)} steps · {fmtNumber(r.conversation_count)} sessions · {fmtNumber(r.prediction_count)} predictions
             </span>
           )}
         </span>
@@ -324,10 +332,10 @@ export function PredictionAgentLinks({ projectId, runId, pasId }: { projectId: s
       <div className="row wrap" style={{ gap: 6 }}>
         <span className="muted small">Agent activity</span>
         <span className="small">
-          {fmtNumber(q.data.span_count)} spans{q.data.total_count ? ` in ${q.data.total_count} conversation${q.data.total_count === 1 ? '' : 's'}` : ''}
+          {fmtNumber(q.data.span_count)} steps{q.data.total_count ? ` in ${q.data.total_count} session${q.data.total_count === 1 ? '' : 's'}` : ''}
         </span>
         {q.data.conversations.map((c) => (
-          <Link key={c.conversation_id} to={conversationUrl(projectId, c.conversation_id)} className="chip mono" title={c.first_message?.text}>
+          <Link key={c.conversation_id} to={conversationUrl(projectId, c.conversation_id)} className="small" title={c.first_message?.text}>
             {truncate(c.conversation_names[0] || c.conversation_id, 28)}
           </Link>
         ))}
@@ -356,12 +364,8 @@ function PredictionRow({ projectId, run, p }: { projectId: string; run: AgentEva
           prediction {p.prediction_span_id.slice(-8)}
         </Link>
         <EvalStatus status={p.status} />
-        {meta.map((m) => (
-          <span key={m} className="chip faint">
-            {m}
-          </span>
-        ))}
-        <span className="small faint">{fmtNumber(p.span_count)} spans here</span>
+        {meta.length > 0 && <span className="small faint">{meta.join(' · ')}</span>}
+        <span className="small faint">{fmtNumber(p.span_count)} steps here</span>
         <span className="grow" />
         <Link className="btn sm ghost" to={evalSpansUrl(projectId, run.evaluation_run_id, { pred: p.prediction_span_id })}>
           View spans
@@ -405,11 +409,7 @@ export function ConversationEvals({ projectId, runs }: { projectId: string; runs
                 <span className="small faint" title={fmtDate(r.started_at)}>
                   {fmtRelative(r.started_at)}
                 </span>
-                {keys.map((k) => (
-                  <span key={k} className="chip mono" title={`run summary ${k}`}>
-                    {k}: {fmtScoreValue(k, m[k])}
-                  </span>
-                ))}
+                {keys.length > 0 && <span className="small">{keys.map((k) => `${k} ${fmtScoreValue(k, m[k])}`).join(' · ')}</span>}
                 <span className="grow" />
                 <Link className="btn sm" to={compareEvaluationsUrl(projectId, [r.evaluation_run_id])}>
                   Open evaluation
@@ -439,10 +439,10 @@ export function TurnEvalBadge({ projectId, items }: { projectId: string; items: 
           <Link
             key={run.evaluation_run_id + pred.prediction_span_id}
             to={spanUrl(projectId, pred.prediction_span_id)}
-            className="badge accent"
+            className="small"
             title={`Prediction ${pred.prediction_span_id} of ${run.evaluation_name || run.evaluation_run_id}`}
           >
-            eval: {truncate(run.evaluation_name || run.evaluation_run_id, 24)}
+            Evaluation {truncate(run.evaluation_name || run.evaluation_run_id, 24)}
             {first ? ` · ${fmtScoreValue(first, flat[first])}` : ''}
           </Link>
         )

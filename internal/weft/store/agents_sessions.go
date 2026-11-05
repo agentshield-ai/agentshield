@@ -1459,15 +1459,19 @@ func (s *Store) GetAgentSession(ctx context.Context, projectID, sessionID string
 
 // GraphNode is one agent of a delegation graph.
 type GraphNode struct {
-	Agent      string         `json:"agent"`
-	Calls      int64          `json:"calls"`
-	Spans      int64          `json:"spans"`
-	Errors     int64          `json:"errors"`
-	Tokens     int64          `json:"tokens"`
-	CostUSD    *float64       `json:"cost_usd"`
-	ToolCalls  int64          `json:"tool_calls"`
-	Detections map[string]int `json:"detections"`
-	Sessions   int            `json:"sessions,omitempty"`
+	Agent string `json:"agent"`
+	Calls int64  `json:"calls"`
+	// FailedCalls are runs (invocations) that ended with an error, as
+	// invocation_error_count counts them for /api/v1/agents; Errors counts
+	// every span of the agent that did.
+	FailedCalls int64          `json:"failed_calls"`
+	Spans       int64          `json:"spans"`
+	Errors      int64          `json:"errors"`
+	Tokens      int64          `json:"tokens"`
+	CostUSD     *float64       `json:"cost_usd"`
+	ToolCalls   int64          `json:"tool_calls"`
+	Detections  map[string]int `json:"detections"`
+	Sessions    int            `json:"sessions,omitempty"`
 }
 
 // GraphEdge aggregates the hand-offs between two agents.
@@ -1514,6 +1518,9 @@ func buildGraph(spans []*agentSpan, edges []*Handoff, dets map[string]map[string
 		n.Spans++
 		if sp.IsInvocation {
 			n.Calls++
+			if sp.Exception != nil {
+				n.FailedCalls++
+			}
 		}
 		if sp.Exception != nil {
 			n.Errors++
@@ -2357,6 +2364,7 @@ func (s *Store) QueryTeams(ctx context.Context, q TeamsQuery) ([]*TeamSummary, i
 type TeamAgentRow struct {
 	Agent       string         `json:"agent"`
 	Calls       int64          `json:"calls"`
+	FailedCalls int64          `json:"failed_calls"`
 	Errors      int64          `json:"errors"`
 	ToolCalls   int64          `json:"tool_calls"`
 	Tokens      int64          `json:"tokens"`
@@ -2428,7 +2436,7 @@ func (s *Store) GetAgentTeam(ctx context.Context, projectID, teamID string) (*Te
 	}
 	sort.SliceStable(d.HandoffStats, func(i, j int) bool { return d.HandoffStats[i].Count > d.HandoffStats[j].Count })
 	for _, n := range g.Nodes {
-		d.AgentStats = append(d.AgentStats, TeamAgentRow{Agent: n.Agent, Calls: n.Calls, Errors: n.Errors, ToolCalls: n.ToolCalls,
+		d.AgentStats = append(d.AgentStats, TeamAgentRow{Agent: n.Agent, Calls: n.Calls, FailedCalls: n.FailedCalls, Errors: n.Errors, ToolCalls: n.ToolCalls,
 			Tokens: n.Tokens, CostUSD: n.CostUSD, Sessions: n.Sessions, HandoffsIn: in[n.Agent], HandoffsOut: out[n.Agent], Detections: n.Detections})
 	}
 	sortRows(sessions, ListSort{Field: "last_activity", Desc: true}, sessionField, func(ss *SessionSummary) string { return ss.SessionID })

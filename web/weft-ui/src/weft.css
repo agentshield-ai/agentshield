@@ -30,10 +30,11 @@ body {
   background: var(--panel);
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
 }
+/* The shadow only while it is shown: hidden above the page it would bleed a grey smudge into the corner. */
 .skip-link:focus {
   top: 8px;
+  box-shadow: var(--shadow-lg);
 }
 .icon {
   flex: none;

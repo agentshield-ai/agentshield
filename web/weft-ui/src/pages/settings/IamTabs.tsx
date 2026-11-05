@@ -8,7 +8,9 @@ import { iamApi, ROLE_HELP, ROLES, type AuditFilter, type ProjectMember, type Ro
 import { ErrorBox, Loading, Modal, Pager, Spinner } from '../../components/common'
 import { ConfirmButton } from '../../components/objects/bits'
 import { SettingsEmpty, SettingsRow, SettingsSection, SettingsSentence, StatusWords } from '../../components/settings/SettingsList'
-import { PlainTable } from '../../components/ui/PlainTable'
+import { Icon } from '../../components/ui/Icons'
+import { HelpLink } from '../../components/ui/PageHeader'
+import { SearchField } from '../../components/ui/SearchField'
 import { fmtDate } from '../../lib/format'
 import { relativeTime } from '../../lib/summaries'
 import { auditSentence, membersSentence } from '../../lib/summaries/project'
@@ -46,12 +48,16 @@ export function MembersTab({ projectId }: { projectId: string }) {
         <SettingsSection title="You">
           <SettingsRow
             label={<span className="mono">{me.data.user?.id ?? me.data.user_id}</span>}
-            detail={`${me.data.server_admin ? 'Server admin · ' : ''}signed in with ${me.data.auth_method.replace('_', ' ')}`}
+            detail={`${me.data.server_admin ? 'Server admin · ' : ''}${me.data.auth_method === 'none' ? 'the server is open: no sign-in' : `signed in with ${authWords(me.data.auth_method)}`}`}
           />
         </SettingsSection>
       )}
       <SettingsSection
-        title="People with a role here"
+        title={
+          <>
+            People with a role here <HelpLink doc="project.md#members" topic="Members and roles" />
+          </>
+        }
         action={
           <button type="button" className="qbtn primary" disabled={!canManage} onClick={() => setAdding(true)}>
             Add a member
@@ -59,14 +65,11 @@ export function MembersTab({ projectId }: { projectId: string }) {
         }
         note={
           <>
-            A user's role here is the stronger of their role in team <span className="mono">{entity}</span> and their role on this project. Viewers read;
-            members also write traces, assets and feedback; admins also manage members, keys and settings. Server admins are admins everywhere, and a user's
-            API keys carry the user's roles.
-            {!canManage && members.data && ' Changing members needs the admin role on this project or its team.'}
+            {!canManage && members.data ? 'Changing members needs the admin role on this project or its team.' : `The stronger of a person's role in team ${entity} and here applies.`}
             {me.data?.server_admin && (
               <>
                 {' '}
-                Users and teams are managed on <Link to="/admin">Users &amp; teams</Link>.
+                <Link to="/admin">Users &amp; teams</Link>
               </>
             )}
           </>
@@ -82,7 +85,7 @@ export function MembersTab({ projectId }: { projectId: string }) {
             <Spinner />
           </SettingsEmpty>
         ) : !members.data || members.data.members.length === 0 ? (
-          members.data && <SettingsEmpty>Nobody has a role on this project yet. Server admins and the server's own keys still have access.</SettingsEmpty>
+          members.data && <SettingsEmpty>{canManage ? 'Add a member to give someone a role on this project.' : 'No members yet.'}</SettingsEmpty>
         ) : (
           members.data.members.map((m) => (
               <SettingsRow
@@ -124,9 +127,11 @@ export function MembersTab({ projectId }: { projectId: string }) {
                           title={`Remove ${m.user_id}'s project role?`}
                           body={m.team_role ? `They keep their ${m.team_role} role from team ${entity}.` : 'They lose access to this project.'}
                           confirmLabel="Remove"
+                          ariaLabel={`Remove ${m.user_id}'s project role`}
+                          tooltip="Remove the project role"
                           onConfirm={() => setRole(m, '')}
                         >
-                          Remove
+                          <Icon name="trash" size={14} />
                         </ConfirmButton>
                       )}
                     </>
@@ -250,25 +255,28 @@ function IdList({ ids }: { ids: string[] }) {
 export function AuditLogTab({ projectId }: { projectId: string }) {
   const me = useQuery({ queryKey: ['auth-me'], queryFn: iamApi.me, retry: false })
   const [scope, setScope] = useState<'project' | 'all'>('project')
-  const [actor, setActor] = useState('')
+  // One search box: "/api/v1/spans" searches paths, anything else who made the request.
+  const [search, setSearch] = useState('')
   const [method, setMethod] = useState('')
-  const [path, setPath] = useState('')
   const [outcome, setOutcome] = useState('')
   const [since, setSince] = useState('')
   const [until, setUntil] = useState('')
+  const [trayOpen, setTrayOpen] = useState(false)
   const [offset, setOffset] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [exportErr, setExportErr] = useState<unknown>(null)
+  const term = search.trim()
   const filter: AuditFilter = {
     project_id: scope === 'project' ? projectId : undefined,
-    actor: actor.trim() || undefined,
+    actor: term && !term.startsWith('/') ? term : undefined,
     method: method || undefined,
-    path_prefix: path.trim() || undefined,
+    path_prefix: term.startsWith('/') ? term : undefined,
     outcome: outcome || undefined,
     since: toRFC3339(since),
     until: toRFC3339(until),
   }
-  const filtered = !!(actor.trim() || method || path.trim() || outcome || since || until)
+  const trayCount = [scope === 'all', method, outcome, since, until].filter(Boolean).length
+  const filtered = !!(term || method || outcome || since || until)
   const q = useQuery({
     queryKey: ['audit', filter, offset],
     queryFn: () => iamApi.audit({ ...filter, limit: PAGE, offset }),
@@ -300,51 +308,90 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
       {q.data && <SettingsSentence>{auditSentence(q.data.total_count, q.data.retention_days, filtered)}</SettingsSentence>}
       <SettingsSection
         plain
-        title="Entries"
-        action={
-          <button type="button" className="qbtn" disabled={exporting || !!q.error} onClick={() => void download()} data-testid="audit-export">
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </button>
+        title={
+          <>
+            Entries <HelpLink doc="project.md#audit-log" topic="Audit log" />
+          </>
         }
-        note="Every write, admin action, sign-in and refused request: who, when, the endpoint, the project, the assets and steps it touched, and the outcome. Request bodies and secrets are never recorded."
+        action={
+          <>
+            <SearchField label="Search by who or by path" value={search} onChange={(v) => reset(() => setSearch(v))} placeholder="Who, or /path" width={200} />
+            <button type="button" className={`qbtn ${trayCount ? 'on' : ''}`} aria-expanded={trayOpen || trayCount > 0} aria-controls="audit-tray" onClick={() => setTrayOpen((o) => !o)}>
+              Filter{trayCount ? <span className="qbtn-count">{trayCount}</span> : null}
+            </button>
+            <button type="button" className="qbtn" disabled={exporting || !!q.error} onClick={() => void download()} data-testid="audit-export">
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
+          </>
+        }
+        note="Request bodies and secrets are never recorded."
       >
-        <div className="row wrap" style={{ gap: 8 }}>
-          {me.data?.server_admin && (
-            <select className="input" aria-label="scope" value={scope} onChange={(e) => reset(() => setScope(e.target.value as 'project' | 'all'))}>
-              <option value="project">This project</option>
-              <option value="all">All projects</option>
-            </select>
-          )}
-          <input className="input mono" style={{ width: 140 }} placeholder="who" aria-label="actor" value={actor} onChange={(e) => reset(() => setActor(e.target.value))} />
-          <select className="input" aria-label="method" value={method} onChange={(e) => reset(() => setMethod(e.target.value))}>
-            <option value="">Any method</option>
-            {['POST', 'PUT', 'DELETE', 'PATCH', 'GET'].map((m) => (
-              <option key={m}>{m}</option>
-            ))}
-          </select>
-          <input className="input mono" style={{ width: 200, maxWidth: '100%' }} placeholder="path, e.g. /api/v1/spans" aria-label="path prefix" value={path} onChange={(e) => reset(() => setPath(e.target.value))} />
-          <select className="input" aria-label="outcome" value={outcome} onChange={(e) => reset(() => setOutcome(e.target.value))}>
-            <option value="">Any outcome</option>
-            {OUTCOMES.map((o) => (
-              <option key={o} value={o}>
-                {OUTCOME_WORDS[o]}
-              </option>
-            ))}
-          </select>
-          <label className="quiet-note">
-            from <input className="input" type="datetime-local" value={since} onChange={(e) => reset(() => setSince(e.target.value))} />
-          </label>
-          <label className="quiet-note">
-            to <input className="input" type="datetime-local" value={until} onChange={(e) => reset(() => setUntil(e.target.value))} />
-          </label>
-        </div>
+        {(trayOpen || trayCount > 0) && (
+          <div className="s-tray" id="audit-tray" role="group" aria-label="Filter the audit log">
+            {me.data?.server_admin && (
+              <label>
+                Projects
+                <select className="input" value={scope} onChange={(e) => reset(() => setScope(e.target.value as 'project' | 'all'))}>
+                  <option value="project">This project</option>
+                  <option value="all">All projects</option>
+                </select>
+              </label>
+            )}
+            <label>
+              Method
+              <select className="input" value={method} onChange={(e) => reset(() => setMethod(e.target.value))}>
+                <option value="">Any</option>
+                {['POST', 'PUT', 'DELETE', 'PATCH', 'GET'].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Result
+              <select className="input" value={outcome} onChange={(e) => reset(() => setOutcome(e.target.value))}>
+                <option value="">Any</option>
+                {OUTCOMES.map((o) => (
+                  <option key={o} value={o}>
+                    {OUTCOME_WORDS[o]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              From
+              <input className="input" type="datetime-local" value={since} onChange={(e) => reset(() => setSince(e.target.value))} />
+            </label>
+            <label>
+              To
+              <input className="input" type="datetime-local" value={until} onChange={(e) => reset(() => setUntil(e.target.value))} />
+            </label>
+            {trayCount > 0 && (
+              <button
+                type="button"
+                className="qbtn sm"
+                onClick={() =>
+                  reset(() => {
+                    setScope('project')
+                    setMethod('')
+                    setOutcome('')
+                    setSince('')
+                    setUntil('')
+                  })
+                }
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        )}
         <ErrorBox error={q.error ?? exportErr} />
         {q.isLoading ? (
           <Loading />
         ) : !q.data || q.data.entries.length === 0 ? null : (
           <>
-            <div data-testid="audit-table">
-              <PlainTable caption="Audit log entries">
+            <div data-testid="audit-table" className="audit-box">
+              <table className="audit-table">
+                <caption className="sr-only">Audit log entries</caption>
                 <thead>
                   <tr>
                     <th scope="col">When</th>
@@ -356,17 +403,17 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
                 <tbody>
                   {q.data.entries.map((e) => (
                     <tr key={e.id}>
-                      <td title={fmtDate(e.ts)} style={{ whiteSpace: 'nowrap' }}>
+                      <td className="a-when" title={fmtDate(e.ts)}>
                         {relativeTime(e.ts)}
                       </td>
-                      <td>
-                        <span className="mono small">{e.actor}</span>
+                      <td className="a-who">
+                        <span className="a-actor">{e.actor}</span>
                         <div className="quiet-note">
-                          {e.auth_method.replace('_', ' ')}
+                          {authWords(e.auth_method)}
                           {e.ip && ` · ${e.ip}`}
                         </div>
                       </td>
-                      <td>
+                      <td className="a-req">
                         <span className="mono small">
                           {e.method} {e.path}
                         </span>
@@ -374,13 +421,13 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
                         <IdList ids={[...e.object_ids, ...e.span_ids]} />
                         {e.detail && <div className="quiet-note">{e.detail}</div>}
                       </td>
-                      <td title={`HTTP ${e.status}`} style={{ whiteSpace: 'nowrap' }}>
+                      <td className="a-res" title={`HTTP ${e.status}`}>
                         <StatusWords tone={e.outcome === 'success' ? 'ok' : e.outcome === 'failed' ? 'warn' : 'error'}>{OUTCOME_WORDS[e.outcome] ?? e.outcome}</StatusWords>
                       </td>
                     </tr>
                   ))}
                 </tbody>
-              </PlainTable>
+              </table>
             </div>
             <Pager offset={offset} limit={PAGE} total={q.data.total_count} onChange={setOffset} />
           </>
@@ -388,4 +435,9 @@ export function AuditLogTab({ projectId }: { projectId: string }) {
       </SettingsSection>
     </>
   )
+}
+
+/** How a request was signed in, in words: "API key", "browser session", "no sign-in". */
+export function authWords(method: string): string {
+  return method === 'none' || !method ? 'no sign-in' : method.replace(/_/g, ' ')
 }

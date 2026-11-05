@@ -1,24 +1,29 @@
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Link } from 'react-router-dom'
+// Sessions by id (the developer view of Sessions): answers "which session
+// ids have spans, and how did they go?". One sentence, then the sessions as
+// a list, newest first; each row is named by its first turn's request and
+// opens the session. The id stays as the row's quiet line.
+import { useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import type { SortBy } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative } from '../../lib/format'
+import { fmtDate, fmtRelative } from '../../lib/format'
 import { spanSessionUrl, tracesUrl } from '../../lib/urls'
-import { spanSessionsSentence } from '../../lib/summaries/traces'
+import { spanSessionLine, spanSessionsSentence, SPAN_SESSIONS_TITLE, turnName } from '../../lib/summaries/traces'
 import { ErrorBox, Pager, Spinner } from '../../components/common'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
 import { PageHeader } from '../../components/ui/PageHeader'
-import { PlainTable } from '../../components/ui/PlainTable'
+import { Segmented } from '../../components/ui/Segmented'
 import { Sentence } from '../../components/ui/Sentence'
 import '../observe.css'
 
 const SORTABLE = ['last_updated', 'started_at', 'turn_count'] as const
+type SortField = (typeof SORTABLE)[number]
 const LIMIT = 50
 
 export function SpanSessionsPage() {
   const projectId = useProjectId()
-  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [sf, sd] = (params.get('sort') ?? 'last_updated:desc').split(':')
   const sort: SortBy = { field: (SORTABLE as readonly string[]).includes(sf) ? sf : 'last_updated', direction: sd === 'asc' ? 'asc' : 'desc' }
@@ -31,31 +36,44 @@ export function SpanSessionsPage() {
   const all = q.data?.items ?? []
   const hasMore = all.length > LIMIT
   const threads = all.slice(0, LIMIT)
+  // Each session is named by its first turn's request.
+  const firstIds = useMemo(() => threads.map((t) => t.first_turn_id).filter((x): x is string => !!x), [threads])
+  const firsts = useQuery({
+    queryKey: ['spans', projectId, 'first-turns', firstIds],
+    queryFn: () => api.spansQuery({ project_id: projectId, filter: { ids: firstIds }, columns: ['id', 'inputs'], limit: firstIds.length }),
+    enabled: firstIds.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  })
+  const names = useMemo(() => new Map((firsts.data?.items ?? []).map((s) => [s.id, turnName(s.inputs)])), [firsts.data])
   const set = (patch: Record<string, string | null>) =>
     setParams((p) => {
       const n = new URLSearchParams(p)
       for (const [k, v] of Object.entries(patch)) v == null ? n.delete(k) : n.set(k, v)
       return n
     })
-  const sortBy = (f: string) => {
-    const dir = sort.field === f && sort.direction === 'desc' ? 'asc' : 'desc'
-    set({ sort: `${f}:${dir}`, offset: null })
-  }
-  const th = (f: (typeof SORTABLE)[number], label: string, num = false) => (
-    <th scope="col" className={`sortable ${num ? 'num' : ''}`} onClick={() => sortBy(f)} aria-sort={sort.field === f ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
-      {label}
-      {sort.field === f ? (sort.direction === 'desc' ? ' ↓' : ' ↑') : ''}
-    </th>
-  )
   const sentence = q.data ? spanSessionsSentence({ shown: threads.length, more: hasMore, offset, latest: offset === 0 && sort.field === 'last_updated' && sort.direction === 'desc' ? threads[0]?.last_updated : null }) : null
   return (
-    <div className="page-frame obs-page obs-wide">
+    <div className="page-frame obs-page">
       <PageHeader
         variant="detail"
         back={{ to: tracesUrl(projectId), label: 'Traces' }}
-        title="Span sessions"
+        title={SPAN_SESSIONS_TITLE}
         help="traces.md"
         helpTopic="Traces"
+        controls={
+          <Segmented<SortField>
+            label="Order"
+            size="sm"
+            options={[
+              { id: 'last_updated', label: 'Last active' },
+              { id: 'started_at', label: 'Started' },
+              { id: 'turn_count', label: 'Most turns' },
+            ]}
+            value={sort.field as SortField}
+            onChange={(f) => set({ sort: f === 'last_updated' ? null : `${f}:desc`, offset: null })}
+          />
+        }
         sentence={
           sentence ? (
             <Sentence size="detail" parts={[sentence]} />
@@ -66,7 +84,6 @@ export function SpanSessionsPage() {
             </p>
           )
         }
-        meta="Spans grouped by their session id, the developer view of Sessions."
       />
       <ErrorBox error={q.error} />
       {q.isLoading ? (
@@ -76,55 +93,33 @@ export function SpanSessionsPage() {
       ) : threads.length === 0 ? (
         <div className="quiet-empty">
           <p>
-            <b>No span sessions yet.</b> Spans with a <code>session_id</code> are grouped by session. With the Python SDK wrap each turn in{' '}
-            <code>with weft.session("conversation-id"):</code>; with OpenTelemetry set <code>gen_ai.conversation.id</code> or <code>session.id</code> on spans.
+            <b>No sessions yet.</b> Spans that carry a session id are grouped here. With the Python SDK wrap each turn in <code>with weft.session("chat-id"):</code>; with
+            OpenTelemetry set <code>session.id</code> on spans.
           </p>
         </div>
       ) : (
         <>
-          <PlainTable caption="Span sessions" className="obs-nowrap">
-            <thead>
-              <tr>
-                <th scope="col">Session</th>
-                {th('turn_count', 'Turns', true)}
-                <th scope="col" className="num">
-                  Spans
-                </th>
-                {th('started_at', 'Started')}
-                {th('last_updated', 'Last updated')}
-                <th scope="col" className="num" title="Median and 99th percentile of the turns' durations">
-                  Turn time (p50 / p99)
-                </th>
-                <th scope="col" className="num">
-                  Cost
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {threads.map((t) => (
-                <tr key={t.session_id} className="clickable" onClick={() => navigate(spanSessionUrl(projectId, t.session_id))}>
-                  <td className="mono">
-                    <Link to={spanSessionUrl(projectId, t.session_id)} onClick={(e) => e.stopPropagation()}>
-                      {t.session_id}
-                    </Link>
-                  </td>
-                  <td className="num">{fmtNumber(t.turn_count)}</td>
-                  <td className="num">{fmtNumber(t.span_count)}</td>
-                  <td title={fmtDate(t.started_at)}>{fmtRelative(t.started_at)}</td>
-                  <td title={fmtDate(t.last_updated)}>{fmtRelative(t.last_updated)}</td>
-                  <td className="num">
-                    {fmtDuration(t.p50_turn_duration_ms)} / {fmtDuration(t.p99_turn_duration_ms)}
-                  </td>
-                  <td className="num" title={t.total_tokens ? `${fmtNumber(t.total_tokens)} tokens` : undefined}>
-                    {t.cost_usd ? fmtCost(t.cost_usd) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </PlainTable>
-          <div className="obs-foot" style={{ justifyContent: 'flex-end' }}>
-            <Pager offset={offset} limit={LIMIT} total={hasMore ? null : offset + threads.length} onChange={(o) => set({ offset: o ? String(o) : null })} />
-          </div>
+          <GroupedList label="Sessions by id">
+            {threads.map((t) => {
+              const name = t.first_turn_id ? names.get(t.first_turn_id) : ''
+              return (
+                <ListRow
+                  key={t.session_id}
+                  title={name || t.session_id}
+                  summary={spanSessionLine(t)}
+                  meta={name ? t.session_id : undefined}
+                  time={fmtRelative(t.last_updated)}
+                  timeTitle={`Last active ${fmtDate(t.last_updated)}`}
+                  to={spanSessionUrl(projectId, t.session_id)}
+                />
+              )
+            })}
+          </GroupedList>
+          {(offset > 0 || hasMore) && (
+            <div className="obs-foot" style={{ justifyContent: 'flex-end' }}>
+              <Pager offset={offset} limit={LIMIT} total={hasMore ? null : offset + threads.length} onChange={(o) => set({ offset: o ? String(o) : null })} />
+            </div>
+          )}
         </>
       )}
     </div>

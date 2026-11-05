@@ -10,6 +10,8 @@ import { adminApi, type ApiKeyCreate, type ManagedApiKey, type RedactionPattern,
 import { getApiKey, setApiKey } from '../../api/client'
 import { CopyButton, ErrorBox, Modal, Spinner } from '../../components/common'
 import { ConfirmButton, Switch } from '../../components/objects/bits'
+import { Icon } from '../../components/ui/Icons'
+import { HelpLink } from '../../components/ui/PageHeader'
 import { SettingsEmpty, SettingsRow, SettingsSection, SettingsSentence, StatusWords } from '../../components/settings/SettingsList'
 import { fmtDate, fmtNumber } from '../../lib/format'
 import { joinClauses, relativeTime } from '../../lib/summaries'
@@ -58,8 +60,6 @@ export function ApiKeysTab({ projectId, browserKey }: { projectId: string; brows
             detail={
               <>
                 {accessWords(p)}
-                {' · '}
-                {p.auth_required ? 'the server requires sign-in' : 'the server is open: no sign-in'}
                 {keys.data && keys.data.static_key_count > 0 && ` · ${keys.data.static_key_count} more ${keys.data.static_key_count === 1 ? 'key' : 'keys'} from the server's --api-keys`}
               </>
             }
@@ -67,7 +67,11 @@ export function ApiKeysTab({ projectId, browserKey }: { projectId: string; brows
         </SettingsSection>
       )}
       <SettingsSection
-        title="Keys"
+        title={
+          <>
+            Keys <HelpLink doc="project.md#api-keys" topic="API keys" />
+          </>
+        }
         action={
           <>
             <label className="checkbox small">
@@ -78,14 +82,7 @@ export function ApiKeysTab({ projectId, browserKey }: { projectId: string; brows
             </button>
           </>
         }
-        note={
-          <>
-            Keys are stored hashed: the secret is shown once, when the key is created. A key can be limited to some projects and made read-only; admin keys
-            also manage keys, secrets and settings. A key of a registered user carries that user's team and project roles; without admin rights you see and
-            create only your own keys.
-            {p && !p.auth_required && ' The server is open: the first key you create must be an admin key, turns sign-in on, and is saved in this browser.'}
-          </>
-        }
+        note={p && !p.auth_required ? 'The first key must be an admin key; creating it turns sign-in on.' : 'A key’s secret is shown once, when it is created.'}
       >
         {keys.error ? (
           <SettingsEmpty>
@@ -96,7 +93,7 @@ export function ApiKeysTab({ projectId, browserKey }: { projectId: string; brows
             <Spinner />
           </SettingsEmpty>
         ) : !keys.data || keys.data.keys.length === 0 ? (
-          <SettingsEmpty>No managed keys yet.</SettingsEmpty>
+          <SettingsEmpty>{cannot ? 'No keys yet.' : 'Create a key for an SDK, a plugin or AgentShield to send data with.'}</SettingsEmpty>
         ) : (
           keys.data.keys.map((k) => (
             <SettingsRow
@@ -528,12 +525,7 @@ export function SensitiveDataTab({ projectId }: { projectId: string }) {
         <>
           <SettingsSection
             title="Redaction"
-            note={
-              <>
-                Matches in inputs, outputs, errors and attributes become placeholders such as <span className="mono">&lt;EMAIL_ADDRESS&gt;</span> before anything is
-                stored, for SDK spans and OpenTelemetry spans alike. Data stored earlier is not changed.
-              </>
-            }
+            note="Data stored earlier is not changed."
             action={
               <>
                 {saved && !dirty && <StatusWords tone="ok">Saved</StatusWords>}
@@ -563,17 +555,30 @@ export function SensitiveDataTab({ projectId }: { projectId: string }) {
           >
             <SettingsRow
               label="Redact sensitive data as it arrives"
-              detail={<>Policy {draft.policy}</>}
+              detail={
+                <>
+                  Inputs, outputs, errors and attributes: matches become placeholders such as <span className="mono">&lt;EMAIL_ADDRESS&gt;</span> before anything is stored.
+                </>
+              }
               control={<Switch on={draft.policy === 'pii-v1'} onChange={(on) => setDraft({ ...draft, policy: on ? 'pii-v1' : 'off' })} label="Redact sensitive data" />}
             />
           </SettingsSection>
-          <SettingsSection title="Detectors">
+          <SettingsSection title="Detectors" note={draft.policy === 'off' ? 'The detectors apply when redaction is on.' : undefined}>
             {all.map((e) => (
               <SettingsRow
                 key={e.name}
+                muted={draft.policy === 'off'}
                 label={<span className="mono">{e.placeholder}</span>}
                 detail={e.description}
-                control={<Switch on={enabled(e.name)} onChange={() => toggle(e.name)} label={`Detect ${e.placeholder}`} />}
+                control={
+                  <Switch
+                    on={draft.policy !== 'off' && enabled(e.name)}
+                    disabled={draft.policy === 'off'}
+                    onChange={() => toggle(e.name)}
+                    label={`Detect ${e.placeholder}`}
+                    title={draft.policy === 'off' ? 'Turn redaction on to choose detectors' : undefined}
+                  />
+                }
               />
             ))}
           </SettingsSection>
@@ -581,7 +586,7 @@ export function SensitiveDataTab({ projectId }: { projectId: string }) {
             title="Your own patterns"
             note="RE2 regular expressions; a match becomes <NAME>."
             action={
-              <button type="button" className="qbtn sm" onClick={() => setDraft({ ...draft, custom_patterns: [...draft.custom_patterns, { name: '', pattern: '' }] })}>
+              <button type="button" className="qbtn primary" onClick={() => setDraft({ ...draft, custom_patterns: [...draft.custom_patterns, { name: '', pattern: '' }] })}>
                 Add a pattern
               </button>
             }
@@ -601,9 +606,10 @@ export function SensitiveDataTab({ projectId }: { projectId: string }) {
                         type="button"
                         className="qbtn sm plain danger"
                         aria-label={`Remove pattern ${i + 1}`}
+                        title="Remove this pattern"
                         onClick={() => setDraft({ ...draft, custom_patterns: draft.custom_patterns.filter((_, j) => j !== i) })}
                       >
-                        Remove
+                        <Icon name="trash" size={14} />
                       </button>
                     </span>
                   }

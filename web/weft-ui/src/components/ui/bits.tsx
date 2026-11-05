@@ -1,11 +1,9 @@
-// Shared presentational pieces for the agent-first pages: tooltips that
-// explain numbers, status pills (icon + text, never colour alone), agent
-// chips with their consistent colour, copyable ids and breadcrumbs.
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+// Shared presentational pieces: tooltips that explain numbers, a scrolling
+// box for wide tables, copyable ids, breadcrumbs and the cap note. Status is
+// a StatusGlyph with words and a score is text (no pills or badges).
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import type { DetectionAction, SessionStatus } from '../../api/v1'
-import { agentColor } from '../../lib/agentColor'
-import { Icon, type IconName } from './Icons'
+import { Icon } from './Icons'
 
 export function Tip({ text, label = 'How is this computed?' }: { text: ReactNode; label?: string }) {
   const id = useId()
@@ -45,104 +43,9 @@ export function TableScroll({ label, children }: { label: string; children: Reac
   )
 }
 
-export function AgentChip({ name, to, size }: { name: string | null | undefined; to?: string | null; size?: 'sm' }) {
-  if (!name) return <span className="agent-chip muted">unknown agent</span>
-  const style = { '--ac': agentColor(name) } as CSSProperties
-  const body = (
-    <>
-      <span className="agent-dot" aria-hidden />
-      <span className="agent-name">{name}</span>
-    </>
-  )
-  const cls = `agent-chip ${size === 'sm' ? 'sm' : ''}`
-  return to ? (
-    <Link className={cls} style={style} to={to} title={`Agent ${name}`}>
-      {body}
-    </Link>
-  ) : (
-    <span className={cls} style={style}>
-      {body}
-    </span>
-  )
-}
-
-export function AgentDot({ name }: { name: string | null | undefined }) {
-  return <span className="agent-dot" aria-hidden style={{ '--ac': agentColor(name) } as CSSProperties} />
-}
-
-const STATUS: Record<SessionStatus, { icon: IconName; label: string; cls: string }> = {
-  ok: { icon: 'ok', label: 'Succeeded', cls: 'ok' },
-  error: { icon: 'error', label: 'Failed', cls: 'error' },
-  running: { icon: 'running', label: 'Running', cls: 'running' },
-  // Known only from AgentShield verdicts: no agent spans, so no outcome.
-  unknown: { icon: 'info', label: 'No agent data', cls: 'muted' },
-}
-
-export function StatusPill({ status, label }: { status: SessionStatus | string; label?: string }) {
-  const s = STATUS[(String(status).toLowerCase() === 'unset' ? 'ok' : String(status).toLowerCase()) as SessionStatus] ?? STATUS.ok
-  return (
-    <span className={`pill ${s.cls}`}>
-      <Icon name={s.icon} size={13} />
-      {label ?? s.label}
-    </span>
-  )
-}
-
-export const ACTION_META: Record<DetectionAction, { icon: IconName; label: string; cls: string; help: string }> = {
-  block: { icon: 'block', label: 'Blocked', cls: 'error', help: 'AgentShield stopped this tool call.' },
-  require_approval: { icon: 'approval', label: 'Needs approval', cls: 'warn', help: 'AgentShield asked a person to approve this tool call.' },
-  log: { icon: 'log', label: 'Logged', cls: 'info', help: 'AgentShield recorded an alert but let the call run.' },
-  allow: { icon: 'ok', label: 'Allowed', cls: 'ok', help: 'No rule matched.' },
-}
-
-export function ActionBadge({ action, count, overridden }: { action: DetectionAction; count?: number; overridden?: boolean }) {
-  const m = ACTION_META[action] ?? ACTION_META.log
-  return (
-    <span className={`pill ${m.cls}`} title={m.help}>
-      <Icon name={m.icon} size={13} />
-      {m.label}
-      {count != null && count > 1 && <span className="pill-count">×{count}</span>}
-      {overridden && <span className="pill-note">overridden</span>}
-    </span>
-  )
-}
-
-/** One badge per non-allow action, most severe first. */
-export function DetectionBadges({ counts }: { counts: Partial<Record<DetectionAction, number>> | null | undefined }) {
-  const order: DetectionAction[] = ['block', 'require_approval', 'log']
-  const xs = order.filter((a) => (counts?.[a] ?? 0) > 0)
-  if (!xs.length) return null
-  return (
-    <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-      {xs.map((a) => (
-        <ActionBadge key={a} action={a} count={counts![a]} />
-      ))}
-    </span>
-  )
-}
-
 export function SeverityText({ level }: { level: string }) {
   const l = (level || 'none').toLowerCase()
   return <span className={`sev sev-${l}`}>{l === 'none' ? 'no severity' : l}</span>
-}
-
-export function scoreTone(v: number | null | undefined): 'ok' | 'warn' | 'error' | 'muted' {
-  if (v == null || Number.isNaN(v)) return 'muted'
-  if (v < 0.5) return 'error'
-  if (v < 0.75) return 'warn'
-  return 'ok'
-}
-
-export function ScorePill({ value, scorer, reason, count }: { value: number | null | undefined; scorer?: string; reason?: string; count?: number }) {
-  const tone = scoreTone(value)
-  const text = value == null ? '—' : Number.isInteger(value) ? String(value) : value.toFixed(2)
-  const title = [scorer, count && count > 1 ? `mean of ${count} results` : null, reason].filter(Boolean).join(' · ')
-  return (
-    <span className={`pill score ${tone}`} title={title || undefined}>
-      {scorer && <span className="pill-scorer">{humanScorer(scorer)}</span>}
-      <strong>{text}</strong>
-    </span>
-  )
 }
 
 export function humanScorer(name: string): string {
@@ -200,20 +103,6 @@ export function Crumbs({ items }: { items: Crumb[] }) {
         ))}
       </ol>
     </nav>
-  )
-}
-
-export function Callout({ tone = 'info', title, children, actions }: { tone?: 'info' | 'warn' | 'error' | 'ok'; title?: ReactNode; children?: ReactNode; actions?: ReactNode }) {
-  const icon: IconName = tone === 'error' ? 'error' : tone === 'warn' ? 'approval' : tone === 'ok' ? 'ok' : 'info'
-  return (
-    <div className={`callout ${tone}`} role={tone === 'error' ? 'alert' : undefined}>
-      <Icon name={icon} size={16} />
-      <div className="grow">
-        {title && <div className="callout-title">{title}</div>}
-        {children}
-      </div>
-      {actions && <div className="callout-actions">{actions}</div>}
-    </div>
   )
 }
 

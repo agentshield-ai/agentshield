@@ -14,7 +14,7 @@ import { extractChat, messageText, normaliseMessage } from '../../components/tra
 import { BASE_FILTER_FIELDS, clauseToOperation, clauseValid, decodeClauses, encodeClauses, type FilterClause } from '../../components/traces/FilterBuilder'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal, Dropdown, MenuItem } from '../../components/traces/Menu'
-import { GettingStarted } from '../../components/traces/GettingStarted'
+import { GuidedEmpty } from '../../components/ui/EmptyState'
 import { callLabel, discoverFeedbackFields, discoverFields, exportCalls, getDotted, reactionCounts } from '../../components/traces/callUtils'
 import { CopyAsCodeModal, ServerExportModal } from '../../components/traces/ExportModal'
 import { AddToDashboardModal } from '../../components/dashboards/AddToDashboardModal'
@@ -29,7 +29,7 @@ import { PlainTable } from '../../components/ui/PlainTable'
 import { Segmented } from '../../components/ui/Segmented'
 import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
-import { statusGlyph, tracesSentence } from '../../lib/summaries/traces'
+import { SPAN_SESSIONS_TITLE, statusGlyph, tracesSentence } from '../../lib/summaries/traces'
 import '../observe.css'
 
 // ---------------------------------------------------------------- URL state
@@ -520,12 +520,159 @@ export function TracesPage() {
     update({ hide: hideParam(h) }, false)
   }
 
+  // Nothing recorded at all: the guided start, not an empty table under every control.
+  const empty = ready && !calls.isLoading && rows.length === 0 && !hasFilters && total === 0
+  const viewChanged = hasFilters || !!s.view || s.cols.length > 0 || params.has('hide') || params.has('order') || params.has('pin')
+  const check = (label: string, checked: boolean, onChange: (v: boolean) => void, title?: string) => (
+    <label className="dd-check" title={title}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} /> {label}
+    </label>
+  )
+  // One menu for what the table lists and how: rows, columns, charts, refresh, export and the page's other views.
+  const viewMenu = (
+    <Dropdown kind="dialog" label="View" ariaLabel="View options" align="right" className="qbtn">
+      {(close) => (
+        <div className="obs-view-menu">
+          <div className="dd-section">Rows</div>
+          {check('Top-level spans only', s.roots, (v) => update({ roots: v ? null : '0' }), 'Only show the top-level span of each trace')}
+          {check('System spans', s.system, (v) => update({ system: v ? '1' : null }), 'Include scorer spans made by monitors and other internal server spans')}
+          {check('Replay evaluations', s.replay, (v) => update({ replay: v ? '1' : null }), 'Include the engine traces of AgentShield replays (re-evaluations of recorded tool calls)')}
+          <div className="dd-section">Show</div>
+          {check('Charts', s.charts, (v) => update({ charts: v ? '1' : null }, false))}
+          {check('Refresh every 5 seconds', s.live, (v) => update({ live: v ? '1' : null }, false))}
+          <div className="dd-section">Columns</div>
+          {BASE_COLS.map((c) => (
+            <label key={c} className="dd-check">
+              <input type="checkbox" checked={!s.hidden.has(c)} onChange={() => toggleColumn(c)} />
+              {BASE_COL_LABEL[c]}
+            </label>
+          ))}
+          {columnCandidates.length + s.cols.length > 0 && <div className="dd-note">Fields from the loaded rows</div>}
+          <div style={{ maxHeight: 200, overflow: 'auto' }}>
+            {[...new Set([...s.cols, ...columnCandidates])].map((f) => (
+              <label key={f} className="dd-check small">
+                <input
+                  type="checkbox"
+                  checked={s.cols.includes(f)}
+                  onChange={() => update({ cols: (s.cols.includes(f) ? s.cols.filter((x) => x !== f) : [...s.cols, f]).join(',') || null }, false)}
+                />
+                {f}
+              </label>
+            ))}
+          </div>
+          <details className="dd-details">
+            <summary>Order and pinning</summary>
+            <div style={{ maxHeight: 240, overflow: 'auto' }}>
+              {slots.map((c, i) => (
+                <div key={c.id} className="dd-check col-order-row">
+                  <span className="grow truncate" title={c.id}>
+                    {(BASE_COL_LABEL as Record<string, string>)[c.id] || c.id}
+                  </span>
+                  <button className="btn ghost sm icon" aria-label={`Move ${c.id} left`} disabled={i === 0} onClick={() => setOrder(moveStep(slotIds, c.id, -1))}>
+                    ↑
+                  </button>
+                  <button className="btn ghost sm icon" aria-label={`Move ${c.id} right`} disabled={i === slots.length - 1} onClick={() => setOrder(moveStep(slotIds, c.id, 1))}>
+                    ↓
+                  </button>
+                  <button className={`btn sm ${c.pinned ? 'primary' : 'ghost'}`} aria-pressed={c.pinned} aria-label={`${c.pinned ? 'Unpin' : 'Pin'} ${c.id}`} onClick={() => setPin(togglePin(s.pin, c.id))}>
+                    {c.pinned ? 'Pinned' : 'Pin'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {(s.order.length > 0 || s.pin.length > 0) && (
+              <button className="btn ghost sm" style={{ margin: '4px 8px' }} onClick={() => update({ order: null, pin: null }, false)}>
+                Reset order and pins
+              </button>
+            )}
+          </details>
+          <div className="dd-section">{selected.size ? `Export the ${selected.size} selected` : 'Export this page'}</div>
+          <div className="dd-row">
+            {(['json', 'jsonl', 'csv'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                className="btn ghost sm"
+                onClick={() => {
+                  exportCalls(exportTargets, f, s.cols)
+                  close()
+                }}
+              >
+                {f.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="dd-item"
+            onClick={() => {
+              setExtraModal('serverExport')
+              close()
+            }}
+          >
+            Export all matching rows…
+          </button>
+          <button
+            type="button"
+            className="dd-item"
+            onClick={() => {
+              setExtraModal('code')
+              close()
+            }}
+          >
+            Copy this query as code…
+          </button>
+          <div className="dd-sep" />
+          <button
+            type="button"
+            className="dd-item"
+            onClick={() => {
+              void qc.invalidateQueries({ queryKey: ['spans', projectId] })
+              close()
+            }}
+          >
+            Refresh now
+          </button>
+          <button
+            type="button"
+            className="dd-item"
+            onClick={() => {
+              setExtraModal('chart')
+              close()
+            }}
+          >
+            Add a chart of these spans to a dashboard…
+          </button>
+          <Link className="dd-item" to={spanSessionsUrl(projectId)} onClick={close}>
+            {SPAN_SESSIONS_TITLE}
+          </Link>
+          {viewChanged && (
+            <button
+              type="button"
+              className="dd-item"
+              onClick={() => {
+                setParams(new URLSearchParams())
+                close()
+              }}
+            >
+              Reset filters, columns and sort
+            </button>
+          )}
+          <div className="dd-note obs-keys">
+            Keys: <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>Enter</kbd> open, <kbd>x</kbd> select, <kbd>/</kbd> search
+          </div>
+        </div>
+      )}
+    </Dropdown>
+  )
+
   return (
     <div className="page-frame obs-page obs-wide traces-page">
       <PageHeader
         title="Traces"
         help="traces.md"
         controls={
+          empty ? undefined : (
           <>
             <Segmented
               label="Time range"
@@ -535,10 +682,12 @@ export function TracesPage() {
             />
             <FilterSearchField label="Search traces" />
             <FilterButton open={filterOpen} onToggle={() => setFilterOpen((o) => !o)} defaultTime={DEFAULT_TIME} />
+            {viewMenu}
           </>
+          )
         }
         sentence={
-          sentence ? (
+          empty ? undefined : sentence ? (
             <Sentence parts={sentence} />
           ) : (
             <p className="sentence s-outcome sk-sentence" aria-busy="true">
@@ -549,127 +698,35 @@ export function TracesPage() {
         }
       />
 
+      {!empty && (
       <FilterBar
-        page="traces"
-        search="external"
-        timePicker="none"
-        collapsible
-        open={filterOpen}
-        defaultTime={DEFAULT_TIME}
-        effectiveTime={time}
-        viewKeys={VIEW_KEYS}
-        viewDefinition={viewDefinition}
-        legacyView={legacyTraceView}
-        advanced={{ fields: filterFields, clauses: s.clauses, onChange: (cs) => update({ f: encodeClauses(cs) || null }) }}
-      />
+          page="traces"
+          search="external"
+          timePicker="none"
+          collapsible
+          open={filterOpen}
+          defaultTime={DEFAULT_TIME}
+          effectiveTime={time}
+          viewKeys={VIEW_KEYS}
+          viewDefinition={viewDefinition}
+          legacyView={legacyTraceView}
+          advanced={{ fields: filterFields, clauses: s.clauses, onChange: (cs) => update({ f: encodeClauses(cs) || null }) }}
+        />
+      )}
       {widen.widened && <WidenedNote time={time} defaultTime={DEFAULT_TIME} onReset={() => update({ time: DEFAULT_TIME })} />}
       <ErrorBox error={scope.error} />
       {scope.sessionsTruncated && <ScopeCapNote total={scope.sessionsTotal} />}
 
-      <div className="obs-toolbar" role="group" aria-label="What the table lists">
-        <label className="obs-check" title="Only show the top-level span of each trace">
-          <input type="checkbox" checked={s.roots} onChange={(e) => update({ roots: e.target.checked ? null : '0' })} /> Top-level spans only
-        </label>
-        <label className="obs-check" title="Include scorer spans made by monitors and other internal server spans">
-          <input type="checkbox" checked={s.system} onChange={(e) => update({ system: e.target.checked ? '1' : null })} /> System spans
-        </label>
-        <label className="obs-check" title="Include the engine traces of AgentShield replays (re-evaluations of recorded tool calls). They are not agent activity, so they are hidden by default.">
-          <input type="checkbox" checked={s.replay} onChange={(e) => update({ replay: e.target.checked ? '1' : null })} /> Replay evaluations
-        </label>
-        {s.expr && (
+      {s.expr && (
+        <div className="obs-toolbar" role="group" aria-label="Custom query">
           <span className="filter-chip" title={JSON.stringify(s.expr)}>
-            <span className="filter-chip-label mono">custom query</span>
+            <span className="filter-chip-label">Custom query</span>
             <button className="filter-chip-x" aria-label="Remove custom query" onClick={() => update({ expr: null })}>
               ✕
             </button>
           </span>
-        )}
-        <span className="grow" />
-        {(calls.isFetching || count.isFetching) && <Spinner />}
-        <Link to={spanSessionsUrl(projectId)} title="Spans grouped by session id">
-          Span sessions
-        </Link>
-        {(hasFilters || s.view || s.cols.length > 0 || params.has('hide') || params.has('order') || params.has('pin')) && (
-          <button type="button" className="linkish" onClick={() => setParams(new URLSearchParams())} title="Clear filters, columns and sort">
-            Reset view
-          </button>
-        )}
-        <button type="button" className={`qbtn ${s.charts ? 'on' : ''}`} onClick={() => update({ charts: s.charts ? null : '1' }, false)} aria-pressed={s.charts}>
-          Charts
-        </button>
-        <Dropdown label="Columns" align="right" className="qbtn">
-          <div className="dd-section">Columns</div>
-          {BASE_COLS.map((c) => (
-            <label key={c} className="dd-check">
-              <input type="checkbox" checked={!s.hidden.has(c)} onChange={() => toggleColumn(c)} />
-              {BASE_COL_LABEL[c]}
-            </label>
-          ))}
-          <div className="dd-section">Fields from loaded rows</div>
-          {columnCandidates.length === 0 && <div className="dd-note">No input/output fields found yet.</div>}
-          <div style={{ maxHeight: 240, overflow: 'auto' }}>
-            {[...new Set([...s.cols, ...columnCandidates])].map((f) => (
-              <label key={f} className="dd-check mono small">
-                <input
-                  type="checkbox"
-                  checked={s.cols.includes(f)}
-                  onChange={() => update({ cols: (s.cols.includes(f) ? s.cols.filter((x) => x !== f) : [...s.cols, f]).join(',') || null }, false)}
-                />
-                {f}
-              </label>
-            ))}
-          </div>
-          <div className="dd-section">Order &amp; pinning</div>
-          <div style={{ maxHeight: 260, overflow: 'auto' }}>
-            {slots.map((c, i) => (
-              <div key={c.id} className="dd-check col-order-row">
-                <span className={`grow truncate ${c.id.includes('.') ? 'mono small' : ''}`} title={c.id}>
-                  {(BASE_COL_LABEL as Record<string, string>)[c.id] || c.id}
-                </span>
-                <button className="btn ghost sm icon" aria-label={`Move ${c.id} left`} disabled={i === 0} onClick={() => setOrder(moveStep(slotIds, c.id, -1))}>
-                  ↑
-                </button>
-                <button className="btn ghost sm icon" aria-label={`Move ${c.id} right`} disabled={i === slots.length - 1} onClick={() => setOrder(moveStep(slotIds, c.id, 1))}>
-                  ↓
-                </button>
-                <button className={`btn sm ${c.pinned ? 'primary' : 'ghost'}`} aria-pressed={c.pinned} aria-label={`${c.pinned ? 'Unpin' : 'Pin'} ${c.id}`} onClick={() => setPin(togglePin(s.pin, c.id))}>
-                  {c.pinned ? 'Pinned' : 'Pin'}
-                </button>
-              </div>
-            ))}
-          </div>
-          {(s.order.length > 0 || s.pin.length > 0) && (
-            <button className="btn ghost sm" style={{ margin: '4px 8px' }} onClick={() => update({ order: null, pin: null }, false)}>
-              Reset order and pins
-            </button>
-          )}
-        </Dropdown>
-        <Dropdown label="More" align="right" className="qbtn" title="Refresh, auto-refresh, charts on a dashboard">
-          {(close) => (
-            <>
-              <label className="dd-check" title="Refresh every 5 seconds">
-                <input type="checkbox" checked={s.live} onChange={(e) => update({ live: e.target.checked ? '1' : null }, false)} /> Auto-refresh
-              </label>
-              <MenuItem
-                onClick={() => {
-                  void qc.invalidateQueries({ queryKey: ['spans', projectId] })
-                  close()
-                }}
-              >
-                Refresh now
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setExtraModal('chart')
-                  close()
-                }}
-              >
-                Add a chart of these spans to a dashboard…
-              </MenuItem>
-            </>
-          )}
-        </Dropdown>
-      </div>
+        </div>
+      )}
 
       {s.charts && <CallCharts projectId={projectId} filter={req.filter} query={req.query} search={req.search} />}
 
@@ -723,10 +780,9 @@ export function TracesPage() {
             </button>
           </div>
         ) : (
-          <section className="guided-empty" aria-label="Getting started">
-            <h2>No traces yet</h2>
-            <GettingStarted projectId={projectId} />
-          </section>
+          <GuidedEmpty projectId={projectId} title="No traces yet" doc="traces.md">
+            Every span your agents and code send to <span className="mono">{projectId}</span> appears here, grouped into traces, with its inputs, output, timing and cost.
+          </GuidedEmpty>
         )
       ) : (
         <PlainTable caption={`${s.roots ? 'Traces' : 'Spans'}, newest first`} className="traces-table">
@@ -800,48 +856,7 @@ export function TracesPage() {
 
       {rows.length > 0 && (
         <div className="obs-foot">
-          <div className="row">
-            <span className="kbd-hint">
-              <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>Enter</kbd> open · <kbd>x</kbd> select · <kbd>/</kbd> search
-            </span>
-            {!selected.size && (
-              <Dropdown label="Export" className="qbtn">
-                {(close) => (
-                  <>
-                    <div className="dd-section">This page</div>
-                    {(['json', 'jsonl', 'csv'] as const).map((f) => (
-                      <MenuItem
-                        key={f}
-                        onClick={() => {
-                          exportCalls(exportTargets, f, s.cols)
-                          close()
-                        }}
-                      >
-                        {f.toUpperCase()}
-                      </MenuItem>
-                    ))}
-                    <div className="dd-sep" />
-                    <MenuItem
-                      onClick={() => {
-                        setExtraModal('serverExport')
-                        close()
-                      }}
-                    >
-                      All matching rows (server)…
-                    </MenuItem>
-                    <MenuItem
-                      onClick={() => {
-                        setExtraModal('code')
-                        close()
-                      }}
-                    >
-                      Copy as code…
-                    </MenuItem>
-                  </>
-                )}
-              </Dropdown>
-            )}
-          </div>
+          <span className="grow" />
           <div className="row">
             <select className="input" value={s.limit} onChange={(e) => update({ limit: e.target.value === '50' ? null : e.target.value })} aria-label="Page size">
               {PAGE_SIZES.map((n) => (

@@ -66,17 +66,24 @@ export interface AutomationsSentenceInput {
   now?: number
 }
 
-/** "2 automations, 1 on. In the last 24 hours they fired 3 times; 1 delivery failed." */
+/** "2 automations; 1 is on. In the last 24 hours they fired 3 times; 1 delivery failed." */
 export function automationsSentence({ automations, runs, capped, now = Date.now() }: AutomationsSentenceInput): string {
   const n = automations.length
   if (!n) return 'No automations yet.'
   const on = automations.filter((a) => a.enabled).length
-  let s = `${plural(n, 'automation')}, ${on === n ? (n === 1 ? 'on' : n === 2 ? 'both on' : 'all on') : on === 0 ? (n === 1 ? 'off' : 'all off') : `${on} on`}.`
+  let s =
+    n === 1
+      ? `1 automation is ${on ? 'on' : 'off'}.`
+      : on === n
+        ? `${n === 2 ? 'Both' : `All ${n}`} automations are on.`
+        : on === 0
+          ? `${n === 2 ? 'Both' : `All ${n}`} automations are off.`
+          : `${plural(n, 'automation')}; ${on} ${on === 1 ? 'is' : 'are'} on.`
   const day = runs.filter((r) => !r.test && now - Date.parse(r.created_at) <= DAY)
   // When the page of runs is full and every one is from today, the count is a lower bound.
   const atLeast = capped && day.length === runs.length && runs.length > 0
   const they = n === 1 ? 'it' : 'they'
-  if (!day.length) return `${s} ${cap(they)} did not fire in the last 24 hours.`
+  if (!day.length) return `${s} ${cap(they)} ${n === 1 ? 'has' : 'have'} not fired in the last 24 hours.`
   const failed = day.filter((r) => r.status !== 'success').length
   s += ` In the last 24 hours ${they} fired ${atLeast ? 'at least ' : ''}${day.length === 1 ? 'once' : plural(day.length, 'time')}`
   s += failed ? `; ${failed === day.length ? (failed === 1 ? 'the delivery failed' : 'every delivery failed') : `${plural(failed, 'delivery', 'deliveries')} failed`}.` : ', and every delivery went through.'

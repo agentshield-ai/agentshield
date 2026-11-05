@@ -5,7 +5,7 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { AutomationRun } from '../../api/automations'
-import { fmtDate } from '../../lib/format'
+import { fmtDate, fmtDuration } from '../../lib/format'
 import { relativeTime } from '../../lib/summaries'
 import { spanUrl } from '../../lib/urls'
 import { JsonBlock } from '../ValueView'
@@ -85,7 +85,7 @@ export function RunsTable({ projectId, runs, showAutomation = true }: { projectI
                   <RunStatus run={r} />
                   {r.response_status ? <span className="quiet-note" style={{ display: 'inline', marginLeft: 6 }}>HTTP {r.response_status}</span> : null}
                 </td>
-                <td className="num">{r.duration_ms != null ? `${Math.round(r.duration_ms)} ms` : '—'}</td>
+                <td className="num">{fmtDuration(r.duration_ms)}</td>
                 <td>
                   <button type="button" className="qbtn sm plain" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : r.id)}>
                     {isOpen ? 'Hide' : 'Details'}

@@ -262,12 +262,12 @@ function teamSecurity(c: Partial<Record<string, number>> | null | undefined): st
   return xs.length ? `AgentShield ${joinClauses(xs)}.` : ''
 }
 
-/** "Worked in 7 sessions, and 3 failed." */
+/** "Worked in 7 sessions and 3 failed." */
 function teamSessions(t: TeamSummary): string {
   const n = t.session_count
   if (!n) return 'No sessions recorded.'
   if (n === 1) return t.error_session_count ? 'Worked in one session, which failed.' : 'Worked in one session.'
-  return `Worked in ${n} sessions${t.error_session_count ? `, and ${t.error_session_count} failed` : ''}.`
+  return `Worked in ${n} sessions${t.error_session_count ? ` and ${t.error_session_count} failed` : ''}.`
 }
 
 /** The line under a team row: its sessions and failures, hand-offs, and what AgentShield did. */
@@ -319,34 +319,46 @@ export function worstHandoff(edges: GraphEdge[]): GraphEdge | null {
 
 /**
  * One team's page sentence, leading with the hand-off that fails most
- * (DESIGN.md §7): "Trip planners worked in 7 sessions, and 3 failed. The
- * hand-off that fails most, from orchestrator to researcher, failed 3 of 5
- * times (60%), usually after 1.3 seconds."
+ * (DESIGN.md §7): "Trip planners worked in 7 sessions and 3 failed, each
+ * time at the hand-off from orchestrator to researcher, which failed 3 of 5
+ * times, usually after 1.3 seconds." "Each time at the hand-off" is said only
+ * when that route's failures account for every failed session and no other
+ * route failed; otherwise: "… and 3 failed. The hand-off that fails most,
+ * from orchestrator to researcher, failed 3 of 5 times, …".
  */
 export function teamOutcome(d: TeamDetail): LinkedPart[] {
   const out: LinkedPart[] = []
   const name = teamName(d)
   const n = d.session_count
-  if (!n) out.push(`${name} has no sessions recorded.`)
-  else if (n === 1) out.push(`${name} worked in one session${d.error_session_count ? ', which ' : '.'}`, ...(d.error_session_count ? [{ text: 'failed', sessions: { team: d.team_id, status: 'error', time: 'all' } } as LinkedPart, '.'] : []))
-  else {
-    out.push(`${name} worked in ${n} sessions`)
-    if (d.error_session_count) out.push(', and ', { text: `${d.error_session_count} failed`, sessions: { team: d.team_id, status: 'error', time: 'all' } })
-    out.push('.')
-  }
+  const failed = d.error_session_count
+  const failedLink = (text: string): LinkedPart => ({ text, sessions: { team: d.team_id, status: 'error', time: 'all' } })
   const worst = worstHandoff(d.handoff_stats ?? [])
   const forward = (d.handoff_stats ?? []).filter((e) => e.kind !== 'return')
-  if (worst) {
-    const after = worst.p50_ms != null ? `, usually after ${durationWords(worst.p50_ms)}` : ''
-    out.push(
-      ' The hand-off that fails most, ',
-      { text: `from ${worst.from} to ${worst.to}`, sessions: { team: d.team_id, agent: worst.to, status: 'error', time: 'all' } },
-      `, failed ${worst.errors} of ${worst.count} times (${Math.round(worst.error_rate * 100)}%)${after}.`,
-    )
-  } else if (forward.length) {
+  const failedHandoffs = forward.reduce((s, e) => s + e.errors, 0)
+  const route = (w: GraphEdge): LinkedPart => ({ text: `the hand-off from ${w.from} to ${w.to}`, sessions: { team: d.team_id, agent: w.to, status: 'error', time: 'all' } })
+  const after = (w: GraphEdge) => (w.p50_ms != null ? `, usually after ${durationWords(w.p50_ms)}` : '')
+  const times = (w: GraphEdge) => `${w.errors} of ${w.count} ${w.count === 1 ? 'time' : 'times'}`
+  // Every failed session failed at this one route: its failures are all the failures, one per failed session.
+  const eachTime = !!worst && failed > 0 && worst.errors === failed && failedHandoffs === worst.errors
+
+  if (!n) out.push(`${name} has no sessions recorded.`)
+  else if (n === 1) {
+    if (!failed) out.push(`${name} worked in one session.`)
+    else if (eachTime) out.push(`${name} worked in one session, which `, failedLink('failed'), ' at ', route(worst!), `${after(worst!)}.`)
+    else out.push(`${name} worked in one session, which `, failedLink('failed'), '.')
+  } else {
+    out.push(`${name} worked in ${n} sessions`)
+    if (failed) out.push(' and ', failedLink(`${failed} failed`))
+    if (eachTime) out.push(failed === 1 ? ', at ' : ', each time at ', route(worst!), `, which failed ${times(worst!)}${after(worst!)}.`)
+    else out.push('.')
+  }
+  if (worst && !eachTime) {
+    const r = route(worst) as { text: string; sessions: FilterState }
+    out.push(' The hand-off that fails most, ', { ...r, text: r.text.replace(/^the hand-off /, '') }, `, failed ${times(worst)}${after(worst)}.`)
+  } else if (!worst && forward.length) {
     const total = forward.reduce((s, e) => s + e.count, 0)
     out.push(total === 1 ? ' Its one hand-off did not fail.' : ` None of its ${total} hand-offs failed.`)
-  } else if (n) {
+  } else if (!worst && n) {
     out.push(' Its agents did not hand work to each other.')
   }
   const sec = teamSecurity(d.detection_count)
@@ -370,30 +382,9 @@ export function partsText(parts: LinkedPart[]): string {
   return parts.map((p) => (typeof p === 'string' ? p : p.text)).join('')
 }
 
-// ---------------------------------------------------------------- analytics (developer views)
+// ---------------------------------------------------------------- analytics
 
 const num = (n: number) => n.toLocaleString('en-US')
-
-/** Figures of one agent in the analytics index (/agents/query). */
-export interface AgentStatsFigures {
-  invocation_count: number
-  invocation_error_count: number
-  error_count: number
-  span_count: number
-  conversation_count: number
-  latency_ms_p50: number | null
-  latency_ms_p95: number | null
-  total_input_tokens: number
-  total_output_tokens: number
-  total_cost_usd: number | null
-}
-
-/** "Usually taking 1.3 seconds (4 seconds at the 95th percentile)" or "". */
-function typical(p50: number | null, p95: number | null): string {
-  if (p50 == null) return ''
-  const tail = p95 != null && Math.round(p95) > Math.round(p50) ? ` (${durationWords(p95)} at the 95th percentile)` : ''
-  return `, usually taking ${durationWords(p50)}${tail}`
-}
 
 /** "It used 44,160 tokens, costing $0.29." */
 function usage(tokens: number, cost: number | null, who = 'It'): string {
@@ -403,54 +394,41 @@ function usage(tokens: number, cost: number | null, who = 'It'): string {
   return t ? `${t}, costing ${fmtCost(cost)}.` : `${who} cost ${fmtCost(cost)}.`
 }
 
-/**
- * One agent's analytics sentence: "Ran 7 times in 3 conversations, usually
- * taking 1.3 seconds (4 seconds at the 95th percentile). 2 of its 7 runs
- * failed, and 5 of its 120 spans ended with an error. It used 44,160 tokens,
- * costing $0.23."
- */
-export function agentStatsSentence(a: AgentStatsFigures): string {
-  const out: string[] = []
-  const where = a.conversation_count ? ` in ${countWord(a.conversation_count, 'conversation')}` : ''
-  out.push(a.invocation_count ? `Ran ${a.invocation_count === 1 ? 'once' : `${num(a.invocation_count)} times`}${where}${typical(a.latency_ms_p50, a.latency_ms_p95)}.` : `Recorded ${plural(a.span_count, 'span')}${where}.`)
-  const fails: string[] = []
-  if (a.invocation_error_count) fails.push(`${ofIts(a.invocation_error_count, a.invocation_count, 'run')} failed`)
-  if (a.error_count) fails.push(`${ofIts(a.error_count, a.span_count, 'span')} ended with an error`)
-  out.push(fails.length ? `${cap(joinClauses(fails))}.` : 'Nothing failed.')
-  const u = usage(a.total_input_tokens + a.total_output_tokens, a.total_cost_usd)
-  if (u) out.push(u)
-  return out.join(' ')
-}
-
-/** Totals over every agent in a time window (the analytics dashboard). */
+/** Totals over a time window, of every agent or of one (the analytics pages). */
 export interface AgentsTotals {
   agents: number
-  conversations: number
-  spans: number
+  sessions: number
   invocations: number
   failed: number
   tokens: number
   cost: number
 }
 
-/** "In the last 24 hours, 5 agents ran 20 times in 8 conversations (1,200 spans). 3 of the runs failed. They used 44,160 tokens, costing $0.29." */
-export function agentsTotalsSentence(t: AgentsTotals, time: TimeRange | string): string {
-  const range = time === '6h' ? 'in the last 6 hours' : (RANGE_PHRASE[time as TimeRange] ?? '')
+/**
+ * The analytics sentence, of every agent ("In the last 24 hours, 5 agents
+ * ran 18 times in 10 sessions. 6 of the runs failed. They used 47,360
+ * tokens, costing $0.31.") or of one ("In the last 24 hours, coder ran 3
+ * times in 3 sessions. None of its runs failed. It used …").
+ */
+export function analyticsSentence(t: AgentsTotals, time: TimeRange | string, agent?: string): string {
+  const range = time === '1h' ? 'in the last hour' : time === '6h' ? 'in the last 6 hours' : (RANGE_PHRASE[time as TimeRange] ?? '')
   const lead = range ? `${cap(range)}, ` : ''
-  if (!t.agents && !t.spans) return `${lead ? `${lead}n` : 'N'}othing was recorded.`
-  const who = t.agents ? `${plural(t.agents, 'agent').replace(/^\d+/, num(t.agents))}` : 'agents'
+  if (!t.invocations && !t.tokens && !(agent ? false : t.agents)) return `${lead ? `${lead}n` : 'N'}othing was recorded${agent ? ` for ${agent}` : ''}.`
+  const who = agent ?? (t.agents ? plural(t.agents, 'agent').replace(/^\d+/, num(t.agents)) : 'agents')
   const ran = t.invocations ? ` ran ${t.invocations === 1 ? 'once' : `${num(t.invocations)} times`}` : ' ran'
-  const where = t.conversations ? ` in ${plural(t.conversations, 'conversation').replace(/^\d+/, num(t.conversations))}` : ''
-  const out = [`${lead}${who}${ran}${where} (${plural(t.spans, 'span').replace(/^\d+/, num(t.spans))}).`]
-  if (t.invocations) out.push(t.failed ? `${t.failed === t.invocations && t.failed > 1 ? `All ${num(t.failed)}` : num(t.failed)} of the runs failed.` : 'None of the runs failed.')
-  const u = usage(t.tokens, t.cost, t.agents === 1 ? 'It' : 'They')
+  const where = t.sessions ? ` in ${plural(t.sessions, 'session').replace(/^\d+/, num(t.sessions))}` : ''
+  const out = [`${lead}${who}${ran}${where}.`]
+  const its = agent ? 'its runs' : 'the runs'
+  const all = t.failed === 2 ? 'Both' : `All ${num(t.failed)}`
+  if (t.invocations) out.push(t.failed ? `${t.failed === t.invocations && t.failed > 1 ? all : num(t.failed)} of ${its} failed.` : `None of ${its} failed.`)
+  const u = usage(t.tokens, t.cost, agent || t.agents === 1 ? 'It' : 'They')
   if (u) out.push(u)
   return out.join(' ').replace(/^./, (c) => c.toUpperCase())
 }
 
-/** One conversation's sentence: "12 turns with coder and reviewer, in 40 spans; 2 ended with an error." */
+/** The turn view's sentence: "12 turns with coder and reviewer; 2 steps ended with an error." */
 export function conversationSentence(c: { total_turns: number; agent_names: string[]; span_count: number; error_count: number }): string {
   const agents = c.agent_names.length ? ` with ${joinClauses(c.agent_names).replace(/, and /, ' and ')}` : ''
-  const head = `${cap(countWord(c.total_turns, 'turn'))}${agents}, in ${plural(c.span_count, 'span').replace(/^\d+/, num(c.span_count))}`
-  return c.error_count ? `${head}; ${c.error_count === 1 ? 'one ended' : `${num(c.error_count)} ended`} with an error.` : `${head}. Nothing failed.`
+  const head = `${cap(countWord(c.total_turns, 'turn'))}${agents}`
+  return c.error_count ? `${head}; ${c.error_count === 1 ? 'one step' : `${num(c.error_count)} steps`} ended with an error.` : `${head}. Nothing failed.`
 }

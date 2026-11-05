@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from '../../api/client'
 import { queuesApi, type AnnotationQueue } from '../../api/queues'
 import { parseRef } from '../../api/refs'
 import { ErrorBox, Modal } from '../../components/common'
@@ -20,9 +21,9 @@ import { Sentence } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
 import { undoable } from '../../components/ui/Toasts'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate } from '../../lib/format'
-import { joinClauses, relativeTime } from '../../lib/summaries'
-import { queueLine, queuesSentence } from '../../lib/summaries/evaluate'
+import { fmtDate, fmtRelative } from '../../lib/format'
+import { queueAsks, queueLine, queuesSentence } from '../../lib/summaries/evaluate'
+
 import { tracesUrl } from '../../lib/urls'
 import '../evaluations/evaluate.css'
 
@@ -40,6 +41,14 @@ export function QueuesPage() {
     queryKey: ['annotation-queue-stats', projectId, ids],
     queryFn: () => queuesApi.stats(projectId, ids).then((r) => new Map(r.stats.map((s) => [s.queue_id, s]))),
     enabled: ids.length > 0,
+  })
+  // The queues' annotation fields, read once, so each row can say what it asks of reviewers.
+  const specRefs = [...new Set((queues.data ?? []).flatMap((q) => q.scorer_refs))].sort()
+  const specs = useQuery({
+    queryKey: ['annotation-specs', projectId, specRefs],
+    queryFn: () => api.refsRead(specRefs).then((r) => new Map(specRefs.map((ref, i) => [ref, r.items[i]]))),
+    enabled: specRefs.length > 0,
+    staleTime: 60_000,
   })
   const live = (queues.data ?? []).filter((q) => !hiddenQueues.has(q.id))
   const shown = live.filter((q) => !search || q.name.toLowerCase().includes(search.toLowerCase()) || q.description.toLowerCase().includes(search.toLowerCase()))
@@ -69,15 +78,27 @@ export function QueuesPage() {
   const row = (q: AnnotationQueue) => {
     const c = counts(q.id)
     const left = c.total - c.done
-    const fields = q.scorer_refs.map((r) => parseRef(r)?.name ?? r)
+    const fields = q.scorer_refs.map((r) => {
+      const v = specs.data?.get(r)
+      return { name: String(v?.name ?? parseRef(r)?.name ?? r), schema: v?.field_schema ?? null }
+    })
+    // Waiting: the approval glyph; all reviewed: a check. An empty queue has nothing to show, so no glyph (a blank keeps the text aligned).
+    const glyph =
+      left > 0 ? (
+        <StatusGlyph kind="approval" label={`${left} left to review`} />
+      ) : c.total ? (
+        <StatusGlyph kind="ok" label="All reviewed" />
+      ) : (
+        <span className="ev-glyph-space" aria-hidden />
+      )
     return (
       <ListRow
         key={q.id}
-        glyph={left > 0 ? <StatusGlyph kind="approval" label={`${left} left to review`} /> : <StatusGlyph kind="ok" label={c.total ? 'All reviewed' : 'Empty'} />}
+        glyph={glyph}
         title={q.name}
         summary={stats.data ? queueLine(c) : 'Counting…'}
-        meta={[q.description, fields.length ? `asks for ${joinClauses(fields)}` : 'no annotation fields', q.created_by && q.created_by !== 'anonymous' ? `by ${q.created_by}` : ''].filter(Boolean).join(' · ')}
-        time={relativeTime(q.updated_at)}
+        meta={[q.description, queueAsks(fields), q.created_by && q.created_by !== 'anonymous' ? `by ${q.created_by}` : ''].filter(Boolean).join(' · ')}
+        time={fmtRelative(q.updated_at)}
         timeTitle={`Updated ${fmtDate(q.updated_at)}`}
         to={queueUrl(projectId, q.id)}
         trailing={

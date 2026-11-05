@@ -24,7 +24,7 @@ import {
   type FilterClause,
   type SummaryPart,
 } from './summaries'
-import { ruleWords } from './ruleWords'
+import { ruleWords, sentenceCase } from './ruleWords'
 import { buildTimeline } from './timeline'
 
 const F = fixture as unknown as {
@@ -151,6 +151,17 @@ describe('words', () => {
     const unknown = ruleWords({ id: 'x', title: 'Unusual Tool Call Velocity in Session' }, 'Bash')
     expect(unknown).toEqual({ noun: 'a Bash call', purpose: 'to call Bash', reason: 'It matched the AgentShield rule “Unusual Tool Call Velocity in Session”.', known: false })
   })
+
+  it.each([
+    ['Remote Code Execution via Piped Script Download', 'Remote code execution via piped script download'],
+    ['AWS Credential File Access', 'AWS credential file access'],
+    ['MCP Tool Poisoning via GitHub Issue', 'MCP tool poisoning via GitHub issue'],
+    ['already sentence case', 'already sentence case'],
+    ['Read A File', 'Read a file'],
+    ['', ''],
+  ])('writes the rule title %j in sentence case', (title, want) => {
+    expect(sentenceCase(title)).toBe(want)
+  })
 })
 
 describe('session rows', () => {
@@ -181,12 +192,12 @@ describe('session rows', () => {
       'approval-heavy with overrides',
       session({ detection_count: { require_approval: 5 }, duration_ms: 30_000 }),
       { detections: [0, 1, 2, 3, 4].map((i) => det({ id: `d${i}`, overridden: i < 3 })) },
-      'Asked 5 times to read credential files. The user overrode 3 of them.',
+      'Asked 5 times to read credential files. You approved 3 of them.',
       'approval',
       true,
     ],
     ['approval-heavy, detections not loaded', session({ detection_count: { require_approval: 5 } }), {}, 'Asked for approval 5 times.', 'approval', true],
-    ['one approval, approved', session({ detection_count: { require_approval: 1 } }), { detections: [det({ overridden: true })] }, 'Asked once for approval to read credential files. The user approved it.', 'ok', false],
+    ['one approval, approved', session({ detection_count: { require_approval: 1 } }), { detections: [det({ overridden: true })] }, 'Asked once for approval to read credential files. You approved it.', 'ok', false],
     ['went on after a failed step', session({ failed_step: true, error_count: 1 }), {}, 'Finished, but one step failed on the way.', 'warning', true],
     ['went on after 2 failed steps', session({ failed_step: true, error_count: 2 }), {}, 'Finished, but 2 steps failed on the way.', 'warning', true],
     ['cost spike, median known', session({ cost_usd: 0.25 }), { costThreshold: 0.019, medianCost: 0.0062 }, 'Finished. Cost $0.25, about 40 times the median session.', 'cost', true],
@@ -229,7 +240,7 @@ describe('session rows', () => {
       'AgentShield blocked a script piped from the internet. The session went on and finished.',
     )
     expect(sessionSummaryLine(byId['code-deploy-1'], { ...ctx, detections: F.detections['code-deploy-1'] })).toBe(
-      'Asked 5 times to read credential files. The user overrode 3 of them.',
+      'Asked 5 times to read credential files. You approved 3 of them.',
     )
     expect(sessionSummaryLine(byId['trip-lisbon'], ctx)).toBe('Failed after 4 seconds. Goal completion scored 0.10.')
     expect(sessionSummaryLine(byId['code-test-1'], ctx)).toBe('Finished, but one step failed on the way.')
@@ -252,7 +263,7 @@ describe('the Sessions sentence', () => {
     const rows = F.list.items
     const parts = sessionsSentence({ attention: F.attention, time: '24h', filtered: false, rows, total: F.list.total_count })
     expect(text(parts)).toBe(
-      'Of the 10 sessions that ran in the last 24 hours, 3 failed, 1 was blocked by AgentShield, and 1 kept asking for approval. 2 more finished with something worth a look.',
+      '10 sessions ran in the last 24 hours. 3 failed, 1 was blocked by AgentShield and 1 kept asking for approval. 2 more finished with a failed step or a cost spike.',
     )
     const links = parts.filter((p): p is Exclude<SummaryPart, string> => typeof p !== 'string')
     expect(links.map((l) => [l.clause, l.count, 'session' in l ? (l.session?.id ?? null) : null, 'exact' in l ? l.exact : null])).toEqual([
@@ -306,7 +317,7 @@ describe('the Sessions sentence', () => {
       undefined,
       '1 session ran. It failed.',
     ],
-    ['one that scored low', att({ sessions: 1 }, { low_score: 1 }), '24h', false, [lowScored()], undefined, '1 session ran in the last 24 hours. It finished with something worth a look.'],
+    ['one that scored low', att({ sessions: 1 }, { low_score: 1 }), '24h', false, [lowScored()], undefined, '1 session ran in the last 24 hours. It finished with a low score.'],
     ['all finished', att({ sessions: 3 }), '30d', false, [session(), session(), session()], undefined, '3 sessions ran in the last 30 days. All of them finished.'],
     [
       'some still running: no "the rest finished"',
@@ -315,7 +326,7 @@ describe('the Sessions sentence', () => {
       true,
       [session({ status: 'error' }), session({ status: 'running' }), session()],
       undefined,
-      'Of the 3 sessions that match these filters in the last 24 hours, 1 failed. 1 is still running.',
+      '3 sessions match these filters in the last 24 hours. 1 failed. 1 is still running.',
     ],
     [
       'nothing serious, some worth a look',
@@ -324,7 +335,7 @@ describe('the Sessions sentence', () => {
       false,
       [lowScored(), session({ failed_step: true, error_count: 1 }), session(), session()],
       undefined,
-      '4 sessions ran in the last 24 hours. 2 finished with something worth a look.',
+      '4 sessions ran in the last 24 hours. 2 finished with a failed step or a low score.',
     ],
     [
       'one more, still running, needs a look',
@@ -333,7 +344,7 @@ describe('the Sessions sentence', () => {
       false,
       [session({ status: 'error' }), lowScored({ status: 'running' }), session({ status: 'running' })],
       undefined,
-      'Of the 3 sessions that ran in the last 24 hours, 1 failed. 1 more needs a look and 1 is still running.',
+      '3 sessions ran in the last 24 hours. 1 failed. 1 more needs a look and 1 is still running.',
     ],
     [
       'not every row loaded: a lower bound, and no claim about the rest',
@@ -342,9 +353,9 @@ describe('the Sessions sentence', () => {
       false,
       [session({ status: 'error' }), lowScored(), lowScored(), session({ status: 'running' })],
       200,
-      'Of the 200 sessions that ran in the last 24 hours, 2 failed. At least 2 more finished with something worth a look.',
+      '200 sessions ran in the last 24 hours. 2 failed. At least 2 more finished with a low score.',
     ],
-    ['not every row loaded, nothing else loaded needs a look', att({ sessions: 200 }, { failed: 2 }), '24h', false, [session({ status: 'error' })], 200, 'Of the 200 sessions that ran in the last 24 hours, 2 failed.'],
+    ['not every row loaded, nothing else loaded needs a look', att({ sessions: 200 }, { failed: 2 }), '24h', false, [session({ status: 'error' })], 200, '200 sessions ran in the last 24 hours. 2 failed.'],
     [
       'two kinds of serious clause',
       att({ sessions: 5, blocked: 2, approval_heavy: 0 }, { failed: 1, security: 2 }),
@@ -352,15 +363,23 @@ describe('the Sessions sentence', () => {
       false,
       [],
       5,
-      'Of the 5 sessions that ran in the last hour, 1 failed and 2 were blocked by AgentShield.',
+      '5 sessions ran in the last hour. 1 failed and 2 were blocked by AgentShield.',
     ],
   ] as [string, SessionAttention, '24h' | '7d' | '30d' | 'all' | '1h', boolean, SessionSummary[], number | undefined, string][])('%s', (_n, a, time, filtered, rows, total, want) => {
     expect(text(sessionsSentence({ attention: a, time, filtered, rows, total: total ?? (rows.length || a.sessions) }))).toBe(want)
   })
 
-  it('is at most two sentences', () => {
+  it('is at most three short sentences', () => {
     const parts = sessionsSentence({ attention: F.attention, time: '24h', filtered: false, rows: F.list.items, total: F.list.total_count })
-    expect(text(parts).match(/[.!?](\s|$)/g)?.length).toBeLessThanOrEqual(2)
+    expect(text(parts).match(/[.!?](\s|$)/g)?.length).toBeLessThanOrEqual(3)
+  })
+
+  it('names every kind the other ones have, most serious first', () => {
+    const rows = [session({ cost_usd: 9 }), session({ scores: { G: { mean: 0.2, count: 1 } } }), session({ failed_step: true, error_count: 1 }), session()]
+    const a = att({ sessions: 4, cost_spike_threshold: 5 })
+    expect(text(sessionsSentence({ attention: a, time: '24h', filtered: false, rows, total: 4 }))).toBe(
+      '4 sessions ran in the last 24 hours. 3 finished with a failed step, a low score or a cost spike.',
+    )
   })
 
   it('links approval-heavy sessions exactly when nothing was blocked', () => {
@@ -381,7 +400,7 @@ describe('session outcome', () => {
     ['code-lint-1', 'Finished, after AgentShield blocked one step. After asking the reviewer, the coder ran “npm i -D eslint”, which worked.'],
     ['trip-lisbon', "Failed after 4 seconds. The researcher's web_search call failed: upstream timeout after 400 ms (HTTP 504)."],
     ['code-test-1', "Finished, but the coder's Bash call failed on the way (exit status 1: 3 tests failed (DATABASE_URL is not set)). The coder then ran “DATABASE_URL=sqlite::memory: npm test”, which worked."],
-    ['code-deploy-1', 'Finished, after asking for approval 5 times. The user overrode 3 of them.'],
+    ['code-deploy-1', 'Finished, after asking for approval 5 times. You approved 3 of them.'],
     ['trip-oslo', 'Finished in 4 seconds.'],
   ])('%s', (id, want) => expect(outcome(id)).toBe(want))
 

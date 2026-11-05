@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareSentence, spanSentence, spanSessionSentence, spanSessionsSentence, statusGlyph, tracesSentence, type TracePart } from './traces'
+import { compareSentence, spanSentence, spanSessionLine, spanSessionSentence, spanSessionsSentence, statusGlyph, tracesSentence, turnName, type TracePart } from './traces'
 
 const text = (ps: TracePart[]) => ps.map((p) => (typeof p === 'string' ? p : p.text)).join('')
 
@@ -70,4 +70,20 @@ describe('compareSentence', () => {
     [{ spans: 1, fields: 7, differ: 0, missing: 1, diffMode: false }, 'Only one of these spans was found; pick another on Traces to compare.'],
   ]
   for (const [i, want] of cases) it(want, () => expect(compareSentence(i)).toBe(want))
+})
+
+describe('sessions by id rows', () => {
+  it('names a session by its first request', () => {
+    expect(turnName({ question: 'What is your refund policy?', user_id: 'u1' })).toBe('What is your refund policy?')
+    expect(turnName({ self: 'x', messages: [{ role: 'system', content: 'Be brief' }, { role: 'user', content: [{ type: 'text', text: 'Hi there' }] }] })).toBe('Hi there')
+    expect(turnName({ n: 3, note: 'only text' })).toBe('only text')
+    expect(turnName({ n: 3 })).toBe('')
+    expect(turnName(null)).toBe('')
+  })
+  it('says turns, spans, turn time and cost once', () => {
+    expect(spanSessionLine({ turn_count: 4, span_count: 12, p50_turn_duration_ms: 1350, p99_turn_duration_ms: 3740, cost_usd: 0.0034 })).toBe(
+      '4 turns, 12 spans. Turns take about 1.4 s, up to 3.7 s. $0.0034.',
+    )
+    expect(spanSessionLine({ turn_count: 1, span_count: 1, p50_turn_duration_ms: 565, p99_turn_duration_ms: 565, cost_usd: 0 })).toBe('1 turn, 1 span. The turn took 565 ms.')
+  })
 })

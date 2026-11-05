@@ -7,14 +7,13 @@ Teams pages show how work flows between them and where it breaks.
 ## Find the hand-off that fails most
 
 1. Open **Teams** and click a team.
-2. The **Most failing hand-off** box at the top names the route (for example
-   orchestrator → researcher) and how often it failed.
+2. The sentence at the top names the hand-off that fails most (for example
+   from orchestrator to researcher) and how often it failed.
 3. The **Hand-offs** table lists every route, the most failing first, with its
    count, error rate, typical time taken and average score.
 
-Then open one of the team's failed sessions under **Recent sessions** and
-choose **Go to the failure** to see the failed hand-off and the reasoning
-behind it.
+Then open one of the team's failed sessions under **Recent sessions**: it
+opens at the failed hand-off, with the reasoning behind it.
 
 ## Read a team page
 

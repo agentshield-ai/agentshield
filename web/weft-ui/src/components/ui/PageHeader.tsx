@@ -12,8 +12,9 @@
 //   <PageHeader title="Sessions" help="sessions.md" controls={<>…</>} sentence={<Sentence parts={…} />} />
 //   <PageHeader variant="detail" back={{ to: sessionsUrl(pid), label: 'Sessions' }}
 //     title={title} sentence={outcome} meta="Code crew · coder and reviewer · …" help="sessions.md#read-a-session" />
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { setNavHint } from './navHint'
 
 /** The in-app path of a guide: helpUrl('sessions.md#keyboard') → /help/sessions.md#keyboard. */
 export function helpUrl(doc: string): string {
@@ -57,6 +58,13 @@ export function PageHeader({
   className?: string
 }) {
   const topic = helpTopic ?? (typeof title === 'string' ? title : undefined)
+  // The sidebar highlights the list this page's back link leads to (a dataset's page, at /objects/…, belongs to Datasets).
+  const backTo = back?.to
+  useEffect(() => {
+    if (!backTo) return
+    setNavHint(backTo)
+    return () => setNavHint(null)
+  }, [backTo])
   const heading = (
     <div className="ph-title-line">
       <h1 className="ph-title">{title}</h1>

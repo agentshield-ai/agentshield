@@ -25,22 +25,26 @@ counts every blocked or approval-heavy session).
 
 ## Find a session
 
-The list shows the most recent sessions first, each with the user's first
-request, the agents involved, the outcome, how long it took and what it cost.
-Badges flag problems:
+The sentence at the top says how the sessions in the time range went, for
+example "Of the 10 sessions that ran in the last 24 hours, 3 failed and 1 was
+blocked by AgentShield". Each part of it is a link to the sessions it counts.
 
-- **Blocked** or **Needs approval**: click the badge to jump straight to that
-  tool call.
-- **N failed steps** (or **A step failed**, when the step that failed is not
-  an agent span, such as a database call under the server span around the
-  agent): click it to jump to the failed step.
-- **Go to the failure**: on a failed session, opens the step that failed.
-- **Verdicts only — no agent spans recorded**: AgentShield checked tool calls
-  in this session, but the agent itself sent no spans to Weft, so its steps,
-  duration and cost are unknown (the duration shows as —), and so is its
-  outcome: its status shows as **No agent data**, never Succeeded or Failed,
-  even when a call was blocked. `status:unknown` lists these sessions.
-  Connect the agent (see [Set up](setup.md)) to record them.
+Below it the sessions are grouped:
+
+- **Needs a look:** sessions that failed, were blocked, kept asking for
+  approval, or finished with something odd (a failed step on the way, an
+  unusually high cost). Each row says what happened in one line.
+- **Still running** and **Finished:** the rest, newest first.
+
+Each row shows the user's first request, what happened, the team and agents
+involved, and when it ran. Open a row to see the session; it opens at the
+step that failed or was blocked.
+
+A session where AgentShield checked tool calls but the agent itself sent no
+spans to Weft has no steps, duration or cost, and its outcome is unknown: its
+status is **No agent data**, never Succeeded or Failed, even when a call was
+blocked. `status:unknown` lists these sessions. Connect the agent (see
+[Set up](setup.md)) to record them.
 
 A session's status comes from the top-level spans of its traces, as on
 Traces, so a status chip keeps the same runs on both pages (see
@@ -71,9 +75,11 @@ The breadcrumb at the top always shows where you are: Session › Agent › Turn
 
 ## Get from a problem to its cause
 
-When a session has a problem, a box above the timeline lists it with a
-**Show step** button. That scrolls to the step, opens it, and expands the
-reasoning that led to it. Tick **Only problems** to hide everything else.
+When a session failed or was blocked, the sentence at the top says what went
+wrong, and the session opens at the step responsible: the story scrolls to
+it, and the panel beside the story shows its details (the tool, its input,
+the error or the rule that fired). The reasoning that led to the step is just
+above it in the story.
 
 ## Keyboard
 

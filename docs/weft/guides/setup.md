@@ -10,7 +10,8 @@ traces, datasets and evaluations. Its name has two parts, a team and a name,
 for example `my-team/support-bot`.
 
 1. Open Weft in your browser (by default at `http://127.0.0.1:6345`).
-2. Type a project name under **New project** and choose **Open project**.
+2. Under **Open or start a project**, type a name such as
+   `my-team/support-bot` and choose **Open project**.
 
 The project is created the first time data arrives, so nothing is stored yet.
 

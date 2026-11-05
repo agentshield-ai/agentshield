@@ -32,9 +32,9 @@ describe('agent helpers', () => {
 
 describe('agent evals', () => {
   it('links to the Spans view filtered to a run', () => {
-    expect(evalSpansUrl('e/p', 'run-1')).toBe('/e/p/agents?tab=spans&eval=run-1&range=all')
-    expect(evalSpansUrl('e/p', 'run-1', { pred: 'pas-1', conversations: true })).toBe('/e/p/agents?tab=spans&eval=run-1&range=all&pred=pas-1&group=conversation_id')
-    expect(evalSpansUrl('e/p', 'run-1', { agent: 'a b' })).toBe('/e/p/agents/a%20b?tab=spans&eval=run-1&range=all')
+    expect(evalSpansUrl('e/p', 'run-1')).toBe('/e/p/agent-analytics?tab=spans&eval=run-1&range=all')
+    expect(evalSpansUrl('e/p', 'run-1', { pred: 'pas-1', conversations: true })).toBe('/e/p/agent-analytics?tab=spans&eval=run-1&range=all&pred=pas-1&group=conversation_id')
+    expect(evalSpansUrl('e/p', 'run-1', { agent: 'a b' })).toBe('/e/p/agents/a%20b/analytics?tab=spans&eval=run-1&range=all')
   })
   it('round-trips the evaluation filter through the URL and into the query', () => {
     const f = readSpanFilters(new URLSearchParams('eval=run-1&pred=pas-2&op=chat'))

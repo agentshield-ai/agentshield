@@ -5,8 +5,10 @@
    tokens.css. */
 
 /* ---------- page frame ---------- */
-/* .page-frame: a redesigned page's column: 920 px for lists, 1120 px for a
-   detail page with an inspector; 36/40 px padding, 16 px on a phone. */
+/* .page-frame: every page's column, centred in the main area: 920 px, the
+   same for lists and detail pages, so content does not jump between pages;
+   1120 px for a page with an inspector beside its content (.wide, or found
+   by the inspector it holds). 36/40 px padding, 16 px on a phone. */
 .page-frame {
   width: 100%;
   max-width: calc(920px + 80px);
@@ -20,9 +22,14 @@
   min-width: 0;
 }
 .page-frame.detail {
-  max-width: calc(1120px + 80px);
   padding-top: 28px;
   gap: 22px;
+}
+.page-frame.wide,
+.page-frame.detail:has(aside.inspector),
+.page-frame.detail:has(.obs-span-split),
+.page-frame.playground {
+  max-width: calc(1120px + 80px);
 }
 @media (max-width: 640px) {
   .page-frame,
@@ -256,9 +263,12 @@ a.lrow-link:focus-visible {
   font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text);
+  /* Long titles wrap to two lines, then end in an ellipsis. */
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   min-width: 0;
 }
 .lrow-time {
@@ -611,6 +621,14 @@ a.lrow-link:focus-visible {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+/* A paragraph of notes is text: a link inside it sits in the sentence ("… turn view."), not apart as a flex item. */
+p.quiet-note {
+  display: block;
+  line-height: 1.5;
+}
+p.quiet-note > button {
+  margin-left: 6px;
 }
 
 /* ---------- app shell (Layout.tsx) ---------- */

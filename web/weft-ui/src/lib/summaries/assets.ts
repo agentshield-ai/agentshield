@@ -5,7 +5,9 @@
 // "used by 2 evaluations"), with "object", "ref" and "digest" left to the
 // inspector and the raw view. Table-driven tests: assets.test.ts.
 import type { Any, WeftObject } from '../../api/types'
+import { fmtDuration, fmtRelative, versionLabel } from '../format'
 import { joinClauses, plural, relativeTime } from '../summaries'
+import { metricText, scoreMetrics } from './evaluate'
 
 /** The list pages (mirrors components/objects/objectUtils ObjectPageKind). */
 export type AssetKind = 'datasets' | 'models' | 'prompts' | 'scorers' | 'ops' | 'all'
@@ -24,11 +26,9 @@ export const ASSET_NOUN: Record<AssetKind, { one: string; many: string }> = {
 
 type Obj = Pick<WeftObject, 'name' | 'kind' | 'class' | 'value' | 'version' | 'created_at' | 'aliases'> & { version_count?: number; user_id?: string | null; is_latest?: boolean }
 
-/** The human version number: the API counts from 0 ("v2"), people from 1 ("version 3"). */
-export const versionNumber = (o: Pick<WeftObject, 'version'>) => o.version + 1
-/** "version 3". */
-export const versionWords = (o: Pick<WeftObject, 'version'>) => `version ${versionNumber(o)}`
-/** The SDK's name for a version: "support-tickets:v2". */
+/** "version 3" for API version 2 (format.ts versionLabel: people count from 1). */
+export const versionWords = (o: Pick<WeftObject, 'version'>) => versionLabel(o.version)
+/** The SDK's name for a version: "support-tickets:v2". Only for the inspector's "In code" row and code snippets. */
 export const sdkName = (o: Pick<WeftObject, 'name' | 'version'>) => `${o.name}:v${o.version}`
 
 function valueClass(v: Any): string | null {
@@ -148,15 +148,29 @@ export function assetFacts(o: Obj, f: RowFacts = {}): string {
     const m = cls === 'LLMAsAJudgeScorer' ? modelName(v) : ''
     parts.push(m ? `LLM judge using ${m}` : typeof v?.target_column === 'string' && v.target_column ? `${kindWords(o)} on ${v.target_column}` : kindWords(o))
     if (f.serverScorer === false) parts.push('runs only in the SDK')
-  } else if (o.kind !== 'function') {
+  } else if (o.kind === 'evaluation') {
+    const n = Array.isArray(v?.scorers) ? v.scorers.length : 0
+    const ds = refName(v?.dataset)
+    parts.push(`scores ${ds ?? 'each row'} with ${plural(n, 'scorer')}`)
+  } else if (o.kind !== 'function' && kindWords(o) !== KIND_WORDS[o.kind]) {
+    // The group heading already names the plain kind ("Leaderboards"); say only a more exact one.
     parts.push(kindWords(o))
   }
   parts.push(versionWords({ version: (o.version_count ?? o.version + 1) - 1 }))
   if (f.usedBy) parts.push(`used by ${plural(f.usedBy, 'evaluation')}`)
   const aliases = (o.aliases ?? []).filter((a) => a !== 'latest')
   if (aliases.length) parts.push(`${aliases.length === 1 ? 'alias' : 'aliases'} ${aliases.join(', ')}`)
-  return parts.join(', ')
+  return cap(parts.join(', '))
 }
+
+/** The asset name a ref points at ("support-questions"), or null. */
+function refName(ref: unknown): string | null {
+  if (typeof ref !== 'string') return null
+  const m = /^weft:\/\/\/[^/]+\/[^/]+\/(?:object|op|function)\/([^:/]+)/.exec(ref)
+  return m ? decodeURIComponent(m[1]) : null
+}
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 const clip = (s: string, n: number) => {
   const one = s.replace(/\s+/g, ' ').trim()
@@ -248,7 +262,8 @@ export function assetsSentence({ kind, objects, rows, serverScorer, now = Date.n
       }.`,
     )
   } else if (kind === 'all') {
-    const kinds = new Set(objects.map((o) => kindWords(o)))
+    // One kind per group the page shows (its headings: Datasets, Scorers, …), not per class.
+    const kinds = new Set(objects.map((o) => o.kind))
     out.push(`${head} of ${plural(kinds.size, 'kind')}.`)
   } else {
     out.push(`${head}.`)
@@ -272,8 +287,6 @@ export function versionsSentence(name: string, versions: Obj[], now = Date.now()
   if (aliased.length) out.push(` ${joinClauses(aliased)}.`)
   return out
 }
-
-const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 export interface VersionSentenceInput {
   o: Obj
@@ -344,4 +357,52 @@ export function diffSentence({ a, b, same, changed, added, removed, rows }: Diff
         : ` The rows went from ${rows.a} to ${rows.b}: ${what(rows.added, 'added')}, ${what(rows.removed, 'removed')}.`
   }
   return s
+}
+
+// ---------------------------------------------------------------- runs on an asset's page
+
+const QUESTION_KEYS = ['question', 'query', 'input', 'prompt', 'text', 'message', 'task', 'q']
+const ANSWER_KEYS = ['answer', 'output', 'response', 'result', 'text', 'content', 'completion', 'message']
+const isRefText = (x: unknown) => typeof x === 'string' && x.startsWith('weft:///')
+
+function pickText(v: unknown, keys: string[]): string | null {
+  if (typeof v === 'string') return v.trim() ? v : null
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const o = v as Record<string, unknown>
+  for (const k of keys) if (typeof o[k] === 'string' && (o[k] as string).trim() && !isRefText(o[k])) return o[k] as string
+  for (const [k, x] of Object.entries(o)) if (k !== 'self' && typeof x === 'string' && x.trim() && !isRefText(x)) return x
+  return null
+}
+
+/** The title of a run row: the question it was asked ("Where is my order #4512?"), else its name. */
+export function runTitle(inputs: unknown, fallback: string, n = 140): string {
+  const t = pickText(inputs, QUESTION_KEYS)
+  return t ? clip(t, n) : fallback
+}
+
+/** What the run answered, or how it failed: "Your order shipped yesterday.", "Failed: RateLimitError: 429 Too Many Requests". */
+export function runAnswer(output: unknown, error?: string | null, n = 160): string {
+  if (error) return clip(`Failed: ${error.split('\n')[0]}`, n)
+  if (output == null) return 'No answer recorded.'
+  const t = pickText(output, ANSWER_KEYS)
+  if (t) return clip(t, n)
+  if (typeof output === 'number' || typeof output === 'boolean') return String(output)
+  try {
+    return clip(JSON.stringify(output), n)
+  } catch {
+    return ''
+  }
+}
+
+/** The time column of a run row: "3.4 s · 2 h ago" (no duration while it runs). */
+export function runWhen(latencyMs: number | null | undefined, startedAt: string, now = Date.now()): string {
+  return latencyMs == null ? fmtRelative(startedAt, now) : `${fmtDuration(latencyMs)} · ${fmtRelative(startedAt, now)}`
+}
+
+/** An evaluation run's scores as text: "exact match 0%, helpfulness judge score 2.75, mentions answer 100%". */
+export function runScores(summary: unknown, max = 4): string {
+  const ms = scoreMetrics(summary)
+  if (!ms.length) return 'No scores.'
+  const shown = ms.slice(0, max).map((m) => metricText(m.key, m.value))
+  return cap(joinClauses(ms.length > max ? [...shown, `${ms.length - max} more`] : shown))
 }

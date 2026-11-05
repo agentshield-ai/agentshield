@@ -11,6 +11,7 @@ import { ErrorBox, Modal, Spinner } from '../../components/common'
 import { ConfirmButton, Switch } from '../../components/objects/bits'
 import { SettingsEmpty, SettingsRow, SettingsSection, SettingsSentence } from '../../components/settings/SettingsList'
 import { PageHeader } from '../../components/ui/PageHeader'
+import { Icon } from '../../components/ui/Icons'
 import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
 import { fmtDate } from '../../lib/format'
 import { relativeTime } from '../../lib/summaries'
@@ -29,7 +30,7 @@ export function AdminPage() {
         variant="detail"
         back={{ to: '/', label: 'Projects' }}
         title="Users & teams"
-        help="project.md#settings"
+        help="project.md#users-and-teams"
         helpTopic="Users and teams"
         meta={me.data && !me.data.server_admin ? 'You are not a server admin: you see your own teams and manage the members of teams you administer.' : undefined}
       />
@@ -88,12 +89,7 @@ function UsersTab({ admin, myId }: { admin: boolean; myId?: string }) {
             </button>
           </>
         }
-        note={
-          <>
-            Users own API keys and browser sessions; a user's id is recorded as the <span className="mono">user_id</span> of what they write. People who sign in
-            with SSO are added automatically, and an account added here with the same email is linked on their first sign-in. Server admins can do everything.
-          </>
-        }
+        note="People who sign in with SSO are added automatically."
       >
         {users.error || err ? (
           <SettingsEmpty>
@@ -105,7 +101,7 @@ function UsersTab({ admin, myId }: { admin: boolean; myId?: string }) {
             <Spinner />
           </SettingsEmpty>
         ) : !users.data || users.data.users.length === 0 ? (
-          users.data && <SettingsEmpty>No users yet.</SettingsEmpty>
+          users.data && <SettingsEmpty>{admin ? 'Add a user to give someone their own API keys and sign-in.' : 'Only server admins add users.'}</SettingsEmpty>
         ) : (
           users.data.users.map((u) => (
             <SettingsRow
@@ -282,7 +278,7 @@ function TeamsTab({ admin, myTeamsAdmin }: { admin: boolean; myTeamsAdmin: strin
             Create a team
           </button>
         }
-        note="A team is the first part of a project id. Its members' roles apply to every project of the team, new ones too. Memberships from SSO come from identity-provider groups and are refreshed at each sign-in."
+        note="A team's roles apply to every project whose id starts with its name."
       >
         <ErrorBox error={teams.error} />
         {teams.isLoading && <Spinner />}
@@ -326,12 +322,14 @@ function TeamCard({ team, canManage, canDelete, onChange }: { team: Team; canMan
             className="qbtn sm plain danger"
             title={`Delete team ${team.name}?`}
             body="Members lose the roles they had through this team. Projects and their data are kept."
+            ariaLabel={`Delete team ${team.name}`}
+            tooltip="Delete this team"
             onConfirm={async () => {
               await iamApi.teamDelete(team.name)
               onChange()
             }}
           >
-            Delete team
+            <Icon name="trash" size={14} />
           </ConfirmButton>
         )
       }
@@ -341,7 +339,7 @@ function TeamCard({ team, canManage, canDelete, onChange }: { team: Team; canMan
           <ErrorBox error={err} />
         </SettingsEmpty>
       ) : null}
-      {team.members.length === 0 && <SettingsEmpty>No members yet.</SettingsEmpty>}
+      {team.members.length === 0 && !canManage && <SettingsEmpty>No members yet.</SettingsEmpty>}
       {team.members.map((m) => (
         <SettingsRow
           key={m.user_id}
@@ -357,8 +355,14 @@ function TeamCard({ team, canManage, canDelete, onChange }: { team: Team; canMan
                     </option>
                   ))}
                 </select>
-                <button type="button" className="qbtn sm plain danger" onClick={() => void run(() => iamApi.teamMemberRemove(team.name, m.user_id))}>
-                  Remove
+                <button
+                  type="button"
+                  className="qbtn sm plain danger"
+                  aria-label={`Remove ${m.user_id} from ${team.name}`}
+                  title="Remove from the team"
+                  onClick={() => void run(() => iamApi.teamMemberRemove(team.name, m.user_id))}
+                >
+                  <Icon name="trash" size={14} />
                 </button>
               </>
             ) : (

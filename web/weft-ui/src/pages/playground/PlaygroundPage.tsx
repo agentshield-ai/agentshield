@@ -17,8 +17,8 @@ import { addRun, loadRuns, saveRuns, type PlaygroundRun } from '../../components
 import type { ImageInputs } from '../../api/playground'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Segmented } from '../../components/ui/Segmented'
+import { fmtDuration, fmtRelative, versionLabel } from '../../lib/format'
 import { Sentence } from '../../components/ui/Sentence'
-import { shortDuration } from '../../lib/summaries'
 import { playgroundSentence, tokensText } from '../../lib/summaries/evaluate'
 import '../evaluations/evaluate.css'
 
@@ -186,6 +186,9 @@ function messageText(m: ChatMessage | undefined): string {
   if (Array.isArray(m.tool_calls) && m.tool_calls.length) return `→ ${m.tool_calls.map((t: Any) => t?.function?.name).join(', ')}()`
   return ''
 }
+
+/** The offline test models, in words for the sentence. */
+const OFFLINE_WORDS: Record<string, string> = { 'mock/echo': 'the offline echo model', 'mock/json': 'the offline JSON judge' }
 
 function pickDefaultModel(models: LLMModelInfo[]): string {
   const avail = models.filter((m) => m.available)
@@ -432,7 +435,7 @@ export function PlaygroundPage() {
       if (sync) setShared(st.msgs)
       setPanels((ps) => ps.map((x, i) => (i === 0 ? { ...x, model: st.model ?? x.model, params: st.params, messages: sync ? x.messages : st.msgs, result } : x)))
     }
-    setLoadNote(`Loaded a ${run.source === 'server' ? 'tracked' : 'previous'} run of ${run.model} from ${new Date(run.at).toLocaleString()}.`)
+    setLoadNote(`Loaded a ${run.source === 'server' ? 'tracked' : 'previous'} run of ${run.model} from ${fmtRelative(run.at)}.`)
   }
 
   const loadPrompt = (o: WeftObject, fromUrl = false) => {
@@ -447,7 +450,7 @@ export function PlaygroundPage() {
     }
     if (sync) setShared(msgs)
     else setPanels((ps) => ps.map((p) => ({ ...p, messages: msgs.map((m) => ({ ...m, id: uid() })) })))
-    setLoadNote(`Loaded prompt ${o.name} (v${o.version}).`)
+    setLoadNote(`Loaded prompt ${o.name} (${versionLabel(o.version)}).`)
     // A prompt picked from the menu replaces whatever the URL pointed at.
     if (!fromUrl && (fromCall || fromPrompt)) setParams({}, { replace: true })
   }
@@ -472,7 +475,7 @@ export function PlaygroundPage() {
   const editPanel = panels[Math.min(editIdx, panels.length - 1)]
   const sentence = playgroundSentence(
     panels.map((p) => ({
-      model: p.model || 'a model',
+      model: p.model ? (OFFLINE_WORDS[p.model] ?? p.model) : 'a model',
       running: p.result?.running,
       error: p.result?.error,
       latencyMs: p.result?.latencyMs,
@@ -496,32 +499,15 @@ export function PlaygroundPage() {
               value={mode}
               onChange={setMode}
             />
-            <PromptPicker projectId={projectId} onPick={loadPrompt} />
-            <Dropdown label="Save as" className="qbtn" align="right">
-              {(close) => (
-                <>
-                  <MenuItem
-                    onClick={() => {
-                      setSaveOpen(true)
-                      close()
-                    }}
-                  >
-                    A prompt (the messages)…
-                  </MenuItem>
-                  <MenuItem
-                    onClick={() => {
-                      setSaveModelOpen(true)
-                      close()
-                    }}
-                  >
-                    A model you can evaluate…
-                  </MenuItem>
-                </>
-              )}
-            </Dropdown>
-            <button type="button" className={`qbtn ${showHistory ? 'on' : ''}`} aria-pressed={showHistory} onClick={() => toggleHistory(!showHistory)} title="Past runs in this browser and tracked calls">
-              History{history.length ? <span className="qbtn-count">{history.length}</span> : null}
-            </button>
+            <PlaygroundMenu
+              projectId={projectId}
+              onPick={loadPrompt}
+              onSavePrompt={() => setSaveOpen(true)}
+              onSaveModel={() => setSaveModelOpen(true)}
+              history={history.length}
+              showHistory={showHistory}
+              onHistory={() => toggleHistory(!showHistory)}
+            />
             {mode === 'chat' && (
               <button type="button" className="qbtn primary" onClick={runAll} title="Run every model (Ctrl/⌘+Enter)">
                 Run{panels.length > 1 ? ' all' : ''}
@@ -648,16 +634,34 @@ export function PlaygroundPage() {
 
 // ---------------------------------------------------------------- pieces
 
-function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: WeftObject) => void }) {
+/** Everything in the header but the mode and Run: load a saved prompt, save the messages or a model, show the history. */
+function PlaygroundMenu({
+  projectId,
+  onPick,
+  onSavePrompt,
+  onSaveModel,
+  history,
+  showHistory,
+  onHistory,
+}: {
+  projectId: string
+  onPick: (o: WeftObject) => void
+  onSavePrompt: () => void
+  onSaveModel: () => void
+  history: number
+  showHistory: boolean
+  onHistory: () => void
+}) {
   const prompts = useQuery({
     queryKey: ['objects', projectId, 'Prompt', 'latest'],
     queryFn: () => api.objectsQuery({ project_id: projectId, filter: { kinds: ['prompt'], latest_only: true }, sort_by: [{ field: 'created_at', direction: 'desc' }], limit: 200 }),
   })
   const list = (prompts.data?.items ?? []).filter((o) => !o.deleted_at)
   return (
-    <Dropdown label="Load prompt" className="qbtn">
+    <Dropdown label="More" className="qbtn" align="right">
       {(close) => (
         <>
+          <div className="dd-note">Load a saved prompt</div>
           {prompts.isLoading && <div className="dd-note">Loading…</div>}
           {!prompts.isLoading && list.length === 0 && <div className="dd-note">No saved prompts in this project.</div>}
           {list.map((o) => (
@@ -669,9 +673,16 @@ function PromptPicker({ projectId, onPick }: { projectId: string; onPick: (o: We
               }}
             >
               <span className="grow">{o.name}</span>
-              <span className="faint small">{o.class ?? o.kind}</span>
             </MenuItem>
           ))}
+          <div className="dd-sep" />
+          <MenuItem onClick={() => (onSavePrompt(), close())}>Save the messages as a prompt…</MenuItem>
+          <MenuItem onClick={() => (onSaveModel(), close())}>Save as a model you can evaluate…</MenuItem>
+          <div className="dd-sep" />
+          <MenuItem onClick={() => (onHistory(), close())}>
+            <span className="grow">{showHistory ? 'Hide the history' : 'Show the history'}</span>
+            {history > 0 && <span className="faint small">{history}</span>}
+          </MenuItem>
         </>
       )}
     </Dropdown>
@@ -1034,7 +1045,7 @@ function PanelView({
       </div>
       {unavailable && (
         <p className="pg2-note warn">
-          No API key is set for {info.provider}. <Link to={settingsUrl(projectId, 'secrets')}>Add one in Settings</Link>, or use mock/echo.
+          No API key is set for {info.provider}. <Link to={settingsUrl(projectId, 'secrets')}>Add one in Settings</Link>, or use the offline echo model.
         </p>
       )}
       {!info && panel.model && !modelsLoading && (
@@ -1056,7 +1067,7 @@ function PanelView({
         {r?.running && <Spinner label="Generating…" />}
         <span className="grow" />
         <span className="pg2-figures">
-          {r && !r.running && r.latencyMs != null && <span>{shortDuration(r.latencyMs)}</span>}
+          {r && !r.running && r.latencyMs != null && <span>{fmtDuration(r.latencyMs)}</span>}
           {r?.usage?.total_tokens != null && <span title="Prompt and completion tokens the provider reported">{tokensText(r.usage)}</span>}
           {r?.finishReason && <span title="Why the model stopped">stopped: {r.finishReason}</span>}
           {r?.callId && (

@@ -32,8 +32,9 @@
 .story-layout.narrow .story-side {
   flex-basis: 100%;
 }
-.story-inline-inspector {
-  margin-top: 2px;
+.story-to-inspector {
+  font-size: var(--fs-meta);
+  align-self: flex-start;
 }
 .story-entry {
   display: flex;

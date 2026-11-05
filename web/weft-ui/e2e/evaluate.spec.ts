@@ -165,12 +165,18 @@ test('the Evaluations sentence says which evaluation got better, and its clause 
   const errors = watchErrors(page)
   await page.goto(`/${P}/evaluations`)
   const sentence = page.locator('.ph-sentence')
-  await expect(sentence).toContainText('2 runs of support-eval. Since its previous run, support-eval got better (exact 0% → 75%).')
-  await expect(page.locator('.lrow').first()).toContainText('support-v2 scored exact 75%, up from 0% in the previous run (support-v1); 1 of 4 examples failed.')
+  await expect(sentence).toContainText('support-eval ran twice. The latest run, with support-v2, scored 75% on exact match, up from 0%.')
+  // Each run is titled by its model; the evaluation is in the meta line; the compare box is labelled.
+  const first = page.locator('.lrow').first()
+  await expect(first.locator('.lrow-title')).toHaveText('support-v2')
+  await expect(first).toContainText('Scored exact match 75%, up from 0% in the previous run (support-v1); 1 of 4 examples failed.')
+  await expect(first.locator('.lrow-meta')).toContainText('support-eval')
+  await expect(first.getByRole('checkbox', { name: /^Compare the support-v2 run of support-eval/ })).toBeVisible()
+  await expect(first.locator('.ev-pick')).toContainText('Compare')
   const c = new Clicks(page)
-  await c.click(sentence.getByRole('link', { name: /support-eval got better/ }), 'clause “support-eval got better”')
+  await c.click(sentence.getByRole('link', { name: /The latest run, with support-v2/ }), 'clause “The latest run … up from 0%”')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('support-eval: support-v1 vs support-v2')
-  await expect(page.locator('.ph-sentence')).toContainText('support-v2 did better than support-v1 on 2 of 2 metrics. The biggest difference is exact: 75% against 0%.')
+  await expect(page.locator('.ph-sentence')).toContainText('support-v2 did better than support-v1 on both metrics. The biggest difference is exact match: 75% against 0%.')
   // The example that got worse is one click further, and opens in the inspector.
   await c.click(page.locator('.ph-sentence').getByRole('button', { name: /got worse/ }), 'clause “… got worse”')
   await expect(page.getByRole('radio', { name: /^Worse/ })).toHaveAttribute('aria-checked', 'true')
@@ -182,7 +188,10 @@ test('the Evaluations sentence says which evaluation got better, and its clause 
 
 test('a run’s examples: failing first, j/k select them, Escape returns to the runs', async ({ page }) => {
   await page.goto(`/${P}/evaluations/compare?ids=${runs[1]}`)
-  await expect(page.locator('.ph-sentence')).toContainText('support-v2 scored exact 75% and similarity')
+  await expect(page.locator('.ph-sentence')).toContainText('support-v2 scored exact match 75% and similarity')
+  // One run: no table of runs, and the inspector holds only its id and links.
+  await expect(page.getByRole('table', { name: 'Runs in this comparison' })).toHaveCount(0)
+  await expect(page.getByRole('complementary', { name: 'Run details' })).not.toContainText('Started')
   await expect(page.locator('.ph-sentence')).toContainText('1 of 4 examples failed.')
   await expect(page.locator('.ph-sentence').getByRole('link', { name: 'Compare with the previous run' })).toBeVisible()
   await expect(page.locator('tr.ev-row').first()).toContainText('Cancel my subscription')
@@ -197,10 +206,12 @@ test('a run’s examples: failing first, j/k select them, Escape returns to the 
 
 test('the leaderboard says who leads, and deleting a leaderboard can be undone', async ({ page }) => {
   await page.goto(`/${P}/leaderboards/support`)
-  await expect(page.locator('.ph-sentence')).toHaveText('support-v2 leads on all 2 metrics. 2 models ranked.')
+  await expect(page.locator('.ph-sentence')).toHaveText('support-v2 leads on both metrics. 2 models ranked.')
+  await expect(page.locator('table thead')).toContainText('Exact match')
   await expect(page.locator('table tbody tr').first()).toContainText('support-v2')
   await page.goto(`/${P}/leaderboards`)
   await expect(page.locator('.ph-sentence')).toHaveText('1 leaderboard. support-v2 leads it.')
+  await expect(page.locator('.lrow').first().locator('.lrow-summary')).toHaveText('support-v2 leads on both metrics, among 2 models.')
   const del = page.getByRole('button', { name: 'Delete leaderboard support' })
   await del.click()
   const toast = page.locator('.toast').filter({ hasText: 'Deleted leaderboard “support”' })
@@ -213,13 +224,22 @@ test('the leaderboard says who leads, and deleting a leaderboard can be undone',
 test('review queues say what waits; the review is keyboard-first', async ({ page }) => {
   await page.goto(`/${P}/review-queues`)
   await expect(page.locator('.ph-sentence')).toHaveText('4 items wait for review in Weekly quality review.')
+  await expect(page.locator('.lrow').first()).toContainText('asks reviewers to rate quality and say whether it is correct')
   await page.locator('.ph-sentence').getByRole('link', { name: 'Weekly quality review' }).click()
   await expect(page.locator('.ph-sentence')).toHaveText('Item 1 of 4. 4 are left to review.')
+  // The item leads with the question and the answer; the shortcuts sit behind "?".
+  const item = page.getByRole('region', { name: 'The item to review' })
+  await expect(item).toContainText('Question: ')
+  await expect(item).toContainText('Answer: ')
+  await expect(page.locator('#rv-keys')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Shortcuts for reviewing' }).click()
+  await expect(page.locator('#rv-keys')).toContainText('skip')
+  await page.getByRole('button', { name: 'Shortcuts for reviewing' }).click()
   // 3 on the scale, y for "correct", then submit: the next item opens.
   await page.keyboard.press('3')
-  await expect(page.getByRole('radiogroup', { name: 'quality' }).getByRole('radio', { name: '3' })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('radiogroup', { name: 'Quality' }).getByRole('radio', { name: '3' })).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('y')
-  await expect(page.getByRole('radiogroup', { name: 'correct' }).getByRole('radio', { name: 'Yes' })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('radiogroup', { name: 'Correct' }).getByRole('radio', { name: 'Yes' })).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('Control+Enter')
   await expect(page.locator('.ph-sentence')).toHaveText('Item 2 of 4. 3 are left to review; 1 done.')
   await page.keyboard.press('s')

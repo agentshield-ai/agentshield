@@ -69,7 +69,7 @@ await weft.finish();`,
     },
     otel: {
       lang: 'bash',
-      note: 'Any OpenTelemetry exporter works. Spans with gen_ai.* attributes become sessions (gen_ai.conversation.id), agents (gen_ai.agent.name), tool calls and reasoning.',
+      note: 'Any OpenTelemetry exporter works: spans that follow the GenAI conventions become sessions, agents, tool calls and reasoning. The two attributes to set are in the comments below.',
       code: `export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="${origin}/otel/v1/traces"
 export OTEL_EXPORTER_OTLP_TRACES_HEADERS="project_id=${projectId}${auth ? ',Authorization=Bearer%20<your API key>' : ''}"
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
@@ -171,6 +171,7 @@ export function GuidedEmpty({
   only,
   initial,
   showTest = true,
+  setup,
 }: {
   projectId: string
   title: ReactNode
@@ -179,6 +180,8 @@ export function GuidedEmpty({
   only?: SnippetId[]
   initial?: SnippetId
   showTest?: boolean
+  /** Shown in place of the agent setup snippets, for pages whose data does not come from agents (evaluations). */
+  setup?: ReactNode
 }) {
   return (
     <section className="guided-empty" aria-label="Getting started">
@@ -197,10 +200,14 @@ export function GuidedEmpty({
           <span className="muted small">Writes a realistic two-agent session into {projectId} so you can explore every view in a few seconds.</span>
         </div>
       )}
-      <div className="guided-or">
-        <span>or connect your agents</span>
-      </div>
-      <Snippets projectId={projectId} only={only} initial={initial} />
+      {setup ?? (
+        <>
+          <div className="guided-or">
+            <span>or connect your agents</span>
+          </div>
+          <Snippets projectId={projectId} only={only} initial={initial} />
+        </>
+      )}
       <Link className="help-link" to={helpUrl(doc)}>
         Full setup guide
       </Link>

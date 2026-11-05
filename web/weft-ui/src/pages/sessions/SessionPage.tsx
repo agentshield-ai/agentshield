@@ -16,7 +16,7 @@ import { sessionMetaFigures, sessionOutcome, sessionTitle, scorerWords, relative
 import { buildTimeline, currentFocus, oneLine, STEP_LABEL, stepTitle, type BuiltTimeline } from '../../lib/timeline'
 import { agentUrl, sessionsUrl, spanUrl, traceSpansUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
-import { AgentGraphView } from '../../components/ui/AgentGraphView'
+import { AgentGraphView, GraphTables } from '../../components/ui/AgentGraphView'
 import { GroupedList, ListRow } from '../../components/ui/GroupedList'
 import { CopyText } from '../../components/ui/Inspector'
 import { PageHeader } from '../../components/ui/PageHeader'
@@ -145,7 +145,7 @@ export function SessionPage() {
   const s = summary.data!
 
   return (
-    <div className="page-frame detail session-page">
+    <div className="page-frame detail wide session-page">
       <PageHeader
         variant="detail"
         back={{ to: sessionsUrl(pid), label: 'Sessions' }}
@@ -198,12 +198,10 @@ function TeamView({ pid, sessionId }: { pid: string; sessionId: string }) {
       <h2 id="team-h" className="view-h">
         Who handed work to whom
       </h2>
-      <p className="quiet-note">
-        Each agent with its runs; arrows are hand-offs with their count, failures and median time, dashed arrows returns of control. The table shows the same figures.
-      </p>
       <div className="view-panel">
-        <AgentGraphView graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} />
+        <AgentGraphView graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} tablesOnPage />
       </div>
+      <GraphTables graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} />
     </section>
   )
 }
@@ -286,7 +284,7 @@ function ScoresView({ pid, sessionId, scores, agents }: { pid: string; sessionId
             {open ? 'Hide' : 'Choose scorers'}
           </button>
         </div>
-        <p className="quiet-note">Scores the session, each agent or each hand-off with LLM judges or the tool-safety replay. Judges need a provider key (Settings); mock/json works offline.</p>
+        <p className="quiet-note">Scores the session, each agent or each hand-off with a judge model. Judges need a model provider key, set in Settings.</p>
         {open && (
           <form
             className="col"
@@ -396,7 +394,7 @@ function RawView({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: stri
           The older turn-by-turn view is still available: <Link to={`/${pid}/conversations/${encodeURIComponent(sessionId)}`}>turn view</Link>.
         </p>
       </section>
-      <PlainTable caption={`Spans of this session (${spans.size})`} captionVisible>
+      <PlainTable caption="Spans of this session" count={spans.size} captionVisible>
         <thead>
           <tr>
             <th scope="col">Kind</th>

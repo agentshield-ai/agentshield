@@ -425,3 +425,68 @@
   min-width: 0;
   max-width: 100%;
 }
+
+/* ---------- analytics in the redesigned look (AnalyticsView, AnalyticsOverview) ---------- */
+.an-panel {
+  background: var(--panel);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--ring);
+  padding: 4px 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.an-panel.an-loading {
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+}
+.an-chart {
+  padding: 14px 0;
+  min-width: 0;
+}
+.an-chart + .an-chart {
+  border-top: 1px solid var(--hairline);
+}
+.an-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin-bottom: 6px;
+}
+.an-panel > .an-chart-head {
+  padding-top: 14px;
+}
+.an-chart-title {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--text);
+}
+.an-chart-figure {
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+}
+.an-chart-plot {
+  height: 96px;
+  min-width: 0;
+}
+.an-search {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.an-search .search-field {
+  max-width: 420px;
+}
+.score-text {
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .an-panel {
+    padding: 4px 14px;
+  }
+}

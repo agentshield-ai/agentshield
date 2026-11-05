@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dashboardLine, dashboardSentence, dashboardsSentence, everyWords, monitorLine, monitorSentence, monitorsSentence, monitorTarget, rangeWords } from './dashboards'
+import { dashboardLine, dashboardSentence, dashboardsSentence, everyWords, monitorLine, monitorSentence, monitorsSentence, monitorTarget, rangeWords, scorerResultOf, trueWords } from './dashboards'
 
 const label = (id: string) => ({ '7d': 'Last 7 days', '24h': 'Last 24 hours' })[id] ?? ''
 
@@ -45,15 +45,17 @@ describe('monitors', () => {
     [{ ...m, scopes: [] }, 'goal completion on every top-level span'],
   ]
   for (const [i, want] of targets) it(want, () => expect(monitorTarget(i)).toBe(want))
-  const lines: [Parameters<typeof monitorLine>[0], Parameters<typeof monitorLine>[1], string][] = [
-    [m, { lastAt: '2026-11-05T11:55:00Z', today: 12 }, 'Scores goal completion on every finished session; last scored 5 min ago, 12 scores in the last 24 hours.'],
-    [m, { lastAt: '2026-11-05T11:55:00Z', today: 500, capped: true }, 'Scores goal completion on every finished session; last scored 5 min ago, at least 500 scores in the last 24 hours.'],
-    [m, { lastAt: '2026-11-02T12:00:00Z', today: 0 }, 'Scores goal completion on every finished session; last scored 3 days ago.'],
-    [m, { lastAt: null, today: 0 }, 'Scores goal completion on every finished session; nothing scored yet.'],
-    [{ ...m, active: false }, { lastAt: null, today: 0 }, 'Paused; scored goal completion on every finished session; it never scored anything.'],
-    [m, null, 'Scores goal completion on every finished session.'],
+  const lines: [Parameters<typeof monitorLine>[0], Parameters<typeof monitorLine>[1], boolean, string][] = [
+    // The row's time is the last score; the count shows only when the page's sentence does not give it.
+    [m, { lastAt: '2026-11-05T11:55:00Z', today: 12 }, false, 'Scores goal completion on every finished session.'],
+    [m, { lastAt: '2026-11-05T11:55:00Z', today: 12 }, true, 'Scores goal completion on every finished session; 12 scores in the last 24 hours.'],
+    [m, { lastAt: '2026-11-05T11:55:00Z', today: 500, capped: true }, true, 'Scores goal completion on every finished session; at least 500 scores in the last 24 hours.'],
+    [m, { lastAt: '2026-11-02T12:00:00Z', today: 0 }, true, 'Scores goal completion on every finished session; nothing in the last 24 hours.'],
+    [m, { lastAt: null, today: 0 }, true, 'Scores goal completion on every finished session; nothing scored yet.'],
+    [{ ...m, active: false }, { lastAt: null, today: 0 }, false, 'Paused; scored goal completion on every finished session; it never scored anything.'],
+    [m, null, true, 'Scores goal completion on every finished session.'],
   ]
-  for (const [i, a, want] of lines) it(want, () => expect(monitorLine(i, a, now)).toBe(want))
+  for (const [i, a, counts, want] of lines) it(want, () => expect(monitorLine(i, a, { counts })).toBe(want))
   const list: [Parameters<typeof monitorsSentence>[0], string][] = [
     [{ total: 0, active: 0, today: null }, 'No monitors yet.'],
     [{ total: 1, active: 1, today: 3 }, 'One monitor, active. It recorded 3 scores in the last 24 hours.'],
@@ -63,10 +65,39 @@ describe('monitors', () => {
   ]
   for (const [i, want] of list) it(want, () => expect(monitorsSentence(i)).toBe(want))
   it('one monitor', () => {
-    expect(monitorSentence(m, { total: 34, lastAt: '2026-11-05T11:55:00Z', averages: [{ scorer: 'GoalCompletionJudge', text: 'averages 0.82' }] }, now)).toBe(
-      'Scores goal completion on every finished session. 34 scores so far, the last 5 min ago; goal completion averages 0.82.',
+    const h = { ...m, scorers: ['helpfulness-judge'], scopes: [], names: ['support_agent'], rate: 0.5 }
+    expect(
+      monitorSentence(h, { total: 18, lastAt: '2026-11-05T11:33:00Z', results: [{ scorer: 'helpfulness-judge', n: 18, kind: 'bool', key: 'correct', trueCount: 12 }] }, now),
+    ).toBe('Scores helpfulness judge on 50% of “support_agent” spans. 12 of its 18 scores (67%) said the answer was correct. The last came 27 min ago.')
+    expect(monitorSentence(m, { total: 34, lastAt: '2026-11-05T11:55:00Z', results: [{ scorer: 'GoalCompletionJudge', n: 34, kind: 'mean', mean: '0.82' }] }, now)).toBe(
+      'Scores goal completion on every finished session. Its 34 scores average 0.82. The last came 5 min ago.',
     )
-    expect(monitorSentence({ ...m, active: false }, { total: 0, averages: [] }, now)).toBe('Paused. It scores goal completion on every finished session. Nothing scored yet; activate it to start.')
-    expect(monitorSentence(m, { total: 1000, capped: true, averages: [] }, now)).toBe('Scores goal completion on every finished session. At least 1000 scores so far.')
+    expect(
+      monitorSentence(
+        { ...m, scorers: ['relevance', 'exact'] },
+        {
+          total: 10,
+          results: [
+            { scorer: 'relevance', n: 6, kind: 'mean', mean: '0.7' },
+            { scorer: 'exact', n: 4, kind: 'bool', key: 'value', trueCount: 1 },
+          ],
+        },
+        now,
+      ),
+    ).toBe('Scores relevance and exact on every finished session. 10 scores so far. Relevance averages 0.7; exact: 1 of 4 (25%) were true.')
+    expect(monitorSentence({ ...m, active: false }, { total: 0, results: [] }, now)).toBe('Paused. It scores goal completion on every finished session. Nothing scored yet; activate it to start.')
+    expect(monitorSentence(m, { total: 1000, capped: true, results: [] }, now)).toBe('Scores goal completion on every finished session. At least 1000 scores so far.')
+  })
+  it('counts what a scorer said', () => {
+    expect(scorerResultOf('j', [{ correct: true, score: 4 }, { correct: false, score: 1 }, { correct: true, score: 3 }])).toEqual({ scorer: 'j', n: 3, kind: 'bool', key: 'correct', trueCount: 2 })
+    expect(scorerResultOf('r', [0.5, 1, 0.25])).toEqual({ scorer: 'r', n: 3, kind: 'mean', mean: '0.58' })
+    expect(scorerResultOf('x', [{ score: 4, _raw: true }, { score: 2 }])).toEqual({ scorer: 'x', n: 2, kind: 'mean', mean: '3' })
+    expect(scorerResultOf('t', ['text'])).toEqual({ scorer: 't', n: 1, kind: 'mean', mean: '' })
+  })
+  it('what a true result means', () => {
+    expect(trueWords('correct')).toBe('said the answer was correct')
+    expect(trueWords('passed')).toBe('passed')
+    expect(trueWords('value')).toBe('were true')
+    expect(trueWords('toxic')).toBe('marked “toxic” true')
   })
 })

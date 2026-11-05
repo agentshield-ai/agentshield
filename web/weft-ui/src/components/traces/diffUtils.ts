@@ -31,10 +31,10 @@ export function fmtDelta(d: NumericDelta, fmt: (n: number) => string = fmtPlain)
 /** How numeric changes against the baseline are shown in compare views. */
 export type DeltaFormat = 'both' | 'absolute' | 'percent' | 'ratio'
 export const DELTA_FORMATS: { id: DeltaFormat; label: string; title: string }[] = [
-  { id: 'both', label: 'Δ + %', title: 'Absolute change and percentage' },
-  { id: 'absolute', label: 'Δ', title: 'Absolute change' },
-  { id: 'percent', label: '%', title: 'Percentage change' },
-  { id: 'ratio', label: '×', title: 'Ratio to the baseline' },
+  { id: 'both', label: 'Both', title: 'The difference and the percentage' },
+  { id: 'absolute', label: 'Difference', title: 'The difference from the baseline' },
+  { id: 'percent', label: 'Percent', title: 'The change in percent' },
+  { id: 'ratio', label: 'Ratio', title: 'The ratio to the baseline' },
 ]
 
 export function parseDeltaFormat(s: string | null | undefined): DeltaFormat {

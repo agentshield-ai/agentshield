@@ -67,7 +67,9 @@ describe('chart data', () => {
   it('formats values by kind', () => {
     expect(fmtValue(0.123, 'percent')).toBe('12.3%')
     expect(fmtValue(0, 'percent')).toBe('0%')
-    expect(fmtValue(1500, 'duration')).toBe('1.50s')
+    expect(fmtValue(1500, 'duration')).toBe('1.5 s')
+    expect(fmtValue(565, 'duration')).toBe('565 ms')
+    expect(fmtValue(65_000, 'duration')).toBe('1 min 5 s')
     expect(fmtValue(0.004, 'cost')).toBe('$0.004')
     expect(fmtValue(null, 'number')).toBe('—')
     expect(valueKind({ agg: 'sum', field: 'cost' })).toBe('cost')

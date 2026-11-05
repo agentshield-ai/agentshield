@@ -5,6 +5,8 @@ import type { Any, ChatMessage } from '../../api/types'
 import { CopyButton, ErrorBox, Modal } from '../common'
 import { errMsg, templateVars } from './objectUtils'
 import { Segmented } from '../ui/Segmented'
+import { Icon } from '../ui/Icons'
+import './bits.css'
 
 /** Button that asks for confirmation in a modal before running an async action. */
 export function ConfirmButton({
@@ -15,6 +17,8 @@ export function ConfirmButton({
   onConfirm,
   className = 'btn sm danger',
   disabled,
+  ariaLabel,
+  tooltip,
 }: {
   children: ReactNode
   title: ReactNode
@@ -23,6 +27,9 @@ export function ConfirmButton({
   onConfirm: () => Promise<unknown>
   className?: string
   disabled?: boolean
+  /** The button's accessible name when its content is an icon. */
+  ariaLabel?: string
+  tooltip?: string
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -33,6 +40,8 @@ export function ConfirmButton({
         type="button"
         className={className}
         disabled={disabled}
+        aria-label={ariaLabel}
+        title={tooltip}
         onClick={(e) => {
           e.stopPropagation()
           setOpen(true)
@@ -278,5 +287,37 @@ export function UsePanel({ refUri, name, version, kind }: { refUri: string; name
         {lang === 'ref' && <CodeBlock code={refUri} language="ref" title="Pass this ref anywhere an asset is accepted" />}
       </div>
     </div>
+  )
+}
+
+/** The middle of a long id cut out ("12b07323…71c7567c"); a ref keeps its name and the start of its digest ("…/support-eval:12b07323…"). */
+export function shortId(text: string, keep = 8): string {
+  const ref = /^weft:\/\/\/.*\/([^/]+):([0-9a-f]{16,})$/i.exec(text)
+  if (ref) return `…/${ref[1]}:${ref[2].slice(0, 8)}…`
+  return text.length > keep * 2 + 3 ? `${text.slice(0, keep)}…${text.slice(-keep)}` : text
+}
+
+/** A long id (a ref, a digest) on one line: the middle cut out, the full value in the tooltip and copied by the icon beside it. */
+export function ShortCopy({ text, label = 'id' }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false)
+  return (
+    <span className={`short-copy ${done ? 'done' : ''}`}>
+      <span className="short-copy-value" title={text}>
+        {shortId(text)}
+      </span>
+      <button
+        type="button"
+        className="short-copy-btn"
+        aria-label={`Copy the ${label} ${text}`}
+        title={done ? 'Copied' : `Copy the full ${label}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(text).catch(() => undefined)
+          setDone(true)
+          setTimeout(() => setDone(false), 1200)
+        }}
+      >
+        <Icon name={done ? 'ok' : 'copy'} size={13} />
+      </button>
+    </span>
   )
 }

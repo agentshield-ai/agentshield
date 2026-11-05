@@ -17,8 +17,8 @@ import { Sentence } from '../../components/ui/Sentence'
 import { Icon } from '../../components/ui/Icons'
 import { undoable } from '../../components/ui/Toasts'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate } from '../../lib/format'
-import { plural, relativeTime } from '../../lib/summaries'
+import { fmtDate, fmtRelative, versionLabel } from '../../lib/format'
+import { plural } from '../../lib/summaries'
 import { leaderboardLine, leaderboardsSentence, leaderOf } from '../../lib/summaries/evaluate'
 import { leaderboardUrl } from '../../lib/urls'
 import '../evaluations/evaluate.css'
@@ -117,9 +117,9 @@ export function LeaderboardsPage() {
                 <ListRow
                   key={o.name}
                   title={o.name}
-                  summary={o.value?.description ? `${line} ${o.value.description}` : line}
-                  meta={[evals.length ? `from ${evals.join(', ')}` : '', `version ${o.version_count ?? o.version + 1}`].filter(Boolean).join(' · ')}
-                  time={relativeTime(o.created_at)}
+                  summary={line}
+                  meta={[o.value?.description, evals.length ? `from ${evals.join(', ')}` : '', versionLabel(o.version)].filter(Boolean).join(' · ')}
+                  time={fmtRelative(o.created_at)}
                   timeTitle={`Updated ${fmtDate(o.created_at)}`}
                   to={leaderboardUrl(projectId, o.name)}
                   trailing={

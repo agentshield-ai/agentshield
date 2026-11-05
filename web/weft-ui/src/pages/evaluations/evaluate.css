@@ -42,6 +42,10 @@
   margin-right: 16px;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--text-secondary);
+  white-space: nowrap;
   padding: 6px;
   border-radius: 6px;
   cursor: pointer;
@@ -462,9 +466,62 @@ details.ev-more-details[open] > summary {
   flex: 1;
 }
 .rv-keys {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: var(--fs-meta);
   color: var(--text-muted);
-  line-height: 1.9;
+}
+.rv-buttons .qbtn:not(.primary) {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.rv-buttons .rv-keys-btn {
+  min-width: 30px;
+  justify-content: center;
+}
+/* The thing to judge: "Question: …", "Answer: …" in reading size, then the expected answer and the scores as text. */
+.rv-qa {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rv-qa-label {
+  font-weight: 600;
+}
+.rv-facts {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--separator);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-secondary);
+}
+.rv-facts > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.rv-facts dt {
+  color: var(--text-muted);
+  min-width: 80px;
+}
+.rv-facts dd {
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  flex: 1 1 200px;
 }
 .rv-keys kbd {
   font-family: var(--mono);
@@ -735,4 +792,24 @@ details.ev-more-details[open] > summary {
 }
 .plain-table.ev-wide td {
   overflow-wrap: break-word;
+}
+
+/* ---------- Scores: one glyph column for every row, actions on the title line ---------- */
+.ev-glyph-space {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+}
+.lrow.score-row .row-action {
+  align-self: flex-start;
+  margin-top: 12px;
+}
+.ev-group-note {
+  padding: 0 4px;
+}
+.ev-empty {
+  align-items: flex-start;
+}
+.rv-qa.ev-insp-text {
+  font-size: var(--fs-secondary);
 }

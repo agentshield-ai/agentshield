@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { agentsApi, agentsUrl, agentUrl } from '../../api/agents'
+import { agentsApi, agentUrl } from '../../api/agents'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtCost, fmtDate, fmtRelative } from '../../lib/format'
-import { spanSessionUrl } from '../../lib/urls'
+import { sessionUrl, spanSessionUrl } from '../../lib/urls'
 import { Empty, ErrorBox } from '../../components/common'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Sentence } from '../../components/ui/Sentence'
 import { conversationSentence } from '../../lib/summaries/agentsTeams'
 import './agents-teams.css'
 import { TurnView } from '../../components/agents/AgentTimeline'
-import { KindLegend, SpanStrip } from '../../components/agents/SpanStrip'
 import { compact } from '../../components/agents/agentUtils'
 import { ConversationEvals, predictionsByTrace, TurnEvalBadge, useConversationEvals } from '../../components/agents/AgentEvals'
 import '../../components/agents/agents.css'
@@ -29,10 +28,6 @@ export function ConversationPage() {
       agentsApi.conversationChat({ project_id: projectId, conversation_id: conversationId, include_feedback: true, include_model_tool_calls: true, limit }),
     placeholderData: keepPreviousData,
   })
-  const spans = useQuery({
-    queryKey: ['agent-conv-spans', projectId, [conversationId]],
-    queryFn: () => agentsApi.conversationSpans({ project_id: projectId, conversation_ids: [conversationId] }),
-  })
   const evals = useConversationEvals(projectId, conversationId)
   const predByTrace = useMemo(() => predictionsByTrace(evals.data?.evaluations), [evals.data])
   const c = chat.data
@@ -43,19 +38,18 @@ export function ConversationPage() {
     document.getElementById(location.hash.slice(1))?.scrollIntoView()
   }, [c, location.hash])
   const title = c?.conversation_name || conversationId
-  const first = c?.agent_names?.[0]
   return (
     <div className="page-frame detail analytics-page">
       <PageHeader
         variant="detail"
-        back={first ? { to: agentUrl(projectId, first), label: first } : { to: agentsUrl(projectId), label: 'Agents' }}
-        title={<span className="at-title mono-title">{title}</span>}
-        helpTopic="Conversation"
+        back={{ to: sessionUrl(projectId, conversationId, { tab: 'raw' }), label: 'The session' }}
+        title={<span className="at-title">Turn view of {title}</span>}
+        helpTopic="Turn view"
         help="agents.md"
         sentence={
           chat.isLoading ? (
             <p className="sentence s-detail sk-sentence" aria-busy="true">
-              <span className="sr-only">Reading the conversation…</span>
+              <span className="sr-only">Reading the session…</span>
               <span className="sk sk-line" aria-hidden />
             </p>
           ) : c && c.total_turns > 0 ? (
@@ -89,22 +83,13 @@ export function ConversationPage() {
       />
       <ErrorBox error={chat.error} />
       {chat.isLoading ? null : !c || c.total_turns === 0 ? (
-        <Empty>No spans recorded for conversation “{conversationId}”.</Empty>
+        <Empty>Nothing was recorded for session “{conversationId}”.</Empty>
       ) : (
         <>
           <ConversationEvals projectId={projectId} runs={evals.data?.evaluations ?? []} />
-          {spans.data?.conversations[0]?.spans.length ? (
-            <div className="col" style={{ gap: 4 }}>
-              <div className="row small muted">
-                <span className="grow">Events</span>
-                <KindLegend />
-              </div>
-              <SpanStrip spans={spans.data.conversations[0].spans} max={400} />
-            </div>
-          ) : null}
           {c.has_more && (
             <div className="row" style={{ justifyContent: 'center' }}>
-              <button className="btn sm" onClick={() => setLimit((l) => l + PAGE)}>
+              <button type="button" className="qbtn" onClick={() => setLimit((l) => l + PAGE)}>
                 Load {Math.min(PAGE, firstTurn)} earlier {firstTurn === 1 ? 'turn' : 'turns'}
               </button>
             </div>

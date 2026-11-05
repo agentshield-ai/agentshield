@@ -269,7 +269,7 @@ export function ChatMessageView({ message, projectId, label }: { message: NormMe
   return (
     <div className={`chat-msg role-${role}`}>
       <div className="chat-role">
-        <span>{label ?? role}</span>
+        <span>{label ?? (role ? role[0].toUpperCase() + role.slice(1) : role)}</span>
         {message.name && <span className="faint mono">{message.name}</span>}
         {message.toolCallId && <span className="faint mono">↩ {message.toolCallId}</span>}
         {message.finishReason && <span className="faint small">finish: {message.finishReason}</span>}

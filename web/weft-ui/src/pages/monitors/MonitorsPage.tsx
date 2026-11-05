@@ -17,6 +17,7 @@ import { SignalsGallery } from '../../components/monitors/SignalsGallery'
 import { ConfirmButton, Switch } from '../../components/objects/bits'
 import { refName, useObjects } from '../../components/objects/objectUtils'
 import { GroupedList, ListRow } from '../../components/ui/GroupedList'
+import { Icon } from '../../components/ui/Icons'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Sentence } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
@@ -124,16 +125,16 @@ export function MonitorsPage() {
                 key={o.name}
                 className="obs-monitor-row"
                 title={o.name}
-                summary={monitorLine(monitorWords(v), a)}
+                summary={monitorLine(monitorWords(v), a, { counts: list.length > 1 })}
                 meta={v.description || undefined}
-                time={relativeTime(o.created_at)}
-                timeTitle={`Updated ${fmtDate(o.created_at)}`}
+                time={a?.lastAt ? relativeTime(a.lastAt) : undefined}
+                timeTitle={a?.lastAt ? `Last scored ${fmtDate(a.lastAt)}` : undefined}
                 to={monitorUrl(projectId, o.name)}
                 trailing={
                   <span className="obs-row-trailing">
                     <Switch on={!!v.active} disabled={pending === o.name} onChange={() => void toggle(o)} title={v.active ? `Pause monitor ${o.name}` : `Activate monitor ${o.name}`} />
                     <ConfirmButton
-                      className="btn ghost sm icon danger"
+                      className="btn ghost sm icon"
                       title={`Delete monitor ${o.name}?`}
                       body="Scores it already produced are kept as feedback."
                       onConfirm={async () => {
@@ -141,7 +142,7 @@ export function MonitorsPage() {
                         await qc.invalidateQueries({ queryKey: ['objects', projectId] })
                       }}
                     >
-                      <span aria-hidden>✕</span>
+                      <Icon name="trash" size={15} />
                       <span className="sr-only">Delete monitor {o.name}</span>
                     </ConfirmButton>
                   </span>

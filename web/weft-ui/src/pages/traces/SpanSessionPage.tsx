@@ -10,11 +10,11 @@ import { ErrorBox, Loading } from '../../components/common'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Sentence } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
-import { spanSessionSentence, statusGlyph } from '../../lib/summaries/traces'
+import { SPAN_SESSIONS_TITLE, spanSessionSentence, statusGlyph } from '../../lib/summaries/traces'
 import '../observe.css'
 import { ValueView } from '../../components/ValueView'
 import { ChatMessageView, ChatView, extractChat, normaliseMessage } from '../../components/traces/ChatView'
-import { callLabel, reactionCounts } from '../../components/traces/callUtils'
+import { callLabel } from '../../components/traces/callUtils'
 
 /** A turn is a call with turn_id == id, or with no parent inside the thread. */
 function pickTurns(calls: Span[]): Span[] {
@@ -37,7 +37,6 @@ function Turn({ projectId, call, index, fullContext }: { projectId: string; call
   const chat = extractChat(call)
   const tokens = callTokens(call).total
   const cost = callCost(call)
-  const reactions = reactionCounts(call.feedback)
   return (
     <section className="obs-turn" aria-label={`Turn ${index + 1}`}>
       <div className="obs-turn-head">
@@ -47,12 +46,6 @@ function Turn({ projectId, call, index, fullContext }: { projectId: string; call
           {callLabel(call)}
         </Link>
         <span className="grow" />
-        {reactions.map(([e, n]) => (
-          <span key={e} className="mini-reaction">
-            {e}
-            {n > 1 && <span className="small faint">{n}</span>}
-          </span>
-        ))}
         <span className="small muted" title={fmtDate(call.started_at)}>
           {fmtRelative(call.started_at)}
         </span>
@@ -77,15 +70,15 @@ function Turn({ projectId, call, index, fullContext }: { projectId: string; call
         ) : (
           <div className="chat">
             <div className="chat-msg role-user">
-              <div className="chat-role">input</div>
+              <div className="chat-role">Input</div>
               <div className="chat-body">
                 <ValueView value={Object.fromEntries(Object.entries(call.inputs ?? {}).filter(([k]) => k !== 'self'))} projectId={projectId} markdown />
               </div>
             </div>
             <div className="chat-msg role-assistant">
-              <div className="chat-role">output</div>
+              <div className="chat-role">Output</div>
               <div className="chat-body">
-                {call.output == null ? <span className="faint">{call.ended_at ? 'None' : 'Running…'}</span> : <ValueView value={call.output} projectId={projectId} markdown />}
+                {call.output == null ? <span className="faint">{call.ended_at ? 'No output' : 'Running…'}</span> : <ValueView value={call.output} projectId={projectId} markdown />}
               </div>
             </div>
           </div>
@@ -123,8 +116,8 @@ export function SpanSessionPage() {
     <div className="page-frame detail obs-page thread-page">
       <PageHeader
         variant="detail"
-        back={{ to: spanSessionsUrl(projectId), label: 'Span sessions' }}
-        title={<span className="mono obs-break">{threadId}</span>}
+        back={{ to: spanSessionsUrl(projectId), label: SPAN_SESSIONS_TITLE }}
+        title={<span className="obs-break">{threadId}</span>}
         helpTopic="Traces"
         help="traces.md"
         sentence={
@@ -138,8 +131,15 @@ export function SpanSessionPage() {
         meta={
           t ? (
             <>
-              <span title={fmtDate(t.started_at)}>Started {fmtRelative(t.started_at)}</span> · <span title={fmtDate(t.last_updated)}>last updated {fmtRelative(t.last_updated)}</span> · turn
-              time {fmtDuration(t.p50_turn_duration_ms)} (p50), {fmtDuration(t.p99_turn_duration_ms)} (p99){t.total_tokens > 0 ? <> · {fmtNumber(t.total_tokens)} tokens</> : null}
+              <span title={fmtDate(t.started_at)}>Started {fmtRelative(t.started_at)}</span> · <span title={fmtDate(t.last_updated)}>last active {fmtRelative(t.last_updated)}</span>
+              {t.p50_turn_duration_ms != null && (
+                <span title="Median and 99th percentile of the turns' durations">
+                  {' '}
+                  · turns take about {fmtDuration(t.p50_turn_duration_ms)}
+                  {t.p99_turn_duration_ms != null && t.p99_turn_duration_ms !== t.p50_turn_duration_ms ? `, up to ${fmtDuration(t.p99_turn_duration_ms)}` : ''}
+                </span>
+              )}
+              {t.total_tokens > 0 ? <> · {fmtNumber(t.total_tokens)} tokens</> : null}
             </>
           ) : undefined
         }

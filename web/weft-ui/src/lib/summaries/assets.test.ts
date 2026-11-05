@@ -9,6 +9,10 @@ import {
   kindWords,
   placeholders,
   promptShape,
+  runAnswer,
+  runScores,
+  runTitle,
+  runWhen,
   sdkName,
   usageCounts,
   versionSentence,
@@ -79,13 +83,16 @@ describe('placeholders and promptShape', () => {
 describe('assetFacts (the row summary)', () => {
   it.each([
     ['dataset with rows and use', obj(), { rows: 50, usedBy: 2 }, '50 rows, version 3, used by 2 evaluations'],
-    ['dataset before its rows load', obj(), {}, 'version 3'],
+    ['dataset before its rows load', obj(), {}, 'Version 3'],
     ['aliases', obj({ aliases: ['latest', 'prod'] }), { rows: 1 }, '1 row, version 3, alias prod'],
-    ['chat prompt', chat, {}, 'chat prompt with 2 messages and 2 placeholders, version 2'],
-    ['model', model, {}, 'runs mock/echo at temperature 0, version 1'],
+    ['chat prompt', chat, {}, 'Chat prompt with 2 messages and 2 placeholders, version 2'],
+    ['model', model, {}, 'Runs mock/echo at temperature 0, version 1'],
     ['judge', judge, { serverScorer: true }, 'LLM judge using gpt-4o, version 1'],
-    ['sdk scorer', exact, { serverScorer: false }, 'exact-match scorer on expected, runs only in the SDK, version 1'],
-    ['function', fn, {}, 'version 1'],
+    ['sdk scorer', exact, { serverScorer: false }, 'Exact-match scorer on expected, runs only in the SDK, version 1'],
+    ['function', fn, {}, 'Version 1'],
+    ['evaluation', obj({ kind: 'evaluation', class: 'Evaluation', version: 0, version_count: 1, value: { dataset: 'weft:///e/p/object/qa:d', scorers: ['a', 'b'] } }), {}, 'Scores qa with 2 scorers, version 1'],
+    ['leaderboard (the group heading names it)', obj({ kind: 'leaderboard', class: 'Leaderboard', version: 0, version_count: 1, value: {} }), {}, 'Version 1'],
+    ['custom class', obj({ kind: 'object', class: 'MyCustomThing', version: 0, version_count: 1, value: {} }), {}, 'My custom thing, version 1'],
   ])('%s', (_, o, f, want) => expect(assetFacts(o, f)).toBe(want))
 })
 
@@ -130,7 +137,7 @@ describe('assetsSentence', () => {
     ['scorers', { kind: 'scorers' as const, objects: [judge, exact], serverScorer: (o: { name: string }) => o.name === 'polite' }, '2 scorers; 1 runs only in the SDK. The latest change was to polite, 5 min ago.'],
     ['scorers all server', { kind: 'scorers' as const, objects: [judge, exact], serverScorer: () => true }, '2 scorers; both can run on the server. The latest change was to polite, 5 min ago.'],
     ['functions', { kind: 'ops' as const, objects: [fn] }, '1 traced function. The latest change was to route_ticket, 5 min ago.'],
-    ['all', { kind: 'all' as const, objects: [obj(), chat, judge, exact] }, '4 assets of 4 kinds. The latest change was to support-tickets, 5 min ago.'],
+    ['all', { kind: 'all' as const, objects: [obj(), chat, judge, exact] }, '4 assets of 3 kinds. The latest change was to support-tickets, 5 min ago.'],
   ])('%s', (_, input, want) => expect(text(assetsSentence({ ...input, now: NOW }))).toBe(want))
 
   it('links the latest name', () => {
@@ -175,6 +182,32 @@ describe('diffSentence', () => {
     ['rows only', { a, b, same: false, changed: 1, added: 0, removed: 0, rows: { a: 46, b: 50, added: 4, removed: 0 } }, 'From version 2 to version 3, 1 value changed. The rows went from 46 to 50: 4 added, none removed.'],
     ['same rows', { a, b, same: false, changed: 0, added: 0, removed: 0, rows: { a: 2, b: 2, added: 0, removed: 0 } }, 'From version 2 to version 3, no value changed. The 2 rows are the same.'],
   ])('%s', (_, input, want) => expect(diffSentence(input)).toBe(want))
+})
+
+describe('run rows', () => {
+  it.each([
+    [{ question: 'Where is my order?', user_id: 'u1' }, 'Where is my order?'],
+    [{ self: 'weft:///e/p/object/x:d', user_id: 'u1' }, 'u1'],
+    ['plain text', 'plain text'],
+    [{ n: 3 }, 'support_agent'],
+    [null, 'support_agent'],
+  ])('runTitle %#', (inputs, want) => expect(runTitle(inputs, 'support_agent')).toBe(want))
+  it.each([
+    [{ answer: 'Shipped.', sources: ['kb://faq'] }, null, 'Shipped.'],
+    ['ok', null, 'ok'],
+    [null, 'RateLimitError: 429 Too Many Requests\n  at x', 'Failed: RateLimitError: 429 Too Many Requests'],
+    [null, null, 'No answer recorded.'],
+    [{ score: 4 }, null, '{"score":4}'],
+  ])('runAnswer %#', (out, err, want) => expect(runAnswer(out, err)).toBe(want))
+  it('runWhen', () => {
+    expect(runWhen(3390, ago(120), NOW)).toBe('3.4 s · 2 h ago')
+    expect(runWhen(null, ago(5), NOW)).toBe('5 min ago')
+  })
+  it.each([
+    [{ 'exact-match': { true_count: 0, true_fraction: 0 }, 'helpfulness-judge': { score: { mean: 2.75 } }, model_latency: { mean: 0.1 } }, 'Exact match 0% and helpfulness judge score 2.75'],
+    [{}, 'No scores.'],
+    [{ a: { mean: 1 }, b: { mean: 2 }, c: { mean: 3 } }, 'A 1, b 2, and 1 more'],
+  ])('runScores %#', (summary, want) => expect(runScores(summary, 2)).toBe(want))
 })
 
 it('sdkName keeps the API numbering', () => expect(sdkName(obj())).toBe('support-tickets:v2'))

@@ -109,11 +109,11 @@ export function ObjectVersionsPage() {
               const aliases = v.aliases.filter((x) => x !== 'latest')
               const facts = [rows != null ? plural(rows, 'row') : null, fmtBytes(v.size_bytes), v.user_id ? `saved by ${v.user_id}` : null].filter(Boolean).join(', ')
               const labels = [...aliases.map((x) => `alias ${x}`), ...(v.tags ?? []).map((t) => `#${t}`)].join(' · ')
-              const n = v.version + 1
+              const words = versionWords(v)
               return (
                 <ListRow
                   key={v.digest}
-                  title={`${versionWords(v)[0].toUpperCase()}${versionWords(v).slice(1)}${v.is_latest ? ' · latest' : ''}`}
+                  title={`${words[0].toUpperCase()}${words.slice(1)}${v.is_latest ? ' · latest' : ''}`}
                   summary={facts}
                   meta={labels || undefined}
                   time={relativeTime(v.created_at)}
@@ -124,10 +124,10 @@ export function ObjectVersionsPage() {
                       <button
                         type="button"
                         className="qbtn sm row-action"
-                        aria-label={`Delete version ${n}`}
-                        title={`Delete version ${n}; the others are kept`}
+                        aria-label={`Delete ${words}`}
+                        title={`Delete ${words}; the others are kept`}
                         onClick={() =>
-                          remove(v.digest, `Deleted version ${n} of ${objectId}`, async () => {
+                          remove(v.digest, `Deleted ${words} of ${objectId}`, async () => {
                             await api.objectDelete(projectId, objectId, [v.digest])
                             await qc.invalidateQueries({ queryKey: ['obj-versions', projectId, objectId] })
                             await qc.invalidateQueries({ queryKey: ['objects', projectId] })

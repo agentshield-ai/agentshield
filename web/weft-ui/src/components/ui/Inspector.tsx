@@ -39,7 +39,7 @@ export function Inspector({
   id?: string
 }) {
   return (
-    <aside id={id} className={`inspector ${sticky ? 'sticky' : ''} ${className ?? ''}`} aria-label={label}>
+    <aside id={id} tabIndex={id ? -1 : undefined} className={`inspector ${sticky ? 'sticky' : ''} ${className ?? ''}`} aria-label={label}>
       <div className="insp-head">
         <h2 className="insp-title">{title}</h2>
         {subtitle && <span className="insp-sub">{subtitle}</span>}

@@ -19,9 +19,9 @@ import { ModelFormModal, NameField, usePublish } from '../../components/objects/
 import { classVal, errMsg, isLLMModel, isServerScorerClass, KIND_META, refOf, templateVars, useObjects, valClass } from '../../components/objects/objectUtils'
 import { ScorerPicker } from '../../components/evals/ScorerPicker'
 import { RemoteModelModal, RuntimeModelModal } from '../../components/evals/ServerModelForms'
-import { serverModelKind, serverModelSummary } from '../../components/evals/modelUtils'
+import { serverModelKind, serverModelWords } from '../../components/evals/modelUtils'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtRelative } from '../../lib/format'
+import { fmtRelative, versionLabel } from '../../lib/format'
 import { spanUrl, compareEvaluationsUrl, evaluationsUrl, objectUrl } from '../../lib/urls'
 
 interface Launched {
@@ -66,8 +66,9 @@ export function NewEvaluationPage() {
   const [params] = useSearchParams()
   const evals = useObjects(projectId, { kinds: ['evaluation'] })
   const models = useObjects(projectId, KIND_META.models.filter)
-  // Models the server can run: LLM completion models, remote (predict_url) and runtime-bound models.
+  // Models the server can run: ones that call an AI provider, a remote endpoint (predict_url) or a runtime.
   const llmModels = (models.data ?? []).filter((o) => isLLMModel(o) || serverModelKind(o) != null)
+  const modelWords = serverModelWords
 
   const [evalRef, setEvalRef] = useState<string | null>(params.get('evaluation'))
   const [mode, setMode] = useState<'existing' | 'new'>('existing')
@@ -88,17 +89,17 @@ export function NewEvaluationPage() {
   const nonRunnable = details.data?.scorers.filter((s) => !s.runnable) ?? []
 
   const evalOptions = useMemo(() => {
-    const opts = (evals.data ?? []).map((o) => ({ ref: refOf(o), label: `${o.name} (v${o.version}, latest)` }))
+    const opts = (evals.data ?? []).map((o) => ({ ref: refOf(o), label: `${o.name} (${versionLabel(o.version)}, the latest)` }))
     if (evalRef && !opts.some((o) => o.ref === evalRef)) {
       const p = parseRef(evalRef)
-      opts.unshift({ ref: evalRef, label: `${p?.name ?? evalRef}:${p?.digest?.slice(0, 8) ?? ''}` })
+      opts.unshift({ ref: evalRef, label: `${p?.name ?? evalRef} (an earlier version)` })
     }
     return opts
   }, [evals.data, evalRef])
 
   const modelOptions = useMemo(() => {
-    const opts = llmModels.map((o) => ({ ref: refOf(o), name: o.name, value: o.value, kind: serverModelKind(o), sub: `${serverModelSummary(o)} · v${o.version} · ${fmtRelative(o.created_at)}` }))
-    for (const r of modelRefs) if (!opts.some((o) => o.ref === r)) opts.unshift({ ref: r, name: parseRef(r)?.name ?? r, value: null, kind: null, sub: `pinned version ${parseRef(r)?.digest?.slice(0, 8) ?? ''}` })
+    const opts = llmModels.map((o) => ({ ref: refOf(o), name: o.name, value: o.value, kind: serverModelKind(o), sub: `${modelWords(o)} · ${versionLabel(o.version)} · saved ${fmtRelative(o.created_at)}` }))
+    for (const r of modelRefs) if (!opts.some((o) => o.ref === r)) opts.unshift({ ref: r, name: parseRef(r)?.name ?? r, value: null, kind: null, sub: 'an earlier version' })
     return opts
   }, [llmModels, modelRefs])
 
@@ -129,7 +130,7 @@ export function NewEvaluationPage() {
         help="evaluations.md#evaluations"
         helpTopic="Evaluations"
         sentence={<Sentence size="detail" parts={[newEvalSentence(details.data ?? null, evalRef, modelRefs.length)]} />}
-        meta="LLM completion models, remote models (a predict URL) and runtime models run on the server, with the built-in scorers."
+        meta="The server runs models that call an AI provider, your own web endpoint or a custom runtime, and scores them with the built-in scorers."
       />
       <div className="ev-steps">
       <section className="ev-section" aria-labelledby="ne-1">
@@ -213,8 +214,8 @@ export function NewEvaluationPage() {
           <Dropdown label="New model" className="qbtn" align="right">
             {(close) => (
               <>
-                <MenuItem onClick={() => (setCreatingModel(true), close())}>An LLM model with a prompt template…</MenuItem>
-                <MenuItem onClick={() => (setCreatingModel('remote'), close())}>A remote model (your HTTP endpoint)…</MenuItem>
+                <MenuItem onClick={() => (setCreatingModel(true), close())}>A model that calls an AI provider with a prompt…</MenuItem>
+                <MenuItem onClick={() => (setCreatingModel('remote'), close())}>A model behind your own web endpoint…</MenuItem>
                 <MenuItem onClick={() => (setCreatingModel('runtime'), close())}>A model served by a custom runtime…</MenuItem>
               </>
             )}
@@ -243,7 +244,7 @@ export function NewEvaluationPage() {
                     <span className="ev-pick-text">
                       <span className="name">
                         {m.name}
-                        {m.kind && m.kind !== 'llm' && <span className="ev-note"> · {m.kind} model</span>}
+                        
                       </span>
                       <span className="sub">{m.sub}</span>
                       {missing.length > 0 && <span className="sub ev-warn">Its template uses {missing.map((v) => `{${v}}`).join(' ')}, which the dataset does not have.</span>}
@@ -330,7 +331,7 @@ function NewEvaluationForm({ projectId, onCreated }: { projectId: string; onCrea
             {!datasets.data?.length && <option value="">No datasets</option>}
             {datasets.data?.map((d) => (
               <option key={d.name} value={refOf(d)}>
-                {d.name} (v{d.version})
+                {d.name} ({versionLabel(d.version)})
               </option>
             ))}
           </select>
@@ -420,7 +421,7 @@ function RunProgress({ projectId, launched }: { projectId: string; launched: Lau
                   {s.completed_rows} of {s.total_rows} examples · {s.code === 'complete' ? 'finished' : s.code === 'failed' ? 'failed' : s.code === 'running' ? 'running' : s.code}
                 </span>
               )}
-              {l.callId && <Link to={spanUrl(projectId, l.callId)}>Raw run</Link>}
+              {l.callId && <Link to={spanUrl(projectId, l.callId)}>The raw run</Link>}
             </div>
             <div className="ev-meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={l.error ? 0 : pct} aria-label={`${p?.name ?? 'Model'} progress`}>
               <span style={{ width: `${l.error ? 0 : pct}%` }} />

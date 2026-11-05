@@ -3,7 +3,7 @@
 // quiet count, then a white panel with 14 px corners and a hairline edge,
 // rows separated by inset hairlines.
 //
-// A row: a status glyph, the title (one line, ellipsed), the time on the
+// A row: a status glyph, the title (up to two lines), the time on the
 // right, one summary line saying what happened, and a quiet meta line. The
 // whole row is one link.
 //

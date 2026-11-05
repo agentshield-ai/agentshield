@@ -560,7 +560,8 @@ export function evalSpansUrl(projectId: string, runId: string, opts: { pred?: st
   const p = new URLSearchParams({ tab: 'spans', eval: runId, range: 'all' })
   if (opts.pred) p.set('pred', opts.pred)
   if (opts.conversations) p.set('group', 'conversation_id')
-  return `${opts.agent ? agentUrl(projectId, opts.agent) : agentsUrl(projectId)}?${p}`
+  // The agent analytics pages hold the Spans view (Agents and one agent's page do not).
+  return `${opts.agent ? `${agentUrl(projectId, opts.agent)}/analytics` : `/${projectId}/agent-analytics`}?${p}`
 }
 export const conversationUrl = (projectId: string, id: string, turn?: number) =>
   `/${projectId}/conversations/${encodeURIComponent(id)}${turn != null ? `#turn-${turn}` : ''}`

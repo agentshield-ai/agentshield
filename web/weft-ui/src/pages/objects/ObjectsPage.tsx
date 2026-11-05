@@ -105,10 +105,19 @@ export function ObjectsPage({ kind }: { kind: ObjectPageKind }) {
   }, [counts.data, datasets])
   const used = useMemo(() => usageCounts(kind === 'all' ? all.filter((o) => o.kind === 'evaluation') : (evals.data ?? [])), [kind, all, evals.data])
 
-  const classes = useMemo(() => [...new Set(all.map((o) => kindWords(o)))].sort(), [all])
+  // The kinds to pick from: on All objects the groups the page shows (by kind), elsewhere the classes ("LLM judge").
+  const classes = useMemo(
+    () =>
+      kind === 'all'
+        ? [...new Set(all.map((o) => o.kind))].map((k) => ({ id: k, label: GROUP_TITLE[k] ?? k })).sort((a, b) => a.label.localeCompare(b.label))
+        : [...new Set(all.map((o) => kindWords(o)))].sort().map((c) => ({ id: c, label: c })),
+    [kind, all],
+  )
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const xs = all.filter((o) => (!q || o.name.toLowerCase().includes(q) || kindWords(o).includes(q) || objClass(o).toLowerCase().includes(q)) && (!cls || kindWords(o) === cls))
+    const xs = all.filter(
+      (o) => (!q || o.name.toLowerCase().includes(q) || kindWords(o).includes(q) || objClass(o).toLowerCase().includes(q)) && (!cls || o.kind === cls || kindWords(o) === cls),
+    )
     const key = (o: WeftObject): string | number => (sort === 'name' ? o.name.toLowerCase() : sort === 'versions' ? -(o.version_count ?? o.version + 1) : -Date.parse(o.created_at))
     return xs.slice().sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
   }, [all, search, cls, sort])
@@ -187,10 +196,10 @@ export function ObjectsPage({ kind }: { kind: ObjectPageKind }) {
                 <label>
                   <span className="sr-only">Show only one kind</span>
                   <select className="input" value={cls} onChange={(e) => setParam('class', e.target.value)}>
-                    <option value="">Every kind</option>
+                    <option value="">{kind === 'all' ? 'Every kind' : `Every ${meta.singular}`}</option>
                     {classes.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
+                      <option key={c.id} value={c.id}>
+                        {c.label}
                       </option>
                     ))}
                   </select>
@@ -219,7 +228,7 @@ export function ObjectsPage({ kind }: { kind: ObjectPageKind }) {
         <AssetEmpty kind={kind} projectId={projectId} action={createButton} />
       ) : rows.length === 0 ? (
         <div className="quiet-empty">
-          <p>No {meta.title.toLowerCase()} match “{search || cls}”.</p>
+          <p>No {meta.title.toLowerCase()} match “{search || classes.find((c) => c.id === cls)?.label || cls}”.</p>
           <button type="button" className="qbtn" onClick={() => setParams({}, { replace: true })}>
             Clear the search
           </button>

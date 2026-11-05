@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -27,13 +27,32 @@ import { LinkedCalls } from '../../components/traces/LinkedCalls'
 import { OpCodeView } from '../../components/traces/OpCodeView'
 import { FeedbackPanel, Reactions, ScoresPanel, useCallFeedback } from '../../components/traces/FeedbackPanel'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
-import { ConfirmModal } from '../../components/traces/Menu'
+import { ConfirmModal, Dropdown } from '../../components/traces/Menu'
+import { Icon } from '../../components/ui/Icons'
 import { CodeSnippet, serverOrigin } from '../../components/traces/GettingStarted'
 import { buildTree, callLabel, flattenTree, type TreeNode } from '../../components/traces/callUtils'
 import { AddToQueueButton } from '../../components/queues/AddToQueueModal'
 
 type Tab = 'span' | 'feedback' | 'scores' | 'summary' | 'attributes' | 'code' | 'use' | 'raw'
 const TABS: Tab[] = ['span', 'feedback', 'scores', 'summary', 'attributes', 'code', 'use', 'raw']
+/** The rarely used views, behind "More" (a second-level control). */
+const MORE_TABS: Tab[] = ['summary', 'attributes', 'code', 'use', 'raw']
+type TopTab = 'span' | 'feedback' | 'scores' | 'more'
+
+/** True at phone and narrow-tablet widths, where the trace's tree moves under the title. */
+function useNarrow(query = '(max-width: 800px)'): boolean {
+  const get = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches
+  const [narrow, setNarrow] = useState(get)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const m = window.matchMedia(query)
+    const on = () => setNarrow(m.matches)
+    on()
+    m.addEventListener('change', on)
+    return () => m.removeEventListener('change', on)
+  }, [query])
+  return narrow
+}
 type LeftView = 'tree' | 'code' | 'flame' | 'timeline' | 'graph'
 const LEFT_VIEWS: LeftView[] = ['tree', 'code', 'flame', 'timeline', 'graph']
 const TRACE_LIMIT = 5000
@@ -45,6 +64,7 @@ export function SpanPage() {
   const navigate = useNavigate()
   const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'span') as Tab
   const leftView: LeftView = LEFT_VIEWS.includes(params.get('view') as LeftView) ? (params.get('view') as LeftView) : 'tree'
+  const narrow = useNarrow()
 
   const qc = useQueryClient()
   const callQ = useQuery({
@@ -126,10 +146,10 @@ export function SpanPage() {
 
   const root = roots.find((r) => r.call.trace_id === call.trace_id && !r.call.parent_id) ?? roots[0]
   const node = findNode(roots, call.id)
+  const spanCount = traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} span${traceCalls.length === 1 ? '' : 's'}`
 
-  return (
-    <div className="split call-split">
-      <div className={`pane-left obs-span-tree ${leftView !== 'tree' ? 'wide' : ''}`} role="region" aria-label="Spans in this trace">
+  const tree = (
+    <>
         <div className="obs-span-tree-head">
           <Segmented<LeftView>
             label="How to show the trace"
@@ -145,9 +165,11 @@ export function SpanPage() {
             onChange={setLeftView}
           />
           <span className="grow" />
-          <span className="obs-faint small" style={{ whiteSpace: 'nowrap' }}>
-            {traceQ.isLoading ? 'Loading…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''} span${traceCalls.length === 1 ? '' : 's'}`}
-          </span>
+          {!narrow && (
+            <span className="obs-faint small" style={{ whiteSpace: 'nowrap' }}>
+              {spanCount}
+            </span>
+          )}
         </div>
         <ErrorBox error={traceQ.error} />
         {leftView === 'tree' ? (
@@ -161,6 +183,38 @@ export function SpanPage() {
         ) : (
           <Timeline roots={roots} selectedId={call.id} onSelect={select} />
         )}
+    </>
+  )
+
+  // At narrow widths the page's own back link and title come first; the trace sits under them, folded.
+  if (narrow)
+    return (
+      <div className="obs-span-narrow">
+        <CallDetail
+          projectId={projectId}
+          call={call}
+          root={root?.call}
+          node={node}
+          tab={tab}
+          setTab={setTab}
+          treeSlot={
+            <details className="obs-details obs-span-tree-fold">
+              <summary>
+                Spans in this trace <span className="glist-count">{spanCount}</span>
+              </summary>
+              <div className="obs-span-tree obs-span-tree-inline" role="region" aria-label="Spans in this trace">
+                {tree}
+              </div>
+            </details>
+          }
+        />
+      </div>
+    )
+
+  return (
+    <div className="split call-split">
+      <div className={`pane-left obs-span-tree ${leftView !== 'tree' ? 'wide' : ''}`} role="region" aria-label="Spans in this trace">
+        {tree}
       </div>
       <div className="pane-right">
         <CallDetail projectId={projectId} call={call} root={root?.call} node={node} tab={tab} setTab={setTab} />
@@ -238,6 +292,7 @@ function CallDetail({
   node,
   tab,
   setTab,
+  treeSlot,
 }: {
   projectId: string
   call: Span
@@ -245,6 +300,8 @@ function CallDetail({
   node?: TreeNode
   tab: Tab
   setTab: (t: Tab) => void
+  /** The trace's tree, under the header (narrow widths). */
+  treeSlot?: ReactNode
 }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -269,16 +326,22 @@ function CallDetail({
   const g = statusGlyph(st)
   const below = (call.summary?.status_counts?.success ?? 0) + (call.summary?.status_counts?.error ?? 0)
   const isRoot = !root || root.id === call.id
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'span', label: 'Span' },
+  const tabs: { id: TopTab; label: string }[] = [
+    { id: 'span', label: 'Overview' },
     { id: 'feedback', label: fbCount ? `Feedback ${fbCount}` : 'Feedback' },
     { id: 'scores', label: scoreCount ? `Scores ${scoreCount}` : 'Scores' },
+    { id: 'more', label: 'More' },
+  ]
+  const moreTabs: { id: Tab; label: string }[] = [
     { id: 'summary', label: 'Usage' },
     { id: 'attributes', label: 'Attributes' },
     { id: 'code', label: 'Code' },
-    { id: 'use', label: 'Use' },
+    { id: 'use', label: 'Use in code' },
     { id: 'raw', label: 'Raw' },
   ]
+  const top: TopTab = MORE_TABS.includes(tab) ? 'more' : (tab as TopTab)
+  const reactions = (fb.data?.items ?? []).filter((f) => f.feedback_type === 'weft.reaction')
+  const reactionCounts = [...reactions.reduce((m, r) => m.set(r.payload?.emoji, (m.get(r.payload?.emoji) ?? 0) + 1), new Map<string, number>())].filter(([e]) => e)
   return (
     <div className="page-frame detail obs-page call-detail">
       <PageHeader
@@ -320,9 +383,25 @@ function CallDetail({
           </>
         }
       />
+      {treeSlot}
       <div className="obs-actions">
         <DisplayNameEditor projectId={projectId} call={call} />
         <span className="grow" style={{ flex: 1 }} />
+        {fb.data && (
+          <Dropdown
+            kind="dialog"
+            className="qbtn"
+            ariaLabel={reactionCounts.length ? `React (${reactionCounts.map(([e, n]) => `${e} ${n}`).join(', ')})` : 'React'}
+            label={
+              <>
+                React
+                {reactionCounts.length > 0 && <span className="obs-faint"> {reactionCounts.map(([e, n]) => `${e} ${n}`).join(' ')}</span>}
+              </>
+            }
+          >
+            <Reactions projectId={projectId} callId={call.id} feedback={fb.data.items} />
+          </Dropdown>
+        )}
         {chatInputs && (
           <Link className="qbtn" to={playgroundUrl(projectId, call.id)}>
             Open in playground
@@ -332,16 +411,27 @@ function CallDetail({
           Add to dataset
         </button>
         <AddToQueueButton projectId={projectId} callIds={[call.id]} className="qbtn" />
-        <button type="button" className="qbtn danger" onClick={() => setModal('delete')}>
-          Delete
+        <button type="button" className="qbtn icon-only" onClick={() => setModal('delete')} aria-label="Delete this span" title="Delete this span">
+          <Icon name="trash" size={15} />
         </button>
       </div>
-      {fb.data && <Reactions projectId={projectId} callId={call.id} feedback={fb.data.items} />}
 
       <div className="obs-tabs-scroll">
-        <Segmented label="Views of this span" role="tabs" panelId="span-view" options={tabs} value={tab} onChange={setTab} />
+        <Segmented<TopTab>
+          label="Views of this span"
+          role="tabs"
+          panelId="span-view"
+          options={tabs}
+          value={top}
+          onChange={(t) => setTab(t === 'more' ? (MORE_TABS.includes(tab) ? tab : 'summary') : t)}
+        />
       </div>
-      <div role="tabpanel" id="span-view" aria-labelledby={segmentedTabId('span-view', tab)} className="obs-tabpanel">
+      {top === 'more' && (
+        <div className="obs-tabs-scroll obs-subtabs">
+          <Segmented label="More views of this span" size="sm" options={moreTabs} value={tab} onChange={setTab} />
+        </div>
+      )}
+      <div role="tabpanel" id="span-view" aria-labelledby={segmentedTabId('span-view', top)} className="obs-tabpanel">
       {tab === 'span' && <CallTab projectId={projectId} call={call} node={node} root={root} />}
       {tab === 'feedback' && <FeedbackPanel projectId={projectId} call={call} />}
       {tab === 'scores' && <ScoresPanel projectId={projectId} call={call} />}
@@ -395,22 +485,12 @@ function ExceptionBox({ exception }: { exception: string }) {
   )
 }
 
-const OWN_STATUS_WORDS: Record<ReturnType<typeof callStatus>, string> = {
-  success: 'Succeeded',
-  error: 'Failed',
-  running: 'Running',
-  descendant_error: 'Succeeded; a span under it failed',
-}
-
 function CallTab({ projectId, call, node, root }: { projectId: string; call: Span; node?: TreeNode; root?: Span }) {
   const chat = useMemo(() => extractChat(call), [call])
   const [mode, setMode] = useState<IOMode>(chat ? 'chat' : 'tree')
   useEffect(() => setMode((m) => (m === 'chat' && !chat ? 'tree' : m)), [chat])
   const inputs = Object.fromEntries(Object.entries(call.inputs ?? {}).filter(([k]) => k !== 'self'))
   const self = call.inputs?.self
-  const st = callStatus(call)
-  const tokens = callTokens(call)
-  const cost = callCost(call)
   const models = Object.keys(call.summary?.usage ?? {})
   const opRef = parseRef(call.name)
   const modes: { id: IOMode; label: string }[] = chat
@@ -431,12 +511,8 @@ function CallTab({ projectId, call, node, root }: { projectId: string; call: Spa
         <KeyValueList
           items={[
             { label: 'Name', value: opRef ? <RefChip refStr={call.name} /> : call.name, mono: !opRef, help: 'The span name (internal term: op). A ref links to the function that made it.' },
-            { label: 'Status', value: OWN_STATUS_WORDS[st], tone: st === 'error' ? 'error' : st === 'descendant_error' ? 'warn' : undefined },
             { label: 'Started', value: fmtDate(call.started_at) },
             { label: 'Ended', value: call.ended_at ? fmtDate(call.ended_at) : 'Not yet' },
-            { label: 'Latency', value: fmtDuration(callLatencyMs(call)) },
-            tokens.total > 0 && { label: 'Tokens', value: `${fmtNumber(tokens.prompt)} in · ${fmtNumber(tokens.completion)} out`, help: 'Prompt and completion tokens of this span and every span under it.' },
-            cost != null && cost > 0 && { label: 'Cost', value: fmtCost(cost), help: 'Priced from the token counts with the project’s or the built-in prices.' },
             models.length > 0 && { label: models.length === 1 ? 'Model' : 'Models', value: models.join(', '), mono: true },
             self != null && { label: 'Self', value: <ValueView value={self} projectId={projectId} /> },
             !!call.parent_id && { label: 'Parent', value: <Link to={spanUrl(projectId, call.parent_id)}>Open the parent span</Link> },

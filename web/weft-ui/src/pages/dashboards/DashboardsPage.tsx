@@ -14,7 +14,7 @@ import { dashboardUrl } from '../../components/dashboards/AddToDashboardModal'
 import { newDashboard, panelTitle, timeRangeLabel } from '../../components/dashboards/dashboardUtils'
 import { slugify } from '../../components/traces/callUtils'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtDate } from '../../lib/format'
+import { fmtDate, versionLabel } from '../../lib/format'
 import '../../components/dashboards/dashboards.css'
 
 function NewDashboardModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
@@ -128,10 +128,8 @@ export function DashboardsPage() {
         <Loading />
       ) : all.length === 0 ? (
         <div className="quiet-empty">
-          <p>A dashboard holds charts of any span figure: counts, latency percentiles, tokens, cost and scores, grouped by name, model or attribute.</p>
-          <p className="quiet-note obs-wrap">
-            Create one from a template with New dashboard, or open Traces, choose More and add a chart of the spans you are looking at.
-          </p>
+          <p>A dashboard keeps charts of what your agents and code do in one place: how often they run, how long they take, what they cost and how they score.</p>
+          <p className="quiet-note obs-wrap">Start from a template with New dashboard, or open Traces and choose View, then Add a chart.</p>
         </div>
       ) : shown.length === 0 ? (
         <div className="quiet-empty">
@@ -152,7 +150,7 @@ export function DashboardsPage() {
                 summary={dashboardLine({ titles: panels.map(panelTitle), range: rangeWords(v?.time_range ?? 'all', timeRangeLabel) })}
                 meta={v?.description || undefined}
                 time={relativeTime(o.created_at)}
-                timeTitle={`Saved ${fmtDate(o.created_at)} (version ${o.version})`}
+                timeTitle={`Saved ${fmtDate(o.created_at)} (${versionLabel(o.version)})`}
                 to={dashboardUrl(projectId, o.name)}
               />
             )

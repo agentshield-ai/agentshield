@@ -65,10 +65,14 @@ export function lowerIsBetter(key: string): boolean {
   return /latency|loss|error|cost|tokens|distance|duration|time|wrong|toxic/i.test(key)
 }
 
-/** "exact.true_fraction" → "exact"; "similarity.mean" → "similarity"; "judge.score.mean" → "judge score"; "model_latency.mean" → "model latency". */
+/** Names of the built-in scorers that read better spelled out. */
+const METRIC_ALIASES: Record<string, string> = { exact: 'exact match' }
+
+/** "exact.true_fraction" → "exact match"; "similarity.mean" → "similarity"; "judge.score.mean" → "judge score"; "model_latency.mean" → "model latency". */
 export function metricWords(key: string): string {
   const parts = key.split('.').filter((p) => p !== 'true_fraction' && p !== 'mean')
-  return parts.map(scorerWords).filter(Boolean).join(' ') || scorerWords(key)
+  const w = parts.map(scorerWords).filter(Boolean).join(' ') || scorerWords(key)
+  return METRIC_ALIASES[w] ?? w
 }
 
 /** A metric value as text: fractions as percentages ("80%"), other numbers with two decimals ("0.85"), latency in time units. */
@@ -86,6 +90,44 @@ const trim = (x: number, digits: number) => String(Number(x.toFixed(digits)))
 
 /** "exact 80%", "similarity 0.85". */
 export const metricText = (key: string, v: Leaf | null | undefined) => `${metricWords(key)} ${metricValue(key, v)}`
+
+export type ChangeFormat = 'both' | 'absolute' | 'percent' | 'ratio'
+
+/** How a change against the baseline can be shown, in words (the compare page's "Show changes as" choice). */
+export const CHANGE_FORMATS: { id: ChangeFormat; label: string }[] = [
+  { id: 'both', label: 'difference and percent' },
+  { id: 'absolute', label: 'difference' },
+  { id: 'percent', label: 'percent' },
+  { id: 'ratio', label: 'ratio' },
+]
+
+/**
+ * A metric's change from the baseline, in the metric's own unit: "+75 pts" for fractions, "+8 ms (+58%)" for latency,
+ * "+0.20 (+33%)" for other numbers; or only the difference, the percentage ("+58%") or the ratio ("1.58×"). "no change" when equal.
+ */
+export function changeText(key: string, base: number, v: number, format: ChangeFormat = 'both'): string {
+  const d = v - base
+  if (Math.abs(d) < 1e-12) return format === 'ratio' ? '1×' : 'no change'
+  const sign = d > 0 ? '+' : '−'
+  const a = Math.abs(d)
+  const abs =
+    metricKind(key) === 'fraction'
+      ? `${sign}${trim(a * 100, a * 100 >= 10 ? 0 : 1)} pts`
+      : /latency/.test(key)
+        ? `${sign}${shortDuration(a * 1000)}`
+        : `${sign}${Number.isInteger(a) ? a.toLocaleString('en-US') : a >= 100 ? trim(a, 1) : a.toFixed(2)}`
+  const pct = base !== 0 ? `${sign}${trim((a / Math.abs(base)) * 100, (a / Math.abs(base)) * 100 >= 10 ? 0 : 1)}%` : null
+  switch (format) {
+    case 'absolute':
+      return abs
+    case 'percent':
+      return pct ?? abs
+    case 'ratio':
+      return base !== 0 ? `${Number((v / base).toPrecision(3))}×` : abs
+    default:
+      return pct && metricKind(key) !== 'fraction' ? `${abs} (${pct})` : abs
+  }
+}
 
 /** The score metrics of a run summary, in a stable order: fractions and means first, then by key. */
 export function scoreMetrics(summary: unknown): { key: string; value: number }[] {
@@ -163,15 +205,15 @@ export function runGlyph(run: RunInfo, prev: RunInfo | null): { kind: 'failed' |
 }
 
 /**
- * The line under a run: "support-v2 scored exact 80%, up from 0% in the previous run (support-v1); 2 of 10 examples failed."
+ * The line under a run (the row's title is the model): "Scored exact match 80%, up from 0% in the previous run (support-v1); 2 of 10 examples failed."
  * The previous run is the one before it of the same evaluation.
  */
 export function runLine(run: RunInfo, prev: RunInfo | null): string {
-  if (run.status === 'running') return `${run.model} is running.`
-  if (run.status === 'error') return `${run.model} failed${run.error ? `: ${firstLine(run.error)}` : '.'}${run.error && !/[.!?]$/.test(firstLine(run.error)) ? '.' : ''}`
+  if (run.status === 'running') return 'Still running.'
+  if (run.status === 'error') return `Failed${run.error ? `: ${firstLine(run.error)}` : '.'}${run.error && !/[.!?]$/.test(firstLine(run.error)) ? '.' : ''}`
   const h = headline(run.summary)
-  if (!h) return `${run.model} finished with no scores.`
-  let s = `${run.model} scored ${metricText(h.key, h.value)}`
+  if (!h) return 'Finished with no scores.'
+  let s = `Scored ${metricText(h.key, h.value)}`
   const p = prev ? headline(prev.summary, h.key) : null
   if (prev && p && p.key === h.key) {
     const d = direction(h.key, h.value, p.value)
@@ -225,33 +267,60 @@ export function latestChanges(runs: RunInfo[]): Change[] {
   return out
 }
 
+/** "once", "twice", "3 times". */
+export const times = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n.toLocaleString('en-US')} times`)
+
 /**
- * The Evaluations sentence: "4 runs of 2 evaluations. Since its previous run, support-eval got better (exact 0% → 80%). 1 run failed."
- * Clauses link to the comparison they describe and to the failed or running runs.
+ * The Evaluations sentence. One evaluation: "support-eval ran twice. The latest run, with support-v2, scored 75% on exact match, up from 0%."
+ * Several: "4 runs of 2 evaluations. Since its previous run, support-eval got better (exact match 0% → 80%). 1 run failed."
+ * Clauses link to the comparison (or the run) they describe and to the failed or running runs.
  */
 export function evaluationsSentence(runs: RunInfo[], filtered = false): EvalPart[] {
   if (!runs.length) return [filtered ? 'No runs match these filters.' : 'No evaluation has run yet.']
   const evals = new Set(runs.map((r) => r.evaluation))
-  const parts: EvalPart[] = [
-    evals.size === 1 ? `${plural(runs.length, 'run')} of ${[...evals][0]}${filtered ? ' match' : ''}.` : `${plural(runs.length, 'run')} of ${evals.size} evaluations${filtered ? ' match' : ''}.`,
-  ]
-  const changes = latestChanges(runs).filter((c) => c.dir !== 'same')
-  const same = latestChanges(runs).filter((c) => c.dir === 'same')
-  if (changes.length) {
-    parts.push(changes.length === 1 ? ' Since its previous run, ' : ' Since their previous runs, ')
-    const clauses: EvalPart[] = changes.slice(0, 3).map((c) => ({
-      text: `${c.evaluation} got ${c.dir} (${metricWords(c.key)} ${metricValue(c.key, c.from)} → ${metricValue(c.key, c.to)})`,
-      link: { kind: 'compare', ids: [c.prev.id, c.latest.id], baseline: c.prev.id },
-    }))
-    if (changes.length > 3) clauses.push(`${plural(changes.length - 3, 'other evaluation')} changed`)
-    parts.push(...joinParts(clauses))
-    parts.push('.')
-  } else if (same.length) {
-    if (same.length === 1)
-      parts.push(' ', { text: `${same[0].evaluation} scored the same as in its previous run`, link: { kind: 'compare', ids: [same[0].prev.id, same[0].latest.id], baseline: same[0].prev.id } }, '.')
-    else parts.push(` ${plural(same.length, 'evaluation')} scored the same as in their previous runs.`)
-  } else if (runs.some(finished)) {
-    parts.push(' None has a previous run to compare with yet.')
+  const parts: EvalPart[] = []
+  if (evals.size === 1) {
+    const name = [...evals][0]
+    parts.push(filtered ? `${plural(runs.length, 'run')} of ${name} match.` : `${name} ran ${times(runs.length)}.`)
+    const latest = runs.find(finished)
+    if (latest) {
+      const h = headline(latest.summary)
+      const prev = previousRun(latest, runs)
+      const p = prev && h ? headline(prev.summary, h.key) : null
+      const which = latest === runs[0] ? 'The latest run' : 'The latest finished run'
+      let text = `${which}, with ${latest.model}, `
+      if (!h) text += 'finished with no scores'
+      else {
+        text += `scored ${metricValue(h.key, h.value)} on ${metricWords(h.key)}`
+        if (prev && p && p.key === h.key) {
+          const d = direction(h.key, h.value, p.value)
+          text += d === 'same' ? ', the same as the run before' : `, ${h.value > p.value ? 'up' : 'down'} from ${metricValue(h.key, p.value)}`
+        }
+      }
+      const link: EvalLink = prev && p && h && p.key === h.key ? { kind: 'compare', ids: [prev.id, latest.id], baseline: prev.id } : { kind: 'compare', ids: [latest.id] }
+      parts.push(' ', { text, link }, '.')
+    }
+  } else {
+    parts.push(`${plural(runs.length, 'run')} of ${evals.size} evaluations${filtered ? ' match' : ''}.`)
+    const all = latestChanges(runs)
+    const changes = all.filter((c) => c.dir !== 'same')
+    const same = all.filter((c) => c.dir === 'same')
+    if (changes.length) {
+      parts.push(changes.length === 1 ? ' Since its previous run, ' : ' Since their previous runs, ')
+      const clauses: EvalPart[] = changes.slice(0, 3).map((c) => ({
+        text: `${c.evaluation} got ${c.dir} (${metricWords(c.key)} ${metricValue(c.key, c.from)} → ${metricValue(c.key, c.to)})`,
+        link: { kind: 'compare', ids: [c.prev.id, c.latest.id], baseline: c.prev.id },
+      }))
+      if (changes.length > 3) clauses.push(`${plural(changes.length - 3, 'other evaluation')} changed`)
+      parts.push(...joinParts(clauses))
+      parts.push('.')
+    } else if (same.length) {
+      if (same.length === 1)
+        parts.push(' ', { text: `${same[0].evaluation} scored the same as in its previous run`, link: { kind: 'compare', ids: [same[0].prev.id, same[0].latest.id], baseline: same[0].prev.id } }, '.')
+      else parts.push(` ${plural(same.length, 'evaluation')} scored the same as in their previous runs.`)
+    } else if (runs.some(finished)) {
+      parts.push(' None has a previous run to compare with yet.')
+    }
   }
   const failed = runs.filter((r) => r.status === 'error').length
   const running = runs.filter((r) => r.status === 'running').length
@@ -397,9 +466,9 @@ export function compareSentence(input: CompareInput): EvalPart[] {
     const w = wins[0]
     const who = label(w.run)
     if (!w.total) parts.push(`${who} and ${base} share no score to compare.`)
-    else if (w.better && !w.worse) parts.push(`${who} did better than ${base} on ${w.better} of ${plural(w.total, 'metric')}.`)
-    else if (w.worse && !w.better) parts.push(`${who} did worse than ${base} on ${w.worse} of ${plural(w.total, 'metric')}.`)
-    else if (!w.better && !w.worse) parts.push(`${who} scored the same as ${base} on ${w.total === 1 ? 'the one metric' : `all ${w.total} metrics`}.`)
+    else if (w.better && !w.worse) parts.push(`${who} did better than ${base} on ${onMetrics(w.better, w.total)}.`)
+    else if (w.worse && !w.better) parts.push(`${who} did worse than ${base} on ${onMetrics(w.worse, w.total)}.`)
+    else if (!w.better && !w.worse) parts.push(`${who} scored the same as ${base} on ${onMetrics(w.total, w.total)}.`)
     else parts.push(`${who} did better than ${base} on ${plural(w.better, 'metric')} and worse on ${w.worse}.`)
   } else {
     const clauses = wins.map((w) => `${label(w.run)} on ${w.better} of ${w.total}`)
@@ -435,17 +504,23 @@ export interface ScoreLike {
   scorer: string
   value: number | null
   session_id?: string
+  span_id?: string
   scope: string
 }
 
-/** The Scores sentence: "12 scores from 2 scorers on 5 sessions. 3 are below 0.5. Goal completion averages 0.53." */
+/** "3 sessions", "18 steps", "3 sessions and 18 steps": what the scores are on. */
+function scoredSubjects(scores: ScoreLike[]): string {
+  const sessions = new Set(scores.filter((s) => s.scope !== 'span').map((s) => s.session_id).filter(Boolean))
+  const steps = new Set(scores.filter((s) => s.scope === 'span').map((s) => s.span_id).filter(Boolean))
+  const xs = [sessions.size ? plural(sessions.size, 'session') : '', steps.size ? plural(steps.size, 'step') : ''].filter(Boolean)
+  return xs.length ? ` on ${xs.join(' and ')}` : ''
+}
+
+/** The Scores sentence: "12 scores from 2 scorers on 5 sessions and 18 steps. 3 are below 0.5. Goal completion averages 0.53." */
 export function scoresSentence(scores: ScoreLike[], filtered = false): EvalPart[] {
   if (!scores.length) return [filtered ? 'No scores match these filters.' : 'Nothing has been scored yet.']
   const scorers = [...new Set(scores.map((s) => s.scorer))]
-  const sessions = new Set(scores.map((s) => s.session_id).filter(Boolean))
-  const parts: EvalPart[] = [
-    `${plural(scores.length, 'score')} from ${plural(scorers.length, 'scorer')}${sessions.size ? ` on ${plural(sessions.size, 'session')}` : ''}${filtered ? ' match' : ''}.`,
-  ]
+  const parts: EvalPart[] = [`${plural(scores.length, 'score')} from ${plural(scorers.length, 'scorer')}${scoredSubjects(scores)}${filtered ? ' match' : ''}.`]
   const low = scores.filter((s) => s.value != null && s.value < LOW_SCORE)
   if (low.length) {
     const lowSessions = new Set(low.map((s) => s.session_id).filter(Boolean))
@@ -467,8 +542,32 @@ export function scoresSentence(scores: ScoreLike[], filtered = false): EvalPart[
   return parts
 }
 
-/** A score row's title: "Goal completion 0.10". */
-export const scoreTitle = (s: Pick<ScoreLike, 'scorer' | 'value'>) => `${cap(scorerWords(s.scorer))} ${s.value == null ? '—' : s.value.toFixed(2)}`
+/** A score row's title: "Goal completion 0.10", "Helpfulness judge 4". */
+export const scoreTitle = (s: Pick<ScoreLike, 'scorer' | 'value'>) =>
+  `${cap(scorerWords(s.scorer))} ${s.value == null ? '—' : Number.isInteger(s.value) ? String(s.value) : s.value.toFixed(2)}`
+
+/**
+ * The number a scorer's output stands for, as the server reads it (store.ScoreValue): a number, a boolean as 1 or 0, or in an object the
+ * first of value, score, safe, passed, pass, correct, else its first boolean or number key in name order. Null for text.
+ */
+export function scoreValue(v: unknown): number | null {
+  if (typeof v === 'boolean') return v ? 1 : 0
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>
+    for (const k of ['value', 'score', 'safe', 'passed', 'pass', 'correct']) {
+      if (k in o) {
+        const r = scoreValue(o[k])
+        if (r != null) return r
+      }
+    }
+    for (const k of Object.keys(o).sort()) {
+      const x = o[k]
+      if (typeof x === 'boolean' || (typeof x === 'number' && Number.isFinite(x))) return scoreValue(x)
+    }
+  }
+  return null
+}
 
 /** What a score is about: "The session", "Agent coder", "A hand-off", "A turn", "A step". */
 export function scoreSubject(s: { scope: string; agent?: string }): string {
@@ -527,7 +626,7 @@ export function leaderboardSentence(columns: LbColumnLike[], rows: LbRowLike[]):
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   if (!ranked.length) return `${plural(rows.length, 'model')} ranked; none has a value yet.`
   const [top, n] = ranked[0]
-  let s = `${top} leads on ${n === columns.length ? (n === 1 ? 'the one metric' : `all ${n} metrics`) : `${n} of ${plural(columns.length, 'metric')}`}`
+  let s = `${top} leads on ${onMetrics(n, columns.length)}`
   const others = columns.filter((c) => !leaders[String(c.index)].includes(top) && leaders[String(c.index)].length)
   if (others.length) {
     const byModel = new Map<string, string[]>()
@@ -551,7 +650,13 @@ export function leaderboardLine(columns: LbColumnLike[], rows: LbRowLike[]): str
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   if (!ranked.length) return `${plural(columns.length, 'metric')}; no values yet.`
   const [top, n] = ranked[0]
-  return `${top} leads on ${n} of ${plural(columns.length, 'metric')}, among ${plural(rows.length, 'model')}.`
+  return `${top} leads on ${onMetrics(n, columns.length)}, among ${plural(rows.length, 'model')}.`
+}
+
+/** "the one metric", "both metrics", "all 3 metrics", "2 of 3 metrics". */
+export function onMetrics(n: number, total: number): string {
+  if (n !== total) return `${n} of ${plural(total, 'metric')}`
+  return total === 1 ? 'the one metric' : total === 2 ? 'both metrics' : `all ${total} metrics`
 }
 
 // ---------------------------------------------------------------- review queues
@@ -584,6 +689,35 @@ export function queuesSentence(queues: QueueLike[]): EvalPart[] {
   return parts
 }
 
+export interface FieldLike {
+  name: string
+  schema?: { type?: string; enum?: unknown[] } | null
+}
+
+/**
+ * What a queue asks of its reviewers, from its fields' types: "asks reviewers to rate quality and say whether it is correct".
+ * Fields whose type is not known yet are named plainly ("asks reviewers about tone").
+ */
+export function queueAsks(fields: FieldLike[]): string {
+  if (!fields.length) return 'asks for nothing: reviewers mark each item done or skip it'
+  const words = (f: FieldLike) => scorerWords(f.name)
+  const by = (pred: (f: FieldLike) => boolean) => fields.filter(pred).map(words)
+  const known = (f: FieldLike) => !!f.schema && (!!f.schema.type || Array.isArray(f.schema.enum))
+  const choice = by((f) => known(f) && Array.isArray(f.schema!.enum))
+  const rate = by((f) => known(f) && !Array.isArray(f.schema!.enum) && (f.schema!.type === 'integer' || f.schema!.type === 'number'))
+  const yesNo = by((f) => known(f) && !Array.isArray(f.schema!.enum) && f.schema!.type === 'boolean').map((w) => w.replace(/^is\s+/, ''))
+  const write = by((f) => known(f) && !Array.isArray(f.schema!.enum) && !['integer', 'number', 'boolean'].includes(f.schema!.type ?? ''))
+  const unknown = by((f) => !known(f))
+  const clauses = [
+    rate.length ? `rate ${joinClauses(rate)}` : '',
+    yesNo.length ? `say whether it is ${joinClauses(yesNo)}` : '',
+    choice.length ? `choose ${joinClauses(choice.map((w) => `the ${w}`))}` : '',
+    write.length ? `add ${joinClauses(write)}` : '',
+  ].filter(Boolean)
+  if (!clauses.length) return `asks reviewers about ${joinClauses(unknown)}`
+  return `asks reviewers to ${joinClauses(clauses)}${unknown.length ? `, and about ${joinClauses(unknown)}` : ''}`
+}
+
 /** A queue row's line: "4 of 6 items left to review." / "All 6 items reviewed." / "Empty: add spans from Traces." */
 export function queueLine(q: { total: number; done: number }): string {
   if (!q.total) return 'Empty. Add steps from Traces or a step’s page.'
@@ -599,6 +733,83 @@ export function reviewSentence(p: { position: number | null; total: number; comp
   if (!left) return `You have reviewed every item: ${p.completed} done${p.skipped ? `, ${p.skipped} skipped` : ''}.`
   const done = [p.completed ? `${p.completed} done` : '', p.skipped ? `${p.skipped} skipped` : ''].filter(Boolean)
   return `${p.position != null ? `Item ${p.position} of ${p.total}. ` : ''}${left === 1 ? 'One is' : `${left} are`} left to review${done.length ? `; ${done.join(', ')}` : ''}.`
+}
+
+// ---------------------------------------------------------------- one review item
+
+/** A value as plain text: strings as they are, yes/no, numbers, lists joined, objects as "key: value" lines. */
+export function plainText(v: unknown, depth = 0): string {
+  if (v == null) return '—'
+  if (typeof v === 'string') return v
+  if (typeof v === 'boolean') return v ? 'yes' : 'no'
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString('en-US') : String(Number(v.toFixed(4)))
+  if (Array.isArray(v)) return v.every((x) => x == null || typeof x !== 'object') ? v.map((x) => plainText(x)).join(', ') : JSON.stringify(v)
+  if (typeof v === 'object') {
+    if (depth > 0) return JSON.stringify(v)
+    return Object.entries(v as Record<string, unknown>)
+      .filter(([k]) => !k.startsWith('_'))
+      .map(([k, x]) => `${cap(scorerWords(k))}: ${plainText(x, depth + 1)}`)
+      .join('\n')
+  }
+  return String(v)
+}
+
+/** Dataset columns that hold the answer a person expects. */
+const EXPECTED = /^(expected|expected_output|expected_answer|target|reference|ground_truth|gold|label|ideal|correct_answer)$/i
+
+export interface ReviewField {
+  label: string
+  text: string
+}
+
+export interface ReviewView {
+  /** What the model was asked: the dataset row's fields, or the step's inputs ("Question: …"). */
+  asked: ReviewField[]
+  /** What it answered. */
+  answer: ReviewField | null
+  /** The answer the dataset expects. */
+  expected: ReviewField[]
+  /** The scores already given, as text: "exact match pass · similarity 1". */
+  scores: string | null
+  /** The model that answered, when the step names one. */
+  model: string | null
+  /** Seconds the model took, when the step records it. */
+  modelLatency: number | null
+}
+
+/**
+ * What a review item shows first (DESIGN.md §7.2: the thing to judge, not the raw step): the question and the answer, the expected answer and
+ * the scores as text. `inputs` are the step's inputs with refs to dataset rows already read (an object in place of the ref string); `names`
+ * gives the readable name of any ref left (the model).
+ */
+export function reviewView(inputs: Record<string, unknown> | null | undefined, output: unknown, names: Record<string, string> = {}): ReviewView {
+  const asked: ReviewField[] = []
+  const expected: ReviewField[] = []
+  let model: string | null = null
+  const add = (k: string, v: unknown) => (EXPECTED.test(k) ? expected : asked).push({ label: cap(scorerWords(k)) || k, text: plainText(v) })
+  for (const [k, v] of Object.entries(inputs ?? {})) {
+    if (k === 'self') continue
+    if (k === 'model' && typeof v === 'string' && v.startsWith('weft:///')) {
+      model = names[v] ?? null
+      continue
+    }
+    if (typeof v === 'string' && v.startsWith('weft:///')) continue
+    if ((k === 'example' || k === 'row' || k === 'inputs') && v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const [kk, vv] of Object.entries(v as Record<string, unknown>)) if (!kk.startsWith('_')) add(kk, vv)
+    } else add(k, v)
+  }
+  let answer: ReviewField | null = null
+  let scores: string | null = null
+  let modelLatency: number | null = null
+  const o = output as Record<string, unknown> | null
+  if (o && typeof o === 'object' && !Array.isArray(o) && 'output' in o && ('scores' in o || 'model_latency' in o)) {
+    answer = { label: 'Answer', text: plainText(o.output) }
+    const flat = flatten(o.scores ?? {})
+    const xs = Object.entries(flat).map(([k, v]) => `${metricWords(k)} ${typeof v === 'boolean' ? (v ? 'passed' : 'failed') : metricValue(k, v)}`)
+    scores = xs.length ? xs.join(' · ') : null
+    modelLatency = typeof o.model_latency === 'number' ? o.model_latency : null
+  } else if (output !== undefined && output !== null) answer = { label: 'Answer', text: plainText(output) }
+  return { asked, answer, expected, scores, model, modelLatency }
 }
 
 // ---------------------------------------------------------------- playground

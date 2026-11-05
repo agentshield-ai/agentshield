@@ -1,3 +1,4 @@
+import { versionLabel } from '../../lib/format'
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -17,10 +18,10 @@ const LIMIT = 50
 
 export function CellValue({ v, projectId }: { v: Any; projectId: string }) {
   if (v === undefined) return <span className="faint">—</span>
-  if (v === null) return <span className="json-null mono">null</span>
+  if (v === null) return <span className="vv-null">null</span>
   if (isRef(v)) return <RefChip refStr={v} />
-  if (typeof v === 'boolean') return <span className="json-bool mono">{String(v)}</span>
-  if (typeof v === 'number') return <span className="json-number mono">{v}</span>
+  if (typeof v === 'boolean') return <span className="vv-value">{String(v)}</span>
+  if (typeof v === 'number') return <span className="vv-value vv-num">{v}</span>
   if (typeof v === 'string')
     return (
       <div className="cell-box" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} title={v.length > 200 ? v.slice(0, 2000) : undefined}>
@@ -90,7 +91,7 @@ export function DatasetRowsView({ projectId, obj, onPublished }: { projectId: st
     setDownloading(true)
     try {
       const rows = (await fetchAllRows(projectId, digest)).map((r) => r.value)
-      const name = `${obj.name}-v${obj.version}`
+      const name = `${obj.name}-${versionLabel(obj.version).replace(' ', '-')}`
       if (fmt === 'csv') downloadText(`${name}.csv`, rowsToCSV(rows), 'text/csv')
       else if (fmt === 'jsonl') downloadText(`${name}.jsonl`, rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'application/x-ndjson')
       else downloadText(`${name}.json`, JSON.stringify(rows, null, 2))

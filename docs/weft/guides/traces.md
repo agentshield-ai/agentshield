@@ -49,5 +49,6 @@ filter bar, so you and your team can come back to it.
 ## Do more with spans
 
 Select rows to compare them, add them to a dataset or a review queue, export
-them, or delete them. **Show charts** draws counts, latency, tokens and cost
-over time for the current filters; **+ Add chart to dashboard** keeps a chart.
+them, or delete them. **Charts** draws counts, latency, tokens and cost
+over time for the current filters; **More › Add a chart of these spans to a
+dashboard** keeps a chart.

@@ -111,3 +111,24 @@ html span.ref-chip {
   text-decoration: none;
 }
 
+
+/* Values are near-black text, never syntax-coloured (FIXES convention 5):
+   strings, numbers and booleans alike; null is quiet. The old json-* classes
+   are neutralised too, wherever they are still used. */
+html .vv-value,
+html .json-string,
+html .json-number,
+html .json-bool {
+  color: var(--text);
+}
+html .vv-num {
+  font-variant-numeric: tabular-nums;
+}
+html .vv-null,
+html .json-null {
+  color: var(--text-muted);
+}
+html .vv-key,
+html .json-key {
+  color: var(--text-muted);
+}

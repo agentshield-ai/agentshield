@@ -349,20 +349,78 @@
   align-items: center;
   gap: 5px;
 }
-.change-word.added {
-  color: var(--success);
-}
-.change-word.removed {
-  color: var(--error);
-}
-.change-word.changed {
-  color: var(--warn);
+.change-word {
+  color: var(--text);
+  font-weight: 600;
 }
 .diff-val {
-  font-family: var(--mono);
-  font-size: 12px;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .diff-val.before {
   color: var(--text-muted);
+}
+/* Lines that differ: a neutral tint and weight, never red, green or amber
+   (FIXES convention 5); removed lines are quieter, added lines heavier. */
+html .diff-box .diff-line.add,
+html .diff-box .diff-line.del {
+  background: var(--panel-2);
+}
+html .diff-box .diff-line.add .tx {
+  font-weight: 600;
+}
+html .diff-box .diff-line.del .tx {
+  color: var(--text-muted);
+}
+html .diff-box .diff-line.add .tx::before,
+html .diff-box .diff-line.del .tx::before {
+  color: var(--text-muted);
+}
+
+/* ---------- runs on an asset's page (EvalRunsList, SpanRunsList) ---------- */
+/* A question as the title wraps to two lines rather than being cut. */
+.asset-runs .lrow-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.asset-runs .lrow-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.asset-runs .lrow.selected .lrow-link {
+  background: var(--accent-2);
+}
+.lrow .asset-pick {
+  align-self: center;
+  margin-right: 16px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lrow .asset-pick:hover {
+  background: var(--panel-2);
+}
+.lrow .asset-pick input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+@media (max-width: 640px) {
+  /* The time drops under the title instead of squeezing it. */
+  .asset-runs .lrow-top {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .lrow .asset-pick {
+    margin-right: 8px;
+  }
 }

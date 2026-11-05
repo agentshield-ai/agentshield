@@ -93,7 +93,7 @@ export function TeamsPage() {
       <div className="page-frame">
         {header}
         <GuidedEmpty projectId={pid} title="No teams yet">
-          Teams appear once a session has agents. Add <span className="mono">weft.team.id</span> and <span className="mono">weft.team.name</span> to any span to name the team.
+          Teams appear once a session has agents. To give a team a name, send it with each run; the setup guide shows how.
         </GuidedEmpty>
       </div>
     )

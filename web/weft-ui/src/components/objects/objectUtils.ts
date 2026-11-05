@@ -52,7 +52,8 @@ export const KIND_META: Record<ObjectPageKind, { title: string; singular: string
     blurb: 'Functions and LLM judges that grade model outputs.',
   },
   ops: { title: 'Functions', singular: 'function', filter: { kinds: ['function'] }, blurb: 'Traced functions, versioned by their source code.' },
-  all: { title: 'All objects', singular: 'object', filter: { kinds: VALUE_KINDS }, blurb: 'Every versioned object in this project.' },
+  // Every kind, functions too: the same assets the project's figures count (Settings › General, Projects).
+  all: { title: 'All objects', singular: 'object', filter: { kinds: [...VALUE_KINDS, 'function'] }, blurb: 'Every versioned object in this project.' },
 }
 
 export const OBJ_BASES = ['Object', 'BaseModel']
@@ -146,8 +147,6 @@ export function kindOf(o: WeftObject): ObjectPageKind {
 
 export const refOf = (o: WeftObject) => objectRef(o.project_id, o.name, o.digest, o.kind === 'function' ? 'function' : 'object')
 
-/** Ref with a readable version, e.g. for SDK snippets: name:v3 */
-export const versionLabel = (o: Pick<WeftObject, 'version'>) => `v${o.version}`
 
 export function refName(ref: string | null | undefined): string {
   if (!ref) return '—'

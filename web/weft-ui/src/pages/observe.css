@@ -411,9 +411,6 @@
 .compare-table th {
   min-width: 180px;
 }
-.compare-table .diff-cell {
-  background: var(--warn-bg);
-}
 
 /* ---------- dashboards ---------- */
 .obs-dash-grid .dash-panel {
@@ -513,12 +510,6 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.obs-page .compare-table td.diff-cell {
-  background: color-mix(in srgb, var(--warn-bg) 45%, transparent);
-}
-.obs-page .compare-table .cmp-baseline-col {
-  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
-}
 /* Messages on these pages: no coloured left borders (§7.2 rule 2); the role is in words. */
 .obs-page .chat-msg,
 .obs-page .chat-msg.role-user,
@@ -538,4 +529,112 @@
 }
 .thread-page .ph-title .mono {
   font-size: 24px;
+}
+
+/* ---------- span page: quiet controls, second-level views, narrow layout ---------- */
+.qbtn.icon-only {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+.qbtn.icon-only:hover {
+  color: var(--text);
+}
+.dd-menu.dd-pop {
+  padding: 8px;
+  min-width: max-content;
+}
+.obs-subtabs {
+  margin-top: -8px;
+}
+.obs-span-narrow {
+  min-width: 0;
+}
+.obs-span-tree-fold > summary .glist-count {
+  font-weight: 400;
+}
+.obs-span-tree.obs-span-tree-inline {
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-panel);
+  max-height: 360px;
+  padding: 12px 10px;
+}
+/* Labels in sentence case (§7.2): no small capitals on these pages. */
+.obs-page .chat-role {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-label);
+}
+/* Compare: section rows and field names in sentence case; a field that
+   differs is marked by weight, its cells by a neutral tint (never amber). */
+.obs-page .compare-table .section-row td {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-label);
+  color: var(--text);
+}
+.obs-page .compare-table td.cmp-field {
+  color: var(--text-secondary);
+  font-size: var(--fs-meta);
+}
+.obs-page .compare-table tr.diff-row td.cmp-field {
+  color: var(--text);
+  font-weight: 600;
+}
+.obs-page .compare-table td.diff-cell {
+  background: var(--fill);
+}
+.obs-page .compare-table .cmp-baseline-col {
+  background: transparent;
+}
+.obs-page .tdiff-add {
+  background: var(--fill);
+  color: var(--text);
+  font-weight: 600;
+}
+.obs-page .tdiff-del {
+  background: transparent;
+  color: var(--text-muted);
+}
+.obs-inline-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+/* Traces: the one View menu (rows, columns, charts, export, other views). */
+.obs-view-menu {
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+}
+.obs-page .dd-section,
+.obs-view-menu .dd-section {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding-top: 10px;
+}
+.obs-view-menu a.dd-item {
+  text-decoration: none;
+}
+.obs-view-menu .dd-row {
+  display: flex;
+  gap: 4px;
+  padding: 2px 6px;
+}
+.obs-view-menu .dd-details > summary {
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.obs-view-menu .obs-keys kbd {
+  font-size: 11px;
+}
+.obs-page .compare-table .cmp-delta {
+  color: var(--text-secondary);
 }

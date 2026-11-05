@@ -11,6 +11,7 @@ import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v1, type Detection, type DetectionStats } from '../../api/v1'
+import { api } from '../../api/client'
 import { useProjectId } from '../../hooks/useProject'
 import { SCOPE_LIMIT, sessionScopeParams, useSessionScope, type SessionScope } from '../../hooks/useSessionScope'
 import { filterQueryString, isEmptyFilter, removeKey, timeWindow, TIME_LABEL, type FilterState, type TimeRange } from '../../lib/filters'
@@ -22,17 +23,21 @@ import {
   detectionLine,
   detectionMeta,
   fatigueSentence,
-  groupCounts,
+  groupMix,
   linkedSentence,
   overrideSentence,
+  overrideSplit,
   rangePhrase,
   replayGlyph,
   replayLine,
   replayMeta,
   ruleGroups,
   securitySentence,
+  spanToolArgs,
+  toolTarget,
   type RuleGroup,
   type SecPart,
+  type ToolTarget,
 } from '../../lib/summaries/security'
 import { agentUrl, securityUrl, sessionUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
@@ -174,6 +179,28 @@ export function SecurityPage() {
   const dets = useMemo(() => (list.data?.items ?? []).filter((d) => detectionMatchesText(d, state.q)), [list.data, state.q])
   // The text filter runs here, so the figures are counted from the matching detections.
   const st = state.q && list.data ? statsFromDetections(dets, serverStats.data) : serverStats.data
+  // Every detection is in hand (not capped): the approvals and overridden blocks can be told apart.
+  const complete = !!list.data && list.data.items.length >= list.data.total_count
+  const split = complete || state.q ? overrideSplit(dets) : undefined
+  // What each flagged tool call did ("read ~/.ssh/config"), from its recorded span's arguments.
+  const spanIds = useMemo(() => [...new Set(dets.map((d) => d.span_id).filter((x): x is string => !!x))].sort(), [dets])
+  const argSpans = useQuery({
+    queryKey: ['spans', pid, 'detection-args', spanIds],
+    queryFn: () => api.spansQuery({ project_id: pid, filter: { ids: spanIds }, columns: ['id', 'inputs', 'attributes'], limit: spanIds.length }),
+    enabled: spanIds.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  })
+  const targets = useMemo(() => {
+    const bySpan = new Map((argSpans.data?.items ?? []).map((sp) => [sp.id, sp]))
+    const m = new Map<string, ToolTarget>()
+    for (const d of dets) {
+      const sp = d.span_id ? bySpan.get(d.span_id) : undefined
+      const t = sp ? toolTarget(d.tool_name, spanToolArgs(sp)) : null
+      if (t) m.set(d.id, t)
+    }
+    return m
+  }, [argSpans.data, dets])
   const ruleFilter = params.get('rule')
   const groups = useMemo(() => {
     const gs = ruleGroups(dets)
@@ -214,7 +241,7 @@ export function SecurityPage() {
             <Sentence parts={['AgentShield has not sent any verdicts to this project yet.']} />
           ) : undefined
         ) : st && list.data ? (
-          <Sentence parts={securitySentence({ stats: st, time, filtered }).map(toPart)} />
+          <Sentence parts={securitySentence({ stats: st, time, filtered, split }).map(toPart)} />
         ) : (
           <p className="sentence s-outcome sk-sentence" aria-busy="true">
             <span className="sr-only">Counting verdicts…</span>
@@ -295,13 +322,13 @@ export function SecurityPage() {
       ) : (
         <div className="obs-groups">
           {groups.map((g) => (
-            <RuleGroupList key={g.id || 'none'} pid={pid} group={g} />
+            <RuleGroupList key={g.id || 'none'} pid={pid} group={g} targets={targets} />
           ))}
           {st && st.linked < st.total && <p className="quiet-note">{linkedSentence(st)}</p>}
         </div>
       )}
 
-      <Patterns pid={pid} insights={insights.data} keep={keep} toPart={toPart} />
+      <Patterns pid={pid} insights={insights.data} keep={keep} toPart={toPart} asked={st?.by_action.require_approval ?? 0} />
       {scope.truncated && <CapNote shown={SCOPE_LIMIT} total={scope.total} what="matching sessions" why="the approval sentences and replay use the most recent ones" />}
 
       {dets.length > 0 && <OverTime dets={dets} from={w.from} to={w.to} />}
@@ -313,9 +340,10 @@ export function SecurityPage() {
 }
 
 /** One rule: its plain words and severity, then its detections, each opening the step. */
-function RuleGroupList({ pid, group: g }: { pid: string; group: RuleGroup }) {
+function RuleGroupList({ pid, group: g, targets }: { pid: string; group: RuleGroup; targets: Map<string, ToolTarget> }) {
   const [n, setN] = useState(GROUP_ROWS)
   const id = `rule-${(g.id || 'none').replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  const mix = groupMix(g)
   return (
     <section className="obs-group" aria-labelledby={id}>
       <div className="obs-group-head">
@@ -325,7 +353,8 @@ function RuleGroupList({ pid, group: g }: { pid: string; group: RuleGroup }) {
         </h2>
         <p className="obs-group-why">
           {g.reason}
-          {g.ruleTitle && <span className="obs-rule-title"> Rule: {g.ruleTitle}.</span>} <span className="obs-rule-title">{groupCounts(g)}.</span>
+          {g.ruleTitle && <span className="obs-rule-title"> Rule: {g.ruleTitle}.</span>}
+          {mix && <span className="obs-rule-title"> {mix}.</span>}
         </p>
       </div>
       <GroupedList
@@ -346,7 +375,7 @@ function RuleGroupList({ pid, group: g }: { pid: string; group: RuleGroup }) {
               className="det-row"
               glyph={<StatusGlyph kind={detectionGlyph(d)} label={d.action === 'log' ? 'Logged' : undefined} />}
               title={d.session_title?.trim() || `Session ${d.session_id}`}
-              summary={detectionLine(d)}
+              summary={detectionLine(d, targets.get(d.id))}
               meta={meta || undefined}
               time={relativeTime(d.created_at)}
               timeTitle={fmtDate(d.created_at)}
@@ -359,53 +388,34 @@ function RuleGroupList({ pid, group: g }: { pid: string; group: RuleGroup }) {
   )
 }
 
-/** Approval fatigue, override escalation and correlated agents, each a sentence, only when present. */
+/**
+ * Where approval requests piled up, where users overrode blocks and which
+ * agents tripped the same rules together: one quiet paragraph, only when
+ * present. The counts are the header sentence's; this names the sessions.
+ */
 function Patterns({
   insights,
   keep,
   toPart,
+  asked,
 }: {
   pid: string
   insights?: Awaited<ReturnType<typeof v1.insights>>
   keep: (s: { session_id: string; agents: string[] }) => boolean
   toPart: (p: SecPart) => SentencePart
+  asked: number
 }) {
   if (!insights) return null
-  const fatigue = fatigueSentence(insights.approval_fatigue.by_session.filter(keep), insights.approval_fatigue.threshold)
+  const fatigue = fatigueSentence(insights.approval_fatigue.by_session.filter(keep), insights.approval_fatigue.threshold, asked)
   const overrides = overrideSentence(insights.override_escalation.by_session.filter(keep))
   const cross = crossAgentSentences(insights.cross_agent ?? [])
   if (!fatigue && !overrides && !cross.length) return null
+  const parts: SecPart[] = []
+  for (const x of [fatigue, overrides, ...cross.map((c) => [c])]) if (x) parts.push(...(parts.length ? [' '] : []), ...x)
   return (
-    <div className="obs-quiet-sections">
-      {fatigue && (
-        <section className="obs-quiet" aria-labelledby="sec-fatigue">
-          <h2 className="view-h" id="sec-fatigue">
-            Approval fatigue
-          </h2>
-          <Sentence size="body" parts={fatigue.map(toPart)} />
-        </section>
-      )}
-      {overrides && (
-        <section className="obs-quiet" aria-labelledby="sec-overrides">
-          <h2 className="view-h" id="sec-overrides">
-            Overrides
-          </h2>
-          <Sentence size="body" parts={overrides.map(toPart)} />
-        </section>
-      )}
-      {cross.length > 0 && (
-        <section className="obs-quiet" aria-labelledby="sec-cross">
-          <h2 className="view-h" id="sec-cross">
-            Across agents
-          </h2>
-          {cross.map((c) => (
-            <p key={c} className="sentence s-body">
-              {c}
-            </p>
-          ))}
-        </section>
-      )}
-    </div>
+    <section className="obs-quiet obs-patterns" aria-label="Patterns worth a look">
+      <Sentence size="body" parts={parts.map(toPart)} />
+    </section>
   )
 }
 
@@ -454,8 +464,7 @@ function ByAgent({ pid, stats }: { pid: string; stats: DetectionStats }) {
     <details className="obs-details">
       <summary>By agent</summary>
       <p className="quiet-note obs-wrap" style={{ marginBottom: 10 }}>
-        Flagged tool calls: the agent's recorded tool calls with at least one verdict other than allow (a call with several verdicts counts once), out of all its recorded tool calls.
-        Verdicts also counts those not linked to a recorded tool call.
+        Flagged tool calls: the agent's tool calls AgentShield did not simply allow, out of all its tool calls.
       </p>
       <PlainTable caption="Detections by agent">
         <thead>
@@ -545,7 +554,7 @@ function ReplaySection({ pid, enabled, state, time, scope }: { pid: string; enab
         </button>
       </div>
       <p className="quiet-note obs-wrap">
-        Replay runs the recorded tool calls through the current rules in shadow mode and lists what would change. Your agents are not affected.
+        Replay checks the recorded tool calls against the current rules and lists what would change. Your agents are not affected.
       </p>
       {!enabled && (
         <p className="quiet-note obs-wrap">
@@ -580,7 +589,7 @@ function ReplaySection({ pid, enabled, state, time, scope }: { pid: string; enab
           {job.data ? <ReplayResult pid={pid} job={job.data} /> : <Loading />}
         </div>
       )}
-      {enabled && jobs.data?.items.length === 0 && <p className="quiet-note obs-wrap">No replays yet. A replay shows what your current rules would block in the sessions you already recorded.</p>}
+      {enabled && jobs.data?.items.length === 0 && <p className="quiet-note obs-wrap">No replays yet.</p>}
     </section>
   )
 }

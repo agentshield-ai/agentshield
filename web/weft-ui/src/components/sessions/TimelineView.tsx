@@ -11,15 +11,15 @@
 // Selecting a step opens it in the inspector: its tool, decision, rule,
 // severity, model, timing, tokens and ids, and links to every detection of
 // the rule, a replay with the current rules, and the raw span. j/k move
-// between steps. On a narrow screen the inspector opens under the selected
-// step instead of beside the story.
+// between steps. On a narrow screen the inspector comes after the story
+// (the story is never split), and the selected step links down to it.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { v1, type Detection, type ReplayJob, type SessionSummary } from '../../api/v1'
 import { fmtCost, fmtDate, fmtNumber } from '../../lib/format'
 import { isCommandTool, joinClauses, offsetText, shortDuration } from '../../lib/summaries'
-import { ruleWords } from '../../lib/ruleWords'
+import { ruleWords, sentenceCase } from '../../lib/ruleWords'
 import { entryFor, type Delegation, type Story, type StepEntry, type StoryEntry } from '../../lib/story'
 import { oneLine, type BuiltTimeline, type Step } from '../../lib/timeline'
 import { agentUrl, securityUrl, spanUrl } from '../../lib/urls'
@@ -195,7 +195,7 @@ export function StoryView({
   ) : (
     <SessionInspector pid={pid} summary={summary} replay={replay} sticky={!narrow} />
   )
-  const ctx: EntryCtx = { pid, sessionStart, selected, onSelect, inline: narrow ? inspector : null }
+  const ctx: EntryCtx = { pid, sessionStart, selected, onSelect, narrow }
 
   if (!story.order.length)
     return (
@@ -210,7 +210,7 @@ export function StoryView({
           <TopEntry key={e.key} e={e} ctx={ctx} />
         ))}
       </ol>
-      {(!narrow || !sel) && <div className="story-side">{inspector}</div>}
+      <div className="story-side">{inspector}</div>
     </div>
   )
 }
@@ -220,8 +220,8 @@ interface EntryCtx {
   sessionStart: number
   selected: string | null
   onSelect: (key: string) => void
-  /** The inspector, rendered under the selected step on a narrow screen. */
-  inline: ReactNode
+  /** On a narrow screen the inspector sits after the story: the selected step links down to it. */
+  narrow: boolean
 }
 
 function startOf(e: StepEntry): number {
@@ -265,7 +265,20 @@ function EntryBody({ e, ctx }: { e: StepEntry; ctx: EntryCtx }) {
     <>
       {e.kind !== 'thought' && e.thoughts.map((x) => <Thought key={x.key} s={x} onClick={() => ctx.onSelect(e.key)} />)}
       <Block e={e} ctx={ctx} />
-      {selected && ctx.inline && <div className="story-inline-inspector">{ctx.inline}</div>}
+      {selected && ctx.narrow && (
+        <a
+          className="story-to-inspector"
+          href="#inspector"
+          onClick={(ev) => {
+            ev.preventDefault()
+            const el = document.getElementById('inspector')
+            el?.scrollIntoView({ block: 'start' })
+            el?.focus({ preventScroll: true })
+          }}
+        >
+          Details of this step, below the story
+        </a>
+      )}
       {e.kind === 'act' && e.delegation && <Nested d={e.delegation} ctx={ctx} />}
     </>
   )
@@ -391,12 +404,12 @@ function ActCard({ e, props }: { e: Extract<StepEntry, { kind: 'act' }>; props: 
             <span className="sb-title">{v.action === 'block' ? 'Blocked by AgentShield' : 'AgentShield asked for approval'}</span>
             <span className="sb-reason">
               {words!.reason}
-              {v.overridden ? (v.action === 'block' ? ' The user overrode the block.' : ' The user approved it.') : ''}
+              {v.overridden ? (v.action === 'block' ? ' You overrode the block.' : ' You approved it.') : ''}
             </span>
           </div>
         </div>
       )}
-      {v?.action === 'log' && <p className="sb-log">AgentShield noted this: {v.rules[0]?.title ?? 'a rule matched'}.</p>}
+      {v?.action === 'log' && <p className="sb-log">AgentShield noted this: {v.rules[0]?.title ? sentenceCase(v.rules[0].title) : 'a rule matched'}.</p>}
       {failed(s) && v?.action !== 'block' && s.errorText && <p className="sc-error">{clip(oneLine(s.errorText, 400), 300)}</p>}
     </div>
   )
@@ -460,8 +473,9 @@ function StepInspector({ pid, summary, entry: e, story, tl, replay, sticky }: { 
     if (s.type === 'tool_call' || s.type === 'detection') items.push({ label: 'Tool', value: String(p.tool_name ?? s.detections[0]?.tool_name ?? '—') })
     if (v) {
       const decision = v.action === 'block' ? 'Blocked' : v.action === 'require_approval' ? 'Needed approval' : 'Logged'
-      items.push({ label: 'Decision', value: `${decision}${v.overridden ? ' (overridden by the user)' : ''}`, tone: v.action === 'block' ? 'error' : v.action === 'require_approval' ? 'warn' : undefined })
-      items.push({ label: v.rules.length > 1 ? 'Rules' : 'Rule', value: v.rules.map((r) => r.title || r.id).join('; ') || '—' })
+      const after = v.overridden ? (v.action === 'block' ? '; overridden' : v.action === 'require_approval' ? '; approved' : '') : ''
+      items.push({ label: 'Decision', value: `${decision}${after}`, tone: v.action === 'block' ? 'error' : v.action === 'require_approval' ? 'warn' : undefined })
+      items.push({ label: v.rules.length > 1 ? 'Rules' : 'Rule', value: v.rules.map((r) => (r.title ? sentenceCase(r.title) : r.id)).join('; ') || '—' })
       items.push({ label: 'Severity', value: sev(v.severity) })
       items.push({ label: 'Mode', value: sev(v.mode) })
     } else if (failed(s)) items.push({ label: 'Outcome', value: 'Failed', tone: 'error' })

@@ -1,7 +1,7 @@
 // Pure helpers for dashboards and custom charts (unit tested in dashboards.test.ts).
 import type { Span, SpansFilter, Operation, Query } from '../../api/types'
 import { spanDisplayName } from '../../api/refs'
-import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, getPath } from '../../lib/format'
+import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDuration, getPath } from '../../lib/format'
 import type { ChartType, DashboardPanel, DashboardVal, MetricAgg, MetricSpec, MetricsReq, MetricsRes } from '../../api/dashboards'
 
 export const TIME_RANGES: { id: string; label: string; seconds: number | null }[] = [
@@ -161,10 +161,7 @@ export function fmtValue(v: number | null | undefined, kind: ValueKind): string 
     case 'percent':
       return `${(v * 100).toFixed(v < 0.1 ? 2 : 1)}%`
     case 'duration':
-      if (v < 1) return `${v.toFixed(2)}ms`
-      if (v < 1000) return `${Math.round(v)}ms`
-      if (v < 60_000) return `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)}s`
-      return `${Math.floor(v / 60_000)}m ${Math.round((v % 60_000) / 1000)}s`
+      return fmtDuration(v)
     case 'cost':
       return fmtCost(v)
     default:

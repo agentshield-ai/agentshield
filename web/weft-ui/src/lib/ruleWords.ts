@@ -112,3 +112,20 @@ export function ruleWords(rule: Pick<DetectionRule, 'title' | 'id'> | null | und
     known: false,
   }
 }
+
+/**
+ * A rule title in sentence case, for showing it in prose and inspectors:
+ * "Remote Code Execution via Piped Script Download" → "Remote code execution
+ * via piped script download". Words in capitals (AWS, MCP, IMDS) and words
+ * with inner capitals (GitHub, npm's camelCase) keep their spelling.
+ */
+export function sentenceCase(title: string): string {
+  let first = true
+  return title.replace(/[\p{L}][\p{L}\p{N}'’]*/gu, (w) => {
+    const isFirst = first
+    first = false
+    if (isFirst) return w
+    // Title Case words only: a capital then lower case (not "AWS", "GitHub", "macOS").
+    return /^\p{Lu}[\p{Ll}\p{N}'’]*$/u.test(w) && w.length > 1 ? w.toLowerCase() : w.length === 1 && /\p{Lu}/u.test(w) && w !== 'I' ? w.toLowerCase() : w
+  })
+}

@@ -129,9 +129,14 @@ export function edgeTone(e: GraphEdge): 'error' | 'ok' | 'muted' {
   return e.errors > 0 ? 'error' : 'ok'
 }
 
+/** Runs of the agent that failed: the server's failed_calls, else (older servers) its failed spans. */
+export function failedRuns(n: Pick<GraphNode, 'failed_calls' | 'errors'>): number {
+  return n.failed_calls ?? n.errors
+}
+
 export function nodeTone(n: GraphNode): 'block' | 'approval' | 'error' | 'ok' {
   if ((n.detections?.block ?? 0) > 0) return 'block'
-  if (n.errors > 0) return 'error'
+  if (failedRuns(n) > 0) return 'error'
   if ((n.detections?.require_approval ?? 0) > 0) return 'approval'
   return 'ok'
 }

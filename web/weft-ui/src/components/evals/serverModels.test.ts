@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { leaderboardColumns, metricColumn } from './leaderboardUtils'
-import { predictUrlError, promptColumns, serverModelKind, serverModelSummary } from './modelUtils'
+import { predictUrlError, promptColumns, serverModelKind, serverModelSummary, serverModelWords } from './modelUtils'
 
 describe('server-runnable models', () => {
   it('classifies models', () => {
@@ -12,6 +12,13 @@ describe('server-runnable models', () => {
     expect(serverModelSummary({ value: { runtime: 'weft:///e/p/object/vllm:abc', runtime_id: 'llama' } })).toBe('runtime vllm:abc / llama')
     expect(serverModelSummary({ value: { predict_url: 'https://x/p' } })).toBe('POST https://x/p')
   })
+  it.each([
+    [{ _class_name: 'LLMStructuredCompletionModel', llm_model_id: 'gpt-4o' }, 'calls gpt-4o'],
+    [{ _class_name: 'LLMStructuredCompletionModel', llm_model_id: 'mock/echo' }, 'an offline test model that repeats the prompt'],
+    [{ predict_url: 'https://x/p' }, 'calls your endpoint at https://x/p'],
+    [{ runtime: 'weft:///e/p/object/vllm:abc', runtime_id: 'llama' }, 'runs on the vllm runtime'],
+    [{ _class_name: 'Model' }, 'cannot run on the server'],
+  ])('serverModelWords %#', (value, out) => expect(serverModelWords({ value })).toBe(out))
   it('validates predict URLs and finds template columns', () => {
     expect(predictUrlError('https://x/predict')).toBeNull()
     expect(predictUrlError('')).toMatch(/Enter/)

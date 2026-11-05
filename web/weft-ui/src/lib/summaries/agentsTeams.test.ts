@@ -7,8 +7,7 @@ import {
   agentNeedsALook,
   agentOutcome,
   agentsSentence,
-  agentStatsSentence,
-  agentsTotalsSentence,
+  analyticsSentence,
   agentSummaryLine,
   conversationSentence,
   handoffWords,
@@ -200,7 +199,7 @@ describe('one agent', () => {
 describe('teams', () => {
   it.each([
     ['fine', team(), 'Worked in 7 sessions. Its agents handed work on 7 times.', 'ok', false],
-    ['failed', team({ error_session_count: 3 }), 'Worked in 7 sessions, and 3 failed. Its agents handed work on 7 times.', 'failed', true],
+    ['failed', team({ error_session_count: 3 }), 'Worked in 7 sessions and 3 failed. Its agents handed work on 7 times.', 'failed', true],
     [
       'blocked and approvals',
       team({ session_count: 3, handoff_count: 1, detection_count: { block: 1, require_approval: 5 } }),
@@ -235,11 +234,28 @@ describe('one team', () => {
   it('leads with the hand-off that fails most, linking to its failed sessions', () => {
     const d = teamDetail({ error_session_count: 3, handoff_stats: [edge({ to: 'writer', count: 2 }), edge({ errors: 3, error_rate: 0.6 })] })
     const parts = teamOutcome(d)
-    expect(partsText(parts)).toBe('Trip planners worked in 7 sessions, and 3 failed. The hand-off that fails most, from orchestrator to researcher, failed 3 of 5 times (60%), usually after 1.3 seconds.')
+    expect(partsText(parts)).toBe(
+      'Trip planners worked in 7 sessions and 3 failed, each time at the hand-off from orchestrator to researcher, which failed 3 of 5 times, usually after 1.3 seconds.',
+    )
     expect(links(parts)).toEqual([
       ['3 failed', { team: 'trip-planners', status: 'error', time: 'all' }],
-      ['from orchestrator to researcher', { team: 'trip-planners', agent: 'researcher', status: 'error', time: 'all' }],
+      ['the hand-off from orchestrator to researcher', { team: 'trip-planners', agent: 'researcher', status: 'error', time: 'all' }],
     ])
+  })
+
+  it('says "each time at the hand-off" only when that route accounts for every failed session', () => {
+    // More failed sessions than failed hand-offs: some failed elsewhere.
+    const more = teamDetail({ error_session_count: 4, handoff_stats: [edge({ errors: 3, error_rate: 0.6 })] })
+    expect(partsText(teamOutcome(more))).toBe(
+      'Trip planners worked in 7 sessions and 4 failed. The hand-off that fails most, from orchestrator to researcher, failed 3 of 5 times, usually after 1.3 seconds.',
+    )
+    expect(links(teamOutcome(more))[1]).toEqual(['from orchestrator to researcher', { team: 'trip-planners', agent: 'researcher', status: 'error', time: 'all' }])
+    // Another route failed too.
+    const two = teamDetail({ error_session_count: 3, handoff_stats: [edge({ errors: 3, error_rate: 0.6 }), edge({ to: 'writer', count: 2, errors: 1, error_rate: 0.5 })] })
+    expect(partsText(teamOutcome(two))).toMatch(/^Trip planners worked in 7 sessions and 3 failed\. The hand-off that fails most/)
+    // One failed session, at the one route that failed.
+    const one = teamDetail({ error_session_count: 1, handoff_stats: [edge({ errors: 1, error_rate: 0.2 })] })
+    expect(partsText(teamOutcome(one))).toBe('Trip planners worked in 7 sessions and 1 failed, at the hand-off from orchestrator to researcher, which failed 1 of 5 times, usually after 1.3 seconds.')
   })
 
   it.each([
@@ -256,29 +272,16 @@ describe('one team', () => {
 })
 
 describe('analytics', () => {
-  it('writes one agent’s figures', () => {
-    expect(
-      agentStatsSentence({
-        invocation_count: 3,
-        invocation_error_count: 0,
-        error_count: 2,
-        span_count: 22,
-        conversation_count: 3,
-        latency_ms_p50: 9000,
-        latency_ms_p95: 30000,
-        total_input_tokens: 1800,
-        total_output_tokens: 1080,
-        total_cost_usd: 0.022,
-      }),
-    ).toBe('Ran 3 times in 3 conversations, usually taking 9 seconds (30 seconds at the 95th percentile). 2 of its 22 spans ended with an error. It used 2,880 tokens, costing $0.022.')
-  })
   it.each([
-    [{ agents: 5, conversations: 10, spans: 73, invocations: 18, failed: 6, tokens: 47360, cost: 0.31 }, '24h', 'In the last 24 hours, 5 agents ran 18 times in 10 conversations (73 spans). 6 of the runs failed. They used 47,360 tokens, costing $0.31.'],
-    [{ agents: 1, conversations: 0, spans: 4, invocations: 1, failed: 0, tokens: 0, cost: 0 }, 'all', '1 agent ran once (4 spans). None of the runs failed.'],
-    [{ agents: 0, conversations: 0, spans: 0, invocations: 0, failed: 0, tokens: 0, cost: 0 }, '6h', 'In the last 6 hours, nothing was recorded.'],
-  ])('writes the totals %#', (t, range, want) => expect(agentsTotalsSentence(t, range)).toBe(want))
-  it('writes a conversation', () => {
-    expect(conversationSentence({ total_turns: 1, agent_names: ['coder', 'reviewer'], span_count: 8, error_count: 1 })).toBe('One turn with coder and reviewer, in 8 spans; one ended with an error.')
-    expect(conversationSentence({ total_turns: 3, agent_names: [], span_count: 1, error_count: 0 })).toBe('3 turns, in 1 span. Nothing failed.')
+    [{ agents: 5, sessions: 10, invocations: 18, failed: 6, tokens: 47360, cost: 0.31 }, '24h', undefined, 'In the last 24 hours, 5 agents ran 18 times in 10 sessions. 6 of the runs failed. They used 47,360 tokens, costing $0.31.'],
+    [{ agents: 1, sessions: 0, invocations: 1, failed: 0, tokens: 0, cost: 0 }, 'all', undefined, '1 agent ran once. None of the runs failed.'],
+    [{ agents: 0, sessions: 0, invocations: 0, failed: 0, tokens: 0, cost: 0 }, '6h', undefined, 'In the last 6 hours, nothing was recorded.'],
+    [{ agents: 1, sessions: 3, invocations: 3, failed: 0, tokens: 2880, cost: 0.022 }, '24h', 'coder', 'In the last 24 hours, coder ran 3 times in 3 sessions. None of its runs failed. It used 2,880 tokens, costing $0.022.'],
+    [{ agents: 1, sessions: 2, invocations: 2, failed: 2, tokens: 0, cost: 0 }, '7d', 'researcher', 'In the last 7 days, researcher ran 2 times in 2 sessions. Both of its runs failed.'],
+    [{ agents: 0, sessions: 0, invocations: 0, failed: 0, tokens: 0, cost: 0 }, '24h', 'coder', 'In the last 24 hours, nothing was recorded for coder.'],
+  ])('writes the totals %#', (t, range, agent, want) => expect(analyticsSentence(t, range, agent)).toBe(want))
+  it('writes a turn view', () => {
+    expect(conversationSentence({ total_turns: 1, agent_names: ['coder', 'reviewer'], span_count: 8, error_count: 1 })).toBe('One turn with coder and reviewer; one step ended with an error.')
+    expect(conversationSentence({ total_turns: 3, agent_names: [], span_count: 1, error_count: 0 })).toBe('3 turns. Nothing failed.')
   })
 })

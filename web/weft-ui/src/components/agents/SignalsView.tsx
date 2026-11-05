@@ -8,7 +8,9 @@ import { fmtDate, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { spanUrl } from '../../lib/urls'
 import { Empty, ErrorBox, Modal, Pager, Spinner } from '../common'
 import { windowStart } from './agentUtils'
-import { RangePicker, ScorePill, Sparkline, TOOLTIP_STYLE } from './bits'
+import { ScoreText, Sparkline, TOOLTIP_STYLE } from './bits'
+import { StatusGlyph } from '../ui/StatusGlyph'
+import { Icon } from '../ui/Icons'
 import {
   fmtScore,
   parseSignalsVal,
@@ -173,15 +175,16 @@ function ActiveSignalsModal({ signals, onSave, onClose }: { signals: SignalConfi
                 <label className="checkbox">
                   <input type="checkbox" checked={s.enabled} onChange={(e) => setList(list.map((x) => (x.id === s.id ? { ...x, enabled: e.target.checked } : x)))} aria-label={`Enable ${s.name}`} />
                 </label>
-                <span className={`badge ${s.kind === 'tag' ? 'accent' : ''}`}>{s.kind}</span>
                 <b className="grow">{s.name}</b>
-                <span className="mono small faint">{s.id}</span>
-                {s.sample_rate != null && s.sample_rate < 1 && <span className="badge">{Math.round(s.sample_rate * 100)}%</span>}
+                <span className="small faint">
+                  {s.kind === 'tag' ? 'tag' : 'rating'}
+                  {s.sample_rate != null && s.sample_rate < 1 ? ` · ${Math.round(s.sample_rate * 100)}% of turns` : ''}
+                </span>
                 <button className="btn ghost sm" onClick={() => setEditing(editing === s.id ? null : s.id)}>
                   {editing === s.id ? 'Done' : 'Edit'}
                 </button>
-                <button className="btn ghost sm" aria-label={`Delete ${s.name}`} onClick={() => setList(list.filter((x) => x.id !== s.id))}>
-                  Delete
+                <button type="button" className="icon-btn" aria-label={`Delete ${s.name}`} title="Delete" onClick={() => setList(list.filter((x) => x.id !== s.id))}>
+                  <Icon name="trash" size={14} />
                 </button>
               </div>
               {editing === s.id ? (
@@ -282,8 +285,8 @@ function RunPanel({
           <label className="checkbox small" title="Score turns again even if this signal already scored them">
             <input type="checkbox" checked={rescore} onChange={(e) => setRescore(e.target.checked)} /> Re-score
           </label>
-          <button className="btn primary sm" disabled={!enabled.length || !chosen || run.isPending} onClick={() => run.mutate()}>
-            {run.isPending ? 'Scoring…' : `Run ${enabled.length} signal${enabled.length === 1 ? '' : 's'}`}
+          <button type="button" className="qbtn" disabled={!enabled.length || !chosen || run.isPending} onClick={() => run.mutate()}>
+            {run.isPending ? "Scoring…" : "Score them now"}
           </button>
         </div>
         <label className="checkbox small" title="Active signals score each agent turn when it finishes, with the judge chosen here">
@@ -315,7 +318,7 @@ function RunPanel({
  */
 export function SignalsView({ projectId, params, update, agent }: { projectId: string; params: URLSearchParams; update: Update; agent?: string }) {
   const qc = useQueryClient()
-  const range = params.get('range') ?? '7d'
+  const range = params.get('range') ?? '24h'
   const since = useMemo(() => windowStart(range), [range])
   const signalF = params.get('signal') ?? ''
   const kindF = (params.get('kind') ?? '') as '' | SignalKind
@@ -357,7 +360,7 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
   const timeline = useMemo(() => {
     const rs = trendBuckets(filteredForTimeline.filter((r) => r.kind === 'rating'), new Date(since), new Date(), 30)
     const ts = trendBuckets(filteredForTimeline.filter((r) => r.kind === 'tag'), new Date(since), new Date(), 30)
-    return rs.map((p, i) => ({ t: p.t, ratings: p.count, tags: ts[i].value ?? 0 }))
+    return rs.map((p, i) => ({ t: p.t, all: p.count + (ts[i].value ?? 0) }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [all.data, signalF, kindF, since])
   const summary = all.data?.summary ?? []
@@ -376,14 +379,12 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
   return (
     <div className="col" style={{ gap: 12 }}>
       <div className="toolbar row wrap">
-        <button className="btn sm" onClick={() => setModal('active')} disabled={cfg.q.isLoading}>
-          {nActive} active signal{nActive === 1 ? '' : 's'}
+        <button type="button" className="qbtn" onClick={() => setModal('active')} disabled={cfg.q.isLoading}>
+          Ratings and tags in use<span className="glist-count"> {nActive}</span>
         </button>
-        <button className="btn sm primary" onClick={() => setModal('new')}>
-          + New signal
+        <button type="button" className="qbtn primary" onClick={() => setModal('new')}>
+          Add a rating or tag
         </button>
-        <span className="grow" />
-        <RangePicker value={range} onChange={(r) => setFilter({ range: r === '7d' ? null : r })} />
       </div>
       <ErrorBox error={cfg.q.error ?? cfg.save.error} />
       {cfg.signals.length > 0 ? (
@@ -399,34 +400,42 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
         />
       ) : (
         !cfg.q.isLoading && (
-          <div className="info-box">
-            No signals are set up yet. Add presets such as <b>Frustrated user</b>, <b>Task success</b> or <b>Response quality</b> with <b>+ New signal</b>, then score recent turns with a judge model.
-          </div>
+          <p className="quiet-note">Nothing is rated or tagged yet: add one (for example “Task success”), then score recent turns with a judge model.</p>
         )
       )}
       {summary.length > 0 && (
-        <div className="signal-cards">
-          {summary.map((s) => {
-            const key = `${s.kind}:${s.signal}`
-            const on = signalF === s.signal && (!kindF || kindF === s.kind)
-            return (
-              <button key={key} className={`signal-card ${on ? 'on' : ''}`} onClick={() => setFilter(on ? { signal: null, kind: null } : { signal: s.signal, kind: s.kind })} aria-pressed={on}>
-                <div className="row small">
-                  <span className={`badge ${s.kind === 'tag' ? 'accent' : ''}`}>{s.kind}</span>
-                  <span className="truncate grow" style={{ textAlign: 'left' }}>
-                    {s.signal_name ?? s.signal}
-                  </span>
-                </div>
-                <div className="row" style={{ alignItems: 'flex-end' }}>
-                  <div className="col grow" style={{ gap: 0, alignItems: 'flex-start' }}>
-                    <span className="signal-card-value">{s.kind === 'rating' ? fmtScore(s.avg) : fmtNumber(s.matched)}</span>
-                    <span className="small faint">{s.kind === 'rating' ? `avg of ${fmtNumber(s.count)}` : `turns tagged`}</span>
-                  </div>
-                  <Sparkline points={trends.get(key) ?? []} kind={s.kind} />
-                </div>
-              </button>
-            )
-          })}
+        <div className="plain-table-box">
+          <table className="plain-table">
+            <caption className="sr-only">Ratings and tags in this time range; choose one to list only its results</caption>
+            <thead>
+              <tr>
+                <th scope="col">Rating or tag</th>
+                <th scope="col" className="num">
+                  Result
+                </th>
+                <th scope="col">Over time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.map((s) => {
+                const key = `${s.kind}:${s.signal}`
+                const on = signalF === s.signal && (!kindF || kindF === s.kind)
+                return (
+                  <tr key={key} aria-selected={on || undefined} className={on ? 'selected' : ''}>
+                    <td>
+                      <button type="button" className="linkish" aria-pressed={on} onClick={() => setFilter(on ? { signal: null, kind: null } : { signal: s.signal, kind: s.kind })}>
+                        {s.signal_name ?? s.signal}
+                      </button>
+                    </td>
+                    <td className="num">{s.kind === 'rating' ? `mean ${fmtScore(s.avg)} of ${fmtNumber(s.count)}` : `${fmtNumber(s.matched)} turns tagged`}</td>
+                    <td>
+                      <Sparkline points={trends.get(key) ?? []} kind={s.kind} />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
       <div className="row wrap toolbar">
@@ -473,22 +482,18 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
         <span className="small muted">{fmtNumber(page.data?.total_count ?? 0)} results</span>
       </div>
       {filteredForTimeline.length > 0 && (
-        <div className="chart-card" aria-label="Score volume timeline">
-          <div className="row small muted">
-            <span className="grow">Score volume</span>
-            <span>
-              <span className="legend-swatch" style={{ background: 'var(--c2)' }} /> ratings evaluated <span className="legend-swatch" style={{ background: 'var(--c4)', marginLeft: 8 }} /> tags matched
-            </span>
+        <div className="an-panel" role="img" aria-label="Ratings and tags over time">
+          <div className="an-chart-head">
+            <h3 className="an-chart-title">Ratings and tags over time</h3>
           </div>
           <div style={{ height: 90 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={timeline} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid vertical={false} stroke="var(--border)" />
+                <CartesianGrid vertical={false} stroke="var(--hairline)" />
                 <XAxis dataKey="t" tick={AXIS} minTickGap={40} axisLine={false} tickLine={false} tickFormatter={(iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' })} />
                 <YAxis tick={AXIS} allowDecimals={false} width={28} axisLine={false} tickLine={false} />
                 <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(iso) => new Date(String(iso)).toLocaleString()} cursor={{ fill: 'var(--panel-2)' }} />
-                <Bar dataKey="ratings" name="Ratings" stackId="s" fill="var(--c2)" isAnimationActive={false} />
-                <Bar dataKey="tags" name="Tags matched" stackId="s" fill="var(--c4)" isAnimationActive={false} />
+                <Bar dataKey="all" name="Ratings and tags" fill="var(--accent)" isAnimationActive={false} radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -498,14 +503,13 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
       {page.isLoading ? (
         <Spinner label="Loading signal results…" />
       ) : results.length === 0 ? (
-        <Empty>{summary.length ? 'No results match these filters.' : 'No signal results in this period. Tag signals only list turns they matched.'}</Empty>
+        <Empty>{summary.length ? 'No results match these filters.' : 'Nothing was rated or tagged in this time range.'}</Empty>
       ) : (
         <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
-                <th>Type</th>
-                <th>Scorer</th>
+                <th>Rating or tag</th>
                 <th>Last message</th>
                 {!agent && <th>Agent</th>}
                 <th>Score</th>
@@ -517,9 +521,6 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
             <tbody>
               {results.map((r) => (
                 <tr key={`${r.feedback_id}-${r.kind}-${r.signal}`}>
-                  <td>
-                    <span className={`badge ${r.kind === 'tag' ? 'accent' : ''}`}>{r.kind}</span>
-                  </td>
                   <td className="small" title={r.signal}>{r.signal_name && r.signal === r.signal_id ? r.signal_name : <span className="mono">{r.signal}</span>}</td>
                   <td style={{ maxWidth: 320 }}>
                     {r.conversation_id ? (
@@ -532,8 +533,8 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
                       </Link>
                     )}
                     {r.turn_status === 'ERROR' && (
-                      <span className="badge error" style={{ marginLeft: 6 }}>
-                        error
+                      <span className="small" style={{ marginLeft: 6 }}>
+                        <StatusGlyph kind="failed" size={14} decorative /> failed
                       </span>
                     )}
                     {r.last_message && (
@@ -550,18 +551,8 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
                     </td>
                   )}
                   <td>
-                    {r.kind === 'rating' ? (
-                      <ScorePill value={r.score} confidence={r.confidence} reason={r.reason} />
-                    ) : (
-                      <div className="chips">
-                        {r.tags.map((t) => (
-                          <span key={t} className="chip tag-chip">
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {r.confidence != null && <div className="small faint">conf. {Math.round(r.confidence * 100)}%</div>}
+                    {r.kind === 'rating' ? <ScoreText value={r.score} confidence={r.confidence} reason={r.reason} /> : <span className="small">{r.tags.join(', ')}</span>}
+                    {r.confidence != null && <div className="small faint">confidence {Math.round(r.confidence * 100)}%</div>}
                   </td>
                   <td className="small muted" style={{ maxWidth: 280 }}>
                     <div className="clamp-2" title={r.reason ?? undefined}>

@@ -2229,7 +2229,9 @@ timeline: fetch them with `/api/v1/detections?session_id=` and merge by
 `span_id` / `tool_call_id`.
 
 `GET /api/v1/sessions/{id}/graph` returns the delegation graph. Nodes:
-`agent`, `calls` (invocations), `spans`, `errors`, `tool_calls`, `tokens`
+`agent`, `calls` (invocations), `failed_calls` (invocations that ended with
+an error, as `invocation_error_count` counts them), `spans`, `errors` (spans
+that ended with an error), `tool_calls`, `tokens`
 (input + output), `cost_usd`, `detections` (by action). Edges, one per
 `from`, `to` and `kind`: `count`, `errors`, `error_rate`, `p50_ms`, `p95_ms`
 (hand-off durations; `null` for `return`), `mean_score` and `scores`
@@ -2237,8 +2239,8 @@ timeline: fetch them with `/api/v1/detections?session_id=` and merge by
 
 ```json
 {"nodes": [
-   {"agent": "orchestrator", "calls": 1, "spans": 4, "errors": 0, "tokens": 810, "cost_usd": 0.00495, "tool_calls": 1, "detections": {}},
-   {"agent": "researcher", "calls": 1, "spans": 4, "errors": 0, "tokens": 330, "cost_usd": 0.001575, "tool_calls": 1, "detections": {}}],
+   {"agent": "orchestrator", "calls": 1, "failed_calls": 0, "spans": 4, "errors": 0, "tokens": 810, "cost_usd": 0.00495, "tool_calls": 1, "detections": {}},
+   {"agent": "researcher", "calls": 1, "failed_calls": 0, "spans": 4, "errors": 0, "tokens": 330, "cost_usd": 0.001575, "tool_calls": 1, "detections": {}}],
  "edges": [
    {"from": "orchestrator", "to": "researcher", "kind": "delegate", "count": 1, "errors": 0, "error_rate": 0, "p50_ms": 1300, "p95_ms": 1300,
     "mean_score": 0.75, "scores": {"HandoffQualityJudge": {"mean": 0.75, "count": 1}}},
@@ -2303,7 +2305,7 @@ team), `agents`, `session_count`, `error_session_count`, `handoff_count`,
 `sort_by`: `last_activity` (default, desc), `first_seen`, `session_count`,
 `handoff_count`, `error_session_count`, `cost_usd`, `name`, `team_id`.
 
-`GET /api/v1/teams/{id}` adds `agent_stats` (per agent: `calls`, `errors`,
+`GET /api/v1/teams/{id}` adds `agent_stats` (per agent: `calls`, `failed_calls`, `errors`,
 `tool_calls`, `tokens`, `cost_usd`, `sessions`, `handoffs_in`,
 `handoffs_out`, `detections`), `graph` (the session graph aggregated over the
 team's sessions; nodes also carry `sessions`), `handoff_stats` (the graph's
@@ -2313,7 +2315,7 @@ non-return edges, most frequent first: `count`, `error_rate`, `p50_ms`,
 ```json
 {"team_id": "trip-planners", "name": "Trip planners", "auto": false, "agents": ["orchestrator", "researcher"], "session_count": 1,
  "error_session_count": 0, "handoff_count": 1, "cost_usd": 0.006525, "last_activity": "2026-11-03T09:16:06.572650Z",
- "agent_stats": [{"agent": "orchestrator", "calls": 1, "errors": 0, "tool_calls": 1, "tokens": 810, "cost_usd": 0.00495, "sessions": 1,
+ "agent_stats": [{"agent": "orchestrator", "calls": 1, "failed_calls": 0, "errors": 0, "tool_calls": 1, "tokens": 810, "cost_usd": 0.00495, "sessions": 1,
    "handoffs_in": 0, "handoffs_out": 1, "detections": {}}],
  "handoff_stats": [{"from": "orchestrator", "to": "researcher", "kind": "delegate", "count": 1, "errors": 0, "error_rate": 0,
    "p50_ms": 1300, "p95_ms": 1300, "mean_score": 0.75, "scores": {"HandoffQualityJudge": {"mean": 0.75, "count": 1}}}],

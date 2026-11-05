@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import { spanDisplayName } from '../../api/refs'
 import type { Any, Span } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
-import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, preview } from '../../lib/format'
+import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
 import { spanUrl, compareSpansUrl, tracesUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
 import { PageHeader } from '../../components/ui/PageHeader'
@@ -38,6 +38,8 @@ function keysOf(calls: Span[], pick: (c: Span) => Any): string[] {
 interface Row {
   section: string
   key: string
+  /** The field in words, for the span's own fields ("Latency"); data keys show as recorded. */
+  label?: string
   values: Any[]
   render?: (v: Any) => React.ReactNode
   /** Numeric rows: how to format a delta and whether a decrease is an improvement. */
@@ -83,19 +85,19 @@ export function CompareSpansPage() {
   const rows: Row[] = useMemo(() => {
     if (!calls.length) return []
     const r: Row[] = [
-      { section: 'Span', key: 'name', values: calls.map((c) => spanDisplayName(c.name)), atomic: true },
-      { section: 'Span', key: 'status', values: calls.map(callStatus), render: (v) => (
+      { section: 'Overview', key: 'name', label: 'Name', values: calls.map((c) => spanDisplayName(c.name)), atomic: true },
+      { section: 'Overview', key: 'status', label: 'Status', values: calls.map(callStatus), render: (v) => (
           <span className="row" style={{ gap: 6 }}>
             <StatusGlyph kind={statusGlyph(v).kind} size={16} decorative /> {statusGlyph(v).label}
           </span>
         ) },
-      { section: 'Span', key: 'started', values: calls.map((c) => c.started_at), render: (v) => fmtDate(v), time: true },
-      { section: 'Span', key: 'latency', values: calls.map(callLatencyMs), render: (v) => fmtDuration(v), num: { fmt: (n) => fmtDuration(n), lowerBetter: true } },
-      { section: 'Span', key: 'tokens', values: calls.map((c) => callTokens(c).total), render: (v) => fmtNumber(v), num: { fmt: (n) => fmtNumber(n), lowerBetter: true } },
-      { section: 'Span', key: 'cost', values: calls.map(callCost), render: (v) => fmtCost(v), num: { fmt: (n) => fmtCost(n), lowerBetter: true } },
-      { section: 'Span', key: 'models', values: calls.map((c) => Object.keys(c.summary?.usage ?? {}).sort().join(', ') || null), atomic: true },
+      { section: 'Overview', key: 'started', label: 'Started', values: calls.map((c) => c.started_at), render: (v) => fmtDate(v), time: true },
+      { section: 'Overview', key: 'latency', label: 'Latency', values: calls.map(callLatencyMs), render: (v) => fmtDuration(v), num: { fmt: (n) => fmtDuration(n), lowerBetter: true } },
+      { section: 'Overview', key: 'tokens', label: 'Tokens', values: calls.map((c) => callTokens(c).total), render: (v) => fmtNumber(v), num: { fmt: (n) => fmtNumber(n), lowerBetter: true } },
+      { section: 'Overview', key: 'cost', label: 'Cost', values: calls.map(callCost), render: (v) => fmtCost(v), num: { fmt: (n) => fmtCost(n), lowerBetter: true } },
+      { section: 'Overview', key: 'models', label: 'Models', values: calls.map((c) => Object.keys(c.summary?.usage ?? {}).sort().join(', ') || null), atomic: true },
     ]
-    if (calls.some((c) => c.error)) r.push({ section: 'Span', key: 'error', values: calls.map((c) => c.error) })
+    if (calls.some((c) => c.error)) r.push({ section: 'Overview', key: 'error', label: 'Error', values: calls.map((c) => c.error) })
     for (const k of keysOf(calls, (c) => c.inputs)) r.push({ section: 'Inputs', key: k, values: calls.map((c) => c.inputs?.[k]) })
     const outKeys = keysOf(calls, (c) => c.output)
     const outputsAreObjects = calls.every((c) => c.output == null || (typeof c.output === 'object' && !Array.isArray(c.output)))
@@ -143,12 +145,15 @@ export function CompareSpansPage() {
           size="sm"
           options={[
             { id: 'values', label: 'Values' },
-            { id: 'diff', label: 'Diff against the baseline', title: "Show each span's changes against the baseline" },
+            { id: 'diff', label: 'Changes from the baseline', title: "Show each span's changes against the baseline" },
           ]}
           value={mode}
           onChange={(m) => setParam('mode', m === 'diff' ? 'diff' : null)}
         />
-        <Segmented label="Numeric change format" size="sm" options={DELTA_FORMATS} value={dfmt} onChange={(f) => setParam('nfmt', f === 'both' ? null : f)} />
+        <span className="obs-inline-control">
+          <span aria-hidden>Show change as</span>
+          <Segmented label="Show change as" size="sm" options={DELTA_FORMATS} value={dfmt} onChange={(f) => setParam('nfmt', f === 'both' ? null : f)} />
+        </span>
         <label className="obs-check">
           <input type="checkbox" checked={diffOnly} onChange={(e) => setDiffOnly(e.target.checked)} /> Only differences
         </label>
@@ -161,8 +166,12 @@ export function CompareSpansPage() {
               {calls.map((c, i) => (
                 <th scope="col" key={c.id} className={i === baseIdx ? 'cmp-baseline-col' : ''}>
                   <div className="row wrap" style={{ gap: 6 }}>
-                    <Link to={spanUrl(projectId, c.id)}>{callLabel(c)}</Link>
-                    <span className="faint mono small">{c.id.slice(-8)}</span>
+                    <Link to={spanUrl(projectId, c.id)} title={`Span ${c.id}`}>
+                      {callLabel(c)}
+                    </Link>
+                    <span className="obs-faint small" title={fmtDate(c.started_at)}>
+                      {fmtRelative(c.started_at)}
+                    </span>
                     <span className="grow" />
                     {i === baseIdx ? (
                       <span className="obs-faint small" title="Other spans are compared against this one">
@@ -200,9 +209,9 @@ export function CompareSpansPage() {
               return (
                 <FragmentRows key={`${r.section}.${r.key}`} head={head ? r.section : null} cols={calls.length + 1}>
                   <tr className={d ? 'diff-row' : ''}>
-                    <td className="mono small">
-                      {r.key}
-                      {d && <span className="diff-mark" title="Values differ" />}
+                    <td className={`cmp-field ${r.label ? '' : 'cmp-key'}`}>
+                      {r.label ?? r.key}
+                      {d && <span className="sr-only"> (differs)</span>}
                     </td>
                     {r.values.map((v, i) => {
                       const base = r.values[baseIdx]
@@ -241,8 +250,8 @@ function NumDelta({ base, value, num, dfmt }: { base: Any; value: Any; num?: Row
   const d = numericDelta(base, value)
   if (!d) return null
   if (d.delta === 0) return <div className="delta-same small">{dfmt === 'ratio' ? '1×' : '±0'}</div>
-  const better = num ? (num.lowerBetter ? d.delta < 0 : d.delta > 0) : null
-  return <div className={`small ${better == null ? 'cmp-delta' : better ? 'delta-up' : 'delta-down'}`}>{fmtDeltaAs(base, value, dfmt, num?.fmt)}</div>
+  // A change is told in plain grey text; colour is kept for failed and succeeded glyphs.
+  return <div className="small cmp-delta">{fmtDeltaAs(base, value, dfmt, num?.fmt)}</div>
 }
 
 export function StringDiff({ ops }: { ops: DiffOp[] }) {

@@ -14,10 +14,10 @@ import type { Any, WeftObject } from '../../api/types'
 import { ErrorBox, Loading, Spinner } from '../../components/common'
 import { RefChip } from '../../components/RefChip'
 import { JsonBlock, ValueView } from '../../components/ValueView'
-import { CallsMiniTable, EvalRunsTable } from '../../components/evals/EvalRunsTable'
+import { EvalRunsList, SpanRunsList } from '../../components/evals/EvalRunsTable'
 import { useAgentEvalRuns } from '../../components/agents/AgentEvals'
 import { objectRefPrefix, useEvalRuns } from '../../components/evals/evalUtils'
-import { AliasEditor, CodeBlock, TemplateText, UsePanel } from '../../components/objects/bits'
+import { AliasEditor, CodeBlock, ShortCopy, TemplateText, UsePanel } from '../../components/objects/bits'
 import { DatasetRowsView } from '../../components/objects/DatasetRowsView'
 import { DatasetSources } from '../../components/objects/DatasetSources'
 import { TagEditor } from '../../components/objects/TagEditor'
@@ -49,7 +49,7 @@ import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtBytes, fmtDate, fmtScore, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
-import { plural, relativeTime } from '../../lib/summaries'
+import { relativeTime } from '../../lib/summaries'
 import { kindWords, sdkName, versionSentence, versionWords, type AssetPart } from '../../lib/summaries/assets'
 import { compareEvaluationsUrl, leaderboardUrl, monitorUrl, newEvaluationUrl, objectDiffUrl, objectUrl, objectVersionsUrl, playgroundUrl, spanUrl } from '../../lib/urls'
 import './assets.css'
@@ -195,8 +195,8 @@ export function ObjectVersionPage() {
               o.user_id ? { label: 'By', value: o.user_id } : null,
               { label: 'Size', value: fmtBytes(o.size_bytes) },
               { label: 'In code', value: <CopyText text={sdkName(o)} label="name" />, mono: true, help: 'The name and version to pass to weft.get()' },
-              { label: 'Ref', value: <CopyText text={ref} label="ref" />, mono: true, help: 'Ref: the address other assets and spans use to point at this version' },
-              { label: 'Digest', value: <CopyText text={o.digest} label="digest" />, mono: true, help: 'Digest: the SHA-256 of the stored value; it names this exact version' },
+              { label: 'Ref', value: <ShortCopy text={ref} label="ref" />, mono: true, help: 'Ref: the address other assets and spans use to point at this version' },
+              { label: 'Digest', value: <ShortCopy text={o.digest} label="digest" />, mono: true, help: 'Digest: the SHA-256 of the stored value; it names this exact version' },
             ]}
           />
           <InspectorDivider />
@@ -244,7 +244,7 @@ export function ObjectVersionPage() {
 const capFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 /** A titled block of the main column. */
-function Block({ title, note, actions, children }: { title?: ReactNode; note?: ReactNode; actions?: ReactNode; children: ReactNode }) {
+function Block({ title, count, note, actions, children }: { title?: ReactNode; count?: number | null; note?: ReactNode; actions?: ReactNode; children: ReactNode }) {
   return (
     <section className="asset-section">
       {(title || actions) && (
@@ -252,6 +252,7 @@ function Block({ title, note, actions, children }: { title?: ReactNode; note?: R
           {title && (
             <h2>
               {title}
+              {count != null && <span className="glist-count"> {count.toLocaleString()}</span>}
               {note && <span className="quiet-note" style={{ display: 'inline', marginLeft: 8 }}>{note}</span>}
             </h2>
           )}
@@ -342,8 +343,8 @@ function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
         </Block>
       )}
       <Block
-        title="Recent runs"
-        note={calls.data ? (calls.data.length >= 50 ? 'the latest 50' : plural(calls.data.length, 'run')) : undefined}
+        title={calls.data && calls.data.length >= 50 ? 'The latest 50 runs' : 'Recent runs'}
+        count={calls.data && calls.data.length < 50 ? calls.data.length : null}
         actions={
           <label className="checkbox small">
             <input type="checkbox" checked={allVersions} onChange={(e) => setAllVersions(e.target.checked)} /> Every version
@@ -356,7 +357,7 @@ function OpView({ o, projectId }: { o: WeftObject; projectId: string }) {
         ) : !calls.data?.length ? (
           <p className="quiet-note">No runs of this {allVersions ? 'function' : 'version'} yet.</p>
         ) : (
-          <CallsMiniTable projectId={projectId} calls={calls.data} />
+          <SpanRunsList projectId={projectId} calls={calls.data} label={`Runs of ${o.name}`} />
         )}
       </Block>
     </>
@@ -444,7 +445,7 @@ function EvaluationView({ o, projectId }: { o: WeftObject; projectId: string }) 
                   ))}
                 </span>
               ) : (
-                'None'
+                'No scorers'
               ),
             },
             v.trials != null ? { label: 'Trials', value: `${v.trials} per row`, help: 'How many times each row is run' } : null,
@@ -453,7 +454,7 @@ function EvaluationView({ o, projectId }: { o: WeftObject; projectId: string }) 
       </div>
       <Block
         title="Runs"
-        note={runs.data ? plural(runs.data.length, 'run') : undefined}
+        count={runs.data?.length}
         actions={
           <button type="button" className="qbtn sm" disabled={sel.length < 1} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
             Compare{sel.length ? ` ${sel.length}` : ''}
@@ -466,7 +467,7 @@ function EvaluationView({ o, projectId }: { o: WeftObject; projectId: string }) 
         ) : !runs.data?.length ? (
           <p className="quiet-note">This evaluation has not been run yet.</p>
         ) : (
-          <EvalRunsTable projectId={projectId} calls={runs.data} hideEval selected={sel} onSelect={setSel} maxMetrics={8} agentRuns={agentRuns.data} />
+          <EvalRunsList projectId={projectId} calls={runs.data} by="model" label={`Runs of ${o.name}`} selected={sel} onSelect={setSel} agentRuns={agentRuns.data} />
         )}
       </Block>
     </>
@@ -484,7 +485,7 @@ function ModelRuns({ o, projectId }: { o: WeftObject; projectId: string }) {
   return (
     <Block
       title="Evaluations of this model"
-      note={runs.data ? plural(runs.data.length, 'run') : undefined}
+      count={runs.data?.length}
       actions={
         <button type="button" className="qbtn sm" disabled={sel.length < 1} onClick={() => nav(compareEvaluationsUrl(projectId, sel))}>
           Compare{sel.length ? ` ${sel.length}` : ''}
@@ -497,7 +498,7 @@ function ModelRuns({ o, projectId }: { o: WeftObject; projectId: string }) {
       ) : !runs.data?.length ? (
         <p className="quiet-note">No evaluation has run this model yet.</p>
       ) : (
-        <EvalRunsTable projectId={projectId} calls={runs.data} hideModel selected={sel} onSelect={setSel} maxMetrics={8} agentRuns={agentRuns.data} />
+        <EvalRunsList projectId={projectId} calls={runs.data} by="evaluation" label={`Evaluations of ${o.name}`} selected={sel} onSelect={setSel} agentRuns={agentRuns.data} />
       )}
     </Block>
   )
@@ -615,7 +616,7 @@ function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
                       {relativeTime(f.created_at)}
                     </td>
                     <td>{p?.kind === 'span' ? <Link to={spanUrl(projectId, p.name)}>step {p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
-                    <td className="mono small">{preview(f.payload?.output ?? f.payload, 160)}</td>
+                    <td>{preview(f.payload?.output ?? f.payload, 160)}</td>
                   </tr>
                 )
               })}
@@ -624,8 +625,8 @@ function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
         </Block>
       )}
       {!!runs.data?.length && (
-        <Block title="Recent scorer runs">
-          <CallsMiniTable projectId={projectId} calls={runs.data} />
+        <Block title="Recent scorer runs" count={runs.data.length}>
+          <SpanRunsList projectId={projectId} calls={runs.data} label={`Recent runs of ${o.name}`} />
         </Block>
       )}
     </>

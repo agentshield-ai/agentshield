@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { ScorePill } from './bits'
+import { ScoreText } from './bits'
+import { StatusGlyph } from '../ui/StatusGlyph'
 import { turnSignals } from './signalUtils'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -15,8 +16,18 @@ import { parseMaybeJSON } from './agentUtils'
 import './agents.css'
 
 function Status({ code }: { code: string | null | undefined }) {
-  if (code === 'ERROR') return <span className="badge error">error</span>
-  if (code === 'UNSET') return <span className="badge running">running</span>
+  if (code === 'ERROR')
+    return (
+      <span className="row small" style={{ gap: 4, display: 'inline-flex' }}>
+        <StatusGlyph kind="failed" size={14} decorative /> failed
+      </span>
+    )
+  if (code === 'UNSET')
+    return (
+      <span className="row small" style={{ gap: 4, display: 'inline-flex' }}>
+        <StatusGlyph kind="running" size={14} decorative /> running
+      </span>
+    )
   return null
 }
 
@@ -130,7 +141,7 @@ function EventView({ m, projectId, agentName }: { m: ChatMessage; projectId: str
         <div className="agent-event indent">
           <div className="agent-event-head">
             {toggle}
-            <span className="badge accent">tool</span>
+            <span className="faint">tool</span>
             <span className="mono" style={{ color: 'var(--text)' }}>
               {t.tool_name ?? 'tool'}
             </span>
@@ -181,7 +192,7 @@ function EventView({ m, projectId, agentName }: { m: ChatMessage; projectId: str
         <div className="agent-event">
           <div className="agent-event-head">
             {(s.system_instructions || s.tool_definitions) && toggle}
-            <span className="badge">sub-agent</span>
+            <span className="faint">sub-agent</span>
             <b style={{ color: 'var(--text)' }}>{m.agent_name ?? m.span_name}</b>
             {s.model && <span className="mono">{s.model}</span>}
             {when}
@@ -208,7 +219,7 @@ export function TurnView({ turn, index, projectId, badges }: { turn: TraceChat; 
   return (
     <section className="agent-turn" id={`turn-${index + 1}`}>
       <div className="agent-turn-head">
-        <span className="badge">Turn {index + 1}</span>
+        <b>Turn {index + 1}</b>
         <Link to={spanUrl(projectId, turn.root_span_id)} className="mono small">
           {turn.root_span_name ?? turn.root_span_id}
         </Link>
@@ -236,23 +247,20 @@ export function TurnView({ turn, index, projectId, badges }: { turn: TraceChat; 
           turn.messages.map((m, i) => <EventView key={`${m.span_id}-${m.type}-${i}`} m={m} projectId={projectId} agentName={turn.agent_name} />)
         )}
         {!!turn.feedback?.length && (
-          <div className="chips" style={{ flexWrap: 'wrap' }}>
+          <div className="small" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
             {turn.feedback
               .filter((f) => f.feedback_type === 'weft.reaction')
               .map((f) => (
-                <span key={f.id} className="chip">
-                  {String(f.payload.emoji ?? '')}
-                </span>
+                <span key={f.id}>{String(f.payload.emoji ?? '')}</span>
               ))}
             {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'weft.reaction')).ratings.map((r, i) => (
-              <span key={`r${i}`} className="chip row" style={{ gap: 6 }} title={[r.reason, r.confidence != null ? `confidence ${Math.round(r.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
-                {r.name}
-                <ScorePill value={r.value} />
+              <span key={`r${i}`} title={[r.reason, r.confidence != null ? `confidence ${Math.round(r.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
+                <span className="muted">{r.name}</span> <ScoreText value={r.value} />
               </span>
             ))}
             {turnSignals(turn.feedback.filter((f) => f.feedback_type !== 'weft.reaction')).tags.map((t) => (
-              <span key={`t${t.name}`} className="chip tag-chip" title={[t.reason, t.confidence != null ? `confidence ${Math.round(t.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
-                {t.name}
+              <span key={`t${t.name}`} title={[t.reason, t.confidence != null ? `confidence ${Math.round(t.confidence * 100)}%` : ''].filter(Boolean).join(' · ') || undefined}>
+                tagged {t.name}
               </span>
             ))}
           </div>
