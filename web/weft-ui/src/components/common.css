@@ -94,6 +94,10 @@ html .qbtn.danger-solid {
   color: var(--accent-text);
 }
 html .qbtn.plain {
+  white-space: normal;
+  height: auto;
+  min-height: 28px;
+  text-align: left;
   background: transparent;
   color: var(--accent);
   padding: 0 6px;

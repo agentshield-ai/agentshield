@@ -181,44 +181,6 @@ export function TemplateText({ text }: { text: string }) {
   )
 }
 
-function contentText(c: Any): string {
-  if (typeof c === 'string') return c
-  if (Array.isArray(c))
-    return c
-      .map((p) => (typeof p === 'string' ? p : p?.type === 'text' ? p.text : p?.type === 'image_url' ? '[image]' : JSON.stringify(p)))
-      .join('\n')
-  return JSON.stringify(c, null, 2)
-}
-
-/** Read-only list of chat messages with template variables highlighted. */
-export function MessageList({ messages }: { messages: ChatMessage[] }) {
-  if (!messages.length) return <div className="faint small">No messages</div>
-  return (
-    <div className="col">
-      {messages.map((m, i) => (
-        <div key={i} className="msg">
-          <div className="msg-role">{m.role}</div>
-          <div className="msg-body">
-            <TemplateText text={contentText(m.content)} />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-export function TemplateVarChips({ texts }: { texts: string[] }) {
-  const vars = templateVars(...texts)
-  if (!vars.length) return <span className="faint small">none</span>
-  return (
-    <span className="chips">
-      {vars.map((v) => (
-        <span key={v} className="tvar">{`{${v}}`}</span>
-      ))}
-    </span>
-  )
-}
-
 /** Code block with header (language label + copy button). */
 export function CodeBlock({ code, language, title, maxHeight }: { code: string; language?: string; title?: ReactNode; maxHeight?: number }) {
   return (
@@ -274,15 +236,6 @@ export function Switch({ on, onChange, disabled, title, label }: { on: boolean; 
         onChange(!on)
       }}
     />
-  )
-}
-
-export function Stat({ label, value, title }: { label: ReactNode; value: ReactNode; title?: string }) {
-  return (
-    <div className="stat" title={title}>
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-    </div>
   )
 }
 

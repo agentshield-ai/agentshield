@@ -285,8 +285,13 @@
 
 /* ---------- tables in the new look ---------- */
 .s-table-box {
+  position: relative;
   max-height: 65vh;
   overflow: auto;
+}
+/* Hidden column labels stay inside the scrolled table. */
+.plain-table th {
+  position: relative;
 }
 .plain-table .row-actions {
   display: flex;

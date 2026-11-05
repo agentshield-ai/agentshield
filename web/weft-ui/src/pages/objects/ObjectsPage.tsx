@@ -180,9 +180,7 @@ export function ObjectsPage({ kind }: { kind: ObjectPageKind }) {
         help="evaluations.md#datasets-models-prompts-and-scorers"
         helpTopic={meta.title}
         controls={
-          empty ? (
-            createButton
-          ) : (
+          empty ? undefined : (
             <span className="asset-controls">
               <SearchField label={`Search ${meta.title.toLowerCase()}`} value={search} onChange={(v) => setParam('q', v)} filterInput width={220} />
               {(kind === 'all' || classes.length > 1) && (

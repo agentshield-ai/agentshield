@@ -1,0 +1,1 @@
+import{j as l}from"./index-BL9lfE92.js";import{T as n}from"./bits-DnIejBtM.js";function t({caption:a,children:s,className:e,captionVisible:i}){return l.jsx("div",{className:"plain-table-box",children:l.jsx(n,{label:a,children:l.jsxs("table",{className:`plain-table ${e??""}`,children:[l.jsx("caption",{className:i?"plain-caption":"sr-only",children:a}),s]})})})}export{t as P};

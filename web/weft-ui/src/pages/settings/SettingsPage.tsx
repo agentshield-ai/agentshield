@@ -245,7 +245,7 @@ function CostsTab({ projectId }: { projectId: string }) {
                   const replaced = c.pricing_level === 'default' && overridden.has(c.llm_id)
                   return (
                     <tr key={c.id} className={replaced ? 'muted-row' : undefined}>
-                      <td>
+                      <td style={{ minWidth: 170, overflowWrap: 'normal' }}>
                         <span className="mono">{c.llm_id}</span>
                         <div className="quiet-note">
                           {c.provider_id || 'any provider'}
