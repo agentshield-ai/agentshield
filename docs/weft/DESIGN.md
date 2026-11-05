@@ -360,22 +360,34 @@ The navigation:
 
 The main pages:
 
-- **Session page.** A header with the summary figures, then these tabs:
-  - **Timeline:** turns, reasoning, tool calls, hand-offs and detections
-    interleaved, with each reasoning step visually tied to the action it led
-    to;
-  - **Graph:** the delegation graph, an SVG with agents as nodes and hand-offs
-    as edges, sized by count and coloured by errors and detections;
-  - **Reasoning;**
-  - **Security;**
+- **Sessions (home).** One sentence answers "what happened, and what needs a
+  look?" (for example "10 sessions ran today. 3 failed, 1 was blocked by
+  AgentShield, and 1 kept asking for approval."), each clause a link to the
+  sessions it counts. Below it, a grouped list: **Needs a look** (failed,
+  blocked, approval-heavy, a failed step, a low score, a cost spike) and
+  **Finished**. Each row: a status glyph, the first request as the title, one
+  generated line saying what happened, the team and agents, and the time.
+- **Session page.** The title, one generated sentence giving the outcome, and
+  one quiet line of figures (team, agents, start, duration, cost, scores). A
+  segmented control switches between:
+  - **Story:** the session as a conversation. Each entry shows who acted
+    (user or agent, with a monogram), what it thought (reasoning, in quiet
+    italics, directly above the action it led to), and what it did (a
+    message, a command or tool call with its main argument, a hand-off). An
+    AgentShield block or approval request sits inside the step it concerns
+    with a one-sentence reason. A hand-off appears as the other agent's
+    indented reply. Selecting a step opens the **inspector** beside the
+    story: its tool, decision, rule, severity, model, timing, ids and links
+    (every detection of the rule, replay, raw span). The step responsible
+    for a failure or block is selected on arrival.
+  - **Team:** the delegation graph for this session, with the same data as a
+    table;
   - **Scores;**
-  - **Raw spans.**
-- **Team page.** The aggregated graph across sessions, a per-agent table, a
-  per-hand-off table (count, error rate, p50 latency, mean score), and
-  recent sessions.
-- **Security page.** Detections over time by action and severity, top rules,
-  a per-agent detection rate, approval fatigue and override escalation
-  panels, replay jobs with their diffs, and a "rules changed" call to action.
+  - **Raw spans:** the developer view (the span tree with every attribute).
+- **Agent, Team and Security pages** follow the same pattern: a sentence that
+  answers the page's question, then lists, and figures only where they
+  answer something. The team page leads with the hand-off that fails most;
+  the security page with what was blocked and why, grouped by rule.
 
 All wording is Weft's own. The UI never names another product, except on the
 compatibility settings panel.
@@ -386,12 +398,11 @@ The owner finds the tool this started from hard to learn, so ease of use is a
 requirement, not polish. Each rule below is checked in Phase 4 by a usability
 review and by task-based browser tests.
 
-1. **Start from questions, not data types.** The Sessions home answers "what
-   happened recently, and what needs my attention?". It shows:
-   - attention cards (failed sessions, blocked or approval-heavy sessions,
-     low scores, cost spikes), each opening a filtered list;
-   - a plain list of recent sessions, each with a one-line summary: the first
-     user request, the agents involved, the outcome, duration and cost.
+1. **Start from questions, not data types.** Every page opens with a
+   sentence that answers its question, generated from the data, with links
+   on the parts you can open. There are no rows of number tiles: a figure
+   appears where it answers something, in the sentence, in a row, or in the
+   inspector.
 2. **Plain language.** Labels use words a new user knows: "Session", "Agent",
    "Hand-off", "Reasoning", "Tool call", "Blocked", "Needs approval", "Score".
    - Internal terms (op, ref, digest, object, call, span) appear only in the
@@ -425,7 +436,7 @@ review and by task-based browser tests.
    scorer and its reason inline.
 9. **Fast to scan.**
    - Status uses colour and an icon with a text label, never colour alone.
-   - Agents get a consistent colour across pages.
+   - Agents keep the same name and monogram on every page.
    - Timelines show time gaps, durations and nesting at a glance.
 10. **Keyboard and accessibility.**
     - `j`/`k` move between steps, `/` focuses the filter, and `?` lists the
@@ -435,12 +446,50 @@ review and by task-based browser tests.
 11. **Undo over confirm.** Deleting views, scores or queue items can be
     undone for a few seconds, and only irreversible deletes ask for
     confirmation.
-12. **Help in place.** Each page has a short "What is this page?" panel that
-    can be dismissed, and a link to the relevant guide in `docs/weft/`. The
-    guides are embedded in the server and shown in the UI at `/help/<guide>`,
-    so they match the running version and work offline.
+12. **Help without clutter.** A page needs no explanation panel; if it
+    does, the page is redesigned. A small "?" in the page header links to the
+    relevant guide in `docs/weft/`. The guides are embedded in the server and
+    shown in the UI at `/help/<guide>`, so they match the running version and
+    work offline.
 
-## 8. Compatibility adapter
+### 7.2 Visual design
+
+The look is quiet and plain, in the manner of a well-made desktop app. Each
+rule is checked by review and, where it can be, by tests.
+
+1. **Type and colour.** Inter (falling back to the system UI font), with a
+   clear scale: page title 28-30 px bold, outcome sentence 19-21 px regular,
+   body 15 px, secondary 13-14 px. Text is near-black (#1D1D1F) and grey
+   (#6E6E73); one accent (blue, #0066CC) for links and selection; red only
+   for failed or blocked, amber only for warnings and approvals, green only
+   for a success glyph. Agents are told apart by name and monogram, not by
+   colour. Every pair meets WCAG 2.1 AA in both themes; the dark theme uses
+   the same rules.
+2. **Surfaces.** A light grey sidebar, an off-white page, and white grouped
+   lists and panels with 14 px corners and a hairline edge. No coloured
+   left borders, no gradients, no shadows beyond a hairline or a 1-2 px lift
+   on a selected control.
+3. **Lists over tables, tables over tiles.** Things a person reads (sessions,
+   agents, detections, evaluations, objects) are grouped lists like Mail or
+   Settings: a title, one line of what matters, quiet metadata, the time.
+   Data people compare across columns (per-agent figures, leaderboards,
+   dataset rows) are plain tables with few columns.
+4. **Say it once.** A fact appears in one place on a page: a block is told in
+   its step, not also in a banner, a badge and a field list.
+5. **Status.** A small glyph with an accessible label, plus words where the
+   row has room. No coloured pills for status, agents or scores in lists; a
+   score is written as text ("goal completion 0.60").
+6. **Controls.** Segmented controls for views and time ranges, a search field
+   per list, a "Filter" button that opens the filter chips (§7.1 rule 5), and
+   one primary button per page at most.
+7. **Detail on demand.** Ids, raw JSON, token counts and attributes live in
+   the inspector or the Raw spans view, never in the main reading flow.
+8. **Generated summaries.** One-line row summaries and outcome sentences are
+   produced by a tested function from the stored data (status, the failing
+   step, blocks, approval requests and overrides, failed steps, scores,
+   cost against the project's median), never by a model, so they are exact.
+
+## 8. Compatibility adapter## 8. Compatibility adapter
 
 `--weave-compat` (`WEFT_WEAVE_COMPAT=true`) is off by default. It lives in one
 package (`internal/weft/compat`, with the old names in
