@@ -2,8 +2,8 @@
 // with counts, failures and median time; a ring marks an agent whose runs
 // failed or that AgentShield blocked. Under 560 px the graph is unreadable,
 // so the same figures show as tables instead (or, when the page already
-// lists them in its own tables, a note pointing at them). Each node link is
-// labelled with its figures, and a screen reader gets the hand-offs as a
+// lists them in its own tables, a note pointing at them). Each node link reads
+// as its name and figures, and a screen reader gets the hand-offs as a
 // list, unless the page shows its own tables.
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -127,7 +127,6 @@ export function AgentGraphView({
               key={n.agent}
               href={agentUrl(n.agent)}
               className="node-link"
-              aria-label={`${n.agent}: ${n.calls} run${n.calls === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}`}
               onClick={(e) => {
                 e.preventDefault()
                 navigate(agentUrl(n.agent))

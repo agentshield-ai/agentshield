@@ -28,6 +28,7 @@ import { OpCodeView } from '../../components/traces/OpCodeView'
 import { FeedbackPanel, Reactions, ScoresPanel, useCallFeedback } from '../../components/traces/FeedbackPanel'
 import { AddToDatasetModal } from '../../components/traces/AddToDatasetModal'
 import { ConfirmModal, Dropdown } from '../../components/traces/Menu'
+import { useNarrow } from './useNarrow'
 import { Icon } from '../../components/ui/Icons'
 import { CodeSnippet, serverOrigin } from '../../components/traces/GettingStarted'
 import { buildTree, callLabel, flattenTree, type TreeNode } from '../../components/traces/callUtils'
@@ -39,20 +40,7 @@ const TABS: Tab[] = ['span', 'feedback', 'scores', 'summary', 'attributes', 'cod
 const MORE_TABS: Tab[] = ['summary', 'attributes', 'code', 'use', 'raw']
 type TopTab = 'span' | 'feedback' | 'scores' | 'more'
 
-/** True at phone and narrow-tablet widths, where the trace's tree moves under the title. */
-function useNarrow(query = '(max-width: 800px)'): boolean {
-  const get = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches
-  const [narrow, setNarrow] = useState(get)
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const m = window.matchMedia(query)
-    const on = () => setNarrow(m.matches)
-    on()
-    m.addEventListener('change', on)
-    return () => m.removeEventListener('change', on)
-  }, [query])
-  return narrow
-}
+
 type LeftView = 'tree' | 'code' | 'flame' | 'timeline' | 'graph'
 const LEFT_VIEWS: LeftView[] = ['tree', 'code', 'flame', 'timeline', 'graph']
 const TRACE_LIMIT = 5000

@@ -29,7 +29,7 @@ import { PlainTable } from '../../components/ui/PlainTable'
 import { Segmented } from '../../components/ui/Segmented'
 import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
-import { SPAN_SESSIONS_TITLE, statusGlyph, tracesSentence } from '../../lib/summaries/traces'
+import { feedbackWords, SPAN_SESSIONS_TITLE, statusGlyph, tracesSentence } from '../../lib/summaries/traces'
 import '../observe.css'
 
 // ---------------------------------------------------------------- URL state
@@ -995,23 +995,8 @@ function CallRow({
         )
       case 'feedback':
         return (
-          <td key={col} style={{ whiteSpace: 'nowrap' }}>
-            {reactions.map(([e, n]) => (
-              <span key={e} className="mini-reaction">
-                {e}
-                {n > 1 && <span className="small faint">{n}</span>}
-              </span>
-            ))}
-            {notes > 0 && (
-              <span className="small faint" title="Notes">
-                ✎{notes}{' '}
-              </span>
-            )}
-            {scores > 0 && (
-              <span className="small faint" title="Scores">
-                ★{scores}
-              </span>
-            )}
+          <td key={col} className="obs-faint" title={reactions.length ? reactions.map(([e, n]) => `${e} ${n}`).join(' ') : undefined}>
+            {feedbackWords({ reactions: reactions.reduce((t, [, n]) => t + n, 0), notes, scores }) || '—'}
           </td>
         )
       case 'inputs':

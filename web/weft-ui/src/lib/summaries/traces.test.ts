@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareSentence, spanSentence, spanSessionLine, spanSessionSentence, spanSessionsSentence, statusGlyph, tracesSentence, turnName, type TracePart } from './traces'
+import { compareSentence, feedbackWords, spanSentence, spanSessionLine, spanSessionSentence, spanSessionsSentence, statusGlyph, tracesSentence, turnName, type TracePart } from './traces'
 
 const text = (ps: TracePart[]) => ps.map((p) => (typeof p === 'string' ? p : p.text)).join('')
 
@@ -85,5 +85,13 @@ describe('sessions by id rows', () => {
       '4 turns, 12 spans. Turns take about 1.4 s, up to 3.7 s. $0.0034.',
     )
     expect(spanSessionLine({ turn_count: 1, span_count: 1, p50_turn_duration_ms: 565, p99_turn_duration_ms: 565, cost_usd: 0 })).toBe('1 turn, 1 span. The turn took 565 ms.')
+  })
+})
+
+describe('feedback in words', () => {
+  it('counts reactions, notes and scores without emoji', () => {
+    expect(feedbackWords({ reactions: 2, notes: 1, scores: 3 })).toBe('2 reactions, 1 note, 3 scores')
+    expect(feedbackWords({ reactions: 1, notes: 0, scores: 0 })).toBe('1 reaction')
+    expect(feedbackWords({ reactions: 0, notes: 0, scores: 0 })).toBe('')
   })
 })

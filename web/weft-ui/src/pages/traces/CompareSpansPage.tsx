@@ -20,6 +20,7 @@ import { callLabel } from '../../components/traces/callUtils'
 import { ChatView, isChatMessages } from '../../components/traces/ChatView'
 import { DELTA_FORMATS, diffStrings, fmtDeltaAs, leafDiffs, numericDelta, parseDeltaFormat, similarity, type DeltaFormat, type DiffOp } from '../../components/traces/diffUtils'
 import '../../components/traces/traceViews.css'
+import { useNarrow } from './useNarrow'
 
 function stable(v: unknown): string {
   if (v === undefined) return '\u0000undefined'
@@ -57,6 +58,7 @@ export function CompareSpansPage() {
   const [params, setParams] = useSearchParams()
   const ids = useMemo(() => (params.get('ids') ?? '').split(',').filter(Boolean), [params])
   const [diffOnly, setDiffOnly] = useState(false)
+  const narrow = useNarrow()
   const mode: Mode = params.get('mode') === 'diff' ? 'diff' : 'values'
   const baselineId = ids.includes(params.get('baseline') ?? '') ? params.get('baseline')! : ids[0]
   const dfmt = parseDeltaFormat(params.get('nfmt'))
@@ -159,65 +161,50 @@ export function CompareSpansPage() {
         </label>
       </div>
       <ErrorBox error={q.error} />
-      <PlainTable caption="Fields of the compared spans" className="compare-table">
-          <thead>
-            <tr>
-              <th scope="col" style={{ width: 160 }}>Field</th>
-              {calls.map((c, i) => (
-                <th scope="col" key={c.id} className={i === baseIdx ? 'cmp-baseline-col' : ''}>
-                  <div className="row wrap" style={{ gap: 6 }}>
-                    <Link to={spanUrl(projectId, c.id)} title={`Span ${c.id}`}>
-                      {callLabel(c)}
+      {narrow ? (
+        // Phone widths: one block per span, its fields as rows (no sideways scrolling).
+        <div className="cmp-stack">
+          {calls.map((c, i) => {
+            let last = ''
+            return (
+              <section key={c.id} className="cmp-block" aria-label={`${callLabel(c)}, ${i === baseIdx ? 'the baseline' : `span ${i + 1}`}`}>
+                <div className="cmp-block-head">
+                  <Link to={spanUrl(projectId, c.id)} title={`Span ${c.id}`}>
+                    {callLabel(c)}
+                  </Link>
+                  <span className="obs-faint small" title={fmtDate(c.started_at)}>
+                    {fmtRelative(c.started_at)}
+                  </span>
+                  <span className="grow" />
+                  {i === baseIdx ? (
+                    <span className="obs-faint small">Baseline</span>
+                  ) : (
+                    <button type="button" className="linkish small" onClick={() => setParam('baseline', c.id)}>
+                      Set baseline
+                    </button>
+                  )}
+                  {calls.length > 2 && (
+                    <Link className="obs-faint small" title="Remove from comparison" aria-label={`Remove ${callLabel(c)} from the comparison`} to={compareSpansUrl(projectId, ids.filter((x) => x !== c.id))}>
+                      ✕
                     </Link>
-                    <span className="obs-faint small" title={fmtDate(c.started_at)}>
-                      {fmtRelative(c.started_at)}
-                    </span>
-                    <span className="grow" />
-                    {i === baseIdx ? (
-                      <span className="obs-faint small" title="Other spans are compared against this one">
-                        Baseline
-                      </span>
-                    ) : (
-                      <button type="button" className="linkish small" onClick={() => setParam('baseline', c.id)} title="Compare the other spans against this one">
-                        Set baseline
-                      </button>
-                    )}
-                    {calls.length > 2 && (
-                      <Link className="faint small" title="Remove from comparison" to={compareSpansUrl(projectId, ids.filter((x) => x !== c.id))}>
-                        ✕
-                      </Link>
-                    )}
-                    {i > 0 && (
-                      <Link
-                        className="faint small"
-                        title="Move left"
-                        to={compareSpansUrl(projectId, ids.map((x, j) => (j === i - 1 ? ids[i] : j === i ? ids[i - 1] : x)))}
-                      >
-                        ←
-                      </Link>
-                    )}
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((r) => {
-              const d = isDiff(r)
-              const head = r.section !== lastSection
-              lastSection = r.section
-              return (
-                <FragmentRows key={`${r.section}.${r.key}`} head={head ? r.section : null} cols={calls.length + 1}>
-                  <tr className={d ? 'diff-row' : ''}>
-                    <td className={`cmp-field ${r.label ? '' : 'cmp-key'}`}>
-                      {r.label ?? r.key}
-                      {d && <span className="sr-only"> (differs)</span>}
-                    </td>
-                    {r.values.map((v, i) => {
-                      const base = r.values[baseIdx]
-                      const changed = stable(v) !== stable(base)
-                      return (
-                        <td key={i} className={`${d && changed ? 'diff-cell' : ''} ${i === baseIdx ? 'cmp-baseline-col' : ''}`}>
+                  )}
+                </div>
+                <dl className="cmp-fields">
+                  {shown.map((r) => {
+                    const d = isDiff(r)
+                    const head = r.section !== last
+                    last = r.section
+                    const base = r.values[baseIdx]
+                    const v = r.values[i]
+                    const changed = d && i !== baseIdx && stable(v) !== stable(base)
+                    return (
+                      <div key={`${r.section}.${r.key}`} className={`cmp-field-row ${d ? 'diff-row' : ''} ${changed ? 'diff-cell' : ''}`}>
+                        {head && <div className="cmp-section">{r.section}</div>}
+                        <dt className={`cmp-field ${r.label ? '' : 'cmp-key'}`}>
+                          {r.label ?? r.key}
+                          {d && <span className="sr-only"> (differs)</span>}
+                        </dt>
+                        <dd>
                           {mode === 'diff' && i !== baseIdx ? (
                             <DiffCell row={r} base={base} value={v} projectId={projectId} dfmt={dfmt} />
                           ) : (
@@ -226,15 +213,93 @@ export function CompareSpansPage() {
                               {r.num && i !== baseIdx && <NumDelta base={base} value={v} num={r.num} dfmt={dfmt} />}
                             </>
                           )}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                </FragmentRows>
-              )
-            })}
-          </tbody>
-      </PlainTable>
+                        </dd>
+                      </div>
+                    )
+                  })}
+                </dl>
+              </section>
+            )
+          })}
+        </div>
+      ) : (
+      <PlainTable caption="Fields of the compared spans" className="compare-table">
+            <thead>
+              <tr>
+                <th scope="col" style={{ width: 160 }}>Field</th>
+                {calls.map((c, i) => (
+                  <th scope="col" key={c.id} className={i === baseIdx ? 'cmp-baseline-col' : ''}>
+                    <div className="row wrap" style={{ gap: 6 }}>
+                      <Link to={spanUrl(projectId, c.id)} title={`Span ${c.id}`}>
+                        {callLabel(c)}
+                      </Link>
+                      <span className="obs-faint small" title={fmtDate(c.started_at)}>
+                        {fmtRelative(c.started_at)}
+                      </span>
+                      <span className="grow" />
+                      {i === baseIdx ? (
+                        <span className="obs-faint small" title="Other spans are compared against this one">
+                          Baseline
+                        </span>
+                      ) : (
+                        <button type="button" className="linkish small" onClick={() => setParam('baseline', c.id)} title="Compare the other spans against this one">
+                          Set baseline
+                        </button>
+                      )}
+                      {calls.length > 2 && (
+                        <Link className="faint small" title="Remove from comparison" to={compareSpansUrl(projectId, ids.filter((x) => x !== c.id))}>
+                          ✕
+                        </Link>
+                      )}
+                      {i > 0 && (
+                        <Link
+                          className="faint small"
+                          title="Move left"
+                          to={compareSpansUrl(projectId, ids.map((x, j) => (j === i - 1 ? ids[i] : j === i ? ids[i - 1] : x)))}
+                        >
+                          ←
+                        </Link>
+                      )}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r) => {
+                const d = isDiff(r)
+                const head = r.section !== lastSection
+                lastSection = r.section
+                return (
+                  <FragmentRows key={`${r.section}.${r.key}`} head={head ? r.section : null} cols={calls.length + 1}>
+                    <tr className={d ? 'diff-row' : ''}>
+                      <td className={`cmp-field ${r.label ? '' : 'cmp-key'}`}>
+                        {r.label ?? r.key}
+                        {d && <span className="sr-only"> (differs)</span>}
+                      </td>
+                      {r.values.map((v, i) => {
+                        const base = r.values[baseIdx]
+                        const changed = stable(v) !== stable(base)
+                        return (
+                          <td key={i} className={`${d && changed ? 'diff-cell' : ''} ${i === baseIdx ? 'cmp-baseline-col' : ''}`}>
+                            {mode === 'diff' && i !== baseIdx ? (
+                              <DiffCell row={r} base={base} value={v} projectId={projectId} dfmt={dfmt} />
+                            ) : (
+                              <>
+                                <PlainValue row={r} value={v} projectId={projectId} />
+                                {r.num && i !== baseIdx && <NumDelta base={base} value={v} num={r.num} dfmt={dfmt} />}
+                              </>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  </FragmentRows>
+                )
+              })}
+            </tbody>
+        </PlainTable>
+      )}
     </div>
   )
 }

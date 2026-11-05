@@ -168,3 +168,8 @@ export function compareSentence(i: { spans: number; fields: number; differ: numb
   const miss = i.missing ? ` ${i.missing === 1 ? 'One span was' : `${i.missing} spans were`} not found.` : ''
   return head + base + miss
 }
+
+/** A span's feedback as a quiet count in words: "2 reactions, 1 note, 3 scores" (empty when none). */
+export function feedbackWords(f: { reactions: number; notes: number; scores: number }): string {
+  return [f.reactions ? nplural(f.reactions, 'reaction') : '', f.notes ? nplural(f.notes, 'note') : '', f.scores ? nplural(f.scores, 'score') : ''].filter(Boolean).join(', ')
+}

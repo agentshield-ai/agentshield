@@ -278,13 +278,13 @@ function ScoresView({ pid, sessionId, scores, agents }: { pid: string; sessionId
       <section className="view-panel" aria-labelledby="run-h">
         <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
           <h2 id="run-h" className="view-h">
-            Run scorers
+            Score this session
           </h2>
           <button type="button" className="qbtn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-            {open ? 'Hide' : 'Choose scorers'}
+            {open ? 'Cancel' : 'Score this session'}
           </button>
         </div>
-        <p className="quiet-note">Scores the session, each agent or each hand-off with a judge model. Judges need a model provider key, set in Settings.</p>
+        <p className="quiet-note">Scorers judge the whole session, one agent or one hand-off.</p>
         {open && (
           <form
             className="col"
@@ -325,11 +325,11 @@ function ScoresView({ pid, sessionId, scores, agents }: { pid: string; sessionId
               )}
               <label className="field">
                 Judge model
-                <input className="input" value={model} onChange={(e) => setModel(e.target.value)} list="judge-models" />
+                <input className="input" value={model} onChange={(e) => setModel(e.target.value)} list="judge-models" title="A model with a provider key in Settings, or the offline test judge" />
                 <datalist id="judge-models">
                   <option value="gpt-4o-mini" />
                   <option value="claude-3-5-haiku-latest" />
-                  <option value="mock/json" />
+                  <option value="mock/json" label="Offline test judge" />
                 </datalist>
               </label>
             </div>
@@ -357,7 +357,7 @@ function ScoresView({ pid, sessionId, scores, agents }: { pid: string; sessionId
             </fieldset>
             <div className="row">
               <button className="qbtn primary" type="submit" disabled={run.isPending || ![...picked].some((n) => scorerOptions.some((x) => x.name === n))}>
-                {run.isPending ? 'Scoring…' : 'Run scorers'}
+                {run.isPending ? 'Scoring…' : 'Score now'}
               </button>
             </div>
           </form>
