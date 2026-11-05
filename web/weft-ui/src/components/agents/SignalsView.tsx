@@ -490,7 +490,7 @@ export function SignalsView({ projectId, params, update, agent }: { projectId: s
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={timeline} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--hairline)" />
-                <XAxis dataKey="t" tick={AXIS} minTickGap={40} axisLine={false} tickLine={false} tickFormatter={(iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' })} />
+                <XAxis dataKey="t" tick={AXIS} minTickGap={40} axisLine={false} tickLine={false} tickFormatter={(iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} />
                 <YAxis tick={AXIS} allowDecimals={false} width={28} axisLine={false} tickLine={false} />
                 <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(iso) => new Date(String(iso)).toLocaleString()} cursor={{ fill: 'var(--panel-2)' }} />
                 <Bar dataKey="all" name="Ratings and tags" fill="var(--accent)" isAnimationActive={false} radius={[2, 2, 0, 0]} />

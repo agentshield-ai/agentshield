@@ -92,6 +92,18 @@ or type a path such as `/api/v1/spans` to search by endpoint; **Filter** narrows
 by method, result and time (and, for server admins, to all projects). **Export
 CSV** downloads what the filters match.
 
+### Retention and sampling
+
+**Retention** deletes spans and their feedback once they are older than the
+number of days you set; a background job runs hourly, and **Purge now**
+deletes them at once. **Keep forever** turns retention off.
+
+**Sampling** keeps a share of traces. The choice is made per trace from its
+id, so a trace's spans are kept or dropped together. With **Dry run** on,
+every trace is kept, and the spans sampling would drop carry the attribute
+`weft_ingest_sampling` (`{"would_drop": true, "sample_rate": …}`), so you can
+filter for them on **Traces** before turning sampling on.
+
 ### Sensitive data
 
 With **Redact sensitive data as it arrives** on, matches in inputs, outputs,

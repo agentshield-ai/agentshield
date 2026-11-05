@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareSentence, feedbackWords, spanSentence, spanSessionLine, spanSessionSentence, spanSessionsSentence, statusGlyph, tracesSentence, turnName, type TracePart } from './traces'
+import { cellValueWords, compareSentence, feedbackWords, scoreSummaryWords, spanSentence, spanSessionLine, spanSessionSentence, spanSessionsSentence, statusGlyph, tracesSentence, turnName, type TracePart } from './traces'
 
 const text = (ps: TracePart[]) => ps.map((p) => (typeof p === 'string' ? p : p.text)).join('')
 
@@ -94,4 +94,33 @@ describe('feedback in words', () => {
     expect(feedbackWords({ reactions: 1, notes: 0, scores: 0 })).toBe('1 reaction')
     expect(feedbackWords({ reactions: 0, notes: 0, scores: 0 })).toBe('')
   })
+})
+
+describe('cell words', () => {
+  const versions: Record<string, number> = { 'polite-echo:ed1991': 0, 'support-eval:abc': 2 }
+  const versionOf = (n: string, d: string) => versions[`${n}:${d}`]
+  it.each<[unknown, string]>([
+    ['weft:///demo/support-bot/object/polite-echo:ed1991', 'polite-echo, version 1'],
+    ['weft:///demo/support-bot/object/support-eval:abc', 'support-eval, version 3'],
+    ['weft:///demo/support-bot/object/unknown:fff', 'unknown'],
+    ['weft:///demo/support-bot/span/0190e2e0-aaaa', 'step 0190e2e0'],
+    ['plain text', 'plain text'],
+    [{ a: 1 }, '{"a":1}'],
+  ])('cellValueWords %#', (v, out) => expect(cellValueWords(v, versionOf)).toBe(out))
+
+  it.each<[unknown, string | null]>([
+    [
+      {
+        'exact-match': { true_count: 0, true_fraction: 0 },
+        'helpfulness-judge': { correct: { true_count: 0, true_fraction: 0 }, score: { mean: 2.52 } },
+        'mentions-answer': { true_count: 8, true_fraction: 1 },
+        model_latency: { mean: 0.1016163965 },
+      },
+      'exact match 0% · helpfulness judge correct 0% · helpfulness judge score 2.52 · mentions answer 100% · model latency 102 ms',
+    ],
+    [{ answer: 'Yes', sources: ['kb://faq'] }, null],
+    [{ score: 4 }, null],
+    [null, null],
+    ['text', null],
+  ])('scoreSummaryWords %#', (v, out) => expect(scoreSummaryWords(v)).toBe(out))
 })

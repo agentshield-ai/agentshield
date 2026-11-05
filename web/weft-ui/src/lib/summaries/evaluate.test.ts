@@ -38,6 +38,12 @@ import {
   runMeta,
   scoreSubject,
   scoresSentence,
+  scoreShapes,
+  needsLook,
+  inferScale,
+  scaleFromText,
+  judgements,
+  judgementParts,
   scoreTitle,
   scoreValue,
   tokensText,
@@ -318,7 +324,7 @@ describe('scores', () => {
   it.each<[string, typeof S, boolean, string]>([
     ['none', [], false, 'Nothing has been scored yet.'],
     ['none match', [], true, 'No scores match these filters.'],
-    ['some low', S, false, '4 scores from 2 scorers on 3 sessions. 2 are below 0.5. Goal completion averages 0.53.'],
+    ['some low', S, false, '4 scores from 2 scorers on 3 sessions. 2 need a look. Goal completion averages 0.53.'],
     ['one low, in one session', S.slice(0, 1), false, '1 score from 1 scorer on 1 session. One is below 0.5.'],
     ['none low', S.slice(1, 3), true, '2 scores from 1 scorer on 2 sessions match. None is below 0.5. Goal completion averages 0.75.'],
   ])('scoresSentence: %s', (_n, s, f, out) => expect(partsText(scoresSentence(s, f))).toBe(out))
@@ -328,8 +334,76 @@ describe('scores', () => {
       { scorer: 'helpfulness-judge', value: 5, span_id: 's1', scope: 'span' },
       { scorer: 'helpfulness-judge', value: 4, span_id: 's2', scope: 'span' },
     ]
-    expect(partsText(scoresSentence(steps))).toBe('2 scores from 1 scorer on 2 steps. None is below 0.5. Helpfulness judge averages 4.50.')
-    expect(partsText(scoresSentence([...S.slice(0, 1), ...steps]))).toBe('3 scores from 2 scorers on 1 session and 2 steps. One is below 0.5. Helpfulness judge averages 4.50.')
+    expect(partsText(scoresSentence(steps))).toBe('2 scores from 1 scorer on 2 steps. None is below 3 out of 5. Helpfulness judge averages 4.50 out of 5.')
+    expect(partsText(scoresSentence([...S.slice(0, 1), ...steps]))).toBe('3 scores from 2 scorers on 1 session and 2 steps. One needs a look. Helpfulness judge averages 4.50 out of 5.')
+  })
+
+  // The demo's helpfulness judge: {score: 1-5, correct: bool}; 22 correct, 3 not, scores averaging 2.52.
+  const demoScores = [4, 1, 1, 2, 1, 1, 1, 5, 2, 2, 4, 1, 1, 4, 2, 5, 2, 1, 4, 5, 4, 1, 3, 2, 4]
+  const demo = demoScores.map((score, i) => ({
+    scorer: 'helpfulness-judge',
+    value: score,
+    output: { score, correct: ![15, 19, 22].includes(i), reasoning: 'mock judgement' },
+    span_id: `s${i}`,
+    scope: 'span',
+  }))
+  const step = (output: unknown, i = 0) => ({ scorer: 'x', value: scoreValue(output), output, span_id: `s${i}`, scope: 'span' })
+  it.each<[string, ReturnType<typeof step>[], string]>([
+    ['booleans with a 1-5 score: the booleans first', demo, '25 scores from 1 scorer on 25 steps. 22 said correct; 3 did not. The score averages 2.52 out of 5.'],
+    ['bare booleans', [true, false, true].map(step), '3 scores from 1 scorer on 3 steps. 2 were true; 1 was false.'],
+    ['all passed', [{ passed: true }, { passed: true }].map((o, i) => step(o, i)), '2 scores from 1 scorer on 2 steps. Both passed.'],
+    ['none matched', [{ match: false }, { match: false }, { match: false }].map((o, i) => step(o, i)), '3 scores from 1 scorer on 3 steps. All 3 did not match.'],
+    ['a 1-5 scale with no booleans: below its midpoint', [1, 2, 4, 5].map((o, i) => step(o, i)), '4 scores from 1 scorer on 4 steps. 2 are below 3 out of 5. X averages 3 out of 5.'],
+    ['a 0-10 scale', [{ rating: 8 }, { rating: 3 }].map((o, i) => step(o, i)), '2 scores from 1 scorer on 2 steps. One is below 5 out of 10. X averages 5.50 out of 10.'],
+    ['a 0-1 share', [0.2, 0.9].map((o, i) => step(o, i)), '2 scores from 1 scorer on 2 steps. One is below 0.5. X averages 0.55.'],
+    ['numbers with no known range', [250, 900].map((o, i) => step(o, i)), '2 scores from 1 scorer on 2 steps. X averages 575.'],
+  ])('scoresSentence reads each scorer by its shape: %s', (_n, s, out) => expect(partsText(scoresSentence(s))).toBe(out))
+
+  it('scoresSentence links what needs a look, and a scorer’s own scale wins over the values seen', () => {
+    const ps = scoresSentence(demo).filter((p) => typeof p !== 'string')
+    expect(ps).toEqual([{ text: '3 did not', link: { kind: 'scores', filter: 'low' } }])
+    const twos = [1, 1].map((o, i) => step(o, i))
+    expect(partsText(scoresSentence(twos))).toBe('2 scores from 1 scorer on 2 steps. None is below 0.5. X averages 1.')
+    expect(partsText(scoresSentence(twos, false, scoreShapes(twos, { x: { min: 1, max: 5 } })))).toBe(
+      '2 scores from 1 scorer on 2 steps. 2 are below 3 out of 5. X averages 1 out of 5.',
+    )
+  })
+
+  it('a filter does not move the threshold: shapes come from every score', () => {
+    const shapes = scoreShapes(demo)
+    const low = demo.filter((s) => needsLook(s, shapes[s.scorer]))
+    expect(low.map((s) => s.value)).toEqual([5, 5, 3])
+    expect(partsText(scoresSentence(low, true, shapes))).toBe('3 scores from 1 scorer on 3 steps match. All 3 did not say correct. The score averages 4.33 out of 5.')
+  })
+
+  it.each<[string, number[], { min: number; max: number } | null]>([
+    ['0-1', [0, 0.4, 1], { min: 0, max: 1 }],
+    ['1-5', [1, 5, 3], { min: 1, max: 5 }],
+    ['0-5', [0, 4], { min: 0, max: 5 }],
+    ['1-10', [2, 7], { min: 0, max: 10 }],
+    ['0-100', [12, 80], { min: 0, max: 100 }],
+    ['none', [250], null],
+    ['negative', [-1, 2], null],
+  ])('inferScale %s', (_n, v, out) => expect(inferScale(v)).toEqual(out))
+
+  it.each<[string, { min: number; max: number } | null]>([
+    ['Rate helpfulness 1-5 as JSON', { min: 1, max: 5 }],
+    ['Give a score from 0 to 10.', { min: 0, max: 10 }],
+    ['a mark out of 10', { min: 0, max: 10 }],
+    ['Say yes or no.', null],
+  ])('scaleFromText %s', (t, out) => expect(scaleFromText(t)).toEqual(out))
+
+  it('judgementParts names each scorer when there are several', () => {
+    const js = judgements([...demo, ...[0.2, 0.8, 0.4].map((v, i) => ({ scorer: 'GoalCompletionJudge', value: v, session_id: `a${i}`, scope: 'session' }))])
+    expect(partsText(judgementParts(js))).toBe('5 need a look. Goal completion averages 0.47 and helpfulness judge: 22 of 25 said correct.')
+  })
+
+  it.each<[unknown, string]>([
+    [{ score: 5, correct: false }, 'Helpfulness judge: not correct, score 5 out of 5'],
+    [{ score: 4, correct: true }, 'Helpfulness judge: correct, score 4 out of 5'],
+  ])('scoreTitle with the scorer’s shape %#', (output, t) => {
+    const shapes = scoreShapes(demo)
+    expect(scoreTitle({ scorer: 'helpfulness-judge', value: scoreValue(output), output }, shapes['helpfulness-judge'])).toBe(t)
   })
 
 

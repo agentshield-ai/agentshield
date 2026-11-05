@@ -31,7 +31,7 @@ function tickTime(bucketSeconds: number, buckets: string[]) {
   return (iso: string) => {
     const d = new Date(iso)
     if (bucketSeconds >= 86_400) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     // Ranges over a day need the date too, or 09:00 on two days look the same.
     if (spanMs > 86_400_000) return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
     return time
@@ -88,7 +88,7 @@ export function MetricChart({ res, panel, height = 200 }: { res: MetricsRes; pan
   const kind = series[0]?.kind ?? 'number'
   const fmtTick = (v: number) => (kind === 'number' ? compact(v) : fmtValue(v, kind))
   const xTick = tickTime(res.bucket_seconds, res.buckets)
-  const labelFmt = (iso: string) => new Date(iso).toLocaleString()
+  const labelFmt = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
   const kindOf = Object.fromEntries(series.map((s) => [s.key, s.kind]))
   const tooltipFmt = (v: number, _n: string, item: { dataKey?: string | number }) => fmtValue(v, kindOf[String(item?.dataKey)] ?? kind)
   const common = (
@@ -199,11 +199,11 @@ function TableView({ res, panel, height }: { res: MetricsRes; panel: DashboardPa
       <table className="table">
         <thead>
           <tr>
-            <th>{res.group_by ? res.group_by.replace(/_/g, ' ') : 'Group'}</th>
+            <th>{res.group_by ? sentenceCase(res.group_by.replace(/[_.]+/g, ' ')) : 'Group'}</th>
             {!hasCount && <th className="num">Spans</th>}
             {metrics.map((m) => (
               <th key={metricName(m)} className="num">
-                {metricLabel(m)}
+                {sentenceCase(metricLabel(m))}
               </th>
             ))}
           </tr>
@@ -227,3 +227,6 @@ function TableView({ res, panel, height }: { res: MetricsRes; panel: DashboardPa
     </div>
   )
 }
+
+/** "name" → "Name", "latency p50" → "Latency p50". */
+const sentenceCase = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)

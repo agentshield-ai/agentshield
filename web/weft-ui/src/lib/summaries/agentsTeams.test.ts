@@ -277,7 +277,7 @@ describe('analytics', () => {
     [{ agents: 1, sessions: 0, invocations: 1, failed: 0, tokens: 0, cost: 0 }, 'all', undefined, '1 agent ran once. None of the runs failed.'],
     [{ agents: 0, sessions: 0, invocations: 0, failed: 0, tokens: 0, cost: 0 }, '6h', undefined, 'In the last 6 hours, nothing was recorded.'],
     [{ agents: 1, sessions: 3, invocations: 3, failed: 0, tokens: 2880, cost: 0.022 }, '24h', 'coder', 'In the last 24 hours, coder ran 3 times in 3 sessions. None of its runs failed. It used 2,880 tokens, costing $0.022.'],
-    [{ agents: 1, sessions: 2, invocations: 2, failed: 2, tokens: 0, cost: 0 }, '7d', 'researcher', 'In the last 7 days, researcher ran 2 times in 2 sessions. Both of its runs failed.'],
+    [{ agents: 1, sessions: 2, invocations: 2, failed: 2, tokens: 0, cost: 0 }, '7d', 'researcher', 'In the last 7 days, researcher ran twice in 2 sessions. Both of its runs failed.'],
     [{ agents: 0, sessions: 0, invocations: 0, failed: 0, tokens: 0, cost: 0 }, '24h', 'coder', 'In the last 24 hours, nothing was recorded for coder.'],
   ])('writes the totals %#', (t, range, agent, want) => expect(analyticsSentence(t, range, agent)).toBe(want))
   it('writes a turn view', () => {

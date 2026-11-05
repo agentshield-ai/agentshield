@@ -19,6 +19,9 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 /** "one step" for 1, "2 steps" otherwise (the mockups' style for small counts in sentences). */
 export const countWord = (n: number, one: string, many = `${one}s`) => (n === 1 ? `one ${one}` : `${n} ${many}`)
 
+/** How often, in words: "once", "twice", "3 times". */
+export const timesWord = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n.toLocaleString('en-US')} times`)
+
 /** Joins clauses: "a", "a and b", "a, b, and c" (serial comma, as in the mockups). */
 export function joinClauses(xs: string[]): string {
   if (xs.length <= 1) return xs.join('')
@@ -29,7 +32,7 @@ export function joinClauses(xs: string[]): string {
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 const trimNum = (x: number, digits: number) => String(Number(x.toFixed(digits)))
 
-/** A duration in words for sentences: "150 milliseconds", "1.3 seconds", "4 seconds", "2 minutes 5 seconds". */
+/** A duration in words for sentences: "150 milliseconds", "1.3 seconds", "4 seconds", "2 minutes 5 seconds", "3 hours 10 minutes", "2 days 4 hours". */
 export function durationWords(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return ''
   if (ms < 1000) return plural(Math.round(ms), 'millisecond')
@@ -45,9 +48,16 @@ export function durationWords(ms: number | null | undefined): string {
     return s ? `${plural(m, 'minute')} ${plural(s, 'second')}` : plural(m, 'minute')
   }
   const totalM = Math.round(totalS / 60)
-  const h = Math.floor(totalM / 60)
-  const m = totalM % 60
-  return m ? `${plural(h, 'hour')} ${plural(m, 'minute')}` : plural(h, 'hour')
+  if (totalM < 24 * 60) {
+    const h = Math.floor(totalM / 60)
+    const m = totalM % 60
+    return m ? `${plural(h, 'hour')} ${plural(m, 'minute')}` : plural(h, 'hour')
+  }
+  // Above a day, days and hours: "2 days 4 hours" (never "52 hours 2 minutes").
+  const totalH = Math.round(totalM / 60)
+  const days = Math.floor(totalH / 24)
+  const h = totalH % 24
+  return h ? `${plural(days, 'day')} ${plural(h, 'hour')}` : plural(days, 'day')
 }
 
 /** A short duration for figures: "150 ms", "2.5 s", "9 s", "1 min 5 s", "2 h 3 min". */
@@ -227,7 +237,7 @@ export function sessionSummaryLine(s: SessionSummary, ctx: RowContext = {}): str
   if (f.unknown) {
     out.push('Only AgentShield verdicts were recorded, so the outcome is unknown.')
     if (f.blocks) out.push(`AgentShield blocked ${countWord(f.blocks, 'tool call')}.`)
-    else if (f.approvals) out.push(`AgentShield asked for approval ${countWord(f.approvals, 'time')}.`)
+    else if (f.approvals) out.push(`AgentShield asked for approval ${timesWord(f.approvals)}.`)
     return out.join(' ')
   }
 
@@ -241,9 +251,9 @@ export function sessionSummaryLine(s: SessionSummary, ctx: RowContext = {}): str
   const approvalSentence = () => {
     const top = topRule(asked)
     const purpose = top && top.all ? ` ${ruleWords(top.rule, top.tool).purpose}` : ''
-    let t = `Asked ${countWord(f.approvals, 'time')}${purpose}.`
+    let t = `Asked ${timesWord(f.approvals)}${purpose}.`
     if (f.approvals === 1) t = `Asked once for approval${purpose}.`
-    else if (!purpose) t = `Asked for approval ${f.approvals} times.`
+    else if (!purpose) t = `Asked for approval ${timesWord(f.approvals)}.`
     const approved = asked.filter((d) => d.overridden).length
     if (approved) t += f.approvals === 1 ? ' You approved it.' : ` You approved ${approved} of them.`
     return t
@@ -542,7 +552,7 @@ export function sessionOutcome({ summary: s, tl, detections = [] }: OutcomeInput
   if (status === 'unknown' || s.verdicts_only) {
     out.push('Only AgentShield verdicts were recorded for this session, so its outcome is unknown.')
     if (blocks) out.push(`AgentShield blocked ${countWord(blocks, 'tool call')}.`)
-    else if (approvalCount) out.push(`AgentShield asked for approval ${countWord(approvalCount, 'time')}.`)
+    else if (approvalCount) out.push(`AgentShield asked for approval ${timesWord(approvalCount)}.`)
     return out.join(' ')
   }
   if (status === 'running') {
@@ -573,7 +583,7 @@ export function sessionOutcome({ summary: s, tl, detections = [] }: OutcomeInput
     return out.join(' ')
   }
   if (approvalCount) {
-    out.push(`Finished, after asking for approval ${countWord(approvalCount, 'time')}.`)
+    out.push(`Finished, after asking for approval ${timesWord(approvalCount)}.`)
     const approved = approvals.filter((d) => d.overridden).length
     if (approved) out.push(approvalCount === 1 ? 'You approved it.' : `You approved ${approved} of them.`)
     if (errors.length) out.push(`${cap(countWord(errors.length, 'step'))} failed on the way.`)

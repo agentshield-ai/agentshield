@@ -30,7 +30,7 @@ export function timeRangeLabel(id: string): string {
 
 function fmtShort(iso: string) {
   const d = new Date(iso)
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 }
 
 /** Start/end for a time range id, relative to `now`. */

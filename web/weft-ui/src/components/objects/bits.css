@@ -41,3 +41,65 @@ html .switch:focus-visible {
 .short-copy.done .short-copy-btn {
   color: var(--success);
 }
+
+/* Aliases and tags as plain names (FIXES convention 6: no pills): the name,
+   a quiet ✕ to remove it, and a text button to add one. */
+.name-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: var(--fs-secondary);
+}
+.name-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.name-x {
+  border: 0;
+  background: none;
+  padding: 0 3px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  min-height: 20px;
+}
+.name-x:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+.name-add {
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.name-add:hover {
+  text-decoration: underline;
+}
+.name-add:focus-visible,
+.name-x:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.name-input {
+  height: 26px;
+  width: 140px;
+  font-size: var(--fs-secondary);
+}
+
+/* A code block's language, as quiet words rather than a badge. */
+.code-lang {
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+  flex: none;
+}

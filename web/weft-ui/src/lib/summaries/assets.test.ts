@@ -13,6 +13,8 @@ import {
   runScores,
   runTitle,
   runWhen,
+  scoreReason,
+  scoreResultWords,
   sdkName,
   usageCounts,
   versionSentence,
@@ -86,7 +88,8 @@ describe('assetFacts (the row summary)', () => {
     ['dataset before its rows load', obj(), {}, 'Version 3'],
     ['aliases', obj({ aliases: ['latest', 'prod'] }), { rows: 1 }, '1 row, version 3, alias prod'],
     ['chat prompt', chat, {}, 'Chat prompt with 2 messages and 2 placeholders, version 2'],
-    ['model', model, {}, 'Runs mock/echo at temperature 0, version 1'],
+    ['model', model, {}, 'Runs the offline echo model at temperature 0, version 1'],
+    ['offline judge', obj({ ...judge, value: { ...judge.value, model: 'mock/json' } }), { serverScorer: true }, 'Offline JSON judge, version 1'],
     ['judge', judge, { serverScorer: true }, 'LLM judge using gpt-4o, version 1'],
     ['sdk scorer', exact, { serverScorer: false }, 'Exact-match scorer on expected, runs only in the SDK, version 1'],
     ['function', fn, {}, 'Version 1'],
@@ -166,7 +169,9 @@ describe('versionSentence', () => {
     ['first dataset version', { o: obj({ version: 0 }), rows: 1, prevRows: null }, 'Version 1 of support-tickets, saved 5 min ago. It has 1 row.'],
     ['older version', { o: obj({ version: 0, user_id: 'ann' }), latestVersion: 2 }, 'Version 1 of support-tickets, saved 5 min ago by ann. A newer version, version 3, exists.'],
     ['prompt', { o: chat }, 'Version 2 of triage, saved 5 min ago. It has 2 messages and 2 placeholders: {question}, {team}.'],
-    ['model', { o: model }, 'Version 1 of triage-model, saved 5 min ago. It runs mock/echo.'],
+    ['model', { o: model }, 'Version 1 of triage-model, saved 5 min ago. It runs the offline echo model.'],
+    ['real model', { o: obj({ ...model, value: { llm_model_id: 'openai/gpt-4o-mini' } }) }, 'Version 1 of triage-model, saved 5 min ago. It runs openai/gpt-4o-mini.'],
+    ['offline judge', { o: obj({ ...judge, value: { ...judge.value, model: 'mock/json' } }) }, 'Version 1 of polite, saved 5 min ago. It is an offline JSON judge.'],
     ['judge', { o: judge }, 'Version 1 of polite, saved 5 min ago. It is an LLM judge using gpt-4o.'],
     ['exact', { o: exact }, 'Version 1 of team-match, saved 5 min ago. It is an exact-match scorer.'],
     ['evaluation', { o: obj({ name: 'ev', kind: 'evaluation', class: 'Evaluation', version: 0, value: { scorers: ['a', 'b'], trials: 3 } }) }, 'Version 1 of ev, saved 5 min ago. It scores each row with 2 scorers, 3 times.'],
@@ -211,3 +216,23 @@ describe('run rows', () => {
 })
 
 it('sdkName keeps the API numbering', () => expect(sdkName(obj())).toBe('support-tickets:v2'))
+
+describe('scoreResultWords and scoreReason', () => {
+  it.each([
+    [{ answer: 'Question: …', correct: true, reasoning: 'ok', score: 4 }, 'correct, score 4'],
+    [{ correct: false, score: 2 }, 'not correct, score 2'],
+    [{ exact_match: true }, 'exact match'],
+    [{ similarity: 0.7912 }, 'similarity 0.79'],
+    [true, 'passed'],
+    [false, 'failed'],
+    [0.75, 'score 0.75'],
+    [{ note: 'text only' }, 'no score recorded'],
+    [null, 'no score recorded'],
+  ])('%#', (out, want) => expect(scoreResultWords(out)).toBe(want))
+  it.each([
+    [{ reasoning: ' Polite and complete. ' }, 'Polite and complete.'],
+    [{ reason: 'Wrong team' }, 'Wrong team'],
+    [{ score: 1 }, ''],
+    ['text', ''],
+  ])('reason %#', (out, want) => expect(scoreReason(out)).toBe(want))
+})

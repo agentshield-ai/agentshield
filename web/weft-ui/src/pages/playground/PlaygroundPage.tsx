@@ -21,6 +21,7 @@ import { fmtDuration, fmtRelative, versionLabel } from '../../lib/format'
 import { Sentence } from '../../components/ui/Sentence'
 import { playgroundSentence, tokensText } from '../../lib/summaries/evaluate'
 import '../evaluations/evaluate.css'
+import { OFFLINE_MODEL_WORDS } from '../../lib/modelWords'
 
 // ---------------------------------------------------------------- model
 
@@ -188,7 +189,7 @@ function messageText(m: ChatMessage | undefined): string {
 }
 
 /** The offline test models, in words for the sentence. */
-const OFFLINE_WORDS: Record<string, string> = { 'mock/echo': 'the offline echo model', 'mock/json': 'the offline JSON judge' }
+const OFFLINE_WORDS: Record<string, string> = Object.fromEntries(Object.entries(OFFLINE_MODEL_WORDS).map(([k, v]) => [k, `the ${v}`]))
 
 function pickDefaultModel(models: LLMModelInfo[]): string {
   const avail = models.filter((m) => m.available)

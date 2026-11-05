@@ -611,6 +611,117 @@ a.lrow-link:focus-visible {
   font-weight: 600;
 }
 
+/* Stacked rows (PlainTable stack): below 600 px of the table's own width,
+   each row is two lines, the first cell then its figures ("7 runs · 3 failed
+   · $0.23"), so no column is cut and no name breaks per letter. */
+.plain-table-box.stackable {
+  container-type: inline-size;
+}
+@container (max-width: 600px) {
+  .plain-table-box.stackable .plain-table,
+  .plain-table-box.stackable .plain-table tbody,
+  .plain-table-box.stackable .plain-table tr {
+    display: block;
+  }
+  .plain-table-box.stackable .plain-table caption.plain-caption {
+    display: block;
+    padding-bottom: 8px;
+  }
+  .plain-table-box.stackable .plain-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .plain-table-box.stackable .plain-table tbody tr {
+    padding: 10px 16px;
+    border-top: 1px solid var(--separator);
+    color: var(--text-secondary);
+  }
+  .plain-table-box.stackable .plain-table tbody tr:first-child {
+    border-top: 0;
+  }
+  .plain-table-box.stackable .plain-table caption.plain-caption + thead + tbody tr:first-child,
+  .plain-table-box.stackable .plain-table caption.plain-caption ~ tbody tr:first-child {
+    border-top: 1px solid var(--separator);
+  }
+  .plain-table-box.stackable .plain-table td {
+    display: inline;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: normal;
+  }
+  .plain-table-box.stackable .plain-table td:first-child {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .plain-table-box.stackable .plain-table td[data-before]::before {
+    content: attr(data-before);
+  }
+  .plain-table-box.stackable .plain-table td[data-label]::after {
+    content: ' ' attr(data-label);
+  }
+}
+
+/* "Show as a table" (GraphWithTables): the graph's figures as tables, closed
+   at desktop width so the page says them once. */
+.graph-with-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.table-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: var(--fs-meta);
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+  border-radius: 6px;
+}
+.table-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.table-disclosure > summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.12s;
+}
+.table-disclosure[open] > summary::before {
+  transform: rotate(45deg);
+}
+.table-disclosure > summary:hover {
+  text-decoration: underline;
+}
+.table-disclosure-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+  min-width: 0;
+}
+
+/* Edge labels of the delegation graph carry a wide halo of the panel colour,
+   so a line passing near them never reads as striking the text through. */
+.graph-svg .edge-label {
+  stroke-width: 7px;
+  stroke-linejoin: round;
+}
+
 /* ---------- small pieces ---------- */
 /* Quiet notes (widened time range, caps): text, not a banner. */
 .quiet-note {
@@ -943,7 +1054,10 @@ body {
   border-radius: var(--radius-panel);
 }
 /* Links among text in a table cell carry a faint underline (never colour alone). */
-.plain-table td a {
+.plain-table td a,
+.plain-table td .linkish {
+  font-family: inherit;
+  color: var(--accent);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
   text-underline-offset: 3px;

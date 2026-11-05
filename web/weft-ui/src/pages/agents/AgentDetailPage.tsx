@@ -102,11 +102,11 @@ function AgentDetail() {
         {d.tool_counts.length === 0 ? (
           <p className="quiet-note">No tool calls recorded.</p>
         ) : (
-          <PlainTable caption={`Tools ${d.agent_name} calls, with how many calls failed`} className="tools-table">
+          <PlainTable caption={`Tools ${d.agent_name} calls, with how many calls failed`} className="tools-table" stack>
             <thead>
               <tr>
                 <th scope="col">Tool</th>
-                <th scope="col" className="num">
+                <th scope="col" className="num" data-stack="call|calls">
                   Calls
                 </th>
                 <th scope="col" className="num">
@@ -118,7 +118,7 @@ function AgentDetail() {
               {d.tool_counts.map((t) => (
                 <tr key={t.tool}>
                   <td>
-                    <Link className="mono" to={sessionsUrl(pid, filterQueryString({ agent: agentName, tool: t.tool, time: 'all' }))} title={`Sessions where ${agentName} called ${t.tool}`}>
+                    <Link to={sessionsUrl(pid, filterQueryString({ agent: agentName, tool: t.tool, time: 'all' }))} title={`Sessions where ${agentName} called ${t.tool}`}>
                       {t.tool}
                     </Link>
                   </td>
@@ -145,14 +145,14 @@ function AgentDetail() {
             )}
           </p>
         ) : (
-          <PlainTable caption="Agent-level scores: each scorer's mean for this agent, from 0 to 1">
+          <PlainTable caption="Agent-level scores: each scorer's mean for this agent, from 0 to 1" stack>
             <thead>
               <tr>
                 <th scope="col">Scorer</th>
-                <th scope="col" className="num">
+                <th scope="col" className="num" data-stack-prefix="mean">
                   Mean
                 </th>
-                <th scope="col" className="num">
+                <th scope="col" className="num" data-stack="result|results">
                   Results
                 </th>
               </tr>

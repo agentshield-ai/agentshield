@@ -1,5 +1,6 @@
 // Which models the server can run in /api/v1/evaluations/run (unit tested in evals.test.ts).
 import type { Any } from '../../api/types'
+import { isOfflineModel, modelDisplayName } from '../../lib/modelWords'
 
 export type ServerModelKind = 'llm' | 'remote' | 'runtime'
 
@@ -32,7 +33,6 @@ export function serverModelSummary(o: { value?: Any }): string {
 }
 
 /** Offline test models, in words. */
-const MOCK_WORDS: Record<string, string> = { 'mock/echo': 'an offline test model that repeats the prompt', 'mock/json': 'an offline test judge' }
 
 /** How a model runs, in plain words for the model picker: "calls gpt-4o-mini", "an offline test model…", "calls your endpoint at …", "runs on runtime x". */
 export function serverModelWords(o: { value?: Any }): string {
@@ -40,7 +40,8 @@ export function serverModelWords(o: { value?: Any }): string {
   switch (serverModelKind(o)) {
     case 'llm': {
       const id = String(v.llm_model_id ?? '')
-      return MOCK_WORDS[id] ?? (id ? `calls ${id}` : 'calls an AI provider')
+      if (isOfflineModel(id)) return `the ${modelDisplayName(id)}`
+      return id ? `calls ${id}` : 'calls an AI provider'
     }
     case 'remote':
       return `calls your endpoint at ${v.predict_url}`

@@ -1,7 +1,7 @@
 // One session (DESIGN.md §7 "Session page", §7.2): the title, one generated
 // sentence giving the outcome, one quiet line of figures, and a segmented
 // control for Story (the session as a conversation, with the inspector),
-// Team (the delegation graph and the same data as tables), Scores and Raw
+// Team (the delegation graph, its figures as tables behind "Show as a table"), Scores and Raw
 // spans. The step responsible for a failure or block is selected and
 // scrolled into view on arrival (§7.1 rule 3); ?step=<key> deep-links any
 // step; j/k move between steps.
@@ -16,7 +16,7 @@ import { sessionMetaFigures, sessionOutcome, sessionTitle, scorerWords, relative
 import { buildTimeline, currentFocus, oneLine, STEP_LABEL, stepTitle, type BuiltTimeline } from '../../lib/timeline'
 import { agentUrl, sessionsUrl, spanUrl, traceSpansUrl } from '../../lib/urls'
 import { ErrorBox, Loading } from '../../components/common'
-import { AgentGraphView, GraphTables } from '../../components/ui/AgentGraphView'
+import { GraphTables, GraphWithTables } from '../../components/ui/AgentGraphView'
 import { GroupedList, ListRow } from '../../components/ui/GroupedList'
 import { CopyText } from '../../components/ui/Inspector'
 import { PageHeader } from '../../components/ui/PageHeader'
@@ -198,10 +198,7 @@ function TeamView({ pid, sessionId }: { pid: string; sessionId: string }) {
       <h2 id="team-h" className="view-h">
         Who handed work to whom
       </h2>
-      <div className="view-panel">
-        <AgentGraphView graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} tablesOnPage />
-      </div>
-      <GraphTables graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} />
+      <GraphWithTables graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} panelClassName="view-panel" tables={<GraphTables graph={g.data!} agentUrl={(a) => agentUrl(pid, a)} />} />
     </section>
   )
 }
@@ -278,7 +275,7 @@ function ScoresView({ pid, sessionId, scores, agents }: { pid: string; sessionId
       <section className="view-panel" aria-labelledby="run-h">
         <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
           <h2 id="run-h" className="view-h">
-            Score this session
+            Run a scorer
           </h2>
           <button type="button" className="qbtn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
             {open ? 'Cancel' : 'Score this session'}

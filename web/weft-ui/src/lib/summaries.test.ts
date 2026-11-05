@@ -18,6 +18,7 @@ import {
   sessionMetaLine,
   sessionOutcome,
   sessionsSentence,
+  timesWord,
   sessionSummaryLine,
   shortDuration,
   type RowContext,
@@ -109,7 +110,18 @@ describe('words', () => {
     [125_000, '2 minutes 5 seconds'],
     [3_600_000, '1 hour'],
     [3_900_000, '1 hour 5 minutes'],
+    [23 * 3_600_000 + 59 * 60_000, '23 hours 59 minutes'],
+    [24 * 3_600_000, '1 day'],
+    [52 * 3_600_000 + 2 * 60_000, '2 days 4 hours'],
+    [49 * 3_600_000, '2 days 1 hour'],
   ])('durationWords(%s) = %s', (ms, want) => expect(durationWords(ms)).toBe(want))
+
+  it.each([
+    [1, 'once'],
+    [2, 'twice'],
+    [3, '3 times'],
+    [1200, '1,200 times'],
+  ])('timesWord(%s) = %s', (n, want) => expect(timesWord(n)).toBe(want))
 
   it.each([
     [150, '150 ms'],

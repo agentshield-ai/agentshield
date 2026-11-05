@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, ApiError } from '../../api/client'
 import { parseRef } from '../../api/refs'
 import type { Feedback } from '../../api/types'
@@ -10,7 +10,10 @@ import { Inspector, InspectorDivider, InspectorLinks, KeyValueList } from '../..
 import { PageHeader } from '../../components/ui/PageHeader'
 import { PlainTable } from '../../components/ui/PlainTable'
 import { Sentence } from '../../components/ui/Sentence'
-import { monitorSentence, scorerResultOf } from '../../lib/summaries/dashboards'
+import { monitorSentence } from '../../lib/summaries/dashboards'
+import { boolWords, judge, needsLook, onScale, scoreParts, scoreResultText, scoreShape, scoreValue, type ScoreShape } from '../../lib/summaries/evaluate'
+import { useScorerScales } from '../scores/useScorerScales'
+import { StatusGlyph } from '../../components/ui/StatusGlyph'
 import { turnName } from '../../lib/summaries/traces'
 import { scorerWords } from '../../lib/summaries'
 import { spanDisplayName } from '../../api/refs'
@@ -20,10 +23,11 @@ import { RefChip } from '../../components/RefChip'
 import { JsonBlock } from '../../components/ValueView'
 import { DEFAULT_IDLE_SECONDS, MONITOR_SCOPES, MonitorEditor, useToggleMonitor } from '../../components/evals/MonitorEditor'
 import { monitorNames, monitorScopes } from '../../components/evals/monitorFields'
-import { flattenScores, fmtMetric, objectRefPrefix, seriesColor, toNum } from '../../components/evals/evalUtils'
+import { objectRefPrefix, seriesColor } from '../../components/evals/evalUtils'
 import { Switch } from '../../components/objects/bits'
 import { useProjectId } from '../../hooks/useProject'
 import { fmtDate, fmtRelative, preview, versionLabel } from '../../lib/format'
+import { plural } from '../../lib/summaries'
 import { contains, toQuery } from '../../lib/query'
 import { spanUrl, objectUrl, objectVersionsUrl } from '../../lib/urls'
 
@@ -75,6 +79,14 @@ export function MonitorPage() {
     for (const sp of targets.data?.items ?? []) m.set(sp.id, sp.display_name || turnName(sp.inputs, 70) || spanDisplayName(sp.name))
     return m
   }, [targets.data])
+  const scorerNames = useMemo(() => [...new Set((results.data ?? []).map(scorerOf))], [results.data])
+  const scales = useScorerScales(projectId, scorerNames)
+  // Each scorer's results read by their shape, as the Scores page reads them.
+  const shapes = useMemo(() => {
+    const m: Record<string, ScoreShape> = {}
+    for (const n of scorerNames) m[n] = scoreShape((results.data ?? []).filter((f) => scorerOf(f) === n).map(itemOf), scales[n])
+    return m
+  }, [results.data, scorerNames, scales])
 
   if (obj.isLoading) return <Loading />
   if (obj.error || !obj.data)
@@ -92,13 +104,12 @@ export function MonitorPage() {
   const o = obj.data
   const v = o.value ?? {}
   const fb = results.data ?? []
-  const scorerNames = [...new Set(fb.map(scorerOf))]
   const shown = scorerFilter ? fb.filter((f) => scorerOf(f) === scorerFilter) : fb
   const sentence = monitorSentence(monitorWords(v), {
     total: fb.length,
     capped: fb.length >= 1000,
     lastAt: fb[0]?.created_at ?? null,
-    results: results.data ? scorerNames.slice(0, 3).map((s) => scorerResultOf(s, fb.filter((f) => scorerOf(f) === s).map((f) => f.payload?.output))) : [],
+    results: results.data ? scorerNames.map((s) => judge(s, fb.filter((f) => scorerOf(f) === s).map(itemOf), shapes[s])) : [],
   })
 
   return (
@@ -132,7 +143,7 @@ export function MonitorPage() {
 
       <div className="obs-detail-grid">
         <div className="obs-groups">
-          <ScoreChart feedback={fb} />
+          <ScoreCharts feedback={fb} shapes={shapes} />
           <section className="obs-quiet" aria-labelledby="mon-results-h">
             <div className="obs-section-head">
               <h2 className="view-h" id="mon-results-h">
@@ -153,7 +164,7 @@ export function MonitorPage() {
             {results.isLoading ? (
               <Loading />
             ) : shown.length === 0 ? (
-              <p className="quiet-empty">{v.active ? 'No results yet. Matching spans are scored as they finish.' : 'This monitor is paused. Activate it to start scoring new spans.'}</p>
+              <p className="quiet-empty">{v.active ? 'No results yet. Matching steps are scored as they finish.' : 'This monitor is paused. Activate it to start scoring new steps.'}</p>
             ) : (
               <>
                 <PlainTable caption="Recent results of this monitor">
@@ -175,7 +186,7 @@ export function MonitorPage() {
                           <td>
                             {target?.kind === 'span' ? (
                               <Link to={spanUrl(projectId, target.name)} title={`Span ${target.name}`}>
-                                {targetName.get(target.name) ?? 'Open the scored span'}
+                                {targetName.get(target.name) ?? 'Open the scored step'}
                               </Link>
                             ) : (
                               <RefChip refStr={f.ref} />
@@ -183,7 +194,7 @@ export function MonitorPage() {
                           </td>
                           {scorerNames.length > 1 && <td>{scorerWords(scorerOf(f))}</td>}
                           <td>
-                            <OutputCell v={out} />
+                            <OutputCell v={out} shape={shapes[scorerOf(f)]} />
                             {sc?.kind === 'span' && (
                               <Link className="obs-faint small" to={spanUrl(projectId, sc.name)} title="The judge's own run, with its reasoning">
                                 {' '}
@@ -207,15 +218,15 @@ export function MonitorPage() {
         <Inspector title="Configuration" label="Monitor configuration">
           <KeyValueList
             items={[
-              { label: 'Span names', value: monitorNames(v).length ? monitorNames(v).join(', ') : 'All top-level spans', mono: monitorNames(v).length > 0 },
+              { label: 'Step names', value: monitorNames(v).length ? monitorNames(v).join(', ') : 'All top-level steps', mono: monitorNames(v).length > 0 },
               { label: 'Sampling', value: `${Math.round((v.sampling_rate ?? 1) * 100)}%`, help: 'The share of matching targets scored.' },
               {
                 label: 'Scores',
                 value: monitorScopes(v).length
                   ? monitorScopes(v).map((s) => MONITOR_SCOPES.find((x) => x.id === s)?.label ?? s).join(', ')
-                  : 'Each scorer where it fits (sessions for session judges, spans otherwise)',
+                  : 'Each scorer where it fits (sessions for session judges, steps otherwise)',
               },
-              { label: 'Complete after', value: `${v.session_idle_seconds ?? DEFAULT_IDLE_SECONDS} s without new spans`, help: 'When a session counts as finished.' },
+              { label: 'Complete after', value: `${v.session_idle_seconds ?? DEFAULT_IDLE_SECONDS} s without new steps`, help: 'When a session counts as finished.' },
               {
                 label: 'Scorers',
                 value: (v.scorers ?? []).length ? (
@@ -229,7 +240,7 @@ export function MonitorPage() {
                 ),
               },
               // The scores are counted in the sentence; the spans they cover differ when a span was scored more than once.
-              new Set(fb.map((f) => f.ref)).size !== fb.length && { label: 'Spans scored', value: new Set(fb.map((f) => f.ref)).size.toLocaleString() },
+              new Set(fb.map((f) => f.ref)).size !== fb.length && { label: 'Steps scored', value: new Set(fb.map((f) => f.ref)).size.toLocaleString() },
             ]}
           />
           {v.query && (
@@ -253,15 +264,23 @@ export function MonitorPage() {
   )
 }
 
-function OutputCell({ v }: { v: unknown }) {
-  if (typeof v === 'boolean') return <span>{v ? 'yes' : 'no'}</span>
-  if (typeof v === 'number') return <span>{fmtMetric(v)}</span>
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    const flat = flattenScores(v)
-    const reason = (v as Record<string, unknown>).reason
+/** A result as the sentences read it: its raw output and its number. */
+function itemOf(f: Feedback) {
+  const output = f.payload?.output
+  return { output, value: scoreValue(output) }
+}
+
+function OutputCell({ v, shape }: { v: unknown; shape?: ScoreShape }) {
+  if (shape && (shape.boolKey || shape.numKey)) {
+    const item = { output: v, value: scoreValue(v) }
+    const look = needsLook(item, shape)
+    const reason = v && typeof v === 'object' ? (v as Record<string, unknown>).reason : undefined
     return (
       <div className="col" style={{ gap: 2 }}>
-        <span>{Object.entries(flat).map(([k, x]) => `${k}: ${typeof x === 'boolean' ? (x ? 'yes' : 'no') : fmtMetric(x)}`).join(', ')}</span>
+        <span className="obs-result">
+          {look && <StatusGlyph kind="warning" size={16} label="Needs a look" />}
+          {scoreResultText(item, shape)}
+        </span>
         {typeof reason === 'string' && <span className="obs-faint small">{reason}</span>}
       </div>
     )
@@ -269,76 +288,125 @@ function OutputCell({ v }: { v: unknown }) {
   return <span className="cell-preview small">{preview(v, 160)}</span>
 }
 
-/** Score over time, bucketed means per numeric/bool series. */
-function ScoreChart({ feedback }: { feedback: Feedback[] }) {
-  const { series, points } = useMemo(() => {
-    const items: { t: number; key: string; v: number }[] = []
-    for (const f of feedback) {
-      const out = f.payload?.output
-      const flat = typeof out === 'boolean' || typeof out === 'number' ? { value: out } : flattenScores(out)
-      for (const [k, x] of Object.entries(flat)) {
-        const n = toNum(x)
-        if (n != null) items.push({ t: new Date(f.created_at).getTime(), key: `${scorerOf(f)}${k === 'value' ? '' : '.' + k}`, v: n })
-      }
-    }
-    if (!items.length) return { series: [] as string[], points: [] as Record<string, number>[] }
+/** 24-hour times on the axis ("22:00"), with the day when the range spans more than one. */
+function timeTick(spanMs: number) {
+  return (t: number) => {
+    const d = new Date(t)
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    return spanMs > 86_400_000 ? `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}` : time
+  }
+}
+
+/** Fewer periods than this and the sentence says it all. */
+const MIN_PERIODS = 3
+
+interface Series {
+  id: string
+  title: string
+  kind: 'share' | 'number'
+  shape: ScoreShape
+  points: { t: number; v: number }[]
+}
+
+/**
+ * Each scorer's results over time, one chart per kind of result: the share
+ * that said yes ("Correct", 0–100%) and the mean number on its own range
+ * ("Score", 1–5). Nothing when there are fewer than three periods.
+ */
+function ScoreCharts({ feedback, shapes }: { feedback: Feedback[]; shapes: Record<string, ScoreShape> }) {
+  const { series, span } = useMemo(() => {
+    const items = feedback.map((f) => ({ t: new Date(f.created_at).getTime(), scorer: scorerOf(f), item: itemOf(f) }))
+    if (!items.length) return { series: [] as Series[], span: 0 }
     const t0 = Math.min(...items.map((i) => i.t))
     const t1 = Math.max(...items.map((i) => i.t))
     const n = Math.min(40, Math.max(1, Math.ceil(items.length / 3)))
     const width = Math.max(60_000, (t1 - t0) / n)
-    const buckets = new Map<number, Map<string, { s: number; c: number }>>()
-    for (const i of items) {
-      const b = t0 + Math.floor((i.t - t0) / width) * width
-      const m = buckets.get(b) ?? new Map()
-      const cur = m.get(i.key) ?? { s: 0, c: 0 }
-      cur.s += i.v
-      cur.c++
-      m.set(i.key, cur)
-      buckets.set(b, m)
-    }
-    // keep the most frequent series to stay readable
-    const freq = new Map<string, number>()
-    items.forEach((i) => freq.set(i.key, (freq.get(i.key) ?? 0) + 1))
-    const series = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => k)
-    const points = [...buckets.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([t, m]) => {
-        const p: Record<string, number> = { t }
-        for (const k of series) {
-          const c = m.get(k)
-          if (c) p[k] = c.s / c.c
+    const bucket = (t: number) => t0 + Math.floor((t - t0) / width) * width
+    const names = [...new Set(items.map((i) => i.scorer))].slice(0, 3)
+    const out: Series[] = []
+    for (const name of names) {
+      const shape = shapes[name]
+      if (!shape) continue
+      const yes = new Map<number, { y: number; c: number }>()
+      const num = new Map<number, { s: number; c: number }>()
+      for (const i of items) {
+        if (i.scorer !== name) continue
+        const b = bucket(i.t)
+        const p = scoreParts(i.item, shape)
+        if (p.yes != null) {
+          const cur = yes.get(b) ?? { y: 0, c: 0 }
+          cur.y += p.yes ? 1 : 0
+          cur.c++
+          yes.set(b, cur)
         }
-        return p
-      })
-    return { series, points }
-  }, [feedback])
+        if (p.num != null) {
+          const cur = num.get(b) ?? { s: 0, c: 0 }
+          cur.s += p.num
+          cur.c++
+          num.set(b, cur)
+        }
+      }
+      const who = names.length > 1 ? `${scorerWords(name)}: ` : ''
+      const capFirst = (x: string) => x[0].toUpperCase() + x.slice(1)
+      if (shape.boolKey && yes.size >= MIN_PERIODS)
+        out.push({
+          id: `${name}-share`,
+          title: capFirst(`${who}${boolWords(shape.boolKey)[2]}`),
+          kind: 'share',
+          shape,
+          points: [...yes.entries()].sort((a, b) => a[0] - b[0]).map(([t, x]) => ({ t, v: (x.y / x.c) * 100 })),
+        })
+      if (shape.numKey && num.size >= MIN_PERIODS)
+        out.push({
+          id: `${name}-num`,
+          title: capFirst(`${who}${!shape.numKey || shape.numKey === 'value' || shape.numKey === 'score' ? 'score' : shape.numKey.replace(/[_.]+/g, ' ')}`),
+          kind: 'number',
+          shape,
+          points: [...num.entries()].sort((a, b) => a[0] - b[0]).map(([t, x]) => ({ t, v: x.s / x.c })),
+        })
+    }
+    return { series: out, span: t1 - t0 }
+  }, [feedback, shapes])
   if (!series.length) return null
-  const fmtT = (t: number) => new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const fmtT = timeTick(span)
+  const tip = (t: number) => new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
   return (
     <section className="obs-quiet" aria-labelledby="mon-chart-h">
       <h2 className="view-h" id="mon-chart-h">
-        Scores over time
+        Over time
       </h2>
-      <div className="view-panel">
-      <div style={{ height: 200 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
-            <CartesianGrid stroke="var(--separator)" vertical={false} />
-            <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={fmtT} tick={{ fill: 'var(--text-3)', fontSize: 11 }} stroke="var(--border)" />
-            <YAxis tick={{ fill: 'var(--text-3)', fontSize: 11 }} stroke="var(--border)" width={48} />
-            <Tooltip
-              contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }}
-              labelFormatter={(t) => fmtT(Number(t))}
-              formatter={(x: number) => fmtMetric(x)}
-            />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            {series.map((k, i) => (
-              <Line key={k} type="monotone" dataKey={k} stroke={seriesColor(i)} strokeWidth={1.75} dot={{ r: 2 }} connectNulls isAnimationActive={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <p className="quiet-note">True or false results are plotted as the share that were true in each period.</p>
+      <div className="obs-chart-grid">
+        {series.map((s, i) => {
+          const fmtV = (x: number) => (s.kind === 'share' ? `${Math.round(x)}%` : onScale(Number(x.toFixed(2)), s.shape.scale))
+          const domain: [number, number] | ['auto', 'auto'] = s.kind === 'share' ? [0, 100] : s.shape.scale ? [s.shape.scale.min, s.shape.scale.max] : ['auto', 'auto']
+          return (
+            <figure className="view-panel obs-chart" key={s.id} aria-label={`${s.title} over time, ${plural(s.points.length, 'period')}`}>
+              <figcaption className="obs-chart-title">{s.title}</figcaption>
+              <div style={{ height: 160 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={s.points} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
+                    <CartesianGrid stroke="var(--separator)" vertical={false} />
+                    <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={fmtT} tick={{ fill: 'var(--text-3)', fontSize: 11 }} stroke="var(--border)" minTickGap={28} />
+                    <YAxis
+                      domain={domain}
+                      allowDecimals={s.kind === 'number' && !s.shape.scale}
+                      tickFormatter={(x: number) => (s.kind === 'share' ? `${x}%` : String(x))}
+                      tick={{ fill: 'var(--text-3)', fontSize: 11 }}
+                      stroke="var(--border)"
+                      width={48}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }}
+                      labelFormatter={(t) => tip(Number(t))}
+                      formatter={(x: number) => [fmtV(x), s.title]}
+                    />
+                    <Line type="linear" dataKey="v" name={s.title} stroke={seriesColor(i)} strokeWidth={1.75} dot={{ r: 2 }} connectNulls isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </figure>
+          )
+        })}
       </div>
     </section>
   )

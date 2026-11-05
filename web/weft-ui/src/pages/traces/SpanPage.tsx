@@ -188,9 +188,9 @@ export function SpanPage() {
           treeSlot={
             <details className="obs-details obs-span-tree-fold">
               <summary>
-                Spans in this trace <span className="glist-count">{spanCount}</span>
+                Steps in this trace <span className="glist-count">{traceQ.isLoading ? '…' : `${traceCalls.length}${traceCalls.length >= TRACE_LIMIT ? '+' : ''}`}</span>
               </summary>
-              <div className="obs-span-tree obs-span-tree-inline" role="region" aria-label="Spans in this trace">
+              <div className="obs-span-tree obs-span-tree-inline" role="region" aria-label="Steps in this trace">
                 {tree}
               </div>
             </details>
@@ -379,10 +379,10 @@ function CallDetail({
           <Dropdown
             kind="dialog"
             className="qbtn"
-            ariaLabel={reactionCounts.length ? `React (${reactionCounts.map(([e, n]) => `${e} ${n}`).join(', ')})` : 'React'}
+            ariaLabel={reactionCounts.length ? `Add a reaction (${reactionCounts.map(([e, n]) => `${e} ${n}`).join(', ')})` : 'Add a reaction'}
             label={
               <>
-                React
+                Add a reaction
                 {reactionCounts.length > 0 && <span className="obs-faint"> {reactionCounts.map(([e, n]) => `${e} ${n}`).join(' ')}</span>}
               </>
             }

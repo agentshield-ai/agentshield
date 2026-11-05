@@ -3,7 +3,9 @@
 // what the API returns; table-driven tests in traces.test.ts.
 import type { SpanSession, SpanStatus } from '../../api/types'
 import type { StatusFilter, TimeRange } from '../filters'
-import { fmtCost, fmtDuration } from '../format'
+import { isRef, parseRef } from '../../api/refs'
+import { fmtCost, fmtDuration, preview, versionLabel } from '../format'
+import { flatten, metricText } from './evaluate'
 import { oneLine } from '../timeline'
 import { countWord, durationWords, plural, relativeTime } from '../summaries'
 import { rangePhrase } from './security'
@@ -172,4 +174,44 @@ export function compareSentence(i: { spans: number; fields: number; differ: numb
 /** A span's feedback as a quiet count in words: "2 reactions, 1 note, 3 scores" (empty when none). */
 export function feedbackWords(f: { reactions: number; notes: number; scores: number }): string {
   return [f.reactions ? nplural(f.reactions, 'reaction') : '', f.notes ? nplural(f.notes, 'note') : '', f.scores ? nplural(f.scores, 'score') : ''].filter(Boolean).join(', ')
+}
+
+/**
+ * A ref as a person reads it: the object's name and version ("polite-echo,
+ * version 1") when the version is known, else its name; "step 0190e2e0" for
+ * a span, "rows 3f2a9c1b" for a table. The raw ref stays in the raw view.
+ */
+export function refValueWords(ref: string, versionOf?: (name: string, digest: string) => number | null | undefined): string {
+  const p = parseRef(ref)
+  if (!p) return ref
+  if (p.kind === 'span') return `step ${p.name.slice(0, 8)}`
+  if (p.kind === 'table') return `rows ${p.name.slice(0, 8)}`
+  const v = p.digest && versionOf ? versionOf(p.name, p.digest) : null
+  return v != null ? `${p.name}, ${versionLabel(v)}` : p.name
+}
+
+/**
+ * An evaluation's score summary in words, or null when the value is not
+ * one: {"exact-match": {"true_fraction": 0}, "judge": {"score": {"mean": 2.5}}}
+ * → "exact match 0% · judge score 2.50". Counts next to a share are left out.
+ */
+export function scoreSummaryWords(v: unknown): string | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const entries = Object.entries(v as Record<string, unknown>)
+  if (!entries.length) return null
+  const flat = flatten(v)
+  const keys = Object.keys(flat)
+  const isSummary = (k: string) => /\.(true_fraction|true_count|mean)$/.test(k)
+  // Every scorer's entry is a summary object (shares, counts, means) and nothing else.
+  if (!keys.length || !keys.every(isSummary) || entries.some(([, x]) => !x || typeof x !== 'object')) return null
+  return keys
+    .filter((k) => !k.endsWith('.true_count'))
+    .map((k) => metricText(k, flat[k]))
+    .join(' · ')
+}
+
+/** A field's value in a table cell: a ref in words, else a short preview. */
+export function cellValueWords(v: unknown, versionOf?: (name: string, digest: string) => number | null | undefined, n = 60): string {
+  if (isRef(v)) return refValueWords(v, versionOf)
+  return preview(v, n)
 }

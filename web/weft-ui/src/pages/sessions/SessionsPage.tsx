@@ -166,7 +166,7 @@ export function SessionsPage() {
       <div className="page-frame">
         {header}
         <GuidedEmpty projectId={pid} title="No sessions yet">
-          Sessions appear here as soon as your agents send traces to <span className="mono">{pid}</span>: each conversation, with its agents, hand-offs, reasoning, tool calls and
+          Sessions appear here as soon as your agents send traces to <span className="mono">{pid}</span>: each session, with its agents, hand-offs, reasoning, tool calls and
           security verdicts.
         </GuidedEmpty>
       </div>

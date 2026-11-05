@@ -12,6 +12,7 @@ import { agentsApi, agentUrl, conversationUrl, eqQuery, type SpanGroup } from '.
 import type { Query } from '../../api/types'
 import { fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, truncate } from '../../lib/format'
 import { sessionUrl } from '../../lib/urls'
+import { joinClauses } from '../../lib/summaries'
 import type { AgentsTotals } from '../../lib/summaries/agentsTeams'
 import { ErrorBox, Spinner } from '../common'
 import { GroupedList, ListRow } from '../ui/GroupedList'
@@ -149,7 +150,7 @@ export function QuietCharts({ projectId, range, agent }: { projectId: string; ra
   const short = granularity < 86_400
   const tick = (iso: string) => {
     const d = new Date(iso)
-    return short ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return short ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
   const labelFmt = (iso: unknown) => fmtDate(String(iso))
   const xAxis = <XAxis dataKey="t" tickFormatter={tick} tick={AXIS} minTickGap={32} axisLine={false} tickLine={false} />
@@ -200,7 +201,7 @@ export function GroupTable({
   range,
   agent,
   by,
-  caption,
+  subject,
   noun,
   onPick,
 }: {
@@ -208,7 +209,8 @@ export function GroupTable({
   range: string
   agent?: string
   by: 'agent_name' | 'tool_name' | 'request_model'
-  caption: string
+  /** What the rows are, for the table's caption ("Tools called"); the columns shown are added to it. */
+  subject: string
   /** The first column's heading. */
   noun: string
   /** Opens the spans of one group (the Spans view filtered to it). */
@@ -236,21 +238,21 @@ export function GroupTable({
   const runs = q.data?.runs
   const costs = groups.some((g) => g.total_cost_usd)
   return (
-    <PlainTable caption={caption}>
+    <PlainTable caption={`${subject}, with ${joinClauses([agents ? 'runs' : 'calls', 'failures', 'median time', ...(costs ? ['cost'] : [])]).replace(/, and /, ' and ')}`} stack>
       <thead>
         <tr>
           <th scope="col">{noun}</th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack={agents ? 'run|runs' : 'call|calls'}>
             {agents ? 'Runs' : 'Calls'}
           </th>
           <th scope="col" className="num">
             Failed
           </th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack-prefix="median">
             Median time
           </th>
           {costs && (
-            <th scope="col" className="num">
+            <th scope="col" className="num" data-stack="">
               Cost
             </th>
           )}
@@ -297,23 +299,25 @@ export function VersionsTable({ projectId, agent }: { projectId: string; agent: 
   const vs = q.data?.versions ?? []
   if (!vs.length) return <p className="quiet-note">No versions recorded.</p>
   return (
-    <PlainTable caption={`Versions of ${agent}`}>
+    <PlainTable caption={`Versions of ${agent}`} stack>
       <thead>
         <tr>
           <th scope="col">Version</th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack="run|runs">
             Runs
           </th>
           <th scope="col" className="num">
             Failed
           </th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack-prefix="median">
             Median time
           </th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack="">
             Cost
           </th>
-          <th scope="col">Last seen</th>
+          <th scope="col" data-stack-prefix="last seen">
+            Last seen
+          </th>
         </tr>
       </thead>
       <tbody>

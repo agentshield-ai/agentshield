@@ -3,8 +3,9 @@
 // time at the hand-off from orchestrator to researcher, which failed 3 of 5
 // times, usually after 1.3 seconds"), its clauses linking to the failed
 // sessions; one quiet line of figures; then how work flows (the delegation
-// graph; on a phone the tables below stand in for it), the hand-offs and
-// the agents as plain tables, and the team's recent sessions.
+// graph, with the hand-offs and the agents as plain tables behind "Show as a
+// table"; on a phone the tables stand in for it), and the team's recent
+// sessions.
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { v1, type TeamDetail } from '../../api/v1'
@@ -14,7 +15,7 @@ import { fmtCost, fmtNumber } from '../../lib/format'
 import { teamMetaFigures, teamName, teamOutcome } from '../../lib/summaries/agentsTeams'
 import { agentUrl, sessionsUrl, teamsUrl } from '../../lib/urls'
 import { ErrorBox } from '../../components/common'
-import { AgentGraphView, HandoffTable } from '../../components/ui/AgentGraphView'
+import { GraphWithTables, HandoffTable } from '../../components/ui/AgentGraphView'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { PlainTable } from '../../components/ui/PlainTable'
 import { Sentence } from '../../components/ui/Sentence'
@@ -72,23 +73,28 @@ export function TeamPage() {
         <h2 id="flow-h" className="at-h">
           How work flows
         </h2>
-        <div className="at-panel">
-          <AgentGraphView graph={d.graph} agentUrl={(a) => agentUrl(pid, a)} title={`Delegation graph of ${name}`} tablesOnPage />
-        </div>
-      </section>
-
-      <section className="at-section" aria-labelledby="handoffs-h">
-        <h2 id="handoffs-h" className="at-h">
-          Hand-offs
-        </h2>
-        <HandoffTable edges={d.handoff_stats} agentUrl={(a) => agentUrl(pid, a)} />
-      </section>
-
-      <section className="at-section" aria-labelledby="agents-h">
-        <h2 id="agents-h" className="at-h">
-          Agents
-        </h2>
-        <TeamAgents pid={pid} d={d} />
+        <GraphWithTables
+          graph={d.graph}
+          agentUrl={(a) => agentUrl(pid, a)}
+          title={`Delegation graph of ${name}`}
+          panelClassName="at-panel"
+          tables={
+            <>
+              <section className="at-section" aria-labelledby="handoffs-h">
+                <h3 id="handoffs-h" className="at-h">
+                  Hand-offs
+                </h3>
+                <HandoffTable edges={d.handoff_stats} agentUrl={(a) => agentUrl(pid, a)} />
+              </section>
+              <section className="at-section" aria-labelledby="agents-h">
+                <h3 id="agents-h" className="at-h">
+                  Agents
+                </h3>
+                <TeamAgents pid={pid} d={d} />
+              </section>
+            </>
+          }
+        />
       </section>
 
       <section className="at-section" aria-labelledby="recent-h">
@@ -123,23 +129,27 @@ function verdictText(c: Partial<Record<string, number>> | null | undefined): str
 function TeamAgents({ pid, d }: { pid: string; d: TeamDetail }) {
   const shield = d.agent_stats.some((a) => (a.detections?.block ?? 0) + (a.detections?.require_approval ?? 0) + (a.detections?.log ?? 0) > 0)
   return (
-    <PlainTable caption={`Agents of ${teamName(d)}, over the team's sessions`} className="team-agents-table">
+    <PlainTable caption={`Agents of ${teamName(d)}, over the team's sessions`} className="team-agents-table" stack>
       <thead>
         <tr>
           <th scope="col">Agent</th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack="session|sessions">
             Sessions
           </th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack="run|runs">
             Runs
           </th>
           <th scope="col" className="num" title="Runs that failed, counted as the Agents page counts them">
             Failed
           </th>
-          <th scope="col" className="num">
+          <th scope="col" className="num" data-stack="">
             Cost
           </th>
-          {shield && <th scope="col">AgentShield</th>}
+          {shield && (
+            <th scope="col" data-stack-prefix="AgentShield:">
+              AgentShield
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>

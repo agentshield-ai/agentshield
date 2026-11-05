@@ -473,3 +473,8 @@ html .plain-table .cost-name:focus-visible {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* A row that names a thing (an automation), titled like a list row (ListRow): semibold. */
+.srow.srow-named .srow-label {
+  font-weight: 600;
+}

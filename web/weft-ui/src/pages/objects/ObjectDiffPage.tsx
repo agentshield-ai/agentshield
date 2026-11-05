@@ -3,7 +3,7 @@
 // The rows went from 46 to 50: 4 added, none removed."); then the changed
 // fields, the whole value side by side or as one column, and for datasets
 // the rows added and removed. ?a= and ?b= name the versions (digests).
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -12,7 +12,8 @@ import { ErrorBox, Loading } from '../../components/common'
 import { columnsOf } from '../../components/objects/csv'
 import { CellValue } from '../../components/objects/DatasetRowsView'
 import { pathDiff, PathChangesTable, stableJson, TextDiff } from '../../components/objects/JsonDiff'
-import { fetchAllRows, isDataset, rowsDigest, useObjectVersions } from '../../components/objects/objectUtils'
+import { fetchAllRows, isDataset, kindOf, rowsDigest, useObjectVersions } from '../../components/objects/objectUtils'
+import { setNavHint } from '../../components/ui/navHint'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { PlainTable } from '../../components/ui/PlainTable'
 import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
@@ -51,6 +52,15 @@ export function ObjectDiffPage() {
   })
   const qa = useQuery(read(a))
   const qb = useQuery(read(b))
+  // The sidebar highlights the asset's list (Prompts, Datasets…), as on its versions page; the back
+  // link stays "Versions of …", so this runs after PageHeader's own hint and replaces it.
+  const kind = vs[0] ? kindOf(vs[0]) : qb.data ? kindOf(qb.data) : null
+  const listUrl = kind ? `/${projectId}/${kind === 'all' ? 'objects' : kind === 'ops' ? 'functions' : kind}` : null
+  useEffect(() => {
+    if (!listUrl) return
+    setNavHint(listUrl)
+    return () => setNavHint(null)
+  }, [listUrl])
   const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(params)
     if (v) p.set(k, v)

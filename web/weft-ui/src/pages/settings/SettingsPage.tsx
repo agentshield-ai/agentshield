@@ -6,6 +6,7 @@
 // Deletions that can be put back are undone from a toast; revoking a key,
 // purging and deleting the project ask first.
 import { useMemo, useState } from "react";
+import { isOfflineModel, modelDisplayName } from "../../lib/modelWords";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, getApiKey, setApiKey } from "../../api/client";
@@ -401,7 +402,7 @@ function CostsTab({ projectId }: { projectId: string }) {
                       <td style={{ minWidth: 170, overflowWrap: "normal" }}>
                         <button
                           type="button"
-                          className="linkish mono cost-name"
+                          className={`linkish cost-name${isOfflineModel(c.llm_id) ? "" : " mono"}`}
                           title={
                             c.pricing_level === "project"
                               ? `Edit the project price for ${c.llm_id}`
@@ -420,10 +421,14 @@ function CostsTab({ projectId }: { projectId: string }) {
                             )
                           }
                         >
-                          {c.llm_id}
+                          {isOfflineModel(c.llm_id)
+                            ? capFirstWord(modelDisplayName(c.llm_id))
+                            : c.llm_id}
                         </button>
                         <div className="quiet-note">
-                          {c.provider_id || "any provider"}
+                          {isOfflineModel(c.llm_id)
+                            ? "offline, for tests"
+                            : c.provider_id || "any provider"}
                           {c.effective_date
                             ? ` · from ${new Date(c.effective_date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
                             : ""}
@@ -644,7 +649,7 @@ function SecretsTab({ projectId }: { projectId: string }) {
             )}
             <button
               type="button"
-              className="qbtn primary"
+              className="qbtn sm"
               onClick={() => setProviderEdit({})}
             >
               Add a provider
@@ -1158,4 +1163,9 @@ function BrowserKey() {
       />
     </SettingsSection>
   );
+}
+
+/** "offline echo model" → "Offline echo model". */
+function capFirstWord(t: string): string {
+  return t ? t[0].toUpperCase() + t.slice(1) : t;
 }

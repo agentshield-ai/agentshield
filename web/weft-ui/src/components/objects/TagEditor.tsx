@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
 import { errMsg } from './objectUtils'
+import './bits.css'
 
 export function TagEditor({ projectId, objectId, digest, tags, compact }: { projectId: string; objectId: string; digest: string; tags: string[]; compact?: boolean }) {
   const qc = useQueryClient()
@@ -30,19 +31,19 @@ export function TagEditor({ projectId, objectId, digest, tags, compact }: { proj
     if (t && !tags.includes(t)) await run(() => adminApi.tagsAdd(projectId, objectId, digest, [t]))
   }
   return (
-    <span className="chips" onClick={(e) => e.stopPropagation()} data-testid="tag-editor">
+    <span className="name-list" onClick={(e) => e.stopPropagation()} data-testid="tag-editor">
       {tags.map((t) => (
-        <span key={t} className="chip" title="tag">
-          #{t}
-          <button className="x" title={`Remove tag ${t}`} onClick={() => void run(() => adminApi.tagsRemove(projectId, objectId, digest, [t]))}>
+        <span key={t} className="name-item" title="tag">
+          {t}
+          <button type="button" className="name-x" aria-label={`Remove tag ${t}`} title={`Remove tag ${t}`} onClick={() => void run(() => adminApi.tagsRemove(projectId, objectId, digest, [t]))}>
             ✕
           </button>
         </span>
       ))}
       {adding ? (
         <input
-          className="input"
-          style={{ height: 22, width: 120, fontSize: 12 }}
+          className="input name-input"
+          aria-label="New tag"
           autoFocus
           value={val}
           placeholder="tag, e.g. reviewed"
@@ -54,8 +55,8 @@ export function TagEditor({ projectId, objectId, digest, tags, compact }: { proj
           onBlur={() => void add()}
         />
       ) : (
-        <button className="chip selectable" style={{ borderStyle: 'dashed' }} onClick={() => setAdding(true)} title="Tag this version">
-          + tag
+        <button type="button" className="name-add" onClick={() => setAdding(true)} title="Tag this version">
+          Add a tag
         </button>
       )}
       {err && !compact && <span className="small" style={{ color: 'var(--error)' }}>{err}</span>}

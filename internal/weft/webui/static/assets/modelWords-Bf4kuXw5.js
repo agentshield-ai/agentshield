@@ -1,0 +1,1 @@
+const n={"mock/echo":"offline echo model","mock/json":"offline JSON judge"};function e(o){return typeof o=="string"&&o.startsWith("mock/")}function s(o){if(typeof o!="string"||!o.trim())return"";const t=o.trim();return n[t]??(e(t)?"offline test model":t)}function r(o){const t=s(o);return t&&e(o)?`the ${t}`:t}export{n as O,r as a,e as i,s as m};

@@ -353,7 +353,7 @@ export function RetentionTab({ projectId }: { projectId: string }) {
           }
         />
         <SettingsRow
-          label="Purge now"
+          label="Delete old data early"
           detail={purged ?? (current ? `Delete spans older than ${current} days at once, without waiting for the hourly job.` : 'Set a retention period first.')}
           control={
             <ConfirmButton
@@ -451,7 +451,7 @@ export function SamplingTab({ projectId }: { projectId: string }) {
               label="Dry run"
               detail={
                 <>
-                  Keep everything, but mark the spans sampling would drop (attribute <span className="mono">weft_ingest_sampling</span>).
+                  Keep every trace, but mark the ones sampling would drop, to see its effect first. <HelpLink doc="project.md#retention-and-sampling" topic="Dry run" />
                 </>
               }
               control={<Switch on={dry} onChange={setDry} label="Dry run" />}
@@ -586,7 +586,7 @@ export function SensitiveDataTab({ projectId }: { projectId: string }) {
             title="Your own patterns"
             note="RE2 regular expressions; a match becomes <NAME>."
             action={
-              <button type="button" className="qbtn primary" onClick={() => setDraft({ ...draft, custom_patterns: [...draft.custom_patterns, { name: '', pattern: '' }] })}>
+              <button type="button" className="qbtn sm" onClick={() => setDraft({ ...draft, custom_patterns: [...draft.custom_patterns, { name: '', pattern: '' }] })}>
                 Add a pattern
               </button>
             }

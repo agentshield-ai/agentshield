@@ -6,7 +6,7 @@
 import type { AgentDetail, AgentSummary, GraphEdge, TeamDetail, TeamSummary } from '../../api/v1'
 import type { FilterState, TimeRange } from '../filters'
 import { fmtCost } from '../format'
-import { countWord, durationWords, joinClauses, plural, RANGE_PHRASE, relativeTime, scorerWords } from '../summaries'
+import { countWord, durationWords, timesWord, joinClauses, plural, RANGE_PHRASE, relativeTime, scorerWords } from '../summaries'
 
 /** A part of a generated sentence: text, or a phrase that links somewhere. */
 export type LinkedPart =
@@ -113,7 +113,7 @@ export function agentGlyph(a: AgentSummary): { kind: AgentGlyph; label: string }
 function ranLine(a: Pick<AgentSummary, 'invocation_count' | 'session_count'>): string {
   const where = a.session_count ? ` in ${countWord(a.session_count, 'session')}` : ''
   if (!a.invocation_count) return a.session_count ? `Ran${where}.` : 'No runs recorded.'
-  return `Ran ${a.invocation_count === 1 ? 'once' : `${a.invocation_count} times`}${where}.`
+  return `Ran ${timesWord(a.invocation_count)}${where}.`
 }
 
 /** "6 of its 10 tool calls were flagged, 1 blocked and 5 needed approval." */
@@ -124,7 +124,7 @@ function flaggedLine(a: AgentSummary, f: AgentFlags): string {
     return `${cap(ofIts(k, a.tool_call_count, 'tool call'))} ${k === 1 ? 'was' : 'were'} flagged${verdicts ? `, ${verdicts}` : ''}.`
   }
   if (f.blocks) return `AgentShield blocked ${countWord(f.blocks, 'tool call')}.`
-  if (f.approvals) return `AgentShield asked for approval ${countWord(f.approvals, 'time')}.`
+  if (f.approvals) return `AgentShield asked for approval ${timesWord(f.approvals)}.`
   if (f.flagged) return `AgentShield flagged ${countWord(f.flagged, 'tool call')}.`
   return ''
 }
@@ -211,7 +211,7 @@ export function agentOutcome(d: AgentDetail): LinkedPart[] {
     const verdicts = verdictWords(d.detection_counts)
     out.push(' AgentShield ', { text: `flagged ${ofIts(Math.min(f.flagged, d.tool_call_count), d.tool_call_count, 'tool call')}`, sessions: { agent, has: 'flagged', time: 'all' } }, verdicts ? `: ${verdicts}.` : '.')
   } else if (f.blocks || f.approvals) {
-    out.push(' ', { text: `AgentShield ${joinClauses([f.blocks ? `blocked ${countWord(f.blocks, 'tool call')}` : '', f.approvals ? `asked for approval ${countWord(f.approvals, 'time')}` : ''].filter(Boolean))}`, sessions: { agent, has: 'flagged', time: 'all' } }, '.')
+    out.push(' ', { text: `AgentShield ${joinClauses([f.blocks ? `blocked ${countWord(f.blocks, 'tool call')}` : '', f.approvals ? `asked for approval ${timesWord(f.approvals)}` : ''].filter(Boolean))}`, sessions: { agent, has: 'flagged', time: 'all' } }, '.')
   } else if (d.tool_call_count > 0) {
     out.push(` AgentShield flagged none of its tool calls.`)
   }
@@ -231,7 +231,7 @@ export function agentMetaFigures(d: AgentSummary, now = Date.now()): string[] {
 
 /** A hand-off route under its heading ("Who hands work to it"): "Delegated 5 times.", "Handed work on once." */
 export function handoffWords(h: { kind: string; count: number }): string {
-  const times = h.count === 1 ? 'once' : `${h.count} times`
+  const times = timesWord(h.count)
   return h.kind === 'delegate' ? `Delegated ${times}.` : `Handed work on ${times}.`
 }
 
@@ -258,7 +258,7 @@ export function teamGlyph(t: TeamSummary): { kind: 'failed' | 'blocked' | 'appro
 function teamSecurity(c: Partial<Record<string, number>> | null | undefined): string {
   const xs: string[] = []
   if (c?.block) xs.push(`blocked ${countWord(c.block, 'tool call')}`)
-  if (c?.require_approval) xs.push(`asked for approval ${countWord(c.require_approval, 'time')}`)
+  if (c?.require_approval) xs.push(`asked for approval ${timesWord(c.require_approval)}`)
   return xs.length ? `AgentShield ${joinClauses(xs)}.` : ''
 }
 
@@ -273,7 +273,7 @@ function teamSessions(t: TeamSummary): string {
 /** The line under a team row: its sessions and failures, hand-offs, and what AgentShield did. */
 export function teamSummaryLine(t: TeamSummary): string {
   const out = [teamSessions(t)]
-  out.push(t.handoff_count ? `Its agents handed work on ${t.handoff_count === 1 ? 'once' : `${t.handoff_count} times`}.` : 'No hand-offs.')
+  out.push(t.handoff_count ? `Its agents handed work on ${timesWord(t.handoff_count)}.` : 'No hand-offs.')
   const sec = teamSecurity(t.detection_count)
   if (sec) out.push(sec)
   return out.join(' ')
@@ -415,7 +415,7 @@ export function analyticsSentence(t: AgentsTotals, time: TimeRange | string, age
   const lead = range ? `${cap(range)}, ` : ''
   if (!t.invocations && !t.tokens && !(agent ? false : t.agents)) return `${lead ? `${lead}n` : 'N'}othing was recorded${agent ? ` for ${agent}` : ''}.`
   const who = agent ?? (t.agents ? plural(t.agents, 'agent').replace(/^\d+/, num(t.agents)) : 'agents')
-  const ran = t.invocations ? ` ran ${t.invocations === 1 ? 'once' : `${num(t.invocations)} times`}` : ' ran'
+  const ran = t.invocations ? ` ran ${timesWord(t.invocations)}` : ' ran'
   const where = t.sessions ? ` in ${plural(t.sessions, 'session').replace(/^\d+/, num(t.sessions))}` : ''
   const out = [`${lead}${who}${ran}${where}.`]
   const its = agent ? 'its runs' : 'the runs'

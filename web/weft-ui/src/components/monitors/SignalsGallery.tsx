@@ -38,13 +38,13 @@ export function SignalsGallery({ projectId, onCreated }: { projectId: string; on
     <section className="obs-signals obs-quiet" aria-labelledby="signals-h">
       <div className="obs-section-head">
         <h2 className="view-h" id="signals-h">
-          Ready-made signals
+          Ready-made ratings
         </h2>
         <button type="button" className="linkish" onClick={() => setOpen(!expanded)} aria-expanded={expanded} aria-controls="signals-list">
-          {expanded ? 'Hide' : `Show ${SIGNALS.length} signals`}
+          {expanded ? 'Hide' : `Show ${SIGNALS.length} ratings`}
         </button>
       </div>
-      <p className="quiet-note obs-wrap">Monitors for common problems. Each creates a scorer and an active monitor you can edit afterwards.</p>
+      <p className="quiet-note obs-wrap">Ratings for common problems. Each adds a scorer and an active monitor you can edit afterwards.</p>
       {expanded && (
         <div id="signals-list" className="obs-groups" style={{ gap: 20 }}>
           {CATEGORIES.map((cat) => (
@@ -70,7 +70,7 @@ export function SignalsGallery({ projectId, onCreated }: { projectId: string; on
                             Open
                           </Link>
                         ) : (
-                          <button type="button" className="qbtn" onClick={() => setPicked(x)} aria-label={`Add the ${x.title} signal`}>
+                          <button type="button" className="qbtn" onClick={() => setPicked(x)} aria-label={`Add the ${x.title} rating`}>
                             Add
                           </button>
                         )}
@@ -160,7 +160,7 @@ function AddSignalModal({
 
   return (
     <Modal
-      title={`Add signal: ${template.title}`}
+      title={`Add rating: ${template.title}`}
       onClose={onClose}
       footer={
         <>
@@ -192,18 +192,18 @@ function AddSignalModal({
         )}
         {template.id === 'latency' && (
           <label className="field">
-            Flag calls slower than (seconds)
+            Flag steps slower than (seconds)
             <input className="input" type="number" min={0} step="any" value={latency} onChange={(e) => setLatency(Number(e.target.value))} />
           </label>
         )}
         <label className="field">
-          Span names to monitor
+          Steps to rate, by name
           <input
             className="input mono"
             list="signal-ops"
             value={ops}
             onChange={(e) => setOps(e.target.value)}
-            placeholder="Comma-separated; empty means all root spans"
+            placeholder="Comma-separated; empty means every top-level step"
           />
           <datalist id="signal-ops">
             {(spanNames.data ?? []).map((o) => (
@@ -212,9 +212,9 @@ function AddSignalModal({
           </datalist>
         </label>
         <label className="field">
-          Sampling rate: {Math.round(rate * 100)}% of matching calls
+          Sampling rate: {Math.round(rate * 100)}% of matching steps
           <input className="input" type="range" min={0.01} max={1} step={0.01} value={rate} onChange={(e) => setRate(Number(e.target.value))} />
-          {template.model && <span className="hint">LLM-based signals cost a judge call per scored span; sample to control spend.</span>}
+          {template.model && <span className="hint">Ratings by a judge model cost one model call per rated step; sample to control spend.</span>}
         </label>
         <ErrorBox error={err} />
       </div>

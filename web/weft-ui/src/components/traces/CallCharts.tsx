@@ -17,7 +17,7 @@ const TOOLTIP_STYLE = {
 function tickFormatter(bucketSeconds: number) {
   return (iso: string) => {
     const d = new Date(iso)
-    if (bucketSeconds < 86_400) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    if (bucketSeconds < 86_400) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 }
@@ -64,7 +64,7 @@ export function CallCharts({ projectId, filter, query, search }: { projectId: st
   if (!s.buckets.length) return <div className="chart-strip empty small">No data in range for charts.</div>
   const data = s.buckets.map((b: SpansStatsBucket) => ({ ...b, success: Math.max(0, b.count - b.error_count) }))
   const fmt = tickFormatter(s.bucket_seconds)
-  const labelFmt = (iso: string) => new Date(iso).toLocaleString()
+  const labelFmt = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
   const xAxis = <XAxis dataKey="start" tickFormatter={fmt} tick={AXIS} minTickGap={24} axisLine={false} tickLine={false} />
   const grid = <CartesianGrid vertical={false} stroke="var(--separator)" />
   const errPct = s.totals.count ? (s.totals.error_count / s.totals.count) * 100 : 0

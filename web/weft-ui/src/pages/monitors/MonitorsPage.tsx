@@ -3,7 +3,7 @@
 // monitors, how many active, how many scores in the last 24 hours), then
 // the monitors as a grouped list, each with a generated line saying what it
 // scores and when it last did, a switch to pause it and a delete. The
-// ready-made signals follow, collapsed once the project has monitors.
+// ready-made ratings follow, collapsed once the project has monitors.
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueries, useQueryClient } from '@tanstack/react-query'
@@ -112,8 +112,8 @@ export function MonitorsPage() {
         <Loading />
       ) : !list.length ? (
         <div className="quiet-empty">
-          <p>A monitor scores your agents' work as it arrives: it samples finished sessions, agent runs, hand-offs or spans and scores them with LLM judges or rules.</p>
-          <p className="quiet-note obs-wrap">Start from a ready-made signal below, or choose New monitor to pick the scorers yourself.</p>
+          <p>A monitor scores your agents' work as it arrives: it samples finished sessions, agent runs, hand-offs or steps and scores them with LLM judges or rules.</p>
+          <p className="quiet-note obs-wrap">Start from a ready-made rating below, or choose New monitor to pick the scorers yourself.</p>
         </div>
       ) : (
         <GroupedList label="Monitors">

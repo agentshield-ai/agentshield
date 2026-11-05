@@ -126,13 +126,15 @@ export function AliasEditor({
     }
   }
   return (
-    <span className="chips" onClick={(e) => e.stopPropagation()}>
+    <span className="name-list" onClick={(e) => e.stopPropagation()}>
       {aliases.map((a) => (
-        <span key={a} className={`chip ${a === 'latest' ? '' : 'on'}`}>
+        <span key={a} className="name-item">
           {a}
           {a !== 'latest' && (
             <button
-              className="x"
+              type="button"
+              className="name-x"
+              aria-label={`Remove alias ${a}`}
               title={`Remove alias ${a}`}
               onClick={async () => {
                 try {
@@ -150,10 +152,10 @@ export function AliasEditor({
       ))}
       {adding ? (
         <input
-          className="input"
-          style={{ height: 22, width: 110, fontSize: 12 }}
+          className="input name-input"
           autoFocus
           value={val}
+          aria-label="New alias"
           placeholder="alias, e.g. prod"
           onChange={(e) => setVal(e.target.value.replace(/[^\w.-]/g, ''))}
           onKeyDown={(e) => {
@@ -163,8 +165,8 @@ export function AliasEditor({
           onBlur={() => void add()}
         />
       ) : (
-        <button className="chip selectable" style={{ borderStyle: 'dashed' }} onClick={() => setAdding(true)} title="Add an alias to this version">
-          + alias
+        <button type="button" className="name-add" onClick={() => setAdding(true)} title="Add an alias to this version">
+          Add an alias
         </button>
       )}
       {err && !compact && <span className="small" style={{ color: 'var(--error)' }}>{err}</span>}
@@ -196,7 +198,7 @@ export function CodeBlock({ code, language, title, maxHeight }: { code: string; 
     <div>
       <div className="code-head">
         <span className="grow truncate">{title}</span>
-        {language && <span className="badge">{language}</span>}
+        {language && <span className="code-lang">{language === 'python' ? 'Python' : language}</span>}
         <CopyButton text={code} />
       </div>
       <pre className="code-block" style={maxHeight ? { maxHeight } : undefined}>

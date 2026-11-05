@@ -710,3 +710,24 @@
 .cmp-block-head .small {
   font-weight: 400;
 }
+
+/* A monitor's results over time: one small chart per kind of result. */
+.obs-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.obs-chart {
+  margin: 0;
+}
+.obs-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+.obs-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

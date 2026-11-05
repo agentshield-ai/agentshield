@@ -93,7 +93,7 @@ export function AnalyticsView({ agent }: { agent?: string }) {
                 <h2 id="an-agents-h" className="at-h">
                   Agents
                 </h2>
-                <GroupTable projectId={projectId} range={range} by="agent_name" noun="Agent" caption="Agents, with their runs, failures, time and cost" />
+                <GroupTable projectId={projectId} range={range} by="agent_name" noun="Agent" subject="Agents" />
               </section>
             )}
             <section className="at-section" aria-labelledby="an-tools-h">
@@ -106,7 +106,7 @@ export function AnalyticsView({ agent }: { agent?: string }) {
                 agent={agent}
                 by="tool_name"
                 noun="Tool"
-                caption="Tools called, with failures, time and cost"
+                subject="Tools"
                 onPick={(k) => switchView('spans', { tool: k })}
               />
             </section>
@@ -120,7 +120,7 @@ export function AnalyticsView({ agent }: { agent?: string }) {
                 agent={agent}
                 by="request_model"
                 noun="Model"
-                caption="Models called, with failures, time and cost"
+                subject="Models"
                 onPick={(k) => switchView('spans', { model: k })}
               />
             </section>

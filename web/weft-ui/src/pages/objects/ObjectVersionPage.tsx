@@ -2,9 +2,9 @@
 // sentence saying which version this is and what changed ("Version 3 of
 // support-tickets, saved 2 days ago. It has 50 rows, 4 more than version
 // 2."), then the value shown readably: rows as a table, prompts as prose,
-// functions as code. Ids, the ref, the digest, aliases and tags live in the
-// inspector beside it, with copy buttons. The views (?tab=) are Contents,
-// Use (SDK snippets) and Raw (the stored JSON).
+// functions as code. The name to use in code, aliases and tags live in the
+// inspector beside it; the ref and digest are in the Raw view with the stored
+// JSON. The views (?tab=) are Contents, Use (SDK snippets) and Raw.
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -43,14 +43,15 @@ import {
 } from '../../components/objects/objectUtils'
 import { CopyText, Inspector, InspectorDivider, InspectorLinks, KeyValueList } from '../../components/ui/Inspector'
 import { PageHeader } from '../../components/ui/PageHeader'
-import { PlainTable } from '../../components/ui/PlainTable'
 import { Segmented, segmentedTabId } from '../../components/ui/Segmented'
 import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { useProjectId } from '../../hooks/useProject'
-import { fmtBytes, fmtDate, fmtScore, preview } from '../../lib/format'
+import { fmtBytes, fmtDate, fmtRelative, fmtScore, preview } from '../../lib/format'
 import { contains, toQuery } from '../../lib/query'
 import { relativeTime } from '../../lib/summaries'
-import { kindWords, sdkName, versionSentence, versionWords, type AssetPart } from '../../lib/summaries/assets'
+import { kindWords, runAnswer, runTitle, scoreReason, scoreResultWords, sdkName, versionSentence, versionWords, type AssetPart } from '../../lib/summaries/assets'
+import { modelDisplayName } from '../../lib/modelWords'
+import { GroupedList, ListRow } from '../../components/ui/GroupedList'
 import { compareEvaluationsUrl, leaderboardUrl, monitorUrl, newEvaluationUrl, objectDiffUrl, objectUrl, objectVersionsUrl, playgroundUrl, spanUrl } from '../../lib/urls'
 import './assets.css'
 
@@ -186,7 +187,19 @@ export function ObjectVersionPage() {
               <UsePanel refUri={ref} name={objectId} version={`v${o.version}`} kind={useKind} />
             </Block>
           )}
-          {tab === 'raw' && <JsonBlock value={o.value} />}
+          {tab === 'raw' && (
+            <>
+              <div className="asset-panel">
+                <KeyValueList
+                  items={[
+                    { label: 'Ref', value: <ShortCopy text={ref} label="ref" />, mono: true, help: 'Ref: the address other assets and spans use to point at this version' },
+                    { label: 'Digest', value: <ShortCopy text={o.digest} label="digest" />, mono: true, help: 'Digest: the SHA-256 of the stored value; it names this exact version' },
+                  ]}
+                />
+              </div>
+              <JsonBlock value={o.value} />
+            </>
+          )}
         </div>
         <Inspector title={capFirst(versionWords(o))} subtitle={o.is_latest ? 'The latest version' : latest ? `The latest is ${versionWords(latest)}` : undefined} label="About this version" sticky>
           <KeyValueList
@@ -195,8 +208,6 @@ export function ObjectVersionPage() {
               o.user_id ? { label: 'By', value: o.user_id } : null,
               { label: 'Size', value: fmtBytes(o.size_bytes) },
               { label: 'In code', value: <CopyText text={sdkName(o)} label="name" />, mono: true, help: 'The name and version to pass to weft.get()' },
-              { label: 'Ref', value: <ShortCopy text={ref} label="ref" />, mono: true, help: 'Ref: the address other assets and spans use to point at this version' },
-              { label: 'Digest', value: <ShortCopy text={o.digest} label="digest" />, mono: true, help: 'Digest: the SHA-256 of the stored value; it names this exact version' },
             ]}
           />
           <InspectorDivider />
@@ -526,7 +537,7 @@ function LLMModelView({ o, projectId }: { o: WeftObject; projectId: string }) {
       <div className="asset-panel">
         <KeyValueList
           items={[
-            { label: 'Model', value: v.llm_model_id ?? '—', mono: true },
+            { label: 'Model', value: <span title={typeof v.llm_model_id === 'string' ? v.llm_model_id : undefined}>{modelDisplayName(v.llm_model_id) || '—'}</span> },
             ...Object.entries(otherParams).map(([k, x]) => ({ label: PARAM_WORDS[k] ?? k.replace(/_/g, ' '), value: fmtScore(x), mono: true })),
           ]}
         />
@@ -552,6 +563,24 @@ function GenericModelView({ o, projectId }: { o: WeftObject; projectId: string }
 
 // ------------------------------------------------------------------ scorers
 
+/** One score in the "Recent scores" list: from a feedback record (monitors, on-demand scoring) or a scorer run with none. */
+interface ScoreEntry {
+  key: string
+  /** The question the scored step was asked, or a fallback. */
+  title: ReactNode
+  to?: string
+  result: string
+  reason: string
+  at: string
+  /** The judge's own run, opened from the "Why" disclosure. */
+  judgeRun?: string
+}
+
+const spanIdOf = (ref: string | null | undefined) => {
+  const p = ref ? parseRef(ref) : null
+  return p?.kind === 'span' ? p.name : null
+}
+
 function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
   const v = o.value ?? {}
   const cls = valClass(v)
@@ -572,6 +601,47 @@ function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
     queryFn: () =>
       api.spansQuery({ project_id: projectId, filter: { names: [`${o.name}.score`] }, sort_by: [{ field: 'started_at', direction: 'desc' }], limit: 20 }).then((r) => r.items),
   })
+  // The steps that were scored, for the question each was asked.
+  const scoredIds = useMemo(() => [...new Set((feedback.data ?? []).map((f) => spanIdOf(f.ref)).filter(Boolean) as string[])], [feedback.data])
+  const scored = useQuery({
+    queryKey: ['scored-spans', projectId, scoredIds],
+    queryFn: () => api.spansQuery({ project_id: projectId, filter: { ids: scoredIds }, columns: ['id', 'inputs'], limit: scoredIds.length }).then((r) => r.items),
+    enabled: scoredIds.length > 0,
+  })
+  const entries = useMemo<ScoreEntry[]>(() => {
+    const byId = new Map((scored.data ?? []).map((c) => [c.id, c]))
+    const runById = new Map((runs.data ?? []).map((c) => [c.id, c]))
+    const usedRuns = new Set<string>()
+    const out: ScoreEntry[] = (feedback.data ?? []).map((f) => {
+      const out = f.payload?.output ?? f.payload
+      const stepId = spanIdOf(f.ref)
+      const judgeRun = spanIdOf(f.span_ref) ?? undefined
+      if (judgeRun) usedRuns.add(judgeRun)
+      const q = runTitle(stepId ? byId.get(stepId)?.inputs : null, '') || runTitle(judgeRun ? runById.get(judgeRun)?.inputs : null, '')
+      return {
+        key: f.id,
+        title: stepId ? q || 'A step' : <RefChip refStr={f.ref} />,
+        to: stepId ? spanUrl(projectId, stepId) : undefined,
+        result: scoreResultWords(out),
+        reason: scoreReason(out),
+        at: f.created_at,
+        judgeRun,
+      }
+    })
+    for (const c of runs.data ?? []) {
+      if (usedRuns.has(c.id)) continue
+      out.push({
+        key: c.id,
+        title: runTitle(c.inputs, 'A run'),
+        to: spanUrl(projectId, c.id),
+        result: c.error ? runAnswer(null, c.error) : scoreResultWords(c.output),
+        reason: c.error ? '' : scoreReason(c.output),
+        at: c.started_at,
+      })
+    }
+    return out.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+  }, [feedback.data, runs.data, scored.data, projectId])
+  const modelId = typeof v.model === 'string' ? v.model : null
   return (
     <>
       <Description val={v} />
@@ -582,13 +652,22 @@ function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
             <KeyValueList
               items={[
                 { label: 'Kind', value: SCORER_LABELS[cls as ServerScorerClass] },
-                { label: 'Model', value: typeof v.model === 'string' && parseRef(v.model) ? <RefChip refStr={v.model} /> : String(v.model ?? '—'), mono: !(typeof v.model === 'string' && parseRef(v.model)) },
+                {
+                  label: 'Model',
+                  value: modelId && parseRef(modelId) ? <RefChip refStr={modelId} /> : <span title={modelId ?? undefined}>{modelDisplayName(modelId) || '—'}</span>,
+                },
                 { label: 'Answers as', value: v.response_format === 'json_object' ? 'JSON' : (v.response_format ?? 'text') },
               ]}
             />
           </div>
           <Block title="Scoring prompt">
-            <ProseMessages messages={[{ role: 'Scoring prompt', content: String(v.scoring_prompt ?? '') }]} />
+            <div className="prose-messages">
+              <div className="prose-msg">
+                <p className="prose-text">
+                  <TemplateText text={String(v.scoring_prompt ?? '')} />
+                </p>
+              </div>
+            </div>
           </Block>
         </>
       ) : (
@@ -597,36 +676,41 @@ function ScorerView({ o, projectId }: { o: WeftObject; projectId: string }) {
           <ValueView value={v} projectId={projectId} />
         </div>
       )}
-      {!!feedback.data?.length && (
-        <Block title="Recent scores" note="from monitors and on-demand scoring">
-          <PlainTable caption="Recent scores of this scorer">
-            <thead>
-              <tr>
-                <th scope="col">When</th>
-                <th scope="col">Scored</th>
-                <th scope="col">Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {feedback.data.map((f) => {
-                const p = parseRef(f.ref)
-                return (
-                  <tr key={f.id}>
-                    <td title={fmtDate(f.created_at)} style={{ whiteSpace: 'nowrap' }}>
-                      {relativeTime(f.created_at)}
-                    </td>
-                    <td>{p?.kind === 'span' ? <Link to={spanUrl(projectId, p.name)}>step {p.name.slice(-8)}</Link> : <RefChip refStr={f.ref} />}</td>
-                    <td>{preview(f.payload?.output ?? f.payload, 160)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </PlainTable>
-        </Block>
-      )}
-      {!!runs.data?.length && (
-        <Block title="Recent scorer runs" count={runs.data.length}>
-          <SpanRunsList projectId={projectId} calls={runs.data} label={`Recent runs of ${o.name}`} />
+      <ErrorBox error={feedback.error ?? runs.error} />
+      {entries.length > 0 && (
+        <Block title="Recent scores" count={entries.length}>
+          <GroupedList label={`Recent scores from ${o.name}`} className="score-list">
+            {entries.map((e) => (
+              <ListRow
+                key={e.key}
+                title={
+                  e.to ? (
+                    <Link className="lrow-title-link" to={e.to}>
+                      {e.title}
+                    </Link>
+                  ) : (
+                    e.title
+                  )
+                }
+                summary={capFirst(e.result)}
+                meta={
+                  e.reason || e.judgeRun ? (
+                    <details className="score-why">
+                      <summary>Why</summary>
+                      {e.reason && <p className="score-why-text">{e.reason}</p>}
+                      {e.judgeRun && (
+                        <Link className="score-why-link" to={spanUrl(projectId, e.judgeRun)}>
+                          Open the judge’s run
+                        </Link>
+                      )}
+                    </details>
+                  ) : undefined
+                }
+                time={fmtRelative(e.at)}
+                timeTitle={fmtDate(e.at)}
+              />
+            ))}
+          </GroupedList>
         </Block>
       )}
     </>

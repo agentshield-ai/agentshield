@@ -117,6 +117,7 @@ export function AutomationsPage() {
             return (
               <SettingsRow
                 key={o.name}
+                className="srow-named"
                 label={o.name}
                 muted={!enabled}
                 detail={

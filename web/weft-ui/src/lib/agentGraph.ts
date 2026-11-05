@@ -14,6 +14,8 @@ export interface LaidEdge extends GraphEdge {
   path: string
   labelX: number
   labelY: number
+  /** Which end of the label sits at (labelX, labelY): labels stand beside the curve, never on it. */
+  labelAnchor: 'start' | 'middle' | 'end'
   /** Stroke width, scaled by count. */
   width: number
 }
@@ -110,12 +112,21 @@ export function layoutGraph(graph: Graph): GraphLayout {
       const sy = a.y + Math.sin(sa) * a.r
       const ex = b.x + Math.cos(ea) * (b.r + 6)
       const ey = b.y + Math.sin(ea) * (b.r + 6)
+      const width = e.kind === 'return' ? 1.25 : 1.5 + 3 * (e.count / maxCount)
+      // The label stands beside the curve's midpoint, on the outside of its
+      // bend, so the line never runs through the text ("2× · 1.3 s").
+      const ox = nx * bend
+      const oy = ny * bend
+      const gap = width / 2 + 8
+      const anchor: LaidEdge['labelAnchor'] = ox > 0.35 ? 'start' : ox < -0.35 ? 'end' : 'middle'
       return {
         ...e,
         path: `M${r1(sx)},${r1(sy)} Q${r1(mx)},${r1(my)} ${r1(ex)},${r1(ey)}`,
-        labelX: r1((sx + 2 * mx + ex) / 4),
-        labelY: r1((sy + 2 * my + ey) / 4),
-        width: e.kind === 'return' ? 1.25 : 1.5 + 3 * (e.count / maxCount),
+        labelX: r1((sx + 2 * mx + ex) / 4 + ox * gap),
+        // Text hangs from its baseline: below the curve it moves down by its height.
+        labelY: r1((sy + 2 * my + ey) / 4 + oy * gap + (oy > 0.35 ? 9 : anchor === 'middle' ? -2 : 4)),
+        labelAnchor: anchor,
+        width,
       }
     })
   return { nodes, edges, width, height }

@@ -1,9 +1,9 @@
 import { normaliseSpansFilter } from '../../api/filters'
-import { cloneElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { cloneElement, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import { spanDisplayName } from '../../api/refs'
+import { isRef, parseRef, spanDisplayName } from '../../api/refs'
 import type { Any, Span, SpansFilter, Operation, Query, SortBy } from '../../api/types'
 import { useProjectId } from '../../hooks/useProject'
 import { callCost, callLatencyMs, callStatus, callTokens, fmtCost, fmtDate, fmtDuration, fmtNumber, fmtRelative, preview } from '../../lib/format'
@@ -29,7 +29,7 @@ import { PlainTable } from '../../components/ui/PlainTable'
 import { Segmented } from '../../components/ui/Segmented'
 import { Sentence, type SentencePart } from '../../components/ui/Sentence'
 import { StatusGlyph } from '../../components/ui/StatusGlyph'
-import { feedbackWords, SPAN_SESSIONS_TITLE, statusGlyph, tracesSentence } from '../../lib/summaries/traces'
+import { cellValueWords, feedbackWords, scoreSummaryWords, SPAN_SESSIONS_TITLE, statusGlyph, tracesSentence } from '../../lib/summaries/traces'
 import '../observe.css'
 
 // ---------------------------------------------------------------- URL state
@@ -208,21 +208,26 @@ export function buildRequest(
 
 // ---------------------------------------------------------------- cell helpers
 
-function inputsPreview(c: Span): string {
+type VersionOf = (name: string, digest: string) => number | null | undefined
+
+/** The versions of the objects the listed rows refer to, so a ref reads "polite-echo, version 1". */
+const RefVersions = createContext<VersionOf>(() => null)
+
+function inputsPreview(c: Span, versionOf?: VersionOf): string {
   const chat = extractChat(c)
   if (chat) {
     const users = chat.input.filter((m) => m?.role === 'user')
     const last = users.length ? users[users.length - 1] : chat.input[chat.input.length - 1]
     return messageText(normaliseMessage(last)) || preview(last)
   }
-  if (!c.inputs || typeof c.inputs !== 'object') return preview(c.inputs)
+  if (!c.inputs || typeof c.inputs !== 'object') return cellValueWords(c.inputs, versionOf, 120)
   return Object.entries(c.inputs)
     .filter(([k]) => k !== 'self')
-    .map(([k, v]) => `${k}: ${preview(v, 60)}`)
+    .map(([k, v]) => `${k}: ${cellValueWords(v, versionOf)}`)
     .join(' · ')
 }
 
-function outputPreview(c: Span): string {
+function outputPreview(c: Span, versionOf?: VersionOf): string {
   const chat = extractChat(c)
   if (chat?.output?.length) {
     const m = normaliseMessage(chat.output[chat.output.length - 1])
@@ -232,11 +237,31 @@ function outputPreview(c: Span): string {
     if (tools.length) return `→ ${tools.join(', ')}()`
   }
   const o = c.output
+  // An evaluation's result: its scores in words ("exact match 0% · …").
+  const scores = scoreSummaryWords(o)
+  if (scores) return scores
   if (o && typeof o === 'object' && !Array.isArray(o))
     return Object.entries(o)
-      .map(([k, v]) => `${k}: ${preview(v, 60)}`)
+      .map(([k, v]) => `${k}: ${cellValueWords(v, versionOf)}`)
       .join(' · ')
-  return preview(o)
+  return cellValueWords(o, versionOf, 120)
+}
+
+/** Object names a row's inputs and output refer to (top-level values only). */
+function refNamesOf(rows: Span[]): string[] {
+  const out = new Set<string>()
+  const add = (v: unknown) => {
+    if (!isRef(v)) return
+    const p = parseRef(v)
+    if (p && (p.kind === 'object' || p.kind === 'function') && p.digest) out.add(p.name)
+  }
+  for (const c of rows) {
+    for (const v of [c.inputs, c.output]) {
+      if (v && typeof v === 'object' && !Array.isArray(v)) Object.values(v).forEach(add)
+      else add(v)
+    }
+  }
+  return [...out].sort().slice(0, 50)
 }
 
 const plural = (n: number, w: string) => `${fmtNumber(n)} ${w}${n === 1 ? '' : 's'}`
@@ -356,6 +381,18 @@ export function TracesPage() {
 
   const rows = calls.data?.items ?? []
   const total = count.data ?? null
+  // The versions of objects the rows refer to: one metadata query for every listed name.
+  const refNames = useMemo(() => refNamesOf(calls.data?.items ?? []), [calls.data])
+  const refObjects = useQuery({
+    queryKey: ['objects', projectId, 'ref-versions', refNames],
+    queryFn: () => api.objectsQuery({ project_id: projectId, filter: { names: refNames }, metadata_only: true, limit: 1000 }),
+    enabled: refNames.length > 0,
+    staleTime: 60_000,
+  })
+  const versionOf = useMemo<VersionOf>(() => {
+    const m = new Map((refObjects.data?.items ?? []).map((o) => [`${o.name}:${o.digest}`, o.version]))
+    return (name, digest) => m.get(`${name}:${digest}`)
+  }, [refObjects.data])
 
   // Field discovery for the filter builder and column picker. Accumulate across pages.
   const [seenFields, setSeenFields] = useState<string[]>([])
@@ -832,6 +869,7 @@ export function TracesPage() {
               })}
             </tr>
           </thead>
+          <RefVersions.Provider value={versionOf}>
           <tbody>
             {rows.map((c, i) => (
               <CallRow
@@ -851,6 +889,7 @@ export function TracesPage() {
               />
             ))}
           </tbody>
+          </RefVersions.Provider>
         </PlainTable>
       )}
 
@@ -918,6 +957,7 @@ function CallRow({
   /** Listed for its trace while the trace's top-level span has not arrived. */
   provisionalRoot: boolean
 }) {
+  const versionOf = useContext(RefVersions)
   const st = callStatus(c)
   const runStatus = c.summary?.weft?.run_status
   const tokens = callTokens(c)
@@ -1002,7 +1042,7 @@ function CallRow({
       case 'inputs':
         return (
           <td key={col}>
-            <span className="cell-preview">{inputsPreview(c)}</span>
+            <span className="cell-preview">{inputsPreview(c, versionOf)}</span>
           </td>
         )
       case 'output':
@@ -1018,7 +1058,7 @@ function CallRow({
                 {c.error}
               </span>
             ) : (
-              <span className="cell-preview">{outputPreview(c)}</span>
+              <span className="cell-preview">{outputPreview(c, versionOf)}</span>
             )}
           </td>
         )
@@ -1035,7 +1075,7 @@ function CallRow({
         ) : (
           <td key={slot.id}>
             <span className="cell-preview" style={{ maxWidth: 220 }}>
-              {preview(getDotted(c, slot.id), 80)}
+              {cellValueWords(getDotted(c, slot.id), versionOf, 80)}
             </span>
           </td>
         )

@@ -8,6 +8,7 @@ import type { Any, WeftObject } from '../../api/types'
 import { fmtDuration, fmtRelative, versionLabel } from '../format'
 import { joinClauses, plural, relativeTime } from '../summaries'
 import { metricText, scoreMetrics } from './evaluate'
+import { isOfflineModel, modelDisplayName, modelInProse } from '../modelWords'
 
 /** The list pages (mirrors components/objects/objectUtils ObjectPageKind). */
 export type AssetKind = 'datasets' | 'models' | 'prompts' | 'scorers' | 'ops' | 'all'
@@ -114,7 +115,7 @@ export function promptShape(v: Any): string {
   return joinClauses(parts)
 }
 
-/** The model a judge or a completion model runs, as text ("" when it is a ref or unknown). */
+/** The model id a judge or a completion model runs ("" when it is a ref or unknown); readers see modelDisplayName of it. */
 function modelName(v: Any): string {
   if (typeof v?.llm_model_id === 'string') return v.llm_model_id
   if (typeof v?.model === 'string' && !v.model.startsWith('weft:///')) return v.model
@@ -143,10 +144,10 @@ export function assetFacts(o: Obj, f: RowFacts = {}): string {
   } else if (o.kind === 'model') {
     const m = modelName(v)
     const t = v?.default_params?.temperature
-    parts.push(m ? `runs ${m}${typeof t === 'number' ? ` at temperature ${t}` : ''}` : kindWords(o))
+    parts.push(m ? `runs ${modelInProse(m)}${typeof t === 'number' ? ` at temperature ${t}` : ''}` : kindWords(o))
   } else if (o.kind === 'scorer') {
     const m = cls === 'LLMAsAJudgeScorer' ? modelName(v) : ''
-    parts.push(m ? `LLM judge using ${m}` : typeof v?.target_column === 'string' && v.target_column ? `${kindWords(o)} on ${v.target_column}` : kindWords(o))
+    parts.push(m ? judgeWords(m) : typeof v?.target_column === 'string' && v.target_column ? `${kindWords(o)} on ${v.target_column}` : kindWords(o))
     if (f.serverScorer === false) parts.push('runs only in the SDK')
   } else if (o.kind === 'evaluation') {
     const n = Array.isArray(v?.scorers) ? v.scorers.length : 0
@@ -161,6 +162,11 @@ export function assetFacts(o: Obj, f: RowFacts = {}): string {
   const aliases = (o.aliases ?? []).filter((a) => a !== 'latest')
   if (aliases.length) parts.push(`${aliases.length === 1 ? 'alias' : 'aliases'} ${aliases.join(', ')}`)
   return cap(parts.join(', '))
+}
+
+/** An LLM judge by its model: "LLM judge using gpt-4o"; on an offline model, that model's own name ("offline JSON judge"). */
+function judgeWords(model: string): string {
+  return isOfflineModel(model) ? modelDisplayName(model) : `LLM judge using ${model}`
 }
 
 /** The asset name a ref points at ("support-questions"), or null. */
@@ -317,10 +323,10 @@ export function versionSentence({ o, latestVersion, rows, prevRows, now = Date.n
     if (shape) out.push(` It has ${shape}${vars.length ? `: ${vars.map((x) => `{${x}}`).join(', ')}` : ''}.`)
   } else if (o.kind === 'model') {
     const m = modelName(v)
-    if (m) out.push(` It runs ${m}.`)
+    if (m) out.push(` It runs ${modelInProse(m)}.`)
   } else if (o.kind === 'scorer') {
-    const m = modelName(v)
-    out.push(` It is ${article(kindWords(o))}${m ? ` using ${m}` : ''}.`)
+    const m = (o.class ?? valueClass(v)) === 'LLMAsAJudgeScorer' ? modelName(v) : ''
+    out.push(` It is ${m ? article(judgeWords(m)) : article(kindWords(o))}.`)
   } else if (o.kind === 'evaluation') {
     const n = Array.isArray(v.scorers) ? v.scorers.length : 0
     out.push(` It scores each row with ${plural(n, 'scorer')}${typeof v.trials === 'number' && v.trials > 1 ? `, ${v.trials} times` : ''}.`)
@@ -405,4 +411,36 @@ export function runScores(summary: unknown, max = 4): string {
   if (!ms.length) return 'No scores.'
   const shown = ms.slice(0, max).map((m) => metricText(m.key, m.value))
   return cap(joinClauses(ms.length > max ? [...shown, `${ms.length - max} more`] : shown))
+}
+
+// ---------------------------------------------------------------- one score a scorer gave
+
+const REASON_KEYS = ['reasoning', 'reason', 'explanation', 'rationale', 'why']
+const scoreNum = (n: number) => String(Number.isInteger(n) ? n : Math.round(n * 100) / 100)
+const keyWords = (k: string) => k.replace(/[_.]+/g, ' ').trim()
+
+/**
+ * What a scorer's result said, as text: "correct, score 4", "not correct, score 2",
+ * "passed", "score 0.75". Booleans and numbers only, in the order the scorer
+ * returned them; text fields (the judge's reasoning, an echoed prompt) are left
+ * to scoreReason and the raw view.
+ */
+export function scoreResultWords(output: unknown): string {
+  if (typeof output === 'boolean') return output ? 'passed' : 'failed'
+  if (typeof output === 'number' && Number.isFinite(output)) return `score ${scoreNum(output)}`
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return 'no score recorded'
+  const parts: string[] = []
+  for (const [k, x] of Object.entries(output as Record<string, unknown>)) {
+    if (typeof x === 'boolean') parts.push(x ? keyWords(k) : `not ${keyWords(k)}`)
+    else if (typeof x === 'number' && Number.isFinite(x)) parts.push(`${keyWords(k)} ${scoreNum(x)}`)
+  }
+  return parts.length ? parts.join(', ') : 'no score recorded'
+}
+
+/** The reason a judge gave for its score ("" when it gave none). */
+export function scoreReason(output: unknown): string {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return ''
+  const o = output as Record<string, unknown>
+  for (const k of REASON_KEYS) if (typeof o[k] === 'string' && (o[k] as string).trim()) return (o[k] as string).trim()
+  return ''
 }

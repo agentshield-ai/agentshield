@@ -75,7 +75,7 @@ function EventView({ m, projectId, agentName }: { m: ChatMessage; projectId: str
       {open ? '▾' : '▸'}
     </button>
   )
-  const when = m.started_at ? <span className="faint" title={fmtDate(m.started_at)}>{new Date(m.started_at).toLocaleTimeString()}</span> : null
+  const when = m.started_at ? <span className="faint" title={fmtDate(m.started_at)}>{new Date(m.started_at).toLocaleTimeString(undefined, { hourCycle: 'h23' })}</span> : null
   switch (m.type) {
     case 'user_message':
       return (

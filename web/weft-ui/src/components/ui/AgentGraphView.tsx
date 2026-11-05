@@ -5,7 +5,7 @@
 // lists them in its own tables, a note pointing at them). Each node link reads
 // as its name and figures, and a screen reader gets the hand-offs as a
 // list, unless the page shows its own tables.
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Graph } from '../../api/v1'
 import { Link } from 'react-router-dom'
@@ -22,12 +22,15 @@ export function AgentGraphView({
   agentUrl,
   title = 'Delegation graph',
   tablesOnPage = false,
+  wide,
 }: {
   graph: Graph
   agentUrl?: (a: string) => string
   title?: string
   /** The page lists the same agents and hand-offs in its own tables (no second copy here). */
   tablesOnPage?: boolean
+  /** Set by a parent that already decided the graph fits (GraphWithTables): skip the width check. */
+  wide?: boolean
 }) {
   const layout = useMemo(() => layoutGraph(graph), [graph])
   const [hover, setHover] = useState<string | null>(null)
@@ -45,7 +48,7 @@ export function AgentGraphView({
   }, [])
   if (!graph.nodes.length) return <p className="muted">No agents recorded yet.</p>
   const forward = graph.edges.filter((e) => e.kind !== 'return')
-  if (narrow)
+  if (narrow && !wide)
     return (
       <div className="agent-graph" ref={box}>
         {tablesOnPage ? <p className="quiet-note">The graph needs a wider screen; the tables below have the same figures.</p> : <GraphTables graph={graph} agentUrl={agentUrl} />}
@@ -88,9 +91,9 @@ export function AgentGraphView({
             <g key={`${e.from}>${e.to}:${e.kind}`} className={`edge ${tone} ${dim ? 'dim' : ''}`}>
               <path d={e.path} strokeWidth={e.width} markerEnd={`url(#arrow-${tone})`} className={e.kind === 'return' ? 'dashed' : ''} />
               {e.kind !== 'return' && (
-                <text x={e.labelX} y={e.labelY} className="edge-label" textAnchor="middle">
-                  {e.count}×{e.errors ? ` · ${e.errors} failed` : ''}
-                  {e.p50_ms != null ? ` · ${fmtDuration(e.p50_ms)}` : ''}
+                <text x={e.labelX} y={e.labelY} className="edge-label" textAnchor={e.labelAnchor}>
+                  {/* One string: separate text nodes would each get their own halo, the next one painting over the last. */}
+                  {`${e.count}×${e.errors ? ` · ${e.errors} failed` : ''}${e.p50_ms != null ? ` · ${fmtDuration(e.p50_ms)}` : ''}`}
                 </text>
               )}
             </g>
@@ -154,6 +157,67 @@ export function AgentGraphView({
   )
 }
 
+/** True while the element is narrower than `min` px (measured before paint, then on every resize). */
+function useNarrower(ref: RefObject<HTMLElement | null>, min: number): boolean {
+  const [narrow, setNarrow] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const check = () => setNarrow(el.clientWidth < min)
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    check()
+    return () => ro.disconnect()
+  }, [ref, min])
+  return narrow
+}
+
+/**
+ * The delegation graph in a panel, with the same figures as tables behind a
+ * "Show as a table" disclosure, so the page says them once (the graph) and
+ * the tables are there for whoever wants to read or copy them. Where the
+ * graph does not fit (a phone), the tables show on their own, open.
+ */
+export function GraphWithTables({
+  graph,
+  agentUrl,
+  title,
+  tables,
+  panelClassName,
+}: {
+  graph: Graph
+  agentUrl?: (a: string) => string
+  title?: string
+  /** The tables: GraphTables, or the page's own (hand-offs, agents). */
+  tables: ReactNode
+  /** The panel the graph sits in (the page's panel style). */
+  panelClassName: string
+}) {
+  const box = useRef<HTMLDivElement>(null)
+  // The panel's padding (up to 20 px each side) comes off the graph's room.
+  const narrow = useNarrower(box, GRAPH_MIN + 40)
+  return (
+    <div className="graph-with-tables" ref={box}>
+      {narrow || !graph.nodes.length ? (
+        <>
+          {!graph.nodes.length && <p className="muted">No agents recorded yet.</p>}
+          {graph.nodes.length > 0 && tables}
+        </>
+      ) : (
+        <>
+          <div className={panelClassName}>
+            <AgentGraphView graph={graph} agentUrl={agentUrl} title={title} wide />
+          </div>
+          <details className="table-disclosure">
+            <summary>Show as a table</summary>
+            <div className="table-disclosure-body">{tables}</div>
+          </details>
+        </>
+      )}
+    </div>
+  )
+}
+
 /** A name that links to its agent page when a URL is given. */
 function AgentName({ name, agentUrl }: { name: string; agentUrl?: (a: string) => string }) {
   return agentUrl ? <Link to={agentUrl(name)}>{name}</Link> : <span>{name}</span>
@@ -172,20 +236,24 @@ export function GraphTables({ graph, agentUrl }: { graph: Graph; agentUrl?: (a: 
   const shield = graph.nodes.some((n) => (n.detections?.block ?? 0) + (n.detections?.require_approval ?? 0) + (n.detections?.log ?? 0) > 0)
   return (
     <div className="col" style={{ gap: 16 }}>
-      <PlainTable caption="Agents">
+      <PlainTable caption="Agents" stack>
         <thead>
           <tr>
             <th scope="col">Agent</th>
-            <th scope="col" className="num">
+            <th scope="col" className="num" data-stack="run|runs">
               Runs
             </th>
             <th scope="col" className="num" title="Runs that failed">
               Failed
             </th>
-            <th scope="col" className="num">
+            <th scope="col" className="num" data-stack="">
               Cost
             </th>
-            {shield && <th scope="col">AgentShield</th>}
+            {shield && (
+              <th scope="col" data-stack-prefix="AgentShield:">
+                AgentShield
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -212,21 +280,21 @@ export function HandoffTable({ edges, agentUrl, caption = 'Hand-offs' }: { edges
   if (!rows.length) return <p className="muted">No hand-offs between agents.</p>
   const scored = rows.some((e) => e.mean_score != null)
   return (
-    <PlainTable caption={`${caption}, most failing first`} className="handoff-table">
+    <PlainTable caption={`${caption}, most failing first`} className="handoff-table" stack>
       <thead>
         <tr>
           <th scope="col">Hand-off</th>
-          <th scope="col" className="num" title="How many times work was handed over">
+          <th scope="col" className="num" title="How many times work was handed over" data-stack="hand-off|hand-offs">
             Times
           </th>
           <th scope="col" className="num" title="Hand-offs whose receiving agent ended with an error">
             Failed
           </th>
-          <th scope="col" className="num" title="Median time from hand-off to the receiving agent finishing">
+          <th scope="col" className="num" title="Median time from hand-off to the receiving agent finishing" data-stack-prefix="median">
             Median time
           </th>
           {scored && (
-            <th scope="col" className="num" title="Mean of hand-off scores (for example, hand-off quality)">
+            <th scope="col" className="num" title="Mean of hand-off scores (for example, hand-off quality)" data-stack-prefix="score">
               Score
             </th>
           )}

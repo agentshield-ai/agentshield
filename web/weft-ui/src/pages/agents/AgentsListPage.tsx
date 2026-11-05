@@ -173,7 +173,7 @@ function AgentsList() {
         </>
       )}
       <p className="at-foot">
-        Charts, span search, signals and agent evaluations are in <Link to={agentAnalyticsUrl(pid)}>agent analytics</Link>.
+        Charts, every step, ratings and evaluations are in <Link to={agentAnalyticsUrl(pid)}>agent analytics</Link>.
       </p>
     </div>
   )

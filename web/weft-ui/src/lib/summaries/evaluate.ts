@@ -500,12 +500,207 @@ export function compareSentence(input: CompareInput): EvalPart[] {
 
 export const LOW_SCORE = 0.5
 
-export interface ScoreLike {
-  scorer: string
+/** The range a scorer's numbers run over: 0–1, or a scale such as 1–5. */
+export interface Scale {
+  min: number
+  max: number
+}
+
+/** One score as the sentences read it: the scorer's raw output when the API gives it, else its number. */
+export interface ScoreItem {
   value: number | null
+  output?: unknown
+}
+
+export interface ScoreLike extends ScoreItem {
+  scorer: string
   session_id?: string
   span_id?: string
   scope: string
+}
+
+/**
+ * How to read one scorer's results, from their shape: the yes/no field
+ * every result has (counted first, a false one needs a look), the number
+ * field, its range and the threshold below which a number needs a look
+ * (the range's midpoint: 0.5 on 0–1, 3 on 1–5).
+ */
+export interface ScoreShape {
+  boolKey: string | null
+  numKey: string | null
+  scale: Scale | null
+  threshold: number | null
+}
+
+const BOOL_KEYS = ['correct', 'passed', 'pass', 'safe', 'success', 'ok', 'valid', 'match', 'value']
+const NUM_KEYS = ['score', 'value', 'rating']
+
+/** An output's yes/no and number fields ("correct", "score", "value" for a bare result); the number when there is no output. */
+function leaves(x: ScoreItem): Record<string, Leaf> {
+  if (x.output !== undefined && x.output !== null && typeof x.output !== 'string') {
+    const f = flatten(x.output)
+    if (Object.keys(f).length) return f
+  }
+  return x.value == null ? {} : { value: x.value }
+}
+
+/** A scale named in a scorer's own words: "Rate helpfulness 1-5", "from 0 to 10", "out of 10". */
+export function scaleFromText(text: string | null | undefined): Scale | null {
+  if (!text) return null
+  const m = /\b(0|1)\s*(?:-|–|to)\s*(5|7|10|100)\b/.exec(text)
+  if (m) return { min: Number(m[1]), max: Number(m[2]) }
+  const o = /\bout of (5|7|10|100)\b/i.exec(text)
+  return o ? { min: Number(o[1]) === 5 ? 1 : 0, max: Number(o[1]) } : null
+}
+
+/** The range numbers fall in, from the values seen: 0–1, else the smallest of 5, 10 or 100 that holds them; null when none does. */
+export function inferScale(values: number[]): Scale | null {
+  if (!values.length) return null
+  const lo = Math.min(...values)
+  const hi = Math.max(...values)
+  if (lo >= 0 && hi <= 1) return { min: 0, max: 1 }
+  if (lo < 0) return null
+  for (const max of [5, 10, 100]) if (hi <= max) return { min: lo >= 1 && max === 5 ? 1 : 0, max }
+  return null
+}
+
+/** How to read a scorer's results (see ScoreShape); `scale` is the scorer's own when it states one. */
+export function scoreShape(items: ScoreItem[], scale?: Scale | null): ScoreShape {
+  const rows = items.map(leaves).filter((r) => Object.keys(r).length)
+  const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))]
+  const isBool = (k: string) => rows.length > 0 && rows.every((r) => typeof r[k] === 'boolean')
+  const boolKey = BOOL_KEYS.find((k) => keys.includes(k) && isBool(k)) ?? keys.sort().find(isBool) ?? null
+  const nums = keys.filter((k) => k !== boolKey && rows.some((r) => typeof r[k] === 'number'))
+  const numKey = NUM_KEYS.find((k) => nums.includes(k)) ?? nums.sort()[0] ?? null
+  const values = numKey ? rows.map((r) => r[numKey]).filter((v): v is number => typeof v === 'number') : []
+  const sc = numKey ? (scale ?? inferScale(values)) : null
+  return { boolKey, numKey, scale: sc, threshold: sc ? (sc.min + sc.max) / 2 : null }
+}
+
+/** One result's yes/no and number, as its scorer's shape reads them. */
+export function scoreParts(x: ScoreItem, shape: ScoreShape): { yes: boolean | null; num: number | null } {
+  const r = leaves(x)
+  const b = shape.boolKey ? r[shape.boolKey] : undefined
+  const n = shape.numKey ? r[shape.numKey] : undefined
+  return { yes: typeof b === 'boolean' ? b : null, num: typeof n === 'number' ? n : null }
+}
+
+/** Whether a result needs a look: its yes/no part says no, or (with no yes/no part) its number is below the threshold. */
+export function needsLook(x: ScoreItem, shape: ScoreShape): boolean {
+  const p = scoreParts(x, shape)
+  if (shape.boolKey) return p.yes === false
+  return p.num != null && shape.threshold != null && p.num < shape.threshold
+}
+
+/** What one scorer's results say, counted. */
+export interface Judgement {
+  scorer: string
+  n: number
+  shape: ScoreShape
+  yes: number
+  no: number
+  mean: number | null
+  /** Results with a number. */
+  counted: number
+  /** Results that need a look. */
+  look: number
+}
+
+export function judge(scorer: string, items: ScoreItem[], shape: ScoreShape = scoreShape(items)): Judgement {
+  const ps = items.map((x) => scoreParts(x, shape))
+  const nums = ps.map((p) => p.num).filter((v): v is number => v != null)
+  return {
+    scorer,
+    n: items.length,
+    shape,
+    yes: ps.filter((p) => p.yes === true).length,
+    no: ps.filter((p) => p.yes === false).length,
+    mean: nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null,
+    counted: nums.length,
+    look: items.filter((x) => needsLook(x, shape)).length,
+  }
+}
+
+/**
+ * The words for a yes/no field: [said yes, said no after a yes, a yes, a no, said no alone]:
+ * "said correct" / "did not" / "correct" / "not correct" / "did not say correct".
+ */
+export function boolWords(key: string): [string, string, string, string, string] {
+  const k = key.toLowerCase().replace(/[\s-]+/g, '_')
+  if (/^(pass|passed|ok|success|succeeded)$/.test(k)) return ['passed', 'failed', 'passed', 'failed', 'failed']
+  if (/^(match|matches|matched|exact_match)$/.test(k)) return ['matched', 'did not', 'matched', 'no match', 'did not match']
+  if (!k || k === 'value' || k === 'result') return ['were true', 'were false', 'true', 'false', 'were false']
+  const w = k.replace(/^is_/, '').replace(/_/g, ' ')
+  return [`said ${w}`, 'did not', w, `not ${w}`, `did not say ${w}`]
+}
+
+/** A number on its scale: "0.53", "2.52 out of 5". */
+export function onScale(v: number, scale: Scale | null, exact = false): string {
+  const t = Number.isInteger(v) ? String(v) : exact ? String(Number(v.toFixed(2))) : v.toFixed(2)
+  return scale && scale.max !== 1 ? `${t} out of ${scale.max}` : t
+}
+
+const numWord = (key: string | null) => (!key || key === 'value' || key === 'score' ? 'score' : key.replace(/[_.]+/g, ' '))
+
+/**
+ * One result in words, its yes/no part first: "not correct, score 5 out of 5", "4 out of 5", "0.10".
+ */
+export function scoreResultText(x: ScoreItem, shape: ScoreShape): string {
+  const p = scoreParts(x, shape)
+  const b = shape.boolKey && p.yes != null ? boolWords(shape.boolKey)[p.yes ? 2 : 3] : ''
+  const n = p.num != null ? onScale(p.num, shape.scale) : ''
+  if (b && n) return `${b}, ${numWord(shape.numKey)} ${n}`
+  return b || n || '—'
+}
+
+/** "3 are below 0.5", "one is below 3 out of 5". */
+const belowText = (n: number, shape: ScoreShape) =>
+  `${n === 1 ? 'one is' : `${n} are`} below ${onScale(shape.threshold as number, shape.scale, true)}`
+
+/**
+ * What the scorers' results say, after a sentence's count. The Scores page and a monitor both use it, so the two never disagree.
+ * One scorer: "22 said correct; 3 did not. The score averages 2.52 out of 5." / "2 are below 0.5. Goal completion averages 0.53."
+ * Several: "4 need a look. Goal completion averages 0.53; helpfulness judge: 9 of 10 said correct."
+ * The part counting what needs a look links to those results.
+ */
+export function judgementParts(js: Judgement[]): EvalPart[] {
+  const xs = js.filter((j) => j.n > 0)
+  if (!xs.length) return []
+  const lowLink = (text: string): EvalPart => ({ text, link: { kind: 'scores', filter: 'low' } })
+  /** "1 was false", "2 were false". */
+  const agree = (n: number, phrase: string) => (n === 1 ? phrase.replace(/^were /, 'was ') : phrase)
+  if (xs.length === 1) {
+    const j = xs[0]
+    const parts: EvalPart[] = []
+    if (j.shape.boolKey) {
+      const [yes, no, , , noAlone] = boolWords(j.shape.boolKey)
+      const all = (n: number) => (n === 1 ? 'It' : n === 2 ? 'Both' : `All ${n}`)
+      if (!j.no) parts.push(`${j.yes === j.n ? all(j.n) : j.yes} ${agree(j.yes, yes)}.`)
+      else if (!j.yes) parts.push(lowLink(`${j.no === j.n ? all(j.n) : j.no} ${agree(j.no, noAlone)}`), '.')
+      else parts.push(`${j.yes} ${agree(j.yes, yes)}; `, lowLink(`${j.no} ${agree(j.no, no)}`), '.')
+      if (j.mean != null && j.counted > 1) parts.push(` The ${numWord(j.shape.numKey)} averages ${onScale(j.mean, j.shape.scale)}.`)
+      return parts
+    }
+    if (j.shape.threshold != null) {
+      if (j.look) parts.push(lowLink(cap(belowText(j.look, j.shape))), '.')
+      else parts.push(`None is below ${onScale(j.shape.threshold, j.shape.scale, true)}.`)
+    }
+    if (j.mean != null && j.counted > 1) parts.push(`${parts.length ? ' ' : ''}${cap(scorerWords(j.scorer))} averages ${onScale(j.mean, j.shape.scale)}.`)
+    return parts
+  }
+  const look = xs.reduce((a, j) => a + j.look, 0)
+  const parts: EvalPart[] = look ? [lowLink(`${look === 1 ? 'One needs' : `${look} need`} a look`), '.'] : ['None needs a look.']
+  const each = [...xs]
+    .sort((a, b) => b.look / b.n - a.look / a.n || a.scorer.localeCompare(b.scorer))
+    .slice(0, 3)
+    .map((j) => {
+      if (j.shape.boolKey) return `${scorerWords(j.scorer)}: ${j.yes} of ${j.n} ${boolWords(j.shape.boolKey)[0]}`
+      if (j.mean != null && j.counted > 1) return `${scorerWords(j.scorer)} averages ${onScale(j.mean, j.shape.scale)}`
+      return ''
+    })
+    .filter(Boolean)
+  if (each.length) parts.push(` ${cap(joinClauses(each))}.`)
+  return parts
 }
 
 /** "3 sessions", "18 steps", "3 sessions and 18 steps": what the scores are on. */
@@ -516,35 +711,38 @@ function scoredSubjects(scores: ScoreLike[]): string {
   return xs.length ? ` on ${xs.join(' and ')}` : ''
 }
 
-/** The Scores sentence: "12 scores from 2 scorers on 5 sessions and 18 steps. 3 are below 0.5. Goal completion averages 0.53." */
-export function scoresSentence(scores: ScoreLike[], filtered = false): EvalPart[] {
+/** Each scorer's shape, read from all of its scores (pass every score, not a filtered few, so a filter does not change the threshold). */
+export function scoreShapes(scores: (ScoreItem & { scorer: string })[], scales: Record<string, Scale | null | undefined> = {}): Record<string, ScoreShape> {
+  const by = new Map<string, ScoreItem[]>()
+  for (const s of scores) by.set(s.scorer, [...(by.get(s.scorer) ?? []), s])
+  return Object.fromEntries([...by.entries()].map(([n, xs]) => [n, scoreShape(xs, scales[n])]))
+}
+
+/** Each scorer's judgement of the given scores, read with `shapes` (else each scorer's own shape from these scores). */
+export function judgements(scores: (ScoreItem & { scorer: string })[], shapes: Record<string, ScoreShape> = {}): Judgement[] {
+  const by = new Map<string, ScoreItem[]>()
+  for (const s of scores) by.set(s.scorer, [...(by.get(s.scorer) ?? []), s])
+  return [...by.entries()].map(([n, xs]) => judge(n, xs, shapes[n] ?? scoreShape(xs)))
+}
+
+/**
+ * The Scores sentence: "25 scores from 1 scorer on 25 steps. 22 said correct; 3 did not. The score averages 2.52 out of 5."
+ * Several scorers: "12 scores from 2 scorers on 5 sessions and 18 steps. 4 need a look. Goal completion averages 0.53; …"
+ */
+export function scoresSentence(scores: ScoreLike[], filtered = false, shapes: Record<string, ScoreShape> = {}): EvalPart[] {
   if (!scores.length) return [filtered ? 'No scores match these filters.' : 'Nothing has been scored yet.']
   const scorers = [...new Set(scores.map((s) => s.scorer))]
   const parts: EvalPart[] = [`${plural(scores.length, 'score')} from ${plural(scorers.length, 'scorer')}${scoredSubjects(scores)}${filtered ? ' match' : ''}.`]
-  const low = scores.filter((s) => s.value != null && s.value < LOW_SCORE)
-  if (low.length) {
-    const lowSessions = new Set(low.map((s) => s.session_id).filter(Boolean))
-    parts.push(' ', {
-      text: `${low.length === 1 ? 'One is' : `${low.length} are`} below ${LOW_SCORE}`,
-      link: { kind: 'scores', filter: 'low' },
-    })
-    parts.push(lowSessions.size > 1 ? `, in ${lowSessions.size} sessions.` : '.')
-  } else parts.push(` None is below ${LOW_SCORE}.`)
-  const means = scorers
-    .map((n) => {
-      const vs = scores.filter((s) => s.scorer === n && s.value != null).map((s) => s.value as number)
-      return { n, mean: vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null, count: vs.length }
-    })
-    .filter((m) => m.mean != null && m.count > 1)
-    .sort((a, b) => (a.mean as number) - (b.mean as number))
-    .slice(0, 2)
-  if (means.length) parts.push(` ${cap(joinClauses(means.map((m) => `${scorerWords(m.n)} averages ${(m.mean as number).toFixed(2)}`)))}.`)
+  const rest = judgementParts(judgements(scores, { ...scoreShapes(scores), ...shapes }))
+  if (rest.length) parts.push(' ', ...rest)
   return parts
 }
 
-/** A score row's title: "Goal completion 0.10", "Helpfulness judge 4". */
-export const scoreTitle = (s: Pick<ScoreLike, 'scorer' | 'value'>) =>
-  `${cap(scorerWords(s.scorer))} ${s.value == null ? '—' : Number.isInteger(s.value) ? String(s.value) : s.value.toFixed(2)}`
+/** A score row's title: "Goal completion 0.10", "Helpfulness judge: not correct, score 5 out of 5" (with its scorer's shape). */
+export const scoreTitle = (s: Pick<ScoreLike, 'scorer' | 'value' | 'output'>, shape?: ScoreShape) => {
+  if (shape && (shape.boolKey || shape.scale)) return `${cap(scorerWords(s.scorer))}${shape.boolKey ? ':' : ''} ${scoreResultText(s, shape)}`
+  return `${cap(scorerWords(s.scorer))} ${s.value == null ? '—' : Number.isInteger(s.value) ? String(s.value) : s.value.toFixed(2)}`
+}
 
 /**
  * The number a scorer's output stands for, as the server reads it (store.ScoreValue): a number, a boolean as 1 or 0, or in an object the
