@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isRef, spanDisplayName, parseRef, refLabel } from '../api/refs'
-import { callCost, callTokens, fmtCost, fmtDuration, getPath, preview } from './format'
+import { callCost, callTokens, fmtCost, fmtDuration, fmtRelative, getPath, preview } from './format'
 import { and, contains, eq, gt, toQuery } from './query'
 import { refUrl } from './urls'
 import { extractChat, messageText, normaliseMessage } from '../components/traces/ChatView'
@@ -129,5 +129,20 @@ describe('playground variables', async () => {
     ]
     expect(templateVars(msgs)).toEqual(['company', 'question'])
     expect(fillVars('{question} for {company} {{x}} {missing}', { question: 'Q?', company: 'Acme' })).toBe('Q? for Acme {x} {missing}')
+  })
+})
+
+describe('fmtRelative', () => {
+  const now = Date.parse('2026-11-05T12:00:00Z')
+  const ago = (ms: number) => new Date(now - ms).toISOString()
+  it.each([
+    [30_000, 'just now'],
+    [59 * 60_000 + 59_000, '59 min ago'],
+    [60 * 60_000, '1 h ago'],
+    [23 * 3_600_000 + 59 * 60_000, '23 h ago'],
+    [24 * 3_600_000, '1 day ago'],
+    [3 * 86_400_000 + 5 * 3_600_000, '3 days ago'],
+  ])('%d ms → %s', (ms, want) => {
+    expect(fmtRelative(ago(ms), now)).toBe(want)
   })
 })
