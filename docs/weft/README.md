@@ -35,6 +35,9 @@ make weft         # build bin/weft
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty; browser origins allowed to call the API. A state-changing request carrying another `Origin` is refused (403) |
 | `--allowed-hosts` | `WEFT_ALLOWED_HOSTS` | empty; host names the server answers to besides IP addresses, `localhost` and the `--addr` host name (and the SSO redirect URL's host): `weft.example.com`, `.example.com` for subdomains, `*` for any. Other `Host` headers get 421 (DNS rebinding). Set it when users reach Weft by a name, e.g. behind a reverse proxy that keeps the `Host` |
 | `--trusted-proxies` | `WEFT_TRUSTED_PROXIES` | empty; IPs or CIDRs of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Host` are believed (audit and request-log addresses, same-origin checks). Otherwise the client address is the socket peer |
+| `--max-connections` | `WEFT_MAX_CONNECTIONS` | `4096`; open client connections at most, more wait to be accepted (`0`: no limit) |
+| `--max-connections-per-ip` | `WEFT_MAX_CONNECTIONS_PER_IP` | `128`; open connections from one client address, more are closed at once; behind `--trusted-proxies`, requests in flight per client (`429`) (`0`: no limit) |
+| `--response-budget-mb` | `WEFT_RESPONSE_BUDGET_MB` | `512`; memory read responses (span, object, table and feedback lists) are built in at once, server wide. Queries wait for it, then get `503`; see [API.md](API.md#conventions) |
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info`: one line per write, ingest batch, refusal and server error; `debug` adds reads, the sessions each batch touched, turn rebuilds and how each AgentShield verdict attached. See [Logs](guides/setup.md#logs) |
 | `--log-format` | `WEFT_LOG_FORMAT` | `text` (`key=value`); `json` writes one JSON object per line |
@@ -524,7 +527,7 @@ and OAuth client secrets. Objects name them (`api_key_name`,
 | Scope | Managed by | Used by |
 |---|---|---|
 | project | members of the project | that project's objects and requests |
-| team | team admins and server admins | every project of the team |
+| team | team admins and server admins | the built-in provider routes of every project of the team; a project's own objects only toward the secret's allowed hosts |
 | server | server admins | the built-in provider routes (`openai/…`, `anthropic/…`, …) of every project; a project's own objects only toward the secret's allowed hosts |
 
 A name resolves from the narrowest scope that has it, so a project can use
@@ -548,10 +551,15 @@ scorers, models, OAuth configs and automations that name a server secret
 fail with `secret "X" is a server secret …`: store the value as a project or
 team secret (**Settings → Secrets & providers**, or
 `POST /api/v1/secrets/set`), or give the server secret allowed hosts. The
-built-in providers keep using the server keys. See
+built-in providers keep using the server keys. Team secrets follow the same
+rule: a project's own objects use one only toward its allowed hosts (the
+Settings page marks team and server secrets without any). See
 [API.md](API.md#secrets).
 
 ## Security notes
+
+The threat model, a deployment checklist and the trust boundaries that
+remain by design are in [SECURITY.md](SECURITY.md).
 
 - Without `--api-keys`, managed keys or `--oidc-issuer` the server is open to
   anyone who can reach it. It binds to loopback by default and warns loudly
@@ -561,7 +569,9 @@ built-in providers keep using the server keys. See
   visitor's browser: state-changing requests need a JSON content type and
   an allowed `Origin`, and unknown `Host` names are refused.
 - **Timeouts.** Request headers must arrive within 10 s and the whole
-  request within 2 min; idle keep-alive connections close after 2 min;
+  request within 2 min, a body at least 32 KiB every 30 s; open connections
+  are capped (`--max-connections`, `--max-connections-per-ip`); idle
+  keep-alive connections close after 2 min;
   every response write must complete within 2 min (streams and exports run
   as long as the client keeps reading). Unauthenticated requests are refused
   before their body is read.
@@ -595,9 +605,9 @@ built-in providers keep using the server keys. See
   recorded (actor, auth method, key id, method, path, project, object and
   span ids, status, outcome, client IP); bodies and secret values are not.
   Entries survive project deletion and are purged after
-  `--audit-retention-days`. Unauthenticated writes are recorded too, so a
-  flood of them grows the table until retention removes it; rate-limit at a
-  proxy if the server is exposed.
+  `--audit-retention-days`. Unauthenticated refusals are recorded at most 20
+  per client address and minute (the rest as one summary entry); rate-limit
+  at a proxy if the server is exposed.
 - **Outbound requests.** Remote scorers, webhooks, OAuth token URLs, remote
   models and provider base URLs are user input, so Weft refuses internal
   destinations (loopback, private, link-local, CGNAT, cloud metadata,

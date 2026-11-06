@@ -180,7 +180,7 @@ func (s *Server) Handler() http.Handler {
 	r.Use(s.clientAddr)  // netguard.go: --trusted-proxies
 	r.Use(s.requestLog)  // requestlog.go; also recovers panics
 	r.Use(s.clientLimit) // connlimit.go: requests in flight per client behind a proxy
-	r.Use(s.netGuard)   // netguard.go: Host, Origin, content type, write stalls
+	r.Use(s.netGuard)    // netguard.go: Host, Origin, content type, write stalls
 	if s.compat != nil {
 		r.Use(s.compat.Middleware)
 	}
@@ -352,7 +352,8 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		r = r.WithContext(s.ingestContext(r)) // sourceclaims.go
-		if isReadRequest(r) { // respbudget.go: reads are built within the response budget
+		// respbudget.go: reads are built within the response budget.
+		if isReadRequest(r) {
 			r = r.WithContext(store.WithReadMeter(r.Context(), s.newRespMeter(bs.hold)))
 		}
 		next.ServeHTTP(w, r.WithContext(s.refAccess(r)))

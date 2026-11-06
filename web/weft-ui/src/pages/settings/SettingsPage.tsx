@@ -624,7 +624,7 @@ function SecretsTab({ projectId }: { projectId: string }) {
                       </>
                     )}
                     {s && s.source === "db" && (s.scope === "team" || s.scope === "server") && s.allowed_hosts.length === 0 && (
-                      <span className="warn" title="Projects' own providers, scorers, OAuth configurations and automations can use a team or server secret only toward its allowed hosts.">
+                      <span title="Projects' own providers, scorers, OAuth configurations and automations can use a team or server secret only toward its allowed hosts.">
                         {" · built-in providers only: no allowed hosts"}
                       </span>
                     )}

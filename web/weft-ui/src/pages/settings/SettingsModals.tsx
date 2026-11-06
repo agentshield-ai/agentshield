@@ -242,7 +242,7 @@ export function SecretModal({
         </span>
       </label>
       {scope !== 'project' && parseAllowedHosts(hosts).length === 0 && (
-        <p className="hint warn" role="note">
+        <p className="callout warn" role="note">
           Without allowed hosts, a {scope} secret is used only by the built-in providers: projects’ own providers, scorers, predict models, OAuth
           configurations and automations cannot send it anywhere. Add the hosts they call.
         </p>

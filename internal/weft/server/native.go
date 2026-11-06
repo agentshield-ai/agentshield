@@ -105,8 +105,7 @@ func (s *Server) mountNative(r chi.Router) {
 var nativeReadPaths = map[string]bool{
 	"/api/v1/spans/query": true, "/api/v1/spans/stream": true, "/api/v1/spans/stats": true, "/api/v1/spans/export": true,
 	"/api/v1/spans/metrics": true, "/api/v1/spans/names": true, "/api/v1/spans/sessions": true,
-	"/api/v1/spans/sessions/sources": true,
-	"/api/v1/objects/query": true, "/api/v1/objects/tags": true, "/api/v1/objects/aliases": true,
+	"/api/v1/spans/sessions/sources": true, "/api/v1/objects/query": true, "/api/v1/objects/tags": true, "/api/v1/objects/aliases": true,
 	"/api/v1/tables/query": true, "/api/v1/tables/stream": true, "/api/v1/tables/stats": true,
 	"/api/v1/feedback/query": true, "/api/v1/files/resolve": true, "/api/v1/refs/read": true, "/api/v1/prices/query": true,
 	"/api/v1/evaluations/compare": true, "/api/v1/leaderboards/compute": true, "/api/v1/registry/query": true,

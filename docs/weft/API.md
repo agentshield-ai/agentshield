@@ -45,7 +45,8 @@ the UI.
 - **Attribution.** The user recorded on spans, feedback, objects, queues
   and settings is the authenticated user (a session, a user's API key, a
   named static key); a body `user_id` or `X-Weft-User` header counts only
-  on open servers and with unnamed static keys.
+  on open servers and with unnamed static keys. The same holds for a
+  feedback's `creator`: for an authenticated caller it is the caller.
 - **project_id** is `"<entity>/<project>"`. A bare `"<project>"` is
   normalised to `"default/<project>"`. Projects are created implicitly on
   first write. A new project's entity and name may not contain `"`, `;`,
@@ -59,8 +60,24 @@ the UI.
   item per line, no wrapper. They read the first page before writing, so an
   invalid request still gets a proper error status, then write page by page;
   a client that does not take a page within 30 seconds is cut off. They take
-  the list's body and have no default limit. `/api/v1/spans/query` refuses
-  (`400`) a page whose spans hold more than 64 MiB: lower `limit` or stream.
+  the list's body and have no default limit.
+- **Response size.** Read responses are built within a server-wide memory
+  budget (`--response-budget-mb`, default 512 MiB; a row costs about twice
+  its stored size). A list or query (`spans/query`, `objects/query`,
+  `tables/query`, `feedback/query`) whose page holds more than 64 MiB stored
+  is refused with `400` (lower `limit`, set `metadata_only`, or use the
+  stream); `spans/query` and `objects/query` check the page's size before
+  loading it. A request that needs more than the whole budget gets `400`;
+  one that waits more than 10 s for budget others hold gets `503` (retry).
+  Streams and exports release each page once written, and read smaller
+  pages when one page would not fit.
+- **Connections.** At most `--max-connections` (default 4096) client
+  connections are open; more wait to be accepted. One client address may
+  hold at most `--max-connections-per-ip` (default 128); more are closed at
+  once. Behind `--trusted-proxies` the per-address cap applies to requests in
+  flight per client instead (`429`). A request body must keep arriving: at
+  least 32 KiB every 30 s (or all of it), else the read fails (`400`) and
+  the connection closes; the whole request must arrive within 2 minutes.
 - **Timestamps** are RFC 3339 strings with up to nanosecond precision, UTC.
 - **IDs**: SDK spans use UUIDv7 strings for `id` and `trace_id`. OTLP spans
   use the hex span id (16 chars) and hex trace id (32 chars).
@@ -234,6 +251,8 @@ from OTLP ([OpenTelemetry ingest](#opentelemetry-ingest)).
 | `POST /api/v1/spans/metrics` | MetricsQuery | chart series ([Metrics](#post-apiv1spansmetrics)) |
 | `POST /api/v1/spans/names` | `{project_id, trace_roots_only?}` | `{"items": [{"name","base_name","count","error_count","last_started_at"}], "total_count"}`, one per span name |
 | `POST /api/v1/spans/score` | `{project_id, ids, scorer_refs, user_id?}` (1–100 spans, 1–10 server-runnable scorers) | `{"items": [{"span_id","scorer","output","scorer_span_id","feedback_id","error"?}]}`; each result is also stored as `weft.scorer.<scorer>` feedback on the span |
+| `POST /api/v1/spans/sessions/sources` | `{project_id, session_id}` | `{"session_id","sources": [{"source","rank","spans","hidden"}],"ignore_plugin_claims"}`: the session's ranked sources ([Session sources](#session-sources)), highest first |
+| `POST /api/v1/spans/sessions/sources/restore` | `{project_id, session_id, ignore_plugin_claims? (true)}` | the same, with `"restored": n`. **Project admin.** Stops honouring plugin source claims for the session and shows its hidden spans again; `false` honours later claims again |
 | `POST /api/v1/spans/sessions` | `{project_id, filter?: {started_after?, started_before?, session_ids?}, sort_by?: [{field: last_updated\|started_at\|turn_count\|span_count\|total_tokens, direction}], limit?, offset?}` | `{"items": [{"session_id","turn_count","span_count","started_at","last_updated","first_turn_id","last_turn_id","p50_turn_duration_ms","p99_turn_duration_ms","total_tokens","cost_usd"}], "total_count"}` |
 
 `/api/v1/spans/sessions` groups spans by `session_id` without the agent
@@ -656,15 +675,20 @@ project; `""` for server), `"kind": "secret"|"bucket", "allowed_hosts":
   secrets and `kind: "bucket"` (reference-bucket credentials, server scope
   only) a server admin; otherwise 403.
 - **Resolution.** An object of project `e/p` that names a secret gets the
-  narrowest of `e/p`'s, team `e`'s and the server's. A **server** secret is
-  used by the built-in provider routes for every project; a project's own
-  objects (Provider `api_key_name`, RemoteScorer `headers_secret` and
-  `auth_config.*`, `predict_api_key_secret`, runtime `api_key_secret`,
-  OAuth `client_secret_secret`, automation `url_secret`) get it only when
-  it has `allowed_hosts` and the request goes to one of them, or while
-  every principal of the server is a server admin (no auth, static keys,
-  admin managed keys only, no SSO). Bucket credentials are never resolved
-  for objects. A refusal is an error naming the secret (never its value).
+  narrowest of `e/p`'s, team `e`'s and the server's. **Server** and
+  **team** secrets are used by the built-in provider routes for every
+  project that sees them; a project's own objects (Provider `api_key_name`,
+  RemoteScorer `headers_secret` and `auth_config.*`,
+  `predict_api_key_secret`, runtime `api_key_secret`, OAuth
+  `client_secret_secret`, automation `url_secret`) get one only when it has
+  `allowed_hosts` and the request goes to one of them, or while every
+  principal of the server is a server admin (no auth, static keys, admin
+  managed keys only, no SSO). Project secrets need no allowed hosts in
+  their own project. Bucket credentials are never resolved for objects. A
+  refusal is an error naming the secret (never its value); scope is checked
+  before the value is read, and every problem with a URL-valued secret's
+  value gets the same error, so a refusal says nothing about what a secret
+  holds.
 - **Allowed hosts.** `host`, `host:port` (IPv6 in brackets) or `*.domain`
   (subdomains only). With a list, the secret is sent only there; a
   URL-valued secret (`url_secret`, a stored `OPENAI_BASE_URL`) must point
@@ -683,7 +707,9 @@ project; `""` for server), `"kind": "secret"|"bucket", "allowed_hosts":
   secrets of the projects and teams where they are a member (403 if none).
 - Errors for a URL-valued secret (webhook) never contain the URL; an
   automation's `headers` must be valid HTTP header names and values
-  (checked by `/automations/validate` and before every delivery).
+  (checked by `/automations/validate` and before every delivery). Webhooks
+  do not follow redirects: a `3xx` answer is a failed delivery (`webhook
+  answered with a redirect`).
 
 Provider responses are limited after decompression (completion 16 MiB,
 stream 64 MiB with 16 MiB of accumulated content, embeddings 128 MiB,
@@ -1037,10 +1063,25 @@ sources (set when spans are rebuilt from log events), and the span API and
 the adapter's routes only a plugin source (`weft-claude-code`,
 `weft-codex`), and only when the request sends `X-Weft-Source: <source>`,
 as the Weft plugins do. Any other ranked claim is kept as
-`weft.claimed_source` and does not rank. The header is a declaration, not
-proof: a credential that may write to the project can send it, so a
-project writer can still choose how a session is shown, but cannot make
-data disappear (outranked spans stay stored) and every switch is audited.
+`weft.claimed_source` and does not rank.
+
+**Any project writer can claim a plugin source.** The header is a
+declaration, not proof: any credential with write access to the project
+(the member role, or a write key) can send it, and one span claiming
+`weft-claude-code` or `weft-codex`, with or without content, hides the
+session's native spans. What bounds a false claim:
+
+- nothing is dropped: outranked spans stay stored, hidden, and every switch
+  is logged and audited;
+- deleting the claiming spans (`POST /api/v1/spans/delete`) shows the
+  session again from the highest-ranked source it still has, hidden spans
+  included (hidden spans a deletion names itself stay deleted);
+- a project admin can restore a session
+  (`POST /api/v1/spans/sessions/sources/restore`, or **Show the hidden
+  spans again** under **Raw spans → Sources** on the session page): its
+  plugin spans keep their content but lose their rank (their source moves
+  to `weft.claimed_source`), later plugin claims for that session are not
+  honoured, and its hidden spans are shown again.
 
 Framework layouts (checked after `input.value` / `output.value`):
 

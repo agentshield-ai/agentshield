@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-//go:embed README.md API.md DESIGN.md COMPATIBILITY.md guides/*.md
+//go:embed README.md API.md DESIGN.md COMPATIBILITY.md SECURITY.md guides/*.md
 var files embed.FS
 
 // Kinds of guide.
@@ -39,7 +39,7 @@ var titleRe = regexp.MustCompile(`(?m)^#\s+(.+)$`)
 var order = map[string]int{
 	"setup.md": 0, "sessions.md": 1, "agents.md": 2, "teams.md": 3, "security.md": 4, "traces.md": 5,
 	"evaluations.md": 6, "filters.md": 7, "project.md": 8,
-	"README.md": 100, "API.md": 101, "DESIGN.md": 102, "COMPATIBILITY.md": 103,
+	"README.md": 100, "API.md": 101, "DESIGN.md": 102, "COMPATIBILITY.md": 103, "SECURITY.md": 104,
 }
 
 func rank(g Guide) int {
