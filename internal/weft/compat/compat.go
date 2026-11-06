@@ -35,6 +35,7 @@ package compat
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -42,6 +43,7 @@ import (
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/compat/legacy"
+	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -212,14 +214,17 @@ func agentsPath(p string) bool { return strings.HasPrefix(p, "/agents/") }
 // adapter's routes from legacy names to Weft's. The server calls it once
 // the caller is authenticated and before its projects are authorised.
 // Compressed and non-JSON bodies, and Weft's own API, are left alone.
-func RewriteRequestBody(r *http.Request) error {
+// limit is the most bytes the route accepts; the body is read through
+// the server-wide body budget (otlp.ReadBodyBudget), its reservation held
+// until the request ends (WithBodyHold).
+func RewriteRequestBody(r *http.Request, limit int64) error {
 	if NativePath(r.URL.Path) {
 		return nil
 	}
-	return rewriteRequestBody(r)
+	return rewriteRequestBody(r, limit)
 }
 
-func rewriteRequestBody(r *http.Request) error {
+func rewriteRequestBody(r *http.Request, limit int64) error {
 	if r.Body == nil || r.Body == http.NoBody {
 		return nil
 	}
@@ -230,14 +235,14 @@ func rewriteRequestBody(r *http.Request) error {
 	if ct != "" && !strings.Contains(ct, "json") {
 		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRewrite+1))
+	if limit <= 0 || limit > maxRewrite {
+		limit = maxRewrite
+	}
+	body, res, err := otlp.ReadBodyBudget(r.Context(), http.MaxBytesReader(nil, r.Body, limit+1), "", limit)
 	if err != nil {
 		return err
 	}
-	if len(body) > maxRewrite {
-		r.Body = readCloser{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
-		return nil
-	}
+	holdBody(r, res)
 	_ = r.Body.Close()
 	body = RewriteRequest(r.URL.Path, body)
 	r.Body = io.NopCloser(bytes.NewReader(body))
@@ -246,9 +251,22 @@ func rewriteRequestBody(r *http.Request) error {
 	return nil
 }
 
-type readCloser struct {
-	io.Reader
-	io.Closer
+type bodyHoldKey struct{}
+
+// WithBodyHold makes the adapter hand its body-budget reservations to hold,
+// which releases them when the request ends.
+func WithBodyHold(ctx context.Context, hold func(*otlp.Reservation)) context.Context {
+	return context.WithValue(ctx, bodyHoldKey{}, hold)
+}
+
+// holdBody keeps res until the request ends, or releases it now when
+// nothing holds it.
+func holdBody(r *http.Request, res *otlp.Reservation) {
+	if hold, ok := r.Context().Value(bodyHoldKey{}).(func(*otlp.Reservation)); ok {
+		hold(res)
+		return
+	}
+	res.Release()
 }
 
 // RewriteRequest translates a JSON request body from legacy names to Weft's.

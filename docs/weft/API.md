@@ -1169,6 +1169,7 @@ is all input columns as JSON; `{output}` is the output text.
 {"_class_name":"ValidXMLScorer", …}                                  // → bool: one well-formed root element
 {"_class_name":"JSONSchemaScorer", … "schema": {...}}                // → bool. Supports type, enum, const, properties, required,
     // additionalProperties, items, min/maxItems, min/maxLength, pattern, minimum/maximum, exclusiveMinimum/Maximum, allOf/anyOf/oneOf, not
+    // Limits (an error result above them): schema 256 KiB, depth 64, 20k objects/arrays, 512 patterns; output 4 MiB; 2M validation steps.
 {"_class_name":"OpenAIModerationScorer", …, "model"?: "omni-moderation-latest"}  // → {"flagged": bool, "categories": {name: true}}; OPENAI_API_KEY secret;
     // "model": "mock/moderation" flags a few words offline (Weft extension)
 {"_class_name":"EmbeddingSimilarityScorer", … "target_column":"expected", "model":"text-embedding-3-small"}
@@ -1356,7 +1357,8 @@ the project settings below). Static keys count as admin.
   segment is a read (`query`, `read`, `stats`, `search`, `list`, `compare`,
   `compute`, `status`, `export`, `metrics`, `preview`, …).
   `/automations/check` is a write: it fires webhooks and records runs.
-- **Admin only:** `/secrets/set|delete`, `/project/delete`,
+- **Admin only:** `/secrets/set|delete` (server secrets; project and team
+  secrets go through `/api/v1/secrets/*`, see [Secrets](#secrets)), `/project/delete`,
   `/project/*/update`, `/project/ttl_settings/purge`. Keys bound to a user
   (see [Users, teams and roles](#users-teams-and-roles)) take their access
   from the user's roles instead of these flags, and can manage their own keys.
@@ -1815,7 +1817,9 @@ Weft has users, teams and three roles:
   one project. The effective role is the stronger of the two.
 - A **server admin** (`users.admin`) is admin of every project and alone may
   manage users and teams (`/users/create|update|revoke_sessions`,
-  `/teams/create|delete`) and provider secrets (`/secrets/set|delete`).
+  `/teams/create|delete`) and server secrets (`/secrets/set|delete`;
+  project members manage project secrets and team admins team secrets,
+  see [Secrets](#secrets)).
   Static `--api-keys` keys and managed admin keys are server admins.
 - **API keys belong to users.** A key created with a `user_id` that names a
   user is bound to it (`"user_bound": true`) and carries that user's roles,
@@ -2003,7 +2007,7 @@ S3/GCS files backend (`--s3-endpoint`, `--files-backend`).
 ### Database encryption at rest
 
 Opt-in. Without a key the SQLite database is a plaintext file (driver
-`modernc.org/sqlite`) and only provider secrets inside it are AES-256-GCM
+`modernc.org/sqlite`) and only the secrets inside it are AES-256-GCM
 encrypted. With `--db-encryption-key-file` / `WEFT_DB_ENCRYPTION_KEY_FILE`
 (or `--db-encryption-key` / `WEFT_DB_ENCRYPTION_KEY`) the server opens the
 database through `github.com/ncruces/go-sqlite3` and its `adiantum` VFS: the

@@ -243,12 +243,19 @@ func (s *Server) v1SpanBatch(ctx context.Context, r *http.Request, req *spanBatc
 			res[i] = map[string]any{"id": st.ID, "trace_id": st.TraceID}
 		}
 	}
+	ctx, stats := store.WithIngestStats(ctx)
 	ended, err := s.store.UpsertBatch(ctx, items)
 	if err != nil {
 		return nil, err
 	}
 	s.engine.Notify(ended)
-	return map[string]any{"items": res}, nil
+	out := map[string]any{"items": res}
+	if stats.SpansDropped > 0 {
+		// Stored but hidden: their session is shown from a higher-ranked
+		// source (store/sources.go).
+		out["hidden"] = stats.SpansDropped
+	}
+	return out, nil
 }
 
 // spansFilter is the native filter of span queries.

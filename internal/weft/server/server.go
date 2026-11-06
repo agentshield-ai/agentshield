@@ -323,7 +323,10 @@ type ctxKey struct{}
 // the caller is authenticated (prepareBody).
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(context.WithValue(r.Context(), bodyStateKey{}, &bodyState{}))
+		bs := &bodyState{}
+		defer bs.release() // body-budget reservations end with the request
+		ctx := context.WithValue(r.Context(), bodyStateKey{}, bs)
+		r = r.WithContext(compat.WithBodyHold(ctx, bs.hold))
 		if r = s.authenticate(w, r); r == nil {
 			return
 		}
@@ -346,15 +349,13 @@ const maxJSONBody = 64 << 20
 // request's project guard (projectguard.go): authorisation at use.
 func decodeBody(r *http.Request, v any) error {
 	var body []byte
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Body != nil {
-		var err error
-		body, err = otlp.ReadBody(http.MaxBytesReader(nil, r.Body, bodyLimit(r)), r.Header.Get("Content-Encoding"))
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		b, release, err := readJSONBody(r) // admin.go: size caps and the body budget
+		defer release()
 		if err != nil {
-			if isBodyTooLarge(err) {
-				return &requestError{code: http.StatusRequestEntityTooLarge, msg: fmt.Sprintf("request body too large (at most %d MiB here)", bodyLimit(r)>>20)}
-			}
-			return store.Invalidf("reading body: %v", err)
+			return err
 		}
+		body = b
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		body = []byte("{}")

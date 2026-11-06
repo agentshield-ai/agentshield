@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -336,11 +337,65 @@ func normalizedProjects(raw []string) []string {
 
 type bodyStateKey struct{}
 
-// bodyState tracks, per authenticated request, whether prepareBody ran.
+// bodyState tracks, per authenticated request, whether prepareBody ran,
+// the body it read, and the body-budget reservations held until the
+// request ends (otlp.ReadBodyBudget).
 type bodyState struct {
 	prepared bool
 	body     []byte // the decompressed JSON body, once read
 	read     bool
+	mu       sync.Mutex
+	held     []*otlp.Reservation
+}
+
+// hold keeps res until the request ends (release).
+func (st *bodyState) hold(res *otlp.Reservation) {
+	st.mu.Lock()
+	st.held = append(st.held, res)
+	st.mu.Unlock()
+}
+
+func (st *bodyState) release() {
+	st.mu.Lock()
+	held := st.held
+	st.held = nil
+	st.mu.Unlock()
+	for _, r := range held {
+		r.Release()
+	}
+}
+
+// decodeCostPerValue estimates the memory of one decoded JSON value, as
+// the OTLP decoder does (otlp/limits.go).
+const decodeCostPerValue = 160
+
+// readJSONBody reads r's body (decompressed, at most bodyLimit(r) bytes,
+// at a bounded compression ratio) through the server-wide body budget and
+// reserves its estimated decoded size too (otlp.ReadBodyBudget: waits,
+// then 503). The reservation is held until the request ends when it runs
+// under auth; otherwise release must be called.
+func readJSONBody(r *http.Request) (body []byte, release func(), err error) {
+	if r.Body == nil || r.Body == http.NoBody {
+		return nil, func() {}, nil
+	}
+	limit := bodyLimit(r)
+	body, res, err := otlp.ReadBodyBudget(r.Context(), http.MaxBytesReader(nil, r.Body, limit+1), r.Header.Get("Content-Encoding"), limit)
+	if err != nil {
+		code := otlp.BodyStatus(err)
+		if code == http.StatusBadRequest {
+			return nil, func() {}, badRequest("reading body: %v", err)
+		}
+		return nil, func() {}, &requestError{code: code, msg: fmt.Sprintf("request body refused: %v (at most %d MiB here)", err, limit>>20)}
+	}
+	if err := res.Grow(r.Context(), otlp.JSONValues(body)*decodeCostPerValue); err != nil {
+		res.Release()
+		return nil, func() {}, &requestError{code: otlp.BodyStatus(err), msg: err.Error()}
+	}
+	if st, _ := r.Context().Value(bodyStateKey{}).(*bodyState); st != nil {
+		st.hold(res)
+		return body, func() {}, nil
+	}
+	return body, res.Release, nil
 }
 
 // prepareBody runs once the caller is authenticated and before its
@@ -354,7 +409,10 @@ func (s *Server) prepareBody(r *http.Request) error {
 	}
 	st.prepared = true
 	if s.compat != nil {
-		if err := compat.RewriteRequestBody(r); err != nil {
+		if err := compat.RewriteRequestBody(r, bodyLimit(r)); err != nil {
+			if code := otlp.BodyStatus(err); code != http.StatusBadRequest {
+				return &requestError{code: code, msg: err.Error()}
+			}
 			return badRequest("reading body: %v", err)
 		}
 	}
@@ -382,13 +440,10 @@ func readBodyOnce(r *http.Request) ([]byte, error) {
 	if st != nil && st.read {
 		return st.body, nil
 	}
-	limit := bodyLimit(r)
-	body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, limit), r.Header.Get("Content-Encoding"))
+	body, release, err := readJSONBody(r)
+	defer release()
 	if err != nil {
-		if isBodyTooLarge(err) {
-			return nil, &requestError{code: http.StatusRequestEntityTooLarge, msg: "request body too large"}
-		}
-		return nil, badRequest("reading body: %v", err)
+		return nil, err
 	}
 	r.Header.Del("Content-Encoding")
 	r.Body = io.NopCloser(bytes.NewReader(body))

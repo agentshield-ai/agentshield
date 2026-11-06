@@ -625,7 +625,6 @@ func TestSourceClaimsAndHiding(t *testing.T) {
 		t.Fatalf("decoy attributes = %v", sp["attributes"])
 	}
 	// Claiming a native source on the span API has no effect either.
-	_ = logSpan
 	traces := map[string]any{"span": map[string]any{"id": "fake-traces", "trace_id": "ft", "name": "turn", "session_id": sess,
 		"attributes": map[string]any{"weft": map[string]any{"source": "claude-code-otel-traces"}}}}
 	e.mustCode(200, "POST", "/api/v1/spans/batch", k, map[string]any{"project_id": "m/own", "items": []any{traces}})
@@ -656,6 +655,14 @@ func TestSourceClaimsAndHiding(t *testing.T) {
 		t.Fatalf("after the plugin: %v", l)
 	}
 	put("native2", store.SourceClaudeCodeLogs)
+	// A native source claimed on the span API does not rank, so it is
+	// neither hidden nor hiding.
+	if res := e.admJSON("POST", "/api/v1/spans/batch", "root", map[string]any{"project_id": "m/own", "items": []any{logSpan("low2")}}); res["hidden"] != nil {
+		t.Fatalf("hidden count in the response: %v", res)
+	}
+	if l := live(); !l["low2"] || !l["plug1"] {
+		t.Fatalf("after an unranked span: %v", l)
+	}
 	var n int
 	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM calls WHERE project_id = 'm/own' AND id IN ('native1','native2') AND deleted_at IS NOT NULL
 		AND json_extract(attributes, '$.weft.hidden_by_source') IS NOT NULL`).Scan(&n); err != nil || n != 2 {

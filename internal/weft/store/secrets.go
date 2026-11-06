@@ -272,7 +272,7 @@ func (s *Store) SetSecretKey(ctx context.Context, key []byte) error {
 		return err
 	}
 	type row struct {
-		id                           int64
+		id                            int64
 		scope, scopeID, name, kind, v string
 	}
 	var legacy []row

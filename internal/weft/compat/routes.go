@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -289,7 +290,7 @@ func (s *Routes) serveNative(w http.ResponseWriter, r *http.Request, method, pat
 		r2.URL.RawQuery = query.Encode()
 	}
 	if body != nil {
-		r2.Body = readCloser{bytes.NewReader(body), http.NoBody}
+		r2.Body = io.NopCloser(bytes.NewReader(body))
 		r2.ContentLength = int64(len(body))
 		r2.Header.Del("Content-Length")
 		r2.Header.Del("Content-Encoding")
@@ -445,6 +446,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	var inv *store.InvalidError
 	var fe *store.ForbiddenError
 	switch {
+	case otlp.BodyStatus(err) != http.StatusBadRequest:
+		writeError(w, otlp.BodyStatus(err), err.Error())
 	case errors.As(err, &inv):
 		writeError(w, http.StatusBadRequest, inv.Msg)
 	case errors.As(err, &fe):
@@ -478,10 +481,18 @@ func pathParam(r *http.Request, name string) string {
 }
 
 // readBody reads a (possibly compressed) request body.
+// It goes through the server-wide body budget (otlp.ReadBodyBudget).
 func readBody(r *http.Request) ([]byte, error) {
-	body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, maxJSONBody), r.Header.Get("Content-Encoding"))
+	if r.Body == nil || r.Body == http.NoBody {
+		return nil, nil
+	}
+	body, res, err := otlp.ReadBodyBudget(r.Context(), http.MaxBytesReader(nil, r.Body, maxJSONBody+1), r.Header.Get("Content-Encoding"), maxJSONBody)
 	if err != nil {
+		if otlp.BodyStatus(err) != http.StatusBadRequest {
+			return nil, err // 413 or 503 (writeErr)
+		}
 		return nil, store.Invalidf("reading body: %v", err)
 	}
+	holdBody(r, res)
 	return body, nil
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
@@ -154,6 +155,10 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 }
 
 func writeStoreErr(w http.ResponseWriter, err error) {
+	if code := otlp.BodyStatus(err); code != http.StatusBadRequest {
+		writeError(w, code, err.Error())
+		return
+	}
 	var inv *store.InvalidError
 	if ok := asInvalid(err, &inv); ok {
 		writeError(w, http.StatusBadRequest, inv.Msg)

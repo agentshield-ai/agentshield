@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -70,12 +69,6 @@ func bodyLimit(r *http.Request) int64 {
 		return maxReadBody
 	}
 	return maxJSONBody
-}
-
-// isBodyTooLarge reports an error from http.MaxBytesReader.
-func isBodyTooLarge(err error) bool {
-	var mb *http.MaxBytesError
-	return errors.As(err, &mb)
 }
 
 // ---------------------------------------------------------------- probe

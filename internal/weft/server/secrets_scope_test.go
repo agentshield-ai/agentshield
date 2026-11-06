@@ -168,7 +168,7 @@ func TestSecretsListScoped(t *testing.T) {
 		var res struct {
 			Secrets []struct {
 				Name, Scope, Source string
-				AllowedHosts       []string `json:"allowed_hosts"`
+				AllowedHosts        []string `json:"allowed_hosts"`
 			}
 		}
 		_ = json.Unmarshal(e.mustCode(200, "GET", path+"?project_id=acme/app", f.bob, nil), &res)

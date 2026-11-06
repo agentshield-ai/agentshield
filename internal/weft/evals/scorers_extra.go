@@ -220,7 +220,7 @@ func parseJSONOutput(output any) (any, bool) {
 	return v, true
 }
 
-func scoreJSONSchema(_ *Engine, _ context.Context, _ string, val, _ map[string]any, output any, _ *callRec, _ map[string]any) (any, error) {
+func scoreJSONSchema(_ *Engine, ctx context.Context, _ string, val, _ map[string]any, output any, _ *callRec, _ map[string]any) (any, error) {
 	schema := val["schema"]
 	if s, ok := schema.(string); ok {
 		v, err := refs.Decode([]byte(s))
@@ -233,19 +233,147 @@ func scoreJSONSchema(_ *Engine, _ context.Context, _ string, val, _ map[string]a
 	if !ok {
 		return nil, fmt.Errorf("JSONSchemaScorer needs a schema object")
 	}
+	if err := checkSchemaSize(sm); err != nil {
+		return nil, err
+	}
 	v, ok := parseJSONOutput(output)
 	if !ok {
 		return false, nil
 	}
-	return len(validateSchema(sm, v, "$", nil)) == 0, nil
+	if b, err := json.Marshal(jsonSafe(v)); err != nil || len(b) > MaxSchemaValueBytes {
+		return nil, fmt.Errorf("JSONSchemaScorer: the output is larger than %d bytes", MaxSchemaValueBytes)
+	}
+	sv := newSchemaValidator(ctx)
+	errs := sv.validate(sm, v, "$", nil)
+	if sv.err != nil {
+		return nil, sv.err
+	}
+	return len(errs) == 0, nil
 }
 
-// validateSchema checks the commonly used JSON Schema keywords: type, enum,
+// Limits of JSONSchemaScorer: validating can cost the schema's size times
+// the value's (anyOf/oneOf/not re-validate subtrees), so both are bounded
+// and the work is counted; above a limit the scorer returns an error.
+var (
+	MaxSchemaBytes      = 256 << 10 // the schema, as JSON
+	MaxSchemaDepth      = 64        // nesting of the schema
+	MaxSchemaNodes      = 20000     // objects and arrays in the schema
+	MaxSchemaValueBytes = 4 << 20   // the output checked, as JSON
+	MaxSchemaSteps      = 2_000_000 // validation steps (subschema visits and 1 KiB of pattern input)
+	MaxSchemaPatterns   = 512       // distinct pattern regexes
+	maxSchemaErrors     = 100       // errors collected (the scorer needs only "any")
+	maxSchemaPatternLen = 4096
+)
+
+// checkSchemaSize refuses schemas above MaxSchemaBytes, MaxSchemaDepth or
+// MaxSchemaNodes.
+func checkSchemaSize(schema map[string]any) error {
+	if b, err := json.Marshal(jsonSafe(schema)); err != nil || len(b) > MaxSchemaBytes {
+		return fmt.Errorf("JSONSchemaScorer: the schema is larger than %d bytes", MaxSchemaBytes)
+	}
+	nodes := 0
+	var walk func(v any, depth int) error
+	walk = func(v any, depth int) error {
+		if depth > MaxSchemaDepth {
+			return fmt.Errorf("JSONSchemaScorer: the schema is nested deeper than %d levels", MaxSchemaDepth)
+		}
+		switch x := v.(type) {
+		case map[string]any:
+			if nodes++; nodes > MaxSchemaNodes {
+				return fmt.Errorf("JSONSchemaScorer: the schema has more than %d objects and arrays", MaxSchemaNodes)
+			}
+			for _, c := range x {
+				if err := walk(c, depth+1); err != nil {
+					return err
+				}
+			}
+		case []any:
+			if nodes++; nodes > MaxSchemaNodes {
+				return fmt.Errorf("JSONSchemaScorer: the schema has more than %d objects and arrays", MaxSchemaNodes)
+			}
+			for _, c := range x {
+				if err := walk(c, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(schema, 0)
+}
+
+// schemaValidator validates one value against one schema with a step budget,
+// cancellation and a cache of compiled patterns.
+type schemaValidator struct {
+	ctx      context.Context
+	patterns map[string]*regexp.Regexp // nil value: the pattern does not compile
+	steps    int
+	err      error
+}
+
+func newSchemaValidator(ctx context.Context) *schemaValidator {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &schemaValidator{ctx: ctx, patterns: map[string]*regexp.Regexp{}}
+}
+
+// spend counts n steps; it records an error (and returns false) once the
+// budget is used up or the context is done.
+func (sv *schemaValidator) spend(n int) bool {
+	if sv.err != nil {
+		return false
+	}
+	before := sv.steps
+	sv.steps += n
+	if sv.steps > MaxSchemaSteps {
+		sv.err = fmt.Errorf("JSONSchemaScorer: validation needs more than %d steps; simplify the schema or the output", MaxSchemaSteps)
+		return false
+	}
+	if before/1024 != sv.steps/1024 {
+		if err := sv.ctx.Err(); err != nil {
+			sv.err = err
+			return false
+		}
+	}
+	return true
+}
+
+func (sv *schemaValidator) pattern(p string) *regexp.Regexp {
+	if re, ok := sv.patterns[p]; ok {
+		return re
+	}
+	if len(sv.patterns) >= MaxSchemaPatterns {
+		sv.err = fmt.Errorf("JSONSchemaScorer: the schema has more than %d patterns", MaxSchemaPatterns)
+		return nil
+	}
+	var re *regexp.Regexp
+	if len(p) <= maxSchemaPatternLen {
+		re, _ = regexp.Compile(p) // an invalid pattern is ignored, as before
+	}
+	sv.patterns[p] = re
+	return re
+}
+
+// validateSchema checks v against schema with the default limits (tests).
+func validateSchema(schema map[string]any, v any, path string, errs []string) []string {
+	return newSchemaValidator(context.Background()).validate(schema, v, path, errs)
+}
+
+// validate checks the commonly used JSON Schema keywords: type, enum,
 // const, properties, required, additionalProperties, items, min/maxItems,
 // min/maxLength, pattern, minimum/maximum, exclusiveMinimum/Maximum,
-// anyOf, oneOf, allOf and not.
-func validateSchema(schema map[string]any, v any, path string, errs []string) []string {
-	add := func(format string, args ...any) { errs = append(errs, path+": "+fmt.Sprintf(format, args...)) }
+// anyOf, oneOf, allOf and not. It stops (sv.err set) when the step budget
+// is spent or the context is done.
+func (sv *schemaValidator) validate(schema map[string]any, v any, path string, errs []string) []string {
+	if !sv.spend(1) || len(errs) >= maxSchemaErrors {
+		return errs
+	}
+	add := func(format string, args ...any) {
+		if len(errs) < maxSchemaErrors {
+			errs = append(errs, path+": "+fmt.Sprintf(format, args...))
+		}
+	}
 	if t, ok := schema["type"]; ok {
 		types := []string{}
 		switch tt := t.(type) {
@@ -278,6 +406,7 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 				break
 			}
 		}
+		sv.spend(len(en))
 		if !found {
 			add("value is not one of the allowed values")
 		}
@@ -303,8 +432,11 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
+			if sv.err != nil {
+				return errs
+			}
 			if ps, ok := props[k].(map[string]any); ok {
-				errs = validateSchema(ps, x[k], path+"."+k, errs)
+				errs = sv.validate(ps, x[k], path+"."+k, errs)
 				continue
 			}
 			switch ap := schema["additionalProperties"].(type) {
@@ -313,7 +445,7 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 					add("unexpected property %q", k)
 				}
 			case map[string]any:
-				errs = validateSchema(ap, x[k], path+"."+k, errs)
+				errs = sv.validate(ap, x[k], path+"."+k, errs)
 			}
 		}
 	case []any:
@@ -325,7 +457,10 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 		}
 		if is, ok := schema["items"].(map[string]any); ok {
 			for i, it := range x {
-				errs = validateSchema(is, it, fmt.Sprintf("%s[%d]", path, i), errs)
+				if sv.err != nil {
+					return errs
+				}
+				errs = sv.validate(is, it, fmt.Sprintf("%s[%d]", path, i), errs)
 			}
 		}
 	case string:
@@ -337,7 +472,7 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 			add("longer than %v characters", m)
 		}
 		if p, ok := schema["pattern"].(string); ok {
-			if re, err := regexp.Compile(p); err == nil && !re.MatchString(x) {
+			if re := sv.pattern(p); re != nil && sv.spend(len(x)/1024) && !re.MatchString(x) {
 				add("does not match pattern %q", p)
 			}
 		}
@@ -360,14 +495,14 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 	if all, ok := schema["allOf"].([]any); ok {
 		for _, s := range all {
 			if sm, ok := s.(map[string]any); ok {
-				errs = validateSchema(sm, v, path, errs)
+				errs = sv.validate(sm, v, path, errs)
 			}
 		}
 	}
 	countMatches := func(list []any) int {
 		n := 0
 		for _, s := range list {
-			if sm, ok := s.(map[string]any); ok && len(validateSchema(sm, v, path, nil)) == 0 {
+			if sm, ok := s.(map[string]any); ok && len(sv.validate(sm, v, path, nil)) == 0 && sv.err == nil {
 				n++
 			}
 		}
@@ -379,7 +514,7 @@ func validateSchema(schema map[string]any, v any, path string, errs []string) []
 	if oneOf, ok := schema["oneOf"].([]any); ok && countMatches(oneOf) != 1 {
 		add("must match exactly one of oneOf")
 	}
-	if not, ok := schema["not"].(map[string]any); ok && len(validateSchema(not, v, path, nil)) == 0 {
+	if not, ok := schema["not"].(map[string]any); ok && len(sv.validate(not, v, path, nil)) == 0 && sv.err == nil {
 		add("must not match the schema in not")
 	}
 	return errs

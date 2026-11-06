@@ -26,8 +26,17 @@ an internal one.
 
 - **Members** and **API keys:** who can see the project and change it, and
   the keys SDKs, plugins and AgentShield use to send data.
-- **Secrets & providers:** provider keys for the playground, LLM judges and
-  monitors. They are stored encrypted and never shown again.
+- **Secrets & providers:** provider keys, webhook URLs and other
+  credentials for the playground, LLM judges, scorers, automations and
+  monitors. They are stored encrypted and never shown again. Each secret
+  has a scope: **this project** (any member can set one), **the team**
+  (team admins) or **the server** (server admins). The narrowest one with a
+  name is used. A server secret serves the built-in providers of every
+  project; this project's own providers, scorers and automations can use it
+  only toward the **allowed hosts** set on it, so to give a custom provider
+  a key, store it as a project or team secret. Allowed hosts also pin any
+  secret to the hosts it may be sent to, and secrets are only sent over
+  https (or to localhost).
 - **Costs:** model prices, used for every cost figure.
 - **Retention**, **Sampling** and **Sensitive data:** how long data is kept,
   how much of it is stored, and redaction of personal data before it is
