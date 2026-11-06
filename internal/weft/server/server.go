@@ -186,6 +186,8 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/secrets/delete", handle(s.secretsDelete))
 
 		r.Post("/otel/v1/traces", s.otelTraces)
+		r.Post("/otel/v1/logs", s.otelLogs)       // otlp_logs.go
+		r.Post("/otel/v1/metrics", s.otelMetrics) // otlp_logs.go
 		for _, ext := range routeExtensions {
 			ext(s, r)
 		}
@@ -589,10 +591,7 @@ func (s *Server) otelTraces(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	hp := r.Header.Get("project_id")
-	if hp == "" {
-		hp = r.Header.Get("X-Weft-Project")
-	}
+	hp := otlpHeaderProject(r)
 	if s.compat != nil {
 		compat.RewriteOTLP(req)
 	}

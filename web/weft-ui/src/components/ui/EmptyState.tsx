@@ -17,13 +17,14 @@ export function serverOrigin(): string {
   return env || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:6345')
 }
 
-export type SnippetId = 'python' | 'typescript' | 'otel' | 'claude-code' | 'codex' | 'openclaw' | 'pi' | 'agentshield'
+export type SnippetId = 'python' | 'typescript' | 'otel' | 'claude-code' | 'claude-code-otel' | 'codex' | 'openclaw' | 'pi' | 'agentshield'
 
 export const SNIPPET_LABEL: Record<SnippetId, string> = {
   python: 'Python',
   typescript: 'TypeScript',
   otel: 'OpenTelemetry',
-  'claude-code': 'Claude Code',
+  'claude-code': 'Claude Code plugin',
+  'claude-code-otel': 'Claude Code (built-in telemetry)',
   codex: 'Codex CLI',
   openclaw: 'OpenClaw',
   pi: 'Pi',
@@ -83,6 +84,18 @@ export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
       code: `node plugins/weft-claude-code/install.mjs --project ${projectId} \\
   --server-url ${origin}${auth ? ' --api-key "$WEFT_API_KEY"' : ''}`,
     },
+    'claude-code-otel': {
+      lang: 'bash',
+      note: 'Nothing to install: set these where Claude Code starts and each session arrives while it runs. Unlike the plugin, it sends no reasoning and only the sizes of tool results.',
+      code: `export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_EXPORTER_OTLP_ENDPOINT="${origin}/otel"
+export OTEL_EXPORTER_OTLP_HEADERS="project_id=${projectId}${auth ? ',Authorization=Bearer%20<your API key>' : ''}"
+
+# Optional: your prompts, Claude's replies and tool arguments
+export OTEL_LOG_USER_PROMPTS=1 OTEL_LOG_ASSISTANT_RESPONSES=1 OTEL_LOG_TOOL_DETAILS=1`,
+    },
     codex: {
       lang: 'bash',
       note: 'Adds a Stop hook to Codex that sends each turn to Weft.',
@@ -119,7 +132,7 @@ pi`,
 export function Snippets({ projectId, only, initial }: { projectId: string; only?: SnippetId[]; initial?: SnippetId }) {
   const info = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const all = snippets(serverOrigin(), projectId, !!info.data?.auth_required)
-  const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'codex', 'openclaw', 'pi'] as SnippetId[])
+  const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'claude-code-otel', 'codex', 'openclaw', 'pi'] as SnippetId[])
   const [tab, setTab] = useState<SnippetId>(initial ?? ids[0])
   const s = all[tab]
   return (

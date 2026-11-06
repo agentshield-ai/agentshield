@@ -1,0 +1,521 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "os.type",
+      "value": {
+       "stringValue": "linux"
+      }
+     },
+     {
+      "key": "os.version",
+      "value": {
+       "stringValue": "6.18.44-fc-v242"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "claude-code"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "2.1.318"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "logRecords": [
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "tool_decision"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:04:01.380Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "24"
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "dcf03ea3-89d8-438c-9255-c50e58f5b301"
+         }
+        },
+        {
+         "key": "decision",
+         "value": {
+          "stringValue": "accept"
+         }
+        },
+        {
+         "key": "source",
+         "value": {
+          "stringValue": "config"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "Read"
+         }
+        },
+        {
+         "key": "tool_use_id",
+         "value": {
+          "stringValue": "toolu_01DXUQ8ESEs5J12ZyQWjYQv6"
+         }
+        },
+        {
+         "key": "tool_source",
+         "value": {
+          "stringValue": "builtin"
+         }
+        },
+        {
+         "key": "permission_mode",
+         "value": {
+          "stringValue": "default"
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgmKueN7LRGzS8ZQRdcxd"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.tool_decision"
+       },
+       "observedTimeUnixNano": "1793952241380000000",
+       "spanId": "dd8dc5b20d84e61f",
+       "timeUnixNano": "1793952241380000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:04:01.403Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "25"
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "dcf03ea3-89d8-438c-9255-c50e58f5b301"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-opus-5-5"
+         }
+        },
+        {
+         "key": "input_tokens",
+         "value": {
+          "intValue": "2"
+         }
+        },
+        {
+         "key": "output_tokens",
+         "value": {
+          "intValue": "110"
+         }
+        },
+        {
+         "key": "cache_read_tokens",
+         "value": {
+          "intValue": "26220"
+         }
+        },
+        {
+         "key": "cache_creation_tokens",
+         "value": {
+          "intValue": "21113"
+         }
+        },
+        {
+         "key": "cache_creation_5m_tokens",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "cache_creation_1h_tokens",
+         "value": {
+          "intValue": "21113"
+         }
+        },
+        {
+         "key": "cost_usd",
+         "value": {
+          "doubleValue": 0.176356
+         }
+        },
+        {
+         "key": "cost_usd_micros",
+         "value": {
+          "intValue": "176356"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": "2928"
+         }
+        },
+        {
+         "key": "ttft_ms",
+         "value": {
+          "intValue": "2055"
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgmKueN7LRGzS8ZQRdcxd"
+         }
+        },
+        {
+         "key": "client_request_id",
+         "value": {
+          "stringValue": "217ac935-ecba-4ace-9e23-6594066dd31b"
+         }
+        },
+        {
+         "key": "speed",
+         "value": {
+          "stringValue": "normal"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        },
+        {
+         "key": "effort",
+         "value": {
+          "stringValue": "medium"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.api_request"
+       },
+       "observedTimeUnixNano": "1793952241403000000",
+       "spanId": "9a2795c1c840e6b0",
+       "timeUnixNano": "1793952241403000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "tool_result"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:04:01.417Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "26"
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "dcf03ea3-89d8-438c-9255-c50e58f5b301"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "Read"
+         }
+        },
+        {
+         "key": "tool_use_id",
+         "value": {
+          "stringValue": "toolu_01DXUQ8ESEs5J12ZyQWjYQv6"
+         }
+        },
+        {
+         "key": "success",
+         "value": {
+          "stringValue": "true"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "32"
+         }
+        },
+        {
+         "key": "tool_input",
+         "value": {
+          "stringValue": "{\"file_path\":\"/home/dev/project/note.txt\"}"
+         }
+        },
+        {
+         "key": "tool_input_size_bytes",
+         "value": {
+          "stringValue": "120"
+         }
+        },
+        {
+         "key": "tool_result_size_bytes",
+         "value": {
+          "stringValue": "10"
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgmKueN7LRGzS8ZQRdcxd"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.tool_result"
+       },
+       "observedTimeUnixNano": "1793952241417000000",
+       "spanId": "9a2795c1c840e6b0",
+       "timeUnixNano": "1793952241417000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      }
+     ],
+     "scope": {
+      "name": "com.anthropic.claude_code.events",
+      "version": "2.1.318"
+     }
+    }
+   ]
+  }
+ ]
+}

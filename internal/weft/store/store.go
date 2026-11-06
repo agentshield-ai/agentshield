@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -44,6 +45,8 @@ type Store struct {
 	encrypted bool
 	// hooks adjust what clients send before it is stored; see SetIngestHooks.
 	hooks IngestHooks
+	// logLocks serialise event-log rebuilds per session; see eventlog.go.
+	logLocks [64]sync.Mutex
 }
 
 // IngestHooks let an adapter for another product's clients (package compat)

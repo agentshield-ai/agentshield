@@ -288,9 +288,53 @@ func (pb *PriceBook) lookup(model string, atUS int64) (Price, bool) {
 // price with an effective date at or before atUS, else the built-in price.
 func (pb *PriceBook) Lookup(model string, atUS int64) (Price, bool) { return pb.lookup(model, atUS) }
 
-// ModelCost prices one model's usage entry.
+// Usage entry fields of a producer that reports what each request cost
+// (Claude Code's cost_usd): the summed cost, and how many of the entry's
+// requests it covers.
+const (
+	UsageReportedCost     = "reported_cost_usd"
+	UsageReportedRequests = "reported_cost_requests"
+)
+
+// PricingReported is the pricing level of a cost taken from the producer's
+// own report.
+const PricingReported = "reported"
+
+// reportedCost returns the cost a producer reported for a usage entry, when
+// it covers every request of the entry (a roll-up that mixes reported and
+// unreported requests is priced from tokens).
+func reportedCost(m map[string]float64) (float64, bool) {
+	n := m[UsageReportedRequests]
+	if n <= 0 || n+1e-9 < m["requests"] {
+		return 0, false
+	}
+	c := m[UsageReportedCost]
+	return c, c >= 0
+}
+
+// ModelCost prices one model's usage entry. A price the project set wins;
+// otherwise a cost the producer reported for every request of the entry
+// (split into input, cache and output in the proportions the built-in price
+// gives, or all input for a model Weft has no price for); otherwise the
+// built-in price.
 func (pb *PriceBook) ModelCost(model string, m map[string]float64, atUS int64) (CostBreakdown, Price, bool) {
 	p, ok := pb.lookup(model, atUS)
+	if rep, has := reportedCost(m); has && (!ok || p.PricingLevel != "project") {
+		var c CostBreakdown
+		if ok {
+			c = p.Cost(UsageCounts(m))
+		} else {
+			p = Price{LLMID: model, PromptTokenCostUnit: "USD", CompletionTokenCostUnit: "USD"}
+		}
+		p.ID, p.PricingLevel = "", PricingReported
+		if t := c.Total(); t > 0 {
+			f := rep / t
+			c = CostBreakdown{Uncached: c.Uncached * f, CacheRead: c.CacheRead * f, CacheCreation: c.CacheCreation * f, Completion: c.Completion * f}
+		} else {
+			c = CostBreakdown{Uncached: rep}
+		}
+		return c, p, true
+	}
 	if !ok {
 		return CostBreakdown{}, Price{}, false
 	}
@@ -306,12 +350,11 @@ func (pb *PriceBook) ModelCost(model string, m map[string]float64, atUS int64) (
 func (pb *PriceBook) Costs(usage Contribution, atUS int64) map[string]any {
 	out := map[string]any{}
 	for model, m := range usage.Usage {
-		p, ok := pb.lookup(model, atUS)
+		c, p, ok := pb.ModelCost(model, m, atUS)
 		if !ok {
 			continue
 		}
 		t := UsageCounts(m)
-		c := p.Cost(t)
 		out[model] = map[string]any{
 			"requests":                               numberValue(t.Requests),
 			"prompt_tokens":                          numberValue(t.Prompt),

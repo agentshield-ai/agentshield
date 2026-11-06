@@ -201,6 +201,9 @@ func isReadRequest(r *http.Request) bool {
 		return true
 	case http.MethodPost:
 		path := strings.TrimSuffix(r.URL.Path, "/")
+		if isOTLPPath(path) { // ingest (otlp_logs.go), whatever its last segment
+			return false
+		}
 		if strings.HasPrefix(path, "/api/v1/") {
 			return nativeReadPaths[path] // native.go
 		}
@@ -227,11 +230,8 @@ func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 		}
 	}
 	add(r.URL.Query().Get("project_id"))
-	if r.URL.Path == "/otel/v1/traces" {
-		hp := r.Header.Get("project_id")
-		if hp == "" {
-			hp = r.Header.Get("X-Weft-Project")
-		}
+	if isOTLPPath(r.URL.Path) {
+		hp := otlpHeaderProject(r)
 		if hp == "" {
 			return nil, errors.New("this API key is limited to specific projects; send the project_id header")
 		}
@@ -253,7 +253,7 @@ func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 			return nil, errors.New("invalid multipart body")
 		}
 		add(r.FormValue("project_id"))
-	case r.Body != nil && r.Method != http.MethodGet && r.URL.Path != "/otel/v1/traces":
+	case r.Body != nil && r.Method != http.MethodGet && !isOTLPPath(r.URL.Path):
 		body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, maxJSONBody), r.Header.Get("Content-Encoding"))
 		if err != nil {
 			return nil, errors.New("reading body: " + err.Error())

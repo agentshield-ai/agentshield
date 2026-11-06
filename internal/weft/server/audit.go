@@ -125,7 +125,7 @@ func clientIP(r *http.Request) string {
 // peekJSONBody reads (and restores) a JSON request body of bounded size.
 // OTLP, multipart and oversized bodies are left alone.
 func peekJSONBody(r *http.Request) []byte {
-	if r.Body == nil || r.URL.Path == "/otel/v1/traces" || r.ContentLength > maxAuditBody {
+	if r.Body == nil || isOTLPPath(r.URL.Path) || r.ContentLength > maxAuditBody {
 		return nil
 	}
 	ct := r.Header.Get("Content-Type")
@@ -163,7 +163,7 @@ func auditProjects(r *http.Request, body []byte) []string {
 		}
 	}
 	add(r.URL.Query().Get("project_id"))
-	if r.URL.Path == "/otel/v1/traces" {
+	if isOTLPPath(r.URL.Path) {
 		add(r.Header.Get("project_id"))
 		add(r.Header.Get("X-Weft-Project"))
 	}

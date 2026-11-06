@@ -107,7 +107,7 @@ the UI.
 | Endpoint | Response |
 |---|---|
 | `GET /health` | `{"status":"ok"}` |
-| `GET /api/v1/server` | `{"name": "weft", "version", "api_version": "v1", "auth_required": bool, "otel_endpoint": "/otel/v1/traces", "features": [...], "limits": {...}, "digest": {"algorithm": "sha256", "encoding": "hex", "canonical_json"}}`; no key needed |
+| `GET /api/v1/server` | `{"name": "weft", "version", "api_version": "v1", "auth_required": bool, "otel_endpoint": "/otel/v1/traces", "otel_endpoints": {"traces", "logs", "metrics"}, "features": [...], "limits": {...}, "digest": {"algorithm": "sha256", "encoding": "hex", "canonical_json"}}`; no key needed |
 | `GET /auth/check` | `{"ok": true}` or 401 |
 | `GET /auth/whoami` | `{"user_id": "alice" \| "anonymous", "auth_required": bool}` |
 | `GET /projects` | `{"projects": [{"project_id","entity","project","span_count","trace_count","object_count","last_activity"}]}` |
@@ -117,7 +117,8 @@ the UI.
 `feedback`, `files`, `refs`, `prices`, `completions`, `embeddings`, `images`,
 `evaluations`, `sessions`, `agents`, `teams`, `handoffs`, `detections`,
 `scores`, `monitors`, `automations`, `annotation_queues`, `registry`,
-`runtimes`, `exports`, `dataset_sources`, `otlp`, plus `files_backend` with an
+`runtimes`, `exports`, `dataset_sources`, `otlp`, `otlp_logs` (Claude Code's
+log events, [below](#claude-code-log-events)), plus `files_backend` with an
 S3 files backend and `compat_adapter` with the adapter on). `limits`:
 `max_request_bytes` (64 MiB), `max_file_bytes` (64 MiB), `max_span_batch`
 (100,000 items), `max_feedback_batch` (1,000), `max_refs_per_read` (1,000),
@@ -573,6 +574,17 @@ Anthropic's 1-hour cache writes (2× input) are priced at the built-in
 5-minute rate (1.25×); set a project `cache_creation_input_token_cost` if you
 mostly use 1-hour caching.
 
+**Reported cost.** A producer that knows what a request cost can say so in
+the usage entry: `reported_cost_usd` (USD) and `reported_cost_requests` (how
+many of the entry's `requests` it covers; roll-ups sum both). Claude Code's
+log events do (their `cost_usd`, which prices 1-hour cache writes and fast
+mode correctly). When `reported_cost_requests` covers every request of an
+entry, its cost is `reported_cost_usd`, split into input, cache and output in
+the proportions the built-in price gives (all input for a model without a
+built-in price), and `pricing_level` is `reported`. A price the project set
+still wins, and an entry that mixes reported and unreported requests is
+priced from its tokens.
+
 The same rates are used everywhere costs appear: `summary.weft.costs`,
 `/api/v1/spans/stats` (`cost_usd`, and the metric buckets'
 `input_cost` / `output_cost` / `total_cost`, where `input_cost` includes the
@@ -718,6 +730,87 @@ OTLP span → Weft span mapping:
 The response is an OTLP `ExportTraceServiceResponse` in the request's encoding.
 `POST /agents/otel/v1/traces` is the same endpoint.
 
+| Route | Body | Response |
+|---|---|---|
+| `POST /otel/v1/traces` | OTLP `ExportTraceServiceRequest` | `ExportTraceServiceResponse` |
+| `POST /otel/v1/logs` | OTLP `ExportLogsServiceRequest` (protobuf or JSON, gzip allowed) | `ExportLogsServiceResponse`. Claude Code's events become spans ([Claude Code log events](#claude-code-log-events)); logs of any other service are accepted and ignored |
+| `POST /otel/v1/metrics` | OTLP `ExportMetricsServiceRequest` | `ExportMetricsServiceResponse`; metrics are accepted and discarded, so an exporter that also sends them reports no errors |
+
+All three take the same API keys and pick the project the same way (header,
+else resource `weft.project`, else `default/default`); a key limited to some
+projects must send the header, and a read-only key cannot write to any of
+them. There is no gRPC receiver: use `http/protobuf` or `http/json`.
+
+### Claude Code log events
+
+Claude Code's built-in export (`CLAUDE_CODE_ENABLE_TELEMETRY=1`,
+`OTEL_LOGS_EXPORTER=otlp`) sends a session as log events: resource
+`service.name = claude-code`, scope `com.anthropic.claude_code.events`, each
+record with `event.name`, `event.timestamp`, `event.sequence`, `session.id`
+and, once a prompt starts, `prompt.id`. Weft stores each event once (a
+re-sent record is recognised), and rebuilds a prompt's spans from all of its
+events whenever one arrives, so batches may be split, re-sent or out of
+order. Span ids derive from the session, prompt, tool-use, request and agent
+ids, so a rebuild updates the same spans. The spans have the plugin's shape
+(`plugins/weft-claude-code`), `weft.source = claude-code-otel-logs`, session
+= `session.id` and trace = the turn:
+
+| Event | Span |
+|---|---|
+| `user_prompt` | the turn: `invoke_agent claude-code` (`gen_ai.agent.name`; a resource `weft.agent.name` renames it), started at the event; input = the prompt (`OTEL_LOG_USER_PROMPTS=1`), else `{"_prompt": "(prompt not exported: set OTEL_LOG_USER_PROMPTS=1)"}`, which the session story does not show as a message; the first prompt names the session |
+| `api_request` | `chat <model>` (`claude_code.llm`): `summary.usage` with gross `prompt_tokens` (input + cache read + cache creation), `cache_read_input_tokens`, `cache_creation_input_tokens`, `completion_tokens` and the reported cost (`cost_usd`); started `duration_ms` before the event; `gen_ai.response.id` = `request_id`; output = the reply text and the tools it asked for (`tool_use` blocks) |
+| `api_error`, `api_refusal` | `chat <model>`, failed (`API error <status>: <error>`) |
+| `assistant_response` | the reply text (`OTEL_LOG_ASSISTANT_RESPONSES=1`) of its request's chat span, the turn's answer, or a sub-agent's reply |
+| `tool_result` | `execute_tool <tool>` (`claude_code.tool.<tool>`): `gen_ai.tool.call.id` = `tool_use_id`, input = `tool_input` (else `tool_parameters`, `OTEL_LOG_TOOL_DETAILS=1`), failed when `success` is false (`error_type: error`), started `duration_ms` before the event; the result itself is not exported (`claude_code.tool_result_size_bytes`) |
+| `tool_decision` | `accept`: folded into the tool span (its start, `claude_code.decision_source`); `reject`: the tool span, failed `Rejected by the user` (or by the permission settings, a hook, or a dismissed prompt), with `claude_code.decision_source` |
+| events with `agent_id` | belong to that sub-agent: an `invoke_agent <type>` span (`claude_code.subagent`; type from `subagent_completed.agent_type`, `agent.name`, `query_source = agent:builtin:<type>` or the Agent call's `subagent_type`) under the `Agent` / `Task` tool call whose run holds the sub-agent's first event (the one whose `subagent_type` matches when several do; a nested sub-agent's under its parent agent's call); its input is the Agent call's prompt |
+| `subagent_completed` | ends the sub-agent's span (`claude_code.total_tokens`, `total_tool_uses`, `duration_ms`; its tokens are not added again) |
+| `plugin_loaded`, `mcp_server_connection`, `managed_settings_resolved`, others | ignored |
+
+Account attributes (`user.email`, `user.account_uuid`, `user.account_id`,
+`user.id`, `organization.id`, `ccr.session.id`) are not stored.
+
+The turn is stored once it is over: its last request of the conversation
+(`query_source` `sdk`, `repl_main_thread*` or none; not `compact` and other
+side requests) asked for no tool, or ended in an API error, or the user
+rejected a tool; or a later prompt of the session started, which marks it
+`interrupted: a new prompt was submitted`. Until then its spans hang under a
+turn that has not arrived, which Weft reads as running and, ten minutes
+after the last event, as its steps' outcome (*Run status* under Sessions). A
+tool call or sub-agent still open when its turn closes ends with it, failed
+(`tool did not finish before the turn ended`). A span first stored under the
+turn and later found to belong under an Agent call moves there, with its
+usage.
+
+### Claude Code traces (beta)
+
+Claude Code's beta trace export (`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`,
+`OTEL_TRACES_EXPORTER=otlp`) arrives at `/otel/v1/traces`. Spans of resource
+`service.name = claude-code` named `claude_code.*` are mapped onto the same
+shape (from the names Claude Code documents), with `weft.source =
+claude-code-otel-traces`:
+
+| Span | Becomes |
+|---|---|
+| `claude_code.interaction` | the turn, `invoke_agent claude-code` (`weft.is_turn`); input = `user_prompt`, or the not-exported note |
+| `claude_code.llm_request` | `chat <model>`: usage from `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens` (priced by Weft: spans carry no cost); failed when `success` is false; output = `response.model_output` when exported |
+| `claude_code.tool` | `execute_tool <tool_name>`, `gen_ai.tool.call.id` = `tool_use_id`, input from `file_path`, `full_command`, `skill_name`, `tool_input`; output from the `tool.output` event (`OTEL_LOG_TOOL_CONTENT=1`). The `Agent` / `Task` tool is the sub-agent's `invoke_agent <subagent_type>` span, as in the plugin, with the sub-agent's spans under it |
+| `claude_code.tool.blocked_on_user` | a step; failed `Rejected by the user (<source>)` when `decision` is `reject` or `cancelled` |
+| `claude_code.tool.execution` | a step; failed with `error` when `success` is false |
+
+### Session sources
+
+A Claude Code session can reach Weft from the plugin, the traces beta and
+the log events at once. Each session is shown from one of them: the
+highest-ranked source that has sent spans for it (`weft.source`:
+`weft-claude-code` > `claude-code-otel-traces` > `claude-code-otel-logs`).
+A span of a lower source is dropped at ingest when its session already has
+spans of a higher one; when a higher source's first span arrives, the lower
+sources' spans of that session are soft-deleted and AgentShield detections
+linked to them are linked again (to the higher source's span with the same
+tool-use id). Nothing is counted twice, whatever the order. Spans of other
+sources are never affected.
+
 Framework layouts (checked after `input.value` / `output.value`):
 
 | Framework | Inputs | Output |
@@ -748,6 +841,7 @@ plugins write them nested; OTel instrumentation writes them flat.
 | `weft.session_id` | the span's `session_id` (the session, or conversation) when the span has none of its own: an explicit `session_id` in `spans/start` or `spans/batch` wins |
 | `weft.turn_id`, `weft.is_turn` | the span's `turn_id`; `weft.is_turn: true` makes the span its own turn |
 | `weft.span_kind` | the span kind the Agents index uses (`llm`, `agent`, `tool`, …) |
+| `weft.source` | the producer: `weft-claude-code` (the plugin), `claude-code-otel-traces`, `claude-code-otel-logs` rank a session's sources ([Session sources](#session-sources)); other values are informational |
 | `weft.parent_span.id`, `weft.parent_span.trace_id` | the span this span was emitted from, when it started its own trace inside it (the caller); the Agents API's `linked_parent_span_id` / `linked_parent_trace_id`, and a linked trace's failure is a failed step of the caller's run |
 | `weft.eval.run_id`, `weft.eval.prediction_span_id`, `weft.eval.*` | the evaluation run and prediction (the `Evaluation.predict_and_score` span) a span belongs to (*Agent evals*) |
 | `weft.linked_spans` | on a prediction: the existing spans it links to, `[{span_id, trace_id?}]` (or span ids / `weft:///…/span/<id>` refs) |

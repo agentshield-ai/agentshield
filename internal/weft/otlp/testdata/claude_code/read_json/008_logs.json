@@ -1,0 +1,372 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "os.type",
+      "value": {
+       "stringValue": "linux"
+      }
+     },
+     {
+      "key": "os.version",
+      "value": {
+       "stringValue": "6.18.44-fc-v242"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "claude-code"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "2.1.318"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "logRecords": [
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:04:03.257Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "27"
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "dcf03ea3-89d8-438c-9255-c50e58f5b301"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-opus-5-5"
+         }
+        },
+        {
+         "key": "input_tokens",
+         "value": {
+          "intValue": "2"
+         }
+        },
+        {
+         "key": "output_tokens",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "cache_read_tokens",
+         "value": {
+          "intValue": "47333"
+         }
+        },
+        {
+         "key": "cache_creation_tokens",
+         "value": {
+          "intValue": "1011"
+         }
+        },
+        {
+         "key": "cache_creation_5m_tokens",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "cache_creation_1h_tokens",
+         "value": {
+          "intValue": "1011"
+         }
+        },
+        {
+         "key": "cost_usd",
+         "value": {
+          "doubleValue": 0.0176426
+         }
+        },
+        {
+         "key": "cost_usd_micros",
+         "value": {
+          "intValue": "17643"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": "1799"
+         }
+        },
+        {
+         "key": "ttft_ms",
+         "value": {
+          "intValue": "1788"
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgmKus6a71cp6DYqApFfg"
+         }
+        },
+        {
+         "key": "client_request_id",
+         "value": {
+          "stringValue": "a49f2b00-11b2-4ac5-96fb-23b39b2b416f"
+         }
+        },
+        {
+         "key": "speed",
+         "value": {
+          "stringValue": "normal"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        },
+        {
+         "key": "effort",
+         "value": {
+          "stringValue": "medium"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.api_request"
+       },
+       "observedTimeUnixNano": "1793952243257000000",
+       "spanId": "9a2795c1c840e6b0",
+       "timeUnixNano": "1793952243257000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "assistant_response"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:04:03.258Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "28"
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "dcf03ea3-89d8-438c-9255-c50e58f5b301"
+         }
+        },
+        {
+         "key": "response_length",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "response",
+         "value": {
+          "stringValue": "hello"
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgmKus6a71cp6DYqApFfg"
+         }
+        },
+        {
+         "key": "message.uuid",
+         "value": {
+          "stringValue": "412c71cd-894f-4534-83c8-6fed745e4917"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-opus-5-5"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.assistant_response"
+       },
+       "observedTimeUnixNano": "1793952243258000000",
+       "spanId": "9a2795c1c840e6b0",
+       "timeUnixNano": "1793952243258000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      }
+     ],
+     "scope": {
+      "name": "com.anthropic.claude_code.events",
+      "version": "2.1.318"
+     }
+    }
+   ]
+  }
+ ]
+}

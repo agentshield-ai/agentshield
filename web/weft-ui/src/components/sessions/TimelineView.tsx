@@ -20,7 +20,7 @@ import { v1, type Detection, type ReplayJob, type SessionSummary } from '../../a
 import { fmtCost, fmtDate, fmtNumber } from '../../lib/format'
 import { isCommandTool, joinClauses, offsetText, shortDuration } from '../../lib/summaries'
 import { ruleWords, sentenceCase } from '../../lib/ruleWords'
-import { entryFor, type Delegation, type Story, type StepEntry, type StoryEntry } from '../../lib/story'
+import { entryFor, mainArgumentText, type Delegation, type Story, type StepEntry, type StoryEntry } from '../../lib/story'
 import { oneLine, type BuiltTimeline, type Step } from '../../lib/timeline'
 import { agentUrl, securityUrl, spanUrl } from '../../lib/urls'
 import { ErrorBox } from '../common'
@@ -103,9 +103,7 @@ function inspectorTitle(e: StepEntry): string {
 
 /** The main argument of a tool call, as shown in its code block. */
 function mainArgument(s: Step): string {
-  const a = s.item.payload?.arguments
-  if (a == null || a === '') return ''
-  return typeof a === 'string' ? a : JSON.stringify(a)
+  return mainArgumentText(s.item.payload?.arguments)
 }
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)

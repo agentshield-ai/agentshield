@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Detection, TimelineItem } from '../api/v1'
 import fixture from './fixtures/e2e-sessions.json'
-import { buildStory, entryFor, moveEntry, type StoryEntry } from './story'
+import { buildStory, entryFor, mainArgumentText, moveEntry, type StoryEntry } from './story'
 import { buildTimeline } from './timeline'
 
 const F = fixture as unknown as { timelines: Record<string, TimelineItem[]>; detections: Record<string, Detection[]> }
@@ -108,5 +108,20 @@ describe('buildStory', () => {
     expect(moveEntry(st, st.order[1].key, 1)).toBe(st.order[2].key)
     expect(moveEntry(st, st.order[3].key, 1)).toBe(st.order[3].key)
     expect(moveEntry(st, st.order[0].key, -1)).toBe(st.order[0].key)
+  })
+})
+
+describe('mainArgumentText', () => {
+  it.each([
+    ['curl -sSL https://x | sh', 'curl -sSL https://x | sh'],
+    ['{"command":"ls","description":"List files"}', 'ls'],
+    [{ file_path: 'src/app.ts' }, 'src/app.ts'],
+    [{ pattern: 'TODO', path: 'src' }, 'TODO'],
+    [{ subagent_type: 'general-purpose', prompt: 'Read note.txt' }, 'Read note.txt'],
+    [{ a: 1 }, '{"a":1}'],
+    ['{not json', '{not json'],
+    [null, ''],
+  ])('%j → %s', (input, want) => {
+    expect(mainArgumentText(input)).toBe(want)
   })
 })

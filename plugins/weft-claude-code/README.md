@@ -1,10 +1,10 @@
 # Weft for Claude Code
 
 Traces [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions
-into [Weft](../../docs/weft/README.md) as agent conversations:
+into [Weft](../../docs/weft/README.md) as sessions:
 
 ```
-invoke_agent claude-code          one per prompt (a turn); conversation = the Claude Code session
+invoke_agent claude-code          one per prompt (a turn); session = the Claude Code session
 ├─ chat claude-sonnet-4-5         each assistant message from the transcript, with token usage
 ├─ execute_tool Bash              each tool use (PreToolUse → PostToolUse), with input and result
 └─ invoke_agent code-reviewer     each Task/Agent sub-agent
@@ -12,12 +12,46 @@ invoke_agent claude-code          one per prompt (a turn); conversation = the Cl
    └─ execute_tool Read           the sub-agent's tools
 ```
 
-Sessions appear under **Agents** (agent `claude-code`), in **Threads** and in
+Each Claude Code session appears under **Sessions** (its story: prompts,
+model calls, tool calls, sub-agents and answers), its agents under **Agents**
+(`claude-code` and each sub-agent type) and **Teams**, and its spans in
 **Traces**. Usage includes cache reads and writes, so cost is shown per turn,
-per LLM call and per conversation.
+per LLM call and per session.
 
 This is separate from the AgentShield security plugin in
 [`plugins/claude`](../claude); the two can be installed side by side.
+
+## Plugin or Claude Code's built-in telemetry
+
+Claude Code can also send its sessions to Weft by itself, with no plugin:
+
+```bash
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf      # or http/json (Weft has no gRPC receiver)
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6345/otel
+export OTEL_EXPORTER_OTLP_HEADERS="project_id=my-team/claude-code,Authorization=Bearer%20<key>"
+export OTEL_LOG_USER_PROMPTS=1          # optional: prompt text
+export OTEL_LOG_ASSISTANT_RESPONSES=1   # optional: reply text
+export OTEL_LOG_TOOL_DETAILS=1          # optional: tool arguments
+```
+
+Weft turns those log events into the same spans this plugin sends (a turn per
+prompt, model calls with tokens and Claude Code's own cost, tool calls with
+their tool-use ids, sub-agents under the Agent call), live, every few
+seconds. What only the plugin records: reasoning, the messages each model
+call received, and tool results (file contents, command output); the
+built-in export sends their sizes only, and prompt and reply text only with
+the variables above. Claude Code's metrics, if exported, are accepted and
+discarded. Its beta trace export (`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`,
+`OTEL_TRACES_EXPORTER=otlp`) is mapped too.
+
+Running both is safe: Weft shows each session from one source only, this
+plugin first, then Claude Code's traces, then its log events, so nothing is
+counted twice. The plugin's spans are recognised by `weft.source =
+weft-claude-code` and the Claude Code session id. See
+[Claude Code without a plugin](../../docs/weft/guides/setup.md#claude-code-without-a-plugin)
+and [API.md](../../docs/weft/API.md#claude-code-log-events).
 
 ## How it works
 

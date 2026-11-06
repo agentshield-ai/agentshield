@@ -321,6 +321,9 @@ func (s *Store) PurgeBefore(ctx context.Context, projectID string, cutoff time.T
 			return err
 		}
 		res.Spans, _ = r.RowsAffected()
+		if _, err := purgeLogEventsBefore(ctx, tx, pid, us); err != nil { // eventlog.go
+			return err
+		}
 		r, err = tx.ExecContext(ctx, `DELETE FROM feedback WHERE project_id = ? AND created_at < ? AND (ref LIKE ? OR ref LIKE ?)`,
 			pid, us, "%/span/%", "%/call/%")
 		if err != nil {

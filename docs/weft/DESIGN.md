@@ -320,6 +320,22 @@ claiming span stays visible in it). Engines never push replays, so the push
 (`/api/v1/shield/ingest`) rejects replay-namespaced ids with 400. Replay never
 creates sessions.
 
+### 5.5 Claude Code without a plugin
+
+Claude Code's built-in OpenTelemetry export is a third way in, beside the
+plugin (§5.3) and an SDK. Its log events (`POST /otel/v1/logs`) are stored
+as they arrive and each prompt's spans are rebuilt from all of its events,
+with ids derived from Claude Code's own ids, so split, re-sent and
+out-of-order batches converge on the plugin's shape: a turn per `prompt.id`,
+a chat span per API request (with Claude Code's reported cost), an
+`execute_tool` span per tool-use id (so detections link exactly as in §5.3),
+and sub-agents under the Agent call that ran them. A turn is stored when it
+is over and until then reads as a trace whose root has not arrived. Its beta
+traces map onto the same shape. A session is shown from one source only:
+plugin, then traces, then logs (`weft.source`; lower sources are dropped or
+soft-deleted at ingest). Metrics (`/otel/v1/metrics`) are accepted and
+discarded. API.md, *Claude Code log events*, has the mapping.
+
 ## 6. Scoped evaluation
 
 Scores are feedback rows whose payload carries `scope` and the target ids

@@ -1,0 +1,3013 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "os.type",
+      "value": {
+       "stringValue": "linux"
+      }
+     },
+     {
+      "key": "os.version",
+      "value": {
+       "stringValue": "6.18.44-fc-v242"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "claude-code"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "2.1.318"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "logRecords": [
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "managed_settings_resolved"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.288Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "managed_settings.trigger",
+         "value": {
+          "stringValue": "startup"
+         }
+        },
+        {
+         "key": "managed_settings.sources",
+         "value": {
+          "arrayValue": {}
+         }
+        },
+        {
+         "key": "managed_settings.source_behavior",
+         "value": {
+          "stringValue": "first-wins"
+         }
+        },
+        {
+         "key": "managed_settings.helper.state",
+         "value": {
+          "stringValue": "none"
+         }
+        },
+        {
+         "key": "managed_settings.helper.applied",
+         "value": {
+          "stringValue": "none"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.managed_settings_resolved"
+       },
+       "observedTimeUnixNano": "1793952235288000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235288000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.502Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "design"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.2.0"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "64d0e9eb2e8e655c"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235502000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235502000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.503Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "2"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "operations"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.3.0"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "96e0bbf9d438bbab"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235503000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235503000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.503Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "3"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "pdf-viewer"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "0.2.0"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "baa9f85a7c36b03d"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235503000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235503000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.504Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "product-management"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.2.0"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "6e216257bf4bda56"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235504000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235504000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.504Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "engineering"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.2.0"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "2d62e12bb33a3ac8"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235504000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235504000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.505Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "6"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "small-business"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.35.1"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "cc42947ad5f6408f"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235505000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235505000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.505Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "7"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "productivity"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.3.1"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "c7b992c6771ec035"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235505000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235505000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.506Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "8"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "data"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "1.1.0"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "57e6cb9e165012db"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235506000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235506000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.506Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "9"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "cowork-plugin-management"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "synced"
+         }
+        },
+        {
+         "key": "plugin.version",
+         "value": {
+          "stringValue": "0.2.2"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "user-local"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "user-install"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "ba91113e693e8c83"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235506000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235506000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.507Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "10"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "cc-plugin-agents-md"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "builtin"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "default-bundle"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "default-enable"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "da63145d0acbb62d"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235507000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235507000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.508Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "11"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "cc-plugin-telemetry"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "builtin"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "default-bundle"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "default-enable"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "0452636910a73fd4"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235508000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235508000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.508Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "12"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "cc-plugin-privacy"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "builtin"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "default-bundle"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "default-enable"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "a2f27f067781660d"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235508000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235508000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "plugin_loaded"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:55.509Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "13"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "cc-plugin-plugin-authoring"
+         }
+        },
+        {
+         "key": "marketplace.name",
+         "value": {
+          "stringValue": "builtin"
+         }
+        },
+        {
+         "key": "plugin.scope",
+         "value": {
+          "stringValue": "default-bundle"
+         }
+        },
+        {
+         "key": "enabled_via",
+         "value": {
+          "stringValue": "default-enable"
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "559932fe5f722b82"
+         }
+        },
+        {
+         "key": "has_hooks",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "has_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "host_owned_mcp",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "skill_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "command_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "agent_path_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.plugin_loaded"
+       },
+       "observedTimeUnixNano": "1793952235509000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952235509000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:56.067Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "14"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "connected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "http"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "451"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "d33dff0c1790a50b"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "small-business"
+         }
+        },
+        {
+         "key": "server_name",
+         "value": {
+          "stringValue": "plugin:small-business:shopify"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "observedTimeUnixNano": "1793952236067000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952236067000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:56.074Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "15"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "connected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "http"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "473"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "d33dff0c1790a50b"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "small-business"
+         }
+        },
+        {
+         "key": "server_name",
+         "value": {
+          "stringValue": "plugin:small-business:gmail"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "observedTimeUnixNano": "1793952236074000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952236074000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:56.103Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "16"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "connected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "http"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "500"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "cc42947ad5f6408f"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "small-business"
+         }
+        },
+        {
+         "key": "server_name",
+         "value": {
+          "stringValue": "plugin:small-business:google-calendar"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "observedTimeUnixNano": "1793952236103000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952236103000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:56.224Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "17"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "connected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "http"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "619"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "cc42947ad5f6408f"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "small-business"
+         }
+        },
+        {
+         "key": "server_name",
+         "value": {
+          "stringValue": "plugin:small-business:google-drive"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "observedTimeUnixNano": "1793952236224000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952236224000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      },
+      {
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+         }
+        },
+        {
+         "key": "ccr.session.id",
+         "value": {
+          "stringValue": "cse_01EXAMPLESESSION"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "dev@example.com"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_01EXAMPLEACCOUNT"
+         }
+        },
+        {
+         "key": "anthropic.provider",
+         "value": {
+          "stringValue": "firstParty"
+         }
+        },
+        {
+         "key": "anthropic.custom_base_url",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "linux"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T08:03:56.405Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": "18"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "failed"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "http"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "768"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "57e6cb9e165012db"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "data"
+         }
+        },
+        {
+         "key": "error_code",
+         "value": {
+          "stringValue": "ENDPOINT_NOT_FOUND"
+         }
+        },
+        {
+         "key": "server_name",
+         "value": {
+          "stringValue": "plugin:data:definite"
+         }
+        },
+        {
+         "key": "error",
+         "value": {
+          "stringValue": "MCP endpoint not found at https://api.definite.app. Check the URL in your MCP config."
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "observedTimeUnixNano": "1793952236405000000",
+       "spanId": "80acddb37d3d679f",
+       "timeUnixNano": "1793952236405000000",
+       "traceId": "226cdcf22b4ded3e712958c7de4761fa"
+      }
+     ],
+     "scope": {
+      "name": "com.anthropic.claude_code.events",
+      "version": "2.1.318"
+     }
+    }
+   ]
+  }
+ ]
+}

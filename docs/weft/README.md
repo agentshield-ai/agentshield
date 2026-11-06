@@ -220,14 +220,25 @@ and [`examples/weft/typescript/agent_team.ts`](../../examples/weft/typescript/ag
 ([`plugins/weft-claude-code`](../../plugins/weft-claude-code)), Codex
 ([`plugins/weft-codex`](../../plugins/weft-codex)), OpenClaw
 ([`plugins/weft-openclaw`](../../plugins/weft-openclaw)) and Pi
-([`plugins/weft-pi`](../../plugins/weft-pi)) sessions as agent
-conversations: a turn per prompt, LLM calls with token usage, tool calls and
-sub-agents. They are configured with `WEFT_SERVER_URL`, `WEFT_API_KEY` and
+([`plugins/weft-pi`](../../plugins/weft-pi)) sessions: a turn per
+prompt, LLM calls with token usage, tool calls and sub-agents. They are configured with `WEFT_SERVER_URL`, `WEFT_API_KEY` and
 `WEFT_PROJECT`, never block the agent, and send in the background. Each
 records the harness's session id as `gen_ai.conversation.id` and the
 harness's tool-use id as `gen_ai.tool.call.id`, the same values the
 AgentShield plugins send as `session_id` and `tool_call_id`, so AgentShield
 verdicts attach to the exact tool call ([DESIGN.md](DESIGN.md) §5.3).
+
+**Claude Code without a plugin.** Claude Code's built-in OpenTelemetry export
+works too: set `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`,
+`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` (or `http/json`),
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://<host>:6345/otel` and
+`OTEL_EXPORTER_OTLP_HEADERS="project_id=my-team/claude-code"`. Weft turns its
+log events (`POST /otel/v1/logs`) into the same sessions the plugin records,
+without reasoning or tool results; `OTEL_LOG_USER_PROMPTS`,
+`OTEL_LOG_ASSISTANT_RESPONSES` and `OTEL_LOG_TOOL_DETAILS` add prompts,
+replies and tool arguments. Its metrics (`/otel/v1/metrics`) are accepted and
+discarded. The [setup guide](guides/setup.md#claude-code-without-a-plugin)
+has the details, and [API.md](API.md#claude-code-log-events) the mapping.
 
 Both SDKs also support guardrails (`span.apply_scorer` / `span.applyScorer`
 score a finished span and attach the result as feedback), loading published
@@ -241,7 +252,7 @@ off by default, lets the client of one other product send traces to Weft.
 It is described, with its limits, in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 **Demo data:** `python3 scripts/weft_seed_demo.py` fills `demo/support-bot` with
-agent traces, threads, OTLP spans, datasets, evaluations, a leaderboard, a
+agent traces, sessions, OTLP spans, datasets, evaluations, a leaderboard, a
 monitor and feedback, using offline mock models.
 
 ## AgentShield integration

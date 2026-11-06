@@ -1,19 +1,19 @@
 # Weft for OpenClaw
 
 An [OpenClaw](https://openclaw.dev/) gateway plugin that traces agent runs into
-[Weft](../../docs/weft/README.md) as agent conversations:
+[Weft](../../docs/weft/README.md) as sessions:
 
 ```
-invoke_agent main               one per agent run (a turn); conversation = the OpenClaw session id
+invoke_agent main               one per agent run (a turn); session = the OpenClaw session id
 ├─ chat claude-sonnet-4-5       each model call, with prompt/history/response and usage
 ├─ execute_tool web_fetch       each tool call with params, result, error and duration
 └─ invoke_agent researcher      sessions_spawn sub-agents (subagent_spawned → subagent_ended)
    └─ invoke_agent researcher   the child session's runs, with their own model and tool calls
-                                (conversation = the child session id: a session of its own)
+                                (session = the child session id: a session of its own)
 ```
 
-Runs appear under **Agents** (agent = the OpenClaw agent id, or `agentName`),
-in **Threads** and in **Traces**.
+Each OpenClaw session appears under **Sessions**, its agents under **Agents**
+(agent = the OpenClaw agent id, or `agentName`) and its spans in **Traces**.
 
 This is separate from the AgentShield security plugin in
 [`plugins/openclaw`](../openclaw); both can be loaded. Each tool span carries

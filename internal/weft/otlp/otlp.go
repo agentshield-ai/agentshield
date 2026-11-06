@@ -187,12 +187,27 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 		if err != nil {
 			return nil, err
 		}
+		cc := isClaudeCodeResource(resource) // claudecode_traces.go
+		var subagents map[string]string
+		if cc {
+			var all []*tracepb.Span
+			for _, ss := range rs.GetScopeSpans() {
+				all = append(all, ss.GetSpans()...)
+			}
+			subagents = claudeCodeSubagentNames(all)
+		}
 		for _, ss := range rs.GetScopeSpans() {
 			scope := map[string]any{"name": ss.GetScope().GetName(), "version": ss.GetScope().GetVersion()}
 			for _, sp := range ss.GetSpans() {
 				c, err := spanToCall(project, sp, resource, scope)
 				if err != nil {
 					return nil, err
+				}
+				if cc {
+					o, _ := c.Start.Attributes["otel"].(map[string]any)
+					attrs, _ := o["attributes"].(map[string]any)
+					events, _ := o["events"].([]map[string]any)
+					mapClaudeCodeSpan(&c.Start, c.End, sp.GetName(), attrs, resource, c.Start.Attributes, events, subagents)
 				}
 				out = append(out, c)
 			}

@@ -2,17 +2,17 @@
 
 A [Pi](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
 coding-agent extension that traces Pi sessions into
-[Weft](../../docs/weft/README.md) as agent conversations:
+[Weft](../../docs/weft/README.md) as sessions:
 
 ```
-invoke_agent pi            one per prompt (agent_start .. agent_end): a turn; conversation = the Pi session id
+invoke_agent pi            one per prompt (agent_start .. agent_end): a turn; session = the Pi session id
 ├─ chat claude-sonnet-4-5  each LLM response, with the context sent, the response, tool calls and usage
 ├─ execute_tool bash       each tool execution, with arguments, result, error and duration
 └─ execute_tool edit
 ```
 
-Sessions appear under **Agents** (agent `pi`), in **Threads** and in
-**Traces**. Usage includes cache reads and writes; Pi's own cost estimate is
+Each Pi session appears under **Sessions**, its agent under **Agents** (agent
+`pi`) and its spans in **Traces**. Usage includes cache reads and writes; Pi's own cost estimate is
 kept as `attributes.pi.cost_usd`.
 
 ## How it works
@@ -31,7 +31,7 @@ background timer (`flushIntervalMs`), with a short timeout. Span ids are
 derived from the session and turn, so a resend after a failure upserts the
 same spans. `session_shutdown` closes an unfinished turn (marked as such) and
 waits briefly for the last send. Warnings go to `~/.weft-pi/logs/weft-pi.log`
-(Pi's TUI owns the terminal). Type `/weft` in Pi to see the conversation's
+(Pi's TUI owns the terminal). Type `/weft` in Pi to see the session's
 Weft link and what was sent.
 
 This is based on Pi's extension documentation (`docs/extensions.md` and

@@ -1,18 +1,18 @@
 # Weft for Codex
 
 Traces [OpenAI Codex CLI](https://developers.openai.com/codex/cli) sessions
-into [Weft](../../docs/weft/README.md) as agent conversations:
+into [Weft](../../docs/weft/README.md) as sessions:
 
 ```
-invoke_agent codex           one per turn; conversation = the Codex session id
+invoke_agent codex           one per turn; session = the Codex session id
 ├─ chat gpt-5-codex          each model response, with input/cached/output/reasoning tokens
 ├─ execute_tool shell        each tool call with arguments, output and exit code
 ├─ execute_tool apply_patch
 └─ execute_tool docs__search MCP tools carry mcp.server.name
 ```
 
-Sessions appear under **Agents** (agent `codex`, version = the Codex CLI
-version), in **Threads** and in **Traces**.
+Each Codex session appears under **Sessions**, its agent under **Agents**
+(agent `codex`, version = the Codex CLI version) and its spans in **Traces**.
 
 This is separate from the AgentShield security connector in
 [`plugins/codex`](../codex); both can be installed.

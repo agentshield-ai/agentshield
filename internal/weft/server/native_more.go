@@ -18,7 +18,7 @@ import (
 func (s *Server) serverFeatures() []string {
 	f := []string{"spans", "objects", "tables", "feedback", "files", "refs", "prices", "completions", "embeddings", "images",
 		"evaluations", "sessions", "agents", "teams", "handoffs", "detections", "scores", "monitors", "automations",
-		"annotation_queues", "registry", "runtimes", "exports", "dataset_sources", "otlp"}
+		"annotation_queues", "registry", "runtimes", "exports", "dataset_sources", "otlp", "otlp_logs"}
 	if s.store.FileBackend() != nil {
 		f = append(f, "files_backend")
 	}
@@ -35,8 +35,9 @@ func (s *Server) v1Server(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{
 		"name": "weft", "version": Version, "api_version": "v1",
 		"auth_required": s.authRequired(), "otel_endpoint": "/otel/v1/traces",
-		"features": s.serverFeatures(),
-		"digest":   map[string]any{"algorithm": "sha256", "encoding": "hex", "canonical_json": "sorted keys, no whitespace, UTF-8"},
+		"otel_endpoints": map[string]any{"traces": "/otel/v1/traces", "logs": "/otel/v1/logs", "metrics": "/otel/v1/metrics"},
+		"features":       s.serverFeatures(),
+		"digest":         map[string]any{"algorithm": "sha256", "encoding": "hex", "canonical_json": "sorted keys, no whitespace, UTF-8"},
 		"limits": map[string]any{
 			"max_request_bytes":     maxJSONBody,
 			"max_file_bytes":        64 << 20,

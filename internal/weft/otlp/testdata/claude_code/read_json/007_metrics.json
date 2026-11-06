@@ -1,0 +1,521 @@
+{
+ "resourceMetrics": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "os.type",
+      "value": {
+       "stringValue": "linux"
+      }
+     },
+     {
+      "key": "os.version",
+      "value": {
+       "stringValue": "6.18.44-fc-v242"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "claude-code"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "2.1.318"
+      }
+     }
+    ]
+   },
+   "scopeMetrics": [
+    {
+     "metrics": [
+      {
+       "description": "Cost of the Claude Code session",
+       "name": "claude_code.cost.usage",
+       "sum": {
+        "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+        "dataPoints": [
+         {
+          "asDouble": 0.0176426,
+          "attributes": [
+           {
+            "key": "user.id",
+            "value": {
+             "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+            }
+           },
+           {
+            "key": "session.id",
+            "value": {
+             "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+            }
+           },
+           {
+            "key": "ccr.session.id",
+            "value": {
+             "stringValue": "cse_01EXAMPLESESSION"
+            }
+           },
+           {
+            "key": "organization.id",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000002"
+            }
+           },
+           {
+            "key": "user.email",
+            "value": {
+             "stringValue": "dev@example.com"
+            }
+           },
+           {
+            "key": "user.account_uuid",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000001"
+            }
+           },
+           {
+            "key": "user.account_id",
+            "value": {
+             "stringValue": "user_01EXAMPLEACCOUNT"
+            }
+           },
+           {
+            "key": "anthropic.provider",
+            "value": {
+             "stringValue": "firstParty"
+            }
+           },
+           {
+            "key": "anthropic.custom_base_url",
+            "value": {
+             "boolValue": false
+            }
+           },
+           {
+            "key": "terminal.type",
+            "value": {
+             "stringValue": "linux"
+            }
+           },
+           {
+            "key": "model",
+            "value": {
+             "stringValue": "claude-opus-5-5"
+            }
+           },
+           {
+            "key": "query_source",
+            "value": {
+             "stringValue": "main"
+            }
+           },
+           {
+            "key": "effort",
+            "value": {
+             "stringValue": "medium"
+            }
+           }
+          ],
+          "startTimeUnixNano": "1793952241492000000",
+          "timeUnixNano": "1793952243492000000"
+         }
+        ],
+        "isMonotonic": true
+       },
+       "unit": "USD"
+      },
+      {
+       "description": "Number of tokens used",
+       "name": "claude_code.token.usage",
+       "sum": {
+        "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+        "dataPoints": [
+         {
+          "asDouble": 2,
+          "attributes": [
+           {
+            "key": "user.id",
+            "value": {
+             "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+            }
+           },
+           {
+            "key": "session.id",
+            "value": {
+             "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+            }
+           },
+           {
+            "key": "ccr.session.id",
+            "value": {
+             "stringValue": "cse_01EXAMPLESESSION"
+            }
+           },
+           {
+            "key": "organization.id",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000002"
+            }
+           },
+           {
+            "key": "user.email",
+            "value": {
+             "stringValue": "dev@example.com"
+            }
+           },
+           {
+            "key": "user.account_uuid",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000001"
+            }
+           },
+           {
+            "key": "user.account_id",
+            "value": {
+             "stringValue": "user_01EXAMPLEACCOUNT"
+            }
+           },
+           {
+            "key": "anthropic.provider",
+            "value": {
+             "stringValue": "firstParty"
+            }
+           },
+           {
+            "key": "anthropic.custom_base_url",
+            "value": {
+             "boolValue": false
+            }
+           },
+           {
+            "key": "terminal.type",
+            "value": {
+             "stringValue": "linux"
+            }
+           },
+           {
+            "key": "model",
+            "value": {
+             "stringValue": "claude-opus-5-5"
+            }
+           },
+           {
+            "key": "query_source",
+            "value": {
+             "stringValue": "main"
+            }
+           },
+           {
+            "key": "effort",
+            "value": {
+             "stringValue": "medium"
+            }
+           },
+           {
+            "key": "type",
+            "value": {
+             "stringValue": "input"
+            }
+           }
+          ],
+          "startTimeUnixNano": "1793952241492000000",
+          "timeUnixNano": "1793952243492000000"
+         },
+         {
+          "asDouble": 4,
+          "attributes": [
+           {
+            "key": "user.id",
+            "value": {
+             "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+            }
+           },
+           {
+            "key": "session.id",
+            "value": {
+             "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+            }
+           },
+           {
+            "key": "ccr.session.id",
+            "value": {
+             "stringValue": "cse_01EXAMPLESESSION"
+            }
+           },
+           {
+            "key": "organization.id",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000002"
+            }
+           },
+           {
+            "key": "user.email",
+            "value": {
+             "stringValue": "dev@example.com"
+            }
+           },
+           {
+            "key": "user.account_uuid",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000001"
+            }
+           },
+           {
+            "key": "user.account_id",
+            "value": {
+             "stringValue": "user_01EXAMPLEACCOUNT"
+            }
+           },
+           {
+            "key": "anthropic.provider",
+            "value": {
+             "stringValue": "firstParty"
+            }
+           },
+           {
+            "key": "anthropic.custom_base_url",
+            "value": {
+             "boolValue": false
+            }
+           },
+           {
+            "key": "terminal.type",
+            "value": {
+             "stringValue": "linux"
+            }
+           },
+           {
+            "key": "model",
+            "value": {
+             "stringValue": "claude-opus-5-5"
+            }
+           },
+           {
+            "key": "query_source",
+            "value": {
+             "stringValue": "main"
+            }
+           },
+           {
+            "key": "effort",
+            "value": {
+             "stringValue": "medium"
+            }
+           },
+           {
+            "key": "type",
+            "value": {
+             "stringValue": "output"
+            }
+           }
+          ],
+          "startTimeUnixNano": "1793952241492000000",
+          "timeUnixNano": "1793952243492000000"
+         },
+         {
+          "asDouble": 47333,
+          "attributes": [
+           {
+            "key": "user.id",
+            "value": {
+             "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+            }
+           },
+           {
+            "key": "session.id",
+            "value": {
+             "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+            }
+           },
+           {
+            "key": "ccr.session.id",
+            "value": {
+             "stringValue": "cse_01EXAMPLESESSION"
+            }
+           },
+           {
+            "key": "organization.id",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000002"
+            }
+           },
+           {
+            "key": "user.email",
+            "value": {
+             "stringValue": "dev@example.com"
+            }
+           },
+           {
+            "key": "user.account_uuid",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000001"
+            }
+           },
+           {
+            "key": "user.account_id",
+            "value": {
+             "stringValue": "user_01EXAMPLEACCOUNT"
+            }
+           },
+           {
+            "key": "anthropic.provider",
+            "value": {
+             "stringValue": "firstParty"
+            }
+           },
+           {
+            "key": "anthropic.custom_base_url",
+            "value": {
+             "boolValue": false
+            }
+           },
+           {
+            "key": "terminal.type",
+            "value": {
+             "stringValue": "linux"
+            }
+           },
+           {
+            "key": "model",
+            "value": {
+             "stringValue": "claude-opus-5-5"
+            }
+           },
+           {
+            "key": "query_source",
+            "value": {
+             "stringValue": "main"
+            }
+           },
+           {
+            "key": "effort",
+            "value": {
+             "stringValue": "medium"
+            }
+           },
+           {
+            "key": "type",
+            "value": {
+             "stringValue": "cacheRead"
+            }
+           }
+          ],
+          "startTimeUnixNano": "1793952241492000000",
+          "timeUnixNano": "1793952243492000000"
+         },
+         {
+          "asDouble": 1011,
+          "attributes": [
+           {
+            "key": "user.id",
+            "value": {
+             "stringValue": "0000000000000000000000000000000000000000000000000000000000000001"
+            }
+           },
+           {
+            "key": "session.id",
+            "value": {
+             "stringValue": "74deee12-92fa-4127-9157-1af0dced000d"
+            }
+           },
+           {
+            "key": "ccr.session.id",
+            "value": {
+             "stringValue": "cse_01EXAMPLESESSION"
+            }
+           },
+           {
+            "key": "organization.id",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000002"
+            }
+           },
+           {
+            "key": "user.email",
+            "value": {
+             "stringValue": "dev@example.com"
+            }
+           },
+           {
+            "key": "user.account_uuid",
+            "value": {
+             "stringValue": "00000000-0000-4000-8000-000000000001"
+            }
+           },
+           {
+            "key": "user.account_id",
+            "value": {
+             "stringValue": "user_01EXAMPLEACCOUNT"
+            }
+           },
+           {
+            "key": "anthropic.provider",
+            "value": {
+             "stringValue": "firstParty"
+            }
+           },
+           {
+            "key": "anthropic.custom_base_url",
+            "value": {
+             "boolValue": false
+            }
+           },
+           {
+            "key": "terminal.type",
+            "value": {
+             "stringValue": "linux"
+            }
+           },
+           {
+            "key": "model",
+            "value": {
+             "stringValue": "claude-opus-5-5"
+            }
+           },
+           {
+            "key": "query_source",
+            "value": {
+             "stringValue": "main"
+            }
+           },
+           {
+            "key": "effort",
+            "value": {
+             "stringValue": "medium"
+            }
+           },
+           {
+            "key": "type",
+            "value": {
+             "stringValue": "cacheCreation"
+            }
+           }
+          ],
+          "startTimeUnixNano": "1793952241492000000",
+          "timeUnixNano": "1793952243492000000"
+         }
+        ],
+        "isMonotonic": true
+       },
+       "unit": "tokens"
+      }
+     ],
+     "scope": {
+      "name": "com.anthropic.claude_code",
+      "version": "2.1.318"
+     }
+    }
+   ]
+  }
+ ]
+}

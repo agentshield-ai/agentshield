@@ -105,8 +105,11 @@ test('d: set up a new project from the empty state', async ({ page }, info) => {
   // The snippets name this server and project.
   await expect(page.locator('.snippet pre')).toContainText(`weft.init("${fresh}"`)
   // Optional reading, not counted as a step of the task: the coding-agent plugin snippet.
-  await page.getByRole('tab', { name: 'Claude Code' }).click()
+  await page.getByRole('tab', { name: 'Claude Code plugin', exact: true }).click()
   await expect(page.locator('.snippet pre')).toContainText(`--project ${fresh}`)
+  await page.getByRole('tab', { name: 'Claude Code (built-in telemetry)', exact: true }).click()
+  await expect(page.locator('.snippet pre')).toContainText(`project_id=${fresh}`)
+  await expect(page.locator('.snippet pre')).toContainText('/otel"')
   await c.click(page.getByRole('button', { name: 'Send a test session' }), '“Send a test session”')
   await expect(page).toHaveURL(/\/sessions\/demo-/)
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Add a lint step to CI')

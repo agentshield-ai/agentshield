@@ -266,3 +266,34 @@ export function moveEntry(story: Story, current: string | null, dir: 1 | -1): st
   if (i < 0) return dir === 1 ? xs[0].key : xs[xs.length - 1].key
   return xs[Math.min(xs.length - 1, Math.max(0, i + dir))].key
 }
+
+/** Fields that hold a tool call's main argument, most telling first:
+ * Bash's command, Read/Edit/Write's file path, Grep's pattern, a fetch's URL,
+ * a search query, a sub-agent's prompt. */
+const MAIN_ARG_FIELDS = ['command', 'cmd', 'file_path', 'notebook_path', 'pattern', 'url', 'query', 'q', 'path', 'prompt', 'description']
+
+/** The main argument of a tool call as one string. Arguments arrive as an
+ * object or as JSON text (Claude Code sends JSON text); either way the field
+ * a person recognises is shown on its own ("ls", "src/app.ts"), and anything
+ * else is shown as compact JSON. */
+export function mainArgumentText(a: unknown): string {
+  if (a == null || a === '') return ''
+  let v: unknown = a
+  if (typeof a === 'string') {
+    const t = a.trim()
+    if (!t.startsWith('{')) return a
+    try {
+      v = JSON.parse(t)
+    } catch {
+      return a
+    }
+  }
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>
+    for (const k of MAIN_ARG_FIELDS) {
+      const x = o[k]
+      if (typeof x === 'string' && x.trim()) return x
+    }
+  }
+  return typeof a === 'string' ? a : JSON.stringify(a)
+}

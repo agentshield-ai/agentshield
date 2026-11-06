@@ -25,6 +25,10 @@ type CallStart struct {
 	UserID      *string        `json:"user_id"`
 	RunID       *string        `json:"run_id"`
 	RunStep     *int64         `json:"run_step"`
+	// ReplaceDisplayName makes a re-sent start replace a stored display
+	// name (spans rebuilt from an event log, eventlog.go); otherwise the
+	// first one, or a rename, is kept.
+	ReplaceDisplayName bool `json:"-"`
 }
 
 // CallEnd is the end half of a call.
@@ -220,7 +224,8 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 		s.nerRedact(ctx, sts, ens)
 	}
 	var ended []EndedCall
-	ctx = withTraceBatch(ctx) // agents_handoffs.go: derive each touched trace once
+	ctx = withTraceBatch(ctx)  // agents_handoffs.go: derive each touched trace once
+	ctx = withSourceBatch(ctx) // sources.go: check each session's source once
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		touched := map[string]bool{}
 		for _, it := range items {
@@ -279,7 +284,8 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 		s.nerRedact(ctx, sts, ens)
 	}
 	var ended []EndedCall
-	ctx = withTraceBatch(ctx) // agents_handoffs.go: derive each touched trace once
+	ctx = withTraceBatch(ctx)  // agents_handoffs.go: derive each touched trace once
+	ctx = withSourceBatch(ctx) // sources.go: check each session's source once
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		touched := map[string]bool{}
 		for i := range calls {
@@ -306,11 +312,17 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 }
 
 func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error {
+	if drop, err := s.applySourcePrecedence(ctx, tx, st); drop || err != nil { // sources.go
+		return err
+	}
 	if drop, err := ingestHook(ctx, s, tx, st, nil); drop || err != nil {
 		return err
 	}
 	started, err := ParseTime(st.StartedAt)
 	if err != nil {
+		return err
+	}
+	if err := s.detachFromOldParent(ctx, tx, st); err != nil {
 		return err
 	}
 	inputs := mustJSON(st.Inputs)
@@ -321,7 +333,7 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
 		ON CONFLICT(project_id, id) DO UPDATE SET
 			op_name = excluded.op_name, op_base_name = excluded.op_base_name,
-			display_name = COALESCE(calls.display_name, excluded.display_name),
+			display_name = CASE WHEN ? THEN excluded.display_name ELSE COALESCE(calls.display_name, excluded.display_name) END,
 			trace_id = excluded.trace_id, parent_id = excluded.parent_id,
 			thread_id = excluded.thread_id, turn_id = excluded.turn_id, started_at = excluded.started_at,
 			attributes = excluded.attributes, inputs = excluded.inputs, input_refs = excluded.input_refs,
@@ -329,7 +341,7 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 			storage_size = calls.storage_size - (CASE WHEN calls.has_start = 1 THEN length(calls.inputs) + length(calls.attributes) ELSE 0 END) + excluded.storage_size`,
 		st.ProjectID, st.ID, st.OpName, OpBaseName(st.OpName), nullStr(st.DisplayName), st.TraceID, nullStr(st.ParentID),
 		nullStr(st.ThreadID), nullStr(st.TurnID), started, attrs, inputs, inRefs, nullStr(st.UserID), nullStr(st.RunID),
-		len(inputs)+len(attrs))
+		len(inputs)+len(attrs), st.ReplaceDisplayName)
 	if err != nil {
 		return err
 	}
@@ -346,6 +358,9 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 }
 
 func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
+	if drop, err := s.droppedEnd(ctx, tx, en); drop || err != nil { // sources.go
+		return err
+	}
 	if drop, err := ingestHook(ctx, s, tx, nil, en); drop || err != nil {
 		return err
 	}
@@ -523,6 +538,39 @@ func (s *Store) absorbChildren(ctx context.Context, tx *sql.Tx, projectID, id st
 	}
 	st.rollup.Add(delta)
 	return s.saveRollup(ctx, tx, projectID, id, st)
+}
+
+// detachFromOldParent handles a call sent again with a different parent
+// (a producer that learns the parent later, such as Claude Code's log
+// events): what the call had added to its old parent's roll-up is taken out
+// of the old ancestor chain, so that propagate adds it under the new parent
+// and nothing is counted twice.
+func (s *Store) detachFromOldParent(ctx context.Context, tx *sql.Tx, st *CallStart) error {
+	old, err := s.loadRoll(ctx, tx, st.ProjectID, st.ID)
+	if err != nil || old == nil || !old.parentID.Valid || old.parentID.String == "" {
+		return err
+	}
+	if st.ParentID != nil && *st.ParentID == old.parentID.String {
+		return nil
+	}
+	if old.propagated.IsZero() {
+		return nil
+	}
+	parent, err := s.loadRoll(ctx, tx, st.ProjectID, old.parentID.String)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE calls SET propagated = '{}' WHERE project_id = ? AND id = ?`, st.ProjectID, st.ID); err != nil {
+		return err
+	}
+	if parent == nil {
+		return nil
+	}
+	parent.rollup.Sub(old.propagated)
+	if err := s.saveRollup(ctx, tx, st.ProjectID, old.parentID.String, parent); err != nil {
+		return err
+	}
+	return s.propagate(ctx, tx, st.ProjectID, old.parentID.String)
 }
 
 // propagate pushes any unpropagated change in total(id) up the ancestor chain.

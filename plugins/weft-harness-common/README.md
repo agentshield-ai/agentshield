@@ -5,7 +5,7 @@
 [OpenClaw](../weft-openclaw), [Pi](../weft-pi)): configuration (`WEFT_SERVER_URL`,
 `WEFT_API_KEY`, `WEFT_PROJECT`, ...), stable span ids, the span shapes the
 agents index understands (`invoke_agent` turns, `chat` LLM spans,
-`execute_tool` tools, conversation = the span's `session_id`), truncation and
+`execute_tool` tools, session = the span's `session_id`), truncation and
 the sender, which posts finished spans to Weft's `POST /api/v1/spans/batch`
 ([API.md](../../docs/weft/API.md#spans)) with a timeout.
 
