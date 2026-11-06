@@ -147,7 +147,14 @@ func ccLogEvent(name, session, group string, raw, resource map[string]any, timeN
 	if a := aStr(resource, "weft.agent.name", "gen_ai.agent.name"); a != "" {
 		attrs["weft.agent.name"] = a
 	}
-	return store.LogEvent{Key: hex.EncodeToString(h[:16]), SessionID: session, GroupID: group, Name: name, TimeUS: us, Seq: int64(seq), Attrs: attrs}
+	// A sub-agent's events can carry a later prompt's id (a background
+	// agent outlives the turn that started it): they all belong to the
+	// prompt of its first event.
+	owner := ""
+	if a := aStr(attrs, "agent_id"); a != "" {
+		owner = "agent:" + a
+	}
+	return store.LogEvent{Key: hex.EncodeToString(h[:16]), SessionID: session, GroupID: group, Owner: owner, Name: name, TimeUS: us, Seq: int64(seq), Attrs: attrs}
 }
 
 // ---------------------------------------------------------------- building
@@ -534,7 +541,12 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 	}
 
 	// Sub-agents: under the Agent tool call whose run holds their first event.
+	// An Agent call runs one sub-agent: one already chosen is passed over
+	// while another candidate remains (parallel calls). A call that started
+	// its sub-agent in the background returns at once, so any sub-agent
+	// starting after it is a candidate.
 	agentSpan := func(id string) string { return ccID(ccLogsNS, sid, "agent", id) }
+	claimed := map[*ccTool]bool{}
 	for _, a := range agentOrder {
 		var main, other []*ccTool
 		for _, t := range toolOrder {
@@ -543,7 +555,7 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 			}
 			// Its run holds the sub-agent's first event (1 ms of slack:
 			// the two are logged in the same instant).
-			if t.startUS > a.firstUS+1000 || (t.hasResult && t.endUS < a.firstUS) {
+			if t.startUS > a.firstUS+1000 || (t.hasResult && t.endUS < a.firstUS && !background(t)) {
 				continue
 			}
 			switch {
@@ -563,6 +575,10 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 			switch {
 			case best == nil:
 				best = t
+			case claimed[t] != claimed[best]:
+				if !claimed[t] {
+					best = t
+				}
 			case a.typ != "" && (t.subagentType == a.typ) != (best.subagentType == a.typ):
 				if t.subagentType == a.typ {
 					best = t
@@ -572,6 +588,9 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 			}
 		}
 		a.parentTool = best
+		if best != nil {
+			claimed[best] = true
+		}
 		if (a.typ == "" || a.typ == "custom") && best != nil && best.subagentType != "" {
 			a.typ = best.subagentType
 		}
@@ -643,7 +662,7 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 					cc[strings.ReplaceAll(k, ".", "_")] = v
 				}
 			}
-		} else if closed {
+		} else if closed && !background(a.parentTool) {
 			msg := "sub-agent did not finish before the turn ended"
 			ended, exc = true, &msg
 		}
@@ -806,6 +825,16 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 		add(ccID(ccLogsNS, sid, "llm", l.key), parent, op, display, evStart(e), attrs, map[string]any{"model": model}, e.TimeUS, true, output, exc, summary)
 	}
 	return out
+}
+
+// background reports an Agent call that started its sub-agent in the
+// background: the sub-agent may outlive the turn.
+func background(t *ccTool) bool {
+	if t == nil {
+		return false
+	}
+	b, _ := t.input["run_in_background"].(bool)
+	return b
 }
 
 func nonEmpty(xs ...string) []string {

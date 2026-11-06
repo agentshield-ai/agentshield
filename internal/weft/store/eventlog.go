@@ -88,6 +88,20 @@ CREATE TABLE IF NOT EXISTS log_session_links (
 		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS log_events_open ON log_events(project_id, source, session_id, grouping, ts)`)
 		return err
 	})
+	// log_events.owner: see LogEvent.Owner.
+	registerMigration(func(db *sql.DB) error {
+		ok, err := HasColumn(db, "log_events", "owner")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			if _, err := db.Exec(`ALTER TABLE log_events ADD COLUMN owner TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+		}
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS log_events_owner ON log_events(project_id, source, session_id, owner, ts) WHERE owner <> ''`)
+		return err
+	})
 	// calls.build_hash: the hash of the span an event-log rebuild last
 	// stored; a rebuild that builds the same span again skips it. A
 	// write of the span by any other path clears it (applyStart).
@@ -126,6 +140,11 @@ type LogEvent struct {
 	GroupID   string
 	// Opens marks an event that opens the group GroupID (a user prompt).
 	Opens bool
+	// Owner, when set, places the event in the group of the earliest
+	// stored event with the same Owner in its session, whatever GroupID it
+	// names (a Claude Code sub-agent: a background agent's later events
+	// carry the prompt id current when they were logged).
+	Owner string
 	// LinkChild names a session this event starts as part of its own
 	// session (a sub-agent's): that session's events are stored here.
 	LinkChild string
@@ -560,12 +579,19 @@ func (w *logWriter) insert(e LogEvent) (int, error) {
 			return 0, err
 		}
 	}
+	owner := ""
+	if grouping == groupNamed && e.Owner != "" {
+		owner = e.Owner
+		if group, err = w.ownerGroup(session, owner, group, e); err != nil {
+			return 0, err
+		}
+	}
 	full, err := w.groupFull(session, group)
 	if err != nil || full {
 		return 0, err
 	}
-	res, err := w.tx.ExecContext(w.ctx, `INSERT OR IGNORE INTO log_events(project_id, source, event_key, session_id, group_id, grouping, name, ts, seq, attributes, received_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, w.pid, w.src.Name, e.Key, session, group, grouping, e.Name, e.TimeUS, e.Seq, mustJSON(e.Attrs), nowMicros())
+	res, err := w.tx.ExecContext(w.ctx, `INSERT OR IGNORE INTO log_events(project_id, source, event_key, session_id, group_id, grouping, owner, name, ts, seq, attributes, received_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, w.pid, w.src.Name, e.Key, session, group, grouping, owner, e.Name, e.TimeUS, e.Seq, mustJSON(e.Attrs), nowMicros())
 	if err != nil {
 		return 0, err
 	}
@@ -614,6 +640,54 @@ func (w *logWriter) insert(e LogEvent) (int, error) {
 		}
 	}
 	return 1, nil
+}
+
+// ownerGroup returns the group an event with an Owner belongs to: that of
+// the owner's earliest stored event. An event earlier than all of them
+// moves the owner's stored events into its own group.
+func (w *logWriter) ownerGroup(session, owner, group string, e LogEvent) (string, error) {
+	var g string
+	var ts, seq int64
+	err := w.tx.QueryRowContext(w.ctx, `SELECT group_id, ts, seq FROM log_events WHERE project_id = ? AND source = ? AND session_id = ? AND owner = ?
+		ORDER BY ts, seq LIMIT 1`, w.pid, w.src.Name, session, owner).Scan(&g, &ts, &seq)
+	if err == sql.ErrNoRows {
+		return group, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if g == group {
+		return group, nil
+	}
+	if ts < e.TimeUS || (ts == e.TimeUS && seq <= e.Seq) {
+		return g, nil
+	}
+	rows, err := w.tx.QueryContext(w.ctx, `SELECT DISTINCT group_id FROM log_events WHERE project_id = ? AND source = ? AND session_id = ? AND owner = ? AND group_id <> ?`,
+		w.pid, w.src.Name, session, owner, group)
+	if err != nil {
+		return "", err
+	}
+	var old []string
+	for rows.Next() {
+		var x string
+		if err := rows.Scan(&x); err != nil {
+			rows.Close()
+			return "", err
+		}
+		old = append(old, x)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if _, err := w.tx.ExecContext(w.ctx, `UPDATE log_events SET group_id = ? WHERE project_id = ? AND source = ? AND session_id = ? AND owner = ? AND group_id <> ?`,
+		group, w.pid, w.src.Name, session, owner, group); err != nil {
+		return "", err
+	}
+	for _, x := range old {
+		w.touched[logGroupKey{session, x}] = true
+	}
+	return group, nil
 }
 
 // groupFull reports whether a group holds maxLogGroupEvents events: its

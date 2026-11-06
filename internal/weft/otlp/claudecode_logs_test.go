@@ -702,3 +702,83 @@ func keys(m map[string][]store.LogEvent) []string {
 	}
 	return out
 }
+
+// A background sub-agent outlives the turn that started it, and its later
+// events carry the next prompt's id. It stays under its Agent call in the
+// first turn, whichever order the batches arrive in.
+func TestClaudeCodeLogsBackgroundSubagent(t *testing.T) {
+	const session = "sess-bg"
+	t0 := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Millisecond)
+	n := 0
+	ev := func(prompt, name string, attrs map[string]any) store.LogEvent {
+		n++
+		a := map[string]any{"session.id": session, "prompt.id": prompt, "event.name": name,
+			"event.timestamp": t0.Add(time.Duration(n) * time.Second).Format("2006-01-02T15:04:05.000Z"), "event.sequence": json.Number(itoa(n))}
+		for k, v := range attrs {
+			a[k] = v
+		}
+		return ccLogEvent(name, session, prompt, a, map[string]any{"service.name": "claude-code"}, 0, 0)
+	}
+	sub := map[string]any{"agent_id": "a1", "query_source": "agent:builtin:general-purpose"}
+	with := func(m map[string]any, more map[string]any) map[string]any {
+		out := map[string]any{}
+		for k, v := range m {
+			out[k] = v
+		}
+		for k, v := range more {
+			out[k] = v
+		}
+		return out
+	}
+	first := []store.LogEvent{
+		ev("p1", "user_prompt", map[string]any{"prompt": "review in the background"}),
+		ev("p1", "tool_decision", map[string]any{"decision": "accept", "tool_name": "Agent", "tool_use_id": "toolu_a", "request_id": "req_1"}),
+		ev("p1", "tool_result", map[string]any{"tool_name": "Agent", "tool_use_id": "toolu_a", "success": "true", "duration_ms": "2", "request_id": "req_1",
+			"tool_input": `{"prompt":"review","subagent_type":"general-purpose","run_in_background":true}`}),
+		ev("p1", "api_request", map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_1", "duration_ms": 900, "query_source": "sdk"}),
+		ev("p1", "api_request", with(sub, map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_s1", "duration_ms": 500})),
+		ev("p1", "api_request", map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_2", "duration_ms": 500, "query_source": "sdk"}),
+	}
+	second := []store.LogEvent{
+		ev("p2", "user_prompt", map[string]any{"prompt": "and another thing"}),
+		ev("p2", "api_request", with(sub, map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_s2", "duration_ms": 500})),
+		ev("p2", "subagent_completed", with(sub, map[string]any{"agent_type": "general-purpose", "duration_ms": 5000})),
+		ev("p2", "api_request", map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_3", "duration_ms": 500, "query_source": "sdk"}),
+	}
+	check := func(t *testing.T, h *ccHarness) {
+		t.Helper()
+		calls := h.spans(session)
+		agentCall := spanByName(t, calls, "Agent: review")
+		s := spanByName(t, calls, "invoke_agent general-purpose")
+		if deref(s.ParentID) != agentCall.ID || deref(s.TurnID) != deref(agentCall.TurnID) || s.EndedAt == nil || s.Exception != nil {
+			t.Fatalf("background sub-agent: parent %s (Agent call %s), turn %s vs %s, ended %v, exc %v",
+				deref(s.ParentID), agentCall.ID, deref(s.TurnID), deref(agentCall.TurnID), s.EndedAt, s.Exception)
+		}
+		kids := 0
+		for _, c := range calls {
+			if deref(c.ParentID) == s.ID {
+				kids++
+			}
+		}
+		if kids != 2 {
+			t.Fatalf("sub-agent has %d model calls, want 2", kids)
+		}
+	}
+	t.Run("in order", func(t *testing.T) {
+		h := newCCHarness(t)
+		h.ingest(first)
+		// Still running when the turn has ended: not marked as failed.
+		calls := h.spans(session)
+		if s := spanByName(t, calls, "invoke_agent general-purpose"); s.Exception != nil {
+			t.Fatalf("running background sub-agent marked failed: %s", *s.Exception)
+		}
+		h.ingest(second)
+		check(t, h)
+	})
+	t.Run("later batch first", func(t *testing.T) {
+		h := newCCHarness(t)
+		h.ingest(second)
+		h.ingest(first)
+		check(t, h)
+	})
+}
