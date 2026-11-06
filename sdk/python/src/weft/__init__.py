@@ -24,6 +24,7 @@ from ._client import (
     flush,
     get,
     get_aliases,
+    load_op,
     get_client,
     get_tags,
     get_tags_and_aliases,
@@ -68,7 +69,7 @@ from ._object import (
     WeftObject,
 )
 from ._call import ApplyScorerResult
-from ._loader import OpLoadError
+from ._loader import OpLoadError, StoredOp
 from ._op import BoundOp, Op, trace
 from ._platform import AnnotationSpec, Leaderboard, LeaderboardColumn, Monitor, SavedView
 from ._refs import FunctionRef, ObjectRef, SpanRef, TableRef, parse_uri
@@ -176,6 +177,8 @@ __all__ = [
     "SavedView",
     "ApplyScorerResult",
     "OpLoadError",
+    "StoredOp",
+    "load_op",
     "Content",
     "Image",
     "Audio",

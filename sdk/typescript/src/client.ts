@@ -9,12 +9,12 @@ import { scrubReasoning } from './reasoning.js';
 import { getClient, setGlobalClient } from './global.js';
 import { HttpClient, VERSION, WeftHTTPError } from './http.js';
 import { uuid7 } from './ids.js';
-import { loadOp } from './loader.js';
+import { NOT_TRUSTED, OpLoadError, StoredOp, codeLoadAllowed, evalOp, loadOp } from './loader.js';
 import { Content } from './content.js';
 import { Dataset, WeftObject, loadPromptOrModel } from './objects.js';
 import { SavedView } from './savedView.js';
 import { loadPlatformObject } from './platform.js';
-import { op as makeOp, isOp, spanDisplayNameOption, type OpMeta } from './op.js';
+import { op as makeOp, isOp, spanDisplayNameOption, type Op, type OpMeta } from './op.js';
 import { Ref, isRefUri, splitProject } from './refs.js';
 import { Redactor, type RedactSettings } from './redact.js';
 import { Sender, type SenderOptions } from './sender.js';
@@ -1284,20 +1284,47 @@ export class WeftClient {
     return new Ref(this.entity, this.project, 'object', i < 0 ? s : s.slice(0, i), i < 0 ? 'latest' : s.slice(i + 1) || 'latest');
   }
 
-  /** Read what a ref (or "name", "name:v3", "name:latest", a URI) points to. Datasets come back as Dataset instances. */
-  async get(s: string | Ref): Promise<any> {
+  /**
+   * Read what a ref (or "name", "name:v3", "name:latest", a URI) points to. Datasets come back as Dataset instances.
+   *
+   * Stored functions come back as inert `StoredOp` values: the SDK does not evaluate code read from the
+   * server unless you opt in with `{ trustCode: true }` (or `WEFT_ALLOW_CODE_LOAD=1`).
+   */
+  async get(s: string | Ref, opts: { trustCode?: boolean } = {}): Promise<any> {
     const r = this.ref(s);
+    const trust = opts.trustCode === true;
     await this.flush();
     if (r.kind === 'span' && !r.extra.length) return this.span(r.name);
     if ((r.kind === 'object' || r.kind === 'function') && !r.extra.length) {
       const obj = await this.readObject(r.projectId, r.name, r.digest);
       if (!obj) throw new WeftHTTPError(404, `object not found: ${r.uri()}`, objectPath(r.name, r.digest));
       const real = new Ref(r.entity, r.project, obj.kind === 'function' ? 'function' : 'object', r.name, obj.digest);
-      return this.fromVal(obj.value, real);
+      return this.fromVal(obj.value, real, trust);
     }
     if (r.kind === 'table' && !r.extra.length) return (await this.readTable(r)).rows;
     const res = await this.http.post('/api/v1/refs/read', { refs: [r.uri()] });
-    return this.fromVal(res.items?.[0] ?? null, undefined);
+    return this.fromVal(res.items?.[0] ?? null, undefined, trust);
+  }
+
+  /**
+   * Build a runnable traced function from a stored function version.
+   *
+   * SECURITY: this evaluates the source code stored on the server. Pass `{ trustCode: true }` (or set
+   * `WEFT_ALLOW_CODE_LOAD=1`) only for projects whose writers you trust; otherwise `OpLoadError` is thrown.
+   */
+  async loadOp(s: string | Ref | StoredOp, opts: { trustCode?: boolean } = {}): Promise<Op<(...args: any[]) => any>> {
+    if (s instanceof StoredOp) {
+      if (!s.ref) return s.load(opts, this);
+      s = s.ref;
+    }
+    const r = this.ref(s);
+    if (!codeLoadAllowed(opts.trustCode)) throw new OpLoadError(`cannot load op ${r.uri()}: ${NOT_TRUSTED}`);
+    await this.flush();
+    if ((r.kind !== 'object' && r.kind !== 'function') || r.extra.length) throw new TypeError(`${r.uri()} is not a function ref`);
+    const obj = await this.readObject(r.projectId, r.name, r.digest);
+    if (!obj) throw new WeftHTTPError(404, `object not found: ${r.uri()}`, objectPath(r.name, r.digest));
+    if (!(obj.value && typeof obj.value === 'object' && obj.value._type === 'Op')) throw new TypeError(`${r.uri()} is not a stored function`);
+    return evalOp(obj.value, new Ref(r.entity, r.project, 'function', r.name, obj.digest), this);
   }
 
   private async readTable(r: Ref): Promise<{ rows: any[]; digests: string[] }> {
@@ -1316,8 +1343,8 @@ export class WeftClient {
     return { rows, digests };
   }
 
-  private async fromVal(val: any, ref: Ref | undefined): Promise<any> {
-    if (val && typeof val === 'object' && val._type === 'Op') return loadOp(val, ref, this);
+  private async fromVal(val: any, ref: Ref | undefined, trustCode = false): Promise<any> {
+    if (val && typeof val === 'object' && val._type === 'Op') return loadOp(val, ref, this, trustCode);
     const platform = val && typeof val === 'object' ? (loadPlatformObject(val, ref) ?? loadPromptOrModel(val, ref)) : null;
     if (platform) return platform;
     if (val && typeof val === 'object' && val._class_name === 'Dataset' && isRefUri(val.rows)) {

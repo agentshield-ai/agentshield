@@ -1,4 +1,33 @@
+import { logger } from './log.js';
+
 export const VERSION = '0.1.0';
+
+/** True for localhost, *.localhost and loopback IP literals. */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return h === '::1' || h === '0:0:0:0:0:0:0:1';
+}
+
+const warnedPlainHttp = new Set<string>();
+
+/** Warn (once per server) when an API key would travel over plain http to a non-loopback host. */
+export function warnPlainHttpKey(baseUrl: string, apiKey?: string): boolean {
+  if (!apiKey) return false;
+  let u: URL;
+  try {
+    u = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' || isLoopbackHost(u.hostname)) return false;
+  if (!warnedPlainHttp.has(u.host)) {
+    warnedPlainHttp.add(u.host);
+    logger.warn(`weft: sending the API key to ${baseUrl} over plain http; anyone on the network path can read it. Use https.`);
+  }
+  return true;
+}
 
 export class WeftHTTPError extends Error {
   constructor(
@@ -74,6 +103,7 @@ export class HttpClient {
     public readonly timeoutMs = 30_000,
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    warnPlainHttpKey(this.baseUrl, apiKey);
   }
 
   headers(contentType: string | null = 'application/json'): Record<string, string> {
@@ -93,6 +123,9 @@ export class HttpClient {
         method,
         headers,
         body,
+        // The Weft API never redirects; following one would resend the API key and body to another host.
+        // 'manual' (rather than 'error') so the refusal below can report the status and target.
+        redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs ?? this.timeoutMs),
       });
     } catch (e) {
@@ -100,6 +133,11 @@ export class HttpClient {
       throw new WeftHTTPError(0, `connection failed: ${(e as Error).message}`, path);
     }
     if (debug) res = await debugResponse(res, started);
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      await res.body?.cancel().catch(() => undefined);
+      const to = res.headers.get('location');
+      throw new WeftHTTPError(res.status || 302, `redirect${to ? ` to ${to}` : ''} refused (the Weft API does not redirect)`, path);
+    }
     if (!res.ok) {
       let reason = await res.text().catch(() => '');
       try {

@@ -1,8 +1,18 @@
 /**
  * Redaction of sensitive values in call inputs/outputs. Values of dict keys
- * named like credentials are replaced with "REDACTED" (case-insensitive, exact
- * key match). Configure with `init(project, { settings: { redactKeys, redactPii } })`;
- * disable key redaction with WEFT_REDACT_KEYS=0.
+ * named like credentials are replaced with "REDACTED". Key names are
+ * normalised (lower-cased, `-`, `_`, `.` and spaces removed) and matched
+ * against DEFAULT_REDACT_KEYS and the same patterns as the Python SDK: names
+ * containing secret, password, passwd, apikey, authorization, credential,
+ * privatekey or cookie; names ending in token or auth; and API, secret,
+ * private, access, signing, encryption, master, session, auth, client and
+ * license `*_key` names. `redactKeys` replaces the defaults and the patterns
+ * with an exact (normalised) list.
+ *
+ * Credential-looking values are redacted inside strings too: Bearer/Basic
+ * credentials, `sk-...` keys, AWS access key ids, GitHub and Slack tokens, PEM
+ * private keys and the password of `scheme://user:password@host` URLs.
+ * WEFT_REDACT_KEYS=0 disables key and value redaction.
  *
  * PII redaction (`redactPii`, env WEFT_REDACT_PII) replaces entities inside
  * strings with `<ENTITY_TYPE>`. Regular expressions always handle e-mail
@@ -28,7 +38,68 @@
 import { logger } from './log.js';
 
 export const REDACTED = 'REDACTED';
-export const DEFAULT_REDACT_KEYS = ['api_key', 'apikey', 'authorization', 'auth', 'password', 'secret', 'token', 'access_token'];
+export const DEFAULT_REDACT_KEYS = [
+  'api_key',
+  'apikey',
+  'authorization',
+  'auth',
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+  'access_token',
+  'cookie',
+  'set_cookie',
+  'credentials',
+  'private_key',
+];
+
+const SECRET_KEY_PARTS = ['secret', 'password', 'passwd', 'apikey', 'authorization', 'credential', 'privatekey', 'cookie'];
+const SECRET_KEY_SUFFIXES = [
+  'token',
+  'auth',
+  'apikey',
+  'secretkey',
+  'privatekey',
+  'accesskey',
+  'signingkey',
+  'encryptionkey',
+  'masterkey',
+  'sessionkey',
+  'authkey',
+  'clientkey',
+  'licensekey',
+];
+
+/** `"X-Api-Key"` -> `"xapikey"`: lower case without `-`, `_`, `.` and spaces. */
+export function normalizeKey(k: string): string {
+  return k.toLowerCase().replace(/[\s_.-]+/g, '');
+}
+
+const DEFAULT_NORM = new Set(DEFAULT_REDACT_KEYS.map(normalizeKey));
+
+/** Whether the default redaction treats a dict key of this name as a credential. */
+export function isSecretKey(k: string): boolean {
+  const n = normalizeKey(k);
+  return DEFAULT_NORM.has(n) || SECRET_KEY_PARTS.some((p) => n.includes(p)) || SECRET_KEY_SUFFIXES.some((p) => n.endsWith(p));
+}
+
+const SECRET_VALUE_PATTERNS: Array<[RegExp, string]> = [
+  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$(?![\s\S]))/g, REDACTED],
+  [/\b(Bearer|Basic|Token)(\s+)[A-Za-z0-9._~+/=:-]{8,}/gi, `$1$2${REDACTED}`],
+  [/\bsk-[A-Za-z0-9_-]{20,}/g, REDACTED],
+  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, REDACTED],
+  [/\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{30,}\b/g, REDACTED],
+  [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, REDACTED],
+  [/\b([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)[^@\s/]+(@)/gi, `$1${REDACTED}$2`],
+];
+
+/** Replace credential-looking values (Bearer tokens, `sk-` keys, AKIA ids, URL passwords ...) in `s`. */
+export function redactSecretValues(s: string): string {
+  return SECRET_VALUE_PATTERNS.reduce((acc, [re, repl]) => acc.replace(re, repl), s);
+}
 
 const PII: Array<[RegExp, string]> = [
   [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<EMAIL_ADDRESS>'],
@@ -165,6 +236,10 @@ function envTrue(name: string): boolean {
 
 export class Redactor {
   readonly keys: Set<string>;
+  /** Key and value redaction on (WEFT_REDACT_KEYS not 0). */
+  readonly enabled: boolean;
+  /** The default list (with its patterns) rather than a custom exact list. */
+  readonly defaultKeys: boolean;
   readonly pii: boolean;
   readonly piiEntities: string[];
   /** The NER analyzer, when one is configured and `redactPii` is on. */
@@ -176,7 +251,9 @@ export class Redactor {
   constructor(settings: RedactSettings = {}) {
     const env = (process.env.WEFT_REDACT_KEYS ?? '1').trim().toLowerCase();
     const enabled = !['0', 'false', 'no', 'off'].includes(env);
-    this.keys = new Set(enabled ? (settings.redactKeys ?? DEFAULT_REDACT_KEYS).map((k) => k.toLowerCase()) : []);
+    this.enabled = enabled;
+    this.defaultKeys = settings.redactKeys === undefined;
+    this.keys = new Set(enabled ? (settings.redactKeys ?? DEFAULT_REDACT_KEYS).map(normalizeKey) : []);
     this.pii = settings.redactPii ?? envTrue('WEFT_REDACT_PII');
     const fields = (settings.redactPiiFields ?? envList('WEFT_REDACT_PII_FIELDS') ?? DEFAULT_PII_ENTITIES).map((e) => e.toUpperCase());
     const exclude = new Set((settings.redactPiiExcludeFields ?? envList('WEFT_REDACT_PII_EXCLUDE_FIELDS') ?? []).map((e) => e.toUpperCase()));
@@ -220,7 +297,7 @@ export class Redactor {
     if (v && typeof v === 'object') {
       const out: Record<string, unknown> = {};
       const entries = Object.entries(v);
-      const vals = await Promise.all(entries.map(([k, x]) => (this.keys.has(k.toLowerCase()) ? REDACTED : this.applyAsync(x, depth + 1, cache))));
+      const vals = await Promise.all(entries.map(([k, x]) => (this.isRedactedKey(k) ? REDACTED : this.applyAsync(x, depth + 1, cache))));
       entries.forEach(([k], i) => (out[k] = vals[i]));
       return out;
     }
@@ -260,7 +337,12 @@ export class Redactor {
   }
 
   get active(): boolean {
-    return this.keys.size > 0 || this.pii;
+    return this.enabled || this.keys.size > 0 || this.pii;
+  }
+
+  isRedactedKey(k: string): boolean {
+    if (!this.enabled) return false;
+    return this.defaultKeys ? isSecretKey(k) : this.keys.has(normalizeKey(k));
   }
 
   apply(v: unknown, depth = 0): unknown {
@@ -268,10 +350,13 @@ export class Redactor {
     if (Array.isArray(v)) return v.map((x) => this.apply(x, depth + 1));
     if (v && typeof v === 'object') {
       const out: Record<string, unknown> = {};
-      for (const [k, x] of Object.entries(v)) out[k] = this.keys.has(k.toLowerCase()) ? REDACTED : this.apply(x, depth + 1);
+      for (const [k, x] of Object.entries(v)) out[k] = this.isRedactedKey(k) ? REDACTED : this.apply(x, depth + 1);
       return out;
     }
-    if (typeof v === 'string' && this.pii) return redactPiiText(v, this.piiEntities);
+    if (typeof v === 'string') {
+      const s = this.enabled ? redactSecretValues(v) : v;
+      return this.pii ? redactPiiText(s, this.piiEntities) : s;
+    }
     return v;
   }
 }

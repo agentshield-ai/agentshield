@@ -217,6 +217,26 @@ func NormalizeProject(projectID string) (string, error) {
 	return ent + "/" + proj, nil
 }
 
+// ValidateNewProject checks a normalised project id for a project that does
+// not exist yet. Besides what NormalizeProject refuses, a new project's
+// entity and name may not contain '"', ';', '<', '>', DEL or other control
+// characters, or be "." or "..": ids end up in file names, object-store
+// keys, headers and HTML. Projects created before keep working.
+func ValidateNewProject(projectID string) error {
+	ent, proj := SplitProject(projectID)
+	for _, part := range []string{ent, proj} {
+		if part == "." || part == ".." {
+			return fmt.Errorf("project_id parts may not be %q: %q", part, projectID)
+		}
+		for _, r := range part {
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == '"' || r == ';' || r == '<' || r == '>' {
+				return fmt.Errorf("invalid character %q in project_id %q", r, projectID)
+			}
+		}
+	}
+	return nil
+}
+
 // CanonicalJSON encodes v with sorted keys, no insignificant whitespace and
 // no HTML escaping. Numbers decoded with UseNumber keep their text form.
 func CanonicalJSON(v any) ([]byte, error) {

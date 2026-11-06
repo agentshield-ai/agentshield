@@ -1391,11 +1391,50 @@ class WeftClient:
         name, version = parse_name_version(s)
         return ObjectRef(self.entity, self.project, name, version or "latest")
 
-    def get(self, ref: Union[str, Ref]) -> Any:
+    def get(self, ref: Union[str, Ref], *, trust_code: bool = False) -> Any:
         """Read what a ref points to (objects, functions, datasets, tables, spans, paths).
 
         ``ref`` is a ``Ref``, a ``weft:///`` URI or ``"name"``, ``"name:v3"``,
-        ``"name:latest"``, ``"name:<alias>"`` or ``"name:<digest>"``."""
+        ``"name:latest"``, ``"name:<alias>"`` or ``"name:<digest>"``.
+
+        Stored functions come back as inert :class:`weft.StoredOp` values: the
+        SDK does not run code read from the server unless you opt in with
+        ``trust_code=True`` (or ``WEFT_ALLOW_CODE_LOAD=1``), which loads
+        functions, and the function-ref methods of objects, as runnable ops."""
+        from ._loader import trusting_code
+
+        with trusting_code(trust_code):
+            return self._get(ref)
+
+    def load_op(self, ref: Union[str, Ref, Any], *, trust_code: bool = False) -> Op:
+        """Build a runnable :class:`weft.Op` from a stored function version.
+
+        SECURITY: this executes the source code stored on the server. Pass
+        ``trust_code=True`` (or set ``WEFT_ALLOW_CODE_LOAD=1``) only for
+        projects whose writers you trust; otherwise ``OpLoadError`` is raised."""
+        from ._loader import OpLoadError, StoredOp, _NOT_TRUSTED, _load_op, code_load_allowed
+
+        if isinstance(ref, StoredOp):
+            if ref.ref is None:
+                return ref.load(trust_code=trust_code)
+            ref = ref.ref
+        if isinstance(ref, Op):
+            return ref
+        r = self.ref(ref)
+        if not code_load_allowed(trust_code):
+            raise OpLoadError(f"cannot load op {r.uri()}: {_NOT_TRUSTED}")
+        self.flush()
+        if not isinstance(r, ObjectRef) or r.extra:
+            raise TypeError(f"{r.uri()} is not a function ref")
+        obj = self._read_object(r.project_id, r.name, r.digest)
+        if obj is None:
+            raise LookupError(f"object not found: {r.uri()}")
+        val = obj.get("value")
+        if not (isinstance(val, dict) and val.get("_type") == "Op"):
+            raise TypeError(f"{r.uri()} is not a stored function")
+        return _load_op(val, FunctionRef(r.entity, r.project, r.name, obj.get("digest", r.digest)), self)
+
+    def _get(self, ref: Union[str, Ref]) -> Any:
         r = self.ref(ref)
         self.flush()
         if isinstance(r, SpanRef) and not r.extra:
@@ -1582,9 +1621,17 @@ def ref(s: Union[str, Ref]) -> Ref:
     return require_client().ref(s)
 
 
-def get(s: Union[str, Ref]) -> Any:
-    """Read what a ref points to: ``weft.get(ref)``, ``weft.get("name:v3")``, ``weft.get(uri)``."""
-    return require_client().get(s)
+def get(s: Union[str, Ref], *, trust_code: bool = False) -> Any:
+    """Read what a ref points to: ``weft.get(ref)``, ``weft.get("name:v3")``, ``weft.get(uri)``.
+
+    Stored functions come back as inert ``weft.StoredOp`` values unless
+    ``trust_code=True``; see ``WeftClient.get``."""
+    return require_client().get(s, trust_code=trust_code)
+
+
+def load_op(s: Union[str, Ref, Any], *, trust_code: bool = False) -> Op:
+    """Build a runnable op from a stored function (executes its stored code; needs ``trust_code=True``)."""
+    return require_client().load_op(s, trust_code=trust_code)
 
 
 def link_to_registry(obj: Any, *, target_path: str, aliases: Optional[List[str]] = None) -> Dict[str, Any]:

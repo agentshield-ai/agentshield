@@ -81,7 +81,9 @@ def test_op_digest_matches_server(live):
     obj = live._read_object(live.project_id, "f", "latest")
     assert obj["digest"] == ref.digest == digest(f.op_val())
     assert obj["kind"] == "function" and obj["ref"] == ref.uri()
-    loaded = weft.get(ref)
+    stored = weft.get(ref)
+    assert isinstance(stored, weft.StoredOp) and stored.code == f.op_val()["code"]
+    loaded = weft.load_op(ref, trust_code=True)
     assert isinstance(loaded, weft.Op) and loaded("x") == "x"
 
 

@@ -31,7 +31,9 @@ type Engine struct {
 	statusMu sync.Mutex
 	status   map[string]*Status
 
-	monitorCh    chan store.EndedCall
+	// Ended spans waiting for monitors, one queue per project, served
+	// round robin (monitors.go).
+	monQ         monitorQueue
 	monMu        sync.Mutex
 	monitorCache map[string]monitorCacheEntry
 	// Sessions waiting to complete for scope monitors (monitors_scope.go),
@@ -41,6 +43,10 @@ type Engine struct {
 	wg       sync.WaitGroup
 	stopOnce sync.Once
 	stop     chan struct{}
+	// baseCtx is the context of background work (monitors, scope
+	// monitors); Close cancels it once the grace period is over.
+	baseCtx    context.Context
+	cancelBase context.CancelFunc
 }
 
 // Status is the progress of a server-side evaluation.
@@ -59,10 +65,12 @@ func New(s *store.Store, client *llm.Client, log *slog.Logger) *Engine {
 	e := &Engine{
 		Store: s, LLM: client, Log: log,
 		opRefs: map[string]string{}, status: map[string]*Status{},
-		monitorCh: make(chan store.EndedCall, 10000), monitorCache: map[string]monitorCacheEntry{},
-		pending: map[pendingKey]time.Time{}, stop: make(chan struct{}),
+		monitorCache: map[string]monitorCacheEntry{},
+		pending:      map[pendingKey]time.Time{}, stop: make(chan struct{}),
 	}
-	for i := 0; i < 4; i++ {
+	e.baseCtx, e.cancelBase = context.WithCancel(context.Background())
+	e.monQ.init()
+	for i := 0; i < monitorWorkers; i++ {
 		e.wg.Add(1)
 		go e.monitorWorker()
 	}
@@ -71,10 +79,37 @@ func New(s *store.Store, client *llm.Client, log *slog.Logger) *Engine {
 	return e
 }
 
+// Background work still running when Close is called gets closeGrace to
+// finish; then it is cancelled, and Close returns at the latest closeWait
+// later, so a stuck scorer or query cannot hold up shutdown.
+var (
+	closeGrace = 5 * time.Second
+	closeWait  = 5 * time.Second
+)
+
 // Close stops background workers.
 func (e *Engine) Close() {
-	e.stopOnce.Do(func() { close(e.stop) })
-	e.wg.Wait()
+	e.stopOnce.Do(func() {
+		close(e.stop)
+		e.monQ.close()
+	})
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		e.cancelBase()
+		return
+	case <-time.After(closeGrace):
+	}
+	e.cancelBase()
+	select {
+	case <-done:
+	case <-time.After(closeWait):
+		e.Log.Warn("monitor workers did not stop; shutting down without them")
+	}
 }
 
 // ---------------------------------------------------------------- call recording

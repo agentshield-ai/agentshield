@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { useQuery } from '@tanstack/react-query'
 import { api, fileFetch, fileUrl } from '../../api/client'
 import { fmtBytes } from '../../lib/format'
-import { dataUrlText, detectMedia, resolveContent, type MediaSpec } from './mediaUtils'
+import { httpUrl, isSameOrigin, safeLinkHref } from '../../lib/safeUrl'
+import { SafeMarkdown } from '../SafeMarkdown'
+import { dataUrlBytes, dataUrlText, detectMedia, resolveContent, type MediaSpec } from './mediaUtils'
 import { useInView, useResolvedUri } from './useResolvedUri'
 import './media.css'
 
@@ -24,10 +24,12 @@ function useMediaText(projectId: string, spec: MediaSpec, enabled: boolean) {
 }
 
 /**
- * A same-origin blob: URL with the right type. Used for PDFs, which the
- * browser will not render from the sandboxed /api/v1/files/{digest} response.
+ * A same-origin blob: URL for a PDF, which the browser will not render from
+ * the sandboxed /api/v1/files/{digest} response. The blob is always
+ * application/pdf, whatever mimetype was recorded: a blob of the recorded
+ * type (text/html, image/svg+xml) would be a document in Weft's origin.
  */
-function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
+function usePdfBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -36,11 +38,8 @@ function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
     let made: string | null = null
     ;(async () => {
       try {
-        let blob: Blob
-        if (spec.dataUrl) blob = await (await fetch(spec.dataUrl)).blob()
-        else blob = await (await fileFetch(projectId, spec.digest!)).blob()
-        blob = new Blob([blob], { type: spec.mimetype || 'application/pdf' })
-        made = URL.createObjectURL(blob)
+        const bytes: BlobPart = spec.dataUrl ? dataUrlBytes(spec.dataUrl) : await (await fileFetch(projectId, spec.digest!)).arrayBuffer()
+        made = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
         if (!revoked) setUrl(made)
       } catch (e) {
         if (!revoked) setError(e instanceof Error ? e.message : String(e))
@@ -50,18 +49,53 @@ function useBlobUrl(projectId: string, spec: MediaSpec, enabled: boolean) {
       revoked = true
       if (made) URL.revokeObjectURL(made)
     }
-  }, [enabled, projectId, spec.digest, spec.dataUrl, spec.mimetype])
+  }, [enabled, projectId, spec.digest, spec.dataUrl])
   return { url, error }
 }
 
+/** The src of an inline image, audio or video (detectMedia checked the type), or of a download. */
 function srcOf(projectId: string, spec: MediaSpec): string | undefined {
   if (spec.dataUrl) return spec.dataUrl
   if (spec.digest) return fileUrl(projectId, spec.digest)
   return undefined
 }
 
+/** Save bytes as a file: an application/octet-stream blob, never opened by the browser. */
+function saveBytes(bytes: BlobPart, filename: string) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+/**
+ * Download link. Inline data is saved as an application/octet-stream blob on
+ * click; a stored file comes from /api/v1/files, which is sandboxed (CSP
+ * sandbox, nosniff) and fetched with the download attribute.
+ */
+function DownloadLink({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
+  const name = spec.filename ?? `${spec.kind === 'file' ? 'download' : spec.kind}`
+  if (spec.dataUrl) {
+    const data = spec.dataUrl
+    return (
+      <button type="button" className="media-dl" onClick={() => saveBytes(dataUrlBytes(data), name)}>
+        Download
+      </button>
+    )
+  }
+  if (!spec.digest) return null
+  return (
+    <a href={fileUrl(projectId, spec.digest)} download={name} className="media-dl" rel="noreferrer noopener">
+      Download
+    </a>
+  )
+}
+
 function Caption({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
-  const src = srcOf(projectId, spec)
   const label = spec.filename ?? spec.mimetype ?? spec.kind
   return (
     <div className="media-caption">
@@ -70,11 +104,7 @@ function Caption({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
       </span>
       {spec.filename && spec.mimetype && <span className="faint">{spec.mimetype}</span>}
       {spec.size != null && <span className="faint">{fmtBytes(spec.size)}</span>}
-      {src && (
-        <a href={src} download={spec.filename ?? true} className="media-dl" target="_blank" rel="noreferrer noopener">
-          Download
-        </a>
-      )}
+      <DownloadLink projectId={projectId} spec={spec} />
     </div>
   )
 }
@@ -82,7 +112,7 @@ function Caption({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
 function Rendered({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   const textKind = spec.kind === 'html' || spec.kind === 'markdown' || spec.kind === 'text'
   const text = useMediaText(projectId, spec, textKind)
-  const blob = useBlobUrl(projectId, spec, spec.kind === 'pdf')
+  const blob = usePdfBlobUrl(projectId, spec, spec.kind === 'pdf')
   const src = srcOf(projectId, spec)
   switch (spec.kind) {
     case 'image':
@@ -94,6 +124,9 @@ function Rendered({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
     case 'pdf':
       if (blob.error) return <div className="error-box">{blob.error}</div>
       if (!blob.url) return <div className="media-frame media-loading faint small">Loading PDF…</div>
+      // An application/pdf blob in <object type="application/pdf">: the
+      // browser's PDF viewer or nothing. Not a sandboxed iframe: Chrome
+      // refuses to show PDFs in one (sandboxed frames get no PDF viewer).
       return (
         <object data={blob.url} type="application/pdf" className="media-frame" aria-label={spec.filename ?? 'PDF document'}>
           <a href={blob.url} target="_blank" rel="noreferrer noopener">
@@ -109,7 +142,7 @@ function Rendered({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
       if (text.isLoading) return <div className="faint small">Loading…</div>
       return (
         <div className="markdown media-md">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text.data ?? ''}</ReactMarkdown>
+          <SafeMarkdown>{text.data ?? ''}</SafeMarkdown>
         </div>
       )
     case 'text':
@@ -138,11 +171,20 @@ function ClientContent({ projectId, spec }: { projectId: string; spec: MediaSpec
   return <MediaBlock projectId={projectId} spec={resolveContent(spec, parsed)} />
 }
 
-/** A reference PDF: fetched into a blob when the bucket allows CORS, else embedded by URL. */
+/**
+ * A PDF by URL. One on this server is fetched into an application/pdf blob
+ * and shown inline. One on another host is a link that opens in a new tab:
+ * the page's Content-Security-Policy (internal/weft/webui) lets the UI fetch
+ * and embed only from this server and blob: URLs, and embedding the URL
+ * itself would show whatever document that host returns.
+ */
 function ExternalPdf({ url, spec }: { url: string; spec: MediaSpec }) {
+  const u = httpUrl(url)
+  const local = !!u && isSameOrigin(u)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
+    if (!local) return
     let revoked = false
     let made: string | null = null
     fetch(url)
@@ -156,11 +198,25 @@ function ExternalPdf({ url, spec }: { url: string; spec: MediaSpec }) {
       revoked = true
       if (made) URL.revokeObjectURL(made)
     }
-  }, [url])
-  if (!blobUrl && !failed) return <div className="media-frame media-loading faint small">Loading PDF…</div>
+  }, [url, local])
+  const href = safeLinkHref(url)
+  if (local && !blobUrl && !failed) return <div className="media-frame media-loading faint small">Loading PDF…</div>
+  if (!blobUrl)
+    return (
+      <div className="media-ref-fallback faint small">
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer noopener">
+            Open PDF{spec.filename ? ` ${spec.filename}` : ''}
+          </a>
+        ) : (
+          'PDF not available'
+        )}
+        {u && !local && <span>on {u.host}, opens in a new tab</span>}
+      </div>
+    )
   return (
-    <object data={blobUrl ?? url} type="application/pdf" className="media-frame" aria-label={spec.filename ?? 'PDF document'}>
-      <a href={url} target="_blank" rel="noreferrer noopener">
+    <object data={blobUrl} type="application/pdf" className="media-frame" aria-label={spec.filename ?? 'PDF document'}>
+      <a href={blobUrl} target="_blank" rel="noreferrer noopener">
         Open PDF
       </a>
     </object>
@@ -168,7 +224,8 @@ function ExternalPdf({ url, spec }: { url: string; spec: MediaSpec }) {
 }
 
 /** The fallback for a URI that cannot be shown: the URI as text and why. */
-function UriFallback({ uri, reason, href }: { uri: string; reason: string; href?: string }) {
+function UriFallback({ uri, reason, href: rawHref }: { uri: string; reason: string; href?: string }) {
+  const href = safeLinkHref(rawHref)
   return (
     <div className="media media-ref-fallback">
       <span className="mono media-uri">{uri}</span>
@@ -199,7 +256,31 @@ const LOAD_FAILED = 'could not load: the object may be missing, or the bucket re
  */
 function ExternalMedia({ projectId, spec }: { projectId: string; spec: MediaSpec }) {
   const inline = spec.kind === 'image' || spec.kind === 'audio' || spec.kind === 'video' || spec.kind === 'pdf'
-  return inline ? <ExternalInline projectId={projectId} spec={spec} /> : <ExternalFile projectId={projectId} spec={spec} />
+  if (!inline) return <ExternalFile projectId={projectId} spec={spec} />
+  // An http(s) URL on another host is whatever the telemetry named: it is
+  // fetched only when the viewer asks. Bucket URIs (s3://, gs://) resolve to
+  // presigned URLs of a bucket registered for the project and load as before.
+  const remote = httpUrl(spec.uri)
+  if (remote && !isSameOrigin(remote)) return <RemoteMedia projectId={projectId} spec={spec} host={remote.host} />
+  return <ExternalInline projectId={projectId} spec={spec} />
+}
+
+const KIND_LABEL: Partial<Record<MediaSpec['kind'], string>> = { image: 'Image', audio: 'Audio', video: 'Video', pdf: 'PDF' }
+
+/** Media at an http(s) URL on another host: a button "Image from <host>" until clicked. */
+function RemoteMedia({ projectId, spec, host }: { projectId: string; spec: MediaSpec; host: string }) {
+  const [load, setLoad] = useState(false)
+  if (load) return <ExternalInline projectId={projectId} spec={spec} />
+  return (
+    <div className="media media-ref-pending">
+      <span className="mono media-uri faint">{spec.uri}</span>
+      <span>
+        <button type="button" className="btn ghost sm media-remote-image" onClick={() => setLoad(true)} title={`Load ${spec.uri}`}>
+          {KIND_LABEL[spec.kind] ?? 'File'} from {host}
+        </button>
+      </span>
+    </div>
+  )
 }
 
 /**
@@ -222,12 +303,12 @@ function ExternalFile({ projectId, spec }: { projectId: string; spec: MediaSpec 
           </button>
         ) : loading ? (
           <span>resolving…</span>
-        ) : resolved?.ok ? (
-          <a href={resolved.url} target="_blank" rel="noreferrer noopener" download={spec.filename ?? true}>
+        ) : resolved?.ok && safeLinkHref(resolved.url) ? (
+          <a href={safeLinkHref(resolved.url)!} target="_blank" rel="noreferrer noopener" download={spec.filename ?? true}>
             Download{spec.filename ? ` ${spec.filename}` : ''}
           </a>
         ) : (
-          <span>not available: {resolved?.reason}</span>
+          <span>not available: {resolved?.ok ? 'not an http(s) URL' : resolved?.reason}</span>
         )}
       </span>
     </div>
@@ -254,12 +335,13 @@ function ExternalInline({ projectId, spec }: { projectId: string; spec: MediaSpe
       </div>
     )
   if (!resolved.ok) return <UriFallback uri={uri} reason={`not rendered: ${resolved.reason}`} />
-  const url = resolved.url
+  const url = safeLinkHref(resolved.url)
+  if (!url) return <UriFallback uri={uri} reason="not rendered: not an http(s) URL" />
   if (loadErrors > 1) return <UriFallback uri={uri} reason={LOAD_FAILED} href={url} />
   let body: ReactNode
   switch (spec.kind) {
     case 'image':
-      body = <img src={url} alt={spec.filename ?? 'image'} className="media-img" onError={onError} />
+      body = <img src={url} alt={spec.filename ?? 'image'} className="media-img" onError={onError} referrerPolicy="no-referrer" />
       break
     case 'audio':
       body = <audio controls src={url} preload="metadata" onError={onError} />

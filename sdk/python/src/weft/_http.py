@@ -2,14 +2,67 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import logging
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Set, Tuple
 
 from ._version import __version__
+
+logger = logging.getLogger("weft")
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """The Weft API never redirects. Following one would resend the API key
+    (and, for 307/308, the request body) to whatever host the Location names,
+    so every redirect is turned into an error instead."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        raise urllib.error.HTTPError(
+            req.full_url, code, f"redirect to {newurl} refused (the Weft API does not redirect)", headers, fp
+        )
+
+
+# Same handlers as urllib's default opener (proxies from the environment, https), minus redirects.
+_OPENER = urllib.request.build_opener(_RefuseRedirects)
+
+_warned_plain_http: Set[str] = set()
+
+
+def is_loopback_host(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    host = host.strip("[]").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def warn_plain_http_key(base_url: str, api_key: Optional[str]) -> bool:
+    """Warn (once per server) when an API key would travel over plain http to a non-loopback host."""
+    if not api_key:
+        return False
+    try:
+        u = urllib.parse.urlsplit(base_url)
+    except ValueError:
+        return False
+    if u.scheme != "http" or is_loopback_host(u.hostname):
+        return False
+    key = f"{u.hostname}:{u.port}"
+    if key not in _warned_plain_http:
+        _warned_plain_http.add(key)
+        logger.warning(
+            "weft: sending the API key to %s over plain http; anyone on the network path can read it. Use https.", base_url
+        )
+    return True
 
 
 class WeftHTTPError(Exception):
@@ -36,6 +89,7 @@ class HTTPClient:
         self.api_key = api_key
         self.timeout = timeout
         self.project_id = project_id
+        warn_plain_http_key(self.base_url, api_key)
 
     def headers(self, content_type: Optional[str] = "application/json") -> Dict[str, str]:
         h = {"User-Agent": f"weft-python/{__version__}", "Accept": "application/json"}
@@ -51,7 +105,7 @@ class HTTPClient:
         if debug:
             started = _debug_request(req, data)
         try:
-            resp = urllib.request.urlopen(req, timeout=timeout or self.timeout)
+            resp = _OPENER.open(req, timeout=timeout or self.timeout)
             if debug:
                 return _debug_response(resp, started)
             return resp

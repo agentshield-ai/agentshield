@@ -1,10 +1,25 @@
 """Redaction of sensitive values in call inputs and outputs.
 
-By default the values of dict keys named like credentials (``api_key``,
-``authorization``, ``password``, ``token`` ...; case-insensitive, exact key
-match) are replaced with ``"REDACTED"`` before anything leaves the process.
-Configure with ``weft.init(..., settings={"redact_keys": [...], "redact_pii": True})``
-or disable key redaction with ``WEFT_REDACT_KEYS=0``.
+By default the values of dict keys named like credentials are replaced with
+``"REDACTED"`` before anything leaves the process. Key names are normalised
+(lower-cased, ``-``, ``_``, ``.`` and spaces removed) and matched against
+``DEFAULT_REDACT_KEYS`` and these patterns: names containing ``secret``,
+``password``, ``passwd``, ``apikey``, ``authorization``, ``credential``,
+``privatekey`` or ``cookie``; names ending in ``token`` or ``auth``; and
+``*_key`` names for API, secret, private, access, signing, encryption, master,
+session, auth, client and license keys. So ``openai_api_key``, ``client_secret``,
+``refresh_token``, ``aws_secret_access_key``, ``X-Api-Key``, ``Cookie`` and
+``Proxy-Authorization`` are all redacted. ``settings={"redact_keys": [...]}``
+replaces the defaults and the patterns with an exact (normalised) list.
+
+Values that look like credentials are redacted wherever they appear in
+strings: ``Bearer``/``Basic`` credentials, ``sk-...`` API keys, AWS access
+key ids (``AKIA...``), GitHub and Slack tokens, PEM private keys and the
+password of ``scheme://user:password@host`` URLs.
+
+``WEFT_REDACT_KEYS=0`` (or ``settings={"redact_enabled": False}``) disables
+both the key and the value redaction. Configure PII with
+``weft.init(..., settings={"redact_pii": True})``.
 
 PII redaction (``redact_pii``, env ``WEFT_REDACT_PII``) replaces entities in
 strings with ``<ENTITY_TYPE>``. Regular expressions always handle e-mail
@@ -48,10 +63,71 @@ DEFAULT_REDACT_KEYS = (
     "authorization",
     "auth",
     "password",
+    "passwd",
+    "pwd",
     "secret",
     "token",
     "access_token",
+    "cookie",
+    "set_cookie",
+    "credentials",
+    "private_key",
 )
+
+# Normalised key-name patterns used with the default list (see the module docstring).
+_SECRET_KEY_PARTS = ("secret", "password", "passwd", "apikey", "authorization", "credential", "privatekey", "cookie")
+_SECRET_KEY_SUFFIXES = (
+    "token",
+    "auth",
+    "apikey",
+    "secretkey",
+    "privatekey",
+    "accesskey",
+    "signingkey",
+    "encryptionkey",
+    "masterkey",
+    "sessionkey",
+    "authkey",
+    "clientkey",
+    "licensekey",
+)
+
+_KEY_NORM = re.compile(r"[\s_.\-]+")
+
+
+def normalize_key(k: str) -> str:
+    """``"X-Api-Key"`` -> ``"xapikey"``: lower case without ``-``, ``_``, ``.`` and spaces."""
+    return _KEY_NORM.sub("", k.lower())
+
+
+def is_secret_key(k: str) -> bool:
+    """Whether the default redaction treats a dict key of this name as a credential."""
+    n = normalize_key(k)
+    if n in _DEFAULT_NORM:
+        return True
+    return any(p in n for p in _SECRET_KEY_PARTS) or n.endswith(_SECRET_KEY_SUFFIXES)
+
+
+_DEFAULT_NORM = frozenset(normalize_key(k) for k in DEFAULT_REDACT_KEYS)
+
+# Values that look like credentials, wherever they appear in strings.
+_SECRET_VALUE_PATTERNS = [
+    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S), REDACTED),
+    (re.compile(r"\b(Bearer|Basic|Token)(\s+)[A-Za-z0-9._~+/=:-]{8,}", re.I), r"\1\2" + REDACTED),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), REDACTED),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"), REDACTED),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"), REDACTED),
+    (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    (re.compile(r"\b([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+(@)", re.I), r"\1" + REDACTED + r"\2"),
+]
+
+
+def redact_secret_values(s: str) -> str:
+    """Replace credential-looking values (Bearer tokens, ``sk-`` keys, AKIA ids, URL passwords ...) in ``s``."""
+    for pat, repl in _SECRET_VALUE_PATTERNS:
+        s = pat.sub(repl, s)
+    return s
 
 # Ordered: more specific patterns first.
 _PII_PATTERNS = [
@@ -243,7 +319,10 @@ class Redactor:
                  settings: Optional[Mapping[str, Any]] = None):
         if enabled is None:
             enabled = os.environ.get("WEFT_REDACT_KEYS", "1").strip().lower() not in ("0", "false", "no", "off")
-        self.keys: Set[str] = {k.lower() for k in (DEFAULT_REDACT_KEYS if keys is None else keys)} if enabled else set()
+        self.enabled = bool(enabled)
+        # Default list: normalised names plus the credential patterns; a custom list: exact normalised names.
+        self.default_keys = keys is None
+        self.keys: Set[str] = {normalize_key(k) for k in (DEFAULT_REDACT_KEYS if keys is None else keys)} if enabled else set()
         if pii is None:
             pii = os.environ.get("WEFT_REDACT_PII", "").strip().lower() in ("1", "true", "yes", "on")
         self.pii = bool(pii)
@@ -265,7 +344,14 @@ class Redactor:
 
     @property
     def active(self) -> bool:
-        return bool(self.keys) or self.pii
+        return self.enabled or bool(self.keys) or self.pii
+
+    def is_redacted_key(self, k: str) -> bool:
+        if not self.enabled:
+            return False
+        if self.default_keys:
+            return is_secret_key(k)
+        return normalize_key(k) in self.keys
 
     def __call__(self, value: Any, _depth: int = 0) -> Any:
         """Redact JSON-safe data (dicts/lists/strings); returns a new value."""
@@ -274,13 +360,16 @@ class Redactor:
         if isinstance(value, dict):
             out = {}
             for k, v in value.items():
-                if isinstance(k, str) and k.lower() in self.keys:
+                if isinstance(k, str) and self.is_redacted_key(k):
                     out[k] = REDACTED
                 else:
                     out[k] = self(v, _depth + 1)
             return out
         if isinstance(value, list):
             return [self(v, _depth + 1) for v in value]
-        if isinstance(value, str) and self.pii:
-            return self.redact_text(value)
+        if isinstance(value, str):
+            if self.enabled:
+                value = redact_secret_values(value)
+            if self.pii:
+                return self.redact_text(value)
         return value

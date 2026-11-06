@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"sort"
 	"strconv"
@@ -150,7 +151,7 @@ func (s *Server) exportCalls(w http.ResponseWriter, r *http.Request, req callsEx
 	ext := map[string]string{"csv": "csv", "jsonl": "jsonl", "json": "json"}[format]
 	ctype := map[string]string{"csv": "text/csv; charset=utf-8", "jsonl": "application/jsonl", "json": "application/json"}[format]
 	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, exportFilename(q.ProjectID, ext)))
+	w.Header().Set("Content-Disposition", attachment(exportFilename(q.ProjectID, ext)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK) // the query was checked above; an empty export is a 200 too
@@ -293,14 +294,29 @@ func andQuery(q any, op map[string]any) any {
 }
 
 func exportFilename(projectID, ext string) string {
-	slug := strings.Map(func(r rune) rune {
+	return fmt.Sprintf("%s-calls-%s.%s", filenameSlug(projectID), time.Now().UTC().Format("20060102-150405"), ext)
+}
+
+// filenameSlug keeps letters, digits, '-' and '_' of s (a project id, an
+// export target), replacing anything else with '-': a project id may hold
+// quotes or semicolons that would break out of a header parameter.
+func filenameSlug(s string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
 			return r
 		}
 		return '-'
-	}, projectID)
-	return fmt.Sprintf("%s-calls-%s.%s", slug, time.Now().UTC().Format("20060102-150405"), ext)
+	}, s)
+}
+
+// attachment is a Content-Disposition header value for a download, with
+// the file name quoted by mime.FormatMediaType.
+func attachment(filename string) string {
+	if v := mime.FormatMediaType("attachment", map[string]string{"filename": filename}); v != "" {
+		return v
+	}
+	return "attachment"
 }
 
 // exportRowAs is the structured row: call fields plus computed status,

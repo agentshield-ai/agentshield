@@ -95,7 +95,9 @@ describe.skipIf(!URL)('real server', () => {
     });
     const tref = await weft.save(triple);
     await client.flush();
-    const loaded = await weft.ref('triple').get();
+    const stored = await weft.get('triple');
+    expect(stored).toBeInstanceOf(weft.StoredOp);
+    const loaded = await weft.loadOp('triple', { trustCode: true });
     const [res, call] = await loaded.call(3);
     expect(res).toBe(9);
     expect(call.name).toBe(tref.uri());

@@ -22,9 +22,61 @@ type fieldResolver func(path string) (expr string, args []any, timeField bool, e
 type exprCompiler struct {
 	field fieldResolver
 	depth int
+	// nodes counts operators and non-literal operands, literals the
+	// literal operands (a $in list's items, mostly): a query's cost, both to
+	// compile and per row evaluated, is bounded by them.
+	nodes, literals int
 }
 
-const maxExprDepth = 64
+// Query size limits (docs/weft/API.md "Query language"). Each operand is
+// compiled once, so the SQL grows linearly with the query; the budgets
+// bound it and the per-row work, whoever sends the query (a reader's
+// spans/query, a saved Monitor run on every ended span).
+const (
+	maxExprDepth    = 64
+	maxExprNodes    = 1000
+	maxExprLiterals = 10000
+	maxExprSQL      = 256 << 10
+)
+
+// ValidateCallsQuery compiles a spans query ({"$expr": ...}) as a spans
+// query would, so a saved query (a Monitor's) that could never run is
+// refused when it is saved.
+func ValidateCallsQuery(q any) error {
+	_, _, err := compileQuery(q, callField)
+	return err
+}
+
+// validateSavedQuery refuses a Monitor whose query does not compile within
+// the limits: monitors run it on every ended span of their project.
+func validateSavedQuery(base *string, val any) error {
+	if base == nil || *base != "Monitor" {
+		return nil
+	}
+	m, _ := val.(map[string]any)
+	if q, ok := m["query"]; ok && q != nil {
+		if err := ValidateCallsQuery(q); err != nil {
+			return Invalidf("invalid monitor query: %v", err)
+		}
+	}
+	return nil
+}
+
+func (c *exprCompiler) node() error {
+	c.nodes++
+	if c.nodes > maxExprNodes {
+		return Invalidf("query too large: more than %d operations", maxExprNodes)
+	}
+	return nil
+}
+
+func (c *exprCompiler) literalNode() error {
+	c.literals++
+	if c.literals > maxExprLiterals {
+		return Invalidf("query too large: more than %d literals", maxExprLiterals)
+	}
+	return nil
+}
 
 // compileQuery compiles {"$expr": op} (or a bare op) into SQL.
 func compileQuery(q any, field fieldResolver) (string, []any, error) {
@@ -52,7 +104,14 @@ func compileQuery(q any, field fieldResolver) (string, []any, error) {
 		m = m2
 	}
 	c := &exprCompiler{field: field}
-	return c.op(m)
+	sql, args, err := c.op(m)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(sql) > maxExprSQL {
+		return "", nil, Invalidf("query too large")
+	}
+	return sql, args, nil
 }
 
 func (c *exprCompiler) op(v any) (string, []any, error) {
@@ -60,6 +119,9 @@ func (c *exprCompiler) op(v any) (string, []any, error) {
 	defer func() { c.depth-- }()
 	if c.depth > maxExprDepth {
 		return "", nil, Invalidf("query nested too deeply")
+	}
+	if err := c.node(); err != nil {
+		return "", nil, err
 	}
 	m, ok := v.(map[string]any)
 	if !ok || len(m) != 1 {
@@ -172,29 +234,24 @@ func (c *exprCompiler) op(v any) (string, []any, error) {
 var cmpOps = map[string]string{"$eq": "=", "$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
 
 func (c *exprCompiler) compare(op string, a, b any) (string, []any, error) {
-	// Determine whether either side is a time field, so literals on the
-	// other side are parsed as timestamps.
-	_, _, aTime, err := c.operand(a, false)
-	if err != nil {
-		return "", nil, err
-	}
-	_, _, bTime, err := c.operand(b, false)
-	if err != nil {
-		return "", nil, err
-	}
-	ls, la, _, err := c.operand(a, bTime)
+	// Each side is compiled once. A literal compared with a time field is
+	// read as a timestamp, and one compared with a ref column as a ref:
+	// only a literal side (cheap to compile) is compiled again for that.
+	ls, la, aTime, err := c.operand(a, false)
 	if err != nil {
 		return "", nil, err
 	}
 	if refColumnSQL[ls] {
 		b = normRefLiteral(b)
 	}
-	rs, ra, _, err := c.operand(b, aTime)
+	rs, ra, bTime, err := c.operand(b, aTime)
 	if err != nil {
 		return "", nil, err
 	}
-	if refColumnSQL[rs] {
-		a = normRefLiteral(a)
+	if (bTime || refColumnSQL[rs]) && literalOperand(a) {
+		if refColumnSQL[rs] {
+			a = normRefLiteral(a)
+		}
 		if ls, la, _, err = c.operand(a, bTime); err != nil {
 			return "", nil, err
 		}
@@ -207,7 +264,27 @@ func (c *exprCompiler) compare(op string, a, b any) (string, []any, error) {
 			return rs + " IS NULL", ra, nil
 		}
 	}
-	return ls + " " + cmpOps[op] + " " + rs, append(la, ra...), nil
+	return ls + " " + cmpOps[op] + " " + rs, append(append([]any{}, la...), ra...), nil
+}
+
+// literalOperand reports whether an operand is a literal, possibly under
+// $convert: the only operands whose SQL depends on the other side of a
+// comparison. Called on operands that compiled, so its depth is bounded.
+func literalOperand(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return true
+	}
+	if len(m) != 1 {
+		return false
+	}
+	if _, ok := m["$literal"]; ok {
+		return true
+	}
+	if cv, ok := m["$convert"].(map[string]any); ok {
+		return literalOperand(cv["input"])
+	}
+	return false
 }
 
 // refColumnSQL are columns holding refs, which are stored with the current
@@ -242,12 +319,21 @@ func (c *exprCompiler) operand(v any, asTime bool) (string, []any, bool, error) 
 	m, ok := v.(map[string]any)
 	if !ok {
 		// Bare scalars are treated as literals for convenience.
+		if err := c.literalNode(); err != nil {
+			return "", nil, false, err
+		}
 		return literal(v, asTime)
 	}
 	if l, ok := m["$literal"]; ok && len(m) == 1 {
+		if err := c.literalNode(); err != nil {
+			return "", nil, false, err
+		}
 		return literal(l, asTime)
 	}
 	if f, ok := m["$getField"]; ok && len(m) == 1 {
+		if err := c.node(); err != nil {
+			return "", nil, false, err
+		}
 		path, ok := f.(string)
 		if !ok || path == "" {
 			return "", nil, false, Invalidf("$getField expects a field path")
@@ -256,6 +342,16 @@ func (c *exprCompiler) operand(v any, asTime bool) (string, []any, bool, error) 
 		return s, a, isTime, err
 	}
 	if cv, ok := m["$convert"]; ok && len(m) == 1 {
+		// $convert nests like an operator: it counts towards the depth
+		// and the operation budget.
+		c.depth++
+		defer func() { c.depth-- }()
+		if c.depth > maxExprDepth {
+			return "", nil, false, Invalidf("query nested too deeply")
+		}
+		if err := c.node(); err != nil {
+			return "", nil, false, err
+		}
 		cm, ok := cv.(map[string]any)
 		if !ok {
 			return "", nil, false, Invalidf("$convert expects an object")
@@ -273,7 +369,8 @@ func (c *exprCompiler) operand(v any, asTime bool) (string, []any, bool, error) 
 		case "string":
 			return "CAST(" + in + " AS TEXT)", a, false, nil
 		case "bool":
-			return "(CASE WHEN " + in + " IS NULL OR " + in + " IN (0, '', 'false', 'False') THEN 0 ELSE 1 END)", append(a, a...), false, nil
+			// The input once: NULL and the false-like values are 0.
+			return "COALESCE((" + in + ") NOT IN (0, '', 'false', 'False'), 0)", a, false, nil
 		case "exists":
 			return "(" + in + " IS NOT NULL)", a, false, nil
 		default:

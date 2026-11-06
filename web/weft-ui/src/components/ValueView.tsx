@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { isRef } from '../api/refs'
 import { MediaView, isMedia } from './media/MediaView'
 import { RefChip } from './RefChip'
+import { SafeMarkdown } from './SafeMarkdown'
 import './valueview.css'
 
 // Generic renderer for span inputs/outputs and saved values, readable first
@@ -35,7 +34,7 @@ function StringView({ s, markdown, code }: { s: string; markdown?: boolean; code
         <pre className="vv-code">{shown}</pre>
       ) : markdown ? (
         <div className="markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown}</ReactMarkdown>
+          <SafeMarkdown>{shown}</SafeMarkdown>
         </div>
       ) : (
         <p className="vv-text">{shown}</p>

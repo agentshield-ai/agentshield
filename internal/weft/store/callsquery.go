@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -241,13 +242,43 @@ func feedbackField(segs []string) (string, []any, bool, error) {
 		ORDER BY f.created_at DESC LIMIT 1)`, []any{jsonPath(rest), ftype}, false, nil
 }
 
+// MaxFilterIDs bounds each id list of a spans filter (call_ids, trace_ids,
+// ...): a longer list is refused with 400.
+const MaxFilterIDs = 10000
+
+// inListJSON is the list length above which inList binds the values as one
+// JSON array (json_each) instead of one variable each, so no list reaches
+// SQLite's limit on bound variables.
+const inListJSON = 500
+
 func inList(col string, vals []string) (string, []any) {
+	if len(vals) > inListJSON {
+		b, _ := json.Marshal(vals)
+		return col + " IN (SELECT value FROM json_each(?))", []any{string(b)}
+	}
 	ph := strings.TrimSuffix(strings.Repeat("?,", len(vals)), ",")
 	args := make([]any, len(vals))
 	for i, v := range vals {
 		args[i] = v
 	}
 	return col + " IN (" + ph + ")", args
+}
+
+// checkFilterLists refuses a spans filter with an id list over MaxFilterIDs.
+func checkFilterLists(f *CallsFilter) error {
+	for _, x := range []struct {
+		name string
+		n    int
+	}{
+		{"op_names", len(f.OpNames)}, {"input_refs", len(f.InputRefs)}, {"output_refs", len(f.OutputRefs)},
+		{"parent_ids", len(f.ParentIDs)}, {"trace_ids", len(f.TraceIDs)}, {"call_ids", len(f.CallIDs)},
+		{"user_ids", len(f.UserIDs)}, {"run_ids", len(f.RunIDs)}, {"thread_ids", len(f.ThreadIDs)}, {"turn_ids", len(f.TurnIDs)},
+	} {
+		if x.n > MaxFilterIDs {
+			return Invalidf("filter.%s lists %d values; at most %d are allowed", x.name, x.n, MaxFilterIDs)
+		}
+	}
+	return nil
 }
 
 // whereCalls builds the WHERE clause shared by queries, stats and counts.
@@ -258,6 +289,9 @@ func whereCalls(projectID string, f *CallsFilter, query any, search string, incl
 		conds = append(conds, "c.deleted_at IS NULL")
 	}
 	if f != nil {
+		if err := checkFilterLists(f); err != nil {
+			return "", nil, err
+		}
 		if len(f.OpNames) > 0 {
 			var ors []string
 			for _, n := range f.OpNames {

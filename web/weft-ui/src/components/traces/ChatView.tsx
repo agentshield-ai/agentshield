@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { Any, Span } from '../../api/types'
+import { isDataImageUrl } from '../../lib/safeUrl'
+import { SafeMarkdown } from '../SafeMarkdown'
 import { MediaView, ValueView, isMedia } from '../ValueView'
+import { RecordedImage } from '../media/RecordedImage'
 import { isReferenceUri } from '../media/mediaUtils'
 
 // Chat-shaped data detection and rendering. Handles OpenAI chat messages and
@@ -47,6 +48,8 @@ function parseArgs(a: Any): Any {
   }
 }
 
+const urlStr = (u: unknown): string => (typeof u === 'string' ? u : '')
+
 function partFrom(p: Any): ChatPart | null {
   if (p == null) return null
   if (typeof p === 'string') return { type: 'text', text: p }
@@ -57,12 +60,12 @@ function partFrom(p: Any): ChatPart | null {
     case 'output_text':
       return { type: 'text', text: String(p.text ?? p.content ?? '') }
     case 'image_url':
-      return { type: 'image', url: typeof p.image_url === 'string' ? p.image_url : p.image_url?.url ?? '' }
+      return { type: 'image', url: urlStr(typeof p.image_url === 'string' ? p.image_url : p.image_url?.url) }
     case 'input_image':
-      return { type: 'image', url: p.image_url ?? '' }
+      return { type: 'image', url: urlStr(p.image_url) }
     case 'image':
       if (p.source?.type === 'base64') return { type: 'image', url: `data:${p.source.media_type};base64,${p.source.data}` }
-      if (p.source?.url) return { type: 'image', url: p.source.url }
+      if (p.source?.url) return { type: 'image', url: urlStr(p.source.url) }
       return { type: 'other', value: p }
     case 'tool_use':
       return { type: 'tool_call', id: p.id, name: p.name, arguments: p.input }
@@ -229,18 +232,16 @@ function PartView({ part, projectId }: { part: ChatPart; projectId: string }) {
       if (isReferenceUri(part.text)) return <MediaView value={part.text} projectId={projectId} />
       return (
         <div className="markdown chat-text">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+          <SafeMarkdown>{part.text}</SafeMarkdown>
         </div>
       )
     case 'image':
+      // Recorded URLs: bucket URIs resolve through the server, data:image/*
+      // renders inline, http(s) on another host loads on click, any other
+      // scheme (javascript:, data:text/html, ...) shows as text.
       if (isReferenceUri(part.url)) return <MediaView value={{ _type: 'Image', uri: part.url.trim() }} projectId={projectId} />
-      return part.url.startsWith('data:') ? (
-        <MediaView value={part.url} projectId={projectId} />
-      ) : (
-        <a href={part.url} target="_blank" rel="noreferrer">
-          <img src={part.url} alt="" style={{ maxWidth: 360, borderRadius: 6 }} />
-        </a>
-      )
+      if (isDataImageUrl(part.url) && isMedia(part.url.trim())) return <MediaView value={part.url.trim()} projectId={projectId} />
+      return <RecordedImage url={part.url} style={{ maxWidth: 360, borderRadius: 6 }} />
     case 'tool_call':
       return <ToolCallView part={part} projectId={projectId} />
     case 'tool_result':

@@ -153,7 +153,7 @@ func (e *Engine) scopeWorker() {
 		case <-e.stop:
 			return
 		case <-t.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			ctx, cancel := context.WithTimeout(e.baseCtx, 10*time.Minute)
 			e.checkPendingSessions(ctx, time.Now())
 			cancel()
 		}

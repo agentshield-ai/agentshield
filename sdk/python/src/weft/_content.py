@@ -91,6 +91,8 @@ class Content:
             if url and url.startswith(client.server_url + "/api/v1/files/"):
                 # this server's file: read it with the client's credentials
                 return client._http.request_raw("GET", url[len(client.server_url):])
+            if not (url or "").startswith(("http://", "https://")):
+                raise ValueError(f"content URL {url!r} is not http(s); refusing to open it")
         with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - user-provided media URL
             return resp.read()
 

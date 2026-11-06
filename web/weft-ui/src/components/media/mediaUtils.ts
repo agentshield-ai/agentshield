@@ -116,7 +116,7 @@ export function mimeFromFilename(name?: string): string | undefined {
 }
 
 export function kindFromMime(mime?: string): MediaKind {
-  const m = (mime ?? '').toLowerCase().split(';')[0].trim()
+  const m = normMime(mime)
   if (m.startsWith('image/')) return 'image'
   if (m.startsWith('audio/')) return 'audio'
   if (m.startsWith('video/')) return 'video'
@@ -145,8 +145,43 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined
 }
 
+/** A mimetype without parameters, lowercased. */
+export function normMime(mime?: string): string {
+  return (mime ?? '').toLowerCase().split(';')[0].trim()
+}
+
+/**
+ * The spec as it may be rendered. The recorded mimetype is untrusted (anyone
+ * who can send telemetry chooses it), so a kind that renders inline must agree
+ * with it: a PDF is only ever application/pdf (rendered from an application/pdf
+ * blob whatever was recorded), images, audio and video need an image/, audio/
+ * or video/ type. Anything else becomes a download ('file', saved as
+ * application/octet-stream), so a recorded mimetype can never produce a
+ * same-origin document. Html, Markdown and text are rendered from their text
+ * (a sandboxed srcdoc iframe, markdown, <pre>) and stay as they are.
+ */
+export function safeSpec(spec: MediaSpec | null): MediaSpec | null {
+  if (!spec) return null
+  const mt = normMime(spec.mimetype)
+  switch (spec.kind) {
+    case 'pdf':
+      if (!mt) return { ...spec, mimetype: 'application/pdf' }
+      return mt === 'application/pdf' ? spec : { ...spec, kind: 'file' }
+    case 'image':
+    case 'audio':
+    case 'video':
+      return !mt || mt.startsWith(`${spec.kind}/`) ? spec : { ...spec, kind: 'file' }
+    default:
+      return spec
+  }
+}
+
 /** Returns how to render `v`, or null when it is not media. */
 export function detectMedia(v: unknown): MediaSpec | null {
+  return safeSpec(detectMediaValue(v))
+}
+
+function detectMediaValue(v: unknown): MediaSpec | null {
   if (typeof v === 'string') {
     if (isReferenceUri(v)) return referenceUriSpec(v)
     const m = DATA_URL_RE.exec(v)
@@ -241,16 +276,30 @@ function detectPart(o: Record<string, unknown>): MediaSpec | null {
 export function resolveContent(spec: MediaSpec, metadata: unknown): MediaSpec {
   const m = (metadata && typeof metadata === 'object' ? metadata : {}) as Record<string, unknown>
   const mt = str(m.mimetype) ?? mimeFromFilename(str(m.filename)) ?? 'application/octet-stream'
-  return { ...spec, kind: kindFromMime(mt), mimetype: mt, filename: str(m.filename), size: typeof m.size === 'number' ? m.size : undefined }
+  return safeSpec({ ...spec, kind: kindFromMime(mt), mimetype: mt, filename: str(m.filename), size: typeof m.size === 'number' ? m.size : undefined })!
 }
 
-/** Decode a base64 data URL into text (UTF-8). */
-export function dataUrlText(url: string): string {
+/** The bytes of a data URL (base64 or percent-encoded). */
+export function dataUrlBytes(url: string): Uint8Array<ArrayBuffer> {
   const i = url.indexOf(',')
-  const b64 = url.slice(i + 1)
-  const bin = atob(b64)
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
-  return new TextDecoder().decode(bytes)
+  const head = url.slice(0, Math.max(i, 0))
+  const body = url.slice(i + 1)
+  if (/;base64$/i.test(head)) {
+    const bin = atob(body.replace(/\s+/g, ''))
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0))
+  }
+  let text = body
+  try {
+    text = decodeURIComponent(body)
+  } catch {
+    // keep as is
+  }
+  return new TextEncoder().encode(text) as Uint8Array<ArrayBuffer>
+}
+
+/** Decode a data URL into text (UTF-8). */
+export function dataUrlText(url: string): string {
+  return new TextDecoder().decode(dataUrlBytes(url))
 }
 
 export function isMediaValue(v: unknown): boolean {

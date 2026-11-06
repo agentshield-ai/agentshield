@@ -126,31 +126,74 @@ describe('EvaluationLogger', () => {
 });
 
 describe('op loading', () => {
-  it('rebuilds a runnable op linked to the same ref', async () => {
+  afterEach(() => {
+    delete process.env.WEFT_ALLOW_CODE_LOAD;
+    delete (globalThis as any).__PWNED;
+  });
+
+  it('get() of stored code is inert: the code never runs (security)', async () => {
+    delete process.env.WEFT_ALLOW_CODE_LOAD;
+    // a project writer stores a "function" whose evaluation has a side effect
+    const code = 'globalThis.__PWNED = 1, function evil(a = (globalThis.__PWNED = 2)) { return 1; }';
+    fake.objs.set('evil', [{ name: 'evil', digest: 'dev', version: 0, kind: 'function', value: { _type: 'Op', name: 'evil', code, language: 'javascript' } }]);
+    const got = await weft.get('evil');
+    expect(got).toBeInstanceOf(weft.StoredOp);
+    expect(weft.isOp(got)).toBe(false);
+    expect(typeof got).toBe('object');
+    expect(got.code).toBe(code);
+    expect(got.ref.uri()).toMatch(/\/function\/evil:dev$/);
+    expect(JSON.stringify({ f: got })).toBe(JSON.stringify({ f: got.ref.uri() }));
+    await expect(weft.loadOp('evil')).rejects.toThrow(/trustCode: true/);
+    await expect(client.loadOp(got)).rejects.toThrow(weft.OpLoadError);
+    expect(() => got.load()).toThrow(/trustCode: true/);
+    expect(await client.get('evil')).toBeInstanceOf(weft.StoredOp);
+    expect((globalThis as any).__PWNED).toBeUndefined();
+    // explicit opt-in evaluates it (that is what trust means)
+    const loaded = await weft.loadOp('evil', { trustCode: true });
+    expect((globalThis as any).__PWNED).toBe(1);
+    expect(loaded()).toBe(1);
+    expect((globalThis as any).__PWNED).toBe(2);
+  });
+
+  it('WEFT_ALLOW_CODE_LOAD=1 opts in', async () => {
+    fake.objs.set('seven', [{ name: 'seven', digest: 'd7', version: 0, kind: 'function', value: { _type: 'Op', name: 'seven', code: 'function seven() { return 7; }', language: 'javascript' } }]);
+    process.env.WEFT_ALLOW_CODE_LOAD = '1';
+    expect((await weft.get('seven'))()).toBe(7);
+    process.env.WEFT_ALLOW_CODE_LOAD = '0';
+    expect(await weft.get('seven')).toBeInstanceOf(weft.StoredOp);
+  });
+
+  it('rebuilds a runnable op linked to the same ref (with trustCode)', async () => {
     const triple = weft.trace(function triple(x: number) {
       return x * 3;
     });
     const ref = await weft.save(triple);
     await client.flush();
-    const loaded = await weft.ref('triple').get();
+    const stored = await weft.get('triple');
+    expect(stored).toBeInstanceOf(weft.StoredOp);
+    const loaded = await weft.loadOp('triple', { trustCode: true });
     expect(weft.isOp(loaded)).toBe(true);
     expect(loaded(2)).toBe(6);
     const [res, call] = await loaded.call(4);
     expect(res).toBe(12);
     expect(call.name).toBe(ref.uri());
+    expect((await client.loadOp(stored, { trustCode: true }))(1)).toBe(3);
+    expect(weft.isOp(await weft.get('triple', { trustCode: true }))).toBe(true);
     const asyncArrow = weft.trace(async ({ a }: any) => a + 1, { name: 'inc' });
     await weft.save(asyncArrow);
-    expect(await (await client.get('inc'))({ a: 1 })).toBe(2);
+    expect(await (await client.get('inc', { trustCode: true }))({ a: 1 })).toBe(2);
     const sc = new weft.ExactMatchScorer();
-    const method = await client.get(client.opRef(sc.scoreOp.__weftOp));
+    const method = await client.loadOp(client.opRef(sc.scoreOp.__weftOp), { trustCode: true });
     expect(typeof method).toBe('function');
   });
 
   it('raises a clear error when code cannot be rebuilt', async () => {
     fake.objs.set('py', [{ name: 'py', digest: 'd', version: 0, kind: 'function', value: { _type: 'Op', name: 'py', code: 'def py(): pass', language: 'python' } }]);
-    await expect(client.get('py')).rejects.toThrow(/not javascript/);
+    await expect(client.loadOp('py', { trustCode: true })).rejects.toThrow(/not javascript/);
     fake.objs.set('rec', [{ name: 'rec', digest: 'd', version: 0, kind: 'function', value: { _type: 'Op', name: 'rec', code: '// rec: recorded by the weft SDK\n', language: 'javascript' } }]);
-    await expect(client.get('rec')).rejects.toThrow(weft.OpLoadError);
+    await expect(client.get('rec', { trustCode: true })).rejects.toThrow(weft.OpLoadError);
+    fake.objs.set('plain', [{ name: 'plain', digest: 'p', version: 0, kind: 'object', value: { k: 1 } }]);
+    await expect(client.loadOp('plain', { trustCode: true })).rejects.toThrow(/not a stored function/);
   });
 });
 

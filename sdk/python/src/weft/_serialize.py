@@ -277,6 +277,7 @@ def object_val(
     _seen: Optional[Set[int]] = None,
 ) -> Dict[str, Any]:
     """The stored JSON value of a ``weft.Object`` (see API.md conventions)."""
+    from ._loader import StoredOp
     from ._op import Op
 
     cls = type(obj)
@@ -302,4 +303,7 @@ def object_val(
                 if isinstance(v, Op):
                     seen_names.add(attr)
                     val[attr] = client._op_ref(v).uri() if client is not None else v.name
+                elif isinstance(v, StoredOp) and v.ref is not None:
+                    seen_names.add(attr)
+                    val[attr] = v.ref.uri()
     return val

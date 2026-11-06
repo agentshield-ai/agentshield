@@ -222,7 +222,7 @@ func (s *Server) testBucket(ctx context.Context, b *store.ReferenceBucket, origi
 	if b.TestObjectKey == "" {
 		return bucketTestFailed("test_object_key (the key of an existing object) is required to test the bucket"), nil
 	}
-	if !strings.HasPrefix(b.TestObjectKey, b.Prefix) {
+	if !store.BucketPrefixCovers(b.Prefix, b.TestObjectKey) {
 		return bucketTestFailed(fmt.Sprintf("test_object_key must start with the prefix %q", b.Prefix)), nil
 	}
 	u, _, err := c.PresignGet(b.TestObjectKey, time.Minute)

@@ -260,7 +260,7 @@ func (s *Server) bulkExportDownload(w http.ResponseWriter, r *http.Request) {
 		exportProblem(w, http.StatusNotFound, "not_found", "this export has no "+target+" artifact")
 		return
 	}
-	filename := fmt.Sprintf("%s-%s-%s.%s", strings.ReplaceAll(pid, "/", "-"), target, job.JobID[:8], bulkExportFormat)
+	filename := fmt.Sprintf("%s-%s-%s.%s", filenameSlug(pid), filenameSlug(target), filenameSlug(job.JobID[:min(8, len(job.JobID))]), bulkExportFormat)
 	if art.Location != "" {
 		backend := s.store.FileBackend()
 		if p, ok := backend.(store.FilePresigner); ok {
@@ -282,12 +282,12 @@ func (s *Server) bulkExportDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/gzip")
-		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		w.Header().Set("Content-Disposition", attachment(filename))
 		_, _ = w.Write(b)
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Disposition", attachment(filename))
 	w.Header().Set("Cache-Control", "no-store")
 	if art.SizeBytes > 0 {
 		w.Header().Set("Content-Length", fmt.Sprint(art.SizeBytes))

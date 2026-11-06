@@ -21,6 +21,7 @@ from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple, Union
 
 from pydantic import field_validator
 
+from ._loader import OpLoadError, StoredOp
 from ._object import Dataset, Model, Object, Table, find_infer_method
 from ._op import ASYNC, AGEN, BoundOp, Op, op
 from .scorers import Scorer
@@ -181,7 +182,7 @@ class Evaluation(Object):
     def _conv_scorers(cls, v: Any) -> Any:
         out = []
         for s in v or []:
-            if isinstance(s, (Scorer, Op, BoundOp, str)) or type(s).__name__ == "WeftObject":
+            if isinstance(s, (Scorer, Op, BoundOp, str, StoredOp)) or type(s).__name__ == "WeftObject":
                 out.append(s)
             elif isinstance(s, type) and issubclass(s, Scorer):
                 out.append(s())
@@ -203,6 +204,11 @@ class Evaluation(Object):
         """Run the evaluation; returns the summary dict."""
         from ._client import tracing_client
 
+        for s in [model, *self.scorers]:
+            if isinstance(s, StoredOp) or isinstance(getattr(s, "predict", None), StoredOp):
+                stored = s if isinstance(s, StoredOp) else s.predict
+                raise OpLoadError(f"{stored!r} is not loaded: load it with weft.load_op(ref, trust_code=True) "
+                                  "or the evaluation with weft.get(ref, trust_code=True)")
         if not isinstance(model, (Model, Op, BoundOp)):
             if callable(model):
                 model = op(model)

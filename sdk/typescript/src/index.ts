@@ -109,7 +109,8 @@ export {
   type LogConversationOptions,
 } from './conversation.js';
 export * as otel from './otel.js';
-export { OpLoadError } from './loader.js';
+export { OpLoadError, StoredOp } from './loader.js';
+import type { StoredOp } from './loader.js';
 export {
   Redactor,
   REDACTED,
@@ -193,9 +194,17 @@ export function ref(s: string): Ref & { get: () => Promise<any> } {
   return r;
 }
 
-/** Read what a ref (or "name", "name:v3", "name:latest", a URI) points to. */
-export function get(s: string | Ref): Promise<any> {
-  return requireClient().get(s);
+/**
+ * Read what a ref (or "name", "name:v3", "name:latest", a URI) points to. Stored functions come back as
+ * inert `StoredOp` values unless `{ trustCode: true }`; see `WeftClient.get`.
+ */
+export function get(s: string | Ref, opts: { trustCode?: boolean } = {}): Promise<any> {
+  return requireClient().get(s, opts);
+}
+
+/** Build a runnable traced function from a stored function (evaluates its stored code; needs `{ trustCode: true }`). */
+export function loadOp(s: string | Ref | StoredOp, opts: { trustCode?: boolean } = {}): Promise<Op<(...args: any[]) => any>> {
+  return requireClient().loadOp(s, opts);
 }
 
 /**

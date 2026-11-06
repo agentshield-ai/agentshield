@@ -63,6 +63,49 @@ def test_redaction_env_opt_out(fake, monkeypatch):
 
 
 # ---------------------------------------------------------------- op loading
+def _stored_op(fake, name, code, language="python"):
+    fake.objs[name] = [{"digest": "d" + name, "value": {"_type": "Op", "name": name, "code": code, "language": language},
+                        "version": 0, "name": name, "kind": "function", "class": None}]
+
+
+def test_get_of_stored_code_is_inert(client, fake, tmp_path, monkeypatch):
+    """A writer to the project stores an op whose module code has a side effect:
+    get() must hand back data, never execute it (security, F1)."""
+    monkeypatch.delenv("WEFT_ALLOW_CODE_LOAD", raising=False)
+    mark = tmp_path / "PWNED"
+    code = f"import pathlib\npathlib.Path({str(mark)!r}).write_text('x')\ndef evil(a=pathlib.Path({str(mark)!r}).write_text('y')):\n    return 1\n"
+    _stored_op(fake, "evil", code)
+    got = weft.get("evil")
+    assert isinstance(got, weft.StoredOp) and not isinstance(got, weft.Op)
+    assert got.name == "evil" and got.code == code and got.language == "python"
+    assert got.ref.uri().endswith("/function/evil:devil")
+    with pytest.raises(weft.OpLoadError, match="trust_code=True"):
+        got()
+    with pytest.raises(weft.OpLoadError, match="trust_code=True"):
+        weft.load_op("evil")
+    with pytest.raises(weft.OpLoadError, match="trust_code=True"):
+        got.load()
+    with pytest.raises(weft.OpLoadError, match="trust_code=True"):
+        client.load_op(got)
+    # nested: a list of function refs inside an object, and a ref read
+    fake.objs["holder"] = [{"digest": "h", "value": {"fns": [got.ref.uri()]}, "version": 0, "name": "holder", "kind": "object", "class": None}]
+    holder = weft.get("holder")
+    assert isinstance(holder["fns"][0], (weft.StoredOp, str))
+    assert not mark.exists()
+    # the explicit opt-in runs it (that is what trust means)
+    loaded = weft.load_op("evil", trust_code=True)
+    assert isinstance(loaded, weft.Op) and loaded() == 1
+    assert mark.exists()
+
+
+def test_code_load_env_opt_in(client, fake, monkeypatch):
+    _stored_op(fake, "seven", "def seven():\n    return 7\n")
+    monkeypatch.setenv("WEFT_ALLOW_CODE_LOAD", "1")
+    assert weft.get("seven")() == 7
+    monkeypatch.setenv("WEFT_ALLOW_CODE_LOAD", "0")
+    assert isinstance(weft.get("seven"), weft.StoredOp)
+
+
 def test_load_op_runs_and_links_to_same_ref(client, fake):
     @weft.trace(name="adder")
     def adder(a: int, b: int = 2) -> int:
@@ -70,12 +113,16 @@ def test_load_op_runs_and_links_to_same_ref(client, fake):
 
     ref = weft.save(adder)
     client.flush()
-    loaded = weft.get("adder")
+    stored = weft.get("adder")
+    assert isinstance(stored, weft.StoredOp) and "return a + b" in stored.code
+    loaded = weft.load_op("adder", trust_code=True)
     assert isinstance(loaded, weft.Op)
     assert loaded(1) == 3
     res, call = loaded.call(5, b=5)
     assert res == 10
     assert call.name == ref.uri()
+    assert weft.load_op(stored, trust_code=True)(2) == 4
+    assert isinstance(weft.get("adder", trust_code=True), weft.Op)
     client.flush()
     assert len(fake.objs["adder"]) == 1  # no new op version
 
@@ -87,23 +134,23 @@ def test_load_async_op_and_decorated_with_args(client, fake):
 
     weft.save(aop)
     client.flush()
-    loaded = client.get("aop")
+    loaded = client.load_op("aop", trust_code=True)
     assert asyncio.run(loaded(2)) == 6
 
 
 def test_load_op_errors_are_clear(client, fake):
-    fake.objs["broken"] = [{"digest": "d", "value": {"_type": "Op", "name": "broken", "code": "def broken(:\n", "language": "python"},
-                            "version": 0, "name": "broken", "kind": "function", "class": None}]
+    _stored_op(fake, "broken", "def broken(:\n")
     with pytest.raises(weft.OpLoadError, match="does not parse"):
-        weft.get("broken")
-    fake.objs["synthetic"] = [{"digest": "d", "value": {"_type": "Op", "name": "synthetic", "code": "# recorded\n", "language": "python"},
-                               "version": 0, "name": "synthetic", "kind": "function", "class": None}]
+        weft.load_op("broken", trust_code=True)
+    _stored_op(fake, "synthetic", "# recorded\n")
     with pytest.raises(weft.OpLoadError, match="no function definition"):
-        weft.get("synthetic")
-    fake.objs["js"] = [{"digest": "d", "value": {"_type": "Op", "name": "js", "code": "function js(){}", "language": "javascript"},
-                        "version": 0, "name": "js", "kind": "function", "class": None}]
+        weft.load_op("synthetic", trust_code=True)
+    _stored_op(fake, "js", "function js(){}", "javascript")
     with pytest.raises(weft.OpLoadError, match="javascript"):
-        weft.get("js")
+        weft.get("js", trust_code=True)
+    fake.objs["plain"] = [{"digest": "p", "value": {"k": 1}, "version": 0, "name": "plain", "kind": "object", "class": None}]
+    with pytest.raises(TypeError, match="not a stored function"):
+        weft.load_op("plain", trust_code=True)
 
 
 def test_load_unknown_model_subclass_runs_predict(client, fake):
@@ -120,7 +167,16 @@ def test_load_unknown_model_subclass_runs_predict(client, fake):
     from weft import _object
 
     del _object._REGISTRY["RemoteModel"]
-    loaded = weft.get("remote")
+    inert = weft.get("remote")
+    assert type(inert).__name__ == "RemoteModel" and inert.prefix == "#"
+    assert isinstance(inert.predict, weft.StoredOp)
+    with pytest.raises(weft.OpLoadError, match="trust_code=True"):
+        inert.predict("hi")
+    # saving the loaded object again keeps its method ref
+    weft.save(inert, "remote2")
+    client.flush()
+    assert fake.objs["remote2"][0]["value"]["predict"] == fake.objs["remote"][0]["value"]["predict"]
+    loaded = weft.get("remote", trust_code=True)
     assert type(loaded).__name__ == "RemoteModel" and isinstance(loaded, weft.Model)
     assert loaded.prefix == "#"
     assert loaded.predict("hi") == "#HI"
@@ -137,7 +193,8 @@ def test_loaded_evaluation_has_runnable_function_scorers(client, fake):
 
     weft.save(weft.Evaluation(name="ev", dataset=[{"q": "a"}], scorers=[is_upper, scorers.ExactMatchScorer()]))
     client.flush()
-    ev = weft.get("ev")
+    assert isinstance(weft.get("ev").scorers[0], weft.StoredOp)
+    ev = weft.get("ev", trust_code=True)
     assert isinstance(ev.scorers[0], weft.Op) and ev.scorers[0](output="A") is True
     assert isinstance(ev.scorers[1], scorers.ExactMatchScorer)
 

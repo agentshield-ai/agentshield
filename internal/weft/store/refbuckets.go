@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS reference_buckets (
 	UNIQUE (entity, project_id, provider, bucket, prefix)
 );
 CREATE INDEX IF NOT EXISTS reference_buckets_lookup ON reference_buckets(provider, bucket);`)
+	// Prefixes registered before they were normalised to end in "/" are
+	// normalised once; a row that would then duplicate another keeps its
+	// spelling and is read the same way (BucketPrefixCovers).
+	registerMigration(func(db *sql.DB) error {
+		_, err := db.Exec(`UPDATE OR IGNORE reference_buckets SET prefix = prefix || '/' WHERE prefix != '' AND substr(prefix, -1) != '/'`)
+		return err
+	})
 }
 
 // Reference bucket providers.
@@ -102,9 +109,14 @@ func NormalizeReferenceBucket(b *ReferenceBucket) error {
 	if !bucketNameRe.MatchString(b.Bucket) || strings.Contains(b.Bucket, "..") {
 		return Invalidf("invalid bucket name %q (give the name only, without s3:// or gs://)", b.Bucket)
 	}
-	b.Prefix = strings.TrimLeft(strings.TrimSpace(b.Prefix), "/")
+	b.Prefix = strings.Trim(strings.TrimSpace(b.Prefix), "/")
 	if strings.Contains(b.Prefix, "..") {
 		return Invalidf("invalid prefix")
+	}
+	if b.Prefix != "" {
+		// A prefix names a folder: "teams/a" covers teams/a/... and not
+		// teams/ab/... (BucketPrefixCovers).
+		b.Prefix += "/"
 	}
 	b.TestObjectKey = strings.TrimLeft(strings.TrimSpace(b.TestObjectKey), "/")
 	if b.ProjectID != nil && *b.ProjectID != "" {
@@ -258,14 +270,14 @@ func (s *Store) ReferenceBucketFor(ctx context.Context, projectID, provider, buc
 	}
 	var best *ReferenceBucket
 	rank := func(b *ReferenceBucket) int {
-		r := len(b.Prefix) * 2
+		r := len(strings.TrimRight(b.Prefix, "/")) * 2
 		if b.ProjectID != nil {
 			r += 1 << 20
 		}
 		return r
 	}
 	for _, b := range all {
-		if b.Provider != provider || b.Bucket != bucket || !strings.HasPrefix(key, b.Prefix) {
+		if b.Provider != provider || b.Bucket != bucket || !BucketPrefixCovers(b.Prefix, key) {
 			continue
 		}
 		if best == nil || rank(b) > rank(best) {
@@ -276,4 +288,17 @@ func (s *Store) ReferenceBucketFor(ctx context.Context, projectID, provider, buc
 		return nil, ErrNotFound
 	}
 	return best, nil
+}
+
+// BucketPrefixCovers reports whether a registration's prefix covers an
+// object key. A prefix names a folder whether or not it ends in "/" (rows
+// registered before prefixes were normalised may not): "teams/a" and
+// "teams/a/" cover "teams/a/x" but not "teams/ab/x". An empty prefix covers
+// the whole bucket.
+func BucketPrefixCovers(prefix, key string) bool {
+	p := strings.TrimRight(prefix, "/")
+	if p == "" {
+		return true
+	}
+	return key == p || strings.HasPrefix(key, p+"/")
 }

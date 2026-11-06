@@ -291,12 +291,82 @@ func ParseTime(s string) (int64, error) {
 }
 
 // encodeJSON marshals without HTML escaping.
+// MaxStoredJSONDepth is the deepest nesting of objects and arrays stored
+// in a JSON column (span attributes, inputs, output, summary, log event
+// attributes, feedback payloads, ...). A deeper subtree is stored as its
+// JSON text, a string, so SQLite's JSON functions, which refuse documents
+// nested deeper than 1000, keep working on every row of the project.
+const MaxStoredJSONDepth = 64
+
 func encodeJSON(v any) (string, error) {
+	if jsonDeeperThan(v, MaxStoredJSONDepth) {
+		v = capJSONDepth(v, 0)
+	}
 	b, err := refs.CanonicalJSON(v)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// jsonDeeperThan reports whether v nests objects and arrays more than
+// limit deep.
+func jsonDeeperThan(v any, limit int) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		if limit <= 0 {
+			return true
+		}
+		for _, x := range t {
+			if jsonDeeperThan(x, limit-1) {
+				return true
+			}
+		}
+	case []any:
+		if limit <= 0 {
+			return true
+		}
+		for _, x := range t {
+			if jsonDeeperThan(x, limit-1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// capJSONDepth copies v, replacing each object or array nested deeper than
+// MaxStoredJSONDepth with its JSON text.
+func capJSONDepth(v any, depth int) any {
+	switch t := v.(type) {
+	case map[string]any:
+		if depth >= MaxStoredJSONDepth {
+			return deepText(t)
+		}
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = capJSONDepth(x, depth+1)
+		}
+		return out
+	case []any:
+		if depth >= MaxStoredJSONDepth {
+			return deepText(t)
+		}
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = capJSONDepth(x, depth+1)
+		}
+		return out
+	}
+	return v
+}
+
+func deepText(v any) string {
+	b, err := refs.CanonicalJSON(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func mustJSON(v any) string {
@@ -341,6 +411,19 @@ func strPtr(ns sql.NullString) *string {
 }
 
 func (s *Store) touchProject(ctx context.Context, tx *sql.Tx, projectID string) error {
+	if err := refs.ValidateNewProject(projectID); err != nil {
+		// Refused for a new project only: one created before the rule
+		// (it has a projects row, or spans) keeps working.
+		var one int
+		qerr := tx.QueryRowContext(ctx, `SELECT 1 WHERE EXISTS (SELECT 1 FROM projects WHERE project_id = ?)
+			OR EXISTS (SELECT 1 FROM calls WHERE project_id = ?)`, projectID, projectID).Scan(&one)
+		if errors.Is(qerr, sql.ErrNoRows) {
+			return &InvalidError{Msg: err.Error()}
+		}
+		if qerr != nil {
+			return qerr
+		}
+	}
 	now := nowMicros()
 	_, err := tx.ExecContext(ctx, `INSERT INTO projects(project_id, created_at, last_activity) VALUES(?,?,?)
 		ON CONFLICT(project_id) DO UPDATE SET last_activity = excluded.last_activity`, projectID, now, now)

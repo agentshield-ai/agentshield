@@ -263,6 +263,9 @@ func (s *Store) CreateObjectRaw(ctx context.Context, projectID, objectID string,
 		return "", 0, Invalidf("val is not JSON-serialisable: %v", err)
 	}
 	kind, base, leaf := classify(val, forcedClass, s.hooks.IsOp)
+	if err := validateSavedQuery(base, val); err != nil { // expr.go
+		return "", 0, err
+	}
 	var version int
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.touchProject(ctx, tx, pid); err != nil {

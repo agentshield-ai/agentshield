@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -63,13 +64,28 @@ func targetValue(val map[string]any, example map[string]any) (any, error) {
 	return v, nil
 }
 
-func levenshtein(a, b []rune) int {
+// MaxLevenshteinRunes bounds each text LevenshteinScorer compares: the
+// distance costs len(a)·len(b), and monitors run scorers on whatever spans
+// their project receives.
+const MaxLevenshteinRunes = 10000
+
+// levenshtein is the edit distance of a and b, in O(min(len)) memory. It
+// stops when ctx is done.
+func levenshtein(ctx context.Context, a, b []rune) (int, error) {
+	if len(b) > len(a) {
+		a, b = b, a
+	}
 	prev := make([]int, len(b)+1)
 	cur := make([]int, len(b)+1)
 	for j := range prev {
 		prev[j] = j
 	}
 	for i := 1; i <= len(a); i++ {
+		if i%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
 		cur[0] = i
 		for j := 1; j <= len(b); j++ {
 			cost := 1
@@ -80,11 +96,11 @@ func levenshtein(a, b []rune) int {
 		}
 		prev, cur = cur, prev
 	}
-	return prev[len(b)]
+	return prev[len(b)], nil
 }
 
 // scoreBuiltin computes a score for a non-LLM scorer.
-func scoreBuiltin(cls string, val map[string]any, example map[string]any, output any) (any, error) {
+func scoreBuiltin(ctx context.Context, cls string, val map[string]any, example map[string]any, output any) (any, error) {
 	out := strings.TrimSpace(outputText(output))
 	switch cls {
 	case "ExactMatchScorer":
@@ -126,12 +142,20 @@ func scoreBuiltin(cls string, val map[string]any, example map[string]any, output
 		if err != nil {
 			return nil, err
 		}
-		a, b := []rune(out), []rune(strings.TrimSpace(Stringify(t)))
+		target := strings.TrimSpace(Stringify(t))
+		if utf8.RuneCountInString(out) > MaxLevenshteinRunes || utf8.RuneCountInString(target) > MaxLevenshteinRunes {
+			return nil, fmt.Errorf("LevenshteinScorer compares texts of at most %d characters", MaxLevenshteinRunes)
+		}
+		a, b := []rune(out), []rune(target)
 		longest := max(len(a), len(b))
 		if longest == 0 {
 			return 1.0, nil
 		}
-		return 1 - float64(levenshtein(a, b))/float64(longest), nil
+		d, err := levenshtein(ctx, a, b)
+		if err != nil {
+			return nil, err
+		}
+		return 1 - float64(d)/float64(longest), nil
 	}
 	return nil, fmt.Errorf("unsupported scorer class %q", cls)
 }
@@ -172,7 +196,7 @@ func (e *Engine) RunScorer(ctx context.Context, projectID string, sc *Scorer, ex
 	} else if fn, ok := extraScorers[cls]; ok {
 		score, scoreErr = fn(e, ctx, projectID, sc.Val, example, output, rec, attrs)
 	} else {
-		score, scoreErr = scoreBuiltin(cls, sc.Val, example, output)
+		score, scoreErr = scoreBuiltin(ctx, cls, sc.Val, example, output)
 	}
 	if err := rec.end(ctx, score, nil, scoreErr); err != nil {
 		return nil, rec, err

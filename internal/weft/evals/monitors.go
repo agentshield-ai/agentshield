@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
@@ -13,15 +14,109 @@ type monitorCacheEntry struct {
 	monitors []*store.Obj
 }
 
+// Monitor work is shared fairly between projects: ended spans wait in one
+// queue per project, workers take the projects in turn, and one project
+// occupies at most monitorsPerProject of the monitorWorkers at a time, so a
+// project whose monitors are slow (a slow judge, a costly query) delays
+// only its own spans.
+const (
+	monitorWorkers         = 8
+	monitorsPerProject     = 4
+	monitorQueueLimit      = 10000 // spans waiting, all projects
+	monitorProjectQueueCap = 5000  // spans waiting, one project
+)
+
+type monitorQueue struct {
+	mu      sync.Mutex
+	cond    *sync.Cond
+	byProj  map[string][]store.EndedCall
+	order   []string // projects with spans waiting, in turn order
+	active  map[string]int
+	total   int
+	stopped bool
+}
+
+func (q *monitorQueue) init() {
+	q.cond = sync.NewCond(&q.mu)
+	q.byProj = map[string][]store.EndedCall{}
+	q.active = map[string]int{}
+}
+
+// push queues c; false when the queue (or the project's share) is full.
+func (q *monitorQueue) push(c store.EndedCall) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.stopped || q.total >= monitorQueueLimit || len(q.byProj[c.ProjectID]) >= monitorProjectQueueCap {
+		return false
+	}
+	if len(q.byProj[c.ProjectID]) == 0 {
+		q.order = append(q.order, c.ProjectID)
+	}
+	q.byProj[c.ProjectID] = append(q.byProj[c.ProjectID], c)
+	q.total++
+	q.cond.Signal()
+	return true
+}
+
+// next waits for a span of a project that has a worker to spare and takes
+// it; false once the queue is closed.
+func (q *monitorQueue) next() (store.EndedCall, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for {
+		if q.stopped {
+			return store.EndedCall{}, false
+		}
+		for i, pid := range q.order {
+			if q.active[pid] >= monitorsPerProject {
+				continue
+			}
+			list := q.byProj[pid]
+			c := list[0]
+			list[0] = store.EndedCall{}
+			list = list[1:]
+			q.order = append(q.order[:i:i], q.order[i+1:]...)
+			if len(list) == 0 {
+				delete(q.byProj, pid)
+			} else {
+				q.byProj[pid] = list
+				q.order = append(q.order, pid) // its next span waits for the other projects' turn
+			}
+			q.total--
+			q.active[pid]++
+			return c, true
+		}
+		q.cond.Wait()
+	}
+}
+
+// done releases the worker next took for projectID.
+func (q *monitorQueue) done(projectID string) {
+	q.mu.Lock()
+	if q.active[projectID]--; q.active[projectID] <= 0 {
+		delete(q.active, projectID)
+	}
+	q.mu.Unlock()
+	q.cond.Broadcast()
+}
+
+func (q *monitorQueue) close() {
+	q.mu.Lock()
+	q.stopped = true
+	q.mu.Unlock()
+	q.cond.Broadcast()
+}
+
 // Notify queues ended calls for monitor evaluation. It never blocks.
 func (e *Engine) Notify(calls []store.EndedCall) {
+	dropped := 0
 	for _, c := range calls {
-		select {
-		case e.monitorCh <- c:
-		default:
-			e.Log.Warn("monitor queue full; dropping call", "project", c.ProjectID, "span_id", c.ID)
-			return
+		if !e.monQ.push(c) {
+			dropped++
 		}
+	}
+	if dropped > 0 {
+		e.Log.Warn("monitor queue full; dropping spans", "project", calls[0].ProjectID, "dropped", dropped)
 	}
 }
 
@@ -62,19 +157,19 @@ func (e *Engine) activeMonitors(ctx context.Context, projectID string) ([]*store
 func (e *Engine) monitorWorker() {
 	defer e.wg.Done()
 	for {
-		select {
-		case <-e.stop:
+		c, ok := e.monQ.next()
+		if !ok {
 			return
-		case c := <-e.monitorCh:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			if err := e.runMonitors(ctx, c); err != nil {
-				e.Log.Warn("monitor evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
-			}
-			if err := e.runAutoSignals(ctx, c); err != nil {
-				e.Log.Warn("signal evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
-			}
-			cancel()
 		}
+		ctx, cancel := context.WithTimeout(e.baseCtx, 5*time.Minute)
+		if err := e.runMonitors(ctx, c); err != nil {
+			e.Log.Warn("monitor evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
+		}
+		if err := e.runAutoSignals(ctx, c); err != nil {
+			e.Log.Warn("signal evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
+		}
+		cancel()
+		e.monQ.done(c.ProjectID)
 	}
 }
 
