@@ -31,6 +31,9 @@ func legacyEncrypt(t *testing.T, passphrase, plain string) string {
 // salted Argon2id key.
 func TestSecretsMigrationAndKeyDerivation(t *testing.T) {
 	t.Setenv("WEFT_SECRET_KEY", "old-passphrase")
+	// The old database is written as plain SQLite below, as before
+	// encryption at rest; the encrypted suite's key would refuse it.
+	t.Setenv(DBEncryptionKeyEnv, "")
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "old.db")
 	db, err := sql.Open("sqlite", path)
