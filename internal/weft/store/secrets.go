@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -299,6 +300,36 @@ func (s *Store) SetSecretKey(ctx context.Context, key []byte) error {
 		}
 	}
 	return nil
+}
+
+// sessionKeySalt stretches the secret key for session signing in databases
+// that use it directly (no stored salt; see SessionSigningKey).
+const sessionKeySalt = "weft-session-signing-salt-v2"
+
+// SessionSigningKey derives the key that signs browser sessions from the
+// secret key, stretched, so a session cookie is no offline oracle for a
+// weak WEFT_SECRET_KEY passphrase: HKDF-SHA256 over the Argon2id key of
+// databases with a stored salt, or over Argon2id of the base key with a
+// fixed salt in databases that use the secret key directly.
+func (s *Store) SessionSigningKey(ctx context.Context) ([]byte, error) {
+	v, ok := secretCiphers.Load(s)
+	if !ok {
+		return nil, errors.New("secret storage has no encryption key")
+	}
+	c := v.(*secretCipher)
+	salt := c.salt
+	if c.kdf != kdfArgon2 {
+		salt = []byte(sessionKeySalt)
+	}
+	id := sha256.Sum256(append(append([]byte{}, c.base...), salt...))
+	var stretched []byte
+	if k, ok := derivedSecretKeys.Load(id); ok {
+		stretched = k.([]byte)
+	} else {
+		stretched = argon2.IDKey(c.base, salt, 3, 64*1024, 4, 32)
+		derivedSecretKeys.Store(id, stretched)
+	}
+	return hkdf.Key(sha256.New, stretched, nil, "weft-session-key-v2", 32)
 }
 
 // SecretKeyDerivation reports how this database derives its secret key:

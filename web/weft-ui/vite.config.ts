@@ -18,7 +18,15 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: Object.fromEntries(apiPrefixes.map((p) => [p, { target, changeOrigin: true }])),
+    // The dev server's origin is not Weft's: Weft refuses state-changing
+    // requests from other origins (docs/weft/API.md), so the proxy drops the
+    // browser's Origin header, as a same-origin deployment would not need.
+    proxy: Object.fromEntries(
+      apiPrefixes.map((p) => [
+        p,
+        { target, changeOrigin: true, configure: (proxy) => proxy.on('proxyReq', (req) => req.removeHeader('origin')) },
+      ]),
+    ),
   },
   test: { environment: 'node', include: ['src/**/*.test.{ts,tsx}'] },
 })

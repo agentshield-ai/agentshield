@@ -202,7 +202,7 @@ func main() {
 	}
 
 	cfg := server.Config{APIKeys: splitList(*apiKeys), CORSOrigins: splitList(*cors), Logger: log, Compat: compatOn}
-	if err := iamCfg.apply(&cfg, *dbPath, log); err != nil {
+	if err := iamCfg.apply(&cfg, st, log); err != nil {
 		log.Error("configuring SSO and sessions", "err", err)
 		os.Exit(2)
 	}

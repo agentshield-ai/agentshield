@@ -47,13 +47,13 @@ func (f *netFlags) apply(cfg *server.Config, addr string) error {
 }
 
 // newHTTPServer is the http.Server with its timeouts: headers within 10 s,
-// the whole request within 5 min (64 MiB uploads on slow links), idle
+// the whole request within 2 min (64 MiB at 0.5 MB/s), idle
 // keep-alive connections closed after 2 min. Responses have no overall
 // deadline, so streams and exports run as long as they move; instead each
 // write must finish within 2 min (netguard.go), which cuts off clients
 // that stop reading.
 func newHTTPServer(addr string, h http.Handler) *http.Server {
-	return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 5 * time.Minute,
+	return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 2 * time.Minute,
 		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
 }
 

@@ -221,7 +221,7 @@ func isReadRequest(r *http.Request) bool {
 // projectFreePaths may be called by project-scoped keys without naming a project.
 var projectFreePaths = map[string]bool{"/auth/check": true, "/auth/whoami": true, "/auth/principal": true, "/projects": true,
 	"/llm/models": true, "/graphql": true, "/secrets/list": true, "/server_info": true, "/health": true,
-	"/api/v1/help": true}
+	"/api/v1/help": true, "/api/v1/secrets/list": true} // secrets lists check access themselves (secrets.go)
 
 // projectFreePath reports routes that need no project: projectFreePaths
 // and the help guides (/api/v1/help/{name}).

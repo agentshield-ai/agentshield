@@ -691,7 +691,7 @@ func TestWriteStallCutsOffNonReader(t *testing.T) {
 	old := writeStall
 	writeStall = 200 * time.Millisecond
 	defer func() { writeStall = old }()
-	s := &Server{log: slogDiscard()}
+	s := &Server{log: slogDiscard()} // netGuard alone
 	done := make(chan error, 1)
 	h := s.netGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chunk := bytes.Repeat([]byte("x"), 1<<20)

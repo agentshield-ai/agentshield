@@ -162,8 +162,9 @@ func (s *Server) resolveProvider(ctx context.Context, projectID, name string) (*
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(s.netGuard)   // netguard.go: client address, Host, Origin, content type, write stalls
+	r.Use(s.clientAddr) // netguard.go: --trusted-proxies
 	r.Use(s.requestLog) // requestlog.go; also recovers panics
+	r.Use(s.netGuard)   // netguard.go: Host, Origin, content type, write stalls
 	if s.compat != nil {
 		r.Use(s.compat.Middleware)
 	}

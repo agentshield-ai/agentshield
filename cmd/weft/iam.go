@@ -1,8 +1,7 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -48,8 +47,9 @@ func registerIAMFlags() *iamFlags {
 }
 
 // apply fills cfg.IAM. The session-signing key is derived from the secret
-// encryption key (WEFT_SECRET_KEY or <db>.key) unless WEFT_SESSION_KEY is set.
-func (f *iamFlags) apply(cfg *server.Config, dbPath string, log *slog.Logger) error {
+// encryption key (WEFT_SECRET_KEY or <db>.key), stretched with Argon2id
+// (store.SessionSigningKey), unless WEFT_SESSION_KEY is set.
+func (f *iamFlags) apply(cfg *server.Config, st *store.Store, log *slog.Logger) error {
 	ttl, err := time.ParseDuration(*f.sessionTTL)
 	if err != nil || ttl < time.Minute || ttl > 30*24*time.Hour {
 		return fmt.Errorf("invalid --session-ttl %q (1m to 720h)", *f.sessionTTL)
@@ -72,10 +72,10 @@ func (f *iamFlags) apply(cfg *server.Config, dbPath string, log *slog.Logger) er
 			return fmt.Errorf("WEFT_SESSION_KEY must be at least 32 characters")
 		}
 		cfg.IAM.SessionKey = []byte(k)
-	} else if base, err := store.LoadSecretKey(os.Getenv("WEFT_SECRET_KEY"), store.SecretKeyFile(dbPath)); err == nil {
-		m := hmac.New(sha256.New, base)
-		m.Write([]byte("weft-session-key-v1"))
-		cfg.IAM.SessionKey = m.Sum(nil)
+	} else if k, err := st.SessionSigningKey(context.Background()); err == nil {
+		// Since v2 the key is stretched: sessions signed with the earlier
+		// (unstretched) key end once on upgrade, and users sign in again.
+		cfg.IAM.SessionKey = k
 	} else {
 		log.Warn("no session key; browser sessions end when the server restarts", "err", err)
 	}

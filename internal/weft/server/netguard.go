@@ -37,9 +37,18 @@ import (
 // cut off, while streams that keep moving run as long as they need.
 var writeStall = 2 * time.Minute
 
+// clientAddr sets the client address (realIP); it runs first, so the
+// request log records the right one.
+func (s *Server) clientAddr(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, s.realIP(r))
+	})
+}
+
+// netGuard applies the Host, Origin and content-type checks and the write
+// stall limit; it runs after the request log, so refusals are logged.
 func (s *Server) netGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = s.realIP(r)
 		if s.cfg.EnforceHosts && !s.hostAllowed(r.Host) {
 			s.log.Debug("request refused: host not allowed", "host", clip(r.Host, 100), "remote", clientIP(r))
 			writeError(w, http.StatusMisdirectedRequest, "this server does not answer to host "+clip(r.Host, 100)+
