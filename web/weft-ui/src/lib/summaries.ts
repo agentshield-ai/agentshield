@@ -9,6 +9,7 @@ import type { Detection, SessionAttention, SessionSummary } from '../api/v1'
 import { APPROVAL_HEAVY, filterFromSessionsParams, type FilterState, type TimeRange } from './filters'
 import { fmtCost, fmtDuration, fmtRelative } from './format'
 import { ruleWords } from './ruleWords'
+import { mainArgumentText } from './story'
 import { oneLine, type BuiltTimeline, type Step } from './timeline'
 
 // ---------------------------------------------------------------- words
@@ -500,7 +501,8 @@ function whoseCall(s: Step): string {
 /** "ran “npm i -D eslint”" or "called web_search". */
 function didWhat(s: Step): string {
   const p = s.item.payload ?? {}
-  const arg = typeof p.arguments === 'string' ? p.arguments.trim() : ''
+  // Claude Code sends arguments as JSON text: the command itself is what a person reads.
+  const arg = mainArgumentText(p.arguments).trim()
   if (isCommandTool(p.tool_name) && arg) return `ran “${oneLine(arg, 60)}”`
   return `called ${p.tool_name ?? 'a tool'}`
 }

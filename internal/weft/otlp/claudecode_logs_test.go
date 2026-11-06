@@ -531,6 +531,34 @@ func TestClaudeCodeLogsGatesAndOutcomes(t *testing.T) {
 			},
 		},
 		{
+			name: "session title request is not a reply",
+			script: func(s *ccScript) {
+				s.add("user_prompt", map[string]any{"prompt": "review this codebase"}).
+					add("api_request", map[string]any{"model": "claude-haiku-5-5", "input_tokens": 40, "output_tokens": 8, "request_id": "req_t",
+						"duration_ms": 300, "cost_usd": 0.0002, "query_source": "generate_session_title"}).
+					add("assistant_response", map[string]any{"response": `{"title": "Codebase review"}`, "request_id": "req_t", "query_source": "generate_session_title"}).
+					add("api_request", map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_1",
+						"duration_ms": 900, "cost_usd": 0.001, "query_source": "repl_main_thread"}).
+					add("assistant_response", map[string]any{"response": "Done.", "request_id": "req_1", "query_source": "repl_main_thread"})
+			},
+			check: func(t *testing.T, calls []*store.Call) {
+				title := spanByName(t, calls, "session title claude-haiku-5-5")
+				if d := store.DeriveSpan(title.OpName, displayOf(title), title.ThreadID, nil, title.ID, title.Attributes, title.Inputs, nil); d.Operation == store.OpChat {
+					t.Fatalf("title request counted as a chat step: %+v", d)
+				}
+				if _, _, _, _, _, cost := usage(title); !near(cost, 0.0002) {
+					t.Fatalf("title request cost = %v", cost)
+				}
+				turn := spanByName(t, calls, "invoke_agent claude-code")
+				if b, _ := json.Marshal(turn.Output); strings.Contains(string(b), "Codebase review") || !strings.Contains(string(b), "Done.") {
+					t.Fatalf("turn output = %s", b)
+				}
+				if _, _, _, _, _, cost := usage(turn); !near(cost, 0.0012) {
+					t.Fatalf("turn cost = %v, want both requests", cost)
+				}
+			},
+		},
+		{
 			name: "tool rejected by the user",
 			script: func(s *ccScript) {
 				s.add("user_prompt", map[string]any{"prompt": "delete the build dir"}).

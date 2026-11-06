@@ -101,12 +101,22 @@ func mapClaudeCodeSpan(st *store.CallStart, en *store.CallEnd, spanName string, 
 		}
 	case "claude_code.llm_request":
 		model := aStr(attrs, "model", "gen_ai.request.model")
-		setWeft("llm")
-		user["gen_ai.operation.name"] = "chat"
 		user["gen_ai.provider.name"] = "anthropic"
 		if model != "" {
 			user["gen_ai.request.model"] = model
-			display("chat " + model)
+		}
+		if purpose := sidePurposeOf(aStr(attrs, "query_source_safe", "query_source")); purpose != "" {
+			// Beside the conversation (session title, compaction): tokens and
+			// cost count, but it is not a conversation step.
+			setWeft("chain")
+			user["claude_code.purpose"] = purpose
+			display(strings.TrimSpace(purpose + " " + model))
+		} else {
+			setWeft("llm")
+			user["gen_ai.operation.name"] = "chat"
+			if model != "" {
+				display("chat " + model)
+			}
 		}
 		if en != nil {
 			if u := ccUsage(model, attrs); u != nil {

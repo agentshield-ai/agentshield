@@ -196,6 +196,28 @@ func conversationRequest(e *store.LogEvent) bool {
 	return qs == "" || qs == "sdk" || qs == "main" || strings.HasPrefix(qs, "repl_main_thread")
 }
 
+// sidePurpose names a model request Claude Code makes beside the
+// conversation ("session title", "compaction", "suggestion", or "side
+// request" for one it doesn't name); "" for the conversation's own requests
+// and a sub-agent's.
+func sidePurpose(e *store.LogEvent) string { return sidePurposeOf(aStr(e.Attrs, "query_source")) }
+
+func sidePurposeOf(qs string) string {
+	if qs == "" || qs == "sdk" || qs == "main" || strings.HasPrefix(qs, "repl_main_thread") || subagentTypeFromSource(qs) != "" {
+		return ""
+	}
+	l := strings.ToLower(qs)
+	switch {
+	case strings.Contains(l, "title"):
+		return "session title"
+	case strings.Contains(l, "compact"):
+		return "compaction"
+	case strings.Contains(l, "suggest"):
+		return "suggestion"
+	}
+	return "side request"
+}
+
 // ClaudeCodeLogTitle names a Claude Code session after its first prompt.
 func ClaudeCodeLogTitle(first []store.LogEvent) string {
 	for _, e := range first {
@@ -328,6 +350,9 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 			}
 			if rid := aStr(e.Attrs, "request_id"); rid != "" && text != "" {
 				responses[rid] = text
+			}
+			if sidePurpose(e) != "" {
+				break // a title or summary, not an answer
 			}
 			if ag != nil {
 				if text != "" {
@@ -714,7 +739,16 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 				cc[strings.ReplaceAll(k, ".", "_")] = v
 			}
 		}
+		purpose := sidePurpose(e)
 		attrs := common(map[string]any{"gen_ai.operation.name": "chat", "gen_ai.provider.name": "anthropic", "weft": weftAttrs("llm"), "claude_code": cc})
+		if purpose != "" {
+			// A request beside the conversation (the session title, compaction,
+			// a suggestion): its tokens and cost count, but it is not a step of
+			// the conversation and its text is not a reply.
+			delete(attrs, "gen_ai.operation.name")
+			attrs["weft"] = weftAttrs("chain")
+			cc["purpose"] = purpose
+		}
 		if model != "" {
 			attrs["gen_ai.request.model"] = model
 		}
@@ -733,6 +767,8 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 		}
 		display := "chat " + model
 		switch {
+		case purpose != "":
+			display = strings.TrimSpace(purpose + " " + model)
 		case text != "":
 			display = shortText(text, 60)
 		case len(names) > 0:
@@ -763,7 +799,11 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 			}
 			exc = &msg
 		}
-		add(ccID(ccLogsNS, sid, "llm", l.key), parent, "claude_code.llm", display, evStart(e), attrs, map[string]any{"model": model}, e.TimeUS, true, output, exc, summary)
+		op := "claude_code.llm"
+		if purpose != "" {
+			op = "claude_code.side_request"
+		}
+		add(ccID(ccLogsNS, sid, "llm", l.key), parent, op, display, evStart(e), attrs, map[string]any{"model": model}, e.TimeUS, true, output, exc, summary)
 	}
 	return out
 }

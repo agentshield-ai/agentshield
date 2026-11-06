@@ -4,6 +4,7 @@
 // (next_span_id), nesting by agent through hand-offs, and the gaps between
 // steps.
 import type { Detection, TimelineItem } from '../api/v1'
+import { mainArgumentText } from './story'
 
 export type StepType = TimelineItem['type'] | 'detection'
 
@@ -268,7 +269,7 @@ export function stepTitle(s: Step): string {
     case 'reasoning':
       return p.kind === 'redacted' ? 'Reasoning (redacted by the provider)' : p.kind === 'summary' ? 'Reasoning summary' : 'Reasoning'
     case 'tool_call':
-      return `${p.tool_name ?? 'tool'}${p.arguments ? `(${oneLine(String(p.arguments), 80)})` : ''}`
+      return `${p.tool_name ?? 'tool'}${p.arguments ? `(${oneLine(mainArgumentText(p.arguments), 80)})` : ''}`
     case 'handoff':
       return p.kind === 'return' ? `${p.from_agent} returned to ${p.to_agent}` : `${p.from_agent} handed off to ${p.to_agent}`
     case 'error':

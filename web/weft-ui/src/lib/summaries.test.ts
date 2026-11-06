@@ -416,6 +416,18 @@ describe('session outcome', () => {
     ['trip-oslo', 'Finished in 4 seconds.'],
   ])('%s', (id, want) => expect(outcome(id)).toBe(want))
 
+  it('names the command, not the JSON, when arguments arrive as JSON text (Claude Code)', () => {
+    const id = 'code-test-1'
+    const items = structuredClone(F.timelines[id])
+    for (const it of items) {
+      const p = it.payload as { arguments?: unknown } | undefined
+      if (p && typeof p.arguments === 'string' && p.arguments.startsWith('DATABASE_URL=')) p.arguments = JSON.stringify({ command: p.arguments, description: 'run tests' })
+    }
+    const dets = F.detections[id].filter((d) => d.source === 'engine')
+    const got = sessionOutcome({ summary: F.sessions[id], tl: buildTimeline(items, dets), detections: dets })
+    expect(got).toContain('then ran “DATABASE_URL=sqlite::memory: npm test”, which worked.')
+  })
+
   it('writes the meta line of figures', () => {
     const s = F.sessions['code-lint-1']
     const now = new Date(s.started_at).getTime() + 50 * 60_000
