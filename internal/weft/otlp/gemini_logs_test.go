@@ -388,23 +388,31 @@ func TestGeminiLogsGatesAndOutcomes(t *testing.T) {
 }
 
 // AgentShield's Gemini hook sends no tool call id (Gemini CLI's hook payload
-// has none): a verdict links by session, tool name and time. (The hook
-// names tools by AgentShield's canonical names, "exec" for
-// run_shell_command, so today only a verdict that names the tool as Gemini
-// CLI does links; see the setup guide.)
+// has none): a verdict links by session, tool name and time. The hook names
+// tools by AgentShield's canonical names ("exec" for run_shell_command), which
+// the store treats as Gemini CLI's (store.ToolNamesMatch).
 func TestGeminiLogsVerdictByTime(t *testing.T) {
-	ctx := context.Background()
-	h := newCCHarness(t)
-	h.ingestFixture("gemini_cli/resume_json")
-	shell := spanByName(t, h.spans(gmResumeSession), "run_shell_command: echo hi")
-	at, _ := time.Parse(time.RFC3339Nano, shell.StartedAt)
-	if _, err := h.s.UpsertDetections(ctx, ccProject, []store.DetectionInput{{EventID: "e1", SessionID: gmResumeSession, ToolName: "run_shell_command",
-		Action: store.DetectionBlock, CreatedAt: at.Add(-50 * time.Millisecond).UnixMicro()}}); err != nil {
-		t.Fatal(err)
+	tests := []struct{ name, source, tool string }{
+		{"canonical name from the Gemini hook", "gemini", "exec"},
+		{"Gemini CLI's own name", "gemini", "run_shell_command"},
+		{"canonical name, no event source", "", "exec"},
 	}
-	ds, _, err := h.s.QueryDetections(ctx, store.DetectionQuery{ProjectID: ccProject})
-	if err != nil || len(ds) != 1 || deref(ds[0].SpanID) != shell.ID || ds[0].Link != store.LinkNearestTime {
-		t.Fatalf("detections %+v %v", ds, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			h := newCCHarness(t)
+			h.ingestFixture("gemini_cli/resume_json")
+			shell := spanByName(t, h.spans(gmResumeSession), "run_shell_command: echo hi")
+			at, _ := time.Parse(time.RFC3339Nano, shell.StartedAt)
+			if _, err := h.s.UpsertDetections(ctx, ccProject, []store.DetectionInput{{EventID: "e1", SessionID: gmResumeSession, ToolName: tc.tool,
+				EventSource: tc.source, Action: store.DetectionBlock, CreatedAt: at.Add(-50 * time.Millisecond).UnixMicro()}}); err != nil {
+				t.Fatal(err)
+			}
+			ds, _, err := h.s.QueryDetections(ctx, store.DetectionQuery{ProjectID: ccProject})
+			if err != nil || len(ds) != 1 || deref(ds[0].SpanID) != shell.ID || ds[0].Link != store.LinkNearestTime {
+				t.Fatalf("detections %+v %v", ds, err)
+			}
+		})
 	}
 }
 

@@ -239,8 +239,11 @@ The plugins pass the coding harness's session id as both the AgentShield
 `session_id` and the Weft `gen_ai.conversation.id`, and the harness tool-use
 id as `tool_call_id` and `gen_ai.tool.call.id`. A detection is attached to the
 tool span with the same `(session_id, tool_call_id)`. Failing that, it is
-attached to the tool span in the same session with the same tool name whose
-start time is nearest within ±5 s. Failing that, it stays attached to the
+attached to the tool span in the same session for the same tool whose
+start time is nearest within ±5 s; the same tool means the same name, or
+names that map to the same AgentShield canonical name in the alias table of
+the verdict's harness (its `event_source`: Gemini CLI's `run_shell_command`
+is `exec`). Failing that, it stays attached to the
 session only. Detections that arrive before their span are linked when the
 span arrives.
 

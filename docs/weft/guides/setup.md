@@ -230,9 +230,9 @@ exporter = { otlp-http = { endpoint = "http://127.0.0.1:6345/otel/v1/logs", prot
   Leave out `Authorization` when your server has no API keys.
 - Leave `trace_exporter` unset. Codex's traces describe its internals (file
   reads, config loading, rollout writes: about a thousand spans a turn) and
-  carry no session, so they add nothing to the session. A
-  `metrics_exporter` pointed at `/otel/v1/metrics` is accepted and
-  discarded.
+  carry no session, so Weft drops them (any `service.name` starting with
+  `codex`). A `metrics_exporter` pointed at `/otel/v1/metrics` is accepted
+  and discarded.
 - `codex exec` exits on a failed model request without sending its
   telemetry, so such a run never reaches Weft. The interactive `codex` sends
   it.
@@ -309,9 +309,11 @@ is a step that failed with "Rejected by the user". A sub-agent
 `invoke_agent` call that ran it, with the result it handed back.
 
 Gemini CLI sends no tool output (only its size). Its hooks give AgentShield
-no call id, and the AgentShield Gemini hook reports tools by AgentShield's
-names (`exec` for `run_shell_command`), so its verdicts are listed with the
-session but not yet attached to a step. There is no Weft plugin for Gemini
+no call id, so a verdict from the AgentShield Gemini hook attaches to the
+step of the same tool that starts nearest to it (within 5 seconds) in the
+session. The hook names tools by AgentShield's names (`exec` for
+`run_shell_command`, `read` for `read_file`, `edit` for `replace`, ...), and
+Weft treats those as Gemini CLI's names. There is no Weft plugin for Gemini
 CLI.
 
 ## Group agents into sessions and teams

@@ -13,8 +13,9 @@ import (
 // reads the transcript (reasoning, tool results); Claude Code's own
 // OpenTelemetry export sends traces (beta) and log events. For Codex the
 // weft-codex plugin reads the rollout file; Codex's own export sends log
-// events, and traces of its internals (ranked last, should they ever be
-// mapped onto a session). Gemini CLI has no Weft plugin: its log events
+// events, and traces of its internals (dropped at ingest,
+// otlp/codex_traces.go; ranked last should they ever be mapped onto a
+// session). Gemini CLI has no Weft plugin: its log events
 // rank above its traces (separate llm_call / tool_call spans). A user may
 // turn on more than one, so
 // each session is shown from one source only: the highest-ranked source of

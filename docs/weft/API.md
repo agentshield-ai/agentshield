@@ -732,7 +732,7 @@ The response is an OTLP `ExportTraceServiceResponse` in the request's encoding.
 
 | Route | Body | Response |
 |---|---|---|
-| `POST /otel/v1/traces` | OTLP `ExportTraceServiceRequest` | `ExportTraceServiceResponse` |
+| `POST /otel/v1/traces` | OTLP `ExportTraceServiceRequest` | `ExportTraceServiceResponse`. Spans of a resource whose `service.name` starts with `codex` are dropped ([Codex](#codex-log-events)) |
 | `POST /otel/v1/logs` | OTLP `ExportLogsServiceRequest` (protobuf or JSON, gzip allowed) | `ExportLogsServiceResponse`. The events of Claude Code, Codex and Gemini CLI become spans ([Claude Code](#claude-code-log-events), [Codex](#codex-log-events), [Gemini CLI](#gemini-cli-log-events)); logs of any other service are accepted and ignored |
 | `POST /otel/v1/metrics` | OTLP `ExportMetricsServiceRequest` | `ExportMetricsServiceResponse`; metrics are accepted and discarded, so an exporter that also sends them reports no errors |
 
@@ -811,6 +811,14 @@ the model's reply text nor a cost. The turn is stored once its last request
 completed without a tool call after it, or failed, or the user denied its
 last tool call; or when the next prompt starts (`interrupted: …`), as for
 Claude Code.
+
+Codex's trace export (`trace_exporter`) describes its own functions (about
+1,500 spans for two turns: `fs.get_metadata`, `append_items`,
+`persist_rollout_items`, `auth`, …) and carries no session id. At
+`/otel/v1/traces`, every span of a resource whose `service.name` starts with
+`codex` is dropped (not stored, not counted, no error in the response); its
+only GenAI attributes are `gen_ai.usage.*` on `handle_responses`, without a
+model, the same tokens the log events already record.
 
 ### Gemini CLI log events
 
@@ -2656,7 +2664,7 @@ POST the member role. Times are RFC 3339 (or unix seconds in `from` / `to`).
 | `event_id` | the engine's evaluation event id (unique per `source`); `replay:<label>:<span_id>` for replays |
 | `session_id` | AgentShield `session_id` = `gen_ai.conversation.id` |
 | `span_id`, `trace_id` | the tool span the verdict concerns, or null |
-| `link` | how `span_id` was found: `tool_call_id`, `nearest_time` (same session and tool name, start within ±5 s), `replay`, or `session` / `none` when unlinked |
+| `link` | how `span_id` was found: `tool_call_id`, `nearest_time` (same session and tool, start within ±5 s), `replay`, or `session` / `none` when unlinked. For `nearest_time` the verdict's tool name and the span's are the same tool when they are equal (ignoring case) or map to the same AgentShield name in the table of the verdict's harness (by `event_source`; every table when it is unknown): AgentShield's connectors send canonical names (`exec`, `read`, `write`, `edit`, `browser`, `web_search`, `sessions_spawn`, …), the harness's spans its own (Gemini CLI `run_shell_command`, `read_file`, `write_file`, `replace`, `web_fetch`, `google_web_search`; Codex `exec_command`, `shell`, `apply_patch`; OpenCode `bash`, `webfetch`, `task`; Copilot CLI `bash`, `view`, `create`; Claude Code `Bash`, `Read`, `Task`). Tools a connector does not rename (`glob`, `grep`, `list_directory`, …) match by name |
 | `engine_span_id` | the engine's `evaluate` span when the verdict came over OTLP |
 | `tool_call_id`, `tool_name`, `agent_name` | from the verdict; `agent_name` is filled from the linked span when the engine had none |
 | `action` | `allow`, `log`, `require_approval`, `block`. For `source=replay`, the action enforce mode would take |

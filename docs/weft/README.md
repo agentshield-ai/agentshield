@@ -283,10 +283,13 @@ OpenClaw session id as `session_id`; MCP gateway: a tool-use id in the
 request `_meta`; Codex, Gemini CLI and Hermes: the hook's tool-call id and
 `AGENTSHIELD_AGENT_NAME`). A detection is linked to the tool span with the
 same session and tool call id; failing that, to the session's span of the same
-tool name that started nearest the verdict, within ±5 s; failing that, to the
-session only. Spans may arrive before or after their verdicts. Plugins that
-canonicalise tool names (the Claude Code hook sends `exec` for `Bash`) rely on
-the tool call id, because the time fallback compares tool names. A sub-agent
+tool that started nearest the verdict, within ±5 s; failing that, to the
+session only. Spans may arrive before or after their verdicts. The time
+fallback treats AgentShield's canonical tool names, which the hooks send, as
+the harness's own (`exec` is Gemini CLI's `run_shell_command`, Codex's
+`exec_command`, OpenCode's `bash`, Claude Code's `Bash`; one alias table per
+harness, `internal/weft/store/toolnames.go`), so Gemini CLI's verdicts, which
+carry no call id, still attach to their step. A sub-agent
 started by a tool (Claude Code's Task tool) is an agent span carrying the
 tool-use id; verdicts on that call link to it by id, never by time.
 
