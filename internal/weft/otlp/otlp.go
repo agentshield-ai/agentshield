@@ -183,6 +183,9 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 	var out []store.CompleteCall
 	for _, rs := range req.GetResourceSpans() {
 		resource := KeyValues(rs.GetResource().GetAttributes())
+		if isCodexResource(resource) { // codex_traces.go: Codex's internal spans; its sessions come from its logs
+			continue
+		}
 		project, err := refs.NormalizeProject(ProjectFor(headerProject, resource))
 		if err != nil {
 			return nil, err

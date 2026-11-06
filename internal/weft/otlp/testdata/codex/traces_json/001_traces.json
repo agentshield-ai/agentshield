@@ -1,0 +1,2008 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "env",
+      "value": {
+       "stringValue": "dev"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "0.167.0"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "codex_exec"
+      }
+     },
+     {
+      "key": "telemetry.sdk.name",
+      "value": {
+       "stringValue": "opentelemetry"
+      }
+     },
+     {
+      "key": "telemetry.sdk.language",
+      "value": {
+       "stringValue": "rust"
+      }
+     },
+     {
+      "key": "telemetry.sdk.version",
+      "value": {
+       "stringValue": "0.31.0"
+      }
+     }
+    ],
+    "droppedAttributesCount": 0,
+    "entityRefs": []
+   },
+   "scopeSpans": [
+    {
+     "scope": {
+      "name": "codex_exec",
+      "version": "",
+      "attributes": [],
+      "droppedAttributesCount": 0
+     },
+     "spans": [
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "f55d2b9af267eed3",
+       "traceState": "",
+       "parentSpanId": "6612e821e9bdf48f",
+       "flags": 257,
+       "name": "persist_rollout_items",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978459539373",
+       "endTimeUnixNano": "1793958978461331702",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/mod.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "5055"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "6"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "item_count",
+         "value": {
+          "stringValue": "1"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "712776"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "1079830"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "d56f57ff3d4f3cef",
+       "traceState": "",
+       "parentSpanId": "83200432498ab40c",
+       "flags": 257,
+       "name": "handle_responses",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978411389993",
+       "endTimeUnixNano": "1793958978461366581",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/turn.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "2900"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "codex.request.reasoning_effort",
+         "value": {
+          "stringValue": "default"
+         }
+        },
+        {
+         "key": "codex.response.receive_wait_ms",
+         "value": {
+          "doubleValue": 47.939685000000004
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "1200"
+         }
+        },
+        {
+         "key": "gen_ai.usage.cache_read.input_tokens",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "gen_ai.usage.cache_write.input_tokens",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "30"
+         }
+        },
+        {
+         "key": "codex.usage.reasoning_output_tokens",
+         "value": {
+          "intValue": "12"
+         }
+        },
+        {
+         "key": "codex.usage.total_tokens",
+         "value": {
+          "intValue": "1230"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "0"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "963aa53962e83a23",
+       "traceState": "",
+       "parentSpanId": "6612e821e9bdf48f",
+       "flags": 257,
+       "name": "codex.sampling",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978298179039",
+       "endTimeUnixNano": "1793958978461376966",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/turn.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "2765"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "3"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "codex.turn.phase",
+         "value": {
+          "stringValue": "sampling"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "0"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "1f8a984a4b879e2d",
+       "traceState": "",
+       "parentSpanId": "4cc66f8b895ccde2",
+       "flags": 257,
+       "name": "append_items",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978463821211",
+       "endTimeUnixNano": "1793958978463831424",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "thread-store/src/local/live_writer.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_thread_store::local::live_writer"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "173"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_thread_store::local::live_writer"
+         }
+        },
+        {
+         "key": "item_count",
+         "value": {
+          "stringValue": "1"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "8104"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "2454"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "4cc66f8b895ccde2",
+       "traceState": "",
+       "parentSpanId": "7f310f8055421e60",
+       "flags": 257,
+       "name": "append_items",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978463813842",
+       "endTimeUnixNano": "1793958978463836565",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "thread-store/src/live_thread.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_thread_store::live_thread"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "224"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_thread_store::live_thread"
+         }
+        },
+        {
+         "key": "item_count",
+         "value": {
+          "stringValue": "1"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "21015"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "2087"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "7f310f8055421e60",
+       "traceState": "",
+       "parentSpanId": "cec36d51abaee13b",
+       "flags": 257,
+       "name": "persist_rollout_items",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978463804417",
+       "endTimeUnixNano": "1793958978463838405",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/mod.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "5055"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "item_count",
+         "value": {
+          "stringValue": "1"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "25972"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "8668"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "cec36d51abaee13b",
+       "traceState": "",
+       "parentSpanId": "4de15b4e885a44ad",
+       "flags": 257,
+       "name": "unified_exec.exec_command",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978429309309",
+       "endTimeUnixNano": "1793958978468580663",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/unified_exec/process_manager.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::unified_exec::process_manager"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "506"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::unified_exec::process_manager"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn_id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "call_id",
+         "value": {
+          "stringValue": "call_resp_26_0"
+         }
+        },
+        {
+         "key": "unified_exec_process_id",
+         "value": {
+          "intValue": "69006"
+         }
+        },
+        {
+         "key": "mode",
+         "value": {
+          "stringValue": "resumable"
+         }
+        },
+        {
+         "key": "outcome",
+         "value": {
+          "stringValue": "exited"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "2823420"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "36449406"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "986adf68029a4de8",
+       "traceState": "",
+       "parentSpanId": "18037832554059f5",
+       "flags": 257,
+       "name": "exec_command",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978411331997",
+       "endTimeUnixNano": "1793958978471088792",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/tools/parallel.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::tools::parallel"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "257"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::tools::parallel"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "exec_command"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "turn_id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "tool_source",
+         "value": {
+          "stringValue": "direct"
+         }
+        },
+        {
+         "key": "call_id",
+         "value": {
+          "stringValue": "call_resp_26_0"
+         }
+        },
+        {
+         "key": "codex.tool.phase",
+         "value": {
+          "stringValue": "dispatch"
+         }
+        },
+        {
+         "key": "aborted",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "20458558"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "39298573"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [
+        {
+         "timeUnixNano": "1793958978471041626",
+         "name": "codex.tool_result_ready",
+         "attributes": [
+          {
+           "key": "level",
+           "value": {
+            "stringValue": "INFO"
+           }
+          },
+          {
+           "key": "target",
+           "value": {
+            "stringValue": "codex_otel.trace_safe"
+           }
+          },
+          {
+           "key": "event.name",
+           "value": {
+            "stringValue": "codex.tool_result_ready"
+           }
+          },
+          {
+           "key": "dispatch_to_result_ready_ms",
+           "value": {
+            "doubleValue": 59.70268
+           }
+          },
+          {
+           "key": "conversation.id",
+           "value": {
+            "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+           }
+          },
+          {
+           "key": "turn_id",
+           "value": {
+            "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+           }
+          },
+          {
+           "key": "call_id",
+           "value": {
+            "stringValue": "call_resp_26_0"
+           }
+          },
+          {
+           "key": "tool_name",
+           "value": {
+            "stringValue": "exec_command"
+           }
+          },
+          {
+           "key": "tool_namespace",
+           "value": {
+            "stringValue": "functions"
+           }
+          },
+          {
+           "key": "tool_source",
+           "value": {
+            "stringValue": "direct"
+           }
+          },
+          {
+           "key": "code.file.path",
+           "value": {
+            "stringValue": "core/src/tools/call_trace.rs"
+           }
+          },
+          {
+           "key": "code.module.name",
+           "value": {
+            "stringValue": "codex_core::tools::call_trace"
+           }
+          },
+          {
+           "key": "code.line.number",
+           "value": {
+            "intValue": "75"
+           }
+          }
+         ],
+         "droppedAttributesCount": 0
+        }
+       ],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "6649db67fb5ecfc3",
+       "traceState": "",
+       "parentSpanId": "83200432498ab40c",
+       "flags": 257,
+       "name": "handle_responses",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978358889832",
+       "endTimeUnixNano": "1793958978411379661",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/turn.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "2900"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "codex.request.reasoning_effort",
+         "value": {
+          "stringValue": "default"
+         }
+        },
+        {
+         "key": "codex.response.receive_wait_ms",
+         "value": {
+          "doubleValue": 50.087737
+         }
+        },
+        {
+         "key": "from",
+         "value": {
+          "stringValue": "output_item_done"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "exec_command"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "1109753"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "51383072"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "e110043df48ecb30",
+       "traceState": "",
+       "parentSpanId": "6612e821e9bdf48f",
+       "flags": 257,
+       "name": "codex.tool_blocking",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978461395061",
+       "endTimeUnixNano": "1793958978472484965",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/turn.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "3564"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "6"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "codex.turn.phase",
+         "value": {
+          "stringValue": "tool_blocking"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "0"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "4a2cc1655f9a2ffb",
+       "traceState": "",
+       "parentSpanId": "a68a00af43bbb728",
+       "flags": 257,
+       "name": "auth",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978475364840",
+       "endTimeUnixNano": "1793958978475367687",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "login/src/auth/manager.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_login::auth::manager"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "2602"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_login::auth::manager"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "1791"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "1180"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "cd6d25a0bb1d24dd",
+       "traceState": "",
+       "parentSpanId": "89c471594ac2b603",
+       "flags": 257,
+       "name": "get_model_info",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978476735865",
+       "endTimeUnixNano": "1793958978477562822",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "models-manager/src/manager.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_models_manager::manager"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "525"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_models_manager::manager"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gpt-fake"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "824235"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "3069"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "ece0c68186a86eda",
+       "traceState": "",
+       "parentSpanId": "eeb02c2c67165fec",
+       "flags": 257,
+       "name": "auth",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978477615171",
+       "endTimeUnixNano": "1793958978477619572",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "login/src/auth/manager.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_login::auth::manager"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "2602"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_login::auth::manager"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "2038"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "2539"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "67e818ed6ecae364",
+       "traceState": "",
+       "parentSpanId": "eeb02c2c67165fec",
+       "flags": 257,
+       "name": "responses.stream_request",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978477869984",
+       "endTimeUnixNano": "1793958978514217805",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "codex-api/src/endpoint/responses.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_api::endpoint::responses"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "60"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_api::endpoint::responses"
+         }
+        },
+        {
+         "key": "transport",
+         "value": {
+          "stringValue": "responses_http"
+         }
+        },
+        {
+         "key": "http.method",
+         "value": {
+          "stringValue": "POST"
+         }
+        },
+        {
+         "key": "api.path",
+         "value": {
+          "stringValue": "/responses"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "842626"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "35505349"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "c0fefa9859a36d2c",
+       "traceState": "",
+       "parentSpanId": "89c471594ac2b603",
+       "flags": 257,
+       "name": "codex.sampling",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978476686096",
+       "endTimeUnixNano": "1793958978715639145",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/turn.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "2765"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session::turn"
+         }
+        },
+        {
+         "key": "codex.turn.phase",
+         "value": {
+          "stringValue": "sampling"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "0"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "49b51deb80901f8a",
+       "traceState": "",
+       "parentSpanId": "beed95f442756a7f",
+       "flags": 257,
+       "name": "run_turn",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978254802763",
+       "endTimeUnixNano": "1793958978719720804",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/tasks/regular.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::tasks::regular"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "55"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "3"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::tasks::regular"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "25877239"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "439041204"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "e89edf648955f3c2",
+       "traceState": "",
+       "parentSpanId": "520cd361bca8e5a1",
+       "flags": 257,
+       "name": "session.flush_rollout",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978719749382",
+       "endTimeUnixNano": "1793958978720698645",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/mod.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "1554"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "484805"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "464638"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "4fb0125c57e9dbdf60795eddeddc74c1",
+       "spanId": "9dcb4df8b33dc9a9",
+       "traceState": "",
+       "parentSpanId": "4131976ac73372e5",
+       "flags": 257,
+       "name": "codex.turn_input",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978247754487",
+       "endTimeUnixNano": "1793958978254692638",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/turn_input.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session::turn_input"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "228"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session::turn_input"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "01a1b049-a2c7-7c31-b713-22307d5607e8"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "4362254"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "2576268"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "aa0b5c5e80bd287cb2db5a8b4254ef92",
+       "spanId": "b2149c7e288ea6c7",
+       "traceState": "",
+       "parentSpanId": "",
+       "flags": 257,
+       "name": "thread/items/list",
+       "kind": 2,
+       "startTimeUnixNano": "1793958978726730842",
+       "endTimeUnixNano": "1793958978727705279",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "app-server/src/app_server_tracing.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_app_server::app_server_tracing"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "100"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_app_server::app_server_tracing"
+         }
+        },
+        {
+         "key": "rpc.system",
+         "value": {
+          "stringValue": "jsonrpc"
+         }
+        },
+        {
+         "key": "rpc.method",
+         "value": {
+          "stringValue": "thread/items/list"
+         }
+        },
+        {
+         "key": "rpc.transport",
+         "value": {
+          "stringValue": "in-process"
+         }
+        },
+        {
+         "key": "rpc.request_id",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "app_server.connection_id",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "app_server.api_version",
+         "value": {
+          "stringValue": "v2"
+         }
+        },
+        {
+         "key": "app_server.client_name",
+         "value": {
+          "stringValue": "codex_exec"
+         }
+        },
+        {
+         "key": "app_server.client_version",
+         "value": {
+          "stringValue": "0.167.0"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "661278"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "313375"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "5f6c665649f14ebaf9734f3f13b2a85f",
+       "spanId": "21bb29323df0cb81",
+       "traceState": "",
+       "parentSpanId": "",
+       "flags": 257,
+       "name": "thread/unsubscribe",
+       "kind": 2,
+       "startTimeUnixNano": "1793958978727971429",
+       "endTimeUnixNano": "1793958978728153709",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "app-server/src/app_server_tracing.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_app_server::app_server_tracing"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "100"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "6"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_app_server::app_server_tracing"
+         }
+        },
+        {
+         "key": "rpc.system",
+         "value": {
+          "stringValue": "jsonrpc"
+         }
+        },
+        {
+         "key": "rpc.method",
+         "value": {
+          "stringValue": "thread/unsubscribe"
+         }
+        },
+        {
+         "key": "rpc.transport",
+         "value": {
+          "stringValue": "in-process"
+         }
+        },
+        {
+         "key": "rpc.request_id",
+         "value": {
+          "stringValue": "4"
+         }
+        },
+        {
+         "key": "app_server.connection_id",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "app_server.api_version",
+         "value": {
+          "stringValue": "v2"
+         }
+        },
+        {
+         "key": "app_server.client_name",
+         "value": {
+          "stringValue": "codex_exec"
+         }
+        },
+        {
+         "key": "app_server.client_version",
+         "value": {
+          "stringValue": "0.167.0"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "136342"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "47740"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      },
+      {
+       "traceId": "19fb1864626a3116b3a6b40f46a12f06",
+       "spanId": "07f008241b7370b7",
+       "traceState": "",
+       "parentSpanId": "",
+       "flags": 257,
+       "name": "session_loop",
+       "kind": 1,
+       "startTimeUnixNano": "1793958978236403895",
+       "endTimeUnixNano": "1793958978730174864",
+       "attributes": [
+        {
+         "key": "code.file.path",
+         "value": {
+          "stringValue": "core/src/session/mod.rs"
+         }
+        },
+        {
+         "key": "code.module.name",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "code.line.number",
+         "value": {
+          "intValue": "1062"
+         }
+        },
+        {
+         "key": "thread.id",
+         "value": {
+          "intValue": "5"
+         }
+        },
+        {
+         "key": "thread.name",
+         "value": {
+          "stringValue": "tokio-rt-worker"
+         }
+        },
+        {
+         "key": "target",
+         "value": {
+          "stringValue": "codex_core::session"
+         }
+        },
+        {
+         "key": "thread_id",
+         "value": {
+          "stringValue": "01a1b049-a2a5-7850-87e9-2e9c1b60cb24"
+         }
+        },
+        {
+         "key": "busy_ns",
+         "value": {
+          "intValue": "5342284"
+         }
+        },
+        {
+         "key": "idle_ns",
+         "value": {
+          "intValue": "488429145"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "links": [],
+       "droppedLinksCount": 0,
+       "status": {
+        "message": "",
+        "code": 0
+       }
+      }
+     ],
+     "schemaUrl": ""
+    }
+   ],
+   "schemaUrl": ""
+  }
+ ]
+}
