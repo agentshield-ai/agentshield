@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/evals"
 	"github.com/agentshield-ai/agentshield/internal/weft/shield"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -313,11 +315,17 @@ func (s *Server) shieldIngestHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	out, err := s.shieldIngest(r.Context(), req)
+	start := time.Now()
+	ctx, stats := store.WithIngestStats(r.Context())
+	if pid, err := project(req.ProjectID); err == nil {
+		weftlog.RequestFrom(ctx).AddProjects(pid)
+	}
+	out, err := s.shieldIngest(ctx, req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	logShieldIngest(ctx, req, out, stats, time.Since(start))
 	if out.allRejected {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -462,6 +470,33 @@ func ingestDetectionInput(d ingestDetection, eventID string) (store.DetectionInp
 		return store.DetectionInput{}, err
 	}
 	return in, nil
+}
+
+// logShieldIngest logs a verdict batch (info) and each rejected record
+// (debug); how each verdict attached is logged by the store (debug).
+func logShieldIngest(ctx context.Context, req *ingestReq, out *ingestResult, st *store.IngestStats, d time.Duration) {
+	log := weftlog.From(ctx)
+	pid, _ := project(req.ProjectID)
+	level := slog.LevelInfo
+	if out.allRejected {
+		level = slog.LevelWarn
+	}
+	attrs := []slog.Attr{slog.String("project", pid), slog.Int("received", len(req.Detections)), slog.Int("accepted", out.Accepted),
+		slog.Int("created", out.Created), slog.Int("duplicates", out.Duplicates), slog.Int("rejected", out.Rejected)}
+	if len(req.Overrides) > 0 {
+		attrs = append(attrs, slog.Int("overrides", len(req.Overrides)), slog.Int("overrides_applied", out.OverridesApplied),
+			slog.Int("overrides_pending", out.OverridesPending))
+	}
+	if links := st.LinkCounts(); len(links) > 0 {
+		attrs = append(attrs, slog.String("attached", weftlog.Counts(links)))
+	}
+	attrs = append(attrs, slog.Int64("duration_ms", d.Milliseconds()))
+	log.LogAttrs(ctx, level, "shield verdicts ingested", attrs...)
+	weftlog.RequestFrom(ctx).SetSummarized()
+	for _, e := range out.Errors {
+		log.Debug("shield record rejected", "project", pid, "kind", e.Kind, "index", e.Index, "event_id", weftlog.Name(e.EventID),
+			"reason", weftlog.Reason(e.Error))
+	}
 }
 
 func shieldFirstNonEmpty(vs ...string) string {

@@ -61,8 +61,15 @@ var LogSources = []store.LogSource{
 type SessionLogs struct {
 	// Events by source name (LogSources), then project.
 	Events map[string]map[string][]store.LogEvent
-	// Ignored counts records that describe no session.
-	Ignored int
+	// Ignored counts records that describe no session; IgnoredBy breaks it
+	// down by reason (Ignored* in otlp.go).
+	Ignored   int
+	IgnoredBy map[string]int
+	// Records counts the log records received, Harness by harness ("other"
+	// for logs Weft does not map), Services the service names seen.
+	Records  int
+	Harness  map[string]int
+	Services map[string]bool
 }
 
 // SessionLogEvents extracts the session events of every harness Weft maps
@@ -70,15 +77,30 @@ type SessionLogs struct {
 // service.name (or instrumentation scope) names; the project is chosen as
 // for traces (ProjectFor).
 func SessionLogEvents(req *collogs.ExportLogsServiceRequest, headerProject string) (SessionLogs, error) {
-	out := SessionLogs{Events: map[string]map[string][]store.LogEvent{}}
+	out := SessionLogs{Events: map[string]map[string][]store.LogEvent{}, IgnoredBy: map[string]int{}, Harness: map[string]int{},
+		Services: map[string]bool{}}
 	for _, rl := range req.GetResourceLogs() {
 		sub := &collogs.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{rl}}
+		n := 0
+		for _, sl := range rl.GetScopeLogs() {
+			n += len(sl.GetLogRecords())
+		}
+		out.Records += n
+		if svc := aStr(KeyValues(rl.GetResource().GetAttributes()), "service.name"); svc != "" {
+			out.Services[svc] = true
+		}
+		h := logHarness(rl)
+		if h == "" {
+			out.Harness["other"] += n
+		} else {
+			out.Harness[h] += n
+		}
 		var (
 			b   LogBatch
 			src string
 			err error
 		)
-		switch logHarness(rl) {
+		switch h {
 		case ClaudeCodeLogSource:
 			src = ClaudeCodeLogSource
 			b, err = ClaudeCodeLogEvents(sub, headerProject)
@@ -89,15 +111,17 @@ func SessionLogEvents(req *collogs.ExportLogsServiceRequest, headerProject strin
 			src = GeminiLogSource
 			b, err = GeminiLogEvents(sub, headerProject)
 		default:
-			for _, sl := range rl.GetScopeLogs() {
-				out.Ignored += len(sl.GetLogRecords())
-			}
+			out.Ignored += n
+			out.IgnoredBy[IgnoredOtherService] += n
 			continue
 		}
 		if err != nil {
 			return out, err
 		}
 		out.Ignored += b.Ignored
+		for k, v := range b.IgnoredBy {
+			out.IgnoredBy[k] += v
+		}
 		for pid, evs := range b.Events {
 			if out.Events[src] == nil {
 				out.Events[src] = map[string][]store.LogEvent{}

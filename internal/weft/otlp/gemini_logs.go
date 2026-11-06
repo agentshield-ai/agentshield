@@ -78,8 +78,12 @@ func GeminiLogEvents(req *collogs.ExportLogsServiceRequest, headerProject string
 				if session == "" {
 					session = aStr(resource, "session.id")
 				}
-				if session == "" || !geminiEvents[name] {
-					out.Ignored++
+				switch {
+				case !geminiEvents[name]:
+					out.ignore(IgnoredNoiseEvent, 1)
+					continue
+				case session == "":
+					out.ignore(IgnoredNoSession, 1)
 					continue
 				}
 				if project == "" {

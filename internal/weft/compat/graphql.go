@@ -3,11 +3,13 @@ package compat
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 )
 
 // weave.init() talks to the W&B GraphQL API (WANDB_BASE_URL/graphql) to
@@ -114,6 +116,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
+	if code >= 400 && code < 500 {
+		weftlog.RecordReason(w, msg)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"reason": msg})
@@ -124,6 +129,9 @@ func writeStoreErr(w http.ResponseWriter, err error) {
 	if ok := asInvalid(err, &inv); ok {
 		writeError(w, http.StatusBadRequest, inv.Msg)
 		return
+	}
+	if !weftlog.RecordError(w, err) { // the request log reports it
+		slog.Error("weft request failed", "err", weftlog.Err(err))
 	}
 	writeError(w, http.StatusInternalServerError, "internal error")
 }

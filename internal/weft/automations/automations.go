@@ -29,6 +29,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 )
 
 // Automation is the parsed value of an Automation object.
@@ -352,7 +353,7 @@ func typeMatches(patterns []string, t string) bool {
 func (r *Runner) HandleFeedback(ctx context.Context, f store.Feedback) []*store.AutomationRun {
 	objs, err := r.automations(ctx, f.ProjectID)
 	if err != nil {
-		r.Log.Warn("loading automations failed", "err", err)
+		r.Log.Warn("loading automations failed", "project", f.ProjectID, "err", weftlog.Err(err))
 		return nil
 	}
 	var runs []*store.AutomationRun
@@ -471,7 +472,7 @@ func (r *Runner) fireWithCooldown(ctx context.Context, o *store.Obj, a *Automati
 	r.mu.Unlock()
 	run, err := r.Fire(ctx, o, a, event, false)
 	if err != nil {
-		r.Log.Warn("automation run not recorded", "automation", o.ObjectID, "err", err)
+		r.Log.Warn("automation run not recorded", "project", o.ProjectID, "automation", o.ObjectID, "err", weftlog.Err(err))
 	}
 	return run
 }
@@ -571,7 +572,11 @@ func (r *Runner) Fire(ctx context.Context, o *store.Obj, a *Automation, event ma
 		msg := err.Error()
 		run.Error = &msg
 		run.Status = "error"
-		r.Log.Warn("automation action failed", "automation", o.ObjectID, "err", err)
+		r.Log.Warn("automation action failed", "project", o.ProjectID, "automation", o.ObjectID, "trigger", a.Trigger.Type,
+			"action", a.Action.Type, "test", test, "status", status, "duration_ms", int64(ms), "err", weftlog.Err(err))
+	} else {
+		r.Log.Info("automation fired", "project", o.ProjectID, "automation", o.ObjectID, "trigger", a.Trigger.Type,
+			"action", a.Action.Type, "test", test, "status", status, "duration_ms", int64(ms))
 	}
 	if rerr := r.Store.RecordAutomationRun(ctx, run); rerr != nil {
 		return run, rerr

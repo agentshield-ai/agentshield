@@ -16,6 +16,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -114,6 +115,10 @@ func (s *Server) invalidateKeys() {
 
 // authRequired reports whether requests need a key: static keys or SSO are
 // configured, or at least one managed key is active.
+// AuthRequired reports whether requests must authenticate (static keys,
+// managed keys or SSO).
+func (s *Server) AuthRequired() bool { return s.authRequired() }
+
 func (s *Server) authRequired() bool {
 	if len(s.keys) > 0 || s.cfg.IAM.OIDC != nil {
 		return true
@@ -833,8 +838,20 @@ func startRetention(s *Server) func() {
 			case <-first.C:
 			case <-tick.C:
 			}
-			if _, err := s.RunRetention(ctx); err != nil && ctx.Err() == nil {
-				s.log.Error("retention purge failed", "err", err)
+			start := time.Now()
+			s.log.Debug("retention purge started")
+			res, err := s.RunRetention(ctx)
+			switch {
+			case err != nil && ctx.Err() == nil:
+				s.log.Error("retention purge failed", "err", weftlog.Err(err), "duration_ms", time.Since(start).Milliseconds())
+			case err == nil:
+				var spans, feedback int64
+				for _, r := range res {
+					spans += r.Spans
+					feedback += r.Feedback
+				}
+				s.log.Debug("retention purge finished", "projects", len(res), "spans", spans, "feedback", feedback,
+					"duration_ms", time.Since(start).Milliseconds())
 			}
 		}
 	}()

@@ -533,6 +533,9 @@ type contentTypeWriter struct {
 	ctype string
 }
 
+// Unwrap returns the wrapped writer (the request log finds its record there).
+func (w contentTypeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w contentTypeWriter) WriteHeader(code int) {
 	if code < 300 {
 		w.Header().Set("Content-Type", w.ctype)

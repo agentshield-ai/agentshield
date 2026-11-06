@@ -175,6 +175,9 @@ func (w *bufferedWriter) Write(b []byte) (int, error) {
 }
 func (w *bufferedWriter) Flush() {}
 
+// Unwrap returns the wrapped writer (the request log finds its record there).
+func (w *bufferedWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func rewriteQuery(r *http.Request) {
 	if !strings.Contains(r.URL.RawQuery, "weave") {
 		return

@@ -180,16 +180,81 @@ func ProjectFor(headerProject string, resource map[string]any) string {
 
 // ToCalls converts an export request into calls.
 func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]store.CompleteCall, error) {
+	out, _, err := ToCallsStats(req, headerProject)
+	return out, err
+}
+
+// TraceStats describes a traces export for the ingest log: spans received,
+// by harness (or "otel" for any other producer), the services named, and
+// the spans not mapped, by reason.
+type TraceStats struct {
+	Spans    int
+	Harness  map[string]int
+	Services map[string]bool
+	Ignored  map[string]int
+	Projects map[string]bool
+}
+
+// Ignored-span reasons.
+const (
+	IgnoredCodexInternal = "codex_internal_spans" // Codex's internal spans; its sessions come from its logs
+	IgnoredOpenCodeNoise = "opencode_internal_spans"
+	IgnoredOtherService  = "other_service"
+	IgnoredNoiseEvent    = "noise_event"
+	IgnoredNoSession     = "no_session_id"
+)
+
+// resourceHarness names a resource's producer for the ingest log.
+func resourceHarness(resource map[string]any, scopes []string) string {
+	switch {
+	case isClaudeCodeResource(resource):
+		return "claude-code"
+	case isCodexResource(resource):
+		return "codex"
+	case isOpenCodeResource(resource):
+		return "opencode"
+	case aStr(resource, "service.name") == GeminiService:
+		return "gemini-cli"
+	case strings.HasPrefix(aStr(resource, "service.name"), "agentshield"):
+		return "agentshield"
+	}
+	for _, sc := range scopes {
+		switch {
+		case isCopilotScope(resource, sc):
+			return "copilot"
+		case sc == "agentshield":
+			return "agentshield"
+		}
+	}
+	return "otel"
+}
+
+// ToCallsStats is ToCalls, also describing the export.
+func ToCallsStats(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]store.CompleteCall, TraceStats, error) {
 	var out []store.CompleteCall
+	ts := TraceStats{Harness: map[string]int{}, Services: map[string]bool{}, Ignored: map[string]int{}, Projects: map[string]bool{}}
 	for _, rs := range req.GetResourceSpans() {
 		resource := KeyValues(rs.GetResource().GetAttributes())
+		n := 0
+		var scopes []string
+		for _, ss := range rs.GetScopeSpans() {
+			n += len(ss.GetSpans())
+			scopes = append(scopes, ss.GetScope().GetName())
+		}
+		ts.Spans += n
+		ts.Harness[resourceHarness(resource, scopes)] += n
+		if svc := aStr(resource, "service.name"); svc != "" {
+			ts.Services[svc] = true
+		}
 		if isCodexResource(resource) { // codex_traces.go: Codex's internal spans; its sessions come from its logs
+			ts.Ignored[IgnoredCodexInternal] += n
 			continue
 		}
 		project, err := refs.NormalizeProject(ProjectFor(headerProject, resource))
 		if err != nil {
-			return nil, err
+			return nil, ts, err
 		}
+		ts.Projects[project] = true
 		cc := isClaudeCodeResource(resource) // claudecode_traces.go
 		var oc *openCodeBatch
 		if isOpenCodeResource(resource) { // opencode_traces.go
@@ -209,11 +274,12 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 			first := len(out)
 			for _, sp := range ss.GetSpans() {
 				if oc != nil && !oc.keep(sp) {
+					ts.Ignored[IgnoredOpenCodeNoise]++
 					continue
 				}
 				c, err := spanToCall(project, sp, resource, scope)
 				if err != nil {
-					return nil, err
+					return nil, ts, err
 				}
 				if oc != nil {
 					oc.mapSpan(&c, sp, resource)
@@ -234,7 +300,7 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 			}
 		}
 	}
-	return out, nil
+	return out, ts, nil
 }
 
 func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any) (store.CompleteCall, error) {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"hash/fnv"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 )
 
 // Event logs: producers that report what an agent does as a stream of log
@@ -152,8 +154,9 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 
 	touched := map[logGroupKey]bool{}
 	var groups []LogGroup
-	added := 0
+	added, dups := 0, 0
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
+		added, dups = 0, 0
 		if err := s.touchProject(ctx, tx, pid); err != nil {
 			return err
 		}
@@ -190,6 +193,7 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 				return err
 			}
 			added += n
+			dups += 1 - n
 		}
 		sessions := map[string]bool{}
 		for k := range touched {
@@ -235,21 +239,84 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 		}
 		return nil
 	})
-	if err != nil || len(groups) == 0 {
+	if err != nil {
 		return nil, added, err
 	}
+	ingestCount(ctx, func(is *IngestStats) {
+		is.EventsNew += added
+		is.EventsDuplicate += dups
+		is.TurnsRebuilt += len(groups)
+		for _, e := range events {
+			is.addSession(e.SessionID)
+		}
+	})
+	if len(groups) == 0 {
+		return nil, added, nil
+	}
+	log := weftlog.From(ctx)
+	debug := log.Enabled(ctx, slog.LevelDebug)
 	var calls []CompleteCall
+	var interrupted []CompleteCall
 	for _, g := range groups {
-		for _, c := range src.Build(g) {
+		built := src.Build(g)
+		ended := 0
+		for _, c := range built {
 			c.Start.ProjectID = pid
 			calls = append(calls, c)
+			if c.End != nil {
+				ended++
+			}
+			if c.Start.ParentID == nil && c.End != nil && c.End.Exception != nil && strings.HasPrefix(*c.End.Exception, interruptedPrefix) {
+				interrupted = append(interrupted, c)
+			}
+		}
+		if debug {
+			log.Debug("turn rebuilt", "project", pid, "source", src.Name, "session_id", g.SessionID, "trace_id", logTurnTrace(built),
+				"group", g.GroupID, "events", len(g.Events), "spans", len(built), "ended", ended, "later_turn", g.Later)
 		}
 	}
 	if len(calls) == 0 {
 		return nil, added, nil
 	}
+	// A turn closed as interrupted is reported once: when it was not
+	// stored so before this batch.
+	var newlyInterrupted []CompleteCall
+	for _, c := range interrupted {
+		var exc sql.NullString
+		err := s.r.QueryRowContext(ctx, `SELECT exception FROM calls WHERE project_id = ? AND id = ?`, pid, c.Start.ID).Scan(&exc)
+		if err != nil && err != sql.ErrNoRows {
+			log.Warn("checking a turn's stored state", "project", pid, "span_id", c.Start.ID, "err", weftlog.Err(err))
+			continue
+		}
+		if !exc.Valid || !strings.HasPrefix(exc.String, interruptedPrefix) {
+			newlyInterrupted = append(newlyInterrupted, c)
+		}
+	}
 	ended, err := s.UpsertComplete(ctx, calls)
+	if err == nil {
+		for _, c := range newlyInterrupted {
+			sid := ""
+			if c.Start.ThreadID != nil {
+				sid = *c.Start.ThreadID
+			}
+			log.Info("turn closed as interrupted: a new prompt was submitted", "project", pid, "source", src.Name, "session_id", sid,
+				"trace_id", c.Start.TraceID, "span_id", c.Start.ID)
+		}
+		ingestCount(ctx, func(is *IngestStats) { is.TurnsInterrupted += len(newlyInterrupted) })
+	}
 	return ended, added, err
+}
+
+// interruptedPrefix starts the error of a turn a later prompt interrupted
+// (otlp/claudecode_logs.go, codex_logs.go, gemini_logs.go).
+const interruptedPrefix = "interrupted:"
+
+// logTurnTrace is the trace id of a rebuilt group's spans ("" if none).
+func logTurnTrace(calls []CompleteCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	return calls[0].Start.TraceID
 }
 
 type logGroupKey struct{ session, group string }

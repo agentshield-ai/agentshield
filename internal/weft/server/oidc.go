@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
@@ -631,7 +632,9 @@ func (s *Server) createSSOUser(ctx context.Context, subject, email string, email
 		}
 		u, err := s.store.CreateUser(ctx, store.UserCreate{ID: id, Name: clip(name, 128), Email: em, Subject: subject})
 		if err == nil {
-			_ = s.store.LinkUserSubject(ctx, u.ID, subject)
+			if err := s.store.LinkUserSubject(ctx, u.ID, subject); err != nil {
+				s.log.Warn("SSO: linking the new user to its subject", "user", u.ID, "err", weftlog.Err(err))
+			}
 			return u, nil
 		}
 		var inv *store.InvalidError

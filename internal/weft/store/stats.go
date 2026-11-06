@@ -30,6 +30,13 @@ func (s *Store) EnsureProject(ctx context.Context, projectID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error { return s.touchProject(ctx, tx, pid) })
 }
 
+// CountProjects counts the projects (the startup log line).
+func (s *Store) CountProjects(ctx context.Context) (int, error) {
+	var n int
+	err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects`).Scan(&n)
+	return n, err
+}
+
 // ListProjects lists all projects with counts.
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	rows, err := s.r.QueryContext(ctx, `SELECT p.project_id, p.last_activity,

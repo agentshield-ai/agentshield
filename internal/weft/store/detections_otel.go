@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 )
 
 // AgentShield's engine exports an `evaluate` span per verdict (instrumentation
@@ -296,8 +298,14 @@ func detectionFromSpanTx(ctx context.Context, tx *sql.Tx, projectID, id string) 
 		return nil
 	}
 	if err := d.Normalize(); err != nil {
+		weftlog.From(ctx).Debug("verdict span skipped: not a valid detection", "project", projectID, "span_id", id, "reason", weftlog.Err(err))
 		return nil
 	}
-	_, err = upsertDetectionTx(ctx, tx, projectID, &d)
+	r, err := upsertDetectionTx(ctx, tx, projectID, &d)
+	if err == nil && r.Created {
+		ingestCount(ctx, func(is *IngestStats) { is.Verdicts++ })
+		weftlog.From(ctx).Debug("verdict from evaluate span", "project", projectID, "span_id", id, "detection_id", r.ID,
+			"session_id", d.SessionID, "action", d.Action, "severity", d.Severity, "rules", len(d.Rules))
+	}
 	return err
 }

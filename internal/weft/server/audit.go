@@ -17,6 +17,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -80,7 +81,18 @@ func (s *Server) auditLog(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
+		ann := weftlog.RequestFrom(r.Context())
+		keyID := ""
+		if note.keyID != nil {
+			keyID = *note.keyID
+		}
+		ann.SetIdentity(note.actor, keyID, note.authMethod)
 		if !mutating && status != http.StatusForbidden && note.detail == "" {
+			if len(note.projects) > 0 {
+				ann.AddProjects(note.projects...)
+			} else {
+				ann.AddProjects(auditProjects(r, nil)...)
+			}
 			return
 		}
 		e := store.AuditEntry{Actor: note.actor, AuthMethod: note.authMethod, KeyID: note.keyID, Method: r.Method,
@@ -95,6 +107,7 @@ func (s *Server) auditLog(next http.Handler) http.Handler {
 		if len(pids) == 0 {
 			pids = auditProjects(r, body)
 		}
+		ann.AddProjects(pids...)
 		if len(pids) > 0 {
 			e.Project = &pids[0]
 		}

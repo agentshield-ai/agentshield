@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sort"
 	"strings"
+
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 )
 
 // Session sources: the producers that can record the same agent session,
@@ -71,8 +73,43 @@ func sourcesRanked(source string, higher bool) []string {
 type sourceBatchKey struct{}
 
 // sourceBatch remembers, within one write, the decision taken for each
-// (project, session, source), so a batch checks a session once.
-type sourceBatch struct{ drop map[[3]string]bool }
+// (project, session, source), so a batch checks a session once, and the
+// replacements made, logged once the write commits.
+type sourceBatch struct {
+	drop     map[[3]string]bool
+	replaced []sourceReplacement
+}
+
+// sourceReplacement is one session whose spans of lower-ranked sources were
+// hidden because a higher-ranked source arrived.
+type sourceReplacement struct {
+	project, session, to string
+	from                 map[string]int // hidden spans by source
+	relinked             int            // detections linked again
+}
+
+// logSourceReplacements logs the replacements of a committed write (info:
+// a session switches source once).
+func logSourceReplacements(ctx context.Context) {
+	b, _ := ctx.Value(sourceBatchKey{}).(*sourceBatch)
+	if b == nil || len(b.replaced) == 0 {
+		return
+	}
+	log := weftlog.From(ctx)
+	for _, r := range b.replaced {
+		froms := make([]string, 0, len(r.from))
+		hidden := 0
+		for f, n := range r.from {
+			froms = append(froms, f)
+			hidden += n
+		}
+		sort.Strings(froms)
+		log.Info("session source replaced", "project", r.project, "session_id", r.session, "from", strings.Join(froms, ","), "to", r.to,
+			"spans_hidden", hidden, "verdicts_relinked", r.relinked)
+	}
+	ingestCount(ctx, func(is *IngestStats) { is.SourcesReplaced += len(b.replaced) })
+	b.replaced = nil
+}
 
 func withSourceBatch(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(sourceBatchKey{}).(*sourceBatch); ok {
@@ -143,13 +180,22 @@ func (s *Store) applySourcePrecedence(ctx context.Context, tx *sql.Tx, st *CallS
 			return s.markSourceDrop(ctx, tx, st, d)
 		}
 	}
-	drop, err = s.sessionHasSource(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(src, true))
+	higher := sourcesRanked(src, true)
+	drop, err = s.sessionHasSource(ctx, tx, st.ProjectID, *st.ThreadID, higher)
 	if err != nil {
 		return false, err
 	}
-	if !drop {
-		if err := s.retireLowerSources(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(src, false)); err != nil {
+	if drop {
+		weftlog.From(ctx).Debug("spans dropped: the session has a higher-ranked source", "project", st.ProjectID, "session_id", *st.ThreadID,
+			"source", src, "higher", strings.Join(higher, ","))
+	} else {
+		rep, err := s.retireLowerSources(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(src, false))
+		if err != nil {
 			return false, err
+		}
+		if rep != nil && b != nil {
+			rep.to = src
+			b.replaced = append(b.replaced, *rep)
 		}
 	}
 	if b != nil {
@@ -208,29 +254,35 @@ func (s *Store) sessionHasSource(ctx context.Context, tx *sql.Tx, pid, session s
 }
 
 // retireLowerSources soft-deletes a session's spans of the given sources and
-// re-links the detections that pointed at them.
-func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session string, sources []string) error {
+// re-links the detections that pointed at them. It reports what it hid
+// (nil when nothing).
+func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session string, sources []string) (*sourceReplacement, error) {
 	if len(sources) == 0 {
-		return nil
+		return nil, nil
 	}
 	cond, srcArgs := sourceCondition(sources)
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM calls WHERE project_id = ? AND thread_id = ? AND deleted_at IS NULL
-		AND `+cond, append([]any{pid, session}, srcArgs...)...)
+	rows, err := tx.QueryContext(ctx, `SELECT id, COALESCE(json_extract(attributes, '$.weft.source'), '') FROM calls
+		WHERE project_id = ? AND thread_id = ? AND deleted_at IS NULL AND `+cond, append([]any{pid, session}, srcArgs...)...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var ids []string
+	from := map[string]int{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, src string
+		if err := rows.Scan(&id, &src); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
+		if src == "" {
+			src = SourceGeminiTraces // recognised by its agent name (spanSource)
+		}
+		from[src]++
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil || len(ids) == 0 {
-		return err
+		return nil, err
 	}
 	now := nowMicros()
 	var dets []string
@@ -238,22 +290,22 @@ func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session
 		chunk := ids[start:min(start+400, len(ids))]
 		c, a := inList("id", chunk)
 		if _, err := tx.ExecContext(ctx, `UPDATE calls SET deleted_at = ? WHERE project_id = ? AND `+c, append([]any{now, pid}, a...)...); err != nil {
-			return err
+			return nil, err
 		}
 		c, a = inList("span_id", chunk)
 		got, err := detQueryIDs(ctx, tx, `SELECT id FROM detections WHERE project_id = ? AND link <> 'replay' AND `+c, append([]any{pid}, a...)...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		dets = append(dets, got...)
 	}
 	for _, d := range dets {
 		if _, err := tx.ExecContext(ctx, `UPDATE detections SET span_id = NULL, link = '' WHERE project_id = ? AND id = ?`, pid, d); err != nil {
-			return err
+			return nil, err
 		}
 		if err := linkDetectionTx(ctx, tx, pid, d); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return &sourceReplacement{project: pid, session: session, from: from, relinked: len(dets)}, nil
 }

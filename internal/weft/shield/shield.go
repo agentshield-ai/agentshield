@@ -41,6 +41,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/replay"
 	"github.com/agentshield-ai/agentshield/internal/session"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/google/uuid"
 )
 
@@ -336,12 +337,14 @@ func (s *Service) Start(ctx context.Context, req ReplayRequest, createdBy *strin
 		select {
 		case s.sem <- struct{}{}:
 		case <-s.ctx.Done():
-			_ = s.st.UpdateReplayJob(context.Background(), req.ProjectID, id, store.ReplayFailed, "", nil, "server shutting down")
+			if err := s.st.UpdateReplayJob(context.Background(), req.ProjectID, id, store.ReplayFailed, "", nil, "server shutting down"); err != nil {
+				s.log.Warn("shield replay: recording the shutdown", "project", req.ProjectID, "job", id, "err", weftlog.Err(err))
+			}
 			return
 		}
 		defer func() { <-s.sem }()
 		if _, err := s.Run(s.ctx, req.ProjectID, id, req); err != nil {
-			s.log.Warn("shield replay failed", "project", req.ProjectID, "job", id, "err", err)
+			s.log.Warn("shield replay failed", "project", req.ProjectID, "job", id, "status", store.ReplayFailed, "err", weftlog.Err(err))
 		}
 	}()
 	return id, nil
@@ -372,15 +375,25 @@ func (s *Service) CreateJob(ctx context.Context, req ReplayRequest, createdBy *s
 
 // Run executes a job synchronously and records its status and result.
 func (s *Service) Run(ctx context.Context, projectID, jobID string, req ReplayRequest) (*Result, error) {
-	_ = s.st.UpdateReplayJob(ctx, projectID, jobID, store.ReplayRunning, "", nil, "")
+	start := time.Now()
+	s.log.Info("shield replay started", "project", projectID, "job", jobID, "mode", s.Mode(), "sessions", len(req.SessionIDs))
+	if err := s.st.UpdateReplayJob(ctx, projectID, jobID, store.ReplayRunning, "", nil, ""); err != nil {
+		s.log.Warn("shield replay: recording the running state", "project", projectID, "job", jobID, "err", weftlog.Err(err))
+	}
 	res, err := s.run(ctx, projectID, jobID, req)
 	if err != nil {
-		_ = s.st.UpdateReplayJob(context.Background(), projectID, jobID, store.ReplayFailed, "", nil, err.Error())
+		if uerr := s.st.UpdateReplayJob(context.Background(), projectID, jobID, store.ReplayFailed, "", nil, err.Error()); uerr != nil {
+			s.log.Error("shield replay: recording the failure", "project", projectID, "job", jobID, "err", weftlog.Err(uerr))
+		}
 		return nil, err
 	}
 	if err := s.st.UpdateReplayJob(context.Background(), projectID, jobID, store.ReplayDone, res.Label, res, ""); err != nil {
+		s.log.Error("shield replay: recording the result", "project", projectID, "job", jobID, "err", weftlog.Err(err))
 		return nil, err
 	}
+	s.log.Info("shield replay finished", "project", projectID, "job", jobID, "status", store.ReplayDone, "sessions", len(res.SessionIDs),
+		"rules_loaded", res.RulesLoaded, "newly_blocked", len(res.NewlyBlocked), "no_longer_blocked", len(res.NoLongerBlocked),
+		"changed", len(res.Changed), "truncated", res.Truncated, "duration_ms", time.Since(start).Milliseconds())
 	return res, nil
 }
 

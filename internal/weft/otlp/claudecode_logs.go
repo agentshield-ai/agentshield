@@ -58,8 +58,22 @@ type LogBatch struct {
 	// Events of Claude Code sessions, by project.
 	Events map[string][]store.LogEvent
 	// Ignored counts records that describe no session (other services,
-	// other Claude Code events).
-	Ignored int
+	// other Claude Code events); IgnoredBy breaks it down by reason
+	// (Ignored* in otlp.go).
+	Ignored   int
+	IgnoredBy map[string]int
+}
+
+// ignore counts n records not mapped, for reason.
+func (b *LogBatch) ignore(reason string, n int) {
+	if n == 0 {
+		return
+	}
+	if b.IgnoredBy == nil {
+		b.IgnoredBy = map[string]int{}
+	}
+	b.Ignored += n
+	b.IgnoredBy[reason] += n
 }
 
 // ClaudeCodeLogEvents extracts Claude Code session events from a logs
@@ -73,7 +87,7 @@ func ClaudeCodeLogEvents(req *collogs.ExportLogsServiceRequest, headerProject st
 		var project string
 		for _, sl := range rl.GetScopeLogs() {
 			if !isCC && sl.GetScope().GetName() != ClaudeCodeEventsScope {
-				out.Ignored += len(sl.GetLogRecords())
+				out.ignore(IgnoredOtherService, len(sl.GetLogRecords()))
 				continue
 			}
 			for _, lr := range sl.GetLogRecords() {
@@ -83,8 +97,12 @@ func ClaudeCodeLogEvents(req *collogs.ExportLogsServiceRequest, headerProject st
 					name = strings.TrimPrefix(aStr(map[string]any{"b": AnyValue(lr.GetBody())}, "b"), "claude_code.")
 				}
 				session, group := aStr(raw, "session.id"), aStr(raw, "prompt.id")
-				if !ccEvents[name] || session == "" || group == "" {
-					out.Ignored++
+				switch {
+				case !ccEvents[name]:
+					out.ignore(IgnoredNoiseEvent, 1)
+					continue
+				case session == "" || group == "":
+					out.ignore(IgnoredNoSession, 1)
 					continue
 				}
 				if project == "" {

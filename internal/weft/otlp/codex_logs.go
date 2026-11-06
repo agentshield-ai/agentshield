@@ -95,8 +95,12 @@ func CodexLogEvents(req *collogs.ExportLogsServiceRequest, headerProject string)
 				raw := KeyValues(lr.GetAttributes())
 				name := aStr(raw, "event.name")
 				session := aStr(raw, "conversation.id")
-				if session == "" || !codexKeep(name, raw) {
-					out.Ignored++
+				switch {
+				case !codexKeep(name, raw):
+					out.ignore(IgnoredNoiseEvent, 1)
+					continue
+				case session == "":
+					out.ignore(IgnoredNoSession, 1)
 					continue
 				}
 				if project == "" {

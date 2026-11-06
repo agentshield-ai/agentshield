@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/compat"
 	"github.com/agentshield-ai/agentshield/internal/weft/server"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/agentshield-ai/agentshield/internal/weft/webui"
 )
 
@@ -47,6 +49,32 @@ func splitList(s string) []string {
 	return out
 }
 
+const usageHeader = `usage: weft [flags]
+       weft db <command> ...   (see weft db --help)
+
+Weft trace server: OpenTelemetry ingest, the /api/v1 API and the web UI.
+
+Flags:
+`
+
+const usageLogs = `
+Logs (docs/weft/guides/setup.md, "Logs"):
+  Weft logs to stderr (or --log-file) with log/slog, as key=value text or
+  JSON (--log-format). Lines carry ids, names, counts, sizes, durations and
+  reasons only: never keys, prompts, tool arguments or outputs, or bodies.
+  info   startup; one "request" line per write, refusal (4xx) and server
+         error (5xx, at error); one line per ingest batch ("otlp logs
+         ingested", "otlp traces ingested", "shield verdicts ingested");
+         session source changes, interrupted turns, replays, evaluations,
+         automations, retention errors.
+  debug  adds reads and the UI's files, the sessions each batch touched
+         (session_ids), each turn rebuilt from log events and how each
+         AgentShield verdict attached (tool call id, nearest time, or why not).
+  Follow one Claude Code session: --log-level debug, then filter on its
+  session id (grep <session id>: batch lines list it in session_ids,
+  turn and verdict lines carry session_id=).
+`
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "db" {
 		os.Exit(runDB(os.Args[2:], os.Stdout, os.Stderr)) // db.go
@@ -56,7 +84,11 @@ func main() {
 	apiKeys := flag.String("api-keys", os.Getenv("WEFT_API_KEYS"), "comma-separated API keys required on requests (env WEFT_API_KEYS); empty disables auth")
 	cors := flag.String("cors-origins", os.Getenv("WEFT_CORS_ORIGINS"), "comma-separated browser origins allowed to call the API (env WEFT_CORS_ORIGINS)")
 	noUI := flag.Bool("no-ui", false, "do not serve the web UI")
-	logLevel := flag.String("log-level", envOr("WEFT_LOG_LEVEL", "info"), "debug, info, warn or error")
+	logLevel := flag.String("log-level", envOr("WEFT_LOG_LEVEL", "info"),
+		"log level: debug, info, warn or error (env WEFT_LOG_LEVEL). info: one line per write, ingest batch and refusal, server errors, "+
+			"background jobs; debug adds reads, the UI's files, the sessions each batch touched, turn rebuilds and how each AgentShield verdict attached")
+	logFormat := flag.String("log-format", envOr("WEFT_LOG_FORMAT", weftlog.FormatText), "log format: text (key=value) or json, one object per line (env WEFT_LOG_FORMAT)")
+	logFile := flag.String("log-file", os.Getenv("WEFT_LOG_FILE"), "append logs to this file instead of stderr (env WEFT_LOG_FILE)")
 	filesCfg := registerFilesFlags()   // files.go
 	iamCfg := registerIAMFlags()       // iam.go
 	piiCfg := registerPIIFlags()       // pii.go
@@ -66,6 +98,11 @@ func main() {
 		"turn on the compatibility adapter for the official weave client, see docs/weft/COMPATIBILITY.md (env "+compat.EnvName+"=true)")
 
 	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
+	flag.Usage = func() {
+		fmt.Fprint(flag.CommandLine.Output(), usageHeader)
+		flag.PrintDefaults()
+		fmt.Fprint(flag.CommandLine.Output(), usageLogs)
+	}
 	flag.Parse()
 	compatOn := compat.Enabled(flag.CommandLine, *compatFlag)
 	var compatAliases []string
@@ -78,7 +115,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid log level %q\n", *logLevel)
 		os.Exit(2)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+	var logOut io.Writer = os.Stderr
+	if *logFile != "" {
+		f, err := os.OpenFile(*logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "opening log file: %v\n", err)
+			os.Exit(2)
+		}
+		defer f.Close()
+		logOut = f
+	}
+	handler, err := weftlog.NewHandler(logOut, *logFormat, lvl)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	log := slog.New(handler)
 	slog.SetDefault(log)
 	for _, a := range compatAliases {
 		log.Info("compatibility adapter: read setting from environment alias", "env", a)
@@ -98,7 +150,8 @@ func main() {
 		log.Error("creating database file", "err", err)
 		os.Exit(1)
 	}
-	dbKey, err := dbKeyCfg.resolve()
+	var dbKey string
+	dbKey, err = dbKeyCfg.resolve()
 	if err != nil {
 		log.Error("database encryption key", "err", err)
 		os.Exit(2)
@@ -171,7 +224,14 @@ func main() {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdown)
 	}()
-	log.Info("weft listening", "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(), "auth", len(cfg.APIKeys) > 0, "files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode, "compat_adapter", compatOn)
+	projects, err := st.CountProjects(context.Background())
+	if err != nil {
+		log.Warn("counting projects", "err", err)
+	}
+	log.Info("weft listening", "version", server.Version, "addr", "http://"+*addr, "db", *dbPath, "db_encrypted", st.Encrypted(),
+		"auth", srv.AuthRequired(), "static_keys", len(cfg.APIKeys), "sso", cfg.IAM.OIDC != nil, "projects", projects, "ui", cfg.UI != nil,
+		"files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode, "weave_compat", compatOn,
+		"log_level", lvl.String(), "log_format", strings.ToLower(*logFormat))
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)

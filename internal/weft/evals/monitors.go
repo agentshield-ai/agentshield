@@ -19,7 +19,7 @@ func (e *Engine) Notify(calls []store.EndedCall) {
 		select {
 		case e.monitorCh <- c:
 		default:
-			e.Log.Warn("monitor queue full; dropping call", "call_id", c.ID)
+			e.Log.Warn("monitor queue full; dropping call", "project", c.ProjectID, "span_id", c.ID)
 			return
 		}
 	}
@@ -68,10 +68,10 @@ func (e *Engine) monitorWorker() {
 		case c := <-e.monitorCh:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			if err := e.runMonitors(ctx, c); err != nil {
-				e.Log.Warn("monitor evaluation failed", "call_id", c.ID, "err", err)
+				e.Log.Warn("monitor evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
 			}
 			if err := e.runAutoSignals(ctx, c); err != nil {
-				e.Log.Warn("signal evaluation failed", "call_id", c.ID, "err", err)
+				e.Log.Warn("signal evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
 			}
 			cancel()
 		}
@@ -108,7 +108,7 @@ func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
 		if q, ok := val["query"]; ok && q != nil {
 			match, err := e.Store.CallMatches(ctx, ended.ProjectID, call.ID, q)
 			if err != nil {
-				e.Log.Warn("monitor query invalid", "monitor", m.ObjectID, "err", err)
+				e.Log.Warn("monitor query invalid", "project", ended.ProjectID, "monitor", m.ObjectID, "err", err)
 				continue
 			}
 			if !match {
@@ -136,9 +136,13 @@ func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
 			continue
 		}
 		for _, ms := range perCall {
+			start := time.Now()
 			if err := e.scoreForMonitor(ctx, m, ms.scorer, call); err != nil {
-				e.Log.Warn("monitor scorer failed", "monitor", m.ObjectID, "scorer", ms.ref, "err", err)
+				e.Log.Warn("monitor scorer failed", "project", ended.ProjectID, "monitor", m.ObjectID, "scorer", ms.ref, "span_id", call.ID, "err", err)
+				continue
 			}
+			e.Log.Debug("monitor scored a span", "project", ended.ProjectID, "monitor", m.ObjectID, "scorer", ms.ref, "span_id", call.ID,
+				"duration_ms", time.Since(start).Milliseconds())
 		}
 	}
 	return nil

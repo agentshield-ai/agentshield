@@ -22,6 +22,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -149,8 +150,7 @@ func (s *Server) resolveProvider(ctx context.Context, projectID, name string) (*
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Recoverer)
-	r.Use(s.requestLog)
+	r.Use(s.requestLog) // requestlog.go; also recovers panics
 	if s.compat != nil {
 		r.Use(s.compat.Middleware)
 	}
@@ -233,24 +233,6 @@ func (s *Server) apiPath(r *http.Request) bool {
 }
 
 // ---------------------------------------------------------------- middleware
-
-// requestLog records each request at debug level (method, path, status, duration).
-func (s *Server) requestLog(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.log.Enabled(r.Context(), slog.LevelDebug) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-		start := time.Now()
-		next.ServeHTTP(ww, r)
-		status := ww.Status()
-		if status == 0 { // the handler wrote nothing: net/http sends 200
-			status = http.StatusOK
-		}
-		s.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", status, "ms", time.Since(start).Milliseconds())
-	})
-}
 
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +359,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
+	if code >= 400 && code < 500 {
+		weftlog.RecordReason(w, msg)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"reason": msg})
@@ -395,7 +380,11 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.Canceled):
 		writeError(w, 499, "request cancelled")
 	default:
-		slog.Error("weft request failed", "err", err)
+		// The request log reports it, with the route and project
+		// (requestlog.go); outside it, log it here.
+		if !weftlog.RecordError(w, err) {
+			slog.Error("weft request failed", "err", weftlog.Err(err))
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }
@@ -580,14 +569,17 @@ func (s *Server) secretsList(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- OTLP
 
 func (s *Server) otelTraces(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	isJSON := otlp.IsJSON(r.Header.Get("Content-Type"))
 	body, err := otlp.ReadBody(r.Body, r.Header.Get("Content-Encoding"))
 	if err != nil {
+		otlpRejected(r, "read", len(body), err) // ingestlog.go
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req, err := otlp.Decode(body, isJSON)
 	if err != nil {
+		otlpRejected(r, "decode", len(body), err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -595,17 +587,23 @@ func (s *Server) otelTraces(w http.ResponseWriter, r *http.Request) {
 	if s.compat != nil {
 		compat.RewriteOTLP(req)
 	}
-	calls, err := otlp.ToCalls(req, hp)
+	calls, ts, err := otlp.ToCallsStats(req, hp)
 	if err != nil {
+		otlpRejected(r, "map", len(body), err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ended, err := s.store.UpsertComplete(r.Context(), calls)
+	ann := weftlog.RequestFrom(r.Context())
+	ann.AddProjects(setKeys(ts.Projects)...)
+	ctx, stats := store.WithIngestStats(r.Context())
+	ended, err := s.store.UpsertComplete(ctx, calls)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	s.engine.Notify(ended)
+	s.logTraceBatch(ctx, r, ts, stats, len(body), time.Since(start)) // ingestlog.go
+	ann.SetSummarized()
 	resp, ctype := otlp.EncodeResponse(isJSON, 0, "")
 	w.Header().Set("Content-Type", ctype)
 	_, _ = w.Write(resp)

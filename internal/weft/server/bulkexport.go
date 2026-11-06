@@ -17,6 +17,7 @@ import (
 
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -327,12 +328,14 @@ func (s *Server) runBulkExport(ctx context.Context, job *store.ExportJob, base s
 	if failure != nil {
 		state = store.ExportFailed
 		arts = nil
-		_ = s.store.DeleteExportChunks(context.Background(), job.JobID)
+		if err := s.store.DeleteExportChunks(context.Background(), job.JobID); err != nil {
+			s.log.Warn("bulk export: deleting the chunks of a failed job", "job", job.JobID, "project", job.ProjectID, "err", weftlog.Err(err))
+		}
 	}
 	if err := s.store.FinishExportJob(context.Background(), job.JobID, state, arts, failure); err != nil {
 		s.log.Error("bulk export: recording the result", "job", job.JobID, "err", err)
 	}
-	s.log.Info("bulk export finished", "job", job.JobID, "project", job.ProjectID, "state", state, "ms", time.Since(start).Milliseconds())
+	s.log.Info("bulk export finished", "job", job.JobID, "project", job.ProjectID, "status", state, "duration_ms", time.Since(start).Milliseconds())
 }
 
 // exportTarget writes one target to a temporary gzip JSONL file, then stores it.

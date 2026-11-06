@@ -27,10 +27,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/models"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/google/uuid"
 )
 
@@ -549,6 +551,32 @@ func applyPendingOverrideTx(ctx context.Context, tx detDB, projectID, id, eventI
 
 type detSpanRef struct {
 	id, traceID, agent string
+	tool               string // the span's tool name (nearestToolSpanTx)
+}
+
+// Detection link outcomes counted in IngestStats.Links.
+const linkUnattached = "unattached"
+
+// logDetectionLink logs (debug) how a detection attached to a span, and
+// counts it.
+func logDetectionLink(ctx context.Context, projectID, detID, session, spanID, method, trigger, toolName, spanTool string) {
+	ingestCount(ctx, func(is *IngestStats) { is.Links[method]++ })
+	log := weftlog.From(ctx)
+	if !log.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	attrs := []any{"project", projectID, "detection_id", detID, "session_id", session, "span_id", spanID, "link", method, "trigger", trigger}
+	if method == LinkNearestTime {
+		attrs = append(attrs, "tool", weftlog.Name(toolName), "span_tool", weftlog.Name(spanTool))
+	}
+	log.Debug("verdict attached", attrs...)
+}
+
+// logDetectionUnattached logs (debug) why a detection stays without a span.
+func logDetectionUnattached(ctx context.Context, projectID, detID, session, toolName, reason string) {
+	ingestCount(ctx, func(is *IngestStats) { is.Links[linkUnattached]++ })
+	weftlog.From(ctx).Debug("verdict not attached", "project", projectID, "detection_id", detID, "session_id", session,
+		"tool", weftlog.Name(toolName), "reason", reason)
 }
 
 // linkDetectionTx attaches a detection to its tool span (§5.3), when it is
@@ -577,18 +605,35 @@ func linkDetectionTx(ctx context.Context, tx detDB, projectID, id string) error 
 			projectID, toolCallID, session, session, session).Scan(&ref.id, &ref.traceID, &ref.agent)
 		switch {
 		case err == nil:
+			logDetectionLink(ctx, projectID, id, session, ref.id, LinkToolCallID, "verdict", toolName, "")
 			return setLinkTx(ctx, tx, projectID, id, ref, LinkToolCallID)
 		case err != sql.ErrNoRows:
 			return err
 		}
 	}
-	if link == LinkNearestTime || session == "" || toolName == "" {
+	switch {
+	case link == LinkNearestTime:
+		return nil // kept; a span with its tool call id upgrades it (linkToolSpanTx)
+	case session == "":
+		logDetectionUnattached(ctx, projectID, id, session, toolName, "no session id")
+		return nil
+	case toolName == "":
+		logDetectionUnattached(ctx, projectID, id, session, toolName, "no tool name, and no span with its tool call id")
 		return nil
 	}
 	ref, ok, err := nearestToolSpanTx(ctx, tx, projectID, id, source, eventSource, session, toolName, toolCallID, createdAt)
-	if err != nil || !ok {
+	if err != nil {
 		return err
 	}
+	if !ok {
+		reason := "no tool span of the same tool within the correlation window yet; attached to the session, waits for the span"
+		if toolCallID != "" {
+			reason = "no span with its tool call id and none of the same tool within the correlation window yet; attached to the session, waits for the span"
+		}
+		logDetectionUnattached(ctx, projectID, id, session, toolName, reason)
+		return nil
+	}
+	logDetectionLink(ctx, projectID, id, session, ref.id, LinkNearestTime, "verdict", toolName, ref.tool)
 	return setLinkTx(ctx, tx, projectID, id, ref, LinkNearestTime)
 }
 
@@ -618,11 +663,10 @@ func nearestToolSpanTx(ctx context.Context, tx detDB, projectID, detID, source, 
 	defer rows.Close()
 	for rows.Next() {
 		var ref detSpanRef
-		var spanTool string
-		if err := rows.Scan(&ref.id, &ref.traceID, &ref.agent, &spanTool); err != nil {
+		if err := rows.Scan(&ref.id, &ref.traceID, &ref.agent, &ref.tool); err != nil {
 			return detSpanRef{}, false, err
 		}
-		if ToolNamesMatch(eventSource, toolName, spanTool) {
+		if ToolNamesMatch(eventSource, toolName, ref.tool) {
 			return ref, true, nil
 		}
 	}
@@ -755,13 +799,14 @@ func linkToolSpanDepth(ctx context.Context, tx detDB, projectID, spanID string, 
 			if err := setLinkTx(ctx, tx, projectID, did, ref, LinkToolCallID); err != nil {
 				return err
 			}
+			logDetectionLink(ctx, projectID, did, conv, spanID, LinkToolCallID, "span", "", "")
 			if old[i] != "" && old[i] != spanID {
 				freed = append(freed, old[i])
 			}
 		}
 	}
 	if op == OpExecuteTool && conv != "" && toolName != "" && startedAt.Valid {
-		did, prev, ok, err := nearestDetectionTx(ctx, tx, projectID, spanID, conv, toolName, toolCallID, startedAt.Int64)
+		did, prev, detTool, ok, err := nearestDetectionTx(ctx, tx, projectID, spanID, conv, toolName, toolCallID, startedAt.Int64)
 		if err != nil {
 			return err
 		}
@@ -769,6 +814,7 @@ func linkToolSpanDepth(ctx context.Context, tx detDB, projectID, spanID string, 
 			if err := setLinkTx(ctx, tx, projectID, did, ref, LinkNearestTime); err != nil {
 				return err
 			}
+			logDetectionLink(ctx, projectID, did, conv, spanID, LinkNearestTime, "span", detTool, toolName)
 			if prev != "" {
 				freed = append(freed, prev)
 			}
@@ -787,8 +833,8 @@ func linkToolSpanDepth(ctx context.Context, tx detDB, projectID, spanID string, 
 // nearestDetectionTx finds the detection of a session for this tool span's
 // tool (ToolNamesMatch, by the detection's harness) nearest to the span's
 // start that is unlinked or time-linked to a span farther from its verdict.
-// It returns the detection and the span it was linked to.
-func nearestDetectionTx(ctx context.Context, tx detDB, projectID, spanID, conv, toolName, toolCallID string, at int64) (string, string, bool, error) {
+// It returns the detection, the span it was linked to and its tool name.
+func nearestDetectionTx(ctx context.Context, tx detDB, projectID, spanID, conv, toolName, toolCallID string, at int64) (string, string, string, bool, error) {
 	w := CorrelationWindow.Microseconds()
 	rows, err := tx.QueryContext(ctx, `SELECT d.id, COALESCE(d.span_id, ''), d.event_source, d.tool_name FROM detections d
 		LEFT JOIN calls oc ON oc.project_id = d.project_id AND oc.id = d.span_id
@@ -800,19 +846,19 @@ func nearestDetectionTx(ctx context.Context, tx detDB, projectID, spanID, conv, 
 		ORDER BY abs(d.created_at - ?), d.created_at, d.id LIMIT ?`,
 		projectID, conv, at-w, at+w, toolCallID, spanID, at, spanID, at, nearestToolCandidates)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var did, prev, eventSource, detTool string
 		if err := rows.Scan(&did, &prev, &eventSource, &detTool); err != nil {
-			return "", "", false, err
+			return "", "", "", false, err
 		}
 		if ToolNamesMatch(eventSource, detTool, toolName) {
-			return did, prev, true, nil
+			return did, prev, detTool, true, nil
 		}
 	}
-	return "", "", false, rows.Err()
+	return "", "", "", false, rows.Err()
 }
 
 func detQueryIDs(ctx context.Context, tx detDB, q string, args ...any) ([]string, error) {

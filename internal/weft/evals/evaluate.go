@@ -203,6 +203,9 @@ func (e *Engine) EvaluateModel(ctx context.Context, projectID, evaluationRef, mo
 func (e *Engine) runEvaluation(base context.Context, plan *evalPlan, root *callRec) {
 	ctx, cancel := context.WithTimeout(base, 6*time.Hour)
 	defer cancel()
+	started := time.Now()
+	e.Log.Info("evaluation started", "project", plan.projectID, "span_id", root.id, "rows", len(plan.rows), "trials", plan.trials,
+		"scorers", len(plan.scorers))
 	type job struct {
 		row   store.TableRow
 		trial int
@@ -256,14 +259,18 @@ func (e *Engine) runEvaluation(base context.Context, plan *evalPlan, root *callR
 		summary["model_latency"] = map[string]any{"mean": lat / float64(len(results))}
 	}
 	if sumRec, err := e.startCall(ctx, plan.projectID, "Evaluation.summarize", root, map[string]any{"self": plan.evalRef}, nil, nil); err == nil {
-		_ = sumRec.end(ctx, summary, nil, nil)
+		if err := sumRec.end(ctx, summary, nil, nil); err != nil {
+			e.Log.Error("ending evaluation summary call", "project", plan.projectID, "span_id", root.id, "err", err)
+		}
+	} else {
+		e.Log.Error("recording evaluation summary", "project", plan.projectID, "span_id", root.id, "err", err)
 	}
 	var endErr error
 	if ctx.Err() != nil {
 		endErr = ctx.Err()
 	}
 	if err := root.end(ctx, summary, nil, endErr); err != nil {
-		e.Log.Error("ending evaluation call", "err", err)
+		e.Log.Error("ending evaluation call", "project", plan.projectID, "span_id", root.id, "err", err)
 	}
 	e.setStatus(root.id, func(s *Status) {
 		s.Code = "complete"
@@ -271,6 +278,13 @@ func (e *Engine) runEvaluation(base context.Context, plan *evalPlan, root *callR
 			s.Code, s.Error = "failed", endErr.Error()
 		}
 	})
+	if endErr != nil {
+		e.Log.Warn("evaluation failed", "project", plan.projectID, "span_id", root.id, "status", "failed", "rows_done", len(results),
+			"err", endErr, "duration_ms", time.Since(started).Milliseconds())
+		return
+	}
+	e.Log.Info("evaluation finished", "project", plan.projectID, "span_id", root.id, "status", "complete", "rows_done", len(results),
+		"duration_ms", time.Since(started).Milliseconds())
 }
 
 func (e *Engine) predictAndScore(ctx context.Context, plan *evalPlan, root *callRec, row store.TableRow) (map[string]any, float64) {
@@ -282,7 +296,7 @@ func (e *Engine) predictAndScore(ctx context.Context, plan *evalPlan, root *call
 	pas, err := e.startCall(ctx, plan.projectID, "Evaluation.predict_and_score", root,
 		map[string]any{"self": plan.evalRef, "model": plan.modelRef, "example": exampleRef}, nil, nil)
 	if err != nil {
-		e.Log.Error("recording predict_and_score", "err", err)
+		e.Log.Error("recording predict_and_score", "project", plan.projectID, "span_id", root.id, "err", err)
 		return nil, 0
 	}
 	start := time.Now()
@@ -292,9 +306,11 @@ func (e *Engine) predictAndScore(ctx context.Context, plan *evalPlan, root *call
 	if predErr == nil {
 		for _, sc := range plan.scorers {
 			score, _, err := e.RunScorer(ctx, plan.projectID, sc, example, output, pas, nil)
-			if err == nil {
-				scores[sc.Name] = jsonSafe(score)
+			if err != nil {
+				e.Log.Debug("evaluation scorer failed", "project", plan.projectID, "span_id", root.id, "scorer", sc.Name, "err", err)
+				continue
 			}
+			scores[sc.Name] = jsonSafe(score)
 		}
 	}
 	out := map[string]any{"output": output, "scores": scores, "model_latency": latency}

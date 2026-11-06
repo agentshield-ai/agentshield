@@ -164,12 +164,17 @@ func (s *Store) StartCall(ctx context.Context, st CallStart) error {
 	}
 	s.hookStart(&st)
 	s.nerRedact(ctx, []*CallStart{&st}, nil)
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	ctx = withSourceBatch(ctx) // sources.go: logs a replacement once it commits
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.touchProject(ctx, tx, st.ProjectID); err != nil {
 			return err
 		}
 		return s.applyStart(ctx, tx, &st)
 	})
+	if err == nil {
+		logSourceReplacements(ctx) // sources.go
+	}
+	return err
 }
 
 // EndCall records the end of a call.
@@ -254,6 +259,9 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 		}
 		return flushTraceBatch(ctx, tx)
 	})
+	if err == nil {
+		logSourceReplacements(ctx) // sources.go
+	}
 	return ended, err
 }
 
@@ -308,16 +316,31 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 		}
 		return flushTraceBatch(ctx, tx)
 	})
+	if err == nil {
+		logSourceReplacements(ctx) // sources.go
+	}
 	return ended, err
 }
 
 func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error {
 	if drop, err := s.applySourcePrecedence(ctx, tx, st); drop || err != nil { // sources.go
+		if drop && err == nil {
+			ingestCount(ctx, func(is *IngestStats) { is.SpansDropped++ })
+		}
 		return err
 	}
 	if drop, err := ingestHook(ctx, s, tx, st, nil); drop || err != nil {
+		if drop && err == nil {
+			ingestCount(ctx, func(is *IngestStats) { is.SpansSampled++ })
+		}
 		return err
 	}
+	ingestCount(ctx, func(is *IngestStats) {
+		is.SpansStored++
+		if st.ThreadID != nil {
+			is.addSession(*st.ThreadID)
+		}
+	})
 	started, err := ParseTime(st.StartedAt)
 	if err != nil {
 		return err

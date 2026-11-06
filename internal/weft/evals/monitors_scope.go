@@ -247,20 +247,32 @@ func (e *Engine) scoreSessionForMonitor(ctx context.Context, m *store.Obj, score
 			}
 			for _, t := range targets {
 				st, err := e.Store.MonitorTargetStatus(ctx, k.projectID, m.ObjectID, ms.ref, t)
-				if err != nil || st != "" {
+				if err != nil {
+					e.Log.Warn("scope monitor: reading a target's status", "project", k.projectID, "monitor", m.ObjectID, "session_id", k.sessionID, "err", err)
+					continue
+				}
+				if st != "" {
 					continue
 				}
 				if !sampled(rate) {
-					_, _ = e.Store.ClaimMonitorTarget(ctx, k.projectID, m.ObjectID, ms.ref, t, store.MonitorTargetSampledOut)
+					if _, err := e.Store.ClaimMonitorTarget(ctx, k.projectID, m.ObjectID, ms.ref, t, store.MonitorTargetSampledOut); err != nil {
+						e.Log.Warn("scope monitor: recording a sampled-out target", "project", k.projectID, "monitor", m.ObjectID, "session_id", k.sessionID, "err", err)
+					}
 					continue
 				}
 				ok, err := e.Store.ClaimMonitorTarget(ctx, k.projectID, m.ObjectID, ms.ref, t, store.MonitorTargetScored)
-				if err != nil || !ok {
+				if err != nil {
+					e.Log.Warn("scope monitor: claiming a target", "project", k.projectID, "monitor", m.ObjectID, "session_id", k.sessionID, "err", err)
+					continue
+				}
+				if !ok {
 					continue
 				}
 				if res := e.scoreTarget(ctx, k.projectID, t, ms.scorer, by); res.Error != "" {
 					e.Log.Warn("scope monitor scorer failed", "monitor", m.ObjectID, "scorer", ms.ref, "session", k.sessionID, "err", res.Error)
-					_ = e.Store.SetMonitorTargetStatus(ctx, k.projectID, m.ObjectID, ms.ref, t, store.MonitorTargetFailed, res.Error)
+					if err := e.Store.SetMonitorTargetStatus(ctx, k.projectID, m.ObjectID, ms.ref, t, store.MonitorTargetFailed, res.Error); err != nil {
+						e.Log.Warn("scope monitor: recording a failed target", "project", k.projectID, "monitor", m.ObjectID, "session_id", k.sessionID, "err", err)
+					}
 				}
 			}
 		}

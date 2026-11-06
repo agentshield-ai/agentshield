@@ -17,6 +17,7 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -228,6 +229,9 @@ type refKindsWriter struct {
 	wroteHeader bool
 	json        bool
 }
+
+// Unwrap returns the wrapped writer (the request log finds its record there).
+func (w *refKindsWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *refKindsWriter) WriteHeader(code int) {
 	if !w.wroteHeader {
@@ -446,7 +450,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.Canceled):
 		writeError(w, 499, "request cancelled")
 	default:
-		slog.Error("weft request failed", "err", err)
+		if !weftlog.RecordError(w, err) { // the request log reports it
+			slog.Error("weft request failed", "err", weftlog.Err(err))
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }
