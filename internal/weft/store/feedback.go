@@ -25,6 +25,8 @@ type Feedback struct {
 	TriggerRef    *string `json:"trigger_ref"`
 	// QueueID is the annotation queue the feedback was given in (nullable).
 	QueueID *string `json:"queue_id"`
+
+	rawSize int64 // the stored payload's size (ReadMeter)
 }
 
 // FeedbackCreate is the body of /feedback/create.
@@ -182,6 +184,7 @@ func scanFeedback(rows *sql.Rows) (Feedback, error) {
 		return f, err
 	}
 	f.Payload = decodeJSON(payload)
+	f.rawSize = int64(len(payload))
 	f.CreatedAt = FormatMicros(created)
 	f.Creator, f.UserID, f.AnnotationRef, f.RunnableRef, f.CallRef, f.TriggerRef =
 		strPtr(creator), strPtr(user), strPtr(ann), strPtr(run), strPtr(call), strPtr(trig)
@@ -244,6 +247,9 @@ func (s *Store) QueryFeedback(ctx context.Context, projectID string, query any, 
 	for rows.Next() {
 		f, err := scanFeedback(rows)
 		if err != nil {
+			return nil, err
+		}
+		if err := meterRead(ctx, f.rawSize); err != nil {
 			return nil, err
 		}
 		out = append(out, f)

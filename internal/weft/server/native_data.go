@@ -98,6 +98,9 @@ func (s *Server) v1FeedbackQuery(ctx context.Context, _ *http.Request, req *feed
 	}
 	items := []Feedback{}
 	if limit > 0 {
+		if err := limitResponse(ctx, maxListResponseBytes, "", -1); err != nil {
+			return nil, err
+		}
 		fs, err := s.store.QueryFeedback(ctx, req.ProjectID, req.Query, req.SortBy, limit, req.Offset)
 		if err != nil {
 			return nil, err

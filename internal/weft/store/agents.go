@@ -422,6 +422,13 @@ func indexAgentSpanTx(ctx context.Context, tx dbtx, projectID, id string) error 
 			}
 		}
 	}
+	// A session titled by its event log (conversation_titles) shows that
+	// title unless the span names its conversation itself.
+	if eff.conversationID != "" && eff.conversationName == "" {
+		if eff.conversationName, err = conversationTitle(ctx, tx, projectID, eff.conversationID); err != nil {
+			return err
+		}
+	}
 	var prev inherited
 	hadPrev := true
 	err = tx.QueryRowContext(ctx, `SELECT agent_name, agent_id, agent_version, agent_description, conversation_id, conversation_name

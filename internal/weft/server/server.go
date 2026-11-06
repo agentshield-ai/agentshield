@@ -67,6 +67,10 @@ type Config struct {
 	// TrustedProxies may set the client address with X-Forwarded-For or
 	// X-Real-IP (--trusted-proxies); other peers cannot.
 	TrustedProxies []netip.Prefix
+	// ResponseBudget bounds the memory read responses are built in, server
+	// wide, in bytes (--response-budget-mb; respbudget.go). 0 means
+	// DefaultResponseBudget.
+	ResponseBudget int64
 }
 
 // Server is the HTTP API.
@@ -78,6 +82,8 @@ type Server struct {
 	engine *evals.Engine
 	log    *slog.Logger
 	stops  []func()
+	// respBudget is the server-wide budget of read responses (respbudget.go).
+	respBudget *otlp.BodyBudget
 	// compat is the compatibility adapter; nil when it is off.
 	compat *compat.Adapter
 	// legacy serves the older route shapes, which exist only with the
@@ -95,6 +101,11 @@ func New(cfg Config, st *store.Store) *Server {
 		log = slog.Default()
 	}
 	s := &Server{cfg: cfg, store: st, log: log, keys: parseKeys(cfg.APIKeys)}
+	budget := cfg.ResponseBudget
+	if budget <= 0 {
+		budget = DefaultResponseBudget
+	}
+	s.respBudget = otlp.NewBodyBudget(budget)
 	s.llm = llm.New(st.ResolveSecret, s.resolveProvider)
 	s.llm.ServerSecretsOpen = s.serverSecretsOpen // secrets.go
 	s.engine = evals.New(st, s.llm, log)
@@ -336,6 +347,9 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		r = r.WithContext(s.ingestContext(r)) // sourceclaims.go
+		if isReadRequest(r) { // respbudget.go: reads are built within the response budget
+			r = r.WithContext(store.WithReadMeter(r.Context(), s.newRespMeter(bs.hold)))
+		}
 		next.ServeHTTP(w, r.WithContext(s.refAccess(r)))
 	})
 }
@@ -390,6 +404,10 @@ func handle[T any](fn func(context.Context, *http.Request, *T) (any, error)) htt
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	if l, ok := v.(jsonStreamer); ok { // lists: one item at a time, not the whole response at once
+		_ = l.streamJSON(w)
+		return
+	}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(v)

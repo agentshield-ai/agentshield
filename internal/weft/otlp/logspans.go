@@ -43,16 +43,13 @@ func logEventTime(raw map[string]any, timeNs, observedNs uint64) int64 {
 
 // spanWriter collects the spans of one rebuilt group.
 type spanWriter struct {
-	session, turnID, source, convName string
-	out                               []store.CompleteCall
+	session, turnID, source string
+	out                     []store.CompleteCall
 }
 
 // common adds the session attributes every span carries.
 func (w *spanWriter) common(attrs map[string]any) map[string]any {
 	attrs["gen_ai.conversation.id"] = w.session
-	if w.convName != "" {
-		attrs["gen_ai.conversation.name"] = w.convName
-	}
 	return attrs
 }
 

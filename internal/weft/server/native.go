@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -117,6 +120,41 @@ func nativeRefs(ctx context.Context) context.Context {
 type page[T any] struct {
 	Items      []T   `json:"items"`
 	TotalCount int64 `json:"total_count"`
+}
+
+// jsonStreamer writes itself as JSON (writeJSON).
+type jsonStreamer interface {
+	streamJSON(w io.Writer) error
+}
+
+// streamJSON writes the page as encoding/json would, compact and with a
+// final newline, encoding one item at a time: a large list is not held
+// twice (decoded and encoded) in memory.
+func (p page[T]) streamJSON(w io.Writer) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if p.Items == nil {
+		_, err := fmt.Fprintf(w, "{\"items\":null,\"total_count\":%d}\n", p.TotalCount)
+		return err
+	}
+	if _, err := io.WriteString(w, `{"items":[`); err != nil {
+		return err
+	}
+	for i := range p.Items {
+		buf.Reset()
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		if err := enc.Encode(p.Items[i]); err != nil {
+			return err
+		}
+		if _, err := w.Write(bytes.TrimSuffix(buf.Bytes(), []byte("\n"))); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "],\"total_count\":%d}\n", p.TotalCount)
+	return err
 }
 
 func newList[T any](items []T, total int64) page[T] {

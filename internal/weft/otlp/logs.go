@@ -71,9 +71,9 @@ func DecodeLogsWith(ctx context.Context, body []byte, isJSON bool, res *Reservat
 // LogSources are the harnesses whose log events Weft maps, in the order
 // their batches are stored.
 var LogSources = []store.LogSource{
-	{Name: ClaudeCodeLogSource, SpanSource: store.SourceClaudeCodeLogs, Build: BuildClaudeCodeLogGroup},
-	{Name: CodexLogSource, SpanSource: store.SourceCodexLogs, Build: BuildCodexLogGroup},
-	{Name: GeminiLogSource, SpanSource: store.SourceGeminiLogs, Build: BuildGeminiLogGroup},
+	{Name: ClaudeCodeLogSource, SpanSource: store.SourceClaudeCodeLogs, Build: BuildClaudeCodeLogGroup, Title: ClaudeCodeLogTitle},
+	{Name: CodexLogSource, SpanSource: store.SourceCodexLogs, Build: BuildCodexLogGroup, Title: CodexLogTitle},
+	{Name: GeminiLogSource, SpanSource: store.SourceGeminiLogs, Build: BuildGeminiLogGroup, Title: GeminiLogTitle},
 }
 
 // SessionLogs is a logs export sorted by harness.

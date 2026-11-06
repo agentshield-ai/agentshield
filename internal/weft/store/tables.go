@@ -275,6 +275,9 @@ func (s *Store) QueryTable(ctx context.Context, q TableQuery) ([]TableRow, error
 		if err := rows.Scan(&idx, &d, &val); err != nil {
 			return nil, err
 		}
+		if err := meterRead(ctx, int64(len(val))); err != nil {
+			return nil, err
+		}
 		out = append(out, TableRow{Digest: d, Val: decodeJSON(val), OriginalIndex: idx, valRaw: val})
 	}
 	return out, rows.Err()

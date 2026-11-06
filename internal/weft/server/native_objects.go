@@ -170,6 +170,13 @@ func (s *Server) v1ObjectsQuery(ctx context.Context, _ *http.Request, req *objec
 	items := []*Object{}
 	if limit > 0 {
 		q.Limit = limit
+		size, err := s.store.ObjectsPageSize(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		if err := limitResponse(ctx, maxListResponseBytes, "list them with metadata_only and read the values one at a time", size); err != nil {
+			return nil, err
+		}
 		objs, err := s.store.QueryObjects(ctx, q)
 		if err != nil {
 			return nil, err
@@ -385,6 +392,9 @@ func (s *Server) v1TableQuery(ctx context.Context, _ *http.Request, req *tableQu
 	if err != nil {
 		return nil, err
 	}
+	if err := limitResponse(ctx, maxListResponseBytes, "read the rows with /tables/stream", -1); err != nil {
+		return nil, err
+	}
 	if req.Filter != nil && len(req.Filter.RowDigests) > 0 {
 		all, err := s.store.QueryTable(ctx, req.store(0))
 		if err != nil {
@@ -415,7 +425,7 @@ func (s *Server) v1TableStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	limit := 0 // all rows (the store caps a read at 100,000)
+	limit := -1 // all rows
 	if req.Limit != nil {
 		if *req.Limit < 0 {
 			writeErr(w, store.Invalidf("limit must not be negative"))
@@ -423,20 +433,55 @@ func (s *Server) v1TableStream(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = *req.Limit
 	}
-	rows, err := s.store.QueryTable(r.Context(), req.store(limit))
-	if err != nil {
-		writeErr(w, err)
-		return
+	if limit == 0 {
+		limit = -1 // 0 means all rows, as before
 	}
-	out := newNDJSON(w)
-	for _, row := range rows {
-		x, err := tableRowFrom(row)
-		if err != nil || out.write(x) != nil {
+	// A page at a time, in bounded memory (respbudget.go); the first page
+	// is read before anything is written, so a bad request gets its status.
+	var out *ndjson
+	for done, size := 0, tableStreamPage; limit < 0 || done < limit; {
+		n := size
+		if limit >= 0 {
+			n = min(n, limit-done)
+		}
+		tq := req.store(n)
+		tq.Offset += done
+		rows, err := s.store.QueryTable(r.Context(), tq)
+		if n > 1 && isOverBudget(err) { // read the page in smaller pages
+			readPageDone(r.Context())
+			size = max(1, n/4)
+			continue
+		}
+		if err != nil {
+			if out == nil {
+				writeErr(w, err)
+			}
 			return
 		}
+		if out == nil {
+			out = newNDJSON(w)
+		}
+		for _, row := range rows {
+			x, err := tableRowFrom(row)
+			if err != nil || out.write(x) != nil {
+				return
+			}
+		}
+		out.flush()
+		readPageDone(r.Context())
+		done += len(rows)
+		if len(rows) < n {
+			break
+		}
+	}
+	if out == nil {
+		out = newNDJSON(w)
 	}
 	out.flush()
 }
+
+// tableStreamPage is how many rows /tables/stream reads at a time.
+const tableStreamPage = 1000
 
 type tableStatsNativeReq struct {
 	ProjectID          string   `json:"project_id"`

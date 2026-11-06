@@ -91,6 +91,23 @@ func NewBodyBudget(limit int64) *BodyBudget {
 
 var defaultBudget = NewBodyBudget(DefaultBodyBudget)
 
+// NewReservation returns an empty reservation on b, to Grow.
+func (b *BodyBudget) NewReservation() *Reservation { return &Reservation{b: b} }
+
+// Limit is b's size in bytes.
+func (b *BodyBudget) Limit() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.limit
+}
+
+// InUse reports the bytes reserved and b's size.
+func (b *BodyBudget) InUse() (used, limit int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.used, b.limit
+}
+
 // SetBodyBudget changes the server-wide budget's size (bytes > 0).
 func SetBodyBudget(bytes int64) {
 	if bytes <= 0 {

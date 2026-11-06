@@ -511,28 +511,36 @@ func (s *Store) CountObjects(ctx context.Context, q ObjsQuery) (int64, error) {
 	return n, err
 }
 
+// objsOrder is the ORDER BY of an objects query.
+func objsOrder(q ObjsQuery) (string, error) {
+	if len(q.SortBy) == 0 {
+		return "o.created_at DESC, o.object_id, o.version_index DESC", nil
+	}
+	var parts []string
+	for _, sb := range q.SortBy {
+		dir, err := sortDirection(sb.Direction)
+		if err != nil {
+			return "", &InvalidError{Msg: err.Error()}
+		}
+		switch sb.Field {
+		case "created_at", "object_id", "version_index", "size_bytes", "base_object_class":
+			parts = append(parts, "o."+sb.Field+" "+dir)
+		default:
+			return "", Invalidf("cannot sort objects by %q", sb.Field)
+		}
+	}
+	return strings.Join(parts, ", ") + ", o.version_index DESC", nil
+}
+
 // QueryObjects lists object versions.
 func (s *Store) QueryObjects(ctx context.Context, q ObjsQuery) ([]*Obj, error) {
 	pid, conds, args, f, err := objsWhere(q)
 	if err != nil {
 		return nil, err
 	}
-	order := "o.created_at DESC, o.object_id, o.version_index DESC"
-	if len(q.SortBy) > 0 {
-		var parts []string
-		for _, sb := range q.SortBy {
-			dir, err := sortDirection(sb.Direction)
-			if err != nil {
-				return nil, &InvalidError{Msg: err.Error()}
-			}
-			switch sb.Field {
-			case "created_at", "object_id", "version_index", "size_bytes", "base_object_class":
-				parts = append(parts, "o."+sb.Field+" "+dir)
-			default:
-				return nil, Invalidf("cannot sort objects by %q", sb.Field)
-			}
-		}
-		order = strings.Join(parts, ", ") + ", o.version_index DESC"
+	order, err := objsOrder(q)
+	if err != nil {
+		return nil, err
 	}
 	limit := q.Limit
 	if limit <= 0 || limit > 10000 {
@@ -546,6 +554,9 @@ func (s *Store) QueryObjects(ctx context.Context, q ObjsQuery) ([]*Obj, error) {
 	out := []*Obj{}
 	for rows.Next() {
 		o, err := scanObj(rows, !q.MetadataOnly)
+		if err == nil {
+			err = meterRead(ctx, int64(len(o.valRaw)))
+		}
 		if err != nil {
 			rows.Close()
 			return nil, err

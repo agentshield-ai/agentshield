@@ -203,6 +203,20 @@ type cxAgent struct {
 	tools           []*cxTool
 }
 
+// CodexLogTitle names a Codex session after its own first prompt (a
+// linked sub-agent's prompts are stored in its parent's session).
+func CodexLogTitle(first []store.LogEvent) string {
+	for _, e := range first {
+		if e.Name == "codex.user_prompt" && aStr(e.Attrs, "conversation.id") == e.SessionID {
+			if t := aStr(e.Attrs, "prompt"); !redacted(t) {
+				return shortText(t, 80)
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 // BuildCodexLogGroup builds one turn's spans from its events.
 func BuildCodexLogGroup(g store.LogGroup) []store.CompleteCall {
 	sid := g.SessionID
@@ -217,14 +231,6 @@ func BuildCodexLogGroup(g store.LogGroup) []store.CompleteCall {
 		return nil
 	}
 	w := &spanWriter{session: sid, turnID: ccID(codexLogsNS, sid, "turn", g.GroupID), source: store.SourceCodexLogs}
-	for _, e := range g.First {
-		if e.Name == "codex.user_prompt" && aStr(e.Attrs, "conversation.id") == sid {
-			if t := aStr(e.Attrs, "prompt"); !redacted(t) {
-				w.convName = shortText(t, 80)
-			}
-			break
-		}
-	}
 
 	agentName := CodexAgent
 	agents := map[string]*cxAgent{}

@@ -102,7 +102,7 @@ func (s *Server) exportCalls(w http.ResponseWriter, r *http.Request, req callsEx
 	// pages calls fn for each page; the first page is read before anything is
 	// written so a bad query still gets a proper error status.
 	pages := func(fn func([]*store.Call) error) error {
-		return forEachCallPage(r.Context(), s.store, q, baseOffset, remaining, fn)
+		return streamCallPages(r.Context(), s.store, q, baseOffset, remaining, fn)
 	}
 
 	// Validate the query up front.
@@ -249,9 +249,24 @@ func (s *Server) exportCalls(w http.ResponseWriter, r *http.Request, req callsEx
 // time, starting at offset, at most limit calls when limit >= 0) and calls fn
 // with each non-empty page. Also used by bulk export jobs (bulkexport.go).
 func forEachCallPage(ctx context.Context, st *store.Store, q store.CallsQuery, offset, limit int, fn func([]*store.Call) error) error {
-	done := 0
+	return callPages(ctx, st, q, offset, limit, false, fn)
+}
+
+// streamCallPages is forEachCallPage for streams and exports: each page's
+// memory is released once fn wrote it (respbudget.go), and a page too
+// large for the response budget is read again in smaller pages.
+func streamCallPages(ctx context.Context, st *store.Store, q store.CallsQuery, offset, limit int, fn func([]*store.Call) error) error {
+	return callPages(ctx, st, q, offset, limit, true, func(page []*store.Call) error {
+		err := fn(page)
+		readPageDone(ctx)
+		return err
+	})
+}
+
+func callPages(ctx context.Context, st *store.Store, q store.CallsQuery, offset, limit int, stream bool, fn func([]*store.Call) error) error {
+	done, size := 0, exportPageSize
 	for limit < 0 || done < limit {
-		n := exportPageSize
+		n := size
 		if limit >= 0 {
 			n = min(n, limit-done)
 		}
@@ -259,6 +274,11 @@ func forEachCallPage(ctx context.Context, st *store.Store, q store.CallsQuery, o
 		pq.Limit = &n
 		pq.Offset = offset + done
 		page, err := st.ListCalls(ctx, pq)
+		if stream && n > 1 && isOverBudget(err) {
+			readPageDone(ctx)
+			size = max(1, n/4)
+			continue
+		}
 		if err != nil {
 			return err
 		}

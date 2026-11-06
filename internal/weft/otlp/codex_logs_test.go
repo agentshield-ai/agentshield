@@ -197,8 +197,12 @@ func TestCodexLogsRealRuns(t *testing.T) {
 			if !strings.HasPrefix(inputText(turn), w.prompt) {
 				t.Fatalf("turn %d input = %v", i, turn.Inputs)
 			}
-			if attr(turn, "gen_ai.conversation.name") != "Run `echo hi` and tell me what it printed." {
-				t.Fatalf("conversation name = %v", attr(turn, "gen_ai.conversation.name"))
+			// The session title is stored once per session, not in its spans.
+			if attr(turn, "gen_ai.conversation.name") != nil {
+				t.Fatalf("conversation name in the span = %v", attr(turn, "gen_ai.conversation.name"))
+			}
+			if got := conversationNames(t, h, cxResumeSession); len(got) != 1 || !got["Run `echo hi` and tell me what it printed."] {
+				t.Fatalf("conversation names = %v", got)
 			}
 			r, p, c, cr, _, cost := usage(turn)
 			if r != w.requests || p != w.prompt0 || c != w.completion || cr != 1000*(w.requests-1) || cost <= 0 {

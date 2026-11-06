@@ -355,14 +355,19 @@ func (s *Server) v1SpansQuery(ctx context.Context, _ *http.Request, req *spansQu
 	}
 	spans := []*Span{}
 	if limit > 0 {
-		// Read in pages and bound the response: a list of large spans
-		// would otherwise be held in memory whole (use /spans/stream).
-		var bytes int64
-		err := forEachCallPage(nativeRefs(ctx), s.store, q, q.Offset, limit, func(page []*store.Call) error {
+		// The response is bounded and its memory reserved before the spans
+		// are loaded (respbudget.go); larger reads use /spans/stream.
+		pq := q
+		pq.Limit = &limit
+		size, err := s.store.CallsPageSize(ctx, pq)
+		if err != nil {
+			return nil, err
+		}
+		if err := limitResponse(ctx, maxListResponseBytes, "read the spans with /spans/stream", size); err != nil {
+			return nil, err
+		}
+		err = forEachCallPage(nativeRefs(ctx), s.store, q, q.Offset, limit, func(page []*store.Call) error {
 			for _, c := range page {
-				if bytes += c.StoredSize(); bytes > maxListResponseBytes {
-					return store.Invalidf("the response would be larger than %d MiB: lower limit, or read the spans with /spans/stream", maxListResponseBytes>>20)
-				}
 				spans = append(spans, spanFrom(c, req.IncludeStorageSize))
 			}
 			return nil
@@ -373,10 +378,6 @@ func (s *Server) v1SpansQuery(ctx context.Context, _ *http.Request, req *spansQu
 	}
 	return newList(spans, total), nil
 }
-
-// maxListResponseBytes bounds the stored size of the spans one
-// /spans/query response holds.
-const maxListResponseBytes = 64 << 20
 
 // streamWriteTimeout is how long a stream waits for the client to take
 // each page before it gives up on it.
@@ -409,7 +410,7 @@ func (s *Server) v1SpansStream(w http.ResponseWriter, r *http.Request) {
 	ctx := nativeRefs(r.Context())
 	rc := http.NewResponseController(w)
 	var out *ndjson
-	err := forEachCallPage(ctx, s.store, q, q.Offset, limit, func(page []*store.Call) error {
+	err := streamCallPages(ctx, s.store, q, q.Offset, limit, func(page []*store.Call) error {
 		if out == nil { // the first page was read: the query is valid
 			out = newNDJSON(w)
 		}

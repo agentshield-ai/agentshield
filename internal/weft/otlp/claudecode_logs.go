@@ -196,6 +196,19 @@ func conversationRequest(e *store.LogEvent) bool {
 	return qs == "" || qs == "sdk" || qs == "main" || strings.HasPrefix(qs, "repl_main_thread")
 }
 
+// ClaudeCodeLogTitle names a Claude Code session after its first prompt.
+func ClaudeCodeLogTitle(first []store.LogEvent) string {
+	for _, e := range first {
+		if e.Name == "user_prompt" {
+			if t := aStr(e.Attrs, "prompt", "prompt_text"); !redacted(t) {
+				return shortText(t, 80)
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 // BuildClaudeCodeLogGroup builds one prompt's spans from its events.
 func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 	sid := g.SessionID
@@ -211,15 +224,6 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 		return nil
 	}
 	agentName := ClaudeCodeAgent
-	convName := ""
-	for _, e := range g.First {
-		if e.Name == "user_prompt" {
-			if t := aStr(e.Attrs, "prompt", "prompt_text"); !redacted(t) {
-				convName = shortText(t, 80)
-			}
-			break
-		}
-	}
 
 	var prompt *store.LogEvent
 	tools := map[string]*ccTool{}
@@ -474,9 +478,6 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 
 	common := func(attrs map[string]any) map[string]any {
 		attrs["gen_ai.conversation.id"] = sid
-		if convName != "" {
-			attrs["gen_ai.conversation.name"] = convName
-		}
 		return attrs
 	}
 	weftAttrs := func(kind string) map[string]any {

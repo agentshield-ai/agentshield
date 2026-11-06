@@ -537,6 +537,9 @@ func (s *Store) QueryCalls(ctx context.Context, q CallsQuery, fn func(*Call) err
 	var all [][]*Call
 	for rows.Next() {
 		c, err := scanCall(rows)
+		if err == nil {
+			err = meterRead(ctx, c.storedSize)
+		}
 		if err != nil {
 			rows.Close()
 			return err

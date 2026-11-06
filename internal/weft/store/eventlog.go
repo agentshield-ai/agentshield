@@ -56,6 +56,13 @@ CREATE TABLE IF NOT EXISTS log_events (
 );
 CREATE INDEX IF NOT EXISTS log_events_group ON log_events(project_id, source, session_id, group_id);
 CREATE INDEX IF NOT EXISTS log_events_ts ON log_events(project_id, ts);
+CREATE TABLE IF NOT EXISTS conversation_titles (
+	project_id TEXT NOT NULL,
+	conversation_id TEXT NOT NULL,
+	title TEXT NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (project_id, conversation_id)
+);
 CREATE TABLE IF NOT EXISTS log_session_links (
 	project_id TEXT NOT NULL,
 	source TEXT NOT NULL,
@@ -95,9 +102,8 @@ CREATE TABLE IF NOT EXISTS log_session_links (
 }
 
 // Event-log rebuild bounds: a group keeps at most maxLogGroupEvents events
-// (later new ones are dropped, with a warning), and builders see at most
-// firstGroupEvents events of the session's first group (they read its
-// prompt from it).
+// (later new ones are dropped, with a warning), and a session's title is
+// read from at most firstGroupEvents events of its first group.
 var (
 	maxLogGroupEvents = 20000
 	firstGroupEvents  = 200
@@ -138,13 +144,13 @@ type LogGroup struct {
 	Events []LogEvent
 	// Later reports that the session has a group that started after this one.
 	Later bool
-	// First holds the events of the session's earliest group (this
-	// group's own events when it is the earliest).
-	First []LogEvent
 }
 
 // LogGroupBuilder turns a group's events into spans. It must be
-// deterministic: the same events give the same spans.
+// deterministic: the same events give the same spans. A group's spans
+// depend on its own events only (and on whether a later group exists), so
+// a batch re-stores only the spans its events change; what describes the
+// whole session (its title) is kept apart (LogSource.Title).
 type LogGroupBuilder func(g LogGroup) []CompleteCall
 
 // LogSource describes one producer of event logs.
@@ -156,6 +162,12 @@ type LogSource struct {
 	// by it.
 	SpanSource string
 	Build      LogGroupBuilder
+	// Title, when set, names a session from the first events of its
+	// earliest group ("" for none). It is stored once per session
+	// (conversation_titles) and shown as the conversation name of the
+	// session's spans, never written into them: a back-dated first prompt
+	// re-titles the session without rebuilding its other groups.
+	Title func(first []LogEvent) string
 }
 
 // IngestLogEvents stores the events of one source and project (events seen
@@ -260,12 +272,13 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 				}
 				if i == 0 {
 					first = evs
-				} else if first == nil {
-					if first, err = loadLogGroup(ctx, tx, pid, source, sid, order[0], firstGroupEvents); err != nil {
-						return err
-					}
 				}
-				groups = append(groups, LogGroup{SessionID: sid, GroupID: g, Events: evs, Later: i < len(order)-1, First: first})
+				groups = append(groups, LogGroup{SessionID: sid, GroupID: g, Events: evs, Later: i < len(order)-1})
+			}
+			if src.Title != nil && len(order) > 0 {
+				if err := s.updateLogSessionTitle(ctx, tx, pid, source, sid, order[0], first, src.Title); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -355,6 +368,53 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 		ingestCount(ctx, func(is *IngestStats) { is.TurnsInterrupted += len(newlyInterrupted) })
 	}
 	return ended, added, err
+}
+
+// updateLogSessionTitle stores a session's title when its first group was
+// rebuilt (first holds its events) or no title is stored yet, and shows a
+// changed title on the session's spans.
+func (s *Store) updateLogSessionTitle(ctx context.Context, tx *sql.Tx, pid, source, sid, firstGroup string, first []LogEvent,
+	title func([]LogEvent) string) error {
+	var old string
+	err := tx.QueryRowContext(ctx, `SELECT title FROM conversation_titles WHERE project_id = ? AND conversation_id = ?`, pid, sid).Scan(&old)
+	stored := err == nil
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if first == nil {
+		if stored {
+			return nil
+		}
+		if first, err = loadLogGroup(ctx, tx, pid, source, sid, firstGroup, firstGroupEvents); err != nil {
+			return err
+		}
+	} else if len(first) > firstGroupEvents {
+		first = first[:firstGroupEvents]
+	}
+	t := title(first)
+	if stored && t == old {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_titles(project_id, conversation_id, title, updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(project_id, conversation_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`,
+		pid, sid, t, nowMicros()); err != nil {
+		return err
+	}
+	// Spans indexed with the old title (or none) show the new one; spans
+	// written later read it when they are indexed (indexAgentSpanTx).
+	_, err = tx.ExecContext(ctx, `UPDATE agent_spans SET conversation_name = ? WHERE project_id = ? AND conversation_id = ?
+		AND conversation_name <> ? AND (conversation_name = '' OR conversation_name = ?)`, t, pid, sid, t, old)
+	return err
+}
+
+// conversationTitle is the stored title of a conversation ("" for none).
+func conversationTitle(ctx context.Context, tx dbtx, pid, conversationID string) (string, error) {
+	var t string
+	err := tx.QueryRowContext(ctx, `SELECT title FROM conversation_titles WHERE project_id = ? AND conversation_id = ?`, pid, conversationID).Scan(&t)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return t, err
 }
 
 // interruptedPrefix starts the error of a turn a later prompt interrupted
@@ -717,6 +777,10 @@ func purgeLogEventsBefore(ctx context.Context, tx *sql.Tx, pid string, us int64)
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM log_session_links WHERE project_id = ? AND created_at < ?`, pid, us); err != nil &&
+		!strings.Contains(err.Error(), "no such table") {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM conversation_titles WHERE project_id = ? AND updated_at < ?`, pid, us); err != nil &&
 		!strings.Contains(err.Error(), "no such table") {
 		return 0, err
 	}

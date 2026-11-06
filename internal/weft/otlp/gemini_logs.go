@@ -182,6 +182,19 @@ func geminiConversational(role string) bool {
 	return role == "" || role == "main" || role == "subagent"
 }
 
+// GeminiLogTitle names a Gemini CLI session after its first prompt.
+func GeminiLogTitle(first []store.LogEvent) string {
+	for _, e := range first {
+		if e.Name == "gemini_cli.user_prompt" {
+			if t := aStr(e.Attrs, "prompt"); !redacted(t) {
+				return shortText(t, 80)
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 // BuildGeminiLogGroup builds one turn's spans from its events.
 func BuildGeminiLogGroup(g store.LogGroup) []store.CompleteCall {
 	sid := g.SessionID
@@ -196,14 +209,6 @@ func BuildGeminiLogGroup(g store.LogGroup) []store.CompleteCall {
 		return nil
 	}
 	w := &spanWriter{session: sid, turnID: ccID(geminiLogsNS, sid, "turn", g.GroupID), source: store.SourceGeminiLogs}
-	for _, e := range g.First {
-		if e.Name == "gemini_cli.user_prompt" {
-			if t := aStr(e.Attrs, "prompt"); !redacted(t) {
-				w.convName = shortText(t, 80)
-			}
-			break
-		}
-	}
 	agentName := GeminiAgent
 	provider := "gcp.gemini"
 	agents := map[string]*gmAgent{}
