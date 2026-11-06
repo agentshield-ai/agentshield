@@ -739,8 +739,25 @@ func (p *Pusher) deliver(ctx context.Context, recs []record, serverErrors int, s
 					serverErrors = 1
 				case weftStores:
 					if len(recs) == 1 {
-						p.poison(recs[0], err)
-						return nil
+						// Weft stores other records now, but it may only just
+						// have recovered from an outage that also caused this
+						// record's 500s: send it once more before dropping it.
+						again, err2 := p.post(ctx, body)
+						if err2 == nil {
+							p.up()
+							p.ack(recs, again.body)
+							return nil
+						}
+						if ctx.Err() != nil {
+							p.undelivered.Add(uint64(len(recs)))
+							return nil
+						}
+						if again.status >= 500 && !outageStatus(again.status) {
+							p.poison(recs[0], err2)
+							return nil
+						}
+						err = err2
+						break
 					}
 					return p.halves(ctx, recs, since)
 				default:
