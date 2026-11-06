@@ -129,17 +129,22 @@ func TestIngestLogRejectedBatch(t *testing.T) {
 
 func TestIngestLogTraces(t *testing.T) {
 	e, buf, _ := newLogEnv(t)
-	body := map[string]any{"resourceSpans": []any{map[string]any{
-		"resource": map[string]any{"attributes": []any{map[string]any{"key": "service.name", "value": map[string]any{"stringValue": "my-agent"}}}},
+	kv := func(k, v string) map[string]any {
+		return map[string]any{"key": k, "value": map[string]any{"stringValue": v}}
+	}
+	agent := map[string]any{
+		"resource": map[string]any{"attributes": []any{kv("service.name", "my-agent")}},
 		"scopeSpans": []any{map[string]any{"spans": []any{map[string]any{
 			"traceId": "0102030405060708090a0b0c0d0e0f10", "spanId": "0102030405060708", "name": "chat gpt",
 			"startTimeUnixNano": "1700000000000000000", "endTimeUnixNano": "1700000001000000000",
-			"attributes": []any{map[string]any{"key": "gen_ai.conversation.id", "value": map[string]any{"stringValue": "conv-1"}}},
+			"attributes": []any{kv("gen_ai.conversation.id", "conv-1")},
 		}}}},
-	}}, map[string]any{
-		"resource":   map[string]any{"attributes": []any{map[string]any{"key": "service.name", "value": map[string]any{"stringValue": "codex_exec"}}}},
+	}
+	codex := map[string]any{
+		"resource":   map[string]any{"attributes": []any{kv("service.name", "codex_exec")}},
 		"scopeSpans": []any{map[string]any{"spans": []any{map[string]any{"traceId": "0102030405060708090a0b0c0d0e0f11", "spanId": "0102030405060709", "name": "x"}}}},
-	}}}
+	}
+	body := map[string]any{"resourceSpans": []any{agent, codex}}
 	b, _ := json.Marshal(body)
 	if code, out, _ := e.otlpPost("/otel/v1/traces", b, "application/json", map[string]string{"project_id": pid}); code != 200 {
 		t.Fatalf("traces -> %d %s", code, out)

@@ -316,6 +316,66 @@ session. The hook names tools by AgentShield's names (`exec` for
 Weft treats those as Gemini CLI's names. There is no Weft plugin for Gemini
 CLI.
 
+## Logs
+
+Weft writes its log to stderr (or the file `--log-file` names), one line
+per event, as `key=value` text or, with `--log-format json`, one JSON object
+per line. Choose how much with `--log-level` (or `WEFT_LOG_LEVEL`,
+`WEFT_LOG_FORMAT`, `WEFT_LOG_FILE`):
+
+```bash
+./bin/weft --log-level debug                      # follow everything
+./bin/weft --log-format json 2> weft.log          # for a log pipeline
+```
+
+Lines name things the same way throughout: `project`, `session_id`,
+`trace_id`, `span_id`, `harness`, `source`, `count`, `reason`,
+`duration_ms`, `status`. They carry ids, names, counts, sizes, durations and
+reasons only: never API keys, `Authorization` or cookie headers, provider
+keys, prompt text, tool arguments or outputs, request or response bodies, or
+attribute values from telemetry (a value a refusal echoes is shown as `"…"`).
+Every line a request causes carries its `req_id`.
+
+| Line | Level | What it says |
+|---|---|---|
+| `weft listening` | info | at startup: `version`, `addr`, `db` path, `auth` (required or not), `sso`, `projects`, `ui`, `shield_replay` mode, `weave_compat`, the log level and format |
+| `request` | info for writes and refusals (4xx), error for server errors (5xx, with `err`), debug for reads, the UI's files and `/health` | `method`, `route` (the route pattern; the raw `path` only at debug), `status`, `duration_ms`, `bytes_in`, `bytes_out`, `project`, `user` and `key_id` (the managed key's id, never the key), `auth`, `remote`; a refusal adds its `reason` |
+| `otlp logs ingested` | info, per batch | a logs export (Claude Code, Codex, Gemini CLI): `harness` with record counts, `records`, `events_new`, `events_duplicate` (re-sent events, stored once), `ignored` and `ignored_by` (`noise_event`: events that describe no step, such as `plugin_loaded`; `no_session_id`; `other_service`), `turns_rebuilt`, `turns_interrupted`, `spans_stored`, `dropped_by_source`, `sessions` |
+| `otlp traces ingested` | info, per batch | a traces export: `harness` (`claude-code`, `codex`, `opencode`, `copilot`, `gemini-cli`, `agentshield`, or `otel` for anything else) with span counts, `spans_received`, `spans_stored`, `ignored_by` (`codex_internal_spans`, `opencode_internal_spans`), `dropped_by_source`, `verdicts` read from AgentShield `evaluate` spans, `verdicts_attached` |
+| `otlp logs sessions`, `otlp traces sessions` | debug | the `session_ids` a batch touched (at most 20) and the service names it named |
+| `otlp batch rejected` | warn | a batch Weft could not read: `stage` (read, decode, map), `reason`, `content_type`, `content_encoding`, `bytes`; the request line says 400 |
+| `turn rebuilt` | debug | a prompt's spans rebuilt from its log events: `session_id`, `trace_id`, `events`, `spans`, `ended` |
+| `turn closed as interrupted: a new prompt was submitted` | info | a turn that never finished, closed when the next prompt arrived (once per turn) |
+| `session source replaced` | info | a richer source took over a session (see [Claude Code without a plugin](#claude-code-without-a-plugin)): `from`, `to`, `spans_hidden`, `verdicts_relinked` |
+| `spans dropped: the session has a higher-ranked source` | debug | spans of a lower source for a session a richer source already shows |
+| `shield verdicts ingested` | info, per batch | `/api/v1/shield/ingest`: `received`, `accepted`, `created`, `duplicates`, `rejected`, overrides, and `attached` (`tool_call_id`, `nearest_time`, `unattached`) |
+| `verdict attached` | debug | one verdict on its tool span: `link` `tool_call_id` (the same tool-use id) or `nearest_time` (the same tool within ±5 s, with `tool` and `span_tool`), `trigger` `verdict` (it arrived after its span) or `span` (the span arrived later) |
+| `verdict not attached` | debug | a verdict that stays on its session only, and why (`reason`): no session id, no tool name, or no matching span yet (it attaches when the span arrives) |
+| `shield record rejected` | debug | an invalid record of a verdict batch: `kind`, `index`, `event_id`, `reason` |
+| `shield replay started` / `finished` / `failed` | info / warn | replay jobs, with their counts and `duration_ms` |
+| `evaluation started` / `finished` / `failed`, `automation fired`, `monitor scorer failed`, `retention purge` | info / warn | background work |
+
+At info a busy server logs one line per write and per ingest batch (the
+batch's own `request` line moves to debug), never one per span.
+
+**Follow a Claude Code session.** Start Weft with `--log-level debug`, run
+Claude Code with the variables above, and watch the log: every few seconds
+an `otlp logs ingested` line counts what arrived; `otlp logs sessions` lists
+the session ids; `turn rebuilt` shows each prompt's spans growing as its
+events arrive. If you run AgentShield, each `shield verdicts ingested` line
+is followed by `verdict attached` (or `verdict not attached`, with why) for
+every verdict. To keep only one session, filter on its id:
+
+```bash
+./bin/weft --log-level debug 2>&1 | grep 0c36c29e-0bb8-4e24-b31e-a4d8110ad3a8
+```
+
+If nothing arrives, look for `request` lines on `/otel/v1/logs` with status
+401 or 403 (a missing or wrong key or `project_id` header), or an
+`otlp batch rejected` line (a protocol Weft does not accept, such as gRPC).
+A batch with only `ignored` records (`noise_event`, `no_session_id`) means
+Claude Code is exporting, but not yet the events of a prompt.
+
 ## Group agents into sessions and teams
 
 Weft builds a **session** from everything that shares a conversation id

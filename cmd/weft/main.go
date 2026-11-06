@@ -21,8 +21,8 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/compat"
 	"github.com/agentshield-ai/agentshield/internal/weft/server"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
-	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/agentshield-ai/agentshield/internal/weft/webui"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 )
 
 func envOr(name, def string) string {

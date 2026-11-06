@@ -1,8 +1,10 @@
 package otlp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
+	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	common "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/protobuf/proto"
@@ -436,9 +439,28 @@ func TestClaudeCodeLogsTurnCutOff(t *testing.T) {
 	}
 
 	// The user submits another prompt: the first turn is closed as interrupted.
+	// It is logged once, at info, when it closes, although each batch of
+	// the next turn rebuilds it (weftlog).
+	var logBuf bytes.Buffer
+	logCtx := weftlog.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	logCtx, stats := store.WithIngestStats(logCtx)
 	next := ccLogEvent("user_prompt", bashSession, "prompt-2", map[string]any{"session.id": bashSession, "prompt.id": "prompt-2",
-		"event.timestamp": time.Now().UTC().Format(time.RFC3339Nano), "prompt": "next"}, nil, 0, 0)
-	h.ingest([]store.LogEvent{next})
+		"event.timestamp": time.Now().UTC().Format(time.RFC3339Nano), "prompt": "NEXT-PROMPT-CANARY"}, nil, 0, 0)
+	if _, _, err := h.s.IngestLogEvents(logCtx, ccProject, LogSources[0], []store.LogEvent{next}); err != nil {
+		t.Fatal(err)
+	}
+	more := ccLogEvent("tool_decision", bashSession, "prompt-2", map[string]any{"session.id": bashSession, "prompt.id": "prompt-2",
+		"event.timestamp": time.Now().UTC().Format(time.RFC3339Nano), "tool_name": "Glob", "decision": "accept", "tool_use_id": "toolu_x"}, nil, 0, 0)
+	if _, _, err := h.s.IngestLogEvents(logCtx, ccProject, LogSources[0], []store.LogEvent{more}); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(logBuf.String(), "level=INFO msg=\"turn closed as interrupted"); n != 1 || stats.TurnsInterrupted != 1 ||
+		!strings.Contains(logBuf.String(), "session_id="+bashSession) || strings.Count(logBuf.String(), "msg=\"turn rebuilt\"") != 4 {
+		t.Fatalf("interrupted lines = %d, stats %d:\n%s", n, stats.TurnsInterrupted, logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "NEXT-PROMPT-CANARY") {
+		t.Fatalf("prompt text in the log:\n%s", logBuf.String())
+	}
 	calls = h.spans(bashSession)
 	turn := spanByName(t, calls, "invoke_agent claude-code")
 	if turn.ID != turnID || turn.Exception == nil || !strings.Contains(*turn.Exception, "interrupted") {

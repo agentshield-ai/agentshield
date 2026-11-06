@@ -271,8 +271,12 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 			}
 		}
 		if debug {
-			log.Debug("turn rebuilt", "project", pid, "source", src.Name, "session_id", g.SessionID, "trace_id", logTurnTrace(built),
-				"group", g.GroupID, "events", len(g.Events), "spans", len(built), "ended", ended, "later_turn", g.Later)
+			attrs := []any{"project", pid, "source", src.Name, "session_id", g.SessionID}
+			if len(built) > 0 {
+				attrs = append(attrs, "trace_id", built[0].Start.TraceID)
+			}
+			log.Debug("turn rebuilt", append(attrs, "group", g.GroupID, "events", len(g.Events), "spans", len(built), "ended", ended,
+				"later_turn", g.Later)...)
 		}
 	}
 	if len(calls) == 0 {
@@ -310,14 +314,6 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 // interruptedPrefix starts the error of a turn a later prompt interrupted
 // (otlp/claudecode_logs.go, codex_logs.go, gemini_logs.go).
 const interruptedPrefix = "interrupted:"
-
-// logTurnTrace is the trace id of a rebuilt group's spans ("" if none).
-func logTurnTrace(calls []CompleteCall) string {
-	if len(calls) == 0 {
-		return ""
-	}
-	return calls[0].Start.TraceID
-}
 
 type logGroupKey struct{ session, group string }
 

@@ -34,7 +34,9 @@ make weft         # build bin/weft
 | `--api-keys` | `WEFT_API_KEYS` | empty (auth disabled); comma-separated, each `key` or `user=key` |
 | `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
 | `--no-ui` | | serve the UI |
-| `--log-level` | `WEFT_LOG_LEVEL` | `info` (`debug` logs every request) |
+| `--log-level` | `WEFT_LOG_LEVEL` | `info`: one line per write, ingest batch, refusal and server error; `debug` adds reads, the sessions each batch touched, turn rebuilds and how each AgentShield verdict attached. See [Logs](guides/setup.md#logs) |
+| `--log-format` | `WEFT_LOG_FORMAT` | `text` (`key=value`); `json` writes one JSON object per line |
+| `--log-file` | `WEFT_LOG_FILE` | empty (stderr); a file the log is appended to |
 | `--pii-analyzer-url` | `WEFT_PII_ANALYZER_URL` | empty (regex PII redaction only); a Presidio Analyzer REST URL adds PERSON, LOCATION and ORGANIZATION redaction at ingest for projects with sensitive-data redaction on, see [API.md](API.md#project-settings) |
 | `--pii-analyzer-timeout` | `WEFT_PII_ANALYZER_TIMEOUT` | `2s`; on timeout or error spans are stored with regex redaction only |
 | `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |

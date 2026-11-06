@@ -60,6 +60,11 @@ func (s *Server) otelLogs(w http.ResponseWriter, r *http.Request) {
 			projects[pid] = true
 		}
 	}
+	if len(projects) == 0 { // nothing to store: name the project the header chose
+		if hp, err := project(otlpHeaderProject(r)); err == nil {
+			projects[hp] = true
+		}
+	}
 	ann.AddProjects(setKeys(projects)...)
 	ctx, stats := store.WithIngestStats(r.Context())
 	// The header project wins over the resource's (otlp.ProjectFor), so a

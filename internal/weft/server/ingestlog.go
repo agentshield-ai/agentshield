@@ -21,9 +21,12 @@ import (
 // otlpRejected logs a batch that could not be read or decoded: why, its
 // content type, encoding and size, never its body.
 func otlpRejected(r *http.Request, stage string, size int, err error) {
-	weftlog.From(r.Context()).Warn("otlp batch rejected", "route", routeOf(r), "stage", stage, "reason", weftlog.Err(err),
-		"content_type", weftlog.Name(r.Header.Get("Content-Type")), "content_encoding", weftlog.Name(r.Header.Get("Content-Encoding")),
-		"bytes", size, "project", weftlog.Name(otlpHeaderProject(r)))
+	attrs := []any{"route", routeOf(r), "stage", stage, "reason", weftlog.Err(err),
+		"content_type", weftlog.Name(r.Header.Get("Content-Type")), "content_encoding", weftlog.Name(r.Header.Get("Content-Encoding")), "bytes", size}
+	if p := otlpHeaderProject(r); p != "" {
+		attrs = append(attrs, "project", weftlog.Name(p))
+	}
+	weftlog.From(r.Context()).Warn("otlp batch rejected", attrs...)
 }
 
 func setKeys(m map[string]bool) []string {
@@ -77,6 +80,9 @@ func logSessions(ctx context.Context, msg string, st *store.IngestStats, service
 		return
 	}
 	ids, n := weftlog.Capped(st.Sessions())
+	if n == 0 {
+		return
+	}
 	svcs := setKeys(services)
 	for i := range svcs {
 		svcs[i] = weftlog.Name(svcs[i])
