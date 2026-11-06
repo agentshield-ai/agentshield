@@ -2902,6 +2902,16 @@ The engine's `weft:` push (`internal/weftpush`). Body:
  "overrides": [{"event_id": "e-1", "session_id": "s-1", "timestamp": "2026-11-03T09:21:25Z"}]}
 ```
 
+**Trust boundary.** Verdicts are not tied to the engine: any credential
+that may write to the project (and, on an open server, anyone who can
+reach Weft) can push detections and overrides here, send AgentShield
+`evaluate` spans over OTLP, or reuse a `tool_call_id` so a verdict links
+to its span. Treat verdicts in Weft as reports from the project's writers,
+not as proof that the engine saw a tool call; for that, give the engine
+its own project-scoped key and limit who else holds write keys to the
+project. (A dedicated ingest-only key scope would need a key-schema change
+and is not implemented.)
+
 `detection` (one object) is accepted in place of `detections`; `id` is an
 alias of `event_id`, and rules may use `rule_id` / `rule_name` / `severity`.
 At most 1000 detections and 1000 overrides per request, and 64 MiB of body
