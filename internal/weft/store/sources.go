@@ -25,8 +25,10 @@ import (
 // source are stored hidden (soft-deleted) once a higher one is present, and
 // are hidden when a higher one arrives (docs/weft/README.md, "Claude Code
 // without a plugin"). Nothing is dropped, so a decoy cannot make telemetry
-// disappear for good; every replacement is logged and reported
-// (WithSourceReplacedHook: the server audits it).
+// disappear for good: deleting the spans that outrank them, or a project
+// admin's restore, shows hidden spans again (sources_restore.go); every
+// replacement is logged and reported (WithSourceReplacedHook: the server
+// audits it).
 //
 // A span's source is its weft.source attribute (attributes.weft.source, the
 // field the SQL below reads too); spans of any other source (or none) are
@@ -90,6 +92,7 @@ type sourceBatchKey struct{}
 type sourceBatch struct {
 	drop     map[[3]string]bool // (project, session, source) outranked: stored hidden
 	retired  map[[3]string]bool // (project, session, source) that hid lower sources
+	ignored  map[[2]string]bool // (project, session) whose plugin claims are not honoured
 	replaced []sourceReplacement
 }
 
@@ -178,7 +181,8 @@ func withSourceBatch(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(sourceBatchKey{}).(*sourceBatch); ok {
 		return ctx
 	}
-	return context.WithValue(ctx, sourceBatchKey{}, &sourceBatch{drop: map[[3]string]bool{}, retired: map[[3]string]bool{}})
+	return context.WithValue(ctx, sourceBatchKey{}, &sourceBatch{drop: map[[3]string]bool{}, retired: map[[3]string]bool{},
+		ignored: map[[2]string]bool{}})
 }
 
 // spanSource is a call's source: attributes.weft.source, the field
@@ -308,6 +312,17 @@ func (s *Store) applySourcePrecedence(ctx context.Context, tx *sql.Tx, st *CallS
 	src := spanSource(st.Attributes)
 	if sessionSourceRank[src].rank == 0 {
 		return false, nil
+	}
+	if IsPluginSource(src) { // sources_restore.go: a project admin may turn a session's plugin claims off
+		ignored, err := s.pluginClaimsIgnored(ctx, tx, st.ProjectID, *st.ThreadID)
+		if err != nil {
+			return false, err
+		}
+		if ignored {
+			setWeftAttr(st, "source", nil)
+			setWeftAttr(st, "claimed_source", src)
+			return false, nil
+		}
 	}
 	key := [3]string{st.ProjectID, *st.ThreadID, src}
 	b, _ := ctx.Value(sourceBatchKey{}).(*sourceBatch)

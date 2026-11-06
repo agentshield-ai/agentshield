@@ -25,10 +25,14 @@ import (
 //
 // A claim a path may not make is kept as weft.claimed_source and does not
 // rank. The header is a declaration, not proof: any credential that may
-// write to the project can send it. What bounds a false claim is that
-// nothing is dropped (outranked spans are stored hidden), only a source
-// with content outranks another, and every replacement is logged and
-// audited (auditSourceReplaced).
+// write to the project (member role or a write key) can send it, and one
+// span claiming a plugin source, with or without content, outranks the
+// session's native spans. What bounds a false claim: nothing is dropped
+// (outranked spans are stored hidden, never deleted); every replacement is
+// logged and audited (ingestContext below); deleting the claiming spans
+// shows the hidden ones again; and a project admin can restore a session,
+// which also stops honouring plugin claims for it
+// (/api/v1/spans/sessions/sources/restore, store/sources_restore.go).
 
 // sourceHeader names the plugin source a request's spans come from.
 const sourceHeader = "X-Weft-Source"
@@ -77,4 +81,46 @@ func (s *Server) ingestContext(r *http.Request) context.Context {
 			Detail: fmt.Sprintf("session %s now shown from %s: hid %d span(s) of %s, relinked %d verdict(s)",
 				clip(rep.Session, 128), rep.To, hidden, strings.Join(froms, ","), rep.Relinked)})
 	})
+}
+
+// sessionSourcesReq is the body of /api/v1/spans/sessions/sources and
+// /restore.
+type sessionSourcesReq struct {
+	ProjectID string `json:"project_id"`
+	SessionID string `json:"session_id"`
+	// IgnorePluginClaims (restore; default true): stop honouring plugin
+	// claims for the session and show its hidden spans again; false
+	// honours later claims again.
+	IgnorePluginClaims *bool `json:"ignore_plugin_claims"`
+}
+
+// v1SessionSources lists a session's ranked sources: shown and hidden
+// spans of each, and whether plugin claims are honoured.
+func (s *Server) v1SessionSources(ctx context.Context, _ *http.Request, req *sessionSourcesReq) (any, error) {
+	pid, err := project(req.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.SessionSourceInfo(ctx, pid, req.SessionID)
+}
+
+// v1SessionSourcesRestore is a project admin's restore of a session's
+// hidden spans (projectAdminPaths).
+func (s *Server) v1SessionSourcesRestore(ctx context.Context, r *http.Request, req *sessionSourcesReq) (any, error) {
+	pid, err := project(req.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	ignore := req.IgnorePluginClaims == nil || *req.IgnorePluginClaims
+	actor := "anonymous"
+	if note := auditNoteFrom(r); note != nil && note.actor != "" {
+		actor = note.actor
+	}
+	out, err := s.store.RestoreSessionSources(ctx, pid, req.SessionID, ignore, actor)
+	if err != nil {
+		return nil, err
+	}
+	s.log.Info("session sources restored", "project", pid, "session_id", clip(req.SessionID, 128), "ignore_plugin_claims", ignore,
+		"spans_restored", out.Restored, "by", actor)
+	return out, nil
 }

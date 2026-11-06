@@ -262,7 +262,7 @@ var serverAdminPaths = map[string]bool{"/secrets/set": true, "/secrets/delete": 
 // projectAdminPaths need the admin role on the named project.
 var projectAdminPaths = map[string]bool{"/project/delete": true, "/project/ttl_settings/update": true, "/project/ttl_settings/purge": true,
 	"/project/ingest_sampling_settings/update": true, "/project/sensitive_data_settings/update": true,
-	"/project/members/set": true, "/project/members/remove": true}
+	"/project/members/set": true, "/project/members/remove": true, "/api/v1/spans/sessions/sources/restore": true}
 
 // selfPrefixes are checked by their handlers (own keys, teams the caller
 // administers, audit entries of projects the caller administers).

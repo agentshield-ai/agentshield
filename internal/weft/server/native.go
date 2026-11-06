@@ -39,6 +39,8 @@ func (s *Server) mountNative(r chi.Router) {
 	r.Post("/api/v1/spans/names", handle(s.v1SpanNames))
 	r.Post("/api/v1/spans/score", handle(s.v1SpansScore))
 	r.Post("/api/v1/spans/sessions", handle(s.v1SpanSessions))
+	r.Post("/api/v1/spans/sessions/sources", handle(s.v1SessionSources))                // sourceclaims.go
+	r.Post("/api/v1/spans/sessions/sources/restore", handle(s.v1SessionSourcesRestore)) // project admins
 
 	r.Post("/api/v1/objects/save", handle(s.v1ObjectSave))
 	r.Post("/api/v1/objects/query", handle(s.v1ObjectsQuery))
@@ -103,6 +105,7 @@ func (s *Server) mountNative(r chi.Router) {
 var nativeReadPaths = map[string]bool{
 	"/api/v1/spans/query": true, "/api/v1/spans/stream": true, "/api/v1/spans/stats": true, "/api/v1/spans/export": true,
 	"/api/v1/spans/metrics": true, "/api/v1/spans/names": true, "/api/v1/spans/sessions": true,
+	"/api/v1/spans/sessions/sources": true,
 	"/api/v1/objects/query": true, "/api/v1/objects/tags": true, "/api/v1/objects/aliases": true,
 	"/api/v1/tables/query": true, "/api/v1/tables/stream": true, "/api/v1/tables/stats": true,
 	"/api/v1/feedback/query": true, "/api/v1/files/resolve": true, "/api/v1/refs/read": true, "/api/v1/prices/query": true,

@@ -700,17 +700,48 @@ func (s *Store) DeleteCalls(ctx context.Context, projectID string, ids []string)
 	now := nowMicros()
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		args := []any{projectID}
-		for _, id := range ids {
-			args = append(args, id)
-		}
-		args = append(args, projectID, now, projectID)
-		_, err := tx.ExecContext(ctx, `WITH RECURSIVE sub(id) AS (
-				SELECT id FROM calls WHERE project_id = ? AND id IN (`+ph+`)
+		sub := `WITH RECURSIVE sub(id) AS (
+				SELECT id FROM calls WHERE project_id = ? AND id IN (` + ph + `)
 				UNION SELECT c.id FROM calls c JOIN sub ON c.parent_id = sub.id WHERE c.project_id = ?
-			)
-			UPDATE calls SET deleted_at = ? WHERE project_id = ? AND deleted_at IS NULL AND id IN (SELECT id FROM sub)`, args...)
-		return err
+			) `
+		subArgs := []any{projectID}
+		for _, id := range ids {
+			subArgs = append(subArgs, id)
+		}
+		subArgs = append(subArgs, projectID)
+		// Sessions whose ranked-source spans this deletes: spans those
+		// outranked are shown again after (sources_restore.go).
+		cond, cargs := sourceCondition(allRankedSources())
+		rows, err := tx.QueryContext(ctx, sub+`SELECT DISTINCT thread_id FROM calls WHERE project_id = ? AND deleted_at IS NULL
+			AND thread_id IS NOT NULL AND thread_id <> '' AND id IN (SELECT id FROM sub) AND `+cond,
+			append(append(append([]any{}, subArgs...), projectID), cargs...)...)
+		if err != nil {
+			return err
+		}
+		var sessions []string
+		for rows.Next() {
+			var sid string
+			if err := rows.Scan(&sid); err != nil {
+				rows.Close()
+				return err
+			}
+			sessions = append(sessions, sid)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// Hidden spans the deletion names are deleted for good: never shown again.
+		if _, err := tx.ExecContext(ctx, sub+`UPDATE calls SET attributes = json_remove(attributes, '$.weft.`+hiddenByKey+`')
+			WHERE project_id = ? AND deleted_at IS NOT NULL AND `+hiddenExpr+` IS NOT NULL AND id IN (SELECT id FROM sub)`,
+			append(append([]any{}, subArgs...), projectID)...); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, sub+`UPDATE calls SET deleted_at = ? WHERE project_id = ? AND deleted_at IS NULL AND id IN (SELECT id FROM sub)`,
+			append(append([]any{}, subArgs...), now, projectID)...); err != nil {
+			return err
+		}
+		return s.restoreAfterDelete(ctx, tx, projectID, sessions)
 	})
 }
 

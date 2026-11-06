@@ -419,7 +419,19 @@ function qs(projectId: string, params: Params = {}): string {
 
 const seg = (s: string) => encodeURIComponent(s)
 
+/** The ranked sources of one session (POST /api/v1/spans/sessions/sources): spans shown and hidden by source. */
+export interface SessionSources {
+  session_id: string
+  sources: { source: string; rank: number; spans: number; hidden: number }[]
+  ignore_plugin_claims: boolean
+  restored?: number
+}
+
 export const v1 = {
+  sessionSources: (pid: string, id: string) => post<SessionSources>('/api/v1/spans/sessions/sources', { project_id: pid, session_id: id }),
+  /** Project admins: show the session's hidden spans again and stop honouring plugin source claims for it. */
+  restoreSessionSources: (pid: string, id: string) =>
+    post<SessionSources>('/api/v1/spans/sessions/sources/restore', { project_id: pid, session_id: id, ignore_plugin_claims: true }),
   sessions: (pid: string, p: Params = {}) => get<List<SessionSummary>>(`/api/v1/sessions?${qs(pid, p)}`),
   sessionsAttention: (pid: string, p: Params = {}) => get<SessionAttention>(`/api/v1/sessions/attention?${qs(pid, p)}`),
   session: (pid: string, id: string) => get<SessionSummary>(`/api/v1/sessions/${seg(id)}?${qs(pid)}`),

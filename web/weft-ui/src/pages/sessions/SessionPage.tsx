@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { iamApi } from '../../api/iam'
 import { SCORERS_BY_SCOPE, v1, type Detection, type Score } from '../../api/v1'
 import { useProjectId } from '../../hooks/useProject'
 import { buildStory, entryFor, moveEntry } from '../../lib/story'
@@ -391,6 +392,7 @@ function RawView({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: stri
           The older turn-by-turn view is still available: <Link to={`/${pid}/conversations/${encodeURIComponent(sessionId)}`}>turn view</Link>.
         </p>
       </section>
+      <SessionSourcesPanel pid={pid} sessionId={sessionId} />
       <PlainTable caption="Spans of this session" count={spans.size} captionVisible>
         <thead>
           <tr>
@@ -418,5 +420,62 @@ function RawView({ pid, traceIds, tl, sessionId }: { pid: string; traceIds: stri
         </tbody>
       </PlainTable>
     </div>
+  )
+}
+
+/**
+ * The producers that recorded this session (a Weft plugin, the harness's own
+ * traces or logs). The session is shown from the highest-ranked one; spans of
+ * the others are hidden, not deleted. A plugin source is claimed by a header
+ * any project writer can send, so a project admin can show the hidden spans
+ * again and stop honouring plugin claims for the session.
+ */
+function SessionSourcesPanel({ pid, sessionId }: { pid: string; sessionId: string }) {
+  const qc = useQueryClient()
+  const src = useQuery({ queryKey: ['v1', pid, 'session-sources', sessionId], queryFn: () => v1.sessionSources(pid, sessionId), retry: false })
+  const members = useQuery({ queryKey: ['project-members', pid], queryFn: () => iamApi.projectMembers(pid), retry: false })
+  const restore = useMutation({
+    mutationFn: () => v1.restoreSessionSources(pid, sessionId),
+    onSuccess: async (r) => {
+      notify(`${r.restored ?? 0} hidden span${r.restored === 1 ? '' : 's'} shown again; plugin source claims are no longer honoured for this session.`, 'ok', 7000)
+      await qc.invalidateQueries({ queryKey: ['v1', pid] })
+    },
+    onError: (e) => notify(`Restore failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 8000),
+  })
+  const sources = src.data?.sources ?? []
+  if (!sources.length) return null
+  const hidden = sources.reduce((n, x) => n + x.hidden, 0)
+  const canManage = members.data?.can_manage ?? false
+  return (
+    <section className="view-panel" aria-labelledby="sources-h">
+      <h2 id="sources-h" className="view-h" title="The session is shown from its highest-ranked source; spans of lower-ranked sources are hidden, not deleted.">
+        Sources
+      </h2>
+      <ul className="plain">
+        {sources.map((x) => (
+          <li key={x.source} className="row wrap" style={{ gap: 12 }}>
+            <span className="mono small">{x.source}</span>
+            <span className="small">
+              {x.spans} shown{x.hidden ? `, ${x.hidden} hidden` : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {src.data?.ignore_plugin_claims && <p className="quiet-note">Plugin source claims are not honoured for this session (restored by a project admin).</p>}
+      {hidden > 0 && (
+        <p className="quiet-note">
+          {hidden} span{hidden === 1 ? ' is' : 's are'} hidden because a higher-ranked source sent spans for this session. Any project member can claim a
+          plugin source, so if those spans are not from a real plugin run,{' '}
+          {canManage ? (
+            <button type="button" className="qbtn" disabled={restore.isPending} onClick={() => restore.mutate()}>
+              show the hidden spans again
+            </button>
+          ) : (
+            'a project admin can show the hidden spans again'
+          )}
+          .
+        </p>
+      )}
+    </section>
   )
 }
