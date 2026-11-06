@@ -24,6 +24,28 @@ the UI.
 - **Routes.** Weft's own API is under `/api/v1`. Every request names its
   project: `project_id` in the query string for `GET` (and `PUT` paths), in
   the JSON body for `POST` and `PUT`, or as a multipart field for uploads.
+- **Request bodies** are JSON (`Content-Type: application/json`, or
+  `multipart/form-data` for uploads; OTLP routes take protobuf or JSON):
+  a state-changing request with a body of any other type gets `415`. A body
+  is exactly one JSON value (trailing data: `400`); `GET` bodies are ignored,
+  and one that names a project is refused (`400`). Bodies are capped
+  (decompressed, at a bounded gzip ratio): 4 MiB for reads, 1 MiB for
+  administration and IAM routes, 64 MiB for writes (`413`; `503` when the
+  server is decoding too much at once, retry).
+- **Browsers, hosts and proxies.** A state-changing request (not
+  `GET`/`HEAD`/`OPTIONS`) that carries an `Origin` header must come from the
+  server's own origin or a `--cors-origins` entry (`403`), whatever the
+  credential; clients that send no `Origin` (SDKs, plugins, curl,
+  collectors) are unaffected. The `Host` header must be an IP address,
+  `localhost` (or `*.localhost`), the listen address's host name, the SSO
+  redirect URL's host or an `--allowed-hosts` entry (`421` otherwise; DNS
+  rebinding). The client address in the audit and request logs is the
+  socket peer; `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Host` are
+  read only from `--trusted-proxies`.
+- **Attribution.** The user recorded on spans, feedback, objects, queues
+  and settings is the authenticated user (a session, a user's API key, a
+  named static key); a body `user_id` or `X-Weft-User` header counts only
+  on open servers and with unnamed static keys.
 - **project_id** is `"<entity>/<project>"`. A bare `"<project>"` is
   normalised to `"default/<project>"`. Projects are created implicitly on
   first write. A new project's entity and name may not contain `"`, `;`,
@@ -997,12 +1019,28 @@ highest-ranked source of its harness that has sent spans for it
 `codex-otel-traces`; for Gemini CLI `gemini-cli-otel-logs` >
 `gemini-cli-otel-traces`, the latter recognised by `gen_ai.agent.name =
 gemini-cli` on spans with no `weft.source`).
-A span of a lower source is dropped at ingest when its session already has
-spans of a higher one; when a higher source's first span arrives, the lower
-sources' spans of that session are soft-deleted and AgentShield detections
-linked to them are linked again (to the higher source's span with the same
-tool-use id). Nothing is counted twice, whatever the order. Spans of other
-sources are never affected.
+A span of a lower source is stored hidden (soft-deleted, with
+`weft.hidden_by_source`) when its session already has spans of a higher
+one; when a higher source's first span arrives, the lower sources' spans of
+that session are hidden the same way and AgentShield detections linked to
+them are linked again (to the higher source's span with the same tool-use
+id). Nothing is dropped and nothing is counted twice, whatever the order.
+Spans of other sources are never affected. Each replacement is logged and
+recorded in the audit log; `POST /api/v1/spans/batch` reports spans it
+stored hidden as `"hidden": n`.
+
+**Who may claim a source.** The source is `attributes.weft.source` (a flat
+`weft.source` key or OTel attribute is not one). Each ingest path may claim
+only the sources it produces: `/otel/v1/traces` the `*-otel-traces`
+sources (set by the trace mapping), `/otel/v1/logs` the `*-otel-logs`
+sources (set when spans are rebuilt from log events), and the span API and
+the adapter's routes only a plugin source (`weft-claude-code`,
+`weft-codex`), and only when the request sends `X-Weft-Source: <source>`,
+as the Weft plugins do. Any other ranked claim is kept as
+`weft.claimed_source` and does not rank. The header is a declaration, not
+proof: a credential that may write to the project can send it, so a
+project writer can still choose how a session is shown, but cannot make
+data disappear (outranked spans stay stored) and every switch is audited.
 
 Framework layouts (checked after `input.value` / `output.value`):
 
@@ -1830,16 +1868,30 @@ Weft has users, teams and three roles:
 - **Self-service keys.** Users who are not server admins may call
   `/api_keys/create` for themselves only (no `admin`; a project-scoped key
   can create keys only for a subset of its projects; a read-only credential
-  only read-only keys), and `/api_keys/list|revoke` see only their own keys
-  (revoking another user's key is a 404).
+  cannot create keys), and `/api_keys/list|revoke` see only their own keys
+  (revoking another user's key is a 404). A credential cannot revoke a key
+  broader than itself: a read-only one only read-only keys, a
+  project-scoped one only keys limited to its projects (403).
 - **Enforcement.** Every authenticated request is checked against every
   project it names (same discovery as for scoped keys: `project_id` in the
   query, body, wrappers, batch items and refs, the OTLP `project_id` header,
-  and the compatibility adapter's paths). A non-admin request that names no
-  project gets 403, except `/auth/*`, `/projects`, `/llm/models`,
-  `/secrets/list`. `GET /projects` lists only projects where the
-  caller has a role. Refusals are 403 with a `reason` such as
-  `"the member role on acme/app is needed; you have viewer"`.
+  and the compatibility adapter's paths). Field names match as JSON
+  decoding matches them (case-insensitively; every spelling counts). The
+  check fails closed: a non-admin request whose body is not exactly one
+  JSON value, or whose project-bearing fields (`project_id`, `project_ids`,
+  `refs`, `start`/`end`/`obj`/`table`/`span`, `batch`, `items`,
+  `variables`) have an unexpected type, gets 400. The handler then checks
+  again every `project_id` / `project_ids` it actually decoded, at any
+  depth (authorisation at use). Self-service routes (`/auth/*`,
+  `/api_keys/*`, `/audit/*`, …) need at least `viewer` on a project they
+  name. A non-admin request that names no project gets 403, except
+  `/auth/*`, `/projects`, `/llm/models`, `/secrets/list`,
+  `/api/v1/secrets/list` (which check access themselves) and
+  `/api/v1/help[/…]`. `GET /projects` lists only projects where the caller
+  has a role. Refusals are 403 with a `reason` such as `"the member role on
+  acme/app is needed; you have viewer"`, and are audited naming the refused
+  project. With the adapter, `/graphql`'s `upsertModel` (which creates a
+  project) needs `member` on it.
 
 | Endpoint | Body | Response | Who |
 |---|---|---|---|
@@ -1875,9 +1927,13 @@ authentication is required.
 | `POST /auth/logout` | revokes the session (needs `X-Weft-CSRF`) and clears the cookies |
 
 - **Provisioning.** A user is found by issuer and subject; otherwise an
-  existing user with the same email is linked when the email is verified (or
-  in an allowed domain); otherwise one is created from `preferred_username`
-  or the email's local part. Disabled users cannot sign in.
+  existing user with the same email is linked when the email is verified
+  (`email_verified: true`; an allowed domain never stands in for it);
+  otherwise one is created from `preferred_username` or the email's local
+  part (storing the email only when verified). An ID token without
+  `email_verified` is unverified, unless `--oidc-assume-email-verified` says
+  the provider only issues verified addresses (server admin by email still
+  needs the claim itself). Disabled users cannot sign in.
 - **Who may sign in.** With `--oidc-allowed-domains`, only verified emails
   of those domains. Otherwise, with `--oidc-group-roles`, only members of a
   mapped group. With neither, anyone at the provider (with no access until
@@ -1890,21 +1946,34 @@ authentication is required.
   emails.
 - **Cookies.** `weft_session` (HttpOnly, SameSite=Lax, Secure on TLS or an
   https redirect URL, `--session-ttl`): a random id plus its HMAC-SHA256
-  under the session key; the database keeps only SHA-256 of the id.
+  under the session key; the database keeps only SHA-256 of the id. The
+  session key is `WEFT_SESSION_KEY`, else derived from the secret key
+  stretched with Argon2id (HKDF over it), so a cookie is no offline oracle
+  for a weak `WEFT_SECRET_KEY`; upgrading from the unstretched derivation
+  signs everyone out once.
   `weft_csrf` (readable by script): the session's CSRF token.
 - **CSRF.** A cookie-authenticated request other than `GET`/`HEAD`/`OPTIONS`
-  must send `X-Weft-CSRF: <weft_csrf>` (403 otherwise), and an `Origin`
-  other than the server's own or a `--cors-origins` entry is refused.
-  Requests carrying an API key do not use the cookie and are exempt.
+  must send `X-Weft-CSRF: <weft_csrf>` (403 otherwise). An `Origin` other
+  than the server's own or a `--cors-origins` entry is refused for every
+  credential (see [Conventions](#conventions)).
+- **return_to** must be a path on this site: control characters (browsers
+  drop tabs and newlines from URLs), backslashes, `//` and anything with a
+  scheme or host fall back to `/`.
 - Sessions end at sign-out, expiry, `/users/revoke_sessions`, or when the
   user is disabled.
 
 ### Audit log
 
 Recorded: every request other than a read (any outcome, including 401 and
-403), every refused (403) request, admin actions with a `detail` text, and
-SSO sign-ins, sign-in failures and sign-outs. Request bodies, headers and
-secret values are never recorded. Entries are written in the background and
+403), every refused (403, or 400 for a body naming projects it may not)
+request, admin actions with a `detail` text, session source replacements,
+and SSO sign-ins, sign-in failures and sign-outs. Request bodies, headers
+and secret values are never recorded, and no body is read before the
+caller has authenticated. Paths are cut at 1 KiB and details at 500
+bytes. Unauthenticated refusals are recorded one by one up to 20 per client
+address and minute; the rest are counted in one summary entry. If the
+writer falls behind, entries are dropped (counted and logged at warn)
+rather than slowing requests. Entries are written in the background and
 purged after `--audit-retention-days` (default 90). Project delete keeps
 them.
 

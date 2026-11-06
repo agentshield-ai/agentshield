@@ -32,7 +32,9 @@ make weft         # build bin/weft
 | `--addr` | `WEFT_ADDR` | `127.0.0.1:6345` |
 | `--db` | `WEFT_DB` | `~/.weft/weft.db` |
 | `--api-keys` | `WEFT_API_KEYS` | empty (auth disabled); comma-separated, each `key` or `user=key` |
-| `--cors-origins` | `WEFT_CORS_ORIGINS` | empty |
+| `--cors-origins` | `WEFT_CORS_ORIGINS` | empty; browser origins allowed to call the API. A state-changing request carrying another `Origin` is refused (403) |
+| `--allowed-hosts` | `WEFT_ALLOWED_HOSTS` | empty; host names the server answers to besides IP addresses, `localhost` and the `--addr` host name (and the SSO redirect URL's host): `weft.example.com`, `.example.com` for subdomains, `*` for any. Other `Host` headers get 421 (DNS rebinding). Set it when users reach Weft by a name, e.g. behind a reverse proxy that keeps the `Host` |
+| `--trusted-proxies` | `WEFT_TRUSTED_PROXIES` | empty; IPs or CIDRs of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Host` are believed (audit and request-log addresses, same-origin checks). Otherwise the client address is the socket peer |
 | `--no-ui` | | serve the UI |
 | `--log-level` | `WEFT_LOG_LEVEL` | `info`: one line per write, ingest batch, refusal and server error; `debug` adds reads, the sessions each batch touched, turn rebuilds and how each AgentShield verdict attached. See [Logs](guides/setup.md#logs) |
 | `--log-format` | `WEFT_LOG_FORMAT` | `text` (`key=value`); `json` writes one JSON object per line |
@@ -56,6 +58,7 @@ make weft         # build bin/weft
 | `--oidc-group-roles` | `WEFT_OIDC_GROUP_ROLES` | empty; `group=admin` (server admin) or `group=viewer\|member\|admin@team`, comma-separated |
 | `--oidc-groups-claim` | `WEFT_OIDC_GROUPS_CLAIM` | `groups` |
 | `--oidc-admin-emails` | `WEFT_OIDC_ADMIN_EMAILS` | empty; verified emails made server admins at sign-in |
+| `--oidc-assume-email-verified` | `WEFT_OIDC_ASSUME_EMAIL_VERIFIED` | `false`; an ID token without `email_verified` is unverified (it neither links an existing account nor passes `--oidc-allowed-domains`). `true` for providers that only issue verified addresses but omit the claim |
 | `--oidc-scopes` | `WEFT_OIDC_SCOPES` | `openid,email,profile` |
 | `--session-ttl` | `WEFT_SESSION_TTL` | `12h` browser session lifetime |
 | `--secure-cookies` | `WEFT_SECURE_COOKIES` | auto (Secure on TLS or an https redirect URL); `true` behind a TLS-terminating proxy |
@@ -110,8 +113,8 @@ backend are operator configuration and are not restricted. Details:
 For UI development: `./bin/weft` in one shell, `cd web/weft-ui && npm run dev`
 in another (Vite proxies API paths to `WEFT_SERVER_URL`, default `:6345`).
 To test SSO through Vite, register `http://localhost:5173/auth/oidc/callback`
-as the redirect URL and start Weft with `--cors-origins http://localhost:5173`
-(the proxy rewrites `Host`, so the session's same-origin check needs it).
+as the redirect URL (the dev proxy rewrites `Host` and drops the browser's
+`Origin`, so Weft's same-origin checks pass).
 
 ## Send data
 
@@ -551,8 +554,17 @@ built-in providers keep using the server keys. See
 ## Security notes
 
 - Without `--api-keys`, managed keys or `--oidc-issuer` the server is open to
-  anyone who can reach it. It binds to loopback by default and logs a
-  warning on other addresses.
+  anyone who can reach it. It binds to loopback by default and warns loudly
+  (also on stderr when logging to a file) when it listens without
+  authentication on an address other machines can reach, host names
+  included. Even then, web pages of other sites cannot use it through a
+  visitor's browser: state-changing requests need a JSON content type and
+  an allowed `Origin`, and unknown `Host` names are refused.
+- **Timeouts.** Request headers must arrive within 10 s and the whole
+  request within 2 min; idle keep-alive connections close after 2 min;
+  every response write must complete within 2 min (streams and exports run
+  as long as the client keeps reading). Unauthenticated requests are refused
+  before their body is read.
 - **Access model.** Static `--api-keys` keys and managed admin keys are
   server admins. Users (**Users & teams**) hold roles: `viewer` (read),
   `member` (also write spans, objects, feedback, run evaluations) and
