@@ -22,8 +22,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// SecretFunc looks up a provider secret (API key, base URL).
-type SecretFunc func(ctx context.Context, name string) (string, bool)
+// SecretFunc returns the stored secret named name that projectID can see
+// (its own, its team's, else the server's: the narrowest scope that has it),
+// or nil. projectID "" sees server secrets only. Whether it may be used is
+// decided by Client.UseSecret (secrets.go).
+type SecretFunc func(ctx context.Context, projectID, name string) (*store.SecretRecord, error)
 
 // CustomProvider is an OpenAI-compatible endpoint defined by a Provider object.
 type CustomProvider struct {
@@ -40,8 +43,35 @@ type ProviderFunc func(ctx context.Context, projectID, name string) (*CustomProv
 type Client struct {
 	Secret    SecretFunc
 	Providers ProviderFunc
-	HTTP      *http.Client
+	// ServerSecretsOpen reports whether projects' own objects may use server
+	// secrets without allowed hosts: true while every principal of the
+	// server is a server admin. nil means never.
+	ServerSecretsOpen func(ctx context.Context) bool
+	// HTTP calls project-chosen endpoints (custom providers, stored base
+	// URLs); OperatorHTTP calls the built-in provider routes at their
+	// built-in or environment base URLs (egress.NewProviderClient). Neither
+	// follows redirects.
+	HTTP         *http.Client
+	OperatorHTTP *http.Client
 }
+
+// Response size limits (decompressed bytes). A provider that sends more gets
+// the call failed with ErrResponseTooLarge, so a hostile or broken endpoint
+// cannot exhaust memory or have huge spans stored.
+var (
+	MaxCompletionResponseBytes int64 = 16 << 20
+	MaxEmbeddingResponseBytes  int64 = 128 << 20
+	MaxImageResponseBytes      int64 = 64 << 20
+	MaxModerationResponseBytes int64 = 4 << 20
+	// MaxStreamBytes bounds the raw event stream of a streamed completion.
+	MaxStreamBytes int64 = 64 << 20
+	// MaxStreamContentBytes bounds the accumulated content and tool-call
+	// arguments of a streamed completion (what is returned and stored).
+	MaxStreamContentBytes = 16 << 20
+)
+
+// ErrResponseTooLarge is returned when a provider response exceeds its limit.
+var ErrResponseTooLarge = errors.New("provider response too large")
 
 // New creates a client. Secrets come only from the secret store (secret).
 // The server's own environment is consulted only for the API key of a
@@ -51,29 +81,31 @@ type Client struct {
 // custom provider key) could have the server send its environment, such as
 // OPENAI_API_KEY or WEFT_DB_ENCRYPTION_KEY, to a URL they control.
 func New(secret SecretFunc, providers ProviderFunc) *Client {
-	return &Client{Secret: secret, Providers: providers, HTTP: egress.NewClient(10*time.Minute, true)}
+	return &Client{Secret: secret, Providers: providers, HTTP: egress.NewClient(10*time.Minute, false),
+		OperatorHTTP: egress.NewProviderClient(10 * time.Minute)}
 }
 
-func (c *Client) secret(ctx context.Context, name string) (string, bool) {
-	if c.Secret != nil {
-		if v, ok := c.Secret(ctx, name); ok && v != "" {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-// routeKey returns the API key for rt: the stored secret, or, for a built-in
+// routeKey returns the API key for rt: the stored secret (UseSecret decides
+// whether this project may send it to rt.BaseURL), or, for a built-in
 // provider at its operator-chosen base URL (rt.envKey), the environment.
-func (c *Client) routeKey(ctx context.Context, rt Route) (string, bool) {
-	if v, ok := c.secret(ctx, rt.KeyName); ok {
-		return v, true
+// A stored secret that exists but may not be used is an error.
+func (c *Client) routeKey(ctx context.Context, rt Route) (string, bool, error) {
+	if rt.KeyName == "" {
+		return "", false, nil
+	}
+	v, _, err := c.UseSecret(ctx, SecretUse{ProjectID: rt.project, Name: rt.KeyName, Dest: rt.BaseURL + "/", Builtin: rt.builtin,
+		MinScope: rt.minScope, OperatorDest: rt.operator})
+	if err == nil {
+		return v, true, nil
+	}
+	if !IsSecretNotFound(err) {
+		return "", false, err
 	}
 	if rt.envKey {
 		v := os.Getenv(rt.KeyName)
-		return v, v != ""
+		return v, v != "", nil
 	}
-	return "", false
+	return "", false, nil
 }
 
 // openAICompatible are well-known OpenAI-compatible providers.
@@ -100,6 +132,18 @@ type Route struct {
 	// envKey: KeyName may be read from the server environment (built-in
 	// provider, base URL not chosen by a project).
 	envKey bool
+	// project resolves stored secrets; builtin: a built-in provider route
+	// names KeyName (server secrets usable); operator: BaseURL is the
+	// built-in or environment base URL; minScope: KeyName must be at least
+	// this narrow (BaseURL came from a secret of that scope); urlSecret:
+	// BaseURL came from a stored secret, so errors must not print it; err:
+	// a stored base URL could not be used.
+	project   string
+	builtin   bool
+	operator  bool
+	minScope  string
+	urlSecret bool
+	err       error
 }
 
 // Resolve maps a model id to a route.
@@ -113,10 +157,10 @@ func (c *Client) Resolve(ctx context.Context, projectID, model string) (Route, e
 		case "mock":
 			return Route{Kind: "mock", Model: name}, nil
 		case "anthropic":
-			return Route{Kind: "anthropic", Model: name, KeyName: "ANTHROPIC_API_KEY", envKey: true}, nil
+			return anthropicRoute(projectID, name), nil
 		}
 		if p, ok := openAICompatible[prefix]; ok {
-			return c.openAIRoute(ctx, prefix, name, p.BaseURL, p.KeyName), nil
+			return c.openAIRoute(ctx, projectID, prefix, name, p.BaseURL, p.KeyName)
 		}
 		if c.Providers != nil {
 			cp, err := c.Providers(ctx, projectID, prefix)
@@ -124,47 +168,88 @@ func (c *Client) Resolve(ctx context.Context, projectID, model string) (Route, e
 				return Route{}, err
 			}
 			if cp != nil {
-				return Route{Kind: "openai", Model: name, BaseURL: strings.TrimRight(cp.BaseURL, "/"), KeyName: cp.APIKeyName, Headers: cp.ExtraHeaders}, nil
+				return Route{Kind: "openai", Model: name, BaseURL: strings.TrimRight(cp.BaseURL, "/"), KeyName: cp.APIKeyName, Headers: cp.ExtraHeaders,
+					project: projectID}, nil
 			}
 		}
 		return Route{}, fmt.Errorf("unknown provider %q in model %q", prefix, model)
 	}
+	builtin := func(provider string) (Route, error) {
+		p := openAICompatible[provider]
+		return c.openAIRoute(ctx, projectID, provider, model, p.BaseURL, p.KeyName)
+	}
 	switch {
 	case strings.HasPrefix(model, "claude"):
-		return Route{Kind: "anthropic", Model: model, KeyName: "ANTHROPIC_API_KEY", envKey: true}, nil
+		return anthropicRoute(projectID, model), nil
 	case strings.HasPrefix(model, "gemini"):
-		p := openAICompatible["gemini"]
-		return c.openAIRoute(ctx, "gemini", model, p.BaseURL, p.KeyName), nil
+		return builtin("gemini")
 	case strings.HasPrefix(model, "mistral") || strings.HasPrefix(model, "codestral"):
-		p := openAICompatible["mistral"]
-		return c.openAIRoute(ctx, "mistral", model, p.BaseURL, p.KeyName), nil
+		return builtin("mistral")
 	case strings.HasPrefix(model, "deepseek"):
-		p := openAICompatible["deepseek"]
-		return c.openAIRoute(ctx, "deepseek", model, p.BaseURL, p.KeyName), nil
+		return builtin("deepseek")
 	case strings.HasPrefix(model, "grok"):
-		p := openAICompatible["xai"]
-		return c.openAIRoute(ctx, "xai", model, p.BaseURL, p.KeyName), nil
+		return builtin("xai")
 	case strings.HasPrefix(model, "gpt") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") ||
 		strings.HasPrefix(model, "o4") || strings.HasPrefix(model, "chatgpt") || strings.HasPrefix(model, "text-"):
-		p := openAICompatible["openai"]
-		return c.openAIRoute(ctx, "openai", model, p.BaseURL, p.KeyName), nil
+		return builtin("openai")
 	}
 	return Route{}, fmt.Errorf("cannot route model %q: use a provider prefix such as openai/, anthropic/, gemini/ or a custom provider name", model)
 }
 
-func (c *Client) openAIRoute(ctx context.Context, provider, model, base, key string) Route {
-	envKey := true
+func anthropicRoute(projectID, model string) Route {
+	// The Anthropic base URL comes only from the operator's environment.
+	return Route{Kind: "anthropic", Model: model, BaseURL: anthropicBase(), KeyName: "ANTHROPIC_API_KEY", envKey: true,
+		project: projectID, builtin: true, operator: true}
+}
+
+// openAIRoute is a built-in OpenAI-compatible provider. Its base URL is the
+// built-in one, the operator's environment variable, or a stored
+// OPENAI_BASE_URL / OLLAMA_BASE_URL secret visible to the project. A stored
+// base URL may point anywhere, so the operator's environment key is not sent
+// there, and the key must come from the same scope or a narrower one (a base
+// URL a project member stored never receives a server or team key).
+func (c *Client) openAIRoute(ctx context.Context, projectID, provider, model, base, key string) (Route, error) {
+	rt := Route{Kind: "openai", Model: model, KeyName: key, envKey: true, project: projectID, builtin: true, operator: true}
 	baseVar := map[string]string{"openai": "OPENAI_BASE_URL", "ollama": "OLLAMA_BASE_URL"}[provider]
 	if baseVar != "" {
-		if v, ok := c.secret(ctx, baseVar); ok {
-			// A stored base URL may point anywhere, so the operator's
-			// environment key is not sent there.
-			base, envKey = v, false
-		} else if v := os.Getenv(baseVar); v != "" {
-			base = v
+		// The base URL is not itself a credential, so http is fine here;
+		// the key sent to it is checked (https) by routeKey.
+		v, rec, err := c.UseSecret(ctx, SecretUse{ProjectID: projectID, Name: baseVar, URLValued: true, Builtin: true, AllowHTTP: true})
+		switch {
+		case err == nil:
+			base, rt.envKey, rt.operator, rt.urlSecret, rt.minScope = strings.TrimSpace(v), false, false, true, rec.Scope
+		case !IsSecretNotFound(err):
+			return Route{}, err
+		default:
+			if v := os.Getenv(baseVar); v != "" {
+				base = v
+			}
 		}
 	}
-	return Route{Kind: "openai", Model: model, BaseURL: strings.TrimRight(base, "/"), KeyName: key, envKey: envKey}
+	rt.BaseURL = strings.TrimRight(base, "/")
+	return rt, nil
+}
+
+// keyHeaders returns the Authorization header for rt (none for a keyless
+// local endpoint) plus the route's extra headers.
+func (c *Client) keyHeaders(ctx context.Context, rt Route) (map[string]string, error) {
+	headers := map[string]string{}
+	if rt.KeyName != "" {
+		key, ok, err := c.routeKey(ctx, rt)
+		if err != nil {
+			return nil, err
+		}
+		if !ok && !strings.HasPrefix(rt.BaseURL, "http://localhost") && !strings.HasPrefix(rt.BaseURL, "http://127.0.0.1") {
+			return nil, fmt.Errorf("no API key configured: set the %s secret", rt.KeyName)
+		}
+		if key != "" {
+			headers["Authorization"] = "Bearer " + key
+		}
+	}
+	for k, v := range rt.Headers {
+		headers[k] = v
+	}
+	return headers, nil
 }
 
 // Complete runs a non-streaming chat completion.
@@ -194,7 +279,9 @@ func (c *Client) Stream(ctx context.Context, projectID string, inputs map[string
 	}
 	acc := newAccumulator(model)
 	wrapped := func(ch map[string]any) error {
-		acc.add(ch)
+		if err := acc.add(ch); err != nil {
+			return err
+		}
 		return emit(ch)
 	}
 	switch rt.Kind {
@@ -267,20 +354,15 @@ func (c *Client) openAIComplete(ctx context.Context, rt Route, inputs map[string
 		body["stream"] = true
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
-	headers := map[string]string{}
-	if rt.KeyName != "" {
-		key, ok := c.routeKey(ctx, rt)
-		if !ok && !strings.HasPrefix(rt.BaseURL, "http://localhost") && !strings.HasPrefix(rt.BaseURL, "http://127.0.0.1") {
-			return nil, fmt.Errorf("no API key configured: set the %s secret", rt.KeyName)
-		}
-		if key != "" {
-			headers["Authorization"] = "Bearer " + key
-		}
+	headers, err := c.keyHeaders(ctx, rt)
+	if err != nil {
+		return nil, err
 	}
-	for k, v := range rt.Headers {
-		headers[k] = v
+	limit := MaxCompletionResponseBytes
+	if emit != nil {
+		limit = MaxStreamBytes
 	}
-	resp, err := c.post(ctx, rt.BaseURL+"/chat/completions", headers, body)
+	resp, err := c.post(ctx, rt, "/chat/completions", headers, body, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +370,7 @@ func (c *Client) openAIComplete(ctx context.Context, rt Route, inputs map[string
 	if emit == nil {
 		var out map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			return nil, fmt.Errorf("decoding provider response: %w", err)
+			return nil, decodeErr("provider response", err)
 		}
 		return out, nil
 	}
@@ -304,23 +386,40 @@ func (c *Client) openAIComplete(ctx context.Context, rt Route, inputs map[string
 	})
 }
 
-func (c *Client) post(ctx context.Context, url string, headers map[string]string, body any) (*http.Response, error) {
+// post sends a provider request to rt.BaseURL+path. The response body is
+// limited to limit bytes (after decompression). When the base URL came from
+// a stored secret, errors do not include it.
+func (c *Client) post(ctx context.Context, rt Route, path string, headers map[string]string, body any, limit int64) (*http.Response, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rt.BaseURL+path, bytes.NewReader(b))
 	if err != nil {
+		if rt.urlSecret {
+			return nil, errors.New("calling provider: the stored base URL is not a valid URL")
+		}
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.HTTP.Do(req)
+	hc := c.HTTP
+	if rt.operator && c.OperatorHTTP != nil {
+		hc = c.OperatorHTTP
+	}
+	if hc == nil {
+		hc = egress.NewClient(10*time.Minute, false)
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
+		if rt.urlSecret {
+			return nil, fmt.Errorf("calling provider at the stored base URL: %s", NetErrorKind(err))
+		}
 		return nil, fmt.Errorf("calling provider: %w", egress.Sanitize(err))
 	}
+	resp.Body = LimitBody(resp.Body, limit)
 	if resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -336,6 +435,74 @@ func (c *Client) post(ctx context.Context, url string, headers map[string]string
 		return nil, fmt.Errorf("provider returned %d: %s", resp.StatusCode, msg)
 	}
 	return resp, nil
+}
+
+// decodeErr reports a failed decode, naming an oversized response plainly.
+func decodeErr(what string, err error) error {
+	if errors.Is(err, ErrResponseTooLarge) {
+		return err
+	}
+	return fmt.Errorf("decoding %s: %w", what, err)
+}
+
+// LimitBody fails reads with ErrResponseTooLarge once more than limit bytes
+// were read (limit <= 0: unlimited).
+func LimitBody(rc io.ReadCloser, limit int64) io.ReadCloser {
+	if limit <= 0 {
+		return rc
+	}
+	return &limitedBody{rc: rc, left: limit}
+}
+
+type limitedBody struct {
+	rc   io.ReadCloser
+	left int64
+}
+
+func (l *limitedBody) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		// Probe for more data: exactly limit bytes is fine.
+		var one [1]byte
+		n, err := l.rc.Read(one[:])
+		if n > 0 {
+			return 0, ErrResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.rc.Read(p)
+	l.left -= int64(n)
+	return n, err
+}
+
+func (l *limitedBody) Close() error { return l.rc.Close() }
+
+// NetErrorKind describes a failed request without the URL, host or address
+// (for destinations that are themselves secret).
+func NetErrorKind(err error) string {
+	var ne interface{ Timeout() bool }
+	switch {
+	case egress.IsBlocked(err):
+		return egress.ErrBlocked.Error()
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
+		return "the request timed out"
+	case errors.Is(err, context.Canceled):
+		return "the request was cancelled"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "no such host") || strings.Contains(msg, "server misbehaving"):
+		return "the host name could not be resolved"
+	case strings.Contains(msg, "connection refused"):
+		return "the connection was refused"
+	case strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") || strings.Contains(msg, "certificate"):
+		return "the TLS handshake failed"
+	case strings.Contains(msg, "invalid header"):
+		return "a request header is invalid"
+	}
+	return "the request failed"
 }
 
 // readSSE parses a server-sent event stream.
@@ -372,7 +539,13 @@ func readSSE(r io.Reader, fn func(event, data string) error) error {
 	if err := dispatch(); err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	return sc.Err()
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return ErrResponseTooLarge
+		}
+		return err
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- accumulation
@@ -383,13 +556,16 @@ type accumulator struct {
 	toolCalls map[int]map[string]any
 	finish    any
 	usage     any
+	size      int // content and tool-call bytes accumulated
 }
 
 func newAccumulator(model string) *accumulator {
 	return &accumulator{model: model, toolCalls: map[int]map[string]any{}}
 }
 
-func (a *accumulator) add(ch map[string]any) {
+// add folds a chunk in; it fails once the accumulated content and tool-call
+// arguments exceed MaxStreamContentBytes.
+func (a *accumulator) add(ch map[string]any) error {
 	if id, ok := ch["id"].(string); ok && id != "" {
 		a.id = id
 	}
@@ -407,6 +583,9 @@ func (a *accumulator) add(ch map[string]any) {
 		}
 		delta, _ := cm["delta"].(map[string]any)
 		if s, ok := delta["content"].(string); ok {
+			if a.size += len(s); a.size > MaxStreamContentBytes {
+				return ErrResponseTooLarge
+			}
 			a.content.WriteString(s)
 		}
 		tcs, _ := delta["tool_calls"].([]any)
@@ -426,14 +605,20 @@ func (a *accumulator) add(ch map[string]any) {
 			}
 			fn, _ := tm["function"].(map[string]any)
 			cf := cur["function"].(map[string]any)
-			if n, ok := fn["name"].(string); ok {
+			n, _ := fn["name"].(string)
+			args, _ := fn["arguments"].(string)
+			if a.size += len(n) + len(args); a.size > MaxStreamContentBytes || len(a.toolCalls) > 1024 {
+				return ErrResponseTooLarge
+			}
+			if n != "" {
 				cf["name"] = cf["name"].(string) + n
 			}
-			if s, ok := fn["arguments"].(string); ok {
-				cf["arguments"] = cf["arguments"].(string) + s
+			if args != "" {
+				cf["arguments"] = cf["arguments"].(string) + args
 			}
 		}
 	}
+	return nil
 }
 
 func (a *accumulator) final() map[string]any {
@@ -557,7 +742,11 @@ func (c *Client) Models(ctx context.Context) []ModelInfo {
 	}
 	avail := map[string]bool{}
 	for p, k := range providerKeys {
-		_, avail[p] = c.routeKey(ctx, Route{KeyName: k, envKey: true})
+		base := anthropicBase()
+		if oc, ok := openAICompatible[p]; ok {
+			base = oc.BaseURL
+		}
+		_, avail[p], _ = c.routeKey(ctx, Route{KeyName: k, BaseURL: base, envKey: true, builtin: true, operator: true})
 	}
 	for _, d := range store.DefaultPrices {
 		if d.Provider == "mock" || strings.HasPrefix(d.LLMID, "text-embedding") {

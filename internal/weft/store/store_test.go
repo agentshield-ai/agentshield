@@ -367,7 +367,7 @@ func TestSecretsEncryptedAtRest(t *testing.T) {
 	if err := s.r.QueryRowContext(ctx, `SELECT value FROM secrets WHERE name = 'OPENAI_API_KEY'`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw == "sk-test-123" || !strings.HasPrefix(raw, encPrefix) {
+	if raw == "sk-test-123" || !strings.HasPrefix(raw, encPrefixV2) {
 		t.Fatalf("secret stored in plaintext: %q", raw)
 	}
 	// a legacy plaintext row is re-encrypted on the next open
@@ -386,7 +386,7 @@ func TestSecretsEncryptedAtRest(t *testing.T) {
 			t.Fatalf("%s = %q %v %v", name, got, ok, err)
 		}
 	}
-	if err := s2.r.QueryRowContext(ctx, `SELECT value FROM secrets WHERE name = 'LEGACY'`).Scan(&raw); err != nil || !strings.HasPrefix(raw, encPrefix) {
+	if err := s2.r.QueryRowContext(ctx, `SELECT value FROM secrets WHERE name = 'LEGACY'`).Scan(&raw); err != nil || !strings.HasPrefix(raw, encPrefixV2) {
 		t.Fatalf("legacy secret not re-encrypted: %q", raw)
 	}
 	// a different key cannot read the secrets

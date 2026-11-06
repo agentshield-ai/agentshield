@@ -2,7 +2,10 @@ package compat
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -65,6 +68,11 @@ func (a *Adapter) graphql(w http.ResponseWriter, r *http.Request) {
 			writeGraphQLError(w, err.Error())
 			return
 		}
+		// Creating a project is a write, though /graphql only reads otherwise.
+		if err := a.host.AuthorizeWrite(r, pid); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 		if err := a.host.Store().EnsureProject(r.Context(), pid); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -92,10 +100,17 @@ func writeGraphQLError(w http.ResponseWriter, msg string) {
 
 const maxJSONBody = 64 << 20
 
+// decodeBody decodes a JSON request body into v: exactly one JSON value
+// (trailing data is refused), none on GET and HEAD (their bodies are
+// ignored), and every project v names passes the request's decode check
+// (WithDecodeCheck: the caller's role on it).
 func decodeBody(r *http.Request, v any) error {
-	body, err := readBody(r)
-	if err != nil {
-		return err
+	var body []byte
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		var err error
+		if body, err = readBody(r); err != nil {
+			return err
+		}
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		body = []byte("{}")
@@ -105,7 +120,21 @@ func decodeBody(r *http.Request, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return store.Invalidf("invalid JSON body: %v", err)
 	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return store.Invalidf("invalid JSON body: unexpected data after the JSON value")
+	}
+	if check, ok := r.Context().Value(decodeCheckKey{}).(func(any) error); ok {
+		return check(v)
+	}
 	return nil
+}
+
+type decodeCheckKey struct{}
+
+// WithDecodeCheck makes the adapter's body decoding run check on every
+// decoded request (the server's authorisation of the projects it names).
+func WithDecodeCheck(ctx context.Context, check func(any) error) context.Context {
+	return context.WithValue(ctx, decodeCheckKey{}, check)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

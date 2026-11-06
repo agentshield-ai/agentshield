@@ -21,8 +21,10 @@ const placeholder = `<!doctype html><html><head><meta charset="utf-8"><title>Wef
 // ContentSecurityPolicy is sent with the UI's HTML. The UI renders data
 // that anyone who can send telemetry wrote, so the page may run only its own
 // scripts (no inline script, no eval), talk only to this server, embed only
-// blob: objects (PDFs, always application/pdf blobs) and frames of its own,
-// and cannot be framed.
+// blob: objects (PDFs: the UI makes them application/pdf blobs whatever type
+// was recorded; Chrome's PDF viewer then frames the blob, hence frame-src
+// blob:) and frames of its own (sandboxed srcdoc for Html values), and
+// cannot be framed.
 //   - img-src and media-src allow http(s): presigned reference-bucket URLs
 //     (S3, GCS, a local MinIO) and remote images the viewer asked to load.
 //     The UI never fetches a remote image named in recorded data by itself
@@ -37,7 +39,7 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 	"font-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"object-src blob:; " +
-	"frame-src 'self'; " +
+	"frame-src 'self' blob:; " +
 	"worker-src 'self'; " +
 	"frame-ancestors 'none'; " +
 	"base-uri 'none'; " +

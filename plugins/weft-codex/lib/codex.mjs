@@ -14,11 +14,26 @@
 // a failure upserts the same calls.
 
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spanItems, chatOutput, loadConfig, makeLogger, parseMaybeJson, readJsonl, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
+import {
+  chatOutput,
+  createPrivateExclusive,
+  loadConfig,
+  makeLogger,
+  parseMaybeJson,
+  pruneOldFiles,
+  readJsonl,
+  sendItems,
+  shortText,
+  spanItems,
+  stableId,
+  toolDisplay,
+  usageSummary,
+  writePrivate,
+} from './weft.mjs';
 
 export const PLUGIN = 'weft-codex';
 export const PLUGIN_VERSION = '0.1.0';
@@ -288,6 +303,7 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
       inputs: { messages: [{ role: 'user', content: turn.prompt ?? '' }] },
       output: turn.final ? { messages: [{ role: 'assistant', content: turn.final }] } : null,
       error: turn.aborted ? `turn aborted: ${turn.aborted}` : undefined,
+      errorKind: turn.aborted ? 'turn aborted' : undefined,
       genai: { ...conv, 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': cfg.agentName, 'gen_ai.agent.version': session.cliVersion, 'gen_ai.request.model': model, 'gen_ai.provider.name': 'openai' },
       attributes: { codex: { cwd: session.cwd, originator: session.originator, approval_policy: session.approvalPolicy, reasoning_effort: turn.effort, turn_id: turn.codexTurnId } },
     }),
@@ -318,7 +334,8 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
     const genai = { ...conv, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.id };
     if (t.mcpServer) Object.assign(genai, { 'gen_ai.tool.type': 'mcp', 'mcp.server.name': t.mcpServer });
     let exception = t.error;
-    if (!exception && t.endedAt === null) exception = turn.aborted ? 'turn aborted before the tool finished' : undefined;
+    let exceptionKind = exception ? 'tool failed' : undefined;
+    if (!exception && t.endedAt === null) exception = exceptionKind = turn.aborted ? 'turn aborted before the tool finished' : undefined;
     const input = t.input && typeof t.input === 'object' && !Array.isArray(t.input) ? t.input : { input: t.input };
     const exit = t.exitCode ?? t.output?.metadata?.exit_code;
     items.push(
@@ -334,6 +351,7 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
         inputs: input,
         output: t.output ?? null,
         error: exception,
+        errorKind: exceptionKind,
         genai,
         attributes: exit !== undefined ? { codex: { exit_code: exit } } : undefined,
       }),
@@ -343,6 +361,13 @@ export function buildTurnItems(cfg, sid, turn, session = {}) {
 }
 
 // ---------------------------------------------------------------- worker
+
+/** The session fields kept in the cursor file: no prompt text or paths when content capture is off. */
+function storedSession(cfg, session) {
+  if (cfg.captureContent) return session;
+  const { firstPrompt, cwd, ...rest } = session;
+  return rest;
+}
 
 function readCursor(cfg, sid) {
   try {
@@ -354,14 +379,13 @@ function readCursor(cfg, sid) {
 
 function acquireLock(cfg, sid) {
   const p = lockPath(cfg, sid);
-  mkdirSync(dirname(p), { recursive: true });
   try {
     if (Date.now() - statSync(p).mtimeMs > 60_000) unlinkSync(p);
   } catch {
     /* no stale lock */
   }
   try {
-    closeSync(openSync(p, 'wx'));
+    createPrivateExclusive(p);
     return () => {
       try {
         unlinkSync(p);
@@ -401,13 +425,13 @@ export async function flushRollout(cfg, rolloutPath, { sessionId, fetchImpl, fin
       const t = turns[i];
       const isLast = i === turns.length - 1;
       if (!t.closed && !(final && isLast)) break;
-      if (!session.firstPrompt && t.prompt) session.firstPrompt = shortText(t.prompt, 80);
+      if (cfg.captureContent && !session.firstPrompt && t.prompt) session.firstPrompt = shortText(t.prompt, 80);
       const batch = buildTurnItems(cfg, sid, t, session);
       try {
-        await sendItems(cfg, batch, { fetchImpl });
+        await sendItems(cfg, batch, { fetchImpl, warn: (m) => log.warn(m) });
       } catch (e) {
         log.warn(`session ${sid}: send failed, will retry on the next turn: ${e?.message ?? e}`);
-        writeFileSync(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session }));
+        writePrivate(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session: storedSession(cfg, session) }));
         return { sent, items, error: String(e?.message ?? e) };
       }
       sent++;
@@ -416,8 +440,9 @@ export async function flushRollout(cfg, rolloutPath, { sessionId, fetchImpl, fin
       const next = turns[i + 1];
       cursor.offset = next ? next.offset : t.offset;
       cursor.model = t.model ?? cursor.model;
-      writeFileSync(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session }));
+      writePrivate(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session: storedSession(cfg, session) }));
     }
+    pruneOldFiles(dirname(cursorPath(cfg, sid)), /\.(json|lock)$/, cfg.retentionDays);
     return { sent, items, sessionId: sid };
   } catch (e) {
     log.error(`session ${sid}: collector failed: ${e?.stack ?? e}`);

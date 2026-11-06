@@ -8,7 +8,7 @@
     "properties": {
       "enabled": { "type": "boolean", "default": true },
       "serverUrl": { "type": "string", "description": "Weft server URL (default WEFT_SERVER_URL or http://localhost:6345)" },
-      "apiKey": { "type": "string", "description": "Weft API key (default WEFT_API_KEY)" },
+      "apiKey": { "type": "string", "description": "Weft API key (default WEFT_API_KEY; prefer the environment variable over the config file)" },
       "entity": { "type": "string", "description": "Team part of the project id, when project has none" },
       "project": { "type": "string", "description": "Weft project, entity/project (default WEFT_PROJECT)" },
       "agentName": { "type": "string", "description": "Agent name in Weft (default: the OpenClaw agent id)" },
@@ -19,5 +19,8 @@
       "maxFieldChars": { "type": "number", "default": 20000 },
       "runIdleMs": { "type": "number", "default": 600000 }
     }
+  },
+  "uiHints": {
+    "apiKey": { "label": "Weft API key", "sensitive": true, "placeholder": "set WEFT_API_KEY instead" }
   }
 }

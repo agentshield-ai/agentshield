@@ -13,7 +13,7 @@
 // upserts the same spans.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -46,7 +46,9 @@ function readJson(path) {
  *   WEFT_SERVER_URL, WEFT_API_KEY, WEFT_PROJECT (required; `entity/project`),
  *   WEFT_AGENT_NAME, WEFT_CAPTURE_CONTENT (default true),
  *   WEFT_HOOK_TIMEOUT_MS (network timeout, default 2000),
- *   WEFT_MAX_FIELD_CHARS (default 20000), WEFT_PLUGIN_DISABLED, WEFT_DEBUG.
+ *   WEFT_MAX_FIELD_CHARS (default 20000), WEFT_PLUGIN_DISABLED, WEFT_DEBUG,
+ *   WEFT_STATE_RETENTION_DAYS (local session logs left behind by sessions that
+ *   never ended are deleted after this many days, default 7; 0 keeps them).
  */
 export function loadConfig({ plugin, defaultAgent, stateDirEnv, env = process.env, overrides = {} } = {}) {
   const stateDir = overrides.stateDir ?? env[stateDirEnv ?? ''] ?? env.WEFT_PLUGIN_STATE_DIR ?? join(homedir(), `.${plugin ?? 'weft-plugin'}`);
@@ -64,26 +66,112 @@ export function loadConfig({ plugin, defaultAgent, stateDirEnv, env = process.en
     maxFieldChars: Number(pick('maxFieldChars', 'WEFT_MAX_FIELD_CHARS', file.max_field_chars ?? 20000)) || 20000,
     disabled: envBool(pick('disabled', 'WEFT_PLUGIN_DISABLED', file.disabled), false),
     debug: envBool(pick('debug', 'WEFT_DEBUG', file.debug), false),
+    retentionDays: Number(pick('retentionDays', 'WEFT_STATE_RETENTION_DAYS', file.state_retention_days ?? 7)),
   };
+  if (!Number.isFinite(cfg.retentionDays) || cfg.retentionDays < 0) cfg.retentionDays = 7;
   if (!cfg.project) cfg.disabled = true;
   return cfg;
 }
 
+// ---------------------------------------------------------------- private local state
+//
+// Plugin state (session logs, cursors, logs) can hold prompts and tool output,
+// so it lives in directories only the user can read (0700) and files created
+// 0600; directories made earlier with wider modes are tightened.
+
+/** mkdir -p with mode 0700, tightening `dir` itself when it already exists. */
+export function privateMkdir(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    if ((statSync(dir).mode & 0o077) !== 0) chmodSync(dir, 0o700);
+  } catch {
+    /* not ours to change */
+  }
+}
+
+function tighten(path) {
+  try {
+    if ((statSync(path).mode & 0o077) !== 0) chmodSync(path, 0o600);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Append to a file created 0600 (its directory 0700). */
+export function appendPrivate(path, text) {
+  privateMkdir(dirname(path));
+  appendFileSync(path, text, { mode: 0o600 });
+  tighten(path);
+}
+
+/** Replace a file atomically (temp file + rename), created 0600. */
+export function writePrivate(path, text) {
+  privateMkdir(dirname(path));
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  try {
+    writeFileSync(tmp, text, { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
+}
+
+/** Create a file exclusively (a lock), 0600. Throws EEXIST when it exists. */
+export function createPrivateExclusive(path) {
+  privateMkdir(dirname(path));
+  closeSync(openSync(path, 'wx', 0o600));
+}
+
+/**
+ * Delete files in `dir` whose names match `re` and that were last changed more
+ * than `maxAgeDays` days ago (session logs of crashed sessions). Returns the
+ * names deleted. Never throws.
+ */
+export function pruneOldFiles(dir, re, maxAgeDays = 14, now = Date.now()) {
+  const out = [];
+  if (!(maxAgeDays > 0)) return out;
+  const cut = now - maxAgeDays * 86_400_000;
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const n of names) {
+    if (!re.test(n)) continue;
+    try {
+      const p = join(dir, n);
+      if (statSync(p).mtimeMs < cut) {
+        unlinkSync(p);
+        out.push(n);
+      }
+    } catch {
+      /* raced or not ours */
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- logging
 
-/** Append a line to `<stateDir>/logs/<name>.log` (rotated at 1 MB). Never throws. */
+/** Append a line to `<stateDir>/logs/<name>.log` (rotated at 1 MB, 0600 in a 0700 dir). Never throws. */
 export function makeLogger(cfg, name = 'plugin') {
   const path = join(cfg.stateDir, 'logs', `${name}.log`);
   const write = (level, msg) => {
     if (level === 'debug' && !cfg.debug) return;
     try {
-      mkdirSync(dirname(path), { recursive: true });
+      privateMkdir(cfg.stateDir);
       try {
         if (statSync(path).size > 1 << 20) renameSync(path, `${path}.1`);
       } catch {
         /* no file yet */
       }
-      appendFileSync(path, `${new Date().toISOString()} ${level} ${msg}\n`);
+      appendPrivate(path, `${new Date().toISOString()} ${level} ${msg}\n`);
     } catch {
       /* logging must never fail the hook */
     }
@@ -168,36 +256,71 @@ export function toolDisplay(name, input) {
 
 // ---------------------------------------------------------------- spans
 
+/** gen_ai.* attributes that carry conversation content (dropped when content capture is off). */
+export const CONTENT_GENAI_KEYS = new Set(['gen_ai.conversation.name', 'gen_ai.prompt', 'gen_ai.completion', 'gen_ai.input.messages', 'gen_ai.output.messages', 'gen_ai.system_instructions']);
+/** Harness attribute keys (under any namespace) naming local paths or content (dropped when content capture is off). */
+export const CONTENT_ATTRIBUTE_KEYS = new Set(['cwd', 'transcript_path', 'agent_transcript_path', 'session_file', 'parent_session_file', 'prompt', 'last_assistant_message']);
+
+/** A display name that carries no content: the tool name, `chat <model>` or `invoke_agent <agent>`. */
+export function safeDisplayName(kind, genai = {}, name = '') {
+  if (kind === 'tool') return String(genai['gen_ai.tool.name'] ?? name);
+  if (kind === 'llm') return `chat ${genai['gen_ai.request.model'] ?? ''}`.trim();
+  if (kind === 'agent') return `invoke_agent ${genai['gen_ai.agent.name'] ?? ''}`.trim();
+  return String(name);
+}
+
+const GENERIC_ERROR = { tool: 'tool error', llm: 'llm error', agent: 'agent error' };
+
 /**
  * One finished span as a batch item for POST /api/v1/spans/batch
  * (`{span: {...}}`: start and end in one piece).
  * `kind` is the span kind (agent, llm, tool); `genai` are flat gen_ai.* attributes;
  * `sessionId` is the conversation (gen_ai.conversation.id), `turnId` the turn.
+ *
+ * With `cfg.captureContent` false nothing the user or the model wrote leaves
+ * the machine: inputs and output are empty, the display name is
+ * `safeDisplayName` (or `c.safeDisplayName`), the error is `c.errorKind` (a
+ * fixed, content-free class such as "interrupted") or a generic "tool error",
+ * and `gen_ai.conversation.name` and local paths (`cwd`, `transcript_path`, ...)
+ * are dropped.
  */
 export function spanItems(cfg, c) {
   const kind = c.kind;
+  const capture = cfg.captureContent !== false;
+  const harness = { ...(c.attributes ?? {}) };
+  if (!capture) {
+    for (const [ns, v] of Object.entries(harness)) {
+      if (ns === 'weft' || !v || typeof v !== 'object' || Array.isArray(v)) continue;
+      harness[ns] = Object.fromEntries(Object.entries(v).filter(([k]) => !CONTENT_ATTRIBUTE_KEYS.has(k)));
+    }
+  }
   const attributes = {
-    ...(c.attributes ?? {}),
+    ...harness,
     weft: { span_kind: kind, source: cfg.plugin, plugin_version: c.pluginVersion ?? CORE_VERSION, ...(c.attributes?.weft ?? {}) },
   };
-  for (const [k, v] of Object.entries(c.genai ?? {})) if (v !== undefined && v !== null && v !== '') attributes[k] = v;
+  for (const [k, v] of Object.entries(c.genai ?? {})) {
+    if (v === undefined || v === null || v === '') continue;
+    if (!capture && CONTENT_GENAI_KEYS.has(k)) continue;
+    attributes[k] = v;
+  }
+  const display = capture ? (c.displayName ?? null) : (c.safeDisplayName ?? safeDisplayName(kind, c.genai ?? {}, c.name));
   const span = {
     project_id: cfg.project,
     id: c.id,
     name: c.name,
-    display_name: c.displayName ?? null,
+    display_name: display,
     trace_id: c.traceId,
     parent_id: c.parentId ?? null,
     started_at: iso(c.startedAt),
     attributes,
-    inputs: cfg.captureContent ? truncate(c.inputs ?? {}, cfg.maxFieldChars) : {},
+    inputs: capture ? truncate(c.inputs ?? {}, cfg.maxFieldChars) : {},
     ended_at: iso(c.endedAt ?? c.startedAt),
-    output: cfg.captureContent ? truncate(c.output ?? null, cfg.maxFieldChars) : null,
+    output: capture ? truncate(c.output ?? null, cfg.maxFieldChars) : null,
     summary: c.summary ?? {},
   };
   if (c.sessionId) span.session_id = c.sessionId;
   if (c.turnId) span.turn_id = c.turnId;
-  if (c.error) span.error = String(c.error).slice(0, 4000);
+  if (c.error) span.error = capture ? String(c.error).slice(0, 4000) : String(c.errorKind ?? GENERIC_ERROR[kind] ?? 'error');
   return [{ span }];
 }
 
@@ -221,13 +344,47 @@ export function chatOutput(model, content, finishReason) {
 
 // ---------------------------------------------------------------- sending
 
+/** True for localhost, *.localhost and loopback IP literals. */
+export function isLoopbackHost(host) {
+  const h = String(host ?? '').replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h.endsWith('.localhost') || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h) || h === '::1';
+}
+
+/** The warning to log when the API key would go over plain http to a non-loopback host, else null. */
+export function plainHttpKeyWarning(cfg) {
+  if (!cfg?.apiKey) return null;
+  let u;
+  try {
+    u = new URL(cfg.serverUrl);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'http:' || isLoopbackHost(u.hostname)) return null;
+  return `sending the Weft API key to ${u.origin} over plain http; anyone on the network path can read it. Use https.`;
+}
+
+const warnedPlainHttp = new Set();
+
 /**
  * POST span items to /api/v1/spans/batch (in chunks) with a timeout.
- * Throws on a network error or a non-2xx status.
+ * Throws on a network error, a redirect (never followed: it would resend the
+ * API key and the spans to another host) or a non-2xx status. `warn` gets a
+ * one-time warning when the API key goes over plain http to a non-loopback host.
  */
-export async function sendItems(cfg, items, { fetchImpl = globalThis.fetch, timeoutMs } = {}) {
+export async function sendItems(cfg, items, { fetchImpl = globalThis.fetch, timeoutMs, warn } = {}) {
   if (!items.length) return;
-  const headers = { 'Content-Type': 'application/json', 'User-Agent': `${cfg.plugin}/${CORE_VERSION}` };
+  const plain = plainHttpKeyWarning(cfg);
+  if (plain && warn && !warnedPlainHttp.has(cfg.serverUrl)) {
+    warnedPlainHttp.add(cfg.serverUrl);
+    try {
+      warn(plain);
+    } catch {
+      /* ignore */
+    }
+  }
+  // X-Weft-Source declares the plugin's session source: without it Weft does
+  // not rank these spans above the harness's own telemetry (docs/weft/API.md).
+  const headers = { 'Content-Type': 'application/json', 'User-Agent': `${cfg.plugin}/${CORE_VERSION}`, 'X-Weft-Source': cfg.plugin };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
   for (let i = 0; i < items.length; i += 200) {
     const chunk = items.slice(i, i + 200);
@@ -235,6 +392,7 @@ export async function sendItems(cfg, items, { fetchImpl = globalThis.fetch, time
       method: 'POST',
       headers,
       body: JSON.stringify({ project_id: cfg.project, items: chunk }),
+      redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs ?? cfg.timeoutMs),
     });
     if (!res.ok) {
@@ -275,4 +433,77 @@ export function readJsonl(path, offset = 0) {
     }
   }
   return { lines, offset: end, size: buf.length };
+}
+
+// ---------------------------------------------------------------- installers
+
+/**
+ * Characters allowed in a path written into a hook command. Hook commands run
+ * through a shell, so anything else (quotes, `$`, backticks, `;`, `&`, `|`,
+ * `<`, `>`, `%`, `!`, newlines ...) is refused instead of escaped.
+ */
+const SAFE_PATH = /^[A-Za-z0-9 _./:\\@+,=~()[\]{}#-]+$/;
+
+/** Quote one argument for the shell that runs hook commands (refuses unsafe characters). */
+export function shellQuote(arg, platform = process.platform) {
+  const s = String(arg);
+  if (!s || !SAFE_PATH.test(s)) {
+    throw new Error(`refusing to write a hook command for the path ${JSON.stringify(s)}: it contains characters a shell would interpret; move the plugin to a plain directory`);
+  }
+  return platform === 'win32' ? `"${s}"` : `'${s}'`;
+}
+
+/** The hook command `node '<hook path>'`, safely quoted. */
+export function hookCommand(hookPath, platform = process.platform) {
+  return `node ${shellQuote(hookPath, platform)}`;
+}
+
+/**
+ * Write `text` to `path` atomically (temp file in the same directory, then
+ * rename), keeping the mode of an existing file (new files: 0600).
+ */
+export function writeFileAtomic(path, text) {
+  mkdirSync(dirname(path), { recursive: true });
+  let mode = 0o600;
+  try {
+    mode = statSync(path).mode & 0o777;
+  } catch {
+    /* new file */
+  }
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  try {
+    writeFileSync(tmp, text, { mode });
+    chmodSync(tmp, mode);
+    renameSync(tmp, path);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
+}
+
+/**
+ * Back up `path` to `<path>.bak` the first time only: a backup made before the
+ * first install is never overwritten by later runs. Returns the backup path
+ * when one was written, null otherwise.
+ */
+export function backupOnce(path) {
+  if (!existsSync(path)) return null;
+  const bak = `${path}.bak`;
+  if (existsSync(bak)) return null;
+  copyFileSync(path, bak);
+  return bak;
+}
+
+/** Read a secret from stdin (first line, trimmed). Never echoes it. */
+export async function readSecretFromStdin(stdin = process.stdin) {
+  let data = '';
+  for await (const chunk of stdin) {
+    data += chunk;
+    if (data.includes('\n')) break;
+  }
+  return data.split(/\r?\n/)[0].trim();
 }

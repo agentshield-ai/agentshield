@@ -11,7 +11,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, getApiKey, setApiKey } from "../../api/client";
 import { parseRef } from "../../api/refs";
-import type { PriceEntry, WeftObject } from "../../api/types";
+import type { PriceEntry, SecretEntry, WeftObject } from "../../api/types";
+import { iamApi } from "../../api/iam";
 import {
   CopyButton,
   ErrorBox,
@@ -513,12 +514,26 @@ const KNOWN_SECRETS = [
   { name: "GROQ_API_KEY", label: "Groq" },
 ];
 
+/** "project" / "team acme" / "server" / "environment". */
+function secretScopeWords(s: SecretEntry): string {
+  if (s.source === "env") return "the server's environment";
+  if (s.scope === "team") return `team ${s.scope_id}`;
+  return s.scope === "project" ? "this project" : "the server";
+}
+
 function SecretsTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const secrets = useQuery({
-    queryKey: ["secrets"],
-    queryFn: () => api.secretsList().then((r) => r.secrets),
+    queryKey: ["secrets", projectId],
+    queryFn: () => api.secretsList(projectId).then((r) => r.secrets),
   });
+  const me = useQuery({ queryKey: ["auth-me"], queryFn: iamApi.me, retry: false });
+  const team = projectId.split("/")[0];
+  const serverAdmin = !!me.data?.server_admin;
+  const teamAdmin = serverAdmin || me.data?.roles.entities[team] === "admin";
+  const canManage = (s: SecretEntry) =>
+    s.source === "db" && (s.scope === "project" || (s.scope === "team" ? teamAdmin : serverAdmin));
+  const secretKey = (s: SecretEntry) => `secret:${s.scope}:${s.scope_id}:${s.name}`;
   const providers = useObjects(projectId, { kinds: ["provider"] });
   const providerModels = useObjects(projectId, { kinds: ["provider_model"] });
   const [setting, setSetting] = useState<string | null>(null);
@@ -527,9 +542,9 @@ function SecretsTab({ projectId }: { projectId: string }) {
   } | null>(null);
   const [pmEdit, setPmEdit] = useState<{ initial?: WeftObject } | null>(null);
   const { hidden, remove } = useUndoDelete();
-  const set = (secrets.data ?? []).filter(
-    (s) => !hidden.has(`secret:${s.name}`),
-  );
+  const all = (secrets.data ?? []).filter((s) => !hidden.has(secretKey(s)));
+  // The list is ordered narrowest scope first, which is the one used.
+  const set = all.filter((s, i) => all.findIndex((x) => x.name === s.name) === i);
   const byName = new Map(set.map((s) => [s.name, s]));
   const provs = (providers.data ?? []).filter(
     (p) => !hidden.has(`provider:${p.name}`),
@@ -568,7 +583,14 @@ function SecretsTab({ projectId }: { projectId: string }) {
             Add a secret
           </button>
         }
-        note="Used by the playground, LLM judges and server-side evaluations. A value cannot be read back."
+        note={
+          <>
+            Used by the playground, LLM judges, scorers, automations and server-side evaluations. A value cannot be read back.
+            A project secret is used only by this project, a team secret by every project of the team. A server secret is used by
+            the built-in providers of every project; this project&rsquo;s own providers, scorers and automations can use it only
+            toward the allowed hosts a server admin sets on it.
+          </>
+        }
       >
         {secrets.error ? (
           <SettingsEmpty>
@@ -582,43 +604,62 @@ function SecretsTab({ projectId }: { projectId: string }) {
           names.map((n) => {
             const s = byName.get(n);
             const known = KNOWN_SECRETS.find((k) => k.name === n);
+            const others = all.filter((x) => x.name === n && x !== s);
+            const kindWords =
+              known?.label ??
+              (providerKeyNames.includes(n)
+                ? "For a custom provider"
+                : "Custom secret");
             return (
               <SettingsRow
                 key={n}
                 label={<span className="mono">{n}</span>}
                 detail={
-                  known?.label ??
-                  (providerKeyNames.includes(n)
-                    ? "For a custom provider"
-                    : "Custom secret")
+                  <>
+                    {kindWords}
+                    {s && s.allowed_hosts.length > 0 && (
+                      <>
+                        {" · only to "}
+                        <span className="mono">{s.allowed_hosts.join(", ")}</span>
+                      </>
+                    )}
+                    {others.length > 0 && (
+                      <> · overrides the one in {others.map(secretScopeWords).join(" and ")}</>
+                    )}
+                  </>
                 }
                 control={
                   <>
                     {s ? (
                       <StatusWords tone="ok">
-                        {s.source === "env" ? "Set in the environment" : "Set"}
+                        {s.source === "env"
+                          ? "Set in the environment"
+                          : `Set in ${secretScopeWords(s)}`}
                       </StatusWords>
                     ) : (
                       <StatusWords tone="muted">Not set</StatusWords>
                     )}
-                    {s?.source !== "env" && (
-                      <button
-                        type="button"
-                        className="qbtn sm"
-                        onClick={() => setSetting(n)}
-                      >
-                        {s ? "Replace" : "Set"}
-                      </button>
-                    )}
-                    {s?.source === "db" && (
+                    <button
+                      type="button"
+                      className="qbtn sm"
+                      onClick={() => setSetting(n)}
+                    >
+                      {s ? "Replace" : "Set"}
+                    </button>
+                    {s && canManage(s) && (
                       <button
                         type="button"
                         className="qbtn sm plain danger"
-                        aria-label={`Delete ${n}`}
-                        title={`Delete ${n}`}
+                        aria-label={`Delete ${n} from ${secretScopeWords(s)}`}
+                        title={`Delete ${n} from ${secretScopeWords(s)}`}
                         onClick={() =>
-                          remove(`secret:${n}`, `Deleted ${n}`, async () => {
-                            await api.secretsDelete(n);
+                          remove(secretKey(s), `Deleted ${n}`, async () => {
+                            await api.secretsDelete({
+                              name: n,
+                              scope: s.scope,
+                              project_id: s.scope === "server" ? undefined : projectId,
+                              team: s.scope === "team" ? s.scope_id : undefined,
+                            });
                             await refresh();
                           })
                         }
@@ -760,6 +801,10 @@ function SecretsTab({ projectId }: { projectId: string }) {
       {setting !== null && (
         <SecretModal
           name={setting}
+          projectId={projectId}
+          serverAdmin={serverAdmin}
+          teamAdmin={teamAdmin}
+          current={setting ? byName.get(setting) : undefined}
           onClose={() => setSetting(null)}
           onSaved={() => {
             setSetting(null);

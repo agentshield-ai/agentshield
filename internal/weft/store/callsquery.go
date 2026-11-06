@@ -40,6 +40,7 @@ type Call struct {
 	ExpireAt              *string `json:"expire_at"`
 
 	// internal
+	storedSize int64
 	opBaseName string
 	startedUS  int64
 	endedUS    *int64
@@ -47,6 +48,10 @@ type Call struct {
 	cumulative bool
 	total      *Contribution // set by finishSummary
 }
+
+// StoredSize is the size of the call's stored inputs, attributes, output
+// and summary in bytes, roughly the size of its JSON form.
+func (c *Call) StoredSize() int64 { return c.storedSize }
 
 // OpBaseName is the op name without ref decoration.
 func (c *Call) OpBaseName() string { return c.opBaseName }
@@ -175,7 +180,7 @@ func callField(path string) (string, []any, bool, error) {
 	case "inputs", "attributes":
 		return "c." + path, nil, false, nil
 	case "output":
-		return "json_extract(c.output, '$')", nil, false, nil
+		return "(CASE WHEN json_valid(c.output) THEN json_extract(c.output, '$') END)", nil, false, nil
 	}
 	segs := splitField(path)
 	if len(segs) < 2 {
@@ -275,7 +280,7 @@ func checkFilterLists(f *CallsFilter) error {
 		{"user_ids", len(f.UserIDs)}, {"run_ids", len(f.RunIDs)}, {"thread_ids", len(f.ThreadIDs)}, {"turn_ids", len(f.TurnIDs)},
 	} {
 		if x.n > MaxFilterIDs {
-			return Invalidf("filter.%s lists %d values; at most %d are allowed", x.name, x.n, MaxFilterIDs)
+			return Invalidf("filter %s lists %d values; at most %d are allowed", x.name, x.n, MaxFilterIDs)
 		}
 	}
 	return nil
@@ -443,6 +448,7 @@ func scanCall(rows interface{ Scan(...any) error }) (*Call, error) {
 	c.Summary = decodeMap(summary)
 	c.rollup = ParseContribution(rollup)
 	c.StorageSizeBytes = &size
+	c.storedSize = size
 	return &c, nil
 }
 

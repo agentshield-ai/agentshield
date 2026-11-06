@@ -273,6 +273,7 @@ var metadataAddrs = map[netip.Addr]bool{
 	netip.MustParseAddr("100.100.100.200"): true, // Alibaba Cloud
 	netip.MustParseAddr("fd00:ec2::254"):   true, // AWS IMDS over IPv6
 	netip.MustParseAddr("fd00:ec2::23"):    true, // AWS EKS pod identity over IPv6
+	netip.MustParseAddr("fd20:ce::254"):    true, // GCP metadata server over IPv6
 	netip.MustParseAddr("168.63.129.16"):   true, // Azure WireServer
 }
 
@@ -307,34 +308,79 @@ var ranges = func() []rangeCat {
 }()
 
 var (
-	nat64   = netip.MustParsePrefix("64:ff9b::/96")
-	sixTo4  = netip.MustParsePrefix("2002::/16")
-	v4Compt = netip.MustParsePrefix("::/96")
+	nat64      = netip.MustParsePrefix("64:ff9b::/96")
+	nat64Local = netip.MustParsePrefix("64:ff9b:1::/48") // RFC 8215 local-use NAT64
+	sixTo4     = netip.MustParsePrefix("2002::/16")
+	v4Compt    = netip.MustParsePrefix("::/96")
+	v4Transl   = netip.MustParsePrefix("::ffff:0:0:0/96") // RFC 2765 IPv4-translated
 )
 
+// severity orders categories for an address that may embed several IPv4
+// candidates: the most dangerous one wins.
+func severity(c Category) int {
+	switch c {
+	case Metadata:
+		return 4
+	case Unspecified, Multicast:
+		return 3
+	case Public:
+		return 0
+	}
+	return 2
+}
+
+// embeddedV4 returns the IPv4 addresses an IPv6 address may carry:
+// IPv4-compatible, IPv4-translated, NAT64 (well-known and local-use, every
+// RFC 6052 prefix length for the latter, as its length is not known) and
+// 6to4 forms.
+func embeddedV4(ip netip.Addr) []netip.Addr {
+	b := ip.As16()
+	v4 := func(x0, x1, x2, x3 byte) netip.Addr { return netip.AddrFrom4([4]byte{x0, x1, x2, x3}) }
+	switch {
+	case nat64.Contains(ip), v4Transl.Contains(ip):
+		return []netip.Addr{v4(b[12], b[13], b[14], b[15])}
+	case nat64Local.Contains(ip):
+		// RFC 6052 section 2.2: /48 a.b in bytes 6-7, c.d in 9-10; /56 a in
+		// 7, b.c.d in 9-11; /64 bytes 9-12; /96 bytes 12-15.
+		return []netip.Addr{
+			v4(b[6], b[7], b[9], b[10]),
+			v4(b[7], b[9], b[10], b[11]),
+			v4(b[9], b[10], b[11], b[12]),
+			v4(b[12], b[13], b[14], b[15]),
+		}
+	case sixTo4.Contains(ip):
+		return []netip.Addr{v4(b[2], b[3], b[4], b[5])}
+	case v4Compt.Contains(ip) && ip != netip.IPv6Unspecified() && ip != netip.IPv6Loopback():
+		return []netip.Addr{v4(b[12], b[13], b[14], b[15])}
+	}
+	return nil
+}
+
 // Classify names the internal category of ip, or Public. IPv4-mapped
-// (::ffff:a.b.c.d), IPv4-compatible (::a.b.c.d), NAT64 (64:ff9b::/96) and 6to4
-// (2002::/16) addresses are classified by the IPv4 address they embed.
+// (::ffff:a.b.c.d), IPv4-compatible (::a.b.c.d), IPv4-translated
+// (::ffff:0:a.b.c.d), NAT64 (64:ff9b::/96 and the local-use 64:ff9b:1::/48)
+// and 6to4 (2002::/16) addresses are classified by the IPv4 address they
+// embed when that is internal.
 func Classify(ip netip.Addr) Category {
 	ip = ip.Unmap()
 	if metadataAddrs[ip] {
 		return Metadata
 	}
 	if ip.Is6() {
-		b := ip.As16()
-		var emb netip.Addr
-		switch {
-		case nat64.Contains(ip):
-			emb = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
-		case sixTo4.Contains(ip):
-			emb = netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]})
-		case v4Compt.Contains(ip) && ip != netip.IPv6Unspecified() && ip != netip.IPv6Loopback():
-			emb = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
-		}
-		if emb.IsValid() {
-			if c := Classify(emb); c != Public {
-				return c
+		worst := Public
+		cands := embeddedV4(ip)
+		for _, emb := range cands {
+			c := Classify(emb)
+			if c == Unspecified && len(cands) > 1 {
+				// Zero bytes read at the wrong prefix length, not an address.
+				continue
 			}
+			if severity(c) > severity(worst) {
+				worst = c
+			}
+		}
+		if worst != Public {
+			return worst
 		}
 	}
 	for _, r := range ranges {
@@ -470,6 +516,48 @@ func DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	return dial(ctx, Default(), network, addr)
 }
 
+// providerAllow lists destinations only the built-in LLM provider routes may
+// reach in addition to the default policy: the operator's provider base URLs
+// from the environment (OPENAI_BASE_URL, ANTHROPIC_BASE_URL, OLLAMA_BASE_URL).
+// Remote scorers, webhooks and custom providers do not get them.
+var providerAllow atomic.Pointer[Policy]
+
+// SetProviderAllow sets the destinations only NewProviderClient's requests
+// may reach beyond the default policy (same syntax as Config.Allow).
+func SetProviderAllow(entries []string) error {
+	if len(entries) == 0 {
+		providerAllow.Store(nil)
+		return nil
+	}
+	p, err := New(Config{Allow: entries})
+	if err != nil {
+		return err
+	}
+	providerAllow.Store(p)
+	return nil
+}
+
+// ProviderPolicy is the default policy plus the provider allow list (what
+// NewProviderClient enforces).
+func ProviderPolicy() *Policy {
+	d := Default()
+	x := providerAllow.Load()
+	if x == nil {
+		return d
+	}
+	m := &Policy{allowPrivate: d.allowPrivate, hosts: map[string]bool{}, hostPorts: map[string]bool{}, log: d.log, resolver: d.resolver,
+		wildcards: append(append([]wildcard{}, d.wildcards...), x.wildcards...), nets: append(append([]netip.Prefix{}, d.nets...), x.nets...)}
+	for _, src := range []*Policy{d, x} {
+		for k := range src.hosts {
+			m.hosts[k] = true
+		}
+		for k := range src.hostPorts {
+			m.hostPorts[k] = true
+		}
+	}
+	return m
+}
+
 var baseDialer = net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 
 func dial(ctx context.Context, p *Policy, network, addr string) (net.Conn, error) {
@@ -535,9 +623,13 @@ var proxyFromEnvironment = http.ProxyFromEnvironment
 // resolved and checked before the request is handed to the proxy. Use it
 // through NewClient: dialling the proxy itself is only permitted for requests
 // sent through NewClient's round tripper, which records the chosen proxy.
-func NewTransport() *http.Transport {
+func NewTransport() *http.Transport { return newTransport(Default) }
+
+func newTransport(policy func() *Policy) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.DialContext = DialContext
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dial(ctx, policy(), network, addr)
+	}
 	t.Proxy = func(req *http.Request) (*url.URL, error) {
 		pu, err := proxyFromEnvironment(req)
 		if err != nil || pu == nil {
@@ -546,7 +638,7 @@ func NewTransport() *http.Transport {
 		// The proxy resolves the name itself. Check what it resolves to here.
 		// A name this host cannot resolve cannot be checked, so it is refused
 		// (fail closed) unless the operator listed it in --egress-allow.
-		p := Default()
+		p := policy()
 		host, port := req.URL.Hostname(), portOf(req.URL)
 		if err := p.checkHost(req.Context(), host, port); err != nil {
 			if IsBlocked(err) {
@@ -585,6 +677,15 @@ func NewClient(timeout time.Duration, followRedirects bool) *http.Client {
 		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
 	return c
+}
+
+// NewProviderClient is NewClient for the built-in LLM provider routes: it
+// may also reach the destinations set with SetProviderAllow. Redirects are
+// not followed (a 3xx response is returned as is), so provider credentials
+// in custom headers (x-api-key) never follow a redirect to another host.
+func NewProviderClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: sanitizingTransport{newTransport(ProviderPolicy)},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // HostPortOf returns "host:port" for an absolute URL (for allowing an

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/compat"
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
@@ -219,20 +219,47 @@ func isReadRequest(r *http.Request) bool {
 
 // projectFreePaths may be called by project-scoped keys without naming a project.
 var projectFreePaths = map[string]bool{"/auth/check": true, "/auth/whoami": true, "/auth/principal": true, "/projects": true,
-	"/llm/models": true, "/graphql": true, "/secrets/list": true, "/server_info": true, "/health": true}
+	"/llm/models": true, "/graphql": true, "/secrets/list": true, "/server_info": true, "/health": true,
+	"/api/v1/help": true}
+
+// projectFreePath reports routes that need no project: projectFreePaths
+// and the help guides (/api/v1/help/{name}).
+func projectFreePath(path string) bool {
+	return projectFreePaths[path] || strings.HasPrefix(path, "/api/v1/help/")
+}
 
 // requestProjects finds every project a request names: the project_id query
 // parameter and headers, the /v2/{entity}/{project}/ and
 // /v1/entities/{entity}/projects/{project} paths of the adapter's routes,
-// and project_id fields and refs at the top level of a JSON body (and
-// inside the start/end/obj/table wrappers, batch items and the native
-// batches' items), or a multipart form's project_id. The body is restored.
+// the projects a JSON body names (probeBody, projectguard.go), or a
+// multipart form's project_id. It fails closed: a JSON body that is not
+// exactly one value, or whose project-bearing fields have unexpected types,
+// is refused (requestError 400), and so is a GET body naming a project
+// (GET handlers never read bodies). The body is restored, decompressed.
 func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 	var raw []string
 	add := func(v string) {
 		if v != "" {
 			raw = append(raw, v)
 		}
+	}
+	note := auditNoteFrom(r)
+	bodyFrom := -1 // index in raw of the first project the body named
+	var body []byte
+	refuse := func(err error) ([]string, error) {
+		if note != nil {
+			if len(body) > 0 && bodyFrom == len(raw) {
+				probeLenient(body, add) // what the refused body named, for the audit log
+			}
+			// Refusals are audited with what the body named first.
+			note.detail = "refused: " + err.Error()
+			ordered := raw
+			if bodyFrom >= 0 && bodyFrom < len(raw) {
+				ordered = append(append([]string{}, raw[bodyFrom:]...), raw[:bodyFrom]...)
+			}
+			note.projects = normalizedProjects(ordered)
+		}
+		return nil, err
 	}
 	add(r.URL.Query().Get("project_id"))
 	if isOTLPPath(r.URL.Path) {
@@ -255,24 +282,34 @@ func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 	case strings.HasPrefix(ct, "multipart/form-data"):
 		r.Body = http.MaxBytesReader(w, r.Body, 65<<20)
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			return nil, errors.New("invalid multipart body")
+			return refuse(badRequest("invalid multipart body"))
 		}
-		add(r.FormValue("project_id"))
-	case r.Body != nil && r.Method != http.MethodGet && !isOTLPPath(r.URL.Path):
-		body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, maxJSONBody), r.Header.Get("Content-Encoding"))
+		// Every spelling counts: form values are matched exactly, but be
+		// strict about duplicates naming different projects.
+		for _, v := range r.MultipartForm.Value["project_id"] {
+			add(v)
+		}
+	case r.Body != nil && r.Body != http.NoBody && !isOTLPPath(r.URL.Path):
+		var err error
+		body, err = readBodyOnce(r)
 		if err != nil {
-			return nil, errors.New("reading body: " + err.Error())
+			return refuse(err)
 		}
-		r.Header.Del("Content-Encoding")
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		probeBody(body, add)
+		before := len(raw)
+		bodyFrom = before
+		if err := probeBody(body, add); err != nil {
+			return refuse(err)
+		}
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && len(raw) > before {
+			return refuse(badRequest("GET requests must not carry a body naming a project; use the project_id query parameter"))
+		}
 	}
 	out := make([]string, 0, len(raw))
 	seen := map[string]bool{}
 	for _, v := range raw {
 		pid, err := refs.NormalizeProject(v)
 		if err != nil {
-			return nil, errors.New("invalid project " + v)
+			return refuse(badRequest("invalid project %q", clip(v, 200)))
 		}
 		if !seen[pid] {
 			seen[pid] = true
@@ -282,111 +319,104 @@ func requestProjects(w http.ResponseWriter, r *http.Request) ([]string, error) {
 	return out, nil
 }
 
-type projectHolder struct {
-	ProjectID *string `json:"project_id"`
+// normalizedProjects keeps the valid project ids of raw, de-duplicated.
+func normalizedProjects(raw []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, v := range raw {
+		if pid, err := refs.NormalizeProject(v); err == nil && !seen[pid] {
+			seen[pid] = true
+			out = append(out, pid)
+		}
+	}
+	return out
 }
 
-type scopeProbe struct {
-	ProjectID  *string        `json:"project_id"`
-	ProjectIDs []string       `json:"project_ids"`
-	Start      *projectHolder `json:"start"`
-	End        *projectHolder `json:"end"`
-	Obj        *projectHolder `json:"obj"`
-	Table      *projectHolder `json:"table"`
-	Batch      []struct {
-		ProjectID *string `json:"project_id"`
-		Req       struct {
-			Start *projectHolder `json:"start"`
-			End   *projectHolder `json:"end"`
-		} `json:"req"`
-	} `json:"batch"`
-	// Items of the native batches (/api/v1/spans/batch, /api/v1/feedback/batch).
-	Items []struct {
-		ProjectID *string        `json:"project_id"`
-		Start     *projectHolder `json:"start"`
-		End       *projectHolder `json:"end"`
-		Span      *projectHolder `json:"span"`
-	} `json:"items"`
-	Refs      []string       `json:"refs"`
-	Variables map[string]any `json:"variables"`
+// ---------------------------------------------------------------- request bodies
+
+type bodyStateKey struct{}
+
+// bodyState tracks, per authenticated request, whether prepareBody ran.
+type bodyState struct {
+	prepared bool
+	body     []byte // the decompressed JSON body, once read
+	read     bool
 }
 
-func probeBody(body []byte, add func(string)) {
-	var p scopeProbe
-	if json.Unmarshal(body, &p) != nil {
-		return
+// prepareBody runs once the caller is authenticated and before its
+// projects are authorised: the compatibility adapter translates the body
+// of its routes, and a mutating JSON body is kept for the audit log's ids.
+// Nothing is read for a request that fails authentication.
+func (s *Server) prepareBody(r *http.Request) error {
+	st, _ := r.Context().Value(bodyStateKey{}).(*bodyState)
+	if st == nil || st.prepared {
+		return nil
 	}
-	holder := func(h *projectHolder) {
-		if h != nil && h.ProjectID != nil {
-			add(*h.ProjectID)
+	st.prepared = true
+	if s.compat != nil {
+		if err := compat.RewriteRequestBody(r); err != nil {
+			return badRequest("reading body: %v", err)
 		}
 	}
-	if p.ProjectID != nil {
-		add(*p.ProjectID)
+	note := auditNoteFrom(r)
+	if note == nil || isReadRequest(r) || isOTLPPath(r.URL.Path) || r.Body == nil || r.Body == http.NoBody {
+		return nil
 	}
-	for _, x := range p.ProjectIDs {
-		add(x)
+	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.Contains(ct, "json") {
+		return nil
 	}
-	holder(p.Start)
-	holder(p.End)
-	holder(p.Obj)
-	holder(p.Table)
-	for _, b := range p.Batch {
-		if b.ProjectID != nil {
-			add(*b.ProjectID)
+	body, err := readBodyOnce(r)
+	if err != nil {
+		return err
+	}
+	if len(body) <= maxAuditBody {
+		note.body = body
+	}
+	return nil
+}
+
+// readBodyOnce reads the request body (decompressed, at most bodyLimit
+// bytes) and puts it back, once per request.
+func readBodyOnce(r *http.Request) ([]byte, error) {
+	st, _ := r.Context().Value(bodyStateKey{}).(*bodyState)
+	if st != nil && st.read {
+		return st.body, nil
+	}
+	limit := bodyLimit(r)
+	body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, limit), r.Header.Get("Content-Encoding"))
+	if err != nil {
+		if isBodyTooLarge(err) {
+			return nil, &requestError{code: http.StatusRequestEntityTooLarge, msg: "request body too large"}
 		}
-		holder(b.Req.Start)
-		holder(b.Req.End)
+		return nil, badRequest("reading body: %v", err)
 	}
-	for _, it := range p.Items {
-		if it.ProjectID != nil {
-			add(*it.ProjectID)
-		}
-		holder(it.Start)
-		holder(it.End)
-		holder(it.Span)
+	r.Header.Del("Content-Encoding")
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	if st != nil {
+		st.body, st.read = body, true
 	}
-	addRef := func(v string) {
-		if refs.IsRef(v) {
-			if rr, err := refs.Parse(v); err == nil {
-				add(rr.ProjectID())
-			}
-		}
+	return body, nil
+}
+
+// authorizeRole checks the caller has at least role need on project pid,
+// whatever the route (open servers, static keys and admins have it).
+func (s *Server) authorizeRole(r *http.Request, pid string, need store.Role) error {
+	p := principalFrom(r)
+	if p == nil {
+		return nil
 	}
-	for _, x := range p.Refs {
-		addRef(x)
+	n, err := refs.NormalizeProject(pid)
+	if err != nil {
+		return &store.InvalidError{Msg: err.Error()}
 	}
-	if ent, ok := p.Variables["entity"].(string); ok {
-		if name, ok := p.Variables["name"].(string); ok && ent != "" && name != "" {
-			add(ent + "/" + name)
-		}
+	if p.readOnly && need.Rank() > store.RoleViewer.Rank() {
+		return store.Forbiddenf("this API key is read-only")
 	}
-	// Top-level ref-valued fields (evaluation_ref, model, scorer_refs, ...).
-	var top map[string]json.RawMessage
-	if json.Unmarshal(body, &top) != nil {
-		return
+	if p.isAdmin() {
+		return nil
 	}
-	for k, v := range top {
-		if k == "refs" || len(v) == 0 {
-			continue
-		}
-		switch v[0] {
-		case '"':
-			var str string
-			if json.Unmarshal(v, &str) == nil {
-				addRef(str)
-			}
-		case '[':
-			var arr []any
-			if json.Unmarshal(v, &arr) == nil {
-				for _, x := range arr {
-					if str, ok := x.(string); ok {
-						addRef(str)
-					}
-				}
-			}
-		}
-	}
+	return (&projectGuard{p: p, need: need}).check(n)
 }
 
 func (s *Server) listProjectsScoped(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -468,8 +498,8 @@ func (s *Server) apiKeyCreate(ctx context.Context, r *http.Request, req *apiKeyC
 		if c.Admin {
 			return nil, forbidden("only server admins can create admin keys")
 		}
-		if p.readOnly && !c.ReadOnly {
-			return nil, forbidden("a read-only credential can only create read-only keys")
+		if p.readOnly {
+			return nil, forbidden("a read-only credential cannot create API keys")
 		}
 		if p.projects != nil {
 			ps, err := normalizeProjects(c.Projects)
@@ -553,8 +583,13 @@ func (s *Server) apiKeyRevoke(ctx context.Context, r *http.Request, req *apiKeyR
 	if err != nil {
 		return nil, err
 	}
-	if p := principalFrom(r); p != nil && !p.isAdmin() && !(k.UserBound && k.UserID == p.user) {
-		return nil, store.ErrNotFound
+	if p := principalFrom(r); p != nil && !p.isAdmin() {
+		if !(k.UserBound && k.UserID == p.user) {
+			return nil, store.ErrNotFound
+		}
+		if err := noBroaderThan(p, k); err != nil {
+			return nil, err
+		}
 	}
 	if len(s.keys) == 0 && s.keyIsAdmin(ctx, *k) && k.RevokedAt == nil {
 		admins, others := 0, 0
@@ -580,6 +615,26 @@ func (s *Server) apiKeyRevoke(ctx context.Context, r *http.Request, req *apiKeyR
 		return nil, err
 	}
 	return map[string]any{"key": k}, nil
+}
+
+// noBroaderThan refuses to let credential p manage key k when k reaches
+// more than p does: a read-only credential cannot revoke a read-write key,
+// a project-scoped one a key of other or all projects.
+func noBroaderThan(p *principal, k *store.APIKey) error {
+	if p.readOnly && !k.ReadOnly {
+		return forbidden("a read-only credential cannot revoke a read-write key")
+	}
+	if p.projects != nil {
+		if k.AllProjects {
+			return forbidden("this API key is limited to projects; it cannot revoke a key for all projects")
+		}
+		for _, pid := range k.Projects {
+			if !p.projects[pid] {
+				return forbidden("this API key has no access to project %s", pid)
+			}
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- project settings

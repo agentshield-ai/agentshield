@@ -1,20 +1,18 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
@@ -42,6 +40,9 @@ type auditNote struct {
 	keyID      *string
 	projects   []string
 	detail     string
+	// body is the mutating request's JSON body, read after authentication
+	// (prepareBody, admin.go), for the object and span ids.
+	body []byte
 }
 
 type auditNoteKey struct{}
@@ -62,19 +63,22 @@ func auditDetail(r *http.Request, format string, args ...any) {
 	}
 }
 
-// maxAuditBody bounds the body the audit layer parses for ids.
-const maxAuditBody = 8 << 20
+// maxAuditBody bounds the body the audit layer parses for ids (larger
+// bodies are audited without them).
+const maxAuditBody = 1 << 20
 
-// auditLog wraps authenticated routes; it must run before auth.
+// Audit entry field caps: a path or detail longer than this is cut.
+const maxAuditPath = 1024
+
+// auditLog wraps authenticated routes; it must run before auth. It reads
+// no body itself: the body of a mutating request is kept for it only once
+// the caller has authenticated (auditNote.body), so an unauthenticated
+// request costs no body read, decompression or parse.
 func (s *Server) auditLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		note := &auditNote{}
 		r = r.WithContext(context.WithValue(r.Context(), auditNoteKey{}, note))
 		mutating := !isReadRequest(r)
-		var body []byte
-		if mutating {
-			body = peekJSONBody(r)
-		}
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
 		status := ww.Status()
@@ -103,6 +107,7 @@ func (s *Server) auditLog(next http.Handler) http.Handler {
 		if e.Actor == "" {
 			e.Actor = "anonymous"
 		}
+		body := note.body
 		pids := note.projects
 		if len(pids) == 0 {
 			pids = auditProjects(r, body)
@@ -135,39 +140,6 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// peekJSONBody reads (and restores) a JSON request body of bounded size.
-// OTLP, multipart and oversized bodies are left alone.
-func peekJSONBody(r *http.Request) []byte {
-	if r.Body == nil || isOTLPPath(r.URL.Path) || r.ContentLength > maxAuditBody {
-		return nil
-	}
-	ct := r.Header.Get("Content-Type")
-	if ct != "" && !strings.Contains(ct, "json") {
-		return nil
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxAuditBody+1))
-	if err != nil {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), errReader{err}))
-		return nil
-	}
-	if len(raw) > maxAuditBody {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), r.Body))
-		return nil
-	}
-	body, err := otlp.ReadBody(bytes.NewReader(raw), r.Header.Get("Content-Encoding"))
-	if err != nil {
-		r.Body = io.NopCloser(bytes.NewReader(raw))
-		return nil
-	}
-	r.Header.Del("Content-Encoding")
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	return body
-}
-
-type errReader struct{ err error }
-
-func (e errReader) Read([]byte) (int, error) { return 0, e.err }
-
 func auditProjects(r *http.Request, body []byte) []string {
 	var raw []string
 	add := func(v string) {
@@ -175,16 +147,16 @@ func auditProjects(r *http.Request, body []byte) []string {
 			raw = append(raw, v)
 		}
 	}
+	// The body's projects first: the entry's project is the first one.
+	if len(body) > 0 && len(body) <= maxAuditBody {
+		probeLenient(body, add)
+	}
 	add(r.URL.Query().Get("project_id"))
 	if isOTLPPath(r.URL.Path) {
-		add(r.Header.Get("project_id"))
-		add(r.Header.Get("X-Weft-Project"))
+		add(otlpHeaderProject(r)) // the one the data goes to
 	}
 	if parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/"); len(parts) >= 3 && parts[0] == "v2" {
 		add(parts[1] + "/" + parts[2])
-	}
-	if body != nil {
-		probeBody(body, add)
 	}
 	out := []string{}
 	seen := map[string]bool{}
@@ -203,7 +175,7 @@ const maxAuditIDs = 50
 // fields, and the older route shapes' (call_id, call_ids, start/end, batch),
 // which the compatibility adapter serves.
 func auditIDs(path string, body []byte) (objs, spans []string) {
-	if len(body) == 0 {
+	if len(body) == 0 || len(body) > maxAuditBody {
 		return nil, nil
 	}
 	var top map[string]any
@@ -336,6 +308,8 @@ func auditIDs(path string, body []byte) (objs, spans []string) {
 
 type auditWriter struct {
 	s       *Server
+	limit   auditLimiter
+	dropped atomic.Int64
 	ch      chan store.AuditEntry
 	flushCh chan chan struct{}
 	done    chan struct{}
@@ -408,16 +382,99 @@ func (a *auditWriter) close() {
 	})
 }
 
-// recordAudit queues an entry (blocking when the queue is full, so entries
-// are not dropped).
+// recordAudit queues an entry. Fields are capped; unauthenticated
+// refusals are recorded at most unauthPerMinute times per client address
+// and minute (the rest are counted in one summary entry); an entry that
+// finds the queue full waits briefly (authenticated callers) or not at all
+// (unauthenticated ones) and is then dropped, counted and logged.
 func (s *Server) recordAudit(e store.AuditEntry) {
 	e.TimeMicros = time.Now().UnixMicro()
 	st := s.iam()
 	if st.audit == nil {
 		return
 	}
+	e.Path = clip(e.Path, maxAuditPath)
+	e.Detail = clip(e.Detail, 500)
+	e.Actor = clip(e.Actor, 256)
+	unauth := e.Outcome == "unauthenticated" || e.AuthMethod == "unauthenticated"
+	if unauth {
+		ok, summary := st.audit.limit.allow(e.IP, time.Now())
+		if summary != nil {
+			st.audit.send(*summary, false, s)
+		}
+		if !ok {
+			return
+		}
+	}
+	st.audit.send(e, !unauth, s)
+}
+
+// unauthPerMinute is how many unauthenticated refusals per client address
+// and minute are recorded one by one.
+const unauthPerMinute = 20
+
+// auditLimiter counts unauthenticated refusals per client address.
+type auditLimiter struct {
+	mu   sync.Mutex
+	byIP map[string]*ipWindow
+}
+
+type ipWindow struct {
+	start      time.Time
+	n          int
+	suppressed int
+}
+
+// allow reports whether an unauthenticated entry from ip is recorded, and
+// returns the summary of the address's previous minute when it closed with
+// suppressed entries.
+func (l *auditLimiter) allow(ip string, now time.Time) (bool, *store.AuditEntry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.byIP == nil || len(l.byIP) > 10000 {
+		l.byIP = map[string]*ipWindow{}
+	}
+	w := l.byIP[ip]
+	var summary *store.AuditEntry
+	if w == nil || now.Sub(w.start) >= time.Minute {
+		if w != nil && w.suppressed > 0 {
+			summary = &store.AuditEntry{TimeMicros: now.UnixMicro(), Actor: "anonymous", AuthMethod: "unauthenticated", Method: "-",
+				Path: "-", Status: http.StatusUnauthorized, Outcome: "unauthenticated", IP: ip,
+				Detail: fmt.Sprintf("%d more unauthenticated requests from this address in the minute from %s were not recorded one by one",
+					w.suppressed, w.start.UTC().Format(time.RFC3339))}
+		}
+		w = &ipWindow{start: now}
+		l.byIP[ip] = w
+	}
+	w.n++
+	if w.n > unauthPerMinute {
+		w.suppressed++
+		return false, summary
+	}
+	return true, summary
+}
+
+// send queues e: waiting up to a second when wait is set, else not at all.
+func (a *auditWriter) send(e store.AuditEntry, wait bool, s *Server) {
 	defer func() { _ = recover() }() // the writer closed during shutdown
-	st.audit.ch <- e
+	select {
+	case a.ch <- e:
+		return
+	default:
+	}
+	if wait {
+		t := time.NewTimer(time.Second)
+		defer t.Stop()
+		select {
+		case a.ch <- e:
+			return
+		case <-t.C:
+		}
+	}
+	n := a.dropped.Add(1)
+	if n == 1 || n%1000 == 0 {
+		s.log.Warn("audit log queue full; entries dropped", "dropped_total", n)
+	}
 }
 
 // FlushAudit writes queued audit entries (tests, shutdown).

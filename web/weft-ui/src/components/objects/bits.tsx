@@ -256,7 +256,9 @@ export function UsePanel({ refUri, name, version, kind }: { refUri: string; name
   const short = `${name}:${version}`
   const py =
     `import weft\n\nweft.init("${refUri.split('/').slice(3, 5).join('/')}")\n` +
-    `${kind === 'function' ? 'fn' : 'obj'} = weft.get("${short}")\n` +
+    (kind === 'function'
+      ? `# Loading a function runs its stored code on your machine:\n# only do this for code you trust.\nfn = weft.load_op("${short}", trust_code=True)\n`
+      : `obj = weft.get("${short}")\n`) +
     (kind === 'dataset'
       ? `\nfor row in obj.rows:\n    print(row)\n`
       : kind === 'prompt'
@@ -267,8 +269,10 @@ export function UsePanel({ refUri, name, version, kind }: { refUri: string; name
             ? `\nresult = fn(...)  # traced\n`
             : '')
   const ts =
-    `import * as weft from 'weft'\n\nawait weft.init('${refUri.split('/').slice(3, 5).join('/')}')\n` +
-    `const obj = await weft.get('${short}')\n`
+    `import * as weft from 'weft-sdk'\n\nawait weft.init('${refUri.split('/').slice(3, 5).join('/')}')\n` +
+    (kind === 'function'
+      ? `// Loading a function runs its stored code: only do this for code you trust.\nconst fn = await weft.loadOp('${short}', { trustCode: true })\n`
+      : `const obj = await weft.get('${short}')\n`)
   return (
     <div className="col" style={{ gap: 10 }}>
       <Segmented

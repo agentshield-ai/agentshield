@@ -63,7 +63,7 @@ func (s *Server) s3SecretCreds(ctx context.Context, name string) (objstore.Crede
 		}
 		return c, nil
 	}
-	raw, ok, err := s.store.GetSecret(ctx, name)
+	raw, ok, err := s.store.GetBucketCredential(ctx, name)
 	if err != nil {
 		return objstore.Credentials{}, err
 	}
@@ -122,7 +122,7 @@ func (s *Server) bucketClient(ctx context.Context, b *store.ReferenceBucket) (bu
 		}
 		return c, nil
 	case store.BucketGCS:
-		raw, ok, err := s.store.GetSecret(ctx, b.SecretName)
+		raw, ok, err := s.store.GetBucketCredential(ctx, b.SecretName)
 		if err != nil {
 			return nil, err
 		}
@@ -363,6 +363,13 @@ func (s *Server) refBucketCreate(ctx context.Context, r *http.Request, req *refB
 	out, err := s.store.CreateReferenceBucket(ctx, &b, verified)
 	if err != nil {
 		return nil, err
+	}
+	if b.SecretName != "" {
+		// The credentials are now bucket credentials: no object of any
+		// project can name them (store/secrets.go).
+		if err := s.store.MarkBucketCredential(ctx, b.SecretName); err != nil {
+			return nil, err
+		}
 	}
 	return map[string]any{"bucket": out}, nil
 }

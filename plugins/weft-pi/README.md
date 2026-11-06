@@ -89,12 +89,18 @@ await session.prompt('Fix the failing test');
 | `flushIntervalMs` | `WEFT_FLUSH_INTERVAL_MS` | `1000` |
 | `maxContextMessages` | | `40` (context messages kept per LLM call) |
 | `disabled` | `WEFT_PLUGIN_DISABLED` | `false` |
-| `stateDir` | `WEFT_PI_STATE_DIR` | `~/.weft-pi` |
+| `stateDir` | `WEFT_PI_STATE_DIR` | `~/.weft-pi` (logs; `0700`, files `0600`) |
 
 **Privacy.** With content capture on, prompts, the system prompt, responses,
 file contents, shell commands and output are sent to your Weft server. Images
 are replaced by a placeholder. Use the server's sensitive-data redaction or
-`captureContent: false`.
+`captureContent: false`. With capture off, spans carry no content: empty
+inputs and outputs, display names are the tool name, `chat <model>` or
+`invoke_agent <agent>`, errors a fixed class (`tool failed`, `LLM call error`),
+and neither the session name nor the first prompt (`gen_ai.conversation.name`),
+`cwd` or session file paths are sent. The extension never follows HTTP
+redirects and warns when an API key goes over plain `http://` to a host other
+than localhost.
 
 **Sub-agents.** Pi has no built-in sub-agents; the `subagent` example
 extension runs separate `pi` processes, which (with the extension installed

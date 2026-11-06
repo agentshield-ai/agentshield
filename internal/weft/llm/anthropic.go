@@ -216,16 +216,22 @@ func openAIUsage(in, outT float64, u map[string]any) map[string]any {
 
 func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[string]any, emit func(map[string]any) error) (map[string]any, error) {
 	// The Anthropic base URL comes only from the operator's environment.
-	key, ok := c.routeKey(ctx, Route{KeyName: "ANTHROPIC_API_KEY", envKey: true})
+	rt = anthropicRoute(rt.project, rt.Model)
+	key, ok, err := c.routeKey(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("no API key configured: set the ANTHROPIC_API_KEY secret")
 	}
 	body := toAnthropic(rt.Model, inputs)
+	limit := MaxCompletionResponseBytes
 	if emit != nil {
 		body["stream"] = true
+		limit = MaxStreamBytes
 	}
 	headers := map[string]string{"x-api-key": key, "anthropic-version": anthropicVersion}
-	resp, err := c.post(ctx, anthropicBase()+"/v1/messages", headers, body)
+	resp, err := c.post(ctx, rt, "/v1/messages", headers, body, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +239,7 @@ func (c *Client) anthropicComplete(ctx context.Context, rt Route, inputs map[str
 	if emit == nil {
 		var out map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			return nil, fmt.Errorf("decoding provider response: %w", err)
+			return nil, decodeErr("provider response", err)
 		}
 		return fromAnthropic(out), nil
 	}

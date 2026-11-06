@@ -9,6 +9,27 @@ agents index understands (`invoke_agent` turns, `chat` LLM spans,
 the sender, which posts finished spans to Weft's `POST /api/v1/spans/batch`
 ([API.md](../../docs/weft/API.md#spans)) with a timeout.
 
+**Security.** Shared by every plugin:
+
+- `spanItems` with `captureContent` false sends no content at all: empty
+  inputs and outputs, a content-free display name (`safeDisplayName`: tool
+  name, `chat <model>`, `invoke_agent <agent>`), the error as the caller's
+  fixed `errorKind` (or `tool error` / `llm error` / `agent error`), and no
+  `gen_ai.conversation.name` or local paths (`cwd`, `transcript_path`,
+  `session_file`, ...).
+- `sendItems` never follows redirects (`redirect: 'error'`: a redirect would
+  resend the API key and the spans to another host) and passes a one-time
+  warning to `warn` when an API key goes over plain `http://` to a
+  non-loopback host.
+- Local state helpers (`privateMkdir`, `appendPrivate`, `writePrivate`,
+  `createPrivateExclusive`): `0700` directories (existing ones tightened),
+  `0600` files, atomic replace; `pruneOldFiles` deletes session logs older
+  than `WEFT_STATE_RETENTION_DAYS` (default 7); `makeLogger` uses them.
+- Installer helpers: `hookCommand` / `shellQuote` quote the hook path and
+  refuse paths with shell metacharacters, `writeFileAtomic`, `backupOnce`
+  (the first `.bak` is never overwritten), `readSecretFromStdin` (the
+  installers take the API key from stdin or `WEFT_API_KEY`, never argv).
+
 **Correlation with AgentShield** ([DESIGN.md](../../docs/weft/DESIGN.md) §5.3).
 Every plugin records the harness session id as `gen_ai.conversation.id` (and
 the span's `session_id`) and the harness tool-use id as `gen_ai.tool.call.id` on tool

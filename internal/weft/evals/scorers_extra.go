@@ -476,10 +476,15 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	}
 	body := map[string]any{"output": output, "inputs": example}
 	headers := map[string]string{}
+	// Secrets: scoped to this project and its destination (llm.UseSecret).
+	useSecret := func(name string) (string, error) {
+		v, _, err := e.LLM.UseSecret(ctx, llm.SecretUse{ProjectID: projectID, Name: name, Dest: target, AllowHTTP: AllowInsecureRemoteScorerHTTP})
+		return v, err
+	}
 	if name := strField(val, "headers_secret"); name != "" {
-		sv, ok := e.LLM.LookupSecret(ctx, name)
-		if !ok {
-			return nil, fmt.Errorf("secret %q is not set", name)
+		sv, err := useSecret(name)
+		if err != nil {
+			return nil, err
 		}
 		var hm map[string]any
 		if json.Unmarshal([]byte(sv), &hm) == nil {
@@ -492,14 +497,14 @@ func scoreRemote(e *Engine, ctx context.Context, projectID string, val, example 
 	}
 	if ac, ok := val["auth_config"].(map[string]any); ok {
 		if name := strField(ac, "bearer_secret_name"); name != "" {
-			sv, ok := e.LLM.LookupSecret(ctx, name)
-			if !ok {
-				return nil, fmt.Errorf("secret %q is not set", name)
+			sv, err := useSecret(name)
+			if err != nil {
+				return nil, err
 			}
 			headers["Authorization"] = "Bearer " + strings.TrimSpace(sv)
 		}
 		// OAuth client credentials (token_url, client_id, client_secret_secret, scopes): oauth.go.
-		if tok, err := e.oauthToken(ctx, ac); err != nil {
+		if tok, err := e.oauthToken(ctx, projectID, ac); err != nil {
 			return nil, err
 		} else if tok != "" {
 			headers["Authorization"] = "Bearer " + tok

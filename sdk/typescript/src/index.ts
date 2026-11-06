@@ -117,6 +117,8 @@ export {
   DEFAULT_REDACT_KEYS,
   DEFAULT_PII_ENTITIES,
   redactPiiText,
+  redactSecretValues,
+  isSecretKey,
   presidioAnalyzer,
   applyPiiSpans,
   type RedactSettings,

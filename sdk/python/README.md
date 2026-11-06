@@ -55,7 +55,8 @@ flushed at exit (`weft.flush()` / `weft.finish()` do it explicitly).
 | Disable tracing | | `WEFT_DISABLED=true` | off |
 | Evaluation concurrency | | `WEFT_PARALLELISM` | 10 |
 | Exit flush timeout (s) | | `WEFT_FLUSH_TIMEOUT` | 10 |
-| Redaction | `settings={"redact_keys": [...], "redact_pii": True}` | `WEFT_REDACT_KEYS=0` disables, `WEFT_REDACT_PII=1` | credential keys |
+| Redaction | `settings={"redact_keys": [...], "redact_pii": True}` | `WEFT_REDACT_KEYS=0` disables, `WEFT_REDACT_PII=1` | credential keys and values |
+| Run stored function code | `weft.load_op(ref, trust_code=True)`, `weft.get(ref, trust_code=True)` | `WEFT_ALLOW_CODE_LOAD=1` | off: functions load as inert `weft.StoredOp` |
 | PII entities and engine | `settings={"redact_pii_fields": [...], "redact_pii_exclude_fields": [...], "redact_pii_engine": "auto"}` | `WEFT_REDACT_PII_FIELDS`, `WEFT_REDACT_PII_EXCLUDE_FIELDS`, `WEFT_REDACT_PII_ENGINE` | `DEFAULT_PII_ENTITIES`; Presidio if installed |
 | Integrations | `autopatch=False`, `autopatch_settings={...}` | `WEFT_AUTOPATCH=0`, `WEFT_DISABLED_INTEGRATIONS=a,b`, `WEFT_AUTOPATCH_<NAME>=0` | all on |
 | Attributes on every span | `settings={"global_attributes": {...}}` | | none |
@@ -78,13 +79,20 @@ numbers are ignored with a warning.
 
 **WAL.** Weft's write-ahead log is a disk fallback: requests are sent from
 memory, and only what cannot be sent (server down, queue full, process
-exiting) is appended to `<wal_dir>/<server>_<project>.jsonl`, which the next
+exiting) is appended to `<wal_dir>/<server>_<project>.jsonl` (a `0600` file in
+a `0700` directory: it holds span inputs and outputs), which the next
 `weft.init` for that server and project replays.
 `WEFT_DISABLE_WAL_SENDER` (write the WAL, never send): with `WEFT_ENABLE_WAL` on, every write (call
 starts and ends, op and object versions, files) goes to the WAL file, nothing
 is sent, and nothing is replayed at start-up. Reads still go to the server.
 Run once more without the flag to send the file. Without `WEFT_ENABLE_WAL`
 the flag does nothing.
+
+**Transport.** The client never follows HTTP redirects: the Weft API does not
+redirect, and following one would resend the API key (and the request body)
+to whatever host the `Location` names, so a redirect fails the request
+(`WeftHTTPError` with the 3xx status). A warning is logged once when an API
+key is sent over plain `http://` to a host other than localhost.
 
 **`WEFT_DEBUG_HTTP=1`** prints each request
 (time, thread, method, URL, headers with `Authorization` redacted, JSON body)
@@ -124,19 +132,34 @@ A bare project name `"p"` is stored as `"default/p"`. When the server uses
 
 ### Redaction
 
-By default, values under dict keys named `api_key`, `apikey`, `authorization`,
-`auth`, `password`, `secret`, `token` or `access_token` are replaced with
-`"REDACTED"`. Matching is case-insensitive and on the exact key, at any depth
-in span inputs and outputs, and happens before anything leaves the process.
+By default, values under dict keys named like credentials are replaced with
+`"REDACTED"`, at any depth in span inputs and outputs, before anything leaves
+the process. Key names are normalised (lower case; `-`, `_`, `.` and spaces
+removed) and matched against `DEFAULT_REDACT_KEYS` (`api_key`, `authorization`,
+`password`, `passwd`, `pwd`, `secret`, `token`, `access_token`, `cookie`,
+`set_cookie`, `credentials`, `private_key`, ...) and patterns: names containing
+`secret`, `password`, `passwd`, `apikey`, `authorization`, `credential`,
+`privatekey` or `cookie`, names ending in `token` or `auth`, and API, secret,
+private, access, signing, encryption, master, session, auth, client and license
+`*_key` names. So `openai_api_key`, `OPENAI_API_KEY`, `apiKey`, `X-Api-Key`,
+`client_secret`, `refresh_token`, `aws_secret_access_key`, `Cookie` and
+`Proxy-Authorization` are redacted, while `max_tokens`, `key` or `sort_key`
+are not.
+
+Values that look like credentials are redacted inside any string too:
+`Bearer`/`Basic`/`Token` credentials (`Bearer REDACTED`), `sk-...` API keys,
+AWS access key ids (`AKIA...`), GitHub (`ghp_...`, `github_pat_...`) and Slack
+(`xox?-...`) tokens, PEM private keys, and the password in
+`scheme://user:password@host` URLs.
 
 ```python
 weft.init("my-project", settings={
-    "redact_keys": ["api_key", "ssn"],   # replaces the default list
+    "redact_keys": ["api_key", "ssn"],   # replaces the default list and patterns (exact, normalised names)
     "redact_pii": True,                  # also mask PII entities in strings
 })
 ```
 
-Set `WEFT_REDACT_KEYS=0` to turn key redaction off.
+Set `WEFT_REDACT_KEYS=0` to turn key and value redaction off.
 
 **PII entities.** With `redact_pii` (or `WEFT_REDACT_PII=1`), strings in
 inputs and outputs have entities replaced with `<ENTITY_TYPE>`. Regular
@@ -683,16 +706,31 @@ project. An unsaved object is saved
 first. Linking a version already in the collection returns its index;
 aliases move to the version they were given last.
 
-**Loading functions runs stored code.** `weft.get("my_fn")` returns a runnable
-`weft.Op` (a traced function). The SDK rebuilds it from the stored source by `exec`-ing it in a
-fresh namespace, strips its decorators and wraps it with `@weft.trace` again. Its
-spans are linked to the same function ref. A saved `Model`/`Scorer` subclass
-that is not defined in the loading process comes back as a rebuilt class whose
-function-ref methods are loaded the same way, so `loaded_model.predict(...)` works.
+**Stored functions are data unless you opt in.** `weft.get("my_fn")` returns
+a `weft.StoredOp` (`name`, `code`, `language`, `ref`): the SDK never runs code
+read from the server on its own, because anyone who can write to the project
+could store a new version of `my_fn` whose code runs on every machine that
+reads it. Calling a `StoredOp` raises `weft.OpLoadError`. To get a runnable
+`weft.Op` (a traced function), load it explicitly from a project whose writers
+you trust:
+
+```python
+fn = weft.load_op("my_fn", trust_code=True)        # or weft.load_op(stored, trust_code=True)
+model = weft.get("my-model", trust_code=True)       # also loads function-ref methods / scorers
+# or WEFT_ALLOW_CODE_LOAD=1 for the whole process
+```
+
+Loading `exec`s the stored module source in a fresh namespace (module-level
+statements and argument defaults run), strips the function's decorators and
+wraps it with `@weft.trace` again; its spans are linked to the same function
+ref. A saved `Model`/`Scorer` subclass that is not defined in the loading
+process comes back as a rebuilt class; its function-ref methods are
+`StoredOp`s, or loaded ops with `trust_code=True`, so
+`weft.get("m", trust_code=True).predict(...)` works. An `Evaluation` whose
+model or scorers are `StoredOp`s refuses to run until they are loaded.
 Only self-contained functions can be rebuilt; anything they reference from
 their original module (imports, helpers) has to exist at call time. When the
-code can't be rebuilt you get `weft.OpLoadError`. **Only load functions from servers
-and projects you trust.** Nested objects are saved
+code can't be rebuilt you get `weft.OpLoadError`. Nested objects are saved
 first and stored as refs. Objects whose class is not defined locally load as
 `weft.WeftObject`, a dict that also supports attribute access.
 

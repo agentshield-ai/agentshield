@@ -9,18 +9,20 @@ import { predictUrlError, promptColumns } from './modelUtils'
 
 type Created = Awaited<ReturnType<ReturnType<typeof usePublish>>>
 
-function SecretSelect({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
-  const secrets = useQuery({ queryKey: ['secrets'], queryFn: () => api.secretsList().then((r) => r.secrets) })
+function SecretSelect({ projectId, value, onChange, label }: { projectId: string; value: string; onChange: (v: string) => void; label: string }) {
+  const secrets = useQuery({ queryKey: ['secrets', projectId], queryFn: () => api.secretsList(projectId).then((r) => r.secrets) })
   return (
     <label className="field">
       {label}
       <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">None</option>
-        {(secrets.data ?? []).map((s) => (
-          <option key={s.name} value={s.name}>
-            {s.name} ({s.source})
-          </option>
-        ))}
+        {(secrets.data ?? [])
+          .filter((s, i, all) => s.kind !== 'bucket' && all.findIndex((x) => x.name === s.name) === i)
+          .map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name} ({s.source === 'env' ? 'env' : s.scope})
+            </option>
+          ))}
         {value && !(secrets.data ?? []).some((s) => s.name === value) && <option value={value}>{value}</option>}
       </select>
       <span className="hint">Sent as an Authorization: Bearer header. Add secrets in Settings → Secrets.</span>
@@ -77,7 +79,7 @@ export function RemoteModelModal({ projectId, onClose, onCreated }: { projectId:
           <input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://models.internal/predict" />
           {urlErr && <span className="small" style={{ color: 'var(--error)' }}>{urlErr}</span>}
         </label>
-        <SecretSelect value={secret} onChange={setSecret} label="API key secret (optional)" />
+        <SecretSelect projectId={projectId} value={secret} onChange={setSecret} label="API key secret (optional)" />
         <label className="field">
           Timeout (seconds)
           <input className="input" type="number" min={1} max={600} value={timeout} onChange={(e) => setTimeoutS(Math.max(1, Math.min(600, Number(e.target.value) || 120)))} style={{ width: 100 }} />

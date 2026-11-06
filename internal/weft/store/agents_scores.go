@@ -366,6 +366,9 @@ func (s *Store) CreateScopeScore(ctx context.Context, c ScopeScoreCreate) (*Feed
 	if c.Scorer == "" || len(c.Scorer) > 200 {
 		return nil, Invalidf("scorer is required")
 	}
+	if !ValidFeedbackType(c.Scorer) {
+		return nil, Invalidf("scorer may only contain letters, digits and _ . : * - (it becomes the feedback type weft.score.<scorer>)")
+	}
 	ref, err := s.scoreAnchor(ctx, pid, &c)
 	if err != nil {
 		return nil, err

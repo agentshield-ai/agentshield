@@ -82,13 +82,20 @@ Requires Node.js 18+ and a running Weft server (`./bin/weft`, default
 
 ```bash
 node plugins/weft-claude-code/install.mjs --project my-team/claude-code \
-  --server-url http://localhost:6345            # --api-key <key> when auth is on
+  --server-url http://localhost:6345
+# when auth is on, pass the key on stdin (or --api-key-from-env with WEFT_API_KEY set):
+printf %s "$WEFT_API_KEY" | node plugins/weft-claude-code/install.mjs --project my-team/claude-code --api-key-stdin
 ```
 
-This adds the hooks to `~/.claude/settings.json` (a `.bak` copy is kept;
-running it again replaces its own entries) and saves the settings to
-`~/.weft-claude-code/settings.json`. `--dry-run` prints the result instead,
-`--settings <path>` targets a project's `.claude/settings.json`, and
+This adds the hooks to `~/.claude/settings.json` and saves the settings to
+`~/.weft-claude-code/settings.json` (`0600`). The first run keeps a `.bak`
+copy of the original file (later runs never overwrite it), the file is
+replaced atomically, and running it again replaces its own entries. The hook
+command quotes the plugin's path; a path containing shell metacharacters
+(quotes, `$`, backticks, `;`, `&`, `|`, ...) is refused, so move the plugin to a
+plain directory. `--api-key <key>` is refused: a key on the command line is
+visible in the process list and shell history. `--dry-run` prints the result
+instead, `--settings <path>` targets a project's `.claude/settings.json`, and
 `--uninstall` removes the hooks.
 
 **Option B: as a Claude Code plugin.** The directory is a plugin
@@ -117,6 +124,7 @@ Set the configuration in the environment Claude Code starts in (or in
 | `WEFT_MAX_FIELD_CHARS` | `max_field_chars` | `20000` (longer strings, e.g. file contents, are cut) |
 | `WEFT_PLUGIN_DISABLED` | `disabled` | `false` |
 | `WEFT_CLAUDE_CODE_STATE_DIR` | | `~/.weft-claude-code` |
+| `WEFT_STATE_RETENTION_DAYS` | `state_retention_days` | `7`; logs of sessions that never ended are deleted after this many days (`0` keeps them) |
 | `WEFT_DEBUG` | `debug` | `false` (debug lines in the logs) |
 | `WEFT_FLUSH_MODE` | | `background`; `inline` flushes inside the hook (tests), `off` never flushes |
 
@@ -125,6 +133,24 @@ tool results (file contents, shell output) are sent to your Weft server. Turn
 on the server's sensitive-data redaction for the project
 (`/project/sensitive_data_settings/update`, optionally with
 `--pii-analyzer-url`) or set `WEFT_CAPTURE_CONTENT=false`.
+
+With `WEFT_CAPTURE_CONTENT=false` nothing anyone wrote leaves the machine:
+spans have empty inputs and outputs, display names are the tool name,
+`chat <model>` or `invoke_agent <agent>` (not the command or the reply), errors
+are a fixed class (`tool failed`, `interrupted`, ...) instead of the tool's
+error text, and `gen_ai.conversation.name` (the first prompt), `cwd` and the
+transcript path are not sent. The local session log then holds only ids,
+names and timings (no prompt, tool input or output, or last message).
+
+**Local state.** `~/.weft-claude-code` (session logs, cursors, logs, settings)
+is created `0700` with `0600` files; directories from earlier versions are
+tightened. A session's log is deleted when it ends; logs of sessions that
+never ended (a crash, a killed terminal) are deleted after
+`WEFT_STATE_RETENTION_DAYS` (default 7) on the next flush.
+
+**Transport.** The plugin never follows HTTP redirects (a redirect would
+resend the API key and the spans to another host), and logs a warning when
+an API key is sent over plain `http://` to a host other than localhost.
 
 ## Tests
 

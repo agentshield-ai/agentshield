@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { parseRef } from '../../api/refs'
-import type { Any, PriceEntry, WeftObject } from '../../api/types'
+import type { Any, PriceEntry, SecretEntry, SecretScope, WeftObject } from '../../api/types'
 import { ErrorBox, Modal } from '../../components/common'
 import { ConfirmButton } from '../../components/objects/bits'
 import { NameField, usePublish } from '../../components/objects/ObjectForms'
@@ -117,11 +117,55 @@ export function CostModal({ projectId, entry, override, onClose, onSaved }: { pr
   )
 }
 
-export function SecretModal({ name: initialName, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
+/** Splits "a.example.com, *.corp.example:8443" into entries. */
+export function parseAllowedHosts(text: string): string[] {
+  return text
+    .split(/[\s,]+/)
+    .map((h) => h.trim())
+    .filter(Boolean)
+}
+
+export function SecretModal({
+  name: initialName,
+  projectId,
+  serverAdmin,
+  teamAdmin,
+  current,
+  onClose,
+  onSaved,
+}: {
+  name: string
+  projectId: string
+  serverAdmin: boolean
+  teamAdmin: boolean
+  /** The secret now used for this name, if any (its scope is the default). */
+  current?: SecretEntry
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const team = projectId.split('/')[0]
+  const scopes: { id: SecretScope; label: string; hint: string }[] = [
+    { id: 'project', label: `This project (${projectId})`, hint: 'Used only by this project.' },
+    ...(teamAdmin ? [{ id: 'team' as const, label: `Team ${team}`, hint: `Used by every project of team ${team}.` }] : []),
+    ...(serverAdmin
+      ? [
+          {
+            id: 'server' as const,
+            label: 'Server',
+            hint: 'Used by the built-in providers of every project. Projects’ own providers, scorers and automations can use it only toward its allowed hosts.',
+          },
+        ]
+      : []),
+  ]
+  const initialScope: SecretScope =
+    current && current.source === 'db' && scopes.some((x) => x.id === current.scope) ? current.scope : 'project'
   const [name, setName] = useState(initialName)
   const [value, setValue] = useState('')
+  const [scope, setScope] = useState<SecretScope>(initialScope)
+  const [hosts, setHosts] = useState((current?.source === 'db' && current.scope === initialScope ? current.allowed_hosts : []).join(', '))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<unknown>(null)
+  const chosen = scopes.find((x) => x.id === scope) ?? scopes[0]
   return (
     <Modal
       title={initialName ? `Set ${initialName}` : 'Add secret'}
@@ -137,7 +181,14 @@ export function SecretModal({ name: initialName, onClose, onSaved }: { name: str
             onClick={async () => {
               setBusy(true)
               try {
-                await api.secretsSet(name.trim(), value)
+                await api.secretsSet({
+                  name: name.trim(),
+                  value,
+                  scope,
+                  project_id: scope === 'project' ? projectId : undefined,
+                  team: scope === 'team' ? team : undefined,
+                  allowed_hosts: parseAllowedHosts(hosts),
+                })
                 onSaved()
               } catch (e) {
                 setErr(e)
@@ -160,7 +211,26 @@ export function SecretModal({ name: initialName, onClose, onSaved }: { name: str
       <label className="field">
         Value
         <input className="input mono" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} placeholder="sk-…" autoFocus={!!initialName} />
-        <span className="hint">Stored on the server. It is never shown again.</span>
+        <span className="hint">Stored encrypted on the server. It is never shown again.</span>
+      </label>
+      <label className="field">
+        Scope
+        <select className="input" value={scope} onChange={(e) => setScope(e.target.value as SecretScope)} aria-label="Scope">
+          {scopes.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.label}
+            </option>
+          ))}
+        </select>
+        <span className="hint">{chosen.hint} A name set in a narrower scope (project, then team) takes precedence.</span>
+      </label>
+      <label className="field">
+        Allowed hosts
+        <input className="input mono" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder="api.example.com, *.corp.example" aria-label="Allowed hosts" />
+        <span className="hint">
+          Optional. The secret is only sent to these hosts (<span className="mono">host</span>, <span className="mono">host:port</span> or{' '}
+          <span className="mono">*.domain</span>); for a webhook URL, its own host. Empty: any host. Secrets are only sent over https (or to localhost).
+        </span>
       </label>
       <ErrorBox error={err} />
     </Modal>

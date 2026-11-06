@@ -187,12 +187,14 @@ func (s *Store) EndCall(ctx context.Context, en CallEnd) error {
 		if err := s.touchProject(ctx, tx, en.ProjectID); err != nil {
 			return err
 		}
-		return s.applyEnd(ctx, tx, &en)
+		_, err := s.applyEnd(ctx, tx, &en)
+		return err
 	})
 }
 
-// UpsertBatch applies a batch of starts and ends atomically and returns the
-// calls that ended in this batch.
+// UpsertBatch applies a batch of starts and ends, committed in chunks of
+// upsertChunk items, and returns the calls that ended (for the first time)
+// in this batch.
 func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall, error) {
 	for i := range items {
 		switch items[i].Mode {
@@ -231,7 +233,22 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 	var ended []EndedCall
 	ctx = withTraceBatch(ctx)  // agents_handoffs.go: derive each touched trace once
 	ctx = withSourceBatch(ctx) // sources.go: check each session's source once
+	var err error
+	for start := 0; start < len(items) && err == nil; start += upsertChunk {
+		var got []EndedCall
+		got, err = s.upsertBatchTx(ctx, items[start:min(start+upsertChunk, len(items))])
+		ended = append(ended, got...)
+	}
+	if err == nil {
+		logSourceReplacements(ctx) // sources.go
+	}
+	return ended, err
+}
+
+func (s *Store) upsertBatchTx(ctx context.Context, items []BatchItem) ([]EndedCall, error) {
+	var ended []EndedCall
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		ended = ended[:0]
 		touched := map[string]bool{}
 		for _, it := range items {
 			var pid string
@@ -251,17 +268,17 @@ func (s *Store) UpsertBatch(ctx context.Context, items []BatchItem) ([]EndedCall
 					return err
 				}
 			} else {
-				if err := s.applyEnd(ctx, tx, it.End); err != nil {
+				first, err := s.applyEnd(ctx, tx, it.End)
+				if err != nil {
 					return err
 				}
-				ended = append(ended, EndedCall{ProjectID: it.End.ProjectID, ID: it.End.ID})
+				if first {
+					ended = append(ended, EndedCall{ProjectID: it.End.ProjectID, ID: it.End.ID})
+				}
 			}
 		}
 		return flushTraceBatch(ctx, tx)
 	})
-	if err == nil {
-		logSourceReplacements(ctx) // sources.go
-	}
 	return ended, err
 }
 
@@ -294,7 +311,30 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 	var ended []EndedCall
 	ctx = withTraceBatch(ctx)  // agents_handoffs.go: derive each touched trace once
 	ctx = withSourceBatch(ctx) // sources.go: check each session's source once
+	// Large batches commit in chunks, so one request does not hold the
+	// database writer (one for all projects) for long. Upserts are
+	// idempotent: a client retrying after a failed chunk rewrites the
+	// committed ones unchanged.
+	var err error
+	for start := 0; start < len(calls) && err == nil; start += upsertChunk {
+		chunk := calls[start:min(start+upsertChunk, len(calls))]
+		var got []EndedCall
+		got, err = s.upsertCompleteTx(ctx, chunk)
+		ended = append(ended, got...)
+	}
+	if err == nil {
+		logSourceReplacements(ctx) // sources.go
+	}
+	return ended, err
+}
+
+// upsertChunk is the most calls UpsertComplete writes in one transaction.
+var upsertChunk = 250
+
+func (s *Store) upsertCompleteTx(ctx context.Context, calls []CompleteCall) ([]EndedCall, error) {
+	var ended []EndedCall
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		ended = ended[:0]
 		touched := map[string]bool{}
 		for i := range calls {
 			c := &calls[i]
@@ -308,17 +348,17 @@ func (s *Store) UpsertComplete(ctx context.Context, calls []CompleteCall) ([]End
 				return err
 			}
 			if c.End != nil {
-				if err := s.applyEnd(ctx, tx, c.End); err != nil {
+				first, err := s.applyEnd(ctx, tx, c.End)
+				if err != nil {
 					return err
 				}
-				ended = append(ended, EndedCall{ProjectID: c.Start.ProjectID, ID: c.Start.ID})
+				if first {
+					ended = append(ended, EndedCall{ProjectID: c.Start.ProjectID, ID: c.Start.ID})
+				}
 			}
 		}
 		return flushTraceBatch(ctx, tx)
 	})
-	if err == nil {
-		logSourceReplacements(ctx) // sources.go
-	}
 	return ended, err
 }
 
@@ -360,12 +400,15 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 			trace_id = excluded.trace_id, parent_id = excluded.parent_id,
 			thread_id = excluded.thread_id, turn_id = excluded.turn_id, started_at = excluded.started_at,
 			attributes = excluded.attributes, inputs = excluded.inputs, input_refs = excluded.input_refs,
-			user_id = excluded.user_id, run_id = excluded.run_id, has_start = 1,
+			user_id = excluded.user_id, run_id = excluded.run_id, has_start = 1, build_hash = NULL,
 			storage_size = calls.storage_size - (CASE WHEN calls.has_start = 1 THEN length(calls.inputs) + length(calls.attributes) ELSE 0 END) + excluded.storage_size`,
 		st.ProjectID, st.ID, st.OpName, OpBaseName(st.OpName), nullStr(st.DisplayName), st.TraceID, nullStr(st.ParentID),
 		nullStr(st.ThreadID), nullStr(st.TurnID), started, attrs, inputs, inRefs, nullStr(st.UserID), nullStr(st.RunID),
 		len(inputs)+len(attrs), st.ReplaceDisplayName)
 	if err != nil {
+		return err
+	}
+	if err := s.hideIfOutranked(ctx, tx, st); err != nil { // sources.go: stored hidden, not dropped
 		return err
 	}
 	if err := setRunStep(ctx, tx, st.ProjectID, st.ID, "run_step", st.RunStep); err != nil { // callfields.go
@@ -380,17 +423,25 @@ func (s *Store) applyStart(ctx context.Context, tx *sql.Tx, st *CallStart) error
 	return runCallHooks(ctx, tx, st.ProjectID, st.ID)
 }
 
-func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
+// applyEnd stores a call's end. first reports that the call had not ended
+// before (only then are its monitors notified: a re-sent or rebuilt span
+// is not evaluated again).
+func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) (first bool, err error) {
 	if drop, err := s.droppedEnd(ctx, tx, en); drop || err != nil { // sources.go
-		return err
+		return false, err
 	}
 	if drop, err := ingestHook(ctx, s, tx, nil, en); drop || err != nil {
-		return err
+		return false, err
 	}
 	ended, err := ParseTime(en.EndedAt)
 	if err != nil {
-		return err
+		return false, err
 	}
+	var before sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT ended_at FROM calls WHERE project_id = ? AND id = ?`, en.ProjectID, en.ID).Scan(&before); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	first = !before.Valid
 	var output any
 	outStr := ""
 	if en.Output != nil {
@@ -407,18 +458,18 @@ func (s *Store) applyEnd(ctx context.Context, tx *sql.Tx, en *CallEnd) error {
 			storage_size = calls.storage_size - length(COALESCE(calls.output, '')) - length(calls.summary) + excluded.storage_size`,
 		en.ProjectID, en.ID, en.ID, ended, nullStr(en.Exception), output, summary, outRefs, len(outStr)+len(summary), en.Cumulative)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := setRunStep(ctx, tx, en.ProjectID, en.ID, "run_step_end", en.RunStepEnd); err != nil { // callfields.go
-		return err
+		return false, err
 	}
 	if err := s.refreshTotalTokens(ctx, tx, en.ProjectID, en.ID); err != nil {
-		return err
+		return false, err
 	}
 	if err := s.propagate(ctx, tx, en.ProjectID, en.ID); err != nil {
-		return err
+		return false, err
 	}
-	return runCallHooks(ctx, tx, en.ProjectID, en.ID)
+	return first, runCallHooks(ctx, tx, en.ProjectID, en.ID)
 }
 
 // callHooks run inside the write transaction after a call's start or end is

@@ -164,7 +164,9 @@ func TestReferenceBucketCORSCheck(t *testing.T) {
 	s3fake.Objects["/cust-media/frames/1.png"] = []byte("S3PNG")
 	gfake, gsrv := gcstest.NewFake(t)
 	gfake.Objects["/cust-gcs/shots/cat.png"] = []byte("GCSPNG")
-	e := newEnv(t)
+	e, srv := newEnvWithServer(t)
+	// The UI served from another origin (a proxy) must be allowed to call.
+	srv.cfg.CORSOrigins = []string{"https://weft.example.com"}
 	e.post("/secrets/set", map[string]any{"name": "CUST_S3", "value": `{"access_key_id":"CUSTKEY","secret_access_key":"CUSTSECRET"}`})
 	e.post("/secrets/set", map[string]any{"name": "CUST_GCS", "value": string(gfake.ServiceAccountJSON())})
 	s3body := map[string]any{"entity": "acme", "provider": "s3", "bucket": "cust-media", "region": "eu-west-1",
@@ -248,8 +250,9 @@ func TestReferenceBucketCORSCheck(t *testing.T) {
 	if m = test(gcsBody, "https://weft.example.com"); m["ok"] != true {
 		t.Fatalf("gcs matching origin = %v", m)
 	}
-	if m = test(gcsBody, "http://evil.test"); m["ok"] != false {
-		t.Fatalf("gcs other origin = %v", m)
+	// A page of another origin cannot call at all (netguard.go).
+	if code, b := e.raw("/reference_buckets/test", gcsBody, map[string]string{"Origin": "http://evil.test"}); code != 403 {
+		t.Fatalf("gcs other origin -> %d %s", code, b)
 	}
 	// Behind a proxy, the forwarded scheme and host are the origin.
 	code, b := e.raw("/reference_buckets/test", gcsBody, map[string]string{"X-Forwarded-Proto": "https", "X-Forwarded-Host": "weft.example.com"})

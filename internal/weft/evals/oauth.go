@@ -22,9 +22,11 @@ import (
 //	                "client_secret_secret": "SCORER_CLIENT_SECRET", "scopes": ["score"],
 //	                "audience": "https://scorer" (optional)}
 //
-// The client secret is read from the named stored secret (or environment
-// variable). Tokens are cached per token URL, client, secret and scopes and
-// fetched again shortly before they expire.
+// The client secret is read from the named stored secret, which must be
+// visible to the project and allowed for the token URL's host
+// (llm.Client.UseSecret); it is sent only over https (loopback excepted).
+// Tokens are cached per token URL, client, secret and scopes and fetched
+// again shortly before they expire.
 
 var (
 	oauthMu      sync.Mutex
@@ -34,7 +36,7 @@ var (
 )
 
 // oauthToken returns a bearer token for auth_config, or "" when it has no token_url.
-func (e *Engine) oauthToken(ctx context.Context, ac map[string]any) (string, error) {
+func (e *Engine) oauthToken(ctx context.Context, projectID string, ac map[string]any) (string, error) {
 	tokenURL := strField(ac, "token_url")
 	if tokenURL == "" {
 		return "", nil
@@ -48,9 +50,9 @@ func (e *Engine) oauthToken(ctx context.Context, ac map[string]any) (string, err
 	if clientID == "" || secretName == "" {
 		return "", fmt.Errorf("auth_config needs client_id and client_secret_secret (the name of a stored secret)")
 	}
-	secret, ok := e.LLM.LookupSecret(ctx, secretName)
-	if !ok {
-		return "", fmt.Errorf("secret %q is not set", secretName)
+	secret, err := e.LLM.LookupSecret(ctx, projectID, secretName, tokenURL)
+	if err != nil {
+		return "", err
 	}
 	var scopes []string
 	switch v := ac["scopes"].(type) {

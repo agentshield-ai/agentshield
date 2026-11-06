@@ -20,23 +20,6 @@ type EmbeddingResult struct {
 	Usage      any         `json:"usage,omitempty"`
 }
 
-func (c *Client) routeHeaders(ctx context.Context, rt Route) (map[string]string, error) {
-	headers := map[string]string{}
-	if rt.KeyName != "" {
-		key, ok := c.routeKey(ctx, rt)
-		if !ok && !strings.HasPrefix(rt.BaseURL, "http://localhost") && !strings.HasPrefix(rt.BaseURL, "http://127.0.0.1") {
-			return nil, fmt.Errorf("no API key configured: set the %s secret", rt.KeyName)
-		}
-		if key != "" {
-			headers["Authorization"] = "Bearer " + key
-		}
-	}
-	for k, v := range rt.Headers {
-		headers[k] = v
-	}
-	return headers, nil
-}
-
 // Embed returns one embedding per text using an OpenAI-compatible
 // /embeddings endpoint. mock/* models return a deterministic bag-of-words
 // embedding so texts sharing words are similar, which works offline.
@@ -61,11 +44,11 @@ func (c *Client) Embed(ctx context.Context, projectID, model string, texts []str
 	case "anthropic":
 		return nil, fmt.Errorf("model %q does not support embeddings; use an OpenAI-compatible embedding model such as openai/text-embedding-3-small", model)
 	}
-	headers, err := c.routeHeaders(ctx, rt)
+	headers, err := c.keyHeaders(ctx, rt)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.post(ctx, rt.BaseURL+"/embeddings", headers, map[string]any{"model": rt.Model, "input": texts})
+	resp, err := c.post(ctx, rt, "/embeddings", headers, map[string]any{"model": rt.Model, "input": texts}, MaxEmbeddingResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +62,7 @@ func (c *Client) Embed(ctx context.Context, projectID, model string, texts []str
 		Usage any `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decoding embeddings response: %w", err)
+		return nil, decodeErr("embeddings response", err)
 	}
 	if len(body.Data) != len(texts) {
 		return nil, fmt.Errorf("provider returned %d embeddings for %d inputs", len(body.Data), len(texts))
@@ -173,12 +156,15 @@ func (c *Client) Moderate(ctx context.Context, projectID, model, text string) (*
 	}
 	name := strings.TrimPrefix(model, "openai/")
 	p := openAICompatible["openai"]
-	rt := c.openAIRoute(ctx, "openai", name, p.BaseURL, p.KeyName)
-	headers, err := c.routeHeaders(ctx, rt)
+	rt, err := c.openAIRoute(ctx, projectID, "openai", name, p.BaseURL, p.KeyName)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.post(ctx, rt.BaseURL+"/moderations", headers, map[string]any{"model": name, "input": text})
+	headers, err := c.keyHeaders(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.post(ctx, rt, "/moderations", headers, map[string]any{"model": name, "input": text}, MaxModerationResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -187,16 +173,10 @@ func (c *Client) Moderate(ctx context.Context, projectID, model, text string) (*
 		Results []ModerationResult `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decoding moderation response: %w", err)
+		return nil, decodeErr("moderation response", err)
 	}
 	if len(body.Results) == 0 {
 		return nil, fmt.Errorf("moderation response has no results")
 	}
 	return &body.Results[0], nil
-}
-
-// LookupSecret returns a stored secret. It never reads the server environment:
-// the name may come from a project or user (scorer headers, OAuth secrets).
-func (c *Client) LookupSecret(ctx context.Context, name string) (string, bool) {
-	return c.secret(ctx, name)
 }

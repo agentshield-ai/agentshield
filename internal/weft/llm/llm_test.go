@@ -10,7 +10,7 @@ import (
 )
 
 func TestResolve(t *testing.T) {
-	c := New(func(context.Context, string) (string, bool) { return "", false }, nil)
+	c := New(StaticSecrets(nil), nil)
 	cases := map[string]string{
 		"gpt-4o-mini": "openai", "o3-mini": "openai", "claude-sonnet-4-5": "anthropic", "anthropic/claude-x": "anthropic",
 		"gemini-2.5-flash": "openai", "mock/echo": "mock", "groq/llama-3.1-8b": "openai",
@@ -88,7 +88,7 @@ func TestOpenAIStreamAccumulates(t *testing.T) {
 	}))
 	defer srv.Close()
 	secrets := map[string]string{"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": srv.URL}
-	c := New(func(_ context.Context, n string) (string, bool) { v, ok := secrets[n]; return v, ok }, nil)
+	c := New(StaticSecrets(secrets), nil)
 	n := 0
 	final, err := c.Stream(context.Background(), "e/p", map[string]any{"model": "gpt-4o", "messages": []any{}}, func(map[string]any) error { n++; return nil })
 	if err != nil {

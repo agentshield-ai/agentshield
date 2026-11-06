@@ -191,10 +191,12 @@ type spanBatchReq struct {
 	} `json:"items"`
 }
 
-const maxSpanBatch = 100000
+// maxSpanBatch bounds the items of one /spans/batch request (as
+// otlp.MaxExportSpans bounds an OTLP export).
+const maxSpanBatch = 10000
 
-// v1SpanBatch applies starts, ends and complete spans in order, in one
-// transaction.
+// v1SpanBatch applies starts, ends and complete spans in order, committed
+// in chunks (store.UpsertBatch).
 func (s *Server) v1SpanBatch(ctx context.Context, r *http.Request, req *spanBatchReq) (any, error) {
 	if len(req.Items) > maxSpanBatch {
 		return nil, store.Invalidf("batch too large (max %d items)", maxSpanBatch)
@@ -346,19 +348,36 @@ func (s *Server) v1SpansQuery(ctx context.Context, _ *http.Request, req *spansQu
 	}
 	spans := []*Span{}
 	if limit > 0 {
-		q.Limit = &limit
-		calls, err := s.store.ListCalls(nativeRefs(ctx), q)
+		// Read in pages and bound the response: a list of large spans
+		// would otherwise be held in memory whole (use /spans/stream).
+		var bytes int64
+		err := forEachCallPage(nativeRefs(ctx), s.store, q, q.Offset, limit, func(page []*store.Call) error {
+			for _, c := range page {
+				if bytes += c.StoredSize(); bytes > maxListResponseBytes {
+					return store.Invalidf("the response would be larger than %d MiB: lower limit, or read the spans with /spans/stream", maxListResponseBytes>>20)
+				}
+				spans = append(spans, spanFrom(c, req.IncludeStorageSize))
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, err
-		}
-		for _, c := range calls {
-			spans = append(spans, spanFrom(c, req.IncludeStorageSize))
 		}
 	}
 	return newList(spans, total), nil
 }
 
-// v1SpansStream streams every matching span (no default limit).
+// maxListResponseBytes bounds the stored size of the spans one
+// /spans/query response holds.
+const maxListResponseBytes = 64 << 20
+
+// streamWriteTimeout is how long a stream waits for the client to take
+// each page before it gives up on it.
+const streamWriteTimeout = 30 * time.Second
+
+// v1SpansStream streams every matching span (no default limit), a page
+// at a time, so memory does not grow with the result; a client that stops
+// reading is cut off after streamWriteTimeout.
 func (s *Server) v1SpansStream(w http.ResponseWriter, r *http.Request) {
 	var req spansQuery
 	if err := decodeBody(r, &req); err != nil {
@@ -369,17 +388,39 @@ func (s *Server) v1SpansStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, store.Invalidf("limit must not be negative"))
 		return
 	}
-	// Run the query fully before writing so errors produce a proper status.
-	calls, err := s.store.ListCalls(nativeRefs(r.Context()), req.store())
-	if err != nil {
-		writeErr(w, err)
-		return
+	q := req.store()
+	limit := -1
+	if q.Limit != nil {
+		limit = *q.Limit
 	}
-	out := newNDJSON(w)
-	for _, c := range calls {
-		if out.write(spanFrom(c, req.IncludeStorageSize)) != nil {
+	q.Limit = nil
+	// Spans that start while the stream runs would shift the pages; pin
+	// the end, as exports do.
+	q.Query = andQuery(q.Query, map[string]any{"$lte": []any{
+		map[string]any{"$getField": "started_at"}, map[string]any{"$literal": time.Now().UTC().Format(time.RFC3339Nano)},
+	}})
+	ctx := nativeRefs(r.Context())
+	rc := http.NewResponseController(w)
+	var out *ndjson
+	err := forEachCallPage(ctx, s.store, q, q.Offset, limit, func(page []*store.Call) error {
+		if out == nil { // the first page was read: the query is valid
+			out = newNDJSON(w)
+		}
+		_ = rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout))
+		for _, c := range page {
+			if err := out.write(spanFrom(c, req.IncludeStorageSize)); err != nil {
+				return err
+			}
+		}
+		out.flush()
+		return nil
+	})
+	if out == nil {
+		if err != nil {
+			writeErr(w, err)
 			return
 		}
+		out = newNDJSON(w) // nothing matched
 	}
 	out.flush()
 }

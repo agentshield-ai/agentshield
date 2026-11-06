@@ -371,6 +371,7 @@ func TestOIDCES256AndLinking(t *testing.T) {
 		}
 	}
 	req, _ := http.NewRequest("POST", e.srv.URL+"/api/v1/spans/start", strings.NewReader(`{"project_id":"acme/app","name":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(csrfHeader, csrf)
 	resp, err := e.client.Do(req)
 	if err != nil {

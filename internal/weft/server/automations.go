@@ -27,7 +27,7 @@ func (s *Server) automations() *automations.Runner {
 
 func init() {
 	startExtensions = append(startExtensions, func(s *Server) func() {
-		ar := automations.New(s.store, s.llm.LookupSecret, s.log)
+		ar := automations.New(s.store, s.llm.LookupURLSecret, s.log)
 		ar.Start()
 		runnersMu.Lock()
 		runners[s] = ar

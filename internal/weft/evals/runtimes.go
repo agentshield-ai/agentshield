@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
+	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 )
@@ -256,15 +257,19 @@ func (e *Engine) remotePredict(ctx context.Context, projectID string, p *predict
 		req.Header.Set(k, v)
 	}
 	if p.secret != "" {
-		sv, ok := e.LLM.LookupSecret(ctx, p.secret)
-		if !ok {
-			return nil, nil, fmt.Errorf("secret %q is not set", p.secret)
+		sv, err := e.LLM.LookupSecret(ctx, projectID, p.secret, p.url)
+		if err != nil {
+			return nil, nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(sv))
 	}
-	if tok, err := e.oauthToken(ctx, p.oauth); err != nil {
+	if tok, err := e.oauthToken(ctx, projectID, p.oauth); err != nil {
 		return nil, nil, err
 	} else if tok != "" {
+		// A token obtained with a stored secret is a credential too.
+		if err := llm.CheckCredentialTransport(p.url, false); err != nil {
+			return nil, nil, err
+		}
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := remoteHTTP.Do(req)

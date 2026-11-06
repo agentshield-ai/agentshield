@@ -50,7 +50,7 @@ func (c *Client) GenerateImage(ctx context.Context, projectID string, inputs map
 	case "anthropic":
 		return nil, fmt.Errorf("model %q does not generate images; use an OpenAI-compatible image model such as openai/gpt-image-1", model)
 	}
-	headers, err := c.routeHeaders(ctx, rt)
+	headers, err := c.keyHeaders(ctx, rt)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (c *Client) GenerateImage(ctx context.Context, projectID string, inputs map
 			body[k] = v
 		}
 	}
-	resp, err := c.post(ctx, rt.BaseURL+"/images/generations", headers, body)
+	resp, err := c.post(ctx, rt, "/images/generations", headers, body, MaxImageResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (c *Client) GenerateImage(ctx context.Context, projectID string, inputs map
 	dec := json.NewDecoder(resp.Body)
 	dec.UseNumber()
 	if err := dec.Decode(&out); err != nil {
-		return nil, fmt.Errorf("decoding image response: %w", err)
+		return nil, decodeErr("image response", err)
 	}
 	return out, nil
 }

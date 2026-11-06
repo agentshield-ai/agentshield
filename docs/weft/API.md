@@ -26,15 +26,19 @@ the UI.
   the JSON body for `POST` and `PUT`, or as a multipart field for uploads.
 - **project_id** is `"<entity>/<project>"`. A bare `"<project>"` is
   normalised to `"default/<project>"`. Projects are created implicitly on
-  first write.
+  first write. A new project's entity and name may not contain `"`, `;`,
+  `<`, `>` or control characters, or be `.` or `..` (`400`); projects
+  created before this rule keep working.
 - **Lists** take `limit` (default 100, at most 10,000; `0` returns only the
   count), `offset` and, where sorting applies, `sort_by: [{"field",
   "direction": "asc" | "desc"}]`. They return `{"items": [...],
   "total_count": n}`, where `total_count` counts every match before paging.
 - **Streams** (`.../stream` routes) return `application/x-ndjson`: one JSON
-  item per line, no wrapper. They read the whole result first, so an invalid
-  request still gets a proper error status. They take the list's body and
-  have no default limit.
+  item per line, no wrapper. They read the first page before writing, so an
+  invalid request still gets a proper error status, then write page by page;
+  a client that does not take a page within 30 seconds is cut off. They take
+  the list's body and have no default limit. `/api/v1/spans/query` refuses
+  (`400`) a page whose spans hold more than 64 MiB: lower `limit` or stream.
 - **Timestamps** are RFC 3339 strings with up to nanosecond precision, UTC.
 - **IDs**: SDK spans use UUIDv7 strings for `id` and `trace_id`. OTLP spans
   use the hex span id (16 chars) and hex trace id (32 chars).
@@ -121,7 +125,7 @@ the UI.
 events of Claude Code, Codex and Gemini CLI, [below](#claude-code-log-events)), plus `files_backend` with an
 S3 files backend and `compat_adapter` with the adapter on). `limits`:
 `max_request_bytes` (64 MiB), `max_file_bytes` (64 MiB), `max_span_batch`
-(100,000 items), `max_feedback_batch` (1,000), `max_refs_per_read` (1,000),
+(10,000 items), `max_feedback_batch` (1,000), `max_refs_per_read` (1,000),
 `max_table_rows` (1,000,000), `default_page_size` (100), `max_page_size`
 (10,000), `max_compare_runs` (50), `max_scored_spans` (100),
 `max_scorers_per_score` (10).
@@ -197,7 +201,7 @@ from OTLP ([OpenTelemetry ingest](#opentelemetry-ingest)).
 |---|---|---|
 | `POST /api/v1/spans/start` | `{project_id, name, id?, trace_id?, parent_id?, display_name?, started_at?, attributes?, inputs?, session_id?, turn_id?, user_id?, run_id?, run_step?}` | `{"id","trace_id"}`. `id` defaults to a UUIDv7, `started_at` to now, `trace_id` to the parent's (or the span's own id for a root), `session_id` to the `weft.session_id` attribute (nested or flat, [Span attributes](#span-attributes)); an explicit `session_id` wins. `spans/batch` and OTLP ingest do the same |
 | `POST /api/v1/spans/end` | `{project_id, id, ended_at?, output?, error?, summary?, run_step_end?}` | `{}`; an end may arrive before its start (batched clients, OTLP children first): an end for an id not yet started is stored and the start fills in the rest |
-| `POST /api/v1/spans/batch` | `{project_id, items: [{"start": {...}} \| {"end": {...}} \| {"span": {...start fields, ended_at, output, error, summary, run_step_end}}]}` — exactly one key per item; items without `project_id` use the top-level one; applied in order in one transaction | `{"items": [{"id","trace_id"} \| {"id"}]}` aligned with `items` |
+| `POST /api/v1/spans/batch` | `{project_id, items: [{"start": {...}} \| {"end": {...}} \| {"span": {...start fields, ended_at, output, error, summary, run_step_end}}]}` — exactly one key per item (at most 10,000 items); items without `project_id` use the top-level one; applied in order, committed in transactions of 250 items (a retry after an error rewrites the committed ones unchanged) | `{"items": [{"id","trace_id"} \| {"id"}]}` aligned with `items` |
 | `GET /api/v1/spans/{id}?project_id=&include_costs=&include_feedback=&include_storage_size=&include_total_storage_size=&include_usernames=` | | Span, or 404 |
 | `POST /api/v1/spans/query` | SpansQuery | `{"items": [Span], "total_count"}` |
 | `POST /api/v1/spans/stream` | SpansQuery | NDJSON of Span |
@@ -255,6 +259,15 @@ prices):
 - Text: `{"$contains": {"input": a, "substr": b, "case_insensitive": true}}`
 - Operands: `{"$literal": v}`, `{"$getField": "inputs.question"}`,
   `{"$convert": {"input": a, "to": "double|int|string|bool|exists"}}`, or a nested operation.
+- Limits (`400` beyond them): operations and `$convert` nest at most 64
+  deep; a query has at most 1,000 operations and non-literal operands and
+  10,000 literals (`$in` items), and compiles to at most 256 KiB of SQL.
+  Each `filter` id list (`ids`, `trace_ids`, `names`, ...) holds at most
+  10,000 values. A `Monitor` whose `query` breaks these is refused when it
+  is saved.
+- A JSON value is stored at most 64 levels deep (objects and arrays): a
+  deeper part of a span's `attributes`, `inputs`, `output` or `summary`, a
+  feedback payload or a log event, is stored as its JSON text (a string).
 
 Span fields: `id, name, base_name, display_name, trace_id, parent_id,
 session_id, turn_id, started_at, ended_at, error, user_id, run_id,
@@ -678,7 +691,13 @@ means all root spans), that match `query`, and pass `sampling_rate` are scored
 asynchronously by each server-runnable scorer. The result is stored as
 `weft.scorer.<scorer name>` feedback with `trigger_ref` set to the monitor
 ref, and the scorer's own span is recorded with `name = "<scorer name>.score"`.
-Scorer spans and completions are never themselves monitored. (Monitors saved
+Scorer spans and completions are never themselves monitored. A span is
+scored once per monitor (any version) and scorer: it is evaluated when it
+first ends, and a span re-sent, or rebuilt from its event log, is not scored
+again. Monitor work is shared between projects: spans wait in one queue per
+project (at most 5,000 waiting), served in turn, and one project's spans
+occupy at most 4 of the 8 workers. `LevenshteinScorer` compares texts of at
+most 10,000 characters (longer is a scorer error). (Monitors saved
 before Weft's own names, and monitors the weave client publishes through the
 compatibility adapter, say `op_names`; it is read as `names`.)
 
@@ -741,6 +760,13 @@ else resource `weft.project`, else `default/default`); a key limited to some
 projects must send the header, and a read-only key cannot write to any of
 them. There is no gRPC receiver: use `http/protobuf` or `http/json`.
 
+Limits (`413` beyond them): an export is at most 16 MiB decompressed, gzip
+at most 100:1 once over 1 MiB, at most 10,000 spans (log records) and
+2,000,000 protobuf messages (1,000,000 JSON values). Bodies being decoded
+share a server-wide memory budget (512 MiB); a request that cannot get its
+share within 10 seconds gets `503` (OTLP exporters retry it). Spans are
+committed in transactions of 250, so a large export does not hold the database writer for long.
+
 ### Claude Code log events
 
 Claude Code's built-in export (`CLAUDE_CODE_ENABLE_TELEMETRY=1`,
@@ -751,7 +777,11 @@ and, once a prompt starts, `prompt.id`. Weft stores each event once (a
 re-sent record is recognised), and rebuilds a prompt's spans from all of its
 events whenever one arrives, so batches may be split, re-sent or out of
 order. Span ids derive from the session, prompt, tool-use, request and agent
-ids, so a rebuild updates the same spans. The spans have the plugin's shape
+ids, so a rebuild updates the same spans; a span rebuilt exactly as stored is
+not written (or reported to monitors) again. A prompt keeps at most 20,000
+events (later new ones are dropped, with a warning), and events are purged by
+the project's retention by their own time or the time they were received,
+whichever is older. The spans have the plugin's shape
 (`plugins/weft-claude-code`), `weft.source = claude-code-otel-logs`, session
 = `session.id` and trace = the turn:
 

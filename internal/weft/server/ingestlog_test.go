@@ -94,7 +94,7 @@ func TestIngestLogFollowsAClaudeCodeSession(t *testing.T) {
 	}
 
 	// The plugin sends the Bash session: its spans replace the log events'.
-	if code, out := e.raw("/api/v1/spans/batch", map[string]any{"project_id": pid, "items": pluginItems(ccBashSession)}, nil); code != 200 {
+	if code, out := e.raw("/api/v1/spans/batch", map[string]any{"project_id": pid, "items": pluginItems(ccBashSession)}, map[string]string{"X-Weft-Source": "weft-claude-code"}); code != 200 {
 		t.Fatalf("plugin batch -> %d %s", code, out)
 	}
 	rep := buf.find(t, "session source replaced", map[string]any{"session_id": ccBashSession, "from": "claude-code-otel-logs",

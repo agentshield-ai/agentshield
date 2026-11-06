@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"hash/fnv"
 	"log/slog"
 	"sort"
@@ -72,10 +75,33 @@ CREATE TABLE IF NOT EXISTS log_session_links (
 				return err
 			}
 		}
+		if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS log_events_received ON log_events(project_id, received_at)`); err != nil {
+			return err
+		}
 		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS log_events_open ON log_events(project_id, source, session_id, grouping, ts)`)
 		return err
 	})
+	// calls.build_hash: the hash of the span an event-log rebuild last
+	// stored; a rebuild that builds the same span again skips it. A
+	// write of the span by any other path clears it (applyStart).
+	registerMigration(func(db *sql.DB) error {
+		ok, err := HasColumn(db, "calls", "build_hash")
+		if err != nil || ok {
+			return err
+		}
+		_, err = db.Exec(`ALTER TABLE calls ADD COLUMN build_hash TEXT`)
+		return err
+	})
 }
+
+// Event-log rebuild bounds: a group keeps at most maxLogGroupEvents events
+// (later new ones are dropped, with a warning), and builders see at most
+// firstGroupEvents events of the session's first group (they read its
+// prompt from it).
+var (
+	maxLogGroupEvents = 20000
+	firstGroupEvents  = 200
+)
 
 // log_events.grouping: how an event's group was chosen.
 const (
@@ -154,13 +180,14 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 
 	touched := map[logGroupKey]bool{}
 	var groups []LogGroup
-	added, dups := 0, 0
+	added, dups, dropped := 0, 0, 0
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		added, dups = 0, 0
+		added, dups, dropped = 0, 0, 0
 		if err := s.touchProject(ctx, tx, pid); err != nil {
 			return err
 		}
-		w := &logWriter{ctx: ctx, tx: tx, pid: pid, src: src, touched: touched, parents: map[string]string{}}
+		w := &logWriter{ctx: ctx, tx: tx, pid: pid, src: src, touched: touched, parents: map[string]string{},
+			counts: map[logGroupKey]int{}, warned: map[logGroupKey]bool{}}
 		// Links first, so a sub-agent's events in the same batch land in
 		// its parent's session; then openers, so the events after them
 		// find their group.
@@ -188,13 +215,17 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 					return err
 				}
 			}
+			before := w.dropped
 			n, err := w.insert(e)
 			if err != nil {
 				return err
 			}
 			added += n
-			dups += 1 - n
+			if w.dropped == before {
+				dups += 1 - n
+			}
 		}
+		dropped = w.dropped
 		sessions := map[string]bool{}
 		for k := range touched {
 			sessions[k.session] = true
@@ -223,14 +254,14 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 				if !rebuild[i] {
 					continue
 				}
-				evs, err := loadLogGroup(ctx, tx, pid, source, sid, g)
+				evs, err := loadLogGroup(ctx, tx, pid, source, sid, g, 0)
 				if err != nil {
 					return err
 				}
 				if i == 0 {
 					first = evs
 				} else if first == nil {
-					if first, err = loadLogGroup(ctx, tx, pid, source, sid, order[0]); err != nil {
+					if first, err = loadLogGroup(ctx, tx, pid, source, sid, order[0], firstGroupEvents); err != nil {
 						return err
 					}
 				}
@@ -245,6 +276,7 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 	ingestCount(ctx, func(is *IngestStats) {
 		is.EventsNew += added
 		is.EventsDuplicate += dups
+		is.EventsDropped += dropped
 		is.TurnsRebuilt += len(groups)
 		for _, e := range events {
 			is.addSession(e.SessionID)
@@ -296,7 +328,21 @@ func (s *Store) IngestLogEvents(ctx context.Context, projectID string, src LogSo
 			newlyInterrupted = append(newlyInterrupted, c)
 		}
 	}
+	// Spans built exactly as stored last time are not written (or
+	// reported to monitors) again: a batch usually changes a few spans of
+	// the groups it rebuilds.
+	calls, hashes, err := s.changedBuiltCalls(ctx, pid, calls)
+	if err != nil {
+		return nil, added, err
+	}
+	ingestCount(ctx, func(is *IngestStats) { is.SpansUnchanged += len(hashes.unchanged) })
+	if len(calls) == 0 {
+		return nil, added, nil
+	}
 	ended, err := s.UpsertComplete(ctx, calls)
+	if err == nil {
+		err = s.storeBuildHashes(ctx, pid, hashes.changed)
+	}
 	if err == nil {
 		for _, c := range newlyInterrupted {
 			sid := ""
@@ -325,6 +371,9 @@ type logWriter struct {
 	src     LogSource
 	touched map[logGroupKey]bool
 	parents map[string]string // session -> the session it is stored in
+	counts  map[logGroupKey]int
+	warned  map[logGroupKey]bool
+	dropped int
 }
 
 // home is the session a session's events are stored in.
@@ -451,6 +500,10 @@ func (w *logWriter) insert(e LogEvent) (int, error) {
 			return 0, err
 		}
 	}
+	full, err := w.groupFull(session, group)
+	if err != nil || full {
+		return 0, err
+	}
 	res, err := w.tx.ExecContext(w.ctx, `INSERT OR IGNORE INTO log_events(project_id, source, event_key, session_id, group_id, grouping, name, ts, seq, attributes, received_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, w.pid, w.src.Name, e.Key, session, group, grouping, e.Name, e.TimeUS, e.Seq, mustJSON(e.Attrs), nowMicros())
 	if err != nil {
@@ -461,6 +514,7 @@ func (w *logWriter) insert(e LogEvent) (int, error) {
 	}
 	if group != "" {
 		w.touched[logGroupKey{session, group}] = true
+		w.counts[logGroupKey{session, group}]++
 	}
 	if grouping == groupOpener {
 		// Events placed by time from here to the next opener are this group's.
@@ -502,6 +556,33 @@ func (w *logWriter) insert(e LogEvent) (int, error) {
 	return 1, nil
 }
 
+// groupFull reports whether a group holds maxLogGroupEvents events: its
+// spans are rebuilt from all of them on every batch, so a group is bounded.
+func (w *logWriter) groupFull(session, group string) (bool, error) {
+	if group == "" {
+		return false, nil
+	}
+	k := logGroupKey{session, group}
+	n, ok := w.counts[k]
+	if !ok {
+		if err := w.tx.QueryRowContext(w.ctx, `SELECT COUNT(*) FROM log_events WHERE project_id = ? AND source = ? AND session_id = ? AND group_id = ?`,
+			w.pid, w.src.Name, session, group).Scan(&n); err != nil {
+			return false, err
+		}
+		w.counts[k] = n
+	}
+	if n < maxLogGroupEvents {
+		return false, nil
+	}
+	if !w.warned[k] {
+		w.warned[k] = true
+		weftlog.From(w.ctx).Warn("event-log group full; dropping its new events", "project", w.pid, "source", w.src.Name,
+			"session_id", session, "group", group, "max_events", maxLogGroupEvents)
+	}
+	w.dropped++
+	return true, nil
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
@@ -536,9 +617,14 @@ func logGroupOrder(ctx context.Context, tx *sql.Tx, pid, source, session string)
 	return out, rows.Err()
 }
 
-func loadLogGroup(ctx context.Context, tx *sql.Tx, pid, source, session, group string) ([]LogEvent, error) {
+// loadLogGroup loads a group's events in time order, the first limit of
+// them when limit > 0.
+func loadLogGroup(ctx context.Context, tx *sql.Tx, pid, source, session, group string, limit int) ([]LogEvent, error) {
+	if limit <= 0 {
+		limit = -1
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT event_key, name, ts, seq, grouping, attributes FROM log_events
-		WHERE project_id = ? AND source = ? AND session_id = ? AND group_id = ? ORDER BY ts, seq, event_key`, pid, source, session, group)
+		WHERE project_id = ? AND source = ? AND session_id = ? AND group_id = ? ORDER BY ts, seq, event_key LIMIT ?`, pid, source, session, group, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -619,9 +705,11 @@ func (s *Store) lockLogSessions(pid, source string, sessions []string) func() {
 	}
 }
 
-// purgeLogEventsBefore removes a project's events older than us.
+// purgeLogEventsBefore removes a project's events older than us: by their
+// own time, or by when they were received, so events a sender dated in
+// the future are purged too.
 func purgeLogEventsBefore(ctx context.Context, tx *sql.Tx, pid string, us int64) (int64, error) {
-	r, err := tx.ExecContext(ctx, `DELETE FROM log_events WHERE project_id = ? AND ts < ?`, pid, us)
+	r, err := tx.ExecContext(ctx, `DELETE FROM log_events WHERE project_id = ? AND (ts < ? OR received_at < ?)`, pid, us, us)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return 0, nil
@@ -633,4 +721,78 @@ func purgeLogEventsBefore(ctx context.Context, tx *sql.Tx, pid string, us int64)
 		return 0, err
 	}
 	return r.RowsAffected()
+}
+
+type builtHashes struct {
+	changed   map[string]string // span id -> hash, for spans to write
+	unchanged []string
+}
+
+// changedBuiltCalls drops the built calls whose stored build_hash equals
+// their hash, returning the others and their hashes.
+func (s *Store) changedBuiltCalls(ctx context.Context, pid string, calls []CompleteCall) ([]CompleteCall, builtHashes, error) {
+	h := builtHashes{changed: map[string]string{}}
+	hashOf := make([]string, len(calls))
+	ids := make([]string, 0, len(calls))
+	for i := range calls {
+		b, err := json.Marshal(&calls[i])
+		if err != nil {
+			return nil, h, err
+		}
+		sum := sha256.Sum256(b)
+		hashOf[i] = hex.EncodeToString(sum[:16])
+		ids = append(ids, calls[i].Start.ID)
+	}
+	stored := map[string]string{}
+	for start := 0; start < len(ids); start += 1000 {
+		c, a := inList("id", ids[start:min(start+1000, len(ids))])
+		rows, err := s.r.QueryContext(ctx, `SELECT id, build_hash FROM calls WHERE project_id = ? AND build_hash IS NOT NULL AND `+c,
+			append([]any{pid}, a...)...)
+		if err != nil {
+			return nil, h, err
+		}
+		for rows.Next() {
+			var id, hash string
+			if err := rows.Scan(&id, &hash); err != nil {
+				rows.Close()
+				return nil, h, err
+			}
+			stored[id] = hash
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, h, err
+		}
+	}
+	out := calls[:0:0]
+	for i := range calls {
+		id := calls[i].Start.ID
+		if stored[id] == hashOf[i] {
+			h.unchanged = append(h.unchanged, id)
+			continue
+		}
+		out = append(out, calls[i])
+		h.changed[id] = hashOf[i]
+	}
+	return out, h, nil
+}
+
+// storeBuildHashes records the hashes of the spans a rebuild wrote.
+func (s *Store) storeBuildHashes(ctx context.Context, pid string, hashes map[string]string) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		st, err := tx.PrepareContext(ctx, `UPDATE calls SET build_hash = ? WHERE project_id = ? AND id = ?`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for id, h := range hashes {
+			if _, err := st.ExecContext(ctx, h, pid, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

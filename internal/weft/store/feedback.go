@@ -55,6 +55,21 @@ func normRefPtr(p *string) *string {
 	return &v
 }
 
+// ValidFeedbackType reports whether t uses only [A-Za-z0-9_.:*-]. Types are
+// shown in the UI and substituted into automation messages (Slack), so they
+// carry no markup or whitespace. Weft's own types (weft.reaction, weft.note,
+// weft.scorer.<scorer>, weft.score.<scorer>, weft.annotation.<name>,
+// weft.signal) fit: scorer and annotation names are object ids.
+func ValidFeedbackType(t string) bool {
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == ':' || c == '*' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // CreateFeedback stores feedback.
 func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback, error) {
 	pid, err := refs.NormalizeProject(f.ProjectID)
@@ -67,6 +82,9 @@ func (s *Store) CreateFeedback(ctx context.Context, f FeedbackCreate) (*Feedback
 	}
 	if f.FeedbackType == "" || len(f.FeedbackType) > 256 {
 		return nil, Invalidf("feedback_type is required")
+	}
+	if !ValidFeedbackType(f.FeedbackType) {
+		return nil, Invalidf("feedback_type may only contain letters, digits and _ . : * - (e.g. weft.annotation.quality)")
 	}
 	switch f.FeedbackType {
 	case "weft.reaction":

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/compat"
+	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/server"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/webui"
@@ -98,6 +98,12 @@ func main() {
 		"turn on the compatibility adapter for the official weave client, see docs/weft/COMPATIBILITY.md (env "+compat.EnvName+"=true)")
 
 	dbKeyCfg := registerDBKeyFlags(flag.CommandLine) // db.go
+	netCfg := registerNetFlags()                     // netflags.go: --allowed-hosts, --trusted-proxies
+
+	// Stored secrets (internal/weft/llm/secrets.go).
+	secretsInsecureHTTP := flag.Bool("secrets-allow-insecure-http", envBool("WEFT_SECRETS_ALLOW_INSECURE_HTTP"),
+		"let stored secrets (API keys, webhook URLs, OAuth client secrets) be sent over plain http to non-loopback hosts; "+
+			"https is required otherwise (env WEFT_SECRETS_ALLOW_INSECURE_HTTP=true)")
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), usageHeader)
 		flag.PrintDefaults()
@@ -182,6 +188,10 @@ func main() {
 		log.Error("configuring outbound request restrictions", "err", err)
 		os.Exit(2)
 	}
+	llm.AllowInsecureSecretHTTP = *secretsInsecureHTTP
+	if llm.AllowInsecureSecretHTTP {
+		log.Warn("stored secrets may be sent over plain http (--secrets-allow-insecure-http)")
+	}
 
 	permMsg := "database file permissions: the database is not encrypted at rest; restrict access, use an encrypted volume or set --db-encryption-key-file"
 	if st.Encrypted() {
@@ -196,6 +206,10 @@ func main() {
 		log.Error("configuring SSO and sessions", "err", err)
 		os.Exit(2)
 	}
+	if err := netCfg.apply(&cfg, *addr); err != nil {
+		log.Error("configuring hosts and proxies", "err", err)
+		os.Exit(2)
+	}
 	if !*noUI {
 		cfg.UI = webui.Handler()
 	}
@@ -207,15 +221,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	if len(cfg.APIKeys) == 0 {
-		if host, _, err := net.SplitHostPort(*addr); err == nil {
-			if ip := net.ParseIP(host); host == "" || (ip != nil && !ip.IsLoopback()) {
-				log.Warn("authentication is disabled and the server listens on a non-loopback address; set --api-keys")
-			}
-		}
-	}
+	warnOpenBind(*addr, srv.AuthRequired(), log, *logFile != "") // netflags.go
 
-	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := newHTTPServer(*addr, srv.Handler()) // netflags.go: timeouts
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

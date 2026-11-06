@@ -454,9 +454,12 @@ func jsonPath(segs []string) string {
 	return b.String()
 }
 
-// jsonField returns json_extract(col, path) for a dotted path below col.
+// jsonField returns json_extract(col, path) for a dotted path below col,
+// NULL where col is not JSON SQLite can read (a document nested more than
+// 1000 deep, stored before ingest capped nesting), so one such row cannot
+// fail a filter over the whole project.
 func jsonField(col string, rest []string) (string, []any) {
-	return "json_extract(" + col + ", ?)", []any{jsonPath(rest)}
+	return "(CASE WHEN json_valid(" + col + ") THEN json_extract(" + col + ", ?) END)", []any{jsonPath(rest)}
 }
 
 // splitField splits on dots, honouring a [bracketed.segment].

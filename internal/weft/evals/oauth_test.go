@@ -54,7 +54,7 @@ func TestRemoteScorerOAuth(t *testing.T) {
 	defer scorer.Close()
 
 	secrets := map[string]string{"SCORER_SECRET": "s3cret", "BAD": "nope"}
-	e := &Engine{LLM: llm.New(func(_ context.Context, name string) (string, bool) { v, ok := secrets[name]; return v, ok }, nil)}
+	e := &Engine{LLM: llm.New(llm.StaticSecrets(secrets), nil)}
 	val := func(secret string) map[string]any {
 		return map[string]any{"url": scorer.URL, "auth_config": map[string]any{"token_url": tokenSrv.URL, "client_id": "weft",
 			"client_secret_secret": secret, "scopes": []any{"b", "a"}, "audience": "https://scorer"}}
@@ -131,7 +131,7 @@ func TestRemotePredictOAuth(t *testing.T) {
 	}))
 	defer model.Close()
 	secrets := map[string]string{"PREDICT_SECRET": "s3cret", "WRONG": "x"}
-	e := &Engine{LLM: llm.New(func(_ context.Context, name string) (string, bool) { v, ok := secrets[name]; return v, ok }, nil)}
+	e := &Engine{LLM: llm.New(llm.StaticSecrets(secrets), nil)}
 	modelVal := func(secret string) map[string]any {
 		return map[string]any{"_class_name": "MyModel", "predict_url": model.URL, "auth_config": map[string]any{
 			"token_url": tokenSrv.URL, "client_id": "weft", "client_secret_secret": secret, "scopes": "predict"}}

@@ -35,16 +35,17 @@ func otlpHeaderProject(r *http.Request) string {
 func (s *Server) otelLogs(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	isJSON := otlp.IsJSON(r.Header.Get("Content-Type"))
-	body, err := otlp.ReadBody(r.Body, r.Header.Get("Content-Encoding"))
+	body, res, err := otlp.ReadBodyBudget(r.Context(), r.Body, r.Header.Get("Content-Encoding"), otlp.MaxExportBytes)
 	if err != nil {
 		otlpRejected(r, "read", len(body), err) // ingestlog.go
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, otlp.BodyStatus(err), err.Error())
 		return
 	}
-	req, err := otlp.DecodeLogs(body, isJSON)
+	defer res.Release()
+	req, err := otlp.DecodeLogsWith(r.Context(), body, isJSON, res)
 	if err != nil {
 		otlpRejected(r, "decode", len(body), err)
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, otlp.BodyStatus(err), err.Error())
 		return
 	}
 	batch, err := otlp.SessionLogEvents(req, otlpHeaderProject(r))
@@ -89,12 +90,13 @@ func (s *Server) otelLogs(w http.ResponseWriter, r *http.Request) {
 // otelMetrics accepts OTLP metrics and discards them.
 func (s *Server) otelMetrics(w http.ResponseWriter, r *http.Request) {
 	isJSON := otlp.IsJSON(r.Header.Get("Content-Type"))
-	body, err := otlp.ReadBody(r.Body, r.Header.Get("Content-Encoding"))
+	body, res, err := otlp.ReadBodyBudget(r.Context(), r.Body, r.Header.Get("Content-Encoding"), otlp.MaxExportBytes)
 	if err != nil {
 		otlpRejected(r, "read", len(body), err)
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, otlp.BodyStatus(err), err.Error())
 		return
 	}
+	res.Release()
 	weftlog.From(r.Context()).Debug("otlp metrics discarded", "route", routeOf(r), "bytes", len(body))
 	weftlog.RequestFrom(r.Context()).SetSummarized()
 	resp, ctype := otlp.EncodeMetricsResponse(isJSON)

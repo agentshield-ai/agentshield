@@ -122,10 +122,8 @@ func (a *Adapter) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		rewriteQuery(r)
-		if err := rewriteRequestBody(r); err != nil {
-			http.Error(w, "reading body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
+		// The body is translated after authentication (RewriteRequestBody),
+		// so unauthenticated requests are not read.
 		if !IsWeaveClient(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -209,6 +207,17 @@ func feedbackPath(p string) bool {
 
 // agentsPath reports the /agents/* API, whose queries name attribute keys.
 func agentsPath(p string) bool { return strings.HasPrefix(p, "/agents/") }
+
+// RewriteRequestBody translates the JSON body of a request to one of the
+// adapter's routes from legacy names to Weft's. The server calls it once
+// the caller is authenticated and before its projects are authorised.
+// Compressed and non-JSON bodies, and Weft's own API, are left alone.
+func RewriteRequestBody(r *http.Request) error {
+	if NativePath(r.URL.Path) {
+		return nil
+	}
+	return rewriteRequestBody(r)
+}
 
 func rewriteRequestBody(r *http.Request) error {
 	if r.Body == nil || r.Body == http.NoBody {
@@ -362,6 +371,9 @@ var sections = map[string]bool{"calls": true, "objects": true, "evaluations": tr
 
 // LinkTarget maps the path after /{entity}/{project}/weave/ to a UI path.
 func LinkTarget(entity, project, rest string) string {
+	if entity == "" || project == "" {
+		return "/" // never "//host/...": that is another site
+	}
 	base := "/" + url.PathEscape(entity) + "/" + url.PathEscape(project)
 	p := strings.Trim(rest, "/")
 	if c, ok := strings.CutPrefix(p, "agents/conversations/"); ok && c != "" {
@@ -374,7 +386,20 @@ func LinkTarget(entity, project, rest string) string {
 	return base + "/traces"
 }
 
+// linkPathOK refuses empty entity or project segments: a link like
+// //evil.example/weave would otherwise redirect to //evil.example/traces.
+func linkPathOK(w http.ResponseWriter, r *http.Request) bool {
+	if chi.URLParam(r, "entity") == "" || chi.URLParam(r, "project") == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return false
+	}
+	return true
+}
+
 func (a *Adapter) linkRedirect(w http.ResponseWriter, r *http.Request) {
+	if !linkPathOK(w, r) {
+		return
+	}
 	to := LinkTarget(chi.URLParam(r, "entity"), chi.URLParam(r, "project"), chi.URLParam(r, "*"))
 	if r.URL.RawQuery != "" {
 		to += "?" + r.URL.RawQuery
@@ -383,6 +408,9 @@ func (a *Adapter) linkRedirect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Adapter) callRedirect(w http.ResponseWriter, r *http.Request) {
+	if !linkPathOK(w, r) || chi.URLParam(r, "callID") == "" {
+		return
+	}
 	to := "/" + url.PathEscape(chi.URLParam(r, "entity")) + "/" + url.PathEscape(chi.URLParam(r, "project")) +
 		"/calls/" + url.PathEscape(chi.URLParam(r, "callID"))
 	http.Redirect(w, r, to, http.StatusFound)

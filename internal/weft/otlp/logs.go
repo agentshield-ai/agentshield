@@ -11,6 +11,7 @@ package otlp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -25,6 +26,15 @@ import (
 
 // DecodeLogs parses an ExportLogsServiceRequest (protobuf or OTLP JSON).
 func DecodeLogs(body []byte, isJSON bool) (*collogs.ExportLogsServiceRequest, error) {
+	return DecodeLogsWith(context.Background(), body, isJSON, nil)
+}
+
+// DecodeLogsWith is DecodeLogs with the element limits and budget of
+// DecodeWith.
+func DecodeLogsWith(ctx context.Context, body []byte, isJSON bool, res *Reservation) (*collogs.ExportLogsServiceRequest, error) {
+	if err := checkElements(ctx, body, isJSON, pbLogsReq, res); err != nil {
+		return nil, err
+	}
 	req := &collogs.ExportLogsServiceRequest{}
 	if !isJSON {
 		if err := proto.Unmarshal(body, req); err != nil {
@@ -45,6 +55,15 @@ func DecodeLogs(body []byte, isJSON bool) (*collogs.ExportLogsServiceRequest, er
 	}
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(fixed, req); err != nil {
 		return nil, fmt.Errorf("invalid OTLP JSON: %w", err)
+	}
+	n := 0
+	for _, rl := range req.GetResourceLogs() {
+		for _, sl := range rl.GetScopeLogs() {
+			n += len(sl.GetLogRecords())
+		}
+	}
+	if n > MaxExportSpans {
+		return nil, tooLarge("OTLP request has more than %d log records; send smaller batches", MaxExportSpans)
 	}
 	return req, nil
 }

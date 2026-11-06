@@ -1,5 +1,5 @@
 import { logger } from './log.js';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { HttpClient, WeftHTTPError } from './http.js';
 
@@ -32,13 +32,25 @@ function legacySpanItem(d: any): void {
   d.payload = p;
 }
 
+/** Drop group/other permissions of an existing file or directory (POSIX). */
+function tighten(path: string, mode: number): void {
+  if (process.platform === 'win32') return;
+  try {
+    if (statSync(path).mode & 0o077) chmodSync(path, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Append-only JSONL file of unsent requests. */
 export class WriteAheadLog {
   constructor(readonly path: string) {}
 
   append(items: Item[]): void {
     if (!items.length) return;
-    mkdirSync(dirname(this.path), { recursive: true });
+    // The WAL holds span inputs and outputs: a 0700 directory and a 0600 file.
+    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+    tighten(dirname(this.path), 0o700);
     const lines = items
       .map((it) => {
         const { cb: _cb, ...rest } = it as Item & { cb?: unknown };
@@ -46,7 +58,8 @@ export class WriteAheadLog {
         return JSON.stringify(rest);
       })
       .join('\n');
-    appendFileSync(this.path, lines + '\n', 'utf8');
+    appendFileSync(this.path, lines + '\n', { encoding: 'utf8', mode: 0o600 });
+    tighten(this.path, 0o600);
   }
 
   drain(): Item[] {

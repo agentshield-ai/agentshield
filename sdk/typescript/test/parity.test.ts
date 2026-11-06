@@ -176,7 +176,7 @@ describe('op loading', () => {
     expect(loaded(2)).toBe(6);
     const [res, call] = await loaded.call(4);
     expect(res).toBe(12);
-    expect(call.name).toBe(ref.uri());
+    expect(call!.name).toBe(ref.uri());
     expect((await client.loadOp(stored, { trustCode: true }))(1)).toBe(3);
     expect(weft.isOp(await weft.get('triple', { trustCode: true }))).toBe(true);
     const asyncArrow = weft.trace(async ({ a }: any) => a + 1, { name: 'inc' });

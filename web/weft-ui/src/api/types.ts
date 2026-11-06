@@ -324,6 +324,34 @@ export interface LLMModelInfo {
   max_tokens: number
 }
 
+/** Where a stored secret applies (docs/weft/API.md, "Secrets"). */
+export type SecretScope = 'server' | 'team' | 'project'
+
+/** A stored or environment secret, never its value (GET /api/v1/secrets/list). */
+export interface SecretEntry {
+  name: string
+  source: 'env' | 'db'
+  scope: SecretScope
+  /** The team for team secrets, the project for project secrets, "" for server secrets. */
+  scope_id: string
+  kind: 'secret' | 'bucket'
+  /** Hosts the secret may be sent to ("host", "host:port", "*.domain"); empty: any. */
+  allowed_hosts: string[]
+  created_by?: string | null
+  updated_at?: string
+}
+
+/** POST /api/v1/secrets/set (and /delete without value and allowed_hosts). */
+export interface SecretSetReq {
+  name: string
+  value?: string
+  scope: SecretScope
+  project_id?: string
+  team?: string
+  allowed_hosts?: string[]
+  kind?: 'secret' | 'bucket'
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool' | string
   content: Any

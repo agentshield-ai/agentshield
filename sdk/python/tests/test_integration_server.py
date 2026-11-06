@@ -317,7 +317,8 @@ def test_parity_features_live(live):
         return 3 * x
 
     ref = weft.save(triple)
-    loaded = weft.get("triple")
+    assert isinstance(weft.get("triple"), weft.StoredOp)  # stored code is not run by default
+    loaded = weft.load_op("triple", trust_code=True)
     res, call = loaded.call(3)
     assert res == 9 and call.name == ref.uri()
 
@@ -333,7 +334,8 @@ def test_parity_features_live(live):
     from weft import _object
 
     del _object._REGISTRY["LiveModel"]
-    m = weft.get("live-model")
+    assert isinstance(weft.get("live-model").predict, weft.StoredOp)
+    m = weft.get("live-model", trust_code=True)
     assert m.predict("hi") == "hi?"
 
     # add_rows through POST /api/v1/tables/update

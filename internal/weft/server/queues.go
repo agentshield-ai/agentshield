@@ -26,7 +26,8 @@ func init() {
 	})
 }
 
-// queueProject reads project_id from the body or, for GET/DELETE, the URL.
+// queueProject reads project_id from the body or, for GET/DELETE, the URL,
+// and checks the caller's role on it (authorisation at use).
 func queueProject(r *http.Request, body string) (string, error) {
 	if body == "" {
 		body = r.URL.Query().Get("project_id")
@@ -34,7 +35,14 @@ func queueProject(r *http.Request, body string) (string, error) {
 	if strings.TrimSpace(body) == "" {
 		return "", store.Invalidf("project_id is required")
 	}
-	return project(body)
+	pid, err := project(body)
+	if err != nil {
+		return "", err
+	}
+	if err := checkProject(r, pid); err != nil {
+		return "", err
+	}
+	return pid, nil
 }
 
 type queueCreateReq struct {
@@ -197,8 +205,13 @@ func (s *Server) queueItemsQuery(ctx context.Context, r *http.Request, req *queu
 	if err != nil {
 		return nil, err
 	}
+	// Another annotator's progress may be read; the caller's own otherwise.
+	annotator := req.AnnotatorUserID
+	if annotator == nil || *annotator == "" {
+		annotator = userFrom(r, nil)
+	}
 	items, err := s.store.QueryAnnotationQueueItems(ctx, pid, chi.URLParam(r, "queue_id"), req.Filter, req.SortBy, req.Limit, req.Offset,
-		req.IncludePosition, userFrom(r, req.AnnotatorUserID))
+		req.IncludePosition, annotator)
 	if err != nil {
 		return nil, err
 	}

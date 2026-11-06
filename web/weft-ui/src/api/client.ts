@@ -14,6 +14,8 @@ import type {
   Project,
   ProjectStats,
   Query,
+  SecretEntry,
+  SecretSetReq,
   ServerInfo,
   SortBy,
   Span,
@@ -276,9 +278,11 @@ export const api = {
     post<{ response: ChatCompletion; span_id?: string | null }>('/api/v1/completions', { project_id, inputs, track }),
   completionsStream: (project_id: string, inputs: CompletionInputs, onChunk: (chunk: Any) => void, signal?: AbortSignal) =>
     postStream<Any>('/api/v1/completions/stream', { project_id, inputs, track: true }, onChunk, signal),
-  secretsList: () => get<{ secrets: { name: string; source: 'env' | 'db' }[] }>('/secrets/list'),
-  secretsSet: (name: string, value: string) => post<object>('/secrets/set', { name, value }),
-  secretsDelete: (name: string) => post<object>('/secrets/delete', { name }),
+  /** Secrets the project can use (members), or every secret (server admins, without a project). */
+  secretsList: (projectId?: string) =>
+    get<{ secrets: SecretEntry[] }>(projectId ? `/api/v1/secrets/list?project_id=${encodeURIComponent(projectId)}` : '/secrets/list'),
+  secretsSet: (req: SecretSetReq) => post<object>('/api/v1/secrets/set', req),
+  secretsDelete: (req: Omit<SecretSetReq, 'value' | 'allowed_hosts' | 'kind'>) => post<object>('/api/v1/secrets/delete', req),
 
   // ---------------------------------------------------------------- evaluations
   /** Starts a server-side evaluation run; returns the run's span id. */

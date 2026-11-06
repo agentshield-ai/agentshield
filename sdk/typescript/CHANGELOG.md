@@ -7,6 +7,34 @@ uses its names ([DESIGN.md](../../docs/weft/DESIGN.md) §10). It needs a
 server with that API (this repository's server, which ships with the SDK);
 the older route shapes are no longer used.
 
+### Security
+
+- **`weft.get()` no longer evaluates code stored on the server (breaking).**
+  Reading a function (`weft.get('fn')`, `client.get(ref)`, `ref(...).get()`)
+  used to build it with `new Function` from the stored source, so any project
+  writer could run code on every machine that read it. It now returns an
+  inert `weft.StoredOp` (`name`, `code`, `language`, `ref`; not callable).
+  Opt in explicitly for projects you trust: `weft.loadOp(ref, { trustCode: true })`
+  / `client.loadOp(ref | stored, { trustCode: true })`,
+  `weft.get(ref, { trustCode: true })`, or `WEFT_ALLOW_CODE_LOAD=1`. `loadOp`
+  without trust throws `OpLoadError`.
+- **No redirects.** Requests use `redirect: 'manual'` and every 3xx fails with
+  a `WeftHTTPError` carrying the status, instead of resending the API key and
+  the body to the redirect target.
+- **Redaction covers common secret names and values.** Key names are
+  normalised (case, `-`, `_`, `.`) and matched against more defaults and
+  patterns (`openai_api_key`, `client_secret`, `refresh_token`,
+  `aws_secret_access_key`, `private_key`, `passwd`, `credentials`,
+  `X-Api-Key`, `Cookie`, `Proxy-Authorization`, ...); `Bearer ...`, `sk-...`,
+  `AKIA...`, GitHub/Slack tokens, PEM private keys and URL passwords are
+  redacted inside strings (`weft.isSecretKey`, `weft.redactSecretValues`). A
+  custom `redactKeys` list is matched exactly (normalised).
+  `WEFT_REDACT_KEYS=0` turns both off.
+- A warning is logged once when an API key is sent over plain `http://` to a
+  non-loopback host.
+- The write-ahead log (`enableDiskFallback`) is created `0600` in a `0700`
+  directory; existing ones are tightened.
+
 ### New names
 
 - `weft.trace(fn, opts)` traces a function; every call of it is a **span**.

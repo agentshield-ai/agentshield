@@ -208,6 +208,9 @@ func withPathProject(h http.HandlerFunc) http.HandlerFunc {
 			setBody(r, body)
 		}
 		p, err := project(pid)
+		if err == nil {
+			err = checkProject(r, p) // authorisation at use (projectguard.go)
+		}
 		if err != nil {
 			writeErr(w, err)
 			return

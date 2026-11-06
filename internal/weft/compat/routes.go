@@ -61,6 +61,10 @@ type Host interface {
 	// AuthorizeProject checks the caller may write to project pid (0 when
 	// allowed, otherwise the status and body to answer with).
 	AuthorizeProject(r *http.Request, pid string) (int, []byte)
+	// AuthorizeWrite checks the caller may write to project pid whatever
+	// the route (nil when allowed): /graphql is a read route, but its
+	// upsertModel creates the project.
+	AuthorizeWrite(r *http.Request, pid string) error
 	// ExportCalls streams calls as CSV, JSONL or JSON with the stored
 	// field names (POST /api/v1/spans/export uses Weft's).
 	ExportCalls(w http.ResponseWriter, r *http.Request, q store.CallsQuery, format string, flatten *bool)

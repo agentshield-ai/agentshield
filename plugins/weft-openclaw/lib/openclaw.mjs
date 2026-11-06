@@ -243,7 +243,8 @@ export class WeftOpenClawTracer {
     this.subagents.set(event.childSessionKey, {
       id,
       childSessionKey: event.childSessionKey,
-      name: event.agentId ?? event.label ?? 'subagent',
+      // a label is free text: not used as the name when content capture is off
+      name: event.agentId ?? (this.cfg.captureContent ? event.label : undefined) ?? 'subagent',
       label: event.label,
       model: event.resolvedModel,
       provider: event.resolvedProvider,
@@ -279,6 +280,7 @@ export class WeftOpenClawTracer {
         inputs: { label: sub.label, mode: sub.mode, child_session_key: sub.childSessionKey },
         output: { outcome: event.outcome ?? 'ok', reason: event.reason },
         error: ok ? undefined : errText(event.error) ?? `subagent ${event.outcome}`,
+        errorKind: ok ? undefined : `subagent ${event.outcome}`,
         genai: { 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': sub.name, 'gen_ai.request.model': sub.model, 'gen_ai.provider.name': sub.provider, 'gen_ai.conversation.id': sub.conversationId },
         pluginVersion: PLUGIN_VERSION,
       }),
@@ -319,6 +321,7 @@ export class WeftOpenClawTracer {
     const lastOut = run.llmOutputs[run.llmOutputs.length - 1]?.event;
     const finalText = lastAssistantText(run.endMessages) || (lastOut?.assistantTexts ?? []).join('\n');
     const exception = run.error ? errText(run.error) : run.success === false ? 'agent run failed' : undefined;
+    const exceptionKind = exception ? 'agent run failed' : undefined;
     items.push(
       ...spanItems(cfg, {
         ...base,
@@ -332,6 +335,7 @@ export class WeftOpenClawTracer {
         inputs: { messages: [{ role: 'user', content: run.prompt ?? '' }] },
         output: finalText ? { messages: [{ role: 'assistant', content: finalText }] } : null,
         error: exception,
+        errorKind: exceptionKind,
         genai: {
           ...conv,
           'gen_ai.operation.name': 'invoke_agent',
@@ -409,6 +413,7 @@ export class WeftOpenClawTracer {
           inputs: params,
           output: t.result ?? null,
           error: t.error ? errText(t.error) : t.endedAt ? undefined : 'tool did not finish before the run ended',
+          errorKind: t.error ? 'tool error' : 'tool did not finish before the run ended',
           genai: { ...conv, 'gen_ai.conversation.id': sid, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.callId },
         }),
       );
@@ -432,7 +437,7 @@ export class WeftOpenClawTracer {
     if (this.sending) return this.sending;
     if (!this.queue.length) return Promise.resolve();
     const batch = this.queue.splice(0, this.queue.length);
-    this.sending = sendItems(this.cfg, batch, { fetchImpl: this.fetchImpl })
+    this.sending = sendItems(this.cfg, batch, { fetchImpl: this.fetchImpl, warn: (m) => this.warn(m) })
       .then(() => {
         this.stats.sent += batch.length;
       })

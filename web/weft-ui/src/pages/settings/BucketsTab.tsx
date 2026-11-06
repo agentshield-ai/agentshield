@@ -236,7 +236,8 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
   const [err, setErr] = useState<unknown>(null)
   const [result, setResult] = useState<BucketTestResult | null>(null)
   const [skipTest, setSkipTest] = useState(false)
-  const secrets = useQuery({ queryKey: ['secrets'], queryFn: () => api.secretsList().then((r) => r.secrets), retry: false })
+  // Server secrets only (bucket credentials are server secrets; listing all of them needs a server admin).
+  const secrets = useQuery({ queryKey: ['secrets', 'all'], queryFn: () => api.secretsList().then((r) => r.secrets), retry: false })
   const set = (p: Partial<BucketDraft>) => {
     setD((x) => ({ ...x, ...p }))
     setResult(null)
@@ -328,10 +329,11 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
           <select className="input mono" value={d.secretName} onChange={(e) => set({ secretName: e.target.value })}>
             <option value="">{s3 ? 'Server environment (only if the server allows it, AWS only)' : 'Choose a secret…'}</option>
             {(secrets.data ?? [])
-              .filter((s) => s.source !== 'env')
+              .filter((s) => s.source !== 'env' && s.scope === 'server')
               .map((s) => (
                 <option key={s.name} value={s.name}>
                   {s.name}
+                  {s.kind === 'bucket' ? ' (bucket credentials)' : ''}
                 </option>
               ))}
           </select>
@@ -343,7 +345,8 @@ function BucketModal({ projectId, onClose, onSaved }: { projectId: string; onClo
             ) : (
               <>A stored secret holding a service-account key file (JSON) with read access to the bucket.</>
             )}{' '}
-            Add one under Secrets &amp; providers.
+            Add one under Secrets &amp; providers as a server secret; registering the bucket turns it into bucket credentials, which
+            no project&rsquo;s objects can use.
           </span>
         </label>
         <label className="field">

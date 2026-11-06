@@ -21,12 +21,23 @@ import (
 // rank above its traces (separate llm_call / tool_call spans). A user may
 // turn on more than one, so
 // each session is shown from one source only: the highest-ranked source of
-// its harness that has sent spans for it. Spans of a lower source are
-// dropped at ingest once a higher one is present, and are soft-deleted when
-// a higher one arrives (docs/weft/README.md, "Claude Code without a plugin").
+// its harness that has sent spans for it. Spans of a lower
+// source are stored hidden (soft-deleted) once a higher one is present, and
+// are hidden when a higher one arrives (docs/weft/README.md, "Claude Code
+// without a plugin"). Nothing is dropped, so a decoy cannot make telemetry
+// disappear for good; every replacement is logged and reported
+// (WithSourceReplacedHook: the server audits it).
 //
-// A span's source is its weft.source attribute; spans of any other source
-// (or none) are never affected, nor are those of another harness.
+// A span's source is its weft.source attribute (attributes.weft.source, the
+// field the SQL below reads too); spans of any other source (or none) are
+// never affected, nor are those of another harness.
+//
+// Who may claim a ranked source: a write under WithSourceClaims may only
+// claim the ranked sources it lists (the server lists, per ingest path, the
+// sources that path produces: the OTLP trace and log mappings set theirs,
+// and a plugin's source needs the plugin's X-Weft-Source header). Any other
+// ranked claim is kept as weft.claimed_source and does not rank. Writers
+// without WithSourceClaims (internal ones) are trusted.
 const (
 	SourceClaudeCodePlugin = "weft-claude-code"
 	SourceClaudeCodeTraces = "claude-code-otel-traces"
@@ -73,11 +84,60 @@ func sourcesRanked(source string, higher bool) []string {
 type sourceBatchKey struct{}
 
 // sourceBatch remembers, within one write, the decision taken for each
-// (project, session, source), so a batch checks a session once, and the
-// replacements made, logged once the write commits.
+// (project, session, source), so a batch checks a session once, the spans
+// to store hidden, and the replacements made, logged once the write
+// commits.
 type sourceBatch struct {
-	drop     map[[3]string]bool
+	drop     map[[3]string]bool // (project, session, source) outranked: stored hidden
+	retired  map[[3]string]bool // (project, session, source) that hid lower sources
 	replaced []sourceReplacement
+}
+
+type sourceClaimsKey struct{}
+
+// WithSourceClaims limits the ranked sources writes under ctx may claim
+// (see the package comment above). No sources: no ranked claim stands.
+func WithSourceClaims(ctx context.Context, allowed ...string) context.Context {
+	m := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		m[a] = true
+	}
+	return context.WithValue(ctx, sourceClaimsKey{}, m)
+}
+
+// SourceReplaced describes a session whose lower-ranked spans were hidden.
+type SourceReplaced struct {
+	Project, Session, To string
+	From                 map[string]int // hidden spans by source
+	Relinked             int
+}
+
+type sourceHookKey struct{}
+
+// WithSourceReplacedHook calls fn for each replacement once its write has
+// committed (the server records it in the audit log).
+func WithSourceReplacedHook(ctx context.Context, fn func(SourceReplaced)) context.Context {
+	return context.WithValue(ctx, sourceHookKey{}, fn)
+}
+
+// RankedSources lists the ranked sources whose name ends in suffix
+// ("-otel-traces", "-otel-logs"), for WithSourceClaims.
+func RankedSources(suffix string) []string {
+	var out []string
+	for src := range sessionSourceRank {
+		if strings.HasSuffix(src, suffix) {
+			out = append(out, src)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsPluginSource reports a source that only a Weft plugin sends (the top
+// rank of its harness).
+func IsPluginSource(src string) bool {
+	r, ok := sessionSourceRank[src]
+	return ok && strings.HasPrefix(src, "weft-") && r.rank == 3
 }
 
 // sourceReplacement is one session whose spans of lower-ranked sources were
@@ -106,6 +166,9 @@ func logSourceReplacements(ctx context.Context) {
 		sort.Strings(froms)
 		log.Info("session source replaced", "project", r.project, "session_id", r.session, "from", strings.Join(froms, ","), "to", r.to,
 			"spans_hidden", hidden, "verdicts_relinked", r.relinked)
+		if fn, ok := ctx.Value(sourceHookKey{}).(func(SourceReplaced)); ok {
+			fn(SourceReplaced{Project: r.project, Session: r.session, To: r.to, From: r.from, Relinked: r.relinked})
+		}
 	}
 	ingestCount(ctx, func(is *IngestStats) { is.SourcesReplaced += len(b.replaced) })
 	b.replaced = nil
@@ -115,22 +178,82 @@ func withSourceBatch(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(sourceBatchKey{}).(*sourceBatch); ok {
 		return ctx
 	}
-	return context.WithValue(ctx, sourceBatchKey{}, &sourceBatch{drop: map[[3]string]bool{}})
+	return context.WithValue(ctx, sourceBatchKey{}, &sourceBatch{drop: map[[3]string]bool{}, retired: map[[3]string]bool{}})
 }
 
-// spanSource is a call's weft.source attribute (nested or flat). Gemini
-// CLI's own trace spans (llm_call, tool_call, agent_call, ...; always
-// exported alongside its log events) carry none: they are recognised by
-// their agent name, so the session built from the log events replaces them.
+// spanSource is a call's source: attributes.weft.source, the field
+// sourceCondition reads in SQL (a flat "weft.source" key or an OTel
+// attribute of that name is not a source). Gemini CLI's own trace spans
+// (llm_call, tool_call, agent_call, ...; always exported alongside its log
+// events) carry none: they are recognised by their OTel agent name and
+// operation, as in sourceCondition, so the session built from the log
+// events replaces them.
 func spanSource(attributes map[string]any) string {
-	a := newSpanAttrs(attributes)
-	if s := a.str("weft.source"); s != "" {
-		return s
+	if w, ok := attributes["weft"].(map[string]any); ok {
+		if s, ok := w["source"].(string); ok && s != "" {
+			return s
+		}
+		if _, ok := w["source"]; ok {
+			return "" // a non-string source matches nothing in SQL either
+		}
 	}
-	if a.str("gen_ai.agent.name") == geminiCLIAgent && geminiTraceOps[a.str("gen_ai.operation.name")] {
-		return SourceGeminiTraces
+	if o, ok := attributes["otel"].(map[string]any); ok {
+		if a, ok := o["attributes"].(map[string]any); ok {
+			if a["gen_ai.agent.name"] == geminiCLIAgent {
+				if op, _ := a["gen_ai.operation.name"].(string); geminiTraceOps[op] {
+					return SourceGeminiTraces
+				}
+			}
+		}
 	}
 	return ""
+}
+
+// hiddenByKey marks, in attributes.weft, a span stored hidden because a
+// higher-ranked source of its session was present (its value: that
+// source's rank list). Set by the server only.
+const hiddenByKey = "hidden_by_source"
+
+// setWeftAttr returns st's attributes with attributes.weft[key] set (or
+// removed for nil), copying the maps it changes.
+func setWeftAttr(st *CallStart, key string, v any) {
+	w, _ := st.Attributes["weft"].(map[string]any)
+	w2 := make(map[string]any, len(w)+1)
+	for k, x := range w {
+		w2[k] = x
+	}
+	if v == nil {
+		delete(w2, key)
+	} else {
+		w2[key] = v
+	}
+	attrs := make(map[string]any, len(st.Attributes)+1)
+	for k, x := range st.Attributes {
+		attrs[k] = x
+	}
+	attrs["weft"] = w2
+	st.Attributes = attrs
+}
+
+// checkSourceClaim enforces WithSourceClaims on a call start: a ranked
+// weft.source the write may not claim is moved to weft.claimed_source. A
+// sender's own hidden_by_source is removed (the server sets it).
+func checkSourceClaim(ctx context.Context, st *CallStart) {
+	w, _ := st.Attributes["weft"].(map[string]any)
+	if _, ok := w[hiddenByKey]; ok {
+		setWeftAttr(st, hiddenByKey, nil)
+	}
+	allowed, ok := ctx.Value(sourceClaimsKey{}).(map[string]bool)
+	if !ok {
+		return
+	}
+	src, _ := w["source"].(string)
+	if src == "" || sessionSourceRank[src].rank == 0 || allowed[src] {
+		return
+	}
+	setWeftAttr(st, "source", nil)
+	setWeftAttr(st, "claimed_source", src)
+	weftlog.From(ctx).Debug("span source claim not accepted on this ingest path", "project", st.ProjectID, "span_id", st.ID, "claimed_source", src)
 }
 
 const geminiCLIAgent = "gemini-cli"
@@ -143,7 +266,7 @@ var geminiTraceOps = map[string]bool{"llm_call": true, "tool_call": true, "sched
 // (with their arguments).
 func sourceCondition(sources []string) (string, []any) {
 	ph, args := sourceList(sources)
-	cond := `json_extract(attributes, '$.weft.source') IN (` + ph + `)`
+	cond := `` + srcExpr + ` IN (` + ph + `)`
 	for _, s := range sources {
 		if s == SourceGeminiTraces {
 			names := make([]string, 0, len(geminiTraceOps))
@@ -152,20 +275,33 @@ func sourceCondition(sources []string) (string, []any) {
 			}
 			sort.Strings(names)
 			ops, opArgs := sourceList(names)
-			cond = `(` + cond + ` OR (json_extract(attributes, '$.weft.source') IS NULL
-				AND json_extract(attributes, '$.otel.attributes."gen_ai.agent.name"') = ?
-				AND json_extract(attributes, '$.otel.attributes."gen_ai.operation.name"') IN (` + ops + `)))`
+			cond = `(` + cond + ` OR (` + srcExpr + ` IS NULL
+				AND ` + safeJSON(`'$.otel.attributes."gen_ai.agent.name"'`) + ` = ?
+				AND ` + safeJSON(`'$.otel.attributes."gen_ai.operation.name"'`) + ` IN (` + ops + `)))`
 			args = append(append(args, geminiCLIAgent), opArgs...)
 		}
 	}
 	return cond, args
 }
 
-// applySourcePrecedence decides whether a call start of a ranked source is
-// stored: it is dropped when its session already has spans of a higher
-// source; otherwise spans of lower sources in the session are soft-deleted
-// (and detections linked to them are linked again).
+// srcExpr is a call's weft.source in SQL. json_extract fails on a row
+// whose attributes are not valid JSON to SQLite (nested too deep): such a
+// row has no source rather than failing every ingest of its session.
+var srcExpr = safeJSON(`'$.weft.source'`)
+
+func safeJSON(path string) string {
+	return `(CASE WHEN json_valid(attributes) THEN json_extract(attributes, ` + path + `) END)`
+}
+
+// applySourcePrecedence decides how a call start of a ranked source is
+// stored. It never drops it (drop is always false): it is stored hidden
+// (attributes.weft.hidden_by_source, deleted_at set) when its session
+// already has spans of a higher source; otherwise spans of lower sources
+// there are hidden the same way (and detections linked to them are linked
+// again). A ranked claim the write may not make is neutralised first
+// (WithSourceClaims).
 func (s *Store) applySourcePrecedence(ctx context.Context, tx *sql.Tx, st *CallStart) (drop bool, err error) {
+	checkSourceClaim(ctx, st)
 	if st.ThreadID == nil || *st.ThreadID == "" {
 		return false, nil
 	}
@@ -175,42 +311,56 @@ func (s *Store) applySourcePrecedence(ctx context.Context, tx *sql.Tx, st *CallS
 	}
 	key := [3]string{st.ProjectID, *st.ThreadID, src}
 	b, _ := ctx.Value(sourceBatchKey{}).(*sourceBatch)
+	hide, cached := false, false
 	if b != nil {
-		if d, ok := b.drop[key]; ok {
-			return s.markSourceDrop(ctx, tx, st, d)
-		}
+		hide, cached = b.drop[key]
 	}
-	higher := sourcesRanked(src, true)
-	drop, err = s.sessionHasSource(ctx, tx, st.ProjectID, *st.ThreadID, higher)
-	if err != nil {
-		return false, err
-	}
-	if drop {
-		weftlog.From(ctx).Debug("spans dropped: the session has a higher-ranked source", "project", st.ProjectID, "session_id", *st.ThreadID,
-			"source", src, "higher", strings.Join(higher, ","))
-	} else {
-		rep, err := s.retireLowerSources(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(src, false))
+	if !cached {
+		higher := sourcesRanked(src, true)
+		hide, err = s.sessionHasSource(ctx, tx, st.ProjectID, *st.ThreadID, higher)
 		if err != nil {
 			return false, err
 		}
-		if rep != nil && b != nil {
-			rep.to = src
-			b.replaced = append(b.replaced, *rep)
+		if hide {
+			weftlog.From(ctx).Debug("spans hidden: the session has a higher-ranked source", "project", st.ProjectID, "session_id", *st.ThreadID,
+				"source", src, "higher", strings.Join(higher, ","))
+		}
+		if b != nil {
+			b.drop[key] = hide
 		}
 	}
-	if b != nil {
-		b.drop[key] = drop
-	}
-	return s.markSourceDrop(ctx, tx, st, drop)
-}
-
-// markSourceDrop records a dropped start so that its end is dropped too.
-func (s *Store) markSourceDrop(ctx context.Context, tx *sql.Tx, st *CallStart, drop bool) (bool, error) {
-	if !drop {
+	if hide {
+		setWeftAttr(st, hiddenByKey, strings.Join(sourcesRanked(src, true), ","))
 		return false, nil
 	}
-	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO ingest_dropped(project_id, id, dropped_at) VALUES(?,?,?)`, st.ProjectID, st.ID, nowMicros())
-	return true, err
+	if b != nil && b.retired[key] {
+		return false, nil
+	}
+	rep, err := s.retireLowerSources(ctx, tx, st.ProjectID, *st.ThreadID, src, sourcesRanked(src, false))
+	if err != nil {
+		return false, err
+	}
+	if rep != nil && b != nil {
+		rep.to = src
+		b.replaced = append(b.replaced, *rep)
+	}
+	if b != nil {
+		b.retired[key] = true
+	}
+	return false, nil
+}
+
+// hideIfOutranked hides a call start just written when applySourcePrecedence
+// found its session outranked (calls.go runs it after the insert). It is
+// counted in IngestStats.SpansDropped (hidden at ingest: stored, not shown).
+func (s *Store) hideIfOutranked(ctx context.Context, tx *sql.Tx, st *CallStart) error {
+	w, _ := st.Attributes["weft"].(map[string]any)
+	if _, ok := w[hiddenByKey]; !ok {
+		return nil
+	}
+	ingestCount(ctx, func(is *IngestStats) { is.SpansDropped++ })
+	_, err := tx.ExecContext(ctx, `UPDATE calls SET deleted_at = COALESCE(deleted_at, ?) WHERE project_id = ? AND id = ?`, nowMicros(), st.ProjectID, st.ID)
+	return err
 }
 
 // droppedEnd reports an end whose start was dropped (no stored call, and a
@@ -256,12 +406,12 @@ func (s *Store) sessionHasSource(ctx context.Context, tx *sql.Tx, pid, session s
 // retireLowerSources soft-deletes a session's spans of the given sources and
 // re-links the detections that pointed at them. It reports what it hid
 // (nil when nothing).
-func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session string, sources []string) (*sourceReplacement, error) {
+func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session, to string, sources []string) (*sourceReplacement, error) {
 	if len(sources) == 0 {
 		return nil, nil
 	}
 	cond, srcArgs := sourceCondition(sources)
-	rows, err := tx.QueryContext(ctx, `SELECT id, COALESCE(json_extract(attributes, '$.weft.source'), '') FROM calls
+	rows, err := tx.QueryContext(ctx, `SELECT id, COALESCE(`+srcExpr+`, '') FROM calls
 		WHERE project_id = ? AND thread_id = ? AND deleted_at IS NULL AND `+cond, append([]any{pid, session}, srcArgs...)...)
 	if err != nil {
 		return nil, err
@@ -289,7 +439,9 @@ func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session
 	for start := 0; start < len(ids); start += 400 {
 		chunk := ids[start:min(start+400, len(ids))]
 		c, a := inList("id", chunk)
-		if _, err := tx.ExecContext(ctx, `UPDATE calls SET deleted_at = ? WHERE project_id = ? AND `+c, append([]any{now, pid}, a...)...); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE calls SET deleted_at = ?,
+				attributes = CASE WHEN json_valid(attributes) THEN json_set(attributes, '$.weft.`+hiddenByKey+`', ?) ELSE attributes END
+			WHERE project_id = ? AND `+c, append([]any{now, to, pid}, a...)...); err != nil {
 			return nil, err
 		}
 		c, a = inList("span_id", chunk)

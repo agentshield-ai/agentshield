@@ -19,6 +19,7 @@ import (
 type iamFlags struct {
 	issuer, clientID, clientSecret, redirectURL, domains, groupsClaim, groupRoles, adminEmails, scopes *string
 	sessionTTL, secureCookies, auditRetention                                                          *string
+	assumeVerified                                                                                     *bool
 }
 
 func registerIAMFlags() *iamFlags {
@@ -36,6 +37,9 @@ func registerIAMFlags() *iamFlags {
 			"comma-separated group mappings: group=admin (server admin) or group=viewer|member|admin@team (env WEFT_OIDC_GROUP_ROLES)"),
 		adminEmails: flag.String("oidc-admin-emails", os.Getenv("WEFT_OIDC_ADMIN_EMAILS"),
 			"comma-separated verified emails made server admins when they sign in (env WEFT_OIDC_ADMIN_EMAILS)"),
+		assumeVerified: flag.Bool("oidc-assume-email-verified", os.Getenv("WEFT_OIDC_ASSUME_EMAIL_VERIFIED") == "true",
+			"treat emails without an email_verified claim as verified, for identity providers that only issue verified addresses but omit the claim "+
+				"(env WEFT_OIDC_ASSUME_EMAIL_VERIFIED=true); off: such emails do not link existing accounts or pass --oidc-allowed-domains"),
 		scopes:         flag.String("oidc-scopes", envOr("WEFT_OIDC_SCOPES", "openid,email,profile"), "OIDC scopes to request (env WEFT_OIDC_SCOPES)"),
 		sessionTTL:     flag.String("session-ttl", envOr("WEFT_SESSION_TTL", "12h"), "lifetime of a browser session (env WEFT_SESSION_TTL)"),
 		secureCookies:  flag.String("secure-cookies", os.Getenv("WEFT_SECURE_COOKIES"), "true: always mark cookies Secure, e.g. behind a TLS proxy (env WEFT_SECURE_COOKIES)"),
@@ -94,7 +98,7 @@ func (f *iamFlags) apply(cfg *server.Config, dbPath string, log *slog.Logger) er
 	}
 	o := &server.OIDCConfig{Issuer: *f.issuer, ClientID: *f.clientID, ClientSecret: *f.clientSecret, RedirectURL: *f.redirectURL,
 		AllowedDomains: splitList(*f.domains), GroupsClaim: *f.groupsClaim, GroupRoles: roles, AdminEmails: splitList(*f.adminEmails),
-		Scopes: splitList(strings.ReplaceAll(*f.scopes, " ", ","))}
+		Scopes: splitList(strings.ReplaceAll(*f.scopes, " ", ",")), AssumeEmailVerified: *f.assumeVerified}
 	if len(o.AllowedDomains) == 0 && len(o.GroupRoles) == 0 {
 		log.Warn("SSO: any account of the identity provider can sign in (it has no access until granted a role); set --oidc-allowed-domains or --oidc-group-roles to restrict sign-in")
 	}

@@ -70,7 +70,7 @@ Then enable it in `~/.openclaw/openclaw.json` (JSON5) and restart the gateway:
 |---|---|---|
 | `project` (or `entity` + `project`) | `WEFT_PROJECT` | none; the plugin stays off without it |
 | `serverUrl` | `WEFT_SERVER_URL` | `http://localhost:6345` |
-| `apiKey` | `WEFT_API_KEY` | none |
+| `apiKey` | `WEFT_API_KEY` | none; marked sensitive in the manifest (`uiHints`), prefer the environment variable |
 | `agentName` | `WEFT_AGENT_NAME` | the OpenClaw agent id |
 | `agentVersion` | | none |
 | `captureContent` | `WEFT_CAPTURE_CONTENT` | `true`; `false` sends only structure, names, timing and usage |
@@ -82,7 +82,12 @@ Then enable it in `~/.openclaw/openclaw.json` (JSON5) and restart the gateway:
 
 **Privacy.** With content capture on, prompts, responses, history, tool
 arguments and results are sent to your Weft server. Use the server's
-sensitive-data redaction or `captureContent: false`.
+sensitive-data redaction or `captureContent: false`. With capture off, spans
+carry no content: empty inputs and outputs, display names are the tool name,
+`chat <model>` or `invoke_agent <agent>` (a sub-agent's free-text label is not
+used), errors a fixed class (`tool error`, `agent run failed`), and no
+`gen_ai.conversation.name`. The plugin never follows HTTP redirects and warns
+when an API key goes over plain `http://` to a host other than localhost.
 
 ## Tests
 

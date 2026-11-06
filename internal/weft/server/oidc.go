@@ -58,6 +58,13 @@ type OIDCConfig struct {
 	GroupRoles []GroupRole
 	// AdminEmails become server admins when they sign in with a verified email.
 	AdminEmails []string
+	// AssumeEmailVerified treats an email without an email_verified claim
+	// as verified (--oidc-assume-email-verified), for identity providers
+	// that only issue verified addresses but omit the claim. Off by default:
+	// an absent email_verified is unverified, so it neither links an
+	// existing account nor passes --oidc-allowed-domains. An explicit
+	// email_verified: false is never trusted.
+	AssumeEmailVerified bool
 	// HTTPClient is used for discovery, JWKS and the token exchange (tests).
 	// The issuer is operator configuration (--oidc-issuer), so these requests
 	// do not go through the egress guard (an in-cluster IdP is common).
@@ -317,12 +324,18 @@ func (s *Server) sessionAuth(w http.ResponseWriter, r *http.Request, raw string)
 	return s.finishAuth(w, r, p)
 }
 
+// sameOrigin reports an Origin naming this server: the request's Host, or
+// the X-Forwarded-Host a trusted proxy (--trusted-proxies) passed on.
 func sameOrigin(origin string, r *http.Request) bool {
 	u, err := url.Parse(origin)
-	if err != nil {
+	if err != nil || u.Host == "" {
 		return false
 	}
-	return strings.EqualFold(u.Host, r.Host)
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	fh, _ := r.Context().Value(forwardedHostKey{}).(string)
+	return fh != "" && strings.EqualFold(u.Host, fh)
 }
 
 // ---------------------------------------------------------------- handlers
@@ -345,8 +358,20 @@ type oidcState struct {
 }
 
 // safeReturn keeps redirects on this site: a path starting with one "/".
+// Control characters (browsers drop tabs and newlines from URLs, so
+// "/\t/evil.example" becomes "//evil.example"), backslashes and anything
+// that parses with a scheme or host are refused.
 func safeReturn(v string) string {
-	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.ContainsAny(v, "\\\r\n") || len(v) > 1024 {
+	if v == "" || len(v) > 1024 || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.Contains(v, "\\") {
+		return "/"
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] == 0x7f {
+			return "/"
+		}
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
 		return "/"
 	}
 	return v
@@ -512,7 +537,14 @@ func (s *Server) provisionSSOUser(ctx context.Context, c *oidcClient, subject st
 			verified, hasVerified = v == "true", true
 		}
 	}
-	emailOK := email != "" && (!hasVerified || verified)
+	explicitlyVerified := hasVerified && verified // admin by email needs the claim itself
+	if !hasVerified && c.cfg.AssumeEmailVerified {
+		verified = true
+	}
+	// Only a verified email links accounts, passes the allowed domains,
+	// makes an admin or is stored: an IdP that omits email_verified may
+	// let users type any address.
+	emailOK := email != "" && verified
 	groups := claimStrings(claims[c.cfg.GroupsClaim])
 
 	domainOK := false
@@ -550,7 +582,7 @@ func (s *Server) provisionSSOUser(ctx context.Context, c *oidcClient, subject st
 		}
 	}
 	for _, a := range c.cfg.AdminEmails {
-		if emailOK && hasVerified && verified && strings.EqualFold(strings.TrimSpace(a), email) {
+		if emailOK && explicitlyVerified && strings.EqualFold(strings.TrimSpace(a), email) {
 			serverAdmin, matched = true, true
 		}
 	}
@@ -561,8 +593,9 @@ func (s *Server) provisionSSOUser(ctx context.Context, c *oidcClient, subject st
 	u, err := s.store.GetUserBySubject(ctx, subject)
 	if errors.Is(err, store.ErrNotFound) {
 		u = nil
-		// Link an account an admin created for this email, when the email is trusted.
-		if emailOK && (verified || domainOK) {
+		// Link an account an admin created for this email, when the email
+		// is verified (an allowed domain never stands in for that).
+		if emailOK {
 			if x, err := s.store.GetUserByEmail(ctx, email); err == nil && x.Subject == "" {
 				if err := s.store.LinkUserSubject(ctx, x.ID, subject); err != nil {
 					return nil, err

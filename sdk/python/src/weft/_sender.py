@@ -277,6 +277,17 @@ def _estimate(payload: Any) -> int:
         return 1024
 
 
+def _tighten(path: str, mode: int) -> None:
+    """Drop group/other permissions of an existing file or directory (POSIX)."""
+    if os.name != "posix":
+        return
+    try:
+        if os.stat(path).st_mode & 0o077:
+            os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 class WriteAheadLog:
     """Append-only JSONL file of unsent requests, replayed on the next start."""
 
@@ -309,8 +320,13 @@ class WriteAheadLog:
             return
         lines = "".join(json.dumps(self._encode(k, p), default=repr) + "\n" for k, p in items)
         with self._lock:
-            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as f:
+            # The WAL holds call inputs and outputs: a 0700 directory and a 0600 file.
+            d = os.path.dirname(self.path) or "."
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            _tighten(d, 0o700)
+            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            _tighten(self.path, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(lines)
 
     def drain(self) -> List[Any]:

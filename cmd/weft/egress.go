@@ -41,19 +41,24 @@ func registerEgressFlags() *egressFlags {
 
 // operatorBaseURLEnv are provider base URLs read from the server's own
 // environment. They are operator configuration, like the command line, so
-// their host:port is allowed automatically. The same names stored as project
-// or server secrets are not.
+// their host:port is allowed automatically, but only for the built-in
+// provider routes that use them (not for remote scorers, webhooks or custom
+// providers). The same names stored as project or server secrets are not.
 var operatorBaseURLEnv = []string{"OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "OLLAMA_BASE_URL"}
 
 // apply installs the process-wide egress policy and returns a description
 // for the startup log.
 func (f *egressFlags) apply(log *slog.Logger) (string, error) {
 	allow := egress.ParseList(*f.allow)
+	var providerAllow []string
 	for _, name := range operatorBaseURLEnv {
 		if hp := egress.HostPortOf(os.Getenv(name)); hp != "" {
-			allow = append(allow, hp)
-			log.Info("egress: allowing operator-configured provider base URL", "env", name, "host", hp)
+			providerAllow = append(providerAllow, hp)
+			log.Info("egress: allowing operator-configured provider base URL for the built-in provider route", "env", name, "host", hp)
 		}
+	}
+	if err := egress.SetProviderAllow(providerAllow); err != nil {
+		return "", fmt.Errorf("provider base URL: %w", err)
 	}
 	p, err := egress.New(egress.Config{Allow: allow, AllowPrivate: *f.allowPrivate, Logger: log})
 	if err != nil {
@@ -68,7 +73,7 @@ func (f *egressFlags) apply(log *slog.Logger) (string, error) {
 	switch {
 	case *f.allowPrivate:
 		return "private-allowed", nil
-	case len(allow) > 0:
+	case len(allow) > 0 || len(providerAllow) > 0:
 		return "public+allowlist", nil
 	}
 	return "public-only", nil

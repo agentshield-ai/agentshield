@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
-	"os"
+	"net/netip"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -24,7 +24,6 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 // routeExtensions let feature modules register authenticated routes from
@@ -58,6 +57,16 @@ type Config struct {
 	// Compat turns on the compatibility adapter for clients of another
 	// tracing product (package compat, docs/weft/COMPATIBILITY.md).
 	Compat bool
+	// EnforceHosts refuses requests whose Host header is not an IP address,
+	// a localhost name or one of AllowedHosts (DNS rebinding; netguard.go).
+	EnforceHosts bool
+	// AllowedHosts are the host names this server answers to
+	// (--allowed-hosts): "weft.example.com", ".example.com" for its
+	// subdomains, or "*" for any.
+	AllowedHosts []string
+	// TrustedProxies may set the client address with X-Forwarded-For or
+	// X-Real-IP (--trusted-proxies); other peers cannot.
+	TrustedProxies []netip.Prefix
 }
 
 // Server is the HTTP API.
@@ -86,10 +95,8 @@ func New(cfg Config, st *store.Store) *Server {
 		log = slog.Default()
 	}
 	s := &Server{cfg: cfg, store: st, log: log, keys: parseKeys(cfg.APIKeys)}
-	s.llm = llm.New(func(ctx context.Context, name string) (string, bool) {
-		v, ok, err := st.GetSecret(ctx, name)
-		return v, ok && err == nil
-	}, s.resolveProvider)
+	s.llm = llm.New(st.ResolveSecret, s.resolveProvider)
+	s.llm.ServerSecretsOpen = s.serverSecretsOpen // secrets.go
 	s.engine = evals.New(st, s.llm, log)
 	if cfg.Compat {
 		s.compat = compat.New(compatHost{s})
@@ -137,19 +144,25 @@ func (s *Server) resolveProvider(ctx context.Context, projectID, name string) (*
 	cp.APIKeyName, _ = v["api_key_name"].(string)
 	if h, ok := v["extra_headers"].(map[string]any); ok {
 		for k, x := range h {
-			cp.ExtraHeaders[k] = fmt.Sprint(x)
+			val := fmt.Sprint(x)
+			if !validHeader(k, val) {
+				return nil, fmt.Errorf("provider %q: extra header %q is not a valid HTTP header", name, k)
+			}
+			cp.ExtraHeaders[k] = val
 		}
 	}
 	if cp.BaseURL == "" {
 		return nil, fmt.Errorf("provider %q has no base_url", name)
 	}
+	// Secrets named by the provider are checked against the project, the
+	// base URL's host and its scheme when they are used (llm.UseSecret).
 	return cp, nil
 }
 
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP)
+	r.Use(s.netGuard)   // netguard.go: client address, Host, Origin, content type, write stalls
 	r.Use(s.requestLog) // requestlog.go; also recovers panics
 	if s.compat != nil {
 		r.Use(s.compat.Middleware)
@@ -306,12 +319,20 @@ func parseKeys(raw []string) []apiKey {
 type ctxKey struct{}
 
 // auth authenticates (static keys, managed keys, session cookies) and
-// enforces roles; see authenticate in iam.go.
+// enforces roles; see authenticate in iam.go. The body is read only once
+// the caller is authenticated (prepareBody).
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r = s.authenticate(w, r); r != nil {
-			next.ServeHTTP(w, r.WithContext(s.refAccess(r)))
+		r = r.WithContext(context.WithValue(r.Context(), bodyStateKey{}, &bodyState{}))
+		if r = s.authenticate(w, r); r == nil {
+			return
 		}
+		if err := s.prepareBody(r); err != nil { // static keys and open servers
+			writeErr(w, err)
+			return
+		}
+		r = r.WithContext(s.ingestContext(r)) // sourceclaims.go
+		next.ServeHTTP(w, r.WithContext(s.refAccess(r)))
 	})
 }
 
@@ -319,10 +340,21 @@ func (s *Server) auth(next http.Handler) http.Handler {
 
 const maxJSONBody = 64 << 20
 
+// decodeBody decodes a JSON request body into v. The body must be exactly
+// one JSON value (trailing data is refused) of at most bodyLimit bytes;
+// GET and HEAD bodies are ignored. Every project v names must pass the
+// request's project guard (projectguard.go): authorisation at use.
 func decodeBody(r *http.Request, v any) error {
-	body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, maxJSONBody), r.Header.Get("Content-Encoding"))
-	if err != nil {
-		return store.Invalidf("reading body: %v", err)
+	var body []byte
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Body != nil {
+		var err error
+		body, err = otlp.ReadBody(http.MaxBytesReader(nil, r.Body, bodyLimit(r)), r.Header.Get("Content-Encoding"))
+		if err != nil {
+			if isBodyTooLarge(err) {
+				return &requestError{code: http.StatusRequestEntityTooLarge, msg: fmt.Sprintf("request body too large (at most %d MiB here)", bodyLimit(r)>>20)}
+			}
+			return store.Invalidf("reading body: %v", err)
+		}
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		body = []byte("{}")
@@ -332,7 +364,10 @@ func decodeBody(r *http.Request, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return store.Invalidf("invalid JSON body: %v", err)
 	}
-	return nil
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return store.Invalidf("invalid JSON body: unexpected data after the JSON value")
+	}
+	return checkDecoded(r, v)
 }
 
 func handle[T any](fn func(context.Context, *http.Request, *T) (any, error)) http.HandlerFunc {
@@ -370,7 +405,10 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	var inv *store.InvalidError
 	var fe *store.ForbiddenError
+	var re *requestError
 	switch {
+	case errors.As(err, &re):
+		writeError(w, re.code, re.msg)
 	case errors.As(err, &inv):
 		writeError(w, http.StatusBadRequest, inv.Msg)
 	case errors.As(err, &fe):
@@ -397,12 +435,16 @@ func project(p string) (string, error) {
 	return pid, nil
 }
 
+// userFrom is the user a request acts as: the authenticated user (a
+// session, a user's API key or a named static key) whatever the request
+// says; otherwise (open servers, unnamed static keys) explicit, else the
+// X-Weft-User header.
 func userFrom(r *http.Request, explicit *string) *string {
-	if explicit != nil && *explicit != "" {
-		return explicit
-	}
 	if u, ok := r.Context().Value(ctxKey{}).(string); ok && u != "" {
 		return &u
+	}
+	if explicit != nil && *explicit != "" {
+		return explicit
 	}
 	if u := r.Header.Get("X-Weft-User"); u != "" && len(u) <= 128 {
 		return &u
@@ -522,48 +564,6 @@ func (s *Server) completionsCreate(ctx context.Context, _ *http.Request, req *co
 	return out, nil
 }
 
-type secretReq struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-func (s *Server) secretsSet(ctx context.Context, _ *http.Request, req *secretReq) (any, error) {
-	return empty, s.store.SetSecret(ctx, req.Name, req.Value)
-}
-
-func (s *Server) secretsDelete(ctx context.Context, _ *http.Request, req *secretReq) (any, error) {
-	return empty, s.store.DeleteSecret(ctx, req.Name)
-}
-
-// envSecretNames are environment variables reported by /secrets/list.
-var envSecretNames = []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
-	"MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "OPENROUTER_API_KEY", "TOGETHER_API_KEY", "OLLAMA_BASE_URL"}
-
-func (s *Server) secretsList(w http.ResponseWriter, r *http.Request) {
-	names, err := s.store.ListSecrets(r.Context())
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	type entry struct {
-		Name   string `json:"name"`
-		Source string `json:"source"`
-	}
-	seen := map[string]bool{}
-	out := []entry{}
-	for _, n := range names {
-		seen[n] = true
-		out = append(out, entry{n, "db"})
-	}
-	for _, n := range envSecretNames {
-		if !seen[n] && os.Getenv(n) != "" {
-			out = append(out, entry{n, "env"})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeJSON(w, map[string]any{"secrets": out})
-}
-
 // ---------------------------------------------------------------- evaluations
 
 // ---------------------------------------------------------------- OTLP
@@ -571,16 +571,20 @@ func (s *Server) secretsList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) otelTraces(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	isJSON := otlp.IsJSON(r.Header.Get("Content-Type"))
-	body, err := otlp.ReadBody(r.Body, r.Header.Get("Content-Encoding"))
+	// Bounded body, compression ratio, element counts and the server-wide
+	// decode budget (otlp/limits.go); the reservation is held until the
+	// spans are stored.
+	body, res, err := otlp.ReadBodyBudget(r.Context(), r.Body, r.Header.Get("Content-Encoding"), otlp.MaxExportBytes)
 	if err != nil {
 		otlpRejected(r, "read", len(body), err) // ingestlog.go
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, otlp.BodyStatus(err), err.Error())
 		return
 	}
-	req, err := otlp.Decode(body, isJSON)
+	defer res.Release()
+	req, err := otlp.DecodeWith(r.Context(), body, isJSON, res)
 	if err != nil {
 		otlpRejected(r, "decode", len(body), err)
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, otlp.BodyStatus(err), err.Error())
 		return
 	}
 	hp := otlpHeaderProject(r)
@@ -635,6 +639,9 @@ func (h compatHost) PrepareStart(ctx context.Context, r *http.Request, st *store
 }
 func (h compatHost) AuthorizeProject(r *http.Request, pid string) (int, []byte) {
 	return h.s.authorizeProject(r, pid)
+}
+func (h compatHost) AuthorizeWrite(r *http.Request, pid string) error {
+	return h.s.authorizeRole(r, pid, store.RoleMember)
 }
 func (h compatHost) ExportCalls(w http.ResponseWriter, r *http.Request, q store.CallsQuery, format string, flatten *bool) {
 	h.s.exportCalls(w, r, callsExportReq{CallsQuery: q, Format: format, Flatten: flatten}, false)

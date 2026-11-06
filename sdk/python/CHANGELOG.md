@@ -8,6 +8,37 @@ server with that API (this repository's server, which ships with the SDK);
 the older route shapes are no longer used. The server's compatibility
 adapter still serves the official weave client.
 
+### Security
+
+- **`weft.get()` no longer runs code stored on the server (breaking).**
+  Reading a function (`weft.get("fn")`, `client.get(ref)`, a function ref
+  inside an object, an `Evaluation`'s function scorers, a rebuilt
+  `Model`/`Scorer` subclass's methods) used to `exec` its stored source, so any
+  project writer could run code on every machine that read it. It now returns
+  an inert `weft.StoredOp` (`name`, `code`, `language`, `ref`; calling it
+  raises `weft.OpLoadError`). Opt in explicitly for projects you trust:
+  `weft.load_op(ref, trust_code=True)` / `client.load_op(...)`,
+  `weft.get(ref, trust_code=True)` (also loads nested function refs), or
+  `WEFT_ALLOW_CODE_LOAD=1`. `load_op` without trust raises `OpLoadError`.
+  Saving an object that holds `StoredOp`s keeps their refs; an `Evaluation`
+  whose model or scorers are `StoredOp`s refuses to run.
+- **No redirects.** The HTTP client refuses every 3xx (`WeftHTTPError` with
+  the status) instead of following it, which resent the `Authorization`
+  header to the redirect target. `Content` refuses to open non-http(s) URLs
+  a server resolves a reference to (no `file://`).
+- **Redaction covers common secret names and values.** Key names are
+  normalised (case, `-`, `_`, `.`) and matched against more defaults and
+  patterns (`openai_api_key`, `client_secret`, `refresh_token`,
+  `aws_secret_access_key`, `private_key`, `passwd`, `credentials`,
+  `X-Api-Key`, `Cookie`, `Proxy-Authorization`, ...); `Bearer ...`, `sk-...`,
+  `AKIA...`, GitHub/Slack tokens, PEM private keys and URL passwords are
+  redacted inside strings. A custom `redact_keys` list is matched exactly
+  (normalised). `WEFT_REDACT_KEYS=0` turns both off.
+- A warning is logged once when an API key is sent over plain `http://` to a
+  non-loopback host.
+- The write-ahead log (`enable_disk_fallback`) is created `0600` in a `0700`
+  directory; existing ones are tightened.
+
 ### New names
 
 - `@weft.trace` traces a function; every call of it is a **span**.

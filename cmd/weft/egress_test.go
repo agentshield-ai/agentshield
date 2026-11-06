@@ -59,11 +59,17 @@ func TestEgressFlags(t *testing.T) {
 	if _, err := (&egressFlags{allow: str(""), allowPrivate: b(false)}).apply(log); err != nil {
 		t.Fatal(err)
 	}
-	if err := egress.Default().CheckURL(ctx, "http://127.0.0.1:11434/v1/chat/completions"); err != nil {
+	t.Cleanup(func() { _ = egress.SetProviderAllow(nil) })
+	if err := egress.ProviderPolicy().CheckURL(ctx, "http://127.0.0.1:11434/v1/chat/completions"); err != nil {
 		t.Errorf("env base URL: %v", err)
 	}
-	if err := egress.Default().CheckURL(ctx, "http://127.0.0.1:11435/"); !egress.IsBlocked(err) {
+	if err := egress.ProviderPolicy().CheckURL(ctx, "http://127.0.0.1:11435/"); !egress.IsBlocked(err) {
 		t.Errorf("other port: %v", err)
+	}
+	// Only the built-in provider route gets it: remote scorers, webhooks and
+	// custom providers (the default policy) do not.
+	if err := egress.Default().CheckURL(ctx, "http://127.0.0.1:11434/v1/chat/completions"); !egress.IsBlocked(err) {
+		t.Errorf("env base URL allowed for every feature: %v", err)
 	}
 
 	// Bad entries are rejected at startup.

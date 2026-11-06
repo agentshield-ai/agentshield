@@ -5,7 +5,7 @@ package otlp
 
 import (
 	"bytes"
-	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -35,28 +35,28 @@ func IsJSON(contentType string) bool {
 	return mt == "application/json"
 }
 
-// ReadBody reads a possibly gzip-encoded body with a size limit.
+// ReadBody reads a possibly gzip-encoded body with a size limit
+// (MaxBodyBytes decompressed) and the compression-ratio limit. It does not
+// use the body budget; see ReadBodyBudget.
 func ReadBody(r io.Reader, encoding string) ([]byte, error) {
-	if strings.EqualFold(encoding, "gzip") {
-		zr, err := gzip.NewReader(r)
-		if err != nil {
-			return nil, fmt.Errorf("invalid gzip body: %w", err)
-		}
-		defer zr.Close()
-		r = zr
+	if !strings.EqualFold(encoding, "gzip") {
+		encoding = ""
 	}
-	b, err := io.ReadAll(io.LimitReader(r, MaxBodyBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > MaxBodyBytes {
-		return nil, fmt.Errorf("request body too large")
-	}
-	return b, nil
+	return readLimited(context.Background(), r, encoding, MaxBodyBytes, nil)
 }
 
 // Decode parses an ExportTraceServiceRequest.
 func Decode(body []byte, isJSON bool) (*coltrace.ExportTraceServiceRequest, error) {
+	return DecodeWith(context.Background(), body, isJSON, nil)
+}
+
+// DecodeWith is Decode that first refuses a request over the element
+// limits (MaxExportSpans spans, and messages or JSON values) and reserves
+// its estimated decoded size in res (from ReadBodyBudget; may be nil).
+func DecodeWith(ctx context.Context, body []byte, isJSON bool, res *Reservation) (*coltrace.ExportTraceServiceRequest, error) {
+	if err := checkElements(ctx, body, isJSON, pbTraceReq, res); err != nil {
+		return nil, err
+	}
 	req := &coltrace.ExportTraceServiceRequest{}
 	if !isJSON {
 		if err := proto.Unmarshal(body, req); err != nil {
@@ -77,8 +77,18 @@ func Decode(body []byte, isJSON bool) (*coltrace.ExportTraceServiceRequest, erro
 	if err != nil {
 		return nil, err
 	}
+	generic = nil
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(fixed, req); err != nil {
 		return nil, fmt.Errorf("invalid OTLP JSON: %w", err)
+	}
+	n := 0
+	for _, rs := range req.GetResourceSpans() {
+		for _, ss := range rs.GetScopeSpans() {
+			n += len(ss.GetSpans())
+		}
+	}
+	if n > MaxExportSpans {
+		return nil, tooLarge("OTLP request has more than %d spans; send smaller batches", MaxExportSpans)
 	}
 	return req, nil
 }

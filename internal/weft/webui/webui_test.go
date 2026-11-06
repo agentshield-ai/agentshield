@@ -58,7 +58,7 @@ func TestContentSecurityPolicy(t *testing.T) {
 		"font-src":        "'self' data:",
 		"connect-src":     "'self'",
 		"object-src":      "blob:",
-		"frame-src":       "'self'",
+		"frame-src":       "'self' blob:",
 		"frame-ancestors": "'none'",
 		"base-uri":        "'none'",
 		"form-action":     "'self'",

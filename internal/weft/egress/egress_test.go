@@ -566,3 +566,36 @@ func TestHostOwnAndDocumentationAddresses(t *testing.T) {
 		t.Errorf("public address refused: %v", err)
 	}
 }
+
+// E5: under --egress-allow-private, cloud metadata reached through the GCP
+// IPv6 address or an IPv4 address embedded in local-use NAT64
+// (64:ff9b:1::/48, any RFC 6052 prefix length) or IPv4-translated
+// (::ffff:0:a.b.c.d) form stays blocked; embedded private and public
+// addresses classify as before.
+func TestEmbeddedIPv4AndGCPMetadata(t *testing.T) {
+	priv := MustNew(Config{AllowPrivate: true, Logger: discardLogger()})
+	for _, tc := range []struct {
+		ip   string
+		want Category
+	}{
+		{"fd20:ce::254", Metadata},
+		{"64:ff9b:1::a9fe:a9fe", Metadata},       // /96 form of 169.254.169.254
+		{"64:ff9b:1:a9fe:a9:fe00::", Metadata},   // /48 form
+		{"64:ff9b:1:a9:fe:a9fe::", Metadata},     // /56 form
+		{"64:ff9b:1:0:a9:fea9:fe00:0", Metadata}, // /64 form
+		{"::ffff:0:a9fe:a9fe", Metadata},         // IPv4-translated
+		{"::ffff:0:7f00:1", Loopback},            // IPv4-translated loopback
+		{"64:ff9b:1::a00:1", Private},            // 10.0.0.1 in local-use NAT64
+		{"64:ff9b:1::808:808", Reserved},         // public IPv4: the range itself is not global
+		{"::ffff:0:808:808", Reserved},
+	} {
+		got := Classify(netip.MustParseAddr(tc.ip))
+		if got != tc.want {
+			t.Errorf("Classify(%s) = %q, want %q", tc.ip, got, tc.want)
+		}
+		allowed := priv.Check(tc.ip, netip.MustParseAddr(tc.ip), "80") == nil
+		if wantAllowed := tc.want != Metadata; allowed != wantAllowed {
+			t.Errorf("%s under AllowPrivate: allowed=%v, want %v", tc.ip, allowed, wantAllowed)
+		}
+	}
+}

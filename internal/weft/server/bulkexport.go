@@ -137,7 +137,8 @@ func (s *Server) bulkExportStart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := otlp.ReadBody(http.MaxBytesReader(nil, r.Body, 1<<20), r.Header.Get("Content-Encoding"))
+	body, res, err := otlp.ReadBodyBudget(r.Context(), http.MaxBytesReader(nil, r.Body, 1<<20), r.Header.Get("Content-Encoding"), 1<<20)
+	res.Release()
 	if err != nil {
 		validationProblem(w, []any{"body"}, "could not read the request body", "value_error")
 		return

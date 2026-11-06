@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/agentshield-ai/agentshield/internal/weft/egress"
+	"github.com/agentshield-ai/agentshield/internal/weft/llm"
 	"github.com/agentshield-ai/agentshield/internal/weft/refs"
 	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	"github.com/agentshield-ai/agentshield/internal/weft/weftlog"
@@ -131,7 +132,43 @@ func (a *Automation) Validate() error {
 			return err
 		}
 	}
+	if len(a.Action.Headers) > 32 {
+		return store.Invalidf("action.headers: at most 32 headers")
+	}
+	for k, v := range a.Action.Headers {
+		if !validHeaderName(k) {
+			return store.Invalidf("action.headers: %q is not a valid header name", k)
+		}
+		if !validHeaderValue(v) || len(v) > 8192 {
+			return store.Invalidf("action.headers: the value of %q is not a valid header value (no control characters such as newlines, at most 8 KiB)", k)
+		}
+	}
 	return nil
+}
+
+// validHeaderName reports whether k is an HTTP header field name (RFC 9110 token).
+func validHeaderName(k string) bool {
+	if k == "" || len(k) > 256 {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// validHeaderValue rejects control characters other than horizontal tab.
+func validHeaderValue(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; (c < 0x20 && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func checkURL(raw string) error {
@@ -173,8 +210,9 @@ var operators = map[string]func(a, b float64) bool{
 	"ne": func(a, b float64) bool { return a != b }, "!=": func(a, b float64) bool { return a != b },
 }
 
-// SecretFunc looks up a secret by name.
-type SecretFunc func(ctx context.Context, name string) (string, bool)
+// SecretFunc returns the URL held by a stored secret that projectID may use
+// as a webhook (llm.Client.LookupURLSecret: scope, allowed hosts, https).
+type SecretFunc func(ctx context.Context, projectID, name string) (string, error)
 
 // Runner evaluates automations and delivers actions.
 type Runner struct {
@@ -536,19 +574,44 @@ var oldPlaceholders = map[string]string{"call_id": "span_id", "total_calls": "to
 
 // Render fills {placeholders} in a message template from vars.
 func Render(tmpl string, vars map[string]any) string {
+	return render(tmpl, vars, nil)
+}
+
+// RenderSlack is Render for Slack messages: substituted values are escaped
+// (&, <, >) so event data (feedback types, payloads, names) cannot inject
+// mrkdwn links or mentions; the template's own text is kept as written.
+func RenderSlack(tmpl string, vars map[string]any) string {
+	return render(tmpl, vars, SlackEscape)
+}
+
+// SlackEscape escapes the three characters Slack's mrkdwn treats as control
+// characters (https://api.slack.com/reference/surfaces/formatting#escaping).
+func SlackEscape(s string) string {
+	return slackEscaper.Replace(s)
+}
+
+var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+func render(tmpl string, vars map[string]any, esc func(string) string) string {
 	return placeholderRe.ReplaceAllStringFunc(tmpl, func(m string) string {
 		v, ok := vars[m[1:len(m)-1]]
 		if !ok {
 			return m
 		}
+		var out string
 		switch x := v.(type) {
 		case string:
-			return x
+			out = x
 		case nil:
 			return ""
+		default:
+			b, _ := json.Marshal(v)
+			out = string(b)
 		}
-		b, _ := json.Marshal(v)
-		return string(b)
+		if esc != nil {
+			out = esc(out)
+		}
+		return out
 	})
 }
 
@@ -586,18 +649,29 @@ func (r *Runner) Fire(ctx context.Context, o *store.Obj, a *Automation, event ma
 
 func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event map[string]any, test bool) (int, string, error) {
 	target := strings.TrimSpace(a.Action.URL)
-	if a.Action.URLSecret != "" {
+	fromSecret := a.Action.URLSecret != ""
+	if fromSecret {
 		if r.Secret == nil {
 			return 0, "", errors.New("secrets unavailable")
 		}
-		v, ok := r.Secret(ctx, a.Action.URLSecret)
-		if !ok || strings.TrimSpace(v) == "" {
-			return 0, "", fmt.Errorf("secret %q is not set", a.Action.URLSecret)
+		v, err := r.Secret(ctx, o.ProjectID, a.Action.URLSecret)
+		if err != nil {
+			return 0, "", err
 		}
 		target = strings.TrimSpace(v)
 	}
 	if err := checkURL(target); err != nil {
+		if fromSecret {
+			return 0, "", fmt.Errorf("secret %q does not hold an http(s) URL", a.Action.URLSecret)
+		}
 		return 0, "", err
+	}
+	// Headers are checked at save (Validate) too; a value saved before that
+	// check must not reach the transport, whose error would print the URL.
+	for k, v := range a.Action.Headers {
+		if !validHeaderName(k) || !validHeaderValue(v) {
+			return 0, "", fmt.Errorf("action.headers: %q is not a valid header", k)
+		}
 	}
 	name := a.Name
 	if name == "" {
@@ -616,12 +690,21 @@ func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event
 			vars[old] = v
 		}
 	}
-	message := fmt.Sprintf("Weft automation %q fired in %s: %s", name, o.ProjectID, summary)
+	slack := a.Action.Type == "slack"
+	esc := func(s string) string { return s }
+	if slack {
+		esc = SlackEscape
+	}
+	message := fmt.Sprintf("Weft automation %q fired in %s: %s", esc(name), esc(o.ProjectID), esc(summary))
 	if test {
 		message = "[test] " + message
 	}
 	if a.Action.Message != "" {
-		message = Render(a.Action.Message, vars)
+		if slack {
+			message = RenderSlack(a.Action.Message, vars)
+		} else {
+			message = Render(a.Action.Message, vars)
+		}
 	}
 	var payload any
 	if a.Action.Type == "slack" {
@@ -639,6 +722,9 @@ func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(b))
 	if err != nil {
+		if fromSecret {
+			return 0, "", fmt.Errorf("secret %q does not hold a valid URL", a.Action.URLSecret)
+		}
 		return 0, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -653,6 +739,11 @@ func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event
 	}
 	resp, err := r.HTTP.Do(req)
 	if err != nil {
+		if fromSecret {
+			// The URL is the secret: say what went wrong without it (an
+			// *url.Error prints the full URL, a dial error its host).
+			return 0, "", fmt.Errorf("delivering webhook to the URL in secret %q: %s", a.Action.URLSecret, llm.NetErrorKind(err))
+		}
 		return 0, "", fmt.Errorf("delivering webhook: %w", egress.Sanitize(err))
 	}
 	defer resp.Body.Close()

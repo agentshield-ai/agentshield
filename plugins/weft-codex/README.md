@@ -56,11 +56,17 @@ Requires Node.js 18+ and a running Weft server.
 
 ```bash
 node plugins/weft-codex/install.mjs --project my-team/codex --server-url http://localhost:6345
+# when auth is on, pass the key on stdin (or --api-key-from-env with WEFT_API_KEY set):
+printf %s "$WEFT_API_KEY" | node plugins/weft-codex/install.mjs --project my-team/codex --api-key-stdin
 ```
 
 This merges a Stop hook into `$CODEX_HOME/hooks.json` (default
-`~/.codex/hooks.json`; a `.bak` copy is kept, re-running replaces its own
-entry) and saves the settings to `~/.weft-codex/settings.json`. Codex marks
+`~/.codex/hooks.json`; the first run keeps a `.bak` copy that later runs never
+overwrite, the file is replaced atomically, re-running replaces its own
+entry) and saves the settings to `~/.weft-codex/settings.json` (`0600`). The
+hook path is quoted; a path with shell metacharacters is refused.
+`--api-key <key>` is refused (it would show in the process list and shell
+history). Codex marks
 new hooks untrusted: approve it on the next launch. `--dry-run` prints the
 result, `--uninstall` removes it.
 
@@ -74,7 +80,7 @@ node plugins/weft-codex/install.mjs --print-toml
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = 'node "/path/to/plugins/weft-codex/hooks/weft-codex-hook.mjs"'
+command = "node '/path/to/plugins/weft-codex/hooks/weft-codex-hook.mjs'"
 timeout = 5
 
 # or the notify fallback:
@@ -97,14 +103,21 @@ hooks; use `notify`, or run the collector by hand:
 | `WEFT_HOOK_TIMEOUT_MS` | `timeout_ms` | `2000` |
 | `WEFT_MAX_FIELD_CHARS` | `max_field_chars` | `20000` |
 | `WEFT_PLUGIN_DISABLED` | `disabled` | `false` |
-| `WEFT_CODEX_STATE_DIR` | | `~/.weft-codex` (cursors, logs, settings) |
+| `WEFT_CODEX_STATE_DIR` | | `~/.weft-codex` (cursors, logs, settings; `0700`, files `0600`) |
+| `WEFT_STATE_RETENTION_DAYS` | `state_retention_days` | `7`; cursors of sessions not seen for this many days are deleted (`0` keeps them) |
 | `CODEX_HOME` | | `~/.codex` (where rollouts are found) |
 | `WEFT_ROLLOUT_DELAY_MS` | | `500` (collector wait before reading) |
 | `WEFT_FLUSH_MODE` | | `background`; `inline` collects inside the hook (tests) |
 
 **Privacy.** With content capture on, prompts, responses, reasoning
 summaries, tool arguments and tool output are sent to your Weft server. Use
-the server's sensitive-data redaction or `WEFT_CAPTURE_CONTENT=false`.
+the server's sensitive-data redaction or `WEFT_CAPTURE_CONTENT=false`. With
+capture off, spans carry no content: empty inputs and outputs, display names
+are the tool name, `chat <model>` or `invoke_agent <agent>`, errors a fixed
+class (`tool failed`, `turn aborted`), and the first prompt
+(`gen_ai.conversation.name`) and `cwd` are neither sent nor kept in the cursor
+file. The plugin never follows HTTP redirects and warns when an API key goes
+over plain `http://` to a host other than localhost.
 
 ## Tests
 

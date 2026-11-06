@@ -79,7 +79,9 @@ func (s *Store) loadAgentSpans(ctx context.Context, projectID string, f agentSpa
 	if !f.AllCalls {
 		where = append(where, "(s.agent_name != '' OR s.conversation_id != '' OR s.operation_name != '')",
 			// Judge, monitor and signal LLM calls Weft makes itself are not agent activity.
-			"COALESCE(json_extract(c.attributes, '$.weft.internal'), 0) = 0")
+			// Guarded: one row whose JSON SQLite cannot read (nested over 1000
+			// deep, stored before ingest capped nesting) must not fail the list.
+			"COALESCE(CASE WHEN json_valid(c.attributes) THEN json_extract(c.attributes, '$.weft.internal') END, 0) = 0")
 	}
 	if f.After > 0 {
 		where = append(where, "c.started_at >= ?")

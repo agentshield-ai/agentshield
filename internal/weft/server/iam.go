@@ -225,9 +225,16 @@ func (s *Server) finishAuth(w http.ResponseWriter, r *http.Request, p *principal
 			note.keyID = &k
 		}
 	}
+	if err := s.prepareBody(r); err != nil {
+		writeErr(w, err)
+		return nil
+	}
 	if code, msg := s.authorize(w, r, p); code != 0 {
 		writeError(w, code, msg)
 		return nil
+	}
+	if !p.isAdmin() {
+		r = r.WithContext(withProjectGuard(r.Context(), p, classify(r).need()))
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/projects" && !(p.isAdmin()) {
 		s.listProjectsScoped(w, r, p)
@@ -290,6 +297,16 @@ func (a access) role() store.Role {
 	return store.RoleAdmin
 }
 
+// need is the role a request of this class needs on every project it
+// names. Self-service routes check their own rules; the projects they name
+// must at least be readable.
+func (a access) need() store.Role {
+	if a == accSelf {
+		return store.RoleViewer
+	}
+	return a.role()
+}
+
 // authorize returns 0 when p may make the request, or a status and reason.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, p *principal) (int, string) {
 	acc := classify(r)
@@ -307,13 +324,12 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, p *principal)
 		if legacy && strings.HasPrefix(r.URL.Path, "/api_keys/") {
 			return http.StatusForbidden, "this API key is not an admin key"
 		}
-		return 0, ""
 	case accProjectAdmin:
 		if legacy {
 			return http.StatusForbidden, "this API key is not an admin key"
 		}
 	}
-	if p.readOnly && !isReadRequest(r) {
+	if acc != accSelf && p.readOnly && !isReadRequest(r) {
 		return http.StatusForbidden, "this API key is read-only"
 	}
 	if p.isAdmin() {
@@ -321,10 +337,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, p *principal)
 	}
 	pids, err := requestProjects(w, r)
 	if err != nil {
+		var re *requestError
+		if errors.As(err, &re) {
+			return re.code, re.msg
+		}
 		return http.StatusForbidden, err.Error()
 	}
 	if len(pids) == 0 {
-		if projectFreePaths[r.URL.Path] {
+		if acc == accSelf || projectFreePath(r.URL.Path) {
 			return 0, ""
 		}
 		if p.projects != nil {
@@ -338,8 +358,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, p *principal)
 	if note := auditNoteFrom(r); note != nil && len(note.projects) == 0 {
 		note.projects = pids
 	}
-	need := acc.role()
+	need := acc.need()
 	for _, pid := range pids {
+		if note := auditNoteFrom(r); note != nil && (p.projects != nil && !p.projects[pid] || p.roleFor(pid).Rank() < need.Rank()) {
+			note.projects = append([]string{pid}, without(pids, pid)...) // the refused project first
+		}
 		if p.projects != nil && !p.projects[pid] {
 			return http.StatusForbidden, "this API key has no access to project " + pid
 		}
@@ -351,6 +374,16 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, p *principal)
 		}
 	}
 	return 0, ""
+}
+
+func without(list []string, x string) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if v != x {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // roleFor is the caller's effective role on a project.

@@ -42,12 +42,24 @@ redaction).
 
 ### Redaction
 
-By default, values under keys named `api_key`, `apikey`, `authorization`,
-`auth`, `password`, `secret`, `token` or `access_token` are replaced with
-`"REDACTED"` in span inputs and outputs. Matching is case-insensitive and on
-the exact key, at any depth.
+By default, values under keys named like credentials are replaced with
+`"REDACTED"` in span inputs and outputs, at any depth. Key names are
+normalised (lower case; `-`, `_`, `.` and spaces removed) and matched against
+`weft.DEFAULT_REDACT_KEYS` and the same patterns as the Python SDK: names
+containing `secret`, `password`, `passwd`, `apikey`, `authorization`,
+`credential`, `privatekey` or `cookie`, names ending in `token` or `auth`, and
+API, secret, private, access, signing, encryption, master, session, auth,
+client and license `*_key` names (`openai_api_key`, `apiKey`, `X-Api-Key`,
+`client_secret`, `refresh_token`, `aws_secret_access_key`, `Cookie`,
+`Proxy-Authorization`; not `max_tokens`, `key` or `sort_key`;
+`weft.isSecretKey(name)` tells). Credential-looking values inside strings are
+redacted too (`weft.redactSecretValues`): `Bearer`/`Basic`/`Token`
+credentials, `sk-...` keys, AWS access key ids, GitHub and Slack tokens, PEM
+private keys and the password of `scheme://user:password@host` URLs.
+`WEFT_REDACT_KEYS=0` turns key and value redaction off.
 
 ```ts
+// redactKeys replaces the default list and patterns (exact, normalised names)
 await weft.init('my-project', { settings: { redactKeys: ['api_key', 'ssn'], redactPii: true } });
 ```
 
@@ -116,12 +128,20 @@ carry `run_id` (`<entity>/<project>/<run id>`), `run_step` and
 With `enableDiskFallback`, anything that cannot be sent goes to a JSONL file
 instead of being dropped. That covers batches that still fail after retries,
 queue overflow, and what is still queued when the process exits. The next
-`init()` for the same server and project replays it. With `disableWalSender` /
+`init()` for the same server and project replays it (the file is `0600` in a
+`0700` directory: it holds span inputs and outputs). With `disableWalSender` /
 `WEFT_DISABLE_WAL_SENDER` and the WAL on, every write goes to the file and
 nothing is sent or replayed until a run without it. `WEFT_DEBUG_HTTP=1`
 prints every request and response (method, URL,
 headers with `Authorization` redacted, JSON bodies, status, elapsed time) to
 stderr.
+
+**Transport.** The client never follows HTTP redirects (`redirect: 'manual'`
+plus a refusal): the Weft API does not redirect, and following one would
+resend the API key and the request body to another host, so a redirect fails
+the request with a `WeftHTTPError` carrying the 3xx status. A warning is logged
+once when an API key is sent over plain `http://` to a host other than
+localhost.
 
 ## Tracing
 
@@ -396,12 +416,26 @@ await client.deleteObjectVersion('qa:v0'); await client.deleteObjectVersions('qa
 Refs name `object`, `function`, `table` and `span` kinds (`weft:///<entity>/<project>/<kind>/...`);
 refs written with the earlier kind names (`op`, `call`) are read as `function` and `span`.
 
-**Loading functions evaluates stored code.** `await weft.get('myFn')` returns a
-runnable traced function built from the stored JavaScript source with `new Function`. Its
-spans are linked to the same function ref. Only self-contained functions work; a
+**Stored functions are data unless you opt in.** `await weft.get('myFn')`
+returns a `weft.StoredOp` (`name`, `code`, `language`, `ref`), not a function:
+the SDK never evaluates code read from the server on its own, because anyone
+who can write to the project could store a new version whose code would run
+on every machine that reads it. To get a runnable traced function, load it
+explicitly from a project whose writers you trust:
+
+```ts
+const fn = await weft.loadOp('myFn', { trustCode: true });   // or client.loadOp(stored, { trustCode: true })
+const same = await weft.get('myFn', { trustCode: true });
+// or WEFT_ALLOW_CODE_LOAD=1 for the whole process
+```
+
+Loading builds the function from the stored JavaScript source with
+`new Function` (so the source's top-level expressions run); its spans are
+linked to the same function ref. Only self-contained functions work; a
 function that closes over module variables throws `ReferenceError` when
 called. When the code can't be rebuilt (for example a Python function) you get
-`OpLoadError`. Only load functions from servers you trust.
+`OpLoadError`; without `trustCode` (or the variable) `loadOp` throws
+`OpLoadError` too.
 
 `AnnotationSpec`, `Leaderboard`, `Monitor` and `SavedView` serialise in the
 shapes documented in API.md and load back as their classes:

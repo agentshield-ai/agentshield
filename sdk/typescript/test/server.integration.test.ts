@@ -100,7 +100,7 @@ describe.skipIf(!URL)('real server', () => {
     const loaded = await weft.loadOp('triple', { trustCode: true });
     const [res, call] = await loaded.call(3);
     expect(res).toBe(9);
-    expect(call.name).toBe(tref.uri());
+    expect(call!.name).toBe(tref.uri());
 
     // built-in scorer classes + EvaluationLogger + server-side compare
     const model = weft.trace(async function upper({ datasetRow }: any) {

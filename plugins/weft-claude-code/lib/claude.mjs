@@ -14,10 +14,27 @@
 // is retried by the next flush without duplicates.
 
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spanItems, chatOutput, iso, loadConfig, makeLogger, parseMaybeJson, readJsonl, sendItems, shortText, stableId, toolDisplay, usageSummary } from './weft.mjs';
+import {
+  appendPrivate,
+  chatOutput,
+  createPrivateExclusive,
+  iso,
+  loadConfig,
+  makeLogger,
+  parseMaybeJson,
+  pruneOldFiles,
+  readJsonl,
+  sendItems,
+  shortText,
+  spanItems,
+  stableId,
+  toolDisplay,
+  usageSummary,
+  writePrivate,
+} from './weft.mjs';
 
 export const PLUGIN = 'weft-claude-code';
 export const PLUGIN_VERSION = '0.1.0';
@@ -37,11 +54,19 @@ const lockPath = (cfg, sid) => join(sessionsDir(cfg), `${safe(sid)}.lock`);
 
 const KEEP = ['session_id', 'transcript_path', 'cwd', 'permission_mode', 'source', 'model', 'prompt', 'tool_name', 'tool_input', 'tool_use_id', 'tool_response',
   'error', 'is_interrupt', 'stop_hook_active', 'agent_id', 'agent_type', 'agent_transcript_path', 'reason', 'last_assistant_message'];
+/** Fields holding what the user, the model or a tool wrote (or local paths): not written to disk when content capture is off. */
+const CONTENT_FIELDS = new Set(['prompt', 'tool_input', 'tool_response', 'error', 'last_assistant_message', 'cwd']);
 
-/** Turn a hook payload into the record appended to the session log (cheap, local). */
-export function hookRecord(payload, now = Date.now()) {
+/**
+ * Turn a hook payload into the record appended to the session log (cheap, local).
+ * With `captureContent` false the record keeps only ids, names and timings
+ * (a Task/Agent tool keeps its `subagent_type`).
+ */
+export function hookRecord(payload, now = Date.now(), { captureContent = true } = {}) {
   const rec = { ev: payload.hook_event_name, ts: iso(now) };
-  for (const k of KEEP) if (payload[k] !== undefined) rec[k] = payload[k];
+  for (const k of KEEP) if (payload[k] !== undefined && (captureContent || !CONTENT_FIELDS.has(k))) rec[k] = payload[k];
+  if (!captureContent && AGENT_TOOLS.has(payload.tool_name) && payload.tool_input?.subagent_type) rec.tool_input = { subagent_type: String(payload.tool_input.subagent_type) };
+  if (!captureContent && payload.error !== undefined) rec.error = payload.is_interrupt ? 'interrupted' : 'tool failed';
   if (rec.ev === 'UserPromptSubmit' && payload.transcript_path) {
     try {
       rec.transcript_offset = statSync(payload.transcript_path).size;
@@ -63,12 +88,11 @@ export function handleHook(payload, { env = process.env, now = Date.now(), flush
     if (cfg.disabled || !payload || typeof payload !== 'object' || !payload.hook_event_name) return { recorded: false };
     const sid = payload.session_id;
     if (!sid) return { recorded: false };
-    const rec = hookRecord(payload, now);
+    const rec = hookRecord(payload, now, { captureContent: cfg.captureContent });
     const path = eventsPath(cfg, sid);
     let prevOpen = false;
     if (rec.ev === 'UserPromptSubmit') prevOpen = hasOpenTurn(path);
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(rec)}\n`);
+    appendPrivate(path, `${JSON.stringify(rec)}\n`);
     const trigger = rec.ev === 'Stop' || rec.ev === 'SessionEnd' || (rec.ev === 'UserPromptSubmit' && prevOpen);
     if (trigger) {
       if (flush === 'background') spawnFlush(sid, env);
@@ -133,14 +157,13 @@ function readCursor(cfg, sid) {
 
 function acquireLock(cfg, sid) {
   const p = lockPath(cfg, sid);
-  mkdirSync(dirname(p), { recursive: true });
   try {
     if (Date.now() - statSync(p).mtimeMs > 60_000) unlinkSync(p);
   } catch {
     /* no stale lock */
   }
   try {
-    closeSync(openSync(p, 'wx'));
+    createPrivateExclusive(p);
     return () => {
       try {
         unlinkSync(p);
@@ -270,8 +293,13 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
       const t = tools.get(e.tool_use_id) ?? { id: e.tool_use_id, name: e.tool_name, input: e.tool_input, start: e.ts, agentId: e.agent_id };
       t.end = e.ts;
       t.response = e.tool_response;
-      if (e.ev === 'PostToolUseFailure') t.error = e.error ?? (e.is_interrupt ? 'interrupted' : 'tool failed');
-      else if (e.tool_response && typeof e.tool_response === 'object' && (e.tool_response.is_error || e.tool_response.isError)) t.error = shortText(e.tool_response.error ?? e.tool_response.content ?? 'tool error', 500);
+      if (e.ev === 'PostToolUseFailure') {
+        t.errorKind = e.is_interrupt ? 'interrupted' : 'tool failed';
+        t.error = e.error ?? t.errorKind;
+      } else if (e.tool_response && typeof e.tool_response === 'object' && (e.tool_response.is_error || e.tool_response.isError)) {
+        t.errorKind = 'tool error';
+        t.error = shortText(e.tool_response.error ?? e.tool_response.content ?? 'tool error', 500);
+      }
       tools.set(e.tool_use_id, t);
     }
   }
@@ -302,6 +330,7 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
   };
 
   // Turn.
+  const turnError = turn.stop ? undefined : turn.closed === 'session_end' ? 'session ended before the turn finished' : turn.closed === 'next_prompt' ? 'interrupted: a new prompt was submitted' : undefined;
   const finalText = turn.stop?.last_assistant_message ?? lastText(mainMsgs.flatMap((m) => m.blocks));
   items.push(
     ...spanItems(cfg, {
@@ -316,7 +345,8 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
       endedAt,
       inputs: { messages: [{ role: 'user', content: prompt.prompt ?? '' }] },
       output: finalText ? { messages: [{ role: 'assistant', content: finalText }] } : null,
-      error: turn.stop ? undefined : turn.closed === 'session_end' ? 'session ended before the turn finished' : turn.closed === 'next_prompt' ? 'interrupted: a new prompt was submitted' : undefined,
+      error: turnError,
+      errorKind: turnError,
       genai: common({ 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': cfg.agentName, 'gen_ai.request.model': model, 'gen_ai.provider.name': 'anthropic' }),
       attributes: { claude_code: { cwd: prompt.cwd, permission_mode: prompt.permission_mode, session_source: ctx.session?.source, transcript_path: prompt.transcript_path } },
       pluginVersion: PLUGIN_VERSION,
@@ -331,6 +361,7 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
     const id = spanOf.get(t.id);
     const result = toolResultText(t.response);
     const exception = t.error ?? (t.end ? undefined : 'tool did not finish before the turn ended');
+    const exceptionKind = t.error ? t.errorKind : exception;
     if (isAgent) {
       const subType = t.input?.subagent_type ?? t.name;
       items.push(
@@ -347,6 +378,7 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
           inputs: { messages: [{ role: 'user', content: t.input?.prompt ?? '' }], description: t.input?.description },
           output: result != null ? { messages: [{ role: 'assistant', content: typeof result === 'string' ? result : Array.isArray(result?.content) ? result.content.map((b) => b?.text ?? '').join('') : JSON.stringify(result) }] } : null,
           error: exception,
+          errorKind: exceptionKind,
           genai: common({ 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.agent.name': subType, 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.id }),
           pluginVersion: PLUGIN_VERSION,
         }),
@@ -371,6 +403,7 @@ export function buildTurnItems(cfg, sid, turn, ctx = {}) {
           inputs: t.input && typeof t.input === 'object' && !Array.isArray(t.input) ? t.input : { input: t.input },
           output: result ?? null,
           error: exception,
+          errorKind: exceptionKind,
           genai,
           pluginVersion: PLUGIN_VERSION,
         }),
@@ -448,17 +481,18 @@ export async function flushSession(cfg, sid, { fetchImpl, transcriptDelayMs = 0 
     for (let i = 0; i < turns.length; i++) {
       const t = turns[i];
       if (!t.closed) break;
-      if (!session.firstPrompt && t.prompt.prompt) session.firstPrompt = shortText(t.prompt.prompt, 80);
+      if (cfg.captureContent && !session.firstPrompt && t.prompt.prompt) session.firstPrompt = shortText(t.prompt.prompt, 80);
+      if (!cfg.captureContent) delete session.firstPrompt;
       const agentTranscripts = {};
       for (const st of t.events.filter((e) => e.ev === 'SubagentStop' && e.agent_id && e.agent_transcript_path)) {
         agentTranscripts[st.agent_id] = readJsonl(st.agent_transcript_path, 0).lines;
       }
       const items = buildTurnItems(cfg, sid, t, { transcript: turnTranscript(t, turns[i + 1]), agentTranscripts, session, conversationName: session.firstPrompt });
       try {
-        await sendItems(cfg, items, { fetchImpl });
+        await sendItems(cfg, items, { fetchImpl, warn: (m) => log.warn(m) });
       } catch (e) {
         log.warn(`session ${sid}: send failed, will retry on the next flush: ${e?.message ?? e}`);
-        writeFileSync(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session }));
+        writePrivate(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session }));
         return { sent, items: itemsSent, error: String(e?.message ?? e) };
       }
       sent++;
@@ -466,9 +500,12 @@ export async function flushSession(cfg, sid, { fetchImpl, transcriptDelayMs = 0 
       // The last turn stays re-sendable until the next prompt: a Stop-hook continuation
       // or late transcript lines are picked up by the next flush (same call ids).
       cursor.next = turns[i + 1]?.index ?? t.index;
-      writeFileSync(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session }));
+      writePrivate(cursorPath(cfg, sid), JSON.stringify({ ...cursor, session }));
       log.debug(`session ${sid}: sent turn ${t.index} (${items.length / 2} calls)`);
     }
+    // Logs of sessions that never ended (crashes, killed terminals) are not kept forever.
+    const pruned = pruneOldFiles(sessionsDir(cfg), /\.(events\.jsonl|cursor\.json|lock)$/, cfg.retentionDays);
+    if (pruned.length) log.info(`deleted ${pruned.length} session log file(s) older than ${cfg.retentionDays} days`);
     if (sessionEnded && turns.every((t) => t.closed)) {
       for (const p of [eventsPath(cfg, sid), cursorPath(cfg, sid)]) {
         try {

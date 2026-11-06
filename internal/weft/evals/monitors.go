@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,9 @@ const (
 	monitorQueueLimit      = 10000 // spans waiting, all projects
 	monitorProjectQueueCap = 5000  // spans waiting, one project
 )
+
+// monitorRunHook, when set (tests), runs before a span's monitors.
+var monitorRunHook func(ctx context.Context, c store.EndedCall)
 
 type monitorQueue struct {
 	mu      sync.Mutex
@@ -162,6 +166,9 @@ func (e *Engine) monitorWorker() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(e.baseCtx, 5*time.Minute)
+		if monitorRunHook != nil {
+			monitorRunHook(ctx, c)
+		}
 		if err := e.runMonitors(ctx, c); err != nil {
 			e.Log.Warn("monitor evaluation failed", "project", c.ProjectID, "span_id", c.ID, "err", err)
 		}
@@ -230,7 +237,15 @@ func (e *Engine) runMonitors(ctx context.Context, ended store.EndedCall) error {
 		if len(perCall) == 0 || !sampled(monitorRate(val)) {
 			continue
 		}
+		triggerPrefix := strings.TrimSuffix(m.Ref(), m.Digest) // "...:<digest>" -> "...:"
 		for _, ms := range perCall {
+			// A span is scored once per monitor and scorer: re-sent and
+			// rebuilt spans are not scored again.
+			if done, err := e.Store.HasTriggeredFeedback(ctx, ended.ProjectID, call.ID, "weft.scorer."+ms.scorer.Name, triggerPrefix); err != nil {
+				return err
+			} else if done {
+				continue
+			}
 			start := time.Now()
 			if err := e.scoreForMonitor(ctx, m, ms.scorer, call); err != nil {
 				e.Log.Warn("monitor scorer failed", "project", ended.ProjectID, "monitor", m.ObjectID, "scorer", ms.ref, "span_id", call.ID, "err", err)

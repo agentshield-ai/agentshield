@@ -41,7 +41,7 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
 
   const scorers = useObjects(projectId, KIND_META.scorers.filter)
   const monitors = useObjects(projectId, { kinds: ['monitor'] })
-  const secrets = useQuery({ queryKey: ['secrets'], queryFn: () => api.secretsList().then((r) => r.secrets) })
+  const secrets = useQuery({ queryKey: ['secrets', projectId], queryFn: () => api.secretsList(projectId).then((r) => r.secrets) })
   const ops = useQuery({ queryKey: ['span-names', projectId], queryFn: () => api.spanNames(projectId).then((r) => r.items) })
 
   const setT = (p: Partial<AutomationVal['trigger']>) => setV((x) => ({ ...x, trigger: { ...x.trigger, ...p } }))
@@ -263,8 +263,8 @@ export function AutomationEditor({ projectId, initial, onClose, onSaved }: { pro
           Secret holding the URL
           <input className="input mono" list="automation-secrets" value={v.action.url_secret ?? ''} onChange={(e) => setA({ url_secret: e.target.value })} placeholder="SLACK_WEBHOOK_URL" />
           <datalist id="automation-secrets">
-            {(secrets.data ?? []).map((s) => (
-              <option key={s.name} value={s.name} />
+            {[...new Set((secrets.data ?? []).filter((s) => s.kind !== 'bucket').map((s) => s.name))].map((n) => (
+              <option key={n} value={n} />
             ))}
           </datalist>
           <span className="hint">

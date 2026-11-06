@@ -28,7 +28,7 @@ func TestEgressGuardsTokenURLAndPredict(t *testing.T) {
 	prev := egress.SetDefault(egress.MustNew(egress.Config{Allow: []string{"127.0.0.1:" + su.Port()}}))
 	defer egress.SetDefault(prev)
 
-	e := &Engine{LLM: llm.New(func(_ context.Context, name string) (string, bool) { return "s", name == "SEC" }, nil)}
+	e := &Engine{LLM: llm.New(llm.StaticSecrets(map[string]string{"SEC": "s"}), nil)}
 	val := map[string]any{"url": scorer.URL, "auth_config": map[string]any{"token_url": internal.URL + "/token", "client_id": "c", "client_secret_secret": "SEC"}}
 	_, err := scoreRemote(e, context.Background(), "e/p", val, map[string]any{"q": 1}, "x", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "destination not allowed") || strings.Contains(err.Error(), "127.0.0.1") {

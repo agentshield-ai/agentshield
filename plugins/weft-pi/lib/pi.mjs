@@ -296,6 +296,7 @@ export class WeftPiTracer {
     const finalText = last ? contentText((last.content ?? []).filter((b) => b?.type === 'text')) : '';
     const failed = last && (last.stopReason === 'error' || last.stopReason === 'aborted');
     const exception = reason === 'agent_end' || reason === undefined ? (failed ? last.errorMessage ?? `run ${last.stopReason}` : undefined) : `run closed without agent_end (${reason})`;
+    const exceptionKind = reason === 'agent_end' || reason === undefined ? (failed ? `run ${last.stopReason}` : undefined) : `run closed without agent_end (${reason})`;
     const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
     for (const m of assistants) {
       totals.input += m.usage?.input ?? 0;
@@ -318,6 +319,7 @@ export class WeftPiTracer {
         inputs: { messages: [...(run.systemPrompt ? [{ role: 'system', content: run.systemPrompt }] : []), { role: 'user', content: userContent }] },
         output: finalText ? { messages: [{ role: 'assistant', content: finalText }], stop_reason: last?.stopReason ?? null } : last ? { stop_reason: last.stopReason } : null,
         error: exception,
+        errorKind: exceptionKind,
         genai: {
           ...common,
           'gen_ai.operation.name': 'invoke_agent',
@@ -370,6 +372,7 @@ export class WeftPiTracer {
           output: out,
           summary: usageSummary(model, usage),
           error: llmErr,
+          errorKind: m && (m.stopReason === 'error' || m.stopReason === 'aborted') ? `LLM call ${m.stopReason}` : llmErr,
           genai: { ...common, 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': model, 'gen_ai.response.model': m?.model, 'gen_ai.provider.name': provider },
           attributes: u?.cost?.total ? { pi: { cost_usd: u.cost.total } } : undefined,
         }),
@@ -392,6 +395,7 @@ export class WeftPiTracer {
           inputs: args,
           output: resultValue(t.result),
           error: t.isError ? contentText(t.result?.content) || 'tool failed' : t.endedAt ? undefined : 'tool did not finish before the run ended',
+          errorKind: t.isError ? 'tool failed' : 'tool did not finish before the run ended',
           genai: { ...common, 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': t.name, 'gen_ai.tool.call.id': t.id },
         }),
       );
@@ -415,7 +419,7 @@ export class WeftPiTracer {
     if (this.sending) return this.sending;
     if (!this.queue.length) return Promise.resolve();
     const batch = this.queue.splice(0, this.queue.length);
-    this.sending = sendItems(this.cfg, batch, { fetchImpl: this.fetchImpl })
+    this.sending = sendItems(this.cfg, batch, { fetchImpl: this.fetchImpl, warn: (m) => this.warn(m) })
       .then(() => {
         this.stats.sent += batch.length;
       })

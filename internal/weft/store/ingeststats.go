@@ -17,8 +17,12 @@ type IngestStats struct {
 	// because their session has a higher-ranked source (sources.go);
 	// SpansSampled those dropped by the project's ingest sampling.
 	SpansStored, SpansDropped, SpansSampled int
-	// EventsNew and EventsDuplicate count log events stored and re-sent.
-	EventsNew, EventsDuplicate int
+	// EventsNew and EventsDuplicate count log events stored and re-sent;
+	// EventsDropped new events of groups already full (eventlog.go).
+	EventsNew, EventsDuplicate, EventsDropped int
+	// SpansUnchanged counts spans an event-log rebuild built exactly as
+	// stored, and so did not write again.
+	SpansUnchanged int
 	// TurnsRebuilt counts event-log groups whose spans were rebuilt;
 	// TurnsInterrupted those closed as interrupted by this request.
 	TurnsRebuilt, TurnsInterrupted int
