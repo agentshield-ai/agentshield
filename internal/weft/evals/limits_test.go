@@ -79,3 +79,50 @@ func TestMonitorWorkersSharedAcrossProjects(t *testing.T) {
 	}
 	close(release)
 }
+
+// A span is scored once per monitor and scorer, however often it is
+// re-sent or rebuilt (each rebuild used to add a feedback row, and an LLM
+// judge call).
+func TestMonitorScoresSpanOnce(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := New(st, llm.New(nil, nil), nil)
+	defer e.Close()
+	ctx := context.Background()
+	pid := "acme/mon"
+	d, _, err := st.CreateObject(ctx, pid, "exact", map[string]any{"_class_name": "ExactMatchScorer", "_bases": []any{"Scorer", "Object"}}, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scorerRef := "weft:///acme/mon/object/exact:" + d
+	if _, _, err := st.CreateObject(ctx, pid, "mon", map[string]any{"_class_name": "Monitor", "_bases": []any{"Object"}, "name": "mon",
+		"active": true, "sampling_rate": 1.0, "scorers": []any{scorerRef}}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	span := store.CompleteCall{Start: store.CallStart{ProjectID: pid, ID: "s1", TraceID: "s1", OpName: "answer", StartedAt: "2026-01-01T00:00:00Z",
+		Inputs: map[string]any{"expected": "x"}}, End: &store.CallEnd{EndedAt: "2026-01-01T00:00:01Z", Output: "x"}}
+	if _, err := st.UpsertComplete(ctx, []store.CompleteCall{span}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := e.runMonitors(ctx, store.EndedCall{ProjectID: pid, ID: "s1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fbs, err := st.QueryFeedback(ctx, pid, nil, nil, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, f := range fbs {
+		if f.FeedbackType == "weft.scorer.exact" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d feedback rows for one span, want 1", n)
+	}
+}

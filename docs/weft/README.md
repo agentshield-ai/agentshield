@@ -42,9 +42,10 @@ make weft         # build bin/weft
 | `--egress-allow` | `WEFT_EGRESS_ALLOW` | empty; comma-separated internal destinations that remote scorers, webhooks, OAuth token URLs and LLM providers may reach: `host`, `host:port`, `*.domain`, IP or CIDR, e.g. `localhost:11434,10.20.0.0/16`. See [Outbound requests](#outbound-requests) |
 | `--egress-allow-private` | `WEFT_EGRESS_ALLOW_PRIVATE` | `false`; `true` allows loopback, private, link-local and CGNAT destinations (cloud metadata addresses stay blocked) |
 | `--remote-scorer-allow-insecure-http` | `WEFT_REMOTE_SCORER_ALLOW_INSECURE_HTTP` | `false`; `true` allows `http://` RemoteScorer URLs, which otherwise must be `https://` |
+| `--secrets-allow-insecure-http` | `WEFT_SECRETS_ALLOW_INSECURE_HTTP` | `false`; `true` lets stored secrets (keys, webhook URLs, OAuth client secrets) be sent over plain `http://` to non-loopback hosts |
 | `--ref-buckets-env-credentials` | `WEFT_REF_BUCKETS_ENV_CREDENTIALS` | `false`; `true` lets S3 reference buckets registered without `secret_name` use the server's `AWS_*` credentials, for AWS endpoints only. Otherwise every bucket needs a stored secret |
 | `--files-backend` | `WEFT_FILES_BACKEND` | empty (file contents in SQLite); `s3://bucket/prefix` stores them in an S3-compatible bucket, see [API.md](API.md#files-and-media) for `--s3-endpoint`, `--s3-region` and credentials |
-| | `WEFT_SECRET_KEY` | key for encrypting stored provider secrets; default is a random key in `<db>.key` |
+| | `WEFT_SECRET_KEY` | key for encrypting stored secrets (use 32+ random characters); default is a random key in `<db>.key`. New databases stretch it with Argon2id and a stored salt |
 | `--db-encryption-key-file` | `WEFT_DB_ENCRYPTION_KEY_FILE` | empty (plaintext database); a file holding a passphrase encrypts the whole database at rest, see [Database encryption at rest](#database-encryption-at-rest) |
 | `--db-encryption-key` | `WEFT_DB_ENCRYPTION_KEY` | empty; the passphrase itself (prefer the key file or env var, flags show in process lists) |
 | `--oidc-issuer` | `WEFT_OIDC_ISSUER` | empty (no SSO); an OpenID Connect issuer URL turns on "Sign in with SSO" and makes authentication required |
@@ -77,8 +78,10 @@ The guides in `docs/weft` are built into the server: open **/help** in the UI
 
 Provider keys for the playground, LLM judges and monitors come from the
 environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) or
-from **Settings → Secrets** in the UI. The `mock/echo` and `mock/json` models
-work offline.
+from **Settings → Secrets** in the UI, where each secret has a scope (this
+project, its team, or the server) and optional allowed hosts; see
+[Secrets](#secrets) below. The `mock/echo` and `mock/json` models work
+offline.
 
 ### Outbound requests
 
@@ -97,8 +100,10 @@ model servers and mocks need an explicit allow:
 ```
 
 `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL` and `OLLAMA_BASE_URL` set in the
-server's environment are allowed automatically (the same names stored as
-secrets are not). The PII analyzer, the OIDC issuer and the S3/GCS files
+server's environment are allowed automatically for the built-in provider
+routes that use them, and for nothing else (remote scorers, webhooks and
+custom providers still need `--egress-allow`; the same names stored as
+secrets are not allowed automatically). The PII analyzer, the OIDC issuer and the S3/GCS files
 backend are operator configuration and are not restricted. Details:
 [API.md](API.md#outbound-request-restrictions).
 
@@ -506,6 +511,43 @@ Costs, measured on 10,000 spans (4 vCPUs, same workload on both drivers):
 Peak memory is higher too (about 150 MB against 30 MB in that benchmark: the
 one-off Argon2id run plus a Wasm heap per connection).
 
+## Secrets
+
+Secrets hold provider API keys, webhook URLs, scorer and model credentials
+and OAuth client secrets. Objects name them (`api_key_name`,
+`headers_secret`, `predict_api_key_secret`, `client_secret_secret`,
+`url_secret`, …); values are never returned by the API. Each has a scope:
+
+| Scope | Managed by | Used by |
+|---|---|---|
+| project | members of the project | that project's objects and requests |
+| team | team admins and server admins | every project of the team |
+| server | server admins | the built-in provider routes (`openai/…`, `anthropic/…`, …) of every project; a project's own objects only toward the secret's allowed hosts |
+
+A name resolves from the narrowest scope that has it, so a project can use
+its own `OPENAI_API_KEY`. A base URL stored as `OPENAI_BASE_URL` /
+`OLLAMA_BASE_URL` only receives a key from the same scope or a narrower one.
+**Allowed hosts** (`api.example.com`, `host:port`, `*.example.com`) pin where
+a secret may be sent; for a URL-valued secret (a webhook) its own host must
+be on the list. Secrets go out only over https, except to `localhost` /
+loopback addresses (local model servers) and to provider base URLs the
+operator set in the environment; `--secrets-allow-insecure-http`
+(`WEFT_SECRETS_ALLOW_INSECURE_HTTP`) allows plain http everywhere.
+Reference-bucket credentials are a separate kind: registering a bucket turns
+the server secret it names into bucket credentials, which no object can use.
+
+**Upgrading.** Existing secrets become server secrets (those named by a
+registered bucket become bucket credentials). While every principal of the
+server is a server admin (no auth, `--api-keys`, admin managed keys only, no
+SSO), there is nobody to protect them from, and projects' objects use server
+secrets as before. Once a non-admin user or key exists, custom providers,
+scorers, models, OAuth configs and automations that name a server secret
+fail with `secret "X" is a server secret …`: store the value as a project or
+team secret (**Settings → Secrets & providers**, or
+`POST /api/v1/secrets/set`), or give the server secret allowed hosts. The
+built-in providers keep using the server keys. See
+[API.md](API.md#secrets).
+
 ## Security notes
 
 - Without `--api-keys`, managed keys or `--oidc-issuer` the server is open to
@@ -564,15 +606,33 @@ one-off Argon2id run plus a Wasm heap per connection).
 - Remote scorer requests carry span inputs and outputs and often credentials,
   so their URLs must be `https://` unless `--remote-scorer-allow-insecure-http`
   is set.
-- Any key that can write to a project can use the stored provider secrets
-  through the playground and LLM judges. A `Provider` object sends the
-  secret named in `api_key_name` to its `base_url`, so only give write
-  access to people you would trust with those secrets.
-- Provider secrets are encrypted at rest with AES-256-GCM. The key comes
-  from `WEFT_SECRET_KEY` or a random key file created next to the database
-  (`<db>.key`, mode 0600). Keep the key file off backups that hold the
-  database, or set `WEFT_SECRET_KEY` from a secret manager. Plaintext secrets
-  from older versions are re-encrypted at startup.
+- **Secrets are scoped** (see [Secrets](#secrets)). A project's objects
+  (custom providers, remote scorers, predict models and runtimes, OAuth
+  configs, automations) can use only that project's secrets, its team's,
+  and server secrets a server admin shared by giving them allowed hosts
+  (only toward those hosts). Other server secrets are used by the built-in
+  provider routes alone, and reference-bucket credentials by buckets alone.
+  So a project member can no longer have the server send another project's
+  or the server's secrets to a URL they choose. Every secret is sent only
+  to its allowed hosts (when it has any) and only over https (loopback
+  excepted; `--secrets-allow-insecure-http` lifts this), and the provider
+  client does not follow redirects. Members still use the built-in
+  providers with the server's keys (that is what those keys are for), and
+  anyone with write access to a project can use that project's secrets.
+- Secrets are encrypted at rest with AES-256-GCM, bound to their scope and
+  name. The key comes from `WEFT_SECRET_KEY` or a random key file created
+  next to the database (`<db>.key`, mode 0600); databases created by this
+  version stretch it with Argon2id and a salt stored in the database, so a
+  stolen database does not allow a cheap guess of a weak `WEFT_SECRET_KEY`
+  (databases that already held secrets keep the direct key so they still
+  open; use a long random `WEFT_SECRET_KEY` for them). Keep the key file off
+  backups that hold the database, or set `WEFT_SECRET_KEY` from a secret
+  manager. Plaintext secrets from older versions are re-encrypted at
+  startup.
+- Provider, embedding, image and moderation responses are bounded (16 MiB
+  for a completion, 64 MiB for a stream, 128 MiB for embeddings, 64 MiB for
+  images, after decompression) so a hostile endpoint cannot exhaust memory
+  or have huge spans stored.
 - Uploaded files are served with `Content-Security-Policy: sandbox` and
   `nosniff` so they cannot run script in the UI's origin.
 - **The database is not encrypted at rest unless you set a database

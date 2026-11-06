@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -675,3 +677,41 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// D2/D5: a client that stops reading is cut off after writeStall, while
+// the handler keeps writing.
+func TestWriteStallCutsOffNonReader(t *testing.T) {
+	old := writeStall
+	writeStall = 200 * time.Millisecond
+	defer func() { writeStall = old }()
+	s := &Server{log: slogDiscard()}
+	done := make(chan error, 1)
+	h := s.netGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := bytes.Repeat([]byte("x"), 1<<20)
+		for i := 0; i < 1000; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}))
+	hs := httptest.NewServer(h)
+	defer hs.Close()
+	c, err := net.Dial("tcp", strings.TrimPrefix(hs.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_, _ = c.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"))
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("1000 MiB written to a client that does not read")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("writer not cut off")
+	}
+}
+
+func slogDiscard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

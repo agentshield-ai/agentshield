@@ -615,9 +615,59 @@ the sum once, so nested calls are never double counted.
 | `POST /api/v1/completions/stream` | same | NDJSON of OpenAI chunk objects (`{"error"}` on a provider failure), last line `{"_meta": {"span_id": "..." \| null}}` |
 | `POST /api/v1/embeddings` | `{project_id, inputs: {model, input: string \| [string]}}` | `{"response": {"object":"list","data":[{"object":"embedding","index","embedding":[...]}],"model","usage"}}` |
 | `POST /api/v1/images` | `{project_id, inputs: {model, prompt, n?, size?, quality?, style?, response_format?, background?, output_format?}, track?: true}` | `{"response": {...} \| {"error": "..."}, "span_id": "..." \| null}` |
-| `POST /secrets/set` | `{name, value}` | `{}` |
-| `GET /secrets/list` | | `{"secrets": [{"name","source":"env\|db"}]}` (never values) |
-| `POST /secrets/delete` | `{name}` | `{}` |
+| `POST /api/v1/secrets/set` | `{name, value, scope?: "project"\|"team"\|"server", project_id?, team?, allowed_hosts?: [string], kind?: "secret"\|"bucket"}` | `{"name","scope","scope_id"}` |
+| `POST /api/v1/secrets/delete` | `{name, scope?, project_id?, team?}` | `{}` |
+| `GET /api/v1/secrets/list?project_id=` | | `{"secrets": [Secret]}` (never values) |
+| `POST /secrets/set`, `POST /secrets/delete`, `GET /secrets/list` | same bodies / query | the older paths; `set` and `delete` need a server admin |
+
+### Secrets
+
+`Secret`: `{"name", "scope": "server"|"team"|"project", "scope_id"` (team or
+project; `""` for server), `"kind": "secret"|"bucket", "allowed_hosts":
+[...], "created_by", "updated_at", "source": "db"|"env"}`. Names are
+`[A-Z0-9_]`, values at most 16 KiB.
+
+- **Scope.** Omitted, it is `project` when `project_id` is given, `team`
+  when `team` is given, else `server`. A team secret may name the team with
+  `team`, or with `project_id` of one of its projects. Project secrets need
+  the member role on the project, team secrets an admin of the team, server
+  secrets and `kind: "bucket"` (reference-bucket credentials, server scope
+  only) a server admin; otherwise 403.
+- **Resolution.** An object of project `e/p` that names a secret gets the
+  narrowest of `e/p`'s, team `e`'s and the server's. A **server** secret is
+  used by the built-in provider routes for every project; a project's own
+  objects (Provider `api_key_name`, RemoteScorer `headers_secret` and
+  `auth_config.*`, `predict_api_key_secret`, runtime `api_key_secret`,
+  OAuth `client_secret_secret`, automation `url_secret`) get it only when
+  it has `allowed_hosts` and the request goes to one of them, or while
+  every principal of the server is a server admin (no auth, static keys,
+  admin managed keys only, no SSO). Bucket credentials are never resolved
+  for objects. A refusal is an error naming the secret (never its value).
+- **Allowed hosts.** `host`, `host:port` (IPv6 in brackets) or `*.domain`
+  (subdomains only). With a list, the secret is sent only there; a
+  URL-valued secret (`url_secret`, a stored `OPENAI_BASE_URL`) must point
+  at a listed host. `allowed_hosts` omitted on a replace keeps the list;
+  `[]` clears it.
+- **Transport.** A secret is sent only over https, except to `localhost`,
+  `*.localhost` and loopback addresses and to provider base URLs from the
+  server's environment; `--secrets-allow-insecure-http` allows http. A
+  stored `OPENAI_BASE_URL` / `OLLAMA_BASE_URL` only receives a key from the
+  same scope or a narrower one, never the environment key.
+- **Listing.** With `project_id`: the member role on it is required; the
+  result is that project's and its team's secrets, the server secrets it
+  can use (with allowed hosts, or the built-in provider keys) and the
+  provider keys set in the environment (server admins see every server
+  secret). Without: a server admin sees everything; another caller sees the
+  secrets of the projects and teams where they are a member (403 if none).
+- Errors for a URL-valued secret (webhook) never contain the URL; an
+  automation's `headers` must be valid HTTP header names and values
+  (checked by `/automations/validate` and before every delivery).
+
+Provider responses are limited after decompression (completion 16 MiB,
+stream 64 MiB with 16 MiB of accumulated content, embeddings 128 MiB,
+images 64 MiB, moderation 4 MiB); a larger one fails with `provider response
+too large`. Provider requests do not follow redirects (a 3xx is returned as
+`provider returned 3xx`).
 
 Model ids: `gpt-*`, `o1*`, `o3*`, `o4*` → OpenAI; `claude-*` → Anthropic;
 `<provider>/<model>` where `<provider>` is `openai`, `anthropic`, the `name`

@@ -35,7 +35,7 @@ import (
 
 // writeStall bounds one response write: a client that stops reading is
 // cut off, while streams that keep moving run as long as they need.
-const writeStall = 2 * time.Minute
+var writeStall = 2 * time.Minute
 
 func (s *Server) netGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
