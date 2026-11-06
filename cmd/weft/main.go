@@ -223,6 +223,11 @@ func main() {
 
 	warnOpenBind(*addr, srv.AuthRequired(), log, *logFile != "") // netflags.go
 
+	ln, err := netCfg.listen(*addr, cfg, log) // netflags.go: connection caps
+	if err != nil {
+		log.Error("listening", "addr", *addr, "err", err)
+		os.Exit(1)
+	}
 	httpSrv := newHTTPServer(*addr, srv.Handler()) // netflags.go: timeouts
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -240,7 +245,7 @@ func main() {
 		"auth", srv.AuthRequired(), "static_keys", len(cfg.APIKeys), "sso", cfg.IAM.OIDC != nil, "projects", projects, "ui", cfg.UI != nil,
 		"files", filesBackend, "pii", piiMode, "egress", egressMode, "shield_replay", shieldMode, "weave_compat", compatOn,
 		"log_level", lvl.String(), "log_format", strings.ToLower(*logFormat))
-	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server failed", "err", err)
 		os.Exit(1)
 	}

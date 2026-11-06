@@ -71,6 +71,10 @@ type Config struct {
 	// wide, in bytes (--response-budget-mb; respbudget.go). 0 means
 	// DefaultResponseBudget.
 	ResponseBudget int64
+	// MaxRequestsPerClient caps the requests in flight from one client
+	// address behind a trusted proxy (connlimit.go); 0 for no cap. Direct
+	// clients are capped per connection by LimitListener.
+	MaxRequestsPerClient int
 }
 
 // Server is the HTTP API.
@@ -173,8 +177,9 @@ func (s *Server) resolveProvider(ctx context.Context, projectID, name string) (*
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(s.clientAddr) // netguard.go: --trusted-proxies
-	r.Use(s.requestLog) // requestlog.go; also recovers panics
+	r.Use(s.clientAddr)  // netguard.go: --trusted-proxies
+	r.Use(s.requestLog)  // requestlog.go; also recovers panics
+	r.Use(s.clientLimit) // connlimit.go: requests in flight per client behind a proxy
 	r.Use(s.netGuard)   // netguard.go: Host, Origin, content type, write stalls
 	if s.compat != nil {
 		r.Use(s.compat.Middleware)

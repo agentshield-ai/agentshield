@@ -32,6 +32,10 @@ import (
 //     Config.TrustedProxies (--trusted-proxies), the last address in
 //     X-Forwarded-For (or X-Real-IP) that is not itself a trusted proxy.
 //   - Slow readers: every response write must finish within writeStall.
+//   - Slow senders: a request body must deliver bodyPaceMin bytes every
+//     bodyPaceWindow (connlimit.go); open connections are capped server
+//     wide and per address by LimitListener, and requests in flight per
+//     client behind a trusted proxy by clientLimit.
 
 // writeStall bounds one response write: a client that stops reading is
 // cut off, while streams that keep moving run as long as they need.
@@ -72,6 +76,7 @@ func (s *Server) netGuard(next http.Handler) http.Handler {
 		// its own.
 		rc := http.NewResponseController(w)
 		_ = rc.SetWriteDeadline(time.Time{})
+		r = paceBody(r, rc) // connlimit.go: a body must keep arriving
 		next.ServeHTTP(&stallWriter{ResponseWriter: w, rc: rc}, r)
 		_ = rc.SetWriteDeadline(time.Now().Add(writeStall))
 	})
@@ -175,7 +180,7 @@ func (s *Server) realIP(r *http.Request) *http.Request {
 	} else if ip, ok := parseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ok {
 		client = ip.String()
 	}
-	ctx := r.Context()
+	ctx := context.WithValue(r.Context(), viaProxyKey{}, true)
 	if fh := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); fh != "" {
 		ctx = context.WithValue(ctx, forwardedHostKey{}, fh)
 	}
@@ -188,6 +193,14 @@ func (s *Server) realIP(r *http.Request) *http.Request {
 
 // forwardedHostKey holds the X-Forwarded-Host of a trusted proxy.
 type forwardedHostKey struct{}
+
+// viaProxyKey marks a request whose peer is a trusted proxy.
+type viaProxyKey struct{}
+
+func viaTrustedProxy(r *http.Request) bool {
+	v, _ := r.Context().Value(viaProxyKey{}).(bool)
+	return v
+}
 
 func parseIP(v string) (netip.Addr, bool) {
 	if h, _, err := net.SplitHostPort(v); err == nil {
