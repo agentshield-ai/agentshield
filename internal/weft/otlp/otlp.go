@@ -188,6 +188,10 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 			return nil, err
 		}
 		cc := isClaudeCodeResource(resource) // claudecode_traces.go
+		var oc *openCodeBatch
+		if isOpenCodeResource(resource) { // opencode_traces.go
+			oc = newOpenCodeBatch(rs)
+		}
 		var subagents map[string]string
 		if cc {
 			var all []*tracepb.Span
@@ -198,10 +202,21 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 		}
 		for _, ss := range rs.GetScopeSpans() {
 			scope := map[string]any{"name": ss.GetScope().GetName(), "version": ss.GetScope().GetVersion()}
+			copilot := isCopilotScope(resource, ss.GetScope().GetName()) // copilot_traces.go
+			first := len(out)
 			for _, sp := range ss.GetSpans() {
+				if oc != nil && !oc.keep(sp) {
+					continue
+				}
 				c, err := spanToCall(project, sp, resource, scope)
 				if err != nil {
 					return nil, err
+				}
+				if oc != nil {
+					oc.mapSpan(&c, sp, resource)
+				}
+				if copilot {
+					mapCopilotSpan(&c, sp, resource)
 				}
 				if cc {
 					o, _ := c.Start.Attributes["otel"].(map[string]any)
@@ -210,6 +225,9 @@ func ToCalls(req *coltrace.ExportTraceServiceRequest, headerProject string) ([]s
 					mapClaudeCodeSpan(&c.Start, c.End, sp.GetName(), attrs, resource, c.Start.Attributes, events, subagents)
 				}
 				out = append(out, c)
+			}
+			if copilot {
+				copilotSessions(out, first)
 			}
 		}
 	}
@@ -283,7 +301,9 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 	}
 	en := &store.CallEnd{EndedAt: nanosToTime(sp.GetEndTimeUnixNano()), Summary: map[string]any{}}
 	en.Output = extractOutput(attrs, events)
-	if model, u := extractUsage(attrs); model != "" && len(u) > 0 {
+	// An AI SDK wrapper (ai.generateText, ai.streamText) repeats the usage
+	// of its doGenerate / doStream children; counting it would double it.
+	if model, u := extractUsage(attrs); model != "" && len(u) > 0 && !vercelWrapper(sp.GetName(), attrs) {
 		en.Summary["usage"] = map[string]any{model: u}
 	}
 	if sp.GetStatus().GetCode() == tracepb.Status_STATUS_CODE_ERROR {
@@ -292,9 +312,17 @@ func spanToCall(project string, sp *tracepb.Span, resource, scope map[string]any
 			msg = sp.GetStatus().GetMessage()
 		}
 		if msg == "" {
+			msg = firstString(attrs, "error.type")
+		}
+		if msg == "" {
 			msg = "error"
 		}
 		en.Exception = &msg
+	} else if t := firstString(attrs, "error.type"); t != "" && sp.GetStatus().GetCode() != tracepb.Status_STATUS_CODE_OK &&
+		firstString(attrs, "gen_ai.operation.name") != "" {
+		// GenAI semconv: error.type is set when the operation failed, and
+		// some instrumentations leave the span status unset.
+		en.Exception = &t
 	}
 	if en.Exception == nil {
 		en.Exception = langfuseError(attrs) // langfuse.go

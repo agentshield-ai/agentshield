@@ -4,39 +4,66 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"strings"
 )
 
-// Session sources: the producers that can record the same Claude Code
-// session, richest first. The weft-claude-code plugin reads the transcript
-// (reasoning, tool results); Claude Code's own OpenTelemetry export sends
-// traces (beta) and log events. A user may turn on more than one, so each
-// session is shown from one source only: the highest-ranked source that has
-// sent spans for it. Spans of a lower source are dropped at ingest once a
-// higher one is present, and are soft-deleted when a higher one arrives
-// (docs/weft/README.md, "Claude Code without a plugin").
+// Session sources: the producers that can record the same agent session,
+// richest first, per harness. For Claude Code the weft-claude-code plugin
+// reads the transcript (reasoning, tool results); Claude Code's own
+// OpenTelemetry export sends traces (beta) and log events. For Codex the
+// weft-codex plugin reads the rollout file; Codex's own export sends log
+// events, and traces of its internals (ranked last, should they ever be
+// mapped onto a session). Gemini CLI has no Weft plugin: its log events
+// rank above its traces (separate llm_call / tool_call spans). A user may
+// turn on more than one, so
+// each session is shown from one source only: the highest-ranked source of
+// its harness that has sent spans for it. Spans of a lower source are
+// dropped at ingest once a higher one is present, and are soft-deleted when
+// a higher one arrives (docs/weft/README.md, "Claude Code without a plugin").
 //
 // A span's source is its weft.source attribute; spans of any other source
-// (or none) are never affected.
+// (or none) are never affected, nor are those of another harness.
 const (
 	SourceClaudeCodePlugin = "weft-claude-code"
 	SourceClaudeCodeTraces = "claude-code-otel-traces"
 	SourceClaudeCodeLogs   = "claude-code-otel-logs"
+	SourceCodexPlugin      = "weft-codex"
+	SourceCodexTraces      = "codex-otel-traces"
+	SourceCodexLogs        = "codex-otel-logs"
+	SourceGeminiLogs       = "gemini-cli-otel-logs"
+	SourceGeminiTraces     = "gemini-cli-otel-traces"
 )
 
-var sessionSourceRank = map[string]int{SourceClaudeCodePlugin: 3, SourceClaudeCodeTraces: 2, SourceClaudeCodeLogs: 1}
+type rankedSource struct {
+	harness string
+	rank    int
+}
 
-// SessionSourceRank is the precedence of a span source (0: not ranked).
-func SessionSourceRank(source string) int { return sessionSourceRank[source] }
+var sessionSourceRank = map[string]rankedSource{
+	SourceClaudeCodePlugin: {"claude-code", 3}, SourceClaudeCodeTraces: {"claude-code", 2}, SourceClaudeCodeLogs: {"claude-code", 1},
+	SourceCodexPlugin: {"codex", 3}, SourceCodexLogs: {"codex", 2}, SourceCodexTraces: {"codex", 1},
+	SourceGeminiLogs: {"gemini-cli", 2}, SourceGeminiTraces: {"gemini-cli", 1},
+}
 
-// sourcesRanked returns the ranked sources above (higher) or below rank.
-func sourcesRanked(rank int, higher bool) []string {
+// SessionSourceRank is the precedence of a span source within its
+// harness (0: not ranked).
+func SessionSourceRank(source string) int { return sessionSourceRank[source].rank }
+
+// sourcesRanked returns the sources of the same harness ranked above
+// (higher) or below source.
+func sourcesRanked(source string, higher bool) []string {
+	me := sessionSourceRank[source]
 	var out []string
 	for s, r := range sessionSourceRank {
-		if (higher && r > rank) || (!higher && r < rank) {
+		if r.harness != me.harness {
+			continue
+		}
+		if (higher && r.rank > me.rank) || (!higher && r.rank < me.rank) {
 			out = append(out, s)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -53,9 +80,40 @@ func withSourceBatch(ctx context.Context) context.Context {
 	return context.WithValue(ctx, sourceBatchKey{}, &sourceBatch{drop: map[[3]string]bool{}})
 }
 
-// spanSource is a call's weft.source attribute (nested or flat).
+// spanSource is a call's weft.source attribute (nested or flat). Gemini
+// CLI's own trace spans (llm_call, tool_call, schedule_tool_calls; always
+// exported alongside its log events) carry none: they are recognised by
+// their agent name, so the session built from the log events replaces them.
 func spanSource(attributes map[string]any) string {
-	return newSpanAttrs(attributes).str("weft.source")
+	a := newSpanAttrs(attributes)
+	if s := a.str("weft.source"); s != "" {
+		return s
+	}
+	if a.str("gen_ai.agent.name") == geminiCLIAgent && geminiTraceOps[a.str("gen_ai.operation.name")] {
+		return SourceGeminiTraces
+	}
+	return ""
+}
+
+const geminiCLIAgent = "gemini-cli"
+
+var geminiTraceOps = map[string]bool{"llm_call": true, "tool_call": true, "schedule_tool_calls": true}
+
+// sourceCondition is the SQL condition matching calls of the given sources
+// (with their arguments).
+func sourceCondition(sources []string) (string, []any) {
+	ph, args := sourceList(sources)
+	cond := `json_extract(attributes, '$.weft.source') IN (` + ph + `)`
+	for _, s := range sources {
+		if s == SourceGeminiTraces {
+			ops, opArgs := sourceList([]string{"llm_call", "tool_call", "schedule_tool_calls"})
+			cond = `(` + cond + ` OR (json_extract(attributes, '$.weft.source') IS NULL
+				AND json_extract(attributes, '$.otel.attributes."gen_ai.agent.name"') = ?
+				AND json_extract(attributes, '$.otel.attributes."gen_ai.operation.name"') IN (` + ops + `)))`
+			args = append(append(args, geminiCLIAgent), opArgs...)
+		}
+	}
+	return cond, args
 }
 
 // applySourcePrecedence decides whether a call start of a ranked source is
@@ -67,8 +125,7 @@ func (s *Store) applySourcePrecedence(ctx context.Context, tx *sql.Tx, st *CallS
 		return false, nil
 	}
 	src := spanSource(st.Attributes)
-	rank := sessionSourceRank[src]
-	if rank == 0 {
+	if sessionSourceRank[src].rank == 0 {
 		return false, nil
 	}
 	key := [3]string{st.ProjectID, *st.ThreadID, src}
@@ -78,12 +135,12 @@ func (s *Store) applySourcePrecedence(ctx context.Context, tx *sql.Tx, st *CallS
 			return s.markSourceDrop(ctx, tx, st, d)
 		}
 	}
-	drop, err = s.sessionHasSource(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(rank, true))
+	drop, err = s.sessionHasSource(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(src, true))
 	if err != nil {
 		return false, err
 	}
 	if !drop {
-		if err := s.retireLowerSources(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(rank, false)); err != nil {
+		if err := s.retireLowerSources(ctx, tx, st.ProjectID, *st.ThreadID, sourcesRanked(src, false)); err != nil {
 			return false, err
 		}
 	}
@@ -132,10 +189,10 @@ func (s *Store) sessionHasSource(ctx context.Context, tx *sql.Tx, pid, session s
 	if len(sources) == 0 {
 		return false, nil
 	}
-	ph, srcArgs := sourceList(sources)
+	cond, srcArgs := sourceCondition(sources)
 	var one int
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM calls WHERE project_id = ? AND thread_id = ? AND deleted_at IS NULL
-		AND json_extract(attributes, '$.weft.source') IN (`+ph+`) LIMIT 1`, append([]any{pid, session}, srcArgs...)...).Scan(&one)
+		AND `+cond+` LIMIT 1`, append([]any{pid, session}, srcArgs...)...).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -148,9 +205,9 @@ func (s *Store) retireLowerSources(ctx context.Context, tx *sql.Tx, pid, session
 	if len(sources) == 0 {
 		return nil
 	}
-	ph, srcArgs := sourceList(sources)
+	cond, srcArgs := sourceCondition(sources)
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM calls WHERE project_id = ? AND thread_id = ? AND deleted_at IS NULL
-		AND json_extract(attributes, '$.weft.source') IN (`+ph+`)`, append([]any{pid, session}, srcArgs...)...)
+		AND `+cond, append([]any{pid, session}, srcArgs...)...)
 	if err != nil {
 		return err
 	}

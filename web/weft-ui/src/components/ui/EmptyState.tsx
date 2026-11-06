@@ -18,6 +18,7 @@ export function serverOrigin(): string {
 }
 
 export type SnippetId = 'python' | 'typescript' | 'otel' | 'claude-code' | 'claude-code-otel' | 'codex' | 'openclaw' | 'pi' | 'agentshield'
+  | 'opencode-otel' | 'copilot-otel'
 
 export const SNIPPET_LABEL: Record<SnippetId, string> = {
   python: 'Python',
@@ -29,6 +30,8 @@ export const SNIPPET_LABEL: Record<SnippetId, string> = {
   openclaw: 'OpenClaw',
   pi: 'Pi',
   agentshield: 'AgentShield engine',
+  'opencode-otel': 'OpenCode (built-in telemetry)',
+  'copilot-otel': 'Copilot CLI (built-in telemetry)',
 }
 
 /** Copyable setup snippets for the current server and project (unit tested). */
@@ -117,6 +120,27 @@ export OTEL_LOG_USER_PROMPTS=1 OTEL_LOG_ASSISTANT_RESPONSES=1 OTEL_LOG_TOOL_DETA
 export WEFT_PROJECT=${projectId} WEFT_SERVER_URL=${origin}${key}
 pi`,
     },
+    'opencode-otel': {
+      lang: 'bash',
+      note: 'Nothing to install: OpenCode exports its own traces. Each prompt becomes a turn with its model calls (prompts and replies included) and tool calls. A one-shot opencode run can exit before its last spans are sent; the TUI and opencode serve send everything.',
+      code: `# opencode.json (project or ~/.config/opencode/): turns on the model and tool spans
+#   { "experimental": { "openTelemetry": true } }
+export OTEL_EXPORTER_OTLP_ENDPOINT="${origin}/otel"
+export OTEL_EXPORTER_OTLP_HEADERS="project_id=${projectId}${auth ? ',Authorization=Bearer <your API key>' : ''}"
+opencode`,
+    },
+    'copilot-otel': {
+      lang: 'bash',
+      note: "Written from GitHub's documentation of Copilot CLI's OpenTelemetry export; not yet tested against a real run. Prompts, replies and tool arguments are sent only with content capture on.",
+      code: `export COPILOT_OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT="${origin}/otel"
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+export OTEL_EXPORTER_OTLP_HEADERS="project_id=${projectId}${auth ? ',Authorization=Bearer%20<your API key>' : ''}"
+
+# Optional: prompts, replies, tool arguments and results
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+copilot`,
+    },
     agentshield: {
       lang: 'yaml',
       note: "Add this to AgentShield's config.yaml so the engine sends every non-allow verdict to this project. Detections attach to the matching tool call when the plugins pass the same session and tool-call ids.",
@@ -132,7 +156,7 @@ pi`,
 export function Snippets({ projectId, only, initial }: { projectId: string; only?: SnippetId[]; initial?: SnippetId }) {
   const info = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const all = snippets(serverOrigin(), projectId, !!info.data?.auth_required)
-  const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'claude-code-otel', 'codex', 'openclaw', 'pi'] as SnippetId[])
+  const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'claude-code-otel', 'codex', 'openclaw', 'pi', 'opencode-otel', 'copilot-otel'] as SnippetId[])
   const [tab, setTab] = useState<SnippetId>(initial ?? ids[0])
   const s = all[tab]
   return (

@@ -721,8 +721,8 @@ OTLP span → Weft span mapping:
 | `started_at`, `ended_at` | span start/end |
 | `inputs` | `weft.inputs` (JSON), OpenInference LLM spans' `llm.input_messages.*`, `input.value` (OpenInference; serialised LangChain/LangGraph messages become chat messages), framework layouts (see below), `gen_ai.input.messages`, `llm.input_messages.N.message.*`, `gen_ai.prompt.N.*` (OpenLLMetry), `gen_ai.prompt`, `traceloop.entity.input`, `gen_ai.*.message` span events. Request params (`gen_ai.request.*`, `llm.invocation_parameters`) are added. |
 | `output` | `weft.output`, OpenInference LLM spans' `llm.output_messages.*`, `output.value`, framework layouts (see below), `gen_ai.output.messages`, `llm.output_messages.N.message.*`, `gen_ai.completion.N.*`, `gen_ai.completion`, `traceloop.entity.output`, `gen_ai.choice` events |
-| `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata`; also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
-| `error` | span status ERROR message, or the `exception` event (`exception.type: exception.message`) |
+| `summary.usage` | model from `gen_ai.response.model` / `gen_ai.request.model` / `llm.model_name` / `ai.response.model` / `ai.model.id`; tokens from `gen_ai.usage.input_tokens\|prompt_tokens`, `gen_ai.usage.output_tokens\|completion_tokens`, `llm.token_count.*`, `ai.usage.promptTokens\|completionTokens`, `mlflow.chat.tokenUsage`, ADK `usage_metadata` (not on the AI SDK's `ai.generateText` / `ai.streamText` / `ai.generateObject` / `ai.streamObject` spans, whose `ai.usage.*` repeats their `doGenerate` / `doStream` children's); also `reasoning_tokens` (`gen_ai.usage.reasoning.output_tokens`), `cache_read_input_tokens` and `cache_creation_input_tokens` (`gen_ai.usage.cache_read\|cache_write.input_tokens`) |
+| `error` | the `exception` event (`exception.type: exception.message`), else the span status ERROR message, else `error.type`; on a GenAI span (`gen_ai.operation.name` set) whose status is not OK, `error.type` alone marks it failed |
 | `session_id`, `turn_id` | `weft.session_id`, `gen_ai.conversation.id`, `session.id`, `gcp.vertex.agent.session_id`, `ai.telemetry.metadata.sessionId\|threadId\|conversationId`; `weft.turn_id`, or the span's own id when `weft.is_turn` is true |
 | `user_id` | `user.id`, `enduser.id`, `ai.telemetry.metadata.userId` |
 | `attributes` | `weft.attributes.*` (prefix stripped), plus `otel: {span_name, kind, status, resource, scope, attributes, events, links}` |
@@ -797,6 +797,50 @@ claude-code-otel-traces`:
 | `claude_code.tool` | `execute_tool <tool_name>`, `gen_ai.tool.call.id` = `tool_use_id`, input from `file_path`, `full_command`, `skill_name`, `tool_input`; output from the `tool.output` event (`OTEL_LOG_TOOL_CONTENT=1`). The `Agent` / `Task` tool is the sub-agent's `invoke_agent <subagent_type>` span, as in the plugin, with the sub-agent's spans under it |
 | `claude_code.tool.blocked_on_user` | a step; failed `Rejected by the user (<source>)` when `decision` is `reject` or `cancelled` |
 | `claude_code.tool.execution` | a step; failed with `error` when `success` is false |
+
+### OpenCode traces
+
+OpenCode's export (`OTEL_EXPORTER_OTLP_ENDPOINT`, plus
+`"experimental": {"openTelemetry": true}` in `opencode.json` for the AI SDK
+spans; OTLP/HTTP JSON) arrives at `/otel/v1/traces` with resource
+`service.name = opencode`. Captured from opencode-ai 1.19.5. OpenCode traces
+every internal function (about a thousand spans per prompt); of its spans
+Weft keeps only these, and drops the rest:
+
+| Span | Becomes |
+|---|---|
+| `SessionPrompt.prompt` | the turn, `invoke_agent opencode` (`gen_ai.agent.name`; a resource `weft.agent.name` renames it), a top-level span (no parent); session = the id in the enclosing `/session/<id>/…` request, else the `session.id` of the spans under it in the same export; input = the last user message and output = the reply of the last model call under it in the same export (else `{"_prompt": "(prompt not exported)"}`). Its span id is derived from the trace id and session id |
+| `SessionPrompt.prompt` under the `task` tool | a sub-agent's turn in its own (child) session: `invoke_agent <subagent_type>` (from the task call's arguments), under the task's tool span |
+| `ai.streamText`, `ai.generateText`, … | kept as is (Vercel AI SDK layout), re-parented to their session's turn; usage is not counted on them (their `doStream` children carry it) |
+| `ai.streamText.doStream`, `….doGenerate` | `chat <model>` with `summary.usage`; under `SessionPrompt.ensureTitle` (OpenCode titling the session) it is `session title <model>`, a step that is not a model call of the conversation (its tokens still count) |
+| `ai.toolCall` | `execute_tool`: `gen_ai.tool.name` = `ai.toolCall.name`, `gen_ai.tool.call.id` = `ai.toolCall.id`, input = `ai.toolCall.args`, output = the `output` of OpenCode's result (its `metadata` in `opencode.tool.metadata`), failed with the span's error. Its span id is derived from the trace id and tool-call id |
+| everything else (`sql.execute`, `FileSystem.*`, `Plugin.*`, `Tool.execute`, `http.server …`, …) | dropped |
+
+The derived ids let a call and its turn arrive in different exports, in any
+order. Content (prompts, replies, tool arguments and results) is always
+exported: OpenCode does not expose the AI SDK's `recordInputs` /
+`recordOutputs`.
+
+### Copilot CLI traces
+
+Based on GitHub's documentation of Copilot CLI's export (CLI command
+reference, "OpenTelemetry monitoring"); not tested against a real run. Spans
+of resource `service.name` `github-copilot` (the default), `copilot-cli` or
+`copilot-chat`, or of instrumentation scope `github.copilot`, follow the
+GenAI conventions and are read as above, plus:
+
+| Span (`gen_ai.operation.name`) | Becomes |
+|---|---|
+| `invoke_agent`, top-level (no parent, or `server.address` set) | the turn: `invoke_agent copilot` (the default agent, unnamed or `github.copilot.default`; a named custom agent keeps its name; a resource `weft.agent.name` renames it), input = the last user message of `gen_ai.input.messages` (content capture), else `{"_prompt": …}`. Its `gen_ai.usage.*` totals repeat the chat spans' and are not counted |
+| `invoke_agent` under a tool call | a sub-agent (`gen_ai.agent.name`, e.g. `explore`) |
+| `chat` | a model call (`gen_ai.usage.*`, `gen_ai.input.messages` / `gen_ai.output.messages`) |
+| `execute_tool` | a tool call, `gen_ai.tool.call.id`, input = `gen_ai.tool.call.arguments` (else `github.copilot.tool.parameters.*`), output = `gen_ai.tool.call.result`; session from its trace |
+| `execute_hook` (VS Code's harness) | a step, `hook <copilot_chat.hook_type>` |
+
+A failed span's error is `error.type`; an `exception` event's
+`github.copilot.error_type` and `error_status_code` are added
+(`CAPIError: rate_limited (status 429)`). Hook span events
+(`github.copilot.hook.*`) stay in the raw span.
 
 ### Session sources
 

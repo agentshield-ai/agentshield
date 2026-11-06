@@ -272,6 +272,21 @@ func frameworkOutput(attrs map[string]any) (any, bool) {
 	return nil, false
 }
 
+// vercelWrapper reports an AI SDK call span (ai.generateText, ai.streamText,
+// ai.generateObject, ai.streamObject) whose model requests are its
+// doGenerate / doStream children: its ai.usage.* is their total.
+func vercelWrapper(spanName string, attrs map[string]any) bool {
+	id := firstString(attrs, "ai.operationId")
+	if id == "" {
+		id = spanName
+	}
+	switch id {
+	case "ai.generateText", "ai.streamText", "ai.generateObject", "ai.streamObject":
+		return true
+	}
+	return false
+}
+
 // vercelReasoning reads the AI SDK's ai.response.reasoning (a string, or a
 // list of reasoning parts) as thinking parts.
 func vercelReasoning(attrs map[string]any) []any {

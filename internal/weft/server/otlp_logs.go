@@ -7,9 +7,10 @@ import (
 	"github.com/agentshield-ai/agentshield/internal/weft/otlp"
 )
 
-// OTLP/HTTP logs and metrics. Claude Code's built-in OpenTelemetry export
-// sends a session's events as logs (otlp/claudecode_logs.go); its metrics
-// are accepted and discarded so the exporter reports no errors. Both take
+// OTLP/HTTP logs and metrics. The built-in OpenTelemetry exports of Claude
+// Code, Codex and Gemini CLI send a session's events as logs
+// (otlp/claudecode_logs.go, codex_logs.go, gemini_logs.go); metrics are
+// accepted and discarded so the exporters report no errors. Both take
 // the same authentication and project selection as /otel/v1/traces: the
 // project_id (or X-Weft-Project) header, else the resource attribute
 // weft.project, else default/default.
@@ -40,20 +41,22 @@ func (s *Server) otelLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	batch, err := otlp.ClaudeCodeLogEvents(req, otlpHeaderProject(r))
+	batch, err := otlp.SessionLogEvents(req, otlpHeaderProject(r))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// The header project wins over the resource's (otlp.ProjectFor), so a
 	// project-scoped key, which must send the header, writes only there.
-	for pid, events := range batch.Events {
-		ended, _, err := s.store.IngestLogEvents(r.Context(), pid, otlp.ClaudeCodeLogSource, events, otlp.BuildClaudeCodeLogGroup)
-		if err != nil {
-			writeErr(w, err)
-			return
+	for _, src := range otlp.LogSources {
+		for pid, events := range batch.Events[src.Name] {
+			ended, _, err := s.store.IngestLogEvents(r.Context(), pid, src, events)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			s.engine.Notify(ended)
 		}
-		s.engine.Notify(ended)
 	}
 	resp, ctype := otlp.EncodeLogsResponse(isJSON, 0, "")
 	w.Header().Set("Content-Type", ctype)

@@ -41,6 +41,10 @@ and project already filled in. Pick the one that matches your stack:
 - **Claude Code without a plugin:** Claude Code's own OpenTelemetry export
   can send its sessions straight to Weft. See
   [Claude Code without a plugin](#claude-code-without-a-plugin) below.
+- **OpenCode and Copilot CLI:** their built-in OpenTelemetry exports can
+  send sessions straight to Weft too. See
+  [OpenCode (built-in telemetry)](#opencode-built-in-telemetry) and
+  [Copilot CLI (built-in telemetry)](#copilot-cli-built-in-telemetry) below.
 
 Sessions appear within a few seconds. If nothing shows up, check the project
 name: it must match exactly.
@@ -114,6 +118,95 @@ the same turns, model calls, tool calls and sub-agents, and prefers them to
 the logs for a session that sends both. Trace spans carry no cost, so their
 cost comes from Weft's prices. The beta's span names come from Claude Code's
 documentation; we have not seen it export spans yet.
+
+## OpenCode (built-in telemetry)
+
+OpenCode exports OpenTelemetry traces itself. Turn on the model and tool
+spans in `opencode.json` (in the project, or `~/.config/opencode/`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": { "openTelemetry": true }
+}
+```
+
+and point the exporter at Weft where OpenCode starts:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:6345/otel
+export OTEL_EXPORTER_OTLP_HEADERS="project_id=my-team/opencode,Authorization=Bearer <your API key>"
+```
+
+- OpenCode adds `/v1/traces` (and `/v1/logs`) to the endpoint and sends
+  OTLP/HTTP JSON. Weft has no gRPC receiver. Weft accepts the logs and
+  ignores them.
+- OpenCode passes the header value as written: use a plain space after
+  `Bearer`, not `%20`. Leave out `Authorization` when your server has no
+  API keys.
+- Without `experimental.openTelemetry`, OpenCode sends only its internal
+  spans, and Weft records nothing from them.
+
+**What you get.** Each prompt becomes a turn of the `opencode` agent in a
+session named by OpenCode's session id. The turn holds its model calls
+(model and tokens, including cached input; OpenCode exports no cost, so
+Weft prices known models), the prompt and reply of each call, and its tool
+calls with arguments, results, failures and their tool-call ids, so
+AgentShield verdicts attach to them. A sub-agent run by the `task` tool is
+its own OpenCode session; Weft shows it as an `invoke_agent <type>` turn
+under the task call, with a hand-off from `opencode`. The model call
+OpenCode makes to title a new session is kept for its tokens but not shown
+as a reply.
+
+The AI SDK records prompts, replies, tool arguments and tool results, and
+OpenCode has no setting to turn that off. Each model call carries
+OpenCode's full system prompt and tool list.
+
+OpenCode also traces its own internals: database queries, file reads,
+plugin loading, about a thousand spans per prompt. Weft stores only the
+turns and the model and tool spans, and drops the rest.
+
+A one-shot `opencode run` can exit before its last spans are sent: in our
+runs it lost everything after the first batch. The TUI, or `opencode serve`
+with `opencode run --attach`, keeps running and sends everything.
+
+## Copilot CLI (built-in telemetry)
+
+> Based on GitHub's documentation of the Copilot CLI OpenTelemetry export
+> (the CLI command reference, "OpenTelemetry monitoring"). It has not been
+> tested against a real Copilot CLI run.
+
+```bash
+export COPILOT_OTEL_ENABLED=true          # implied when the endpoint is set
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:6345/otel
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json        # the default; http/protobuf works too
+export OTEL_EXPORTER_OTLP_HEADERS="project_id=my-team/copilot,Authorization=Bearer%20<your API key>"
+
+# Optional content (off by default): prompts, replies, system prompt,
+# tool schemas, tool arguments and results
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+```
+
+- Copilot CLI exports OTLP over HTTP only. It adds `/v1/traces` and
+  `/v1/metrics` to the endpoint. Weft accepts the metrics and discards them.
+- Weft recognises Copilot by its service name (`github-copilot` by default,
+  also `copilot-cli` and `copilot-chat`) or by its instrumentation scope
+  (`github.copilot`), so a custom `OTEL_SERVICE_NAME` still works.
+- Some vendor guides use VS Code's names for the same switches
+  (`COPILOT_OTEL_CAPTURE_CONTENT`, `COPILOT_OTEL_EXPORTER_TYPE=otlp-http`).
+  The CLI reference lists the variables above.
+
+**What you get.** Each user message is a turn of the `copilot` agent (a
+named custom agent keeps its name) in the session given by
+`gen_ai.conversation.id`. The turn holds its `chat` model calls (model and
+tokens, including cache reads and writes) and its `execute_tool` calls, with
+their tool-call ids, so AgentShield verdicts attach. A sub-agent (`explore`,
+`task`) is an `invoke_agent` under the tool call that started it. A failed
+call or turn shows its `error.type`. Without content capture, turns show no
+prompt and tools show no arguments. The token totals on the turn span
+repeat its model calls' totals, so Weft does not count them again.
+`github.copilot.cost` and `nano_aiu` are billing multipliers, not money,
+and stay in the raw span.
 
 ## Group agents into sessions and teams
 

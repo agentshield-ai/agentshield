@@ -84,4 +84,15 @@ describe('setup snippets', () => {
     expect(s.agentshield.code).toContain('project: acme/agents')
     expect(snippets('http://x', 'p/q', false).otel.code).not.toContain('Authorization')
   })
+  it('cover OpenCode and Copilot CLI built-in telemetry', () => {
+    const s = snippets('https://weft.example', 'acme/agents', true)
+    expect(s['opencode-otel'].code).toContain('"experimental": { "openTelemetry": true }')
+    expect(s['opencode-otel'].code).toContain('OTEL_EXPORTER_OTLP_ENDPOINT="https://weft.example/otel"')
+    // OpenCode passes the header value as is (no %-decoding).
+    expect(s['opencode-otel'].code).toContain('OTEL_EXPORTER_OTLP_HEADERS="project_id=acme/agents,Authorization=Bearer <your API key>"')
+    expect(s['copilot-otel'].code).toContain('OTEL_EXPORTER_OTLP_ENDPOINT="https://weft.example/otel"')
+    expect(s['copilot-otel'].code).toContain('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true')
+    expect(s['copilot-otel'].note).toContain('not yet tested')
+    expect(snippets('http://x', 'p/q', false)['copilot-otel'].code).toContain('OTEL_EXPORTER_OTLP_HEADERS="project_id=p/q"')
+  })
 })

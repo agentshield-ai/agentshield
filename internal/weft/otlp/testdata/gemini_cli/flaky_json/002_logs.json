@@ -1,0 +1,1809 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.name",
+      "value": {
+       "stringValue": "dev-host"
+      }
+     },
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "process.pid",
+      "value": {
+       "intValue": "4242"
+      }
+     },
+     {
+      "key": "process.executable.name",
+      "value": {
+       "stringValue": "/usr/bin/node"
+      }
+     },
+     {
+      "key": "process.executable.path",
+      "value": {
+       "stringValue": "/usr/bin/node"
+      }
+     },
+     {
+      "key": "process.command_args",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "/usr/bin/node"
+         },
+         {
+          "stringValue": "--max-old-space-size=8043"
+         },
+         {
+          "stringValue": "/usr/lib/node_modules/@google/gemini-cli/bundle/gemini.js"
+         },
+         {
+          "stringValue": "-p"
+         },
+         {
+          "stringValue": "FLAKY: run `echo hi`"
+         },
+         {
+          "stringValue": "--yolo"
+         },
+         {
+          "stringValue": "-m"
+         },
+         {
+          "stringValue": "gemini-2.5-flash"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "process.runtime.version",
+      "value": {
+       "stringValue": "22.23.4"
+      }
+     },
+     {
+      "key": "process.runtime.name",
+      "value": {
+       "stringValue": "nodejs"
+      }
+     },
+     {
+      "key": "process.runtime.description",
+      "value": {
+       "stringValue": "Node.js"
+      }
+     },
+     {
+      "key": "process.command",
+      "value": {
+       "stringValue": "/usr/lib/node_modules/@google/gemini-cli/bundle/gemini.js"
+      }
+     },
+     {
+      "key": "process.owner",
+      "value": {
+       "stringValue": "dev"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "gemini-cli"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "v22.23.4"
+      }
+     },
+     {
+      "key": "session.id",
+      "value": {
+       "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "logRecords": [
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.348Z"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "request_text",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"text\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Friday, November 6, 20…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "role",
+         "value": {
+          "stringValue": "main"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "API request to gemini-2.5-flash."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576348000000",
+       "spanId": "6aaeca189a666c80",
+       "timeUnixNano": "1793959576348000000",
+       "traceId": "e78a042e2635a2b73709cfed94fc930b"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gen_ai.client.inference.operation.details"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.348Z"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "gen_ai.request.top_p",
+         "value": {
+          "doubleValue": 0.95
+         }
+        },
+        {
+         "key": "gen_ai.request.top_k",
+         "value": {
+          "intValue": "64"
+         }
+        },
+        {
+         "key": "gen_ai.request.choice.count",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.seed",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.frequency_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.presence_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.output.type",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.stop_sequences",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\":\"text\",\"content\":\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficie…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "generate_content"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "gcp.gen_ai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "server.address",
+         "value": {
+          "stringValue": "generativelanguage.googleapis.com"
+         }
+        },
+        {
+         "key": "server.port",
+         "value": {
+          "intValue": "443"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Frida…(trimmed for the fixture)"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "GenAI operation request details from gemini-2.5-flash."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576348000000",
+       "spanId": "6aaeca189a666c80",
+       "timeUnixNano": "1793959576348000000",
+       "traceId": "e78a042e2635a2b73709cfed94fc930b"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.api_response"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.403Z"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": "56"
+         }
+        },
+        {
+         "key": "input_token_count",
+         "value": {
+          "intValue": "900"
+         }
+        },
+        {
+         "key": "output_token_count",
+         "value": {
+          "intValue": "20"
+         }
+        },
+        {
+         "key": "cached_content_token_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "thoughts_token_count",
+         "value": {
+          "intValue": "15"
+         }
+        },
+        {
+         "key": "tool_token_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "total_token_count",
+         "value": {
+          "intValue": "935"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "status_code",
+         "value": {
+          "intValue": "200"
+         }
+        },
+        {
+         "key": "finish_reasons",
+         "value": {
+          "arrayValue": {
+           "values": [
+            {
+             "stringValue": "stop"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "key": "role",
+         "value": {
+          "stringValue": "main"
+         }
+        },
+        {
+         "key": "response_text",
+         "value": {
+          "stringValue": "[{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"run_shell_command\",\"args\":{\"command\":\"echo hi\",\"description\":\"run it\"},\"id\":\"run_shell_command__run_shell_command_1793959576355_0\"}}]},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":900,\"candidatesTokenCount\":20,\"totalTokenCount\":935,\"cachedContentTokenCount\":0,\"thoughtsTokenCount\":15},\"responseId\":\"gr_24\",\"modelVersion\":\"gemini-2.5-flash\"}]"
+         }
+        },
+        {
+         "key": "http.status_code",
+         "value": {
+          "intValue": "200"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "API response from gemini-2.5-flash. Status: 200. Duration: 56ms."
+       },
+       "observedTimeUnixNano": "1793959576404000000",
+       "timeUnixNano": "1793959576404000000"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gen_ai.client.inference.operation.details"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.403Z"
+         }
+        },
+        {
+         "key": "gen_ai.response.id",
+         "value": {
+          "stringValue": "gr_24"
+         }
+        },
+        {
+         "key": "gen_ai.response.finish_reasons",
+         "value": {
+          "arrayValue": {
+           "values": [
+            {
+             "stringValue": "stop"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"finish_reason\":\"stop\",\"role\":\"system\",\"parts\":[{\"type\":\"tool_call\",\"name\":\"run_shell_command\",\"id\":\"run_shell_command__run_shell_command_1793959576355_0\",\"arguments\":\"{\\\"command\\\":\\\"echo hi\\\",\\\"description\\\":\\\"run it\\\"}\"}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "gen_ai.request.top_p",
+         "value": {
+          "doubleValue": 0.95
+         }
+        },
+        {
+         "key": "gen_ai.request.top_k",
+         "value": {
+          "intValue": "64"
+         }
+        },
+        {
+         "key": "gen_ai.request.choice.count",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.seed",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.frequency_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.presence_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.output.type",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.stop_sequences",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\":\"text\",\"content\":\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficie…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "generate_content"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "gcp.gen_ai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "gen_ai.response.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "server.address",
+         "value": {
+          "stringValue": "generativelanguage.googleapis.com"
+         }
+        },
+        {
+         "key": "server.port",
+         "value": {
+          "intValue": "443"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Frida…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "900"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "20"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "GenAI operation details from gemini-2.5-flash. Status: 200. Duration: 56ms."
+       },
+       "observedTimeUnixNano": "1793959576404000000",
+       "timeUnixNano": "1793959576404000000"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.tool_call"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.431Z"
+         }
+        },
+        {
+         "key": "function_name",
+         "value": {
+          "stringValue": "run_shell_command"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": "23"
+         }
+        },
+        {
+         "key": "success",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "decision",
+         "value": {
+          "stringValue": "accept"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "tool_type",
+         "value": {
+          "stringValue": "native"
+         }
+        },
+        {
+         "key": "content_length",
+         "value": {
+          "intValue": "76"
+         }
+        },
+        {
+         "key": "mcp_server_name",
+         "value": {}
+        },
+        {
+         "key": "extension_name",
+         "value": {}
+        },
+        {
+         "key": "extension_id",
+         "value": {}
+        },
+        {
+         "key": "start_time",
+         "value": {}
+        },
+        {
+         "key": "end_time",
+         "value": {}
+        },
+        {
+         "key": "function_args",
+         "value": {
+          "stringValue": "{\n  \"command\": \"echo hi\",\n  \"description\": \"run it\"\n}"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "Tool call: run_shell_command. Decision: accept. Success: true. Duration: 23ms."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576432000000",
+       "spanId": "9522ae6d750896e9",
+       "timeUnixNano": "1793959576432000000",
+       "traceId": "4c9bb1599fe9454cdf9c1019396492f2"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.435Z"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "request_text",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"text\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Friday, November 6, 20…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "role",
+         "value": {
+          "stringValue": "main"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "API request to gemini-2.5-flash."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576435000000",
+       "spanId": "397a74086068a28d",
+       "timeUnixNano": "1793959576435000000",
+       "traceId": "95ce6b99d205764fcc99c5169093731c"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gen_ai.client.inference.operation.details"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.435Z"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "gen_ai.request.top_p",
+         "value": {
+          "doubleValue": 0.95
+         }
+        },
+        {
+         "key": "gen_ai.request.top_k",
+         "value": {
+          "intValue": "64"
+         }
+        },
+        {
+         "key": "gen_ai.request.choice.count",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.seed",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.frequency_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.presence_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.output.type",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.stop_sequences",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\":\"text\",\"content\":\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficie…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "generate_content"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "gcp.gen_ai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "server.address",
+         "value": {
+          "stringValue": "generativelanguage.googleapis.com"
+         }
+        },
+        {
+         "key": "server.port",
+         "value": {
+          "intValue": "443"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Frida…(trimmed for the fixture)"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "GenAI operation request details from gemini-2.5-flash."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576435000000",
+       "spanId": "397a74086068a28d",
+       "timeUnixNano": "1793959576435000000",
+       "traceId": "95ce6b99d205764fcc99c5169093731c"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.api_error"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.439Z"
+         }
+        },
+        {
+         "key": "error.message",
+         "value": {
+          "stringValue": "{\"error\":{\"code\":503,\"message\":\"temporary upstream failure\",\"status\":\"UNAVAILABLE\"}}"
+         }
+        },
+        {
+         "key": "model_name",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "duration",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "error",
+         "value": {
+          "stringValue": "{\"error\":{\"code\":503,\"message\":\"temporary upstream failure\",\"status\":\"UNAVAILABLE\"}}"
+         }
+        },
+        {
+         "key": "status_code",
+         "value": {
+          "intValue": "503"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": "4"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "role",
+         "value": {
+          "stringValue": "main"
+         }
+        },
+        {
+         "key": "error.type",
+         "value": {
+          "stringValue": "ApiError"
+         }
+        },
+        {
+         "key": "http.status_code",
+         "value": {
+          "intValue": "503"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "API error for gemini-2.5-flash. Error: {\"error\":{\"code\":503,\"message\":\"temporary upstream failure\",\"status\":\"UNAVAILABLE\"}}. Duration: 4ms."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576439000000",
+       "spanId": "397a74086068a28d",
+       "timeUnixNano": "1793959576439000000",
+       "traceId": "95ce6b99d205764fcc99c5169093731c"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gen_ai.client.inference.operation.details"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:16.439Z"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "gen_ai.request.top_p",
+         "value": {
+          "doubleValue": 0.95
+         }
+        },
+        {
+         "key": "gen_ai.request.top_k",
+         "value": {
+          "intValue": "64"
+         }
+        },
+        {
+         "key": "gen_ai.request.choice.count",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.seed",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.frequency_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.presence_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.output.type",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.stop_sequences",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\":\"text\",\"content\":\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficie…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "generate_content"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "gcp.gen_ai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "gen_ai.response.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "server.address",
+         "value": {
+          "stringValue": "generativelanguage.googleapis.com"
+         }
+        },
+        {
+         "key": "server.port",
+         "value": {
+          "intValue": "443"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Frida…(trimmed for the fixture)"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "GenAI operation error details from gemini-2.5-flash. Error: {\"error\":{\"code\":503,\"message\":\"temporary upstream failure\",\"status\":\"UNAVAILABLE\"}}. Duration: 4ms."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959576439000000",
+       "spanId": "397a74086068a28d",
+       "timeUnixNano": "1793959576439000000",
+       "traceId": "95ce6b99d205764fcc99c5169093731c"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:20.208Z"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "request_text",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"text\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Friday, November 6, 20…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "role",
+         "value": {
+          "stringValue": "main"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "API request to gemini-2.5-flash."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959580208000000",
+       "spanId": "4c830d956949ea66",
+       "timeUnixNano": "1793959580208000000",
+       "traceId": "24587c03cd15cd0056b32d7f37aff358"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gen_ai.client.inference.operation.details"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:20.208Z"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "gen_ai.request.top_p",
+         "value": {
+          "doubleValue": 0.95
+         }
+        },
+        {
+         "key": "gen_ai.request.top_k",
+         "value": {
+          "intValue": "64"
+         }
+        },
+        {
+         "key": "gen_ai.request.choice.count",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.seed",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.frequency_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.presence_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.output.type",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.stop_sequences",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\":\"text\",\"content\":\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficie…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "generate_content"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "gcp.gen_ai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "server.address",
+         "value": {
+          "stringValue": "generativelanguage.googleapis.com"
+         }
+        },
+        {
+         "key": "server.port",
+         "value": {
+          "intValue": "443"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Frida…(trimmed for the fixture)"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "GenAI operation request details from gemini-2.5-flash."
+       },
+       "flags": 1,
+       "observedTimeUnixNano": "1793959580208000000",
+       "spanId": "4c830d956949ea66",
+       "timeUnixNano": "1793959580208000000",
+       "traceId": "24587c03cd15cd0056b32d7f37aff358"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.api_response"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:20.312Z"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": "104"
+         }
+        },
+        {
+         "key": "input_token_count",
+         "value": {
+          "intValue": "950"
+         }
+        },
+        {
+         "key": "output_token_count",
+         "value": {
+          "intValue": "20"
+         }
+        },
+        {
+         "key": "cached_content_token_count",
+         "value": {
+          "intValue": "800"
+         }
+        },
+        {
+         "key": "thoughts_token_count",
+         "value": {
+          "intValue": "15"
+         }
+        },
+        {
+         "key": "tool_token_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "total_token_count",
+         "value": {
+          "intValue": "985"
+         }
+        },
+        {
+         "key": "prompt_id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "status_code",
+         "value": {
+          "intValue": "200"
+         }
+        },
+        {
+         "key": "finish_reasons",
+         "value": {
+          "arrayValue": {
+           "values": [
+            {
+             "stringValue": "stop"
+            },
+            {
+             "stringValue": "stop"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "key": "role",
+         "value": {
+          "stringValue": "main"
+         }
+        },
+        {
+         "key": "response_text",
+         "value": {
+          "stringValue": "[{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"The command\"}]},\"index\":0}],\"responseId\":\"gr_26\",\"modelVersion\":\"gemini-2.5-flash\"},{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" printed hi.\"}]},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":950,\"candidatesTokenCount\":20,\"totalTokenCount\":985,\"cachedContentTokenCount\":800,\"thoughtsTokenCount\":15},\"responseId\":\"gr_26\",\"modelVersion\":\"gemini-2.5-flash\"}]"
+         }
+        },
+        {
+         "key": "http.status_code",
+         "value": {
+          "intValue": "200"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "API response from gemini-2.5-flash. Status: 200. Duration: 104ms."
+       },
+       "observedTimeUnixNano": "1793959580313000000",
+       "timeUnixNano": "1793959580313000000"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gen_ai.client.inference.operation.details"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:20.312Z"
+         }
+        },
+        {
+         "key": "gen_ai.response.id",
+         "value": {
+          "stringValue": "gr_26"
+         }
+        },
+        {
+         "key": "gen_ai.response.finish_reasons",
+         "value": {
+          "arrayValue": {
+           "values": [
+            {
+             "stringValue": "stop"
+            },
+            {
+             "stringValue": "stop"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"finish_reason\":\"stop\",\"role\":\"system\",\"parts\":[{\"type\":\"text\",\"content\":\"The command\"}]},{\"finish_reason\":\"stop\",\"role\":\"system\",\"parts\":[{\"type\":\"text\",\"content\":\" printed hi.\"}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "intValue": "1"
+         }
+        },
+        {
+         "key": "gen_ai.request.top_p",
+         "value": {
+          "doubleValue": 0.95
+         }
+        },
+        {
+         "key": "gen_ai.request.top_k",
+         "value": {
+          "intValue": "64"
+         }
+        },
+        {
+         "key": "gen_ai.request.choice.count",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.seed",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.frequency_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.presence_penalty",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.output.type",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.request.stop_sequences",
+         "value": {}
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\":\"text\",\"content\":\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficie…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "generate_content"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "gcp.gen_ai"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "gen_ai.response.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "server.address",
+         "value": {
+          "stringValue": "generativelanguage.googleapis.com"
+         }
+        },
+        {
+         "key": "server.port",
+         "value": {
+          "intValue": "443"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"\u003csession_context\u003e\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Frida…(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "950"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "20"
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "GenAI operation details from gemini-2.5-flash. Status: 200. Duration: 104ms."
+       },
+       "observedTimeUnixNano": "1793959580314000000",
+       "timeUnixNano": "1793959580314000000"
+      },
+      {
+       "attributes": [
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "b582633c-fcd7-4aa2-898e-5492f93acb2c"
+         }
+        },
+        {
+         "key": "installation.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "interactive",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "auth_type",
+         "value": {
+          "stringValue": "gemini-api-key"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "gemini_cli.plan.approval_mode_duration"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-11-06T10:06:20.315Z"
+         }
+        },
+        {
+         "key": "mode",
+         "value": {
+          "stringValue": "yolo"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "doubleValue": 9674.984021
+         }
+        }
+       ],
+       "body": {
+        "stringValue": "Approval mode yolo was active for 9674.984021ms."
+       },
+       "observedTimeUnixNano": "1793959580316000000",
+       "timeUnixNano": "1793959580316000000"
+      }
+     ],
+     "scope": {
+      "name": "gemini-cli"
+     }
+    }
+   ]
+  }
+ ]
+}

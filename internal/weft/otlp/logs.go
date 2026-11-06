@@ -2,19 +2,23 @@ package otlp
 
 // OTLP/HTTP logs and metrics (POST /otel/v1/logs, /otel/v1/metrics).
 //
-// Logs: Claude Code's built-in OpenTelemetry export reports a session as
-// log events (claudecode_logs.go turns them into spans). Logs of any other
-// service are accepted and ignored: Weft has no generic log model.
-// Metrics are accepted and discarded, so exporters configured to send them
-// (Claude Code with OTEL_METRICS_EXPORTER=otlp) do not log export errors.
+// Logs: the built-in OpenTelemetry exports of Claude Code
+// (claudecode_logs.go), OpenAI Codex CLI (codex_logs.go) and Google Gemini
+// CLI (gemini_logs.go) report a session as log events, which are turned
+// into spans. Logs of any other service are accepted and ignored: Weft has
+// no generic log model. Metrics are accepted and discarded, so exporters
+// configured to send them do not log export errors.
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/agentshield-ai/agentshield/internal/weft/store"
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -43,6 +47,89 @@ func DecodeLogs(body []byte, isJSON bool) (*collogs.ExportLogsServiceRequest, er
 		return nil, fmt.Errorf("invalid OTLP JSON: %w", err)
 	}
 	return req, nil
+}
+
+// LogSources are the harnesses whose log events Weft maps, in the order
+// their batches are stored.
+var LogSources = []store.LogSource{
+	{Name: ClaudeCodeLogSource, SpanSource: store.SourceClaudeCodeLogs, Build: BuildClaudeCodeLogGroup},
+	{Name: CodexLogSource, SpanSource: store.SourceCodexLogs, Build: BuildCodexLogGroup},
+	{Name: GeminiLogSource, SpanSource: store.SourceGeminiLogs, Build: BuildGeminiLogGroup},
+}
+
+// SessionLogs is a logs export sorted by harness.
+type SessionLogs struct {
+	// Events by source name (LogSources), then project.
+	Events map[string]map[string][]store.LogEvent
+	// Ignored counts records that describe no session.
+	Ignored int
+}
+
+// SessionLogEvents extracts the session events of every harness Weft maps
+// from a logs export. Each resource's records go to the harness its
+// service.name (or instrumentation scope) names; the project is chosen as
+// for traces (ProjectFor).
+func SessionLogEvents(req *collogs.ExportLogsServiceRequest, headerProject string) (SessionLogs, error) {
+	out := SessionLogs{Events: map[string]map[string][]store.LogEvent{}}
+	for _, rl := range req.GetResourceLogs() {
+		sub := &collogs.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{rl}}
+		var (
+			b   LogBatch
+			src string
+			err error
+		)
+		switch logHarness(rl) {
+		case ClaudeCodeLogSource:
+			src = ClaudeCodeLogSource
+			b, err = ClaudeCodeLogEvents(sub, headerProject)
+		case CodexLogSource:
+			src = CodexLogSource
+			b, err = CodexLogEvents(sub, headerProject)
+		case GeminiLogSource:
+			src = GeminiLogSource
+			b, err = GeminiLogEvents(sub, headerProject)
+		default:
+			for _, sl := range rl.GetScopeLogs() {
+				out.Ignored += len(sl.GetLogRecords())
+			}
+			continue
+		}
+		if err != nil {
+			return out, err
+		}
+		out.Ignored += b.Ignored
+		for pid, evs := range b.Events {
+			if out.Events[src] == nil {
+				out.Events[src] = map[string][]store.LogEvent{}
+			}
+			out.Events[src][pid] = append(out.Events[src][pid], evs...)
+		}
+	}
+	return out, nil
+}
+
+// logHarness names the harness a resource's logs come from ("" if none).
+func logHarness(rl *logspb.ResourceLogs) string {
+	svc := aStr(KeyValues(rl.GetResource().GetAttributes()), "service.name")
+	switch {
+	case svc == ClaudeCodeService:
+		return ClaudeCodeLogSource
+	case svc == GeminiService:
+		return GeminiLogSource
+	case strings.HasPrefix(svc, "codex"):
+		return CodexLogSource
+	}
+	for _, sl := range rl.GetScopeLogs() {
+		switch name := sl.GetScope().GetName(); {
+		case name == ClaudeCodeEventsScope:
+			return ClaudeCodeLogSource
+		case name == GeminiService:
+			return GeminiLogSource
+		case strings.HasPrefix(name, "codex_otel"):
+			return CodexLogSource
+		}
+	}
+	return ""
 }
 
 // EncodeLogsResponse returns an ExportLogsServiceResponse.

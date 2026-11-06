@@ -99,7 +99,7 @@ func newCCHarness(t *testing.T) *ccHarness {
 
 func (h *ccHarness) ingest(evs []store.LogEvent) int {
 	h.t.Helper()
-	_, added, err := h.s.IngestLogEvents(context.Background(), ccProject, ClaudeCodeLogSource, evs, BuildClaudeCodeLogGroup)
+	_, added, err := h.s.IngestLogEvents(context.Background(), ccProject, LogSources[0], evs)
 	if err != nil {
 		h.t.Fatal(err)
 	}
