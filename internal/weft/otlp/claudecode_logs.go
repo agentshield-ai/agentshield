@@ -429,6 +429,33 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 		} else if st, ok := t.input["subagent_type"].(string); ok {
 			t.subagentType = st
 		}
+		// Claude Code names every MCP tool "mcp_tool" and gives the real
+		// name in its parameters (with OTEL_LOG_TOOL_DETAILS): use its own
+		// form, mcp__<server>__<tool>.
+		if t.name == "mcp_tool" || t.name == "" {
+			pick := func(k string) string {
+				for _, m := range []map[string]any{params, t.input} {
+					if v, ok := m[k].(string); ok && v != "" {
+						return v
+					}
+				}
+				for _, e := range []*store.LogEvent{t.result, t.decision} {
+					if e != nil {
+						if v := aStr(e.Attrs, k); v != "" {
+							return v
+						}
+					}
+				}
+				return ""
+			}
+			if tool := pick("mcp_tool_name"); tool != "" {
+				if srv := pick("mcp_server_name"); srv != "" {
+					t.name = "mcp__" + srv + "__" + tool
+				} else {
+					t.name = tool
+				}
+			}
+		}
 	}
 
 	// Which request asked for which tool: the request id on the tool event,
@@ -600,7 +627,10 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 	}
 
 	// The turn.
-	if closed {
+	// The turn is stored from its first event, open until it closes: its
+	// steps hang under it, and a turn that never closes (Claude Code quit,
+	// or an interruption it did not log) still shows its prompt and steps.
+	{
 		inputs := map[string]any{promptNotExportedKey: promptNotExported}
 		cc := map[string]any{"prompt_id": g.GroupID, "prompt_exported": false}
 		startUS := firstUS
@@ -623,18 +653,24 @@ func BuildClaudeCodeLogGroup(g store.LogGroup) []store.CompleteCall {
 		if version != "" {
 			cc["version"] = version
 		}
+		wa := weftAttrs("agent")
+		if !closed {
+			// Open until Claude Code says the turn is over, which it may
+			// never do: read as running only while events arrive.
+			wa["provisional"] = true
+		}
 		attrs := common(map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": agentName,
-			"gen_ai.provider.name": "anthropic", "weft": weftAttrs("agent"), "claude_code": cc})
+			"gen_ai.provider.name": "anthropic", "weft": wa, "claude_code": cc})
 		if lastConv != nil {
 			if m := aStr(lastConv.ev.Attrs, "model"); m != "" {
 				attrs["gen_ai.request.model"] = m
 			}
 		}
 		var output any
-		if lastMainResponse != "" {
+		if lastMainResponse != "" && closed {
 			output = assistantMessages(lastMainResponse)
 		}
-		add(turnID, "", "claude_code.turn", "invoke_agent "+agentName, startUS, attrs, inputs, lastUS, true, output, turnErr, nil)
+		add(turnID, "", "claude_code.turn", "invoke_agent "+agentName, startUS, attrs, inputs, lastUS, closed, output, turnErr, nil)
 	}
 
 	// Sub-agent spans.

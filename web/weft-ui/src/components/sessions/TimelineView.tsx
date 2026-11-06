@@ -223,6 +223,8 @@ interface EntryCtx {
 }
 
 function startOf(e: StepEntry): number {
+  // An answer is told when the model call that wrote it ended, not when the turn did.
+  if (e.kind === 'answer' && e.at) return t(e.at.item.ended_at ?? e.at.item.started_at)
   const first = e.thoughts[0] ?? e.step
   return t(first.item.started_at)
 }
@@ -235,8 +237,13 @@ function TopEntry({ e, ctx }: { e: StoryEntry; ctx: EntryCtx }) {
       </li>
     )
   const at = offsetText(startOf(e) - ctx.sessionStart)
-  const user = e.kind === 'user'
-  const head = user ? (
+  const user = e.kind === 'user' && !e.notice
+  const notice = e.kind === 'user' && e.notice
+  const head = notice ? (
+    <>
+      <span className="se-who">{e.agent ?? 'Agent'}</span> · a background task {e.notice} after {at}
+    </>
+  ) : user ? (
     <>
       <span className="se-who">User</span> · {e.step.turn > 1 ? 'asked again' : 'asked'}
     </>
@@ -320,7 +327,7 @@ function Block({ e, ctx }: { e: StepEntry; ctx: EntryCtx }) {
   switch (e.kind) {
     case 'user':
       return (
-        <div {...props} className="story-step bubble user">
+        <div {...props} className={e.notice ? 'story-step reply' : 'story-step bubble user'}>
           {clip(e.text, 1200)}
         </div>
       )
@@ -460,7 +467,7 @@ function StepInspector({ pid, summary, entry: e, story, tl, replay, sticky }: { 
   const sessionStart = t(summary.started_at)
   const n = story.order.indexOf(e)
   const turnPart = tl.turns > 1 ? ` · turn ${s.turn}` : ''
-  const sub = `${e.kind === 'user' ? 'User' : (e.agent ?? 'Unknown agent')}${turnPart} · step ${n + 1} of ${story.order.length}`
+  const sub = `${e.kind === 'user' && !e.notice ? 'User' : (e.agent ?? 'Unknown agent')}${turnPart} · step ${n + 1} of ${story.order.length}`
   const items: (KeyValue | null)[] = []
   const v = verdictOf(s)
   const rule = v?.rules[0]

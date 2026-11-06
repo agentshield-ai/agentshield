@@ -37,7 +37,10 @@ import (
 //     so a failure under it is a failed step, as when a run recovers from
 //     one), ok otherwise.
 //
-// When the root arrives the trace is read off it as usual.
+// When the root arrives the trace is read off it as usual. A root stored
+// open by a builder that cannot know when its run ends (weft.provisional:
+// a Claude Code turn rebuilt from log events, which may never close if the
+// process quits) is read the same way while it is open.
 //
 // An AgentShield verdict record (a trace holding an engine evaluate span and
 // no agent activity: no other span with a session id) is not an agent run.
@@ -115,7 +118,8 @@ func linkedToCallerSQL(a string) string {
 // (no verdict-record rule).
 func ownRunStatusSQL(a string) string {
 	return `(CASE WHEN ` + a + `.exception IS NOT NULL THEN (CASE WHEN ` + linkedToCallerSQL(a) + ` THEN 'failed_step' ELSE 'error' END)
-		WHEN ` + a + `.ended_at IS NULL THEN 'running'
+		WHEN ` + a + `.ended_at IS NULL THEN (CASE WHEN json_extract(` + a + `.attributes, '$.weft.provisional') = 1
+			THEN ` + provisionalRunStatusSQL(a) + ` ELSE 'running' END)
 		WHEN COALESCE(json_extract(` + a + `.rollup, '$.status_counts.error'), 0) > 0 THEN 'failed_step'
 		ELSE 'ok' END)`
 }

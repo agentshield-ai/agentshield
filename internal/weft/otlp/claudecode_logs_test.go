@@ -409,8 +409,8 @@ func TestClaudeCodeLogsTurnCutOff(t *testing.T) {
 	old := newCCHarness(t)
 	old.ingest(cut)
 	for _, c := range old.spans(bashSession) {
-		if c.OpName == "claude_code.llm" && deref(c.ParentID) == deref(c.TurnID) && runStatus(c) != "ok" {
-			t.Fatalf("%s: run status %q long after the last event, want ok", deref(c.DisplayName), runStatus(c))
+		if c.OpName == "claude_code.turn" && (c.EndedAt != nil || runStatus(c) == "running") {
+			t.Fatalf("open turn long after the last event: ended %v, run status %q, want its steps' outcome", c.EndedAt, runStatus(c))
 		}
 	}
 	// As if the events had just arrived: running.
@@ -423,8 +423,8 @@ func TestClaudeCodeLogsTurnCutOff(t *testing.T) {
 	calls := h.spans(bashSession)
 	turnID := ""
 	for _, c := range calls {
-		if c.OpName == "claude_code.turn" {
-			t.Fatal("an unfinished turn was stored")
+		if c.OpName == "claude_code.turn" && c.EndedAt != nil {
+			t.Fatal("an unfinished turn was stored as ended")
 		}
 		turnID = deref(c.TurnID)
 	}
@@ -432,10 +432,9 @@ func TestClaudeCodeLogsTurnCutOff(t *testing.T) {
 	if agentCall.EndedAt != nil {
 		t.Fatal("the Agent call has not finished")
 	}
-	for _, c := range calls {
-		if c.ParentID != nil && *c.ParentID == turnID && runStatus(c) != "running" {
-			t.Fatalf("%s: run status %q, want running", deref(c.DisplayName), runStatus(c))
-		}
+	// The open turn is running while its events are recent.
+	if open := spanByName(t, calls, "invoke_agent claude-code"); open.ID != turnID || runStatus(open) != "running" {
+		t.Fatalf("open turn %s (want %s): run status %q, want running", open.ID, turnID, runStatus(open))
 	}
 
 	// The user submits another prompt: the first turn is closed as interrupted.
@@ -462,8 +461,19 @@ func TestClaudeCodeLogsTurnCutOff(t *testing.T) {
 		t.Fatalf("prompt text in the log:\n%s", logBuf.String())
 	}
 	calls = h.spans(bashSession)
-	turn := spanByName(t, calls, "invoke_agent claude-code")
-	if turn.ID != turnID || turn.Exception == nil || !strings.Contains(*turn.Exception, "interrupted") {
+	var turn, second *store.Call
+	for _, c := range calls {
+		switch {
+		case c.ID == turnID:
+			turn = c
+		case c.OpName == "claude_code.turn":
+			second = c
+		}
+	}
+	if turn == nil || second == nil || second.EndedAt != nil {
+		t.Fatalf("turns after the next prompt: first %v, second %v (want stored, open)", turn, second)
+	}
+	if turn.Exception == nil || !strings.Contains(*turn.Exception, "interrupted") {
 		t.Fatalf("first turn after the next prompt: id %s exc %v", turn.ID, turn.Exception)
 	}
 	agentCall = spanByName(t, calls, "Agent")
@@ -527,6 +537,26 @@ func TestClaudeCodeLogsGatesAndOutcomes(t *testing.T) {
 				}
 				if llm := spanByName(t, calls, "chat claude-opus-5-5"); llm.Output != nil || turn.EndedAt == nil {
 					t.Fatalf("LLM output %v; turn ended %v", llm.Output, turn.EndedAt)
+				}
+			},
+		},
+		{
+			name: "MCP tools keep their real name",
+			script: func(s *ccScript) {
+				s.add("user_prompt", map[string]any{"prompt": "look at the page"}).
+					add("tool_decision", map[string]any{"decision": "accept", "source": "config", "tool_name": "mcp_tool", "tool_use_id": "toolu_m", "request_id": "req_1",
+						"tool_parameters": `{"mcp_server_name":"claude-in-chrome","mcp_tool_name":"navigate"}`}).
+					add("tool_result", map[string]any{"tool_name": "mcp_tool", "tool_use_id": "toolu_m", "success": "true", "duration_ms": "40", "request_id": "req_1",
+						"tool_parameters": `{"mcp_server_name":"claude-in-chrome","mcp_tool_name":"navigate"}`, "tool_input": `{"url":"http://localhost:6345/"}`}).
+					add("api_request", map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_1", "duration_ms": 500})
+			},
+			check: func(t *testing.T, calls []*store.Call) {
+				tool := spanByName(t, calls, "mcp__claude-in-chrome__navigate: http://localhost:6345/")
+				if attr(tool, "gen_ai.tool.name") != "mcp__claude-in-chrome__navigate" || attr(tool, "mcp.server.name") != "claude-in-chrome" || attr(tool, "gen_ai.tool.type") != "mcp" {
+					t.Fatalf("MCP tool attrs = %v", tool.Attributes)
+				}
+				if llm := spanByName(t, calls, "→ mcp__claude-in-chrome__navigate"); llm == nil {
+					t.Fatal("the request should name the MCP tool")
 				}
 			},
 		},
@@ -628,10 +658,10 @@ func TestClaudeCodeLogsGatesAndOutcomes(t *testing.T) {
 					add("api_request", map[string]any{"model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 5, "request_id": "req_1", "duration_ms": 500})
 			},
 			check: func(t *testing.T, calls []*store.Call) {
-				for _, c := range calls {
-					if c.OpName == "claude_code.turn" {
-						t.Fatal("turn stored while its tool runs")
-					}
+				// The turn is stored open (provisional) so its steps have a parent.
+				turn := spanByName(t, calls, "invoke_agent claude-code")
+				if turn.EndedAt != nil || attr(turn, "weft/provisional") != true || runStatus(turn) != "running" {
+					t.Fatalf("open turn: ended %v provisional %v status %q", turn.EndedAt, attr(turn, "weft/provisional"), runStatus(turn))
 				}
 				if tool := spanByName(t, calls, "Bash"); tool.EndedAt != nil || runStatus(tool) != "running" {
 					t.Fatalf("running tool: ended %v status %q", tool.EndedAt, runStatus(tool))

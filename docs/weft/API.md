@@ -898,15 +898,21 @@ whichever is older. The spans have the plugin's shape
 Account attributes (`user.email`, `user.account_uuid`, `user.account_id`,
 `user.id`, `organization.id`, `ccr.session.id`) are not stored.
 
-The turn is stored once it is over: its last request of the conversation
-(`query_source` `sdk`, `repl_main_thread*` or none; not `compact` and other
-side requests) asked for no tool, or ended in an API error, or the user
-rejected a tool; or a later prompt of the session started, which marks it
-`interrupted: a new prompt was submitted`. Until then its spans hang under a
-turn that has not arrived, which Weft reads as running and, ten minutes
-after the last event, as its steps' outcome (*Run status* under Sessions). A
-tool call or sub-agent still open when its turn closes ends with it, failed
-(`tool did not finish before the turn ended`). A span first stored under the
+The turn is stored from its first event, open (`weft.provisional`), and
+ends once it is over: its last request of the conversation (`query_source`
+`sdk`, `repl_main_thread*` or none; not `compact` and other side requests)
+asked for no tool, or ended in an API error, or the user rejected a tool; or
+a later prompt of the session started, which marks it `interrupted: a new
+prompt was submitted`. While open it is read as running and, ten minutes
+after the last event of its trace, as its steps' outcome (*Run status* under
+Sessions), as a trace whose root has not arrived is: Claude Code may quit
+without logging the end. A tool call or sub-agent still open when its turn
+closes ends with it, failed (`tool did not finish before the turn ended`). A
+prompt that is a background task's notification (`<task-notification>`) is
+shown as the agent being told the task's status, not as the user asking.
+MCP tools, which Claude Code names `mcp_tool`, take the name
+`mcp__<server>__<tool>` from `mcp_server_name` and `mcp_tool_name` in their
+parameters. A span first stored under the
 turn and later found to belong under an Agent call moves there, with its
 usage.
 

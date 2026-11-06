@@ -4,7 +4,7 @@
 // (next_span_id), nesting by agent through hand-offs, and the gaps between
 // steps.
 import type { Detection, TimelineItem } from '../api/v1'
-import { mainArgumentText } from './story'
+import { mainArgumentText, taskNotification } from './story'
 
 export type StepType = TimelineItem['type'] | 'detection'
 
@@ -263,7 +263,7 @@ export function stepTitle(s: Step): string {
     case 'turn':
       return p.input_preview ? `Turn ${s.turn}: ${p.input_preview}` : `Turn ${s.turn}`
     case 'message':
-      return p.role === 'user' ? 'User asked' : 'Final answer'
+      return p.role === 'user' ? (taskNotification(String(p.text ?? '')) ? 'Background task notice' : 'User asked') : 'Final answer'
     case 'llm':
       return `${p.model ?? 'Model'} replied${Array.isArray(p.tool_calls) && p.tool_calls.length ? ` and asked for ${p.tool_calls.map((c: { name: string }) => c.name).join(', ')}` : ''}`
     case 'reasoning':

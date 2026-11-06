@@ -125,3 +125,34 @@ describe('mainArgumentText', () => {
     expect(mainArgumentText(input)).toBe(want)
   })
 })
+
+describe('Claude Code turns', () => {
+  const T = (s: number) => new Date(Date.UTC(2026, 10, 6, 14, 0, 0) + s * 1000).toISOString()
+  const long = 'The review found three issues. '.repeat(160) // 4960 characters
+  const cut = (s: string, n: number) => s.slice(0, n) + '…'
+  const notice =
+    '<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<summary>Agent "Review the diff" completed</summary>\n</task-notification>'
+  const items = [
+    { type: 'turn', span_id: 't1', trace_id: 'tr1', agent_name: 'claude-code', started_at: T(0), ended_at: T(81), payload: { status: 'ok', input_preview: 'review', output_preview: cut(long, 4000) } },
+    { type: 'message', span_id: 't1', trace_id: 'tr1', agent_name: 'claude-code', started_at: T(0), payload: { role: 'user', text: 'review' } },
+    { type: 'llm', span_id: 'l1', trace_id: 'tr1', agent_name: 'claude-code', started_at: T(2), ended_at: T(7.8), payload: { model: 'm', output_preview: cut(long, 2000) } },
+    { type: 'message', span_id: 't1', trace_id: 'tr1', agent_name: 'claude-code', started_at: T(81), payload: { role: 'assistant', text: cut(long, 4000) } },
+    { type: 'turn', span_id: 't2', trace_id: 'tr2', agent_name: 'claude-code', started_at: T(82), ended_at: T(90), payload: { status: 'ok', input_preview: notice } },
+    { type: 'message', span_id: 't2', trace_id: 'tr2', agent_name: 'claude-code', started_at: T(82), payload: { role: 'user', text: notice } },
+  ] as unknown as TimelineItem[]
+  const s = buildStory(buildTimeline(items, []))
+  const top = s.entries.filter((e) => e.kind !== 'turn')
+
+  it('tells a long answer once, at the time its model call wrote it', () => {
+    expect(top.map((e) => e.kind)).toEqual(['user', 'answer', 'user'])
+    const answer = top[1]
+    expect(answer.kind === 'answer' && answer.at?.item.span_id).toBe('l1')
+  })
+
+  it('tells a background task notification as the agent being told, not as the user asking', () => {
+    const n = top[2]
+    expect(n.kind === 'user' && n.notice).toBe('completed')
+    expect(n.kind === 'user' && n.text).toBe('Agent "Review the diff" completed')
+    expect(n.agent).toBe('claude-code')
+  })
+})

@@ -37,10 +37,12 @@ interface Base {
 
 export type StoryEntry =
   | { kind: 'turn'; key: string; turn: number }
-  | (Base & { kind: 'user'; text: string })
+  /** A user message, or (notice set) a message the harness sent as the user: a background task's notification. */
+  | (Base & { kind: 'user'; text: string; notice?: string })
   | (Base & { kind: 'act'; model?: Step; delegation?: Delegation })
   | (Base & { kind: 'reply'; text: string })
-  | (Base & { kind: 'answer'; text: string })
+  /** The turn's answer; at: the model call that wrote it, whose time it has. */
+  | (Base & { kind: 'answer'; text: string; at?: Step })
   | (Base & { kind: 'thought' })
   | (Base & { kind: 'error' })
 
@@ -56,6 +58,24 @@ export interface Story {
 }
 
 const norm = (s: unknown) => String(s ?? '').replace(/\s+/g, ' ').trim()
+
+/** The same text, allowing for previews cut at different lengths ("…"). */
+export function sameText(a: unknown, b: unknown): boolean {
+  const x = norm(a).replace(/…$/, '')
+  const y = norm(b).replace(/…$/, '')
+  if (!x || !y) return false
+  if (x === y) return true
+  const [short, long] = x.length < y.length ? [x, y] : [y, x]
+  return short.length >= 200 && long.startsWith(short)
+}
+
+/** A background task's notification that a harness (Claude Code) sends as
+ * a user message: its status and summary, or null for a real message. */
+export function taskNotification(text: string): { status: string; summary: string } | null {
+  if (!/^\s*<task-notification>/.test(text)) return null
+  const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim() ?? ''
+  return { status: tag('status') || 'finished', summary: tag('summary') }
+}
 const time = (s: string | null | undefined) => (s ? new Date(s).getTime() : NaN)
 
 export function buildStory(tl: BuiltTimeline): Story {
@@ -87,6 +107,9 @@ export function buildStory(tl: BuiltTimeline): Story {
     }
     return -1
   }
+
+  /** Answer message key → the model call that wrote it. */
+  const answeredBy = new Map<string, Step>()
 
   function scope(i0: number, i1: number, depth: number, ctx: { reply?: string; ownerKey?: string } = {}): StoryEntry[] {
     const out: StoryEntry[] = []
@@ -139,8 +162,10 @@ export function buildStory(tl: BuiltTimeline): Story {
           const text = String(p.text ?? '')
           if (p.role === 'user') {
             flush()
-            push({ kind: 'user', key: s.key, step: s, agent: null, thoughts: [], text })
-          } else push({ kind: 'answer', key: s.key, step: s, agent: s.agent, thoughts: thoughtsFor(s), text })
+            const n = taskNotification(text)
+            if (n) push({ kind: 'user', key: s.key, step: s, agent: s.agent, thoughts: [], text: n.summary || 'A background task finished.', notice: n.status })
+            else push({ kind: 'user', key: s.key, step: s, agent: null, thoughts: [], text })
+          } else push({ kind: 'answer', key: s.key, step: s, agent: s.agent, thoughts: thoughtsFor(s), text, at: answeredBy.get(s.key) })
           break
         }
         case 'llm': {
@@ -155,12 +180,13 @@ export function buildStory(tl: BuiltTimeline): Story {
             const rest = steps.slice(i + 1, i1)
             const answer = rest.find((x) => x.type === 'message' && x.item.payload?.role !== 'user')
             const laterText = rest.some((x) => x.type === 'llm' && x.agent === s.agent && norm(x.item.payload?.output_preview))
-            if (answer && norm(answer.item.payload?.text) === text) {
+            if (answer && sameText(answer.item.payload?.text, text)) {
               used.add(s.key)
               owner.set(s.key, answer.key)
+              answeredBy.set(answer.key, s)
               break
             }
-            if (ctx.reply && ctx.ownerKey && norm(ctx.reply) === text && !laterText) {
+            if (ctx.reply && ctx.ownerKey && sameText(ctx.reply, text) && !laterText) {
               used.add(s.key)
               owner.set(s.key, ctx.ownerKey)
               break
