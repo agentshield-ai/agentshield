@@ -244,7 +244,9 @@ func New(st *store.Store, secret SecretFunc, log *slog.Logger) *Runner {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Runner{Store: st, Secret: secret, Log: log, HTTP: egress.NewClient(15*time.Second, true), Interval: time.Minute,
+	// Redirects are not followed (as on every outbound path that may carry
+	// a credential): a webhook's headers and body go to the URL configured.
+	return &Runner{Store: st, Secret: secret, Log: log, HTTP: egress.NewClient(15*time.Second, false), Interval: time.Minute,
 		feedbackCh: make(chan store.Feedback, 10000), stop: make(chan struct{}),
 		cache: map[string]cacheEntry{}, lastFire: map[string]time.Time{}, loaded: map[string]bool{}}
 }
@@ -748,6 +750,9 @@ func (r *Runner) deliver(ctx context.Context, o *store.Obj, a *Automation, event
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return resp.StatusCode, "", fmt.Errorf("webhook answered with a redirect (%d), which is not followed: configure the URL it redirects to", resp.StatusCode)
+	}
 	if resp.StatusCode >= 300 {
 		return resp.StatusCode, string(raw), fmt.Errorf("webhook returned %d", resp.StatusCode)
 	}

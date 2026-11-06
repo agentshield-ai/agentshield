@@ -59,6 +59,9 @@ type Host interface {
 	CallsEnded([]store.EndedCall)
 	// User returns explicit when set, else the authenticated user (or nil).
 	User(r *http.Request, explicit *string) *string
+	// Creator is the feedback creator to record: the authenticated user,
+	// else sent.
+	Creator(r *http.Request, sent *string) *string
 	// AuthorizeProject checks the caller may write to project pid (0 when
 	// allowed, otherwise the status and body to answer with).
 	AuthorizeProject(r *http.Request, pid string) (int, []byte)

@@ -88,3 +88,18 @@ func TestOpenBindWarning(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// The connection caps and the response budget come from their flags;
+// negative values are refused.
+func TestNetFlagsLimits(t *testing.T) {
+	n := func(v int) *int { return &v }
+	f := &netFlags{allowedHosts: strPtr(""), trustedProxies: strPtr(""), maxConns: n(10), maxConnsPerIP: n(3), responseBudgetMB: n(64)}
+	var cfg server.Config
+	if err := f.apply(&cfg, "127.0.0.1:6345"); err != nil || cfg.MaxRequestsPerClient != 3 || cfg.ResponseBudget != 64<<20 {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+	f.maxConnsPerIP = n(-1)
+	if err := f.apply(&cfg, "127.0.0.1:6345"); err == nil {
+		t.Fatal("negative cap accepted")
+	}
+}

@@ -586,9 +586,9 @@ function SecretsTab({ projectId }: { projectId: string }) {
         note={
           <>
             Used by the playground, LLM judges, scorers, automations and server-side evaluations. A value cannot be read back.
-            A project secret is used only by this project, a team secret by every project of the team. A server secret is used by
-            the built-in providers of every project; this project&rsquo;s own providers, scorers and automations can use it only
-            toward the allowed hosts a server admin sets on it.
+            A project secret is used only by this project. A team secret (every project of the team) and a server secret (every
+            project) are used by the built-in providers; this project&rsquo;s own providers, scorers and automations can use them only
+            toward the allowed hosts their admin sets on them.
           </>
         }
       >
@@ -622,6 +622,11 @@ function SecretsTab({ projectId }: { projectId: string }) {
                         {" · only to "}
                         <span className="mono">{s.allowed_hosts.join(", ")}</span>
                       </>
+                    )}
+                    {s && s.source === "db" && (s.scope === "team" || s.scope === "server") && s.allowed_hosts.length === 0 && (
+                      <span className="warn" title="Projects' own providers, scorers, OAuth configurations and automations can use a team or server secret only toward its allowed hosts.">
+                        {" · built-in providers only: no allowed hosts"}
+                      </span>
                     )}
                     {others.length > 0 && (
                       <> · overrides the one in {others.map(secretScopeWords).join(" and ")}</>

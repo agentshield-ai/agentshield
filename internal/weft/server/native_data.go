@@ -47,6 +47,7 @@ func feedbackCreated(f *store.Feedback) map[string]any {
 func (s *Server) v1FeedbackCreate(ctx context.Context, r *http.Request, req *feedbackCreateReq) (any, error) {
 	it := req.item()
 	it.UserID = userFrom(r, it.UserID)
+	it.Creator = creatorFrom(r, it.Creator)
 	f, err := s.store.CreateAgentFeedback(ctx, it)
 	if err != nil {
 		return nil, err
@@ -70,6 +71,7 @@ func (s *Server) v1FeedbackBatch(ctx context.Context, r *http.Request, req *feed
 			it.ProjectID = req.ProjectID
 		}
 		it.UserID = userFrom(r, it.UserID)
+		it.Creator = creatorFrom(r, it.Creator)
 		f, err := s.store.CreateAgentFeedback(ctx, it)
 		if err != nil {
 			return nil, err
@@ -144,6 +146,7 @@ type feedbackReplaceNativeReq struct {
 func (s *Server) v1FeedbackReplace(ctx context.Context, r *http.Request, req *feedbackReplaceNativeReq) (any, error) {
 	it := req.item()
 	it.UserID = userFrom(r, it.UserID)
+	it.Creator = creatorFrom(r, it.Creator)
 	f, err := s.store.ReplaceFeedback(ctx, req.FeedbackID, store.FeedbackCreate{ProjectID: it.ProjectID, Ref: it.Ref,
 		FeedbackType: it.FeedbackType, Payload: it.Payload, Creator: it.Creator, UserID: it.UserID, AnnotationRef: it.AnnotationRef,
 		RunnableRef: it.RunnableRef, CallRef: it.SpanRef, TriggerRef: it.TriggerRef, QueueID: it.QueueID})

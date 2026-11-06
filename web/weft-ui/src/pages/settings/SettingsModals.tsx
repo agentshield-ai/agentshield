@@ -146,7 +146,15 @@ export function SecretModal({
   const team = projectId.split('/')[0]
   const scopes: { id: SecretScope; label: string; hint: string }[] = [
     { id: 'project', label: `This project (${projectId})`, hint: 'Used only by this project.' },
-    ...(teamAdmin ? [{ id: 'team' as const, label: `Team ${team}`, hint: `Used by every project of team ${team}.` }] : []),
+    ...(teamAdmin
+      ? [
+          {
+            id: 'team' as const,
+            label: `Team ${team}`,
+            hint: `Used by the built-in providers of every project of team ${team}. Projects’ own providers, scorers and automations can use it only toward its allowed hosts.`,
+          },
+        ]
+      : []),
     ...(serverAdmin
       ? [
           {
@@ -229,9 +237,16 @@ export function SecretModal({
         <input className="input mono" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder="api.example.com, *.corp.example" aria-label="Allowed hosts" />
         <span className="hint">
           Optional. The secret is only sent to these hosts (<span className="mono">host</span>, <span className="mono">host:port</span> or{' '}
-          <span className="mono">*.domain</span>); for a webhook URL, its own host. Empty: any host. Secrets are only sent over https (or to localhost).
+          <span className="mono">*.domain</span>); for a webhook URL, its own host. Empty: any host for a project secret. Secrets are only sent over https
+          (or to localhost).
         </span>
       </label>
+      {scope !== 'project' && parseAllowedHosts(hosts).length === 0 && (
+        <p className="hint warn" role="note">
+          Without allowed hosts, a {scope} secret is used only by the built-in providers: projects’ own providers, scorers, predict models, OAuth
+          configurations and automations cannot send it anywhere. Add the hosts they call.
+        </p>
+      )}
       <ErrorBox error={err} />
     </Modal>
   )

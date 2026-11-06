@@ -355,11 +355,19 @@ func TestAttributionUsesAuthenticatedUser(t *testing.T) {
 		t.Fatalf("span user -> %d %s", code, out)
 	}
 	e.mustCode(200, "POST", "/api/v1/feedback/create", k, map[string]any{"project_id": "m/own", "ref": "weft:///m/own/span/a1",
-		"feedback_type": "weft.note", "payload": map[string]any{"note": "x"}, "user_id": "bob"})
+		"feedback_type": "weft.note", "payload": map[string]any{"note": "x"}, "user_id": "bob", "creator": "monitor:forged"})
+	// N6: the creator is the authenticated user too, on every feedback write.
+	e.mustCode(200, "POST", "/api/v1/feedback/batch", k, map[string]any{"project_id": "m/own", "items": []any{map[string]any{
+		"ref": "weft:///m/own/span/a1", "feedback_type": "weft.note", "payload": map[string]any{"note": "y"}, "creator": "weft-signals-auto"}}})
 	fb := e.admJSON("POST", "/api/v1/feedback/query", "root", map[string]any{"project_id": "m/own"})
 	items, _ := fb["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["user_id"] != "mem" {
-		t.Fatalf("feedback user = %v", fb)
+	if len(items) != 2 {
+		t.Fatalf("feedback = %v", fb)
+	}
+	for _, it := range items {
+		if m := it.(map[string]any); m["user_id"] != "mem" || m["creator"] != "mem" {
+			t.Fatalf("feedback user/creator = %v", m)
+		}
 	}
 	// Without authentication the request's user stands (open servers).
 	open := newEnv(t)

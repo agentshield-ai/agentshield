@@ -99,3 +99,28 @@ func TestSecretWebhookErrorsAreGeneric(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// N7: a webhook that answers with a redirect is a delivery failure; the
+// redirect is not followed, so headers and body reach only the URL set.
+func TestWebhookRedirectNotFollowed(t *testing.T) {
+	allowLoopback(t)
+	hits := make(chan string, 4)
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits <- r.Header.Get("Authorization") }))
+	defer final.Close()
+	hop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final.URL+"/landed", http.StatusTemporaryRedirect)
+	}))
+	defer hop.Close()
+	r := newRunner(t, nil)
+	a := &Automation{Trigger: Trigger{Type: "feedback_created"}, Action: Action{Type: "webhook", URL: hop.URL + "/hook",
+		Headers: map[string]string{"Authorization": "Bearer hook-token"}}}
+	code, _, err := r.deliver(context.Background(), obj("e/p"), a, map[string]any{"type": "feedback_created"}, true)
+	if err == nil || code != http.StatusTemporaryRedirect || !strings.Contains(err.Error(), "redirect") {
+		t.Fatalf("deliver: %d %v", code, err)
+	}
+	select {
+	case h := <-hits:
+		t.Fatalf("the redirect target was called (Authorization %q)", h)
+	default:
+	}
+}

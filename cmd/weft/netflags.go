@@ -64,11 +64,12 @@ func (f *netFlags) apply(cfg *server.Config, addr string) error {
 		return fmt.Errorf("invalid --trusted-proxies: %v", err)
 	}
 	cfg.TrustedProxies = proxies
-	if *f.maxConns < 0 || *f.maxConnsPerIP < 0 || *f.responseBudgetMB < 0 {
+	maxConns, perIP, budgetMB := intOr(f.maxConns, defaultMaxConns), intOr(f.maxConnsPerIP, defaultMaxConnsPerIP), intOr(f.responseBudgetMB, 0)
+	if maxConns < 0 || perIP < 0 || budgetMB < 0 {
 		return fmt.Errorf("--max-connections, --max-connections-per-ip and --response-budget-mb must not be negative")
 	}
-	cfg.MaxRequestsPerClient = *f.maxConnsPerIP
-	cfg.ResponseBudget = int64(*f.responseBudgetMB) << 20
+	cfg.MaxRequestsPerClient = perIP
+	cfg.ResponseBudget = int64(budgetMB) << 20
 	cfg.EnforceHosts = true
 	cfg.AllowedHosts = splitList(*f.allowedHosts)
 	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" && net.ParseIP(host) == nil {
@@ -84,7 +85,15 @@ func (f *netFlags) listen(addr string, cfg server.Config, log *slog.Logger) (net
 	if err != nil {
 		return nil, err
 	}
-	return server.LimitListener(ln, *f.maxConns, *f.maxConnsPerIP, cfg.TrustedProxies, log), nil
+	return server.LimitListener(ln, intOr(f.maxConns, defaultMaxConns), intOr(f.maxConnsPerIP, defaultMaxConnsPerIP), cfg.TrustedProxies, log), nil
+}
+
+// intOr is *p, or def when the flag was not registered (tests).
+func intOr(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // newHTTPServer is the http.Server with its timeouts: headers within 10 s,

@@ -49,6 +49,7 @@ func (s *Server) agentFeedbackBatchCreate(ctx context.Context, r *http.Request, 
 			return nil, err
 		}
 		it.UserID = userFrom(r, it.UserID)
+		it.Creator = creatorFrom(r, it.Creator)
 		f, err := s.store.CreateAgentFeedback(ctx, it)
 		if err != nil {
 			return nil, err

@@ -477,6 +477,17 @@ func userFrom(r *http.Request, explicit *string) *string {
 	return nil
 }
 
+// creatorFrom is the creator recorded for feedback a request writes: the
+// authenticated user, whatever the body says (A11/N6); the body's creator
+// only when the server has no authenticated identity for the caller (no
+// auth, or an unnamed static key).
+func creatorFrom(r *http.Request, sent *string) *string {
+	if u, ok := r.Context().Value(ctxKey{}).(string); ok && u != "" {
+		return &u
+	}
+	return sent
+}
+
 var empty = map[string]any{}
 
 // ---------------------------------------------------------------- projects
@@ -658,6 +669,9 @@ func (h compatHost) CallsEnded(ended []store.EndedCall) { h.s.engine.Notify(ende
 func (h compatHost) Native() http.Handler               { return h.s.native }
 func (h compatHost) User(r *http.Request, explicit *string) *string {
 	return userFrom(r, explicit)
+}
+func (h compatHost) Creator(r *http.Request, sent *string) *string {
+	return creatorFrom(r, sent)
 }
 func (h compatHost) PrepareStart(ctx context.Context, r *http.Request, st *store.CallStart) error {
 	return h.s.PrepareStart(ctx, r, st)

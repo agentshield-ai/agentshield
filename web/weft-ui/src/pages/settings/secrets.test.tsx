@@ -59,6 +59,34 @@ describe('secret dialog', () => {
     expect(html).toMatch(/<option value="server" selected="">/)
     expect(html).toContain('value="api.example.com"')
   })
+  it('warns when a team or server secret has no allowed hosts', () => {
+    const team = renderToStaticMarkup(
+      <SecretModal
+        name="K"
+        projectId="demo/app"
+        serverAdmin
+        teamAdmin
+        current={{ name: 'K', source: 'db', scope: 'team', scope_id: 'demo', kind: 'secret', allowed_hosts: [] }}
+        onClose={noop}
+        onSaved={noop}
+      />,
+    )
+    expect(team).toContain('Without allowed hosts, a team secret is used only by the built-in providers')
+    const hosts = renderToStaticMarkup(
+      <SecretModal
+        name="K"
+        projectId="demo/app"
+        serverAdmin
+        teamAdmin
+        current={{ name: 'K', source: 'db', scope: 'team', scope_id: 'demo', kind: 'secret', allowed_hosts: ['api.example.com'] }}
+        onClose={noop}
+        onSaved={noop}
+      />,
+    )
+    expect(hosts).not.toContain('Without allowed hosts')
+    const project = renderToStaticMarkup(<SecretModal name="K" projectId="demo/app" serverAdmin={false} teamAdmin={false} onClose={noop} onSaved={noop} />)
+    expect(project).not.toContain('Without allowed hosts')
+  })
   it('splits allowed hosts', () => {
     expect(parseAllowedHosts(' a.example.com, *.corp.example:8443\nb ')).toEqual(['a.example.com', '*.corp.example:8443', 'b'])
     expect(parseAllowedHosts('')).toEqual([])

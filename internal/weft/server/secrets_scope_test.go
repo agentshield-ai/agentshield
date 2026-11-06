@@ -106,10 +106,17 @@ func TestSecretScopesMemberCannotExfiltrate(t *testing.T) {
 		t.Fatalf("another project used acme/app's secret: %v", got)
 	}
 
-	// A team secret (set by the team's admin) works in every project of the team.
+	// A team secret (set by the team's admin) works in every project of the
+	// team, toward its allowed hosts (N4): without any, a project's objects
+	// cannot send it anywhere.
 	e.mustCode(403, "POST", "/api/v1/secrets/set", f.bob, map[string]any{"name": "TEAM_KEY", "value": "t", "scope": "team", "project_id": "acme/app"})
 	e.mustCode(200, "POST", "/api/v1/secrets/set", f.alice, map[string]any{"name": "TEAM_KEY", "value": "team-value", "scope": "team", "project_id": "acme/app"})
 	e.mustCode(200, "POST", "/api/v1/objects/save", f.carol, map[string]any{"project_id": "acme/special", "name": "teamp", "value": providerVal(capture.srv.URL, "TEAM_KEY")})
+	if out := complete(e, f.carol, "acme/special", "teamp/x"); !strings.Contains(out, "team secret") || strings.Contains(out, "captured") {
+		t.Fatalf("team secret without allowed hosts: %s", out)
+	}
+	e.mustCode(200, "POST", "/api/v1/secrets/set", f.alice, map[string]any{"name": "TEAM_KEY", "value": "team-value", "scope": "team", "project_id": "acme/app",
+		"allowed_hosts": []any{"127.0.0.1"}})
 	if out := complete(e, f.carol, "acme/special", "teamp/x"); !strings.Contains(out, "captured") {
 		t.Fatalf("team secret: %s", out)
 	}

@@ -554,6 +554,7 @@ func (w contentTypeWriter) Write(b []byte) (int, error) {
 
 func (s *Routes) feedbackCreate(ctx context.Context, r *http.Request, req *store.FeedbackCreate) (any, error) {
 	req.UserID = s.host.User(r, req.UserID)
+	req.Creator = s.host.Creator(r, req.Creator)
 	f, err := s.store.CreateFeedback(ctx, *req)
 	if err != nil {
 		return nil, err
@@ -583,6 +584,7 @@ func (s *Routes) feedbackBatchCreate(ctx context.Context, r *http.Request, req *
 			b.SpanRef = it.CallRef
 		}
 		b.UserID = s.host.User(r, b.UserID)
+		b.Creator = s.host.Creator(r, b.Creator)
 		f, err := s.store.CreateAgentFeedback(ctx, b)
 		if err != nil {
 			return nil, err
@@ -628,6 +630,7 @@ type feedbackReplaceReq struct {
 
 func (s *Routes) feedbackReplace(ctx context.Context, r *http.Request, req *feedbackReplaceReq) (any, error) {
 	req.UserID = s.host.User(r, req.UserID)
+	req.Creator = s.host.Creator(r, req.Creator)
 	f, err := s.store.ReplaceFeedback(ctx, req.FeedbackID, req.FeedbackCreate)
 	if err != nil {
 		return nil, err
