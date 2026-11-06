@@ -130,7 +130,16 @@ for (const cfg of CONFIGS) {
         // Let the page grow to its full height for the screenshot.
         await page.addStyleTag({ content: 'html,body,#root,.app{height:auto!important} .main{overflow:visible!important} .topbar{position:static!important}' })
         await page.waitForTimeout(100)
-        await page.screenshot({ path: join(outDir(), 'screenshots', `${name}-${cfg.width}-${cfg.scheme}.png`), fullPage: true })
+        // Very long pages (the API reference) crash Chromium when captured
+        // whole, so they get a screenshot of the first screenful only; the checks above
+        // already covered the whole page.
+        const fullHeight = await page.evaluate(() => document.documentElement.scrollHeight)
+        const shotPath = join(outDir(), 'screenshots', `${name}-${cfg.width}-${cfg.scheme}.png`)
+        if (fullHeight > 12000) {
+          await page.screenshot({ path: shotPath })
+        } else {
+          await page.screenshot({ path: shotPath, fullPage: true })
+        }
         expect(errors).toEqual([])
       })
     }
