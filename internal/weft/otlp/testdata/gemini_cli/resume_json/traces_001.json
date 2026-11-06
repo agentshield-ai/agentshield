@@ -1,0 +1,443 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.name",
+      "value": {
+       "stringValue": "dev-host"
+      }
+     },
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "process.pid",
+      "value": {
+       "intValue": "4242"
+      }
+     },
+     {
+      "key": "process.executable.name",
+      "value": {
+       "stringValue": "/usr/bin/node"
+      }
+     },
+     {
+      "key": "process.executable.path",
+      "value": {
+       "stringValue": "/usr/bin/node"
+      }
+     },
+     {
+      "key": "process.command_args",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "/usr/bin/node"
+         },
+         {
+          "stringValue": "--max-old-space-size=8043"
+         },
+         {
+          "stringValue": "/usr/lib/node_modules/@google/gemini-cli/bundle/gemini.js"
+         },
+         {
+          "stringValue": "-p"
+         },
+         {
+          "stringValue": "Run `echo hi` and tell me what it printed."
+         },
+         {
+          "stringValue": "--yolo"
+         },
+         {
+          "stringValue": "-m"
+         },
+         {
+          "stringValue": "gemini-2.5-flash"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "process.runtime.version",
+      "value": {
+       "stringValue": "22.23.4"
+      }
+     },
+     {
+      "key": "process.runtime.name",
+      "value": {
+       "stringValue": "nodejs"
+      }
+     },
+     {
+      "key": "process.runtime.description",
+      "value": {
+       "stringValue": "Node.js"
+      }
+     },
+     {
+      "key": "process.command",
+      "value": {
+       "stringValue": "/usr/lib/node_modules/@google/gemini-cli/bundle/gemini.js"
+      }
+     },
+     {
+      "key": "process.owner",
+      "value": {
+       "stringValue": "dev"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "gemini-cli"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "v22.23.4"
+      }
+     },
+     {
+      "key": "session.id",
+      "value": {
+       "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+      }
+     }
+    ],
+    "droppedAttributesCount": 0
+   },
+   "scopeSpans": [
+    {
+     "scope": {
+      "name": "gemini-cli",
+      "version": "v1"
+     },
+     "spans": [
+      {
+       "traceId": "30b59fa011b14a2a4350b2c415e7308e",
+       "spanId": "d4a125a7346fb4eb",
+       "name": "llm_call",
+       "kind": 1,
+       "startTimeUnixNano": "1793959564001000000",
+       "endTimeUnixNano": "1793959564090841088",
+       "attributes": [
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "gen_ai.prompt.name",
+         "value": {
+          "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+         }
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficiently, adhering strictly to\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.tool.definitions",
+         "value": {
+          "stringValue": "[{\"functionDeclarations\":[{\"name\":\"update_topic\",\"description\":\"Manages your narrative flow. Include `title` and `summary` only when starting a new Chapter (log\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.conversation.id",
+         "value": {
+          "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"text\":\"<session_context>\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Friday, November 6, 20\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"run_shell_command\",\"args\":{\"command\":\"echo hi\",\"description\":\"run it\"},\"id\":\"run_shell_command__run_shell_command_1793959564020_0\"}}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "llm_call"
+         }
+        },
+        {
+         "key": "gen_ai.agent.name",
+         "value": {
+          "stringValue": "gemini-cli"
+         }
+        },
+        {
+         "key": "gen_ai.agent.description",
+         "value": {
+          "stringValue": "Gemini CLI is an open-source AI agent that brings the power of Gemini directly into your terminal. It is designed to be a terminal-first, extensible, and powerful tool for developers, engineers, SREs, and beyond."
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": 900
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": 20
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "status": {
+        "code": 1
+       },
+       "links": [],
+       "droppedLinksCount": 0,
+       "flags": 257
+      },
+      {
+       "traceId": "7c1259537900dfc3cb737b9c57e443cb",
+       "spanId": "130d7d1f89472f9b",
+       "parentSpanId": "313a9ccfe4827180",
+       "name": "tool_call",
+       "kind": 1,
+       "startTimeUnixNano": "1793959564106000000",
+       "endTimeUnixNano": "1793959564117897763",
+       "attributes": [
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "run_shell_command"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call_id",
+         "value": {
+          "stringValue": "run_shell_command__run_shell_command_1793959564020_0"
+         }
+        },
+        {
+         "key": "gen_ai.tool.description",
+         "value": {
+          "stringValue": "This tool executes a given shell command as `bash -c <command>`. Command can start background processes using `&`. Command is executed as a subprocess that lead\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.conversation.id",
+         "value": {
+          "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "{\"callId\":\"run_shell_command__run_shell_command_1793959564020_0\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"echo hi\",\"description\":\"run it\"},\"display\":{\"name\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "{\"status\":\"success\",\"request\":{\"callId\":\"run_shell_command__run_shell_command_1793959564020_0\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"echo hi\",\"description\":\"run it\"},\"display\":{\"name\":\"Shell\",\"description\":\"echo hi\"},\"isClientInitiated\":false,\"prompt_id\":\"54ab7461-9f16-48e3-ab35-d65df9f60c8e\",\"traceId\":\"gr_15\",\"schedulerId\":\"root\"},\"tool\":{\"name\":\"run_shell_command\",\"displayName\":\"Shell\",\"description\":\"This tool executes a given shell command as `bash -c <command>`. Command can start background processes using `&`. Command is executed as a subprocess that leads its own process group. Command process group can be terminated as `kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`.\\n\\n      Efficiency Guidelines:\\n      - Quiet Flags: Always prefer silent or quiet flags (e.g., `npm install --silent`, `git --no-pager`) to reduce output volume while still capturing necessary information.\\n      - Pagination: Always disable terminal pagination to ensure commands terminate (e.g., use `git --no-pager`, `systemctl --no-pager`, or set `PAGER=cat`).\\n\\n      The following information is returned:\\n\\n      Output: Combined stdout/stderr. Can be `(empty)` or partial on error and for any unwaited background processes.\\n      Exit Code: Only included if non-zero (command failed).\\n      Error: Only included if a process-level error occurred (e.g., spawn failure).\\n      Signal: Only included if process was terminated by a signal.\\n      Background PIDs: Only included if background processes were started.\\n      Process Group PGID: Only included if available.\",\"kind\":\"execute\",\"parameterSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"Exact bash command to execute as `bash -c <command>`\"},\"description\":{\"type\":\"string\",\"description\":\"Brief description of the command for the user. Be specific and concise. Ideally a single sentence. Can be up to 3 sentences for clarity. No line breaks.\"},\"dir_path\":{\"type\":\"string\",\"description\":\"(OPTIONAL) The path of the directory to run the command in. If not provided, the project root directory is used. Must be a directory within the workspace and must already exist.\"},\"is_background\":{\"type\":\"boolean\",\"description\":\"Set to true if this command should be run in the background (e.g. for long-running servers or watchers). The command will be started, allowed to run for a brief moment to check for immediate errors, and then moved to the background.\"},\"delay_ms\":{\"type\":\"integer\",\"description\":\"Optional. Delay in milliseconds to wait after starting the process in the background. Useful to allow the process to start and generate initial output before returning.\"}},\"required\":[\"command\"]}},\"response\":{\"callId\":\"run_shell_command__run_shell_command_1793959564020_0\",\"responseParts\":[{\"functionResponse\":{\"id\":\"run_shell_command__run_shell_command_1793959564020_0\",\"name\":\"run_shell_command\",\"response\":{\"output\":\"<untrusted_context>\\nOutput: hi\\nProcess Group PGID: 9427\\n</untrusted_context>\"}}}],\"display\":{\"name\":\"Shell\",\"description\":\"echo hi\",\"result\":{\"type\":\"text\",\"text\":\"hi\"}},\"resultDisplay\":\"hi\",\"contentLength\":76},\"invocation\":{\"params\":\"[Circular]\"},\"durationMs\":23,\"startTime\":1793959564095,\"endTime\":1793959564118,\"outcome\":\"proceed_once\"}"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "tool_call"
+         }
+        },
+        {
+         "key": "gen_ai.agent.name",
+         "value": {
+          "stringValue": "gemini-cli"
+         }
+        },
+        {
+         "key": "gen_ai.agent.description",
+         "value": {
+          "stringValue": "Gemini CLI is an open-source AI agent that brings the power of Gemini directly into your terminal. It is designed to be a terminal-first, extensible, and powerful tool for developers, engineers, SREs, and beyond."
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "status": {
+        "code": 1
+       },
+       "links": [],
+       "droppedLinksCount": 0,
+       "flags": 257
+      },
+      {
+       "traceId": "7c1259537900dfc3cb737b9c57e443cb",
+       "spanId": "313a9ccfe4827180",
+       "name": "schedule_tool_calls",
+       "kind": 1,
+       "startTimeUnixNano": "1793959564092000000",
+       "endTimeUnixNano": "1793959564118835712",
+       "attributes": [
+        {
+         "key": "gen_ai.conversation.id",
+         "value": {
+          "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"callId\":\"run_shell_command__run_shell_command_1793959564020_0\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"echo hi\",\"description\":\"run it\"},\"display\":{\"name\":\"Shell\",\"description\":\"echo hi\"},\"isClientInitiated\":false,\"prompt_id\":\"54ab7461-9f16-48e3-ab35-d65df9f60c8e\",\"traceId\":\"gr_15\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"request\":{\"callId\":\"run_shell_command__run_shell_command_1793959564020_0\",\"name\":\"run_shell_command\",\"args\":{\"command\":\"echo hi\",\"description\":\"run it\"},\"display\":{\"name\":\"Shell\",\"description\":\"echo hi\"},\"isClientInitiated\":false,\"prompt_id\":\"54ab7461-9f16-48e3-ab35-d65df9f60c8e\",\"traceId\":\"gr_15\",\"schedulerId\":\"root\"},\"tool\":{\"name\":\"run_shell_command\",\"displayName\":\"Shell\",\"description\":\"This tool executes a given shell command as `bash -c <command>`. Command can start background processes using `&`. Command is executed as a subprocess that leads its own process group. Command process group can be terminated as `kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`.\\n\\n      Efficiency Guidelines:\\n      - Quiet Flags: Always prefer silent or quiet flags (e.g., `npm install --silent`, `git --no-pager`) to reduce output volume while still capturing necessary information.\\n      - Pagination: Always disable terminal pagination to ensure commands terminate (e.g., use `git --no-pager`, `systemctl --no-pager`, or set `PAGER=cat`).\\n\\n      The following information is returned:\\n\\n      Output: Combined stdout/stderr. Can be `(empty)` or partial on error and for any unwaited background processes.\\n      Exit Code: Only included if non-zero (command failed).\\n      Error: Only included if a process-level error occurred (e.g., spawn failure).\\n      Signal: Only included if process was terminated by a signal.\\n      Background PIDs: Only included if background processes were started.\\n      Process Group PGID: Only included if available.\",\"kind\":\"execute\",\"parameterSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"Exact bash command to execute as `bash -c <command>`\"},\"description\":{\"type\":\"string\",\"description\":\"Brief description of the command for the user. Be specific and concise. Ideally a single sentence. Can be up to 3 sentences for clarity. No line breaks.\"},\"dir_path\":{\"type\":\"string\",\"description\":\"(OPTIONAL) The path of the directory to run the command in. If not provided, the project root directory is used. Must be a directory within the workspace and must already exist.\"},\"is_background\":{\"type\":\"boolean\",\"description\":\"Set to true if this command should be run in the background (e.g. for long-running servers or watchers). The command will be started, allowed to run for a brief moment to check for immediate errors, and then moved to the background.\"},\"delay_ms\":{\"type\":\"integer\",\"description\":\"Optional. Delay in milliseconds to wait after starting the process in the background. Useful to allow the process to start and generate initial output before returning.\"}},\"required\":[\"command\"]}},\"invocation\":{\"params\":\"[Circular]\"},\"status\":\"success\",\"response\":{\"callId\":\"run_shell_command__run_shell_command_1793959564020_0\",\"responseParts\":[{\"functionResponse\":{\"id\":\"run_shell_command__run_shell_command_1793959564020_0\",\"name\":\"run_shell_command\",\"response\":{\"output\":\"<untrusted_context>\\nOutput: hi\\nProcess Group PGID: 9427\\n</untrusted_context>\"}}}],\"display\":{\"name\":\"Shell\",\"description\":\"echo hi\",\"result\":{\"type\":\"text\",\"text\":\"hi\"}},\"resultDisplay\":\"hi\",\"contentLength\":76},\"durationMs\":23,\"outcome\":\"proceed_once\",\"schedulerId\":\"root\",\"approvalMode\":\"yolo\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "schedule_tool_calls"
+         }
+        },
+        {
+         "key": "gen_ai.agent.name",
+         "value": {
+          "stringValue": "gemini-cli"
+         }
+        },
+        {
+         "key": "gen_ai.agent.description",
+         "value": {
+          "stringValue": "Gemini CLI is an open-source AI agent that brings the power of Gemini directly into your terminal. It is designed to be a terminal-first, extensible, and powerful tool for developers, engineers, SREs, and beyond."
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "status": {
+        "code": 1
+       },
+       "links": [],
+       "droppedLinksCount": 0,
+       "flags": 257
+      },
+      {
+       "traceId": "ea85a74d2c77feb58a21e6996c297994",
+       "spanId": "d063e2949c13f98a",
+       "name": "llm_call",
+       "kind": 1,
+       "startTimeUnixNano": "1793959564122000000",
+       "endTimeUnixNano": "1793959564229221086",
+       "attributes": [
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "gemini-2.5-flash"
+         }
+        },
+        {
+         "key": "gen_ai.prompt.name",
+         "value": {
+          "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+         }
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "\"You are a non-interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficiently, adhering strictly to\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.tool.definitions",
+         "value": {
+          "stringValue": "[{\"functionDeclarations\":[{\"name\":\"update_topic\",\"description\":\"Manages your narrative flow. Include `title` and `summary` only when starting a new Chapter (log\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.conversation.id",
+         "value": {
+          "stringValue": "54ab7461-9f16-48e3-ab35-d65df9f60c8e"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"parts\":[{\"text\":\"<session_context>\\nThis is the Gemini CLI. We are setting up the context for our chat.\\nToday's date is Friday, November 6, 20\u2026(trimmed for the fixture)"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"role\":\"model\",\"parts\":[{\"text\":\"The command\"}]},{\"role\":\"model\",\"parts\":[{\"text\":\" printed hi.\"}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "llm_call"
+         }
+        },
+        {
+         "key": "gen_ai.agent.name",
+         "value": {
+          "stringValue": "gemini-cli"
+         }
+        },
+        {
+         "key": "gen_ai.agent.description",
+         "value": {
+          "stringValue": "Gemini CLI is an open-source AI agent that brings the power of Gemini directly into your terminal. It is designed to be a terminal-first, extensible, and powerful tool for developers, engineers, SREs, and beyond."
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": 950
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": 20
+         }
+        }
+       ],
+       "droppedAttributesCount": 0,
+       "events": [],
+       "droppedEventsCount": 0,
+       "status": {
+        "code": 1
+       },
+       "links": [],
+       "droppedLinksCount": 0,
+       "flags": 257
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -3,6 +3,8 @@ package otlp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -99,6 +101,9 @@ func TestGeminiLogsRealRuns(t *testing.T) {
 		if attr(sub, "gen_ai.agent.name") != "generalist" || sub.EndedAt == nil || sub.Exception != nil || attr(sub, "gemini_cli/terminate_reason") != "GOAL" ||
 			inputText(sub) != "Run `cat note.txt` and report its contents." {
 			t.Fatalf("sub-agent = %v inputs %v", sub.Attributes, sub.Inputs)
+		}
+		if out, _ := json.Marshal(sub.Output); !strings.Contains(string(out), `\"response\":\"simple\"`) {
+			t.Fatalf("sub-agent output (its complete_task result) = %s", out)
 		}
 		if r, _, _, _, _, _ := usage(invoke); r != 2 {
 			t.Fatalf("the sub-agent's 2 requests should roll up into invoke_agent: %v", r)
@@ -383,7 +388,10 @@ func TestGeminiLogsGatesAndOutcomes(t *testing.T) {
 }
 
 // AgentShield's Gemini hook sends no tool call id (Gemini CLI's hook payload
-// has none): a verdict links by session, tool name and time.
+// has none): a verdict links by session, tool name and time. (The hook
+// names tools by AgentShield's canonical names, "exec" for
+// run_shell_command, so today only a verdict that names the tool as Gemini
+// CLI does links; see the setup guide.)
 func TestGeminiLogsVerdictByTime(t *testing.T) {
 	ctx := context.Background()
 	h := newCCHarness(t)
@@ -430,4 +438,70 @@ func scriptExport(evs []store.LogEvent) *collogs.ExportLogsServiceRequest {
 		Resource:  &resourcepb.Resource{Attributes: []*common.KeyValue{{Key: "service.name", Value: &common.AnyValue{Value: &common.AnyValue_StringValue{StringValue: GeminiService}}}}},
 		ScopeLogs: []*logspb.ScopeLogs{{Scope: &common.InstrumentationScope{Name: GeminiService}, LogRecords: recs}},
 	}}}
+}
+
+// Gemini CLI always exports trace spans too (llm_call, tool_call,
+// schedule_tool_calls, one trace each). Sent to the same Weft they would
+// repeat the session's steps; the session is shown from the log events,
+// whichever arrives first.
+func TestGeminiLogsReplaceItsTraces(t *testing.T) {
+	traces := func(t *testing.T, h *ccHarness) {
+		t.Helper()
+		files, _ := filepath.Glob(filepath.Join("testdata", "gemini_cli", "resume_json", "traces_*.json"))
+		if len(files) == 0 {
+			t.Fatal("no trace fixtures")
+		}
+		for _, f := range files {
+			b, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := Decode(b, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls, err := ToCalls(req, ccProject)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.s.UpsertComplete(context.Background(), calls); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	onlyLogs := func(t *testing.T, h *ccHarness) {
+		t.Helper()
+		calls := h.spans(gmResumeSession)
+		if len(calls) != 8 {
+			var names []string
+			for _, c := range calls {
+				names = append(names, c.OpName)
+			}
+			t.Fatalf("spans = %d %v, want the 8 built from the log events", len(calls), names)
+		}
+		for _, c := range calls {
+			if attr(c, "weft/source") != store.SourceGeminiLogs {
+				t.Fatalf("%s from %v", c.OpName, attr(c, "weft/source"))
+			}
+		}
+	}
+	t.Run("traces alone are kept", func(t *testing.T) {
+		h := newCCHarness(t)
+		traces(t, h)
+		if n := len(h.spans(gmResumeSession)); n == 0 {
+			t.Fatal("trace spans without log events should stay")
+		}
+	})
+	t.Run("traces first", func(t *testing.T) {
+		h := newCCHarness(t)
+		traces(t, h)
+		h.ingestFixture("gemini_cli/resume_json")
+		onlyLogs(t, h)
+	})
+	t.Run("logs first", func(t *testing.T) {
+		h := newCCHarness(t)
+		h.ingestFixture("gemini_cli/resume_json")
+		traces(t, h)
+		onlyLogs(t, h)
+	})
 }

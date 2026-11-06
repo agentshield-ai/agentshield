@@ -117,8 +117,8 @@ the UI.
 `feedback`, `files`, `refs`, `prices`, `completions`, `embeddings`, `images`,
 `evaluations`, `sessions`, `agents`, `teams`, `handoffs`, `detections`,
 `scores`, `monitors`, `automations`, `annotation_queues`, `registry`,
-`runtimes`, `exports`, `dataset_sources`, `otlp`, `otlp_logs` (Claude Code's
-log events, [below](#claude-code-log-events)), plus `files_backend` with an
+`runtimes`, `exports`, `dataset_sources`, `otlp`, `otlp_logs` (the log
+events of Claude Code, Codex and Gemini CLI, [below](#claude-code-log-events)), plus `files_backend` with an
 S3 files backend and `compat_adapter` with the adapter on). `limits`:
 `max_request_bytes` (64 MiB), `max_file_bytes` (64 MiB), `max_span_batch`
 (100,000 items), `max_feedback_batch` (1,000), `max_refs_per_read` (1,000),
@@ -733,7 +733,7 @@ The response is an OTLP `ExportTraceServiceResponse` in the request's encoding.
 | Route | Body | Response |
 |---|---|---|
 | `POST /otel/v1/traces` | OTLP `ExportTraceServiceRequest` | `ExportTraceServiceResponse` |
-| `POST /otel/v1/logs` | OTLP `ExportLogsServiceRequest` (protobuf or JSON, gzip allowed) | `ExportLogsServiceResponse`. Claude Code's events become spans ([Claude Code log events](#claude-code-log-events)); logs of any other service are accepted and ignored |
+| `POST /otel/v1/logs` | OTLP `ExportLogsServiceRequest` (protobuf or JSON, gzip allowed) | `ExportLogsServiceResponse`. The events of Claude Code, Codex and Gemini CLI become spans ([Claude Code](#claude-code-log-events), [Codex](#codex-log-events), [Gemini CLI](#gemini-cli-log-events)); logs of any other service are accepted and ignored |
 | `POST /otel/v1/metrics` | OTLP `ExportMetricsServiceRequest` | `ExportMetricsServiceResponse`; metrics are accepted and discarded, so an exporter that also sends them reports no errors |
 
 All three take the same API keys and pick the project the same way (header,
@@ -781,6 +781,63 @@ tool call or sub-agent still open when its turn closes ends with it, failed
 (`tool did not finish before the turn ended`). A span first stored under the
 turn and later found to belong under an Agent call moves there, with its
 usage.
+
+### Codex log events
+
+Codex's export (`[otel]` `exporter = { otlp-http = … }` in `config.toml`;
+captured from Codex CLI 0.167.0) arrives at `/otel/v1/logs` with resource
+`service.name` = the Codex client (`codex_exec`, `codex_cli_rs`,
+`codex-tui`, …: any name starting `codex`) or scope `codex_otel.*`. Each
+record carries `event.name`, `event.timestamp` (milliseconds),
+`conversation.id` (the session), `model` and `app.version`, but no turn id:
+a turn is the run of events from one `codex.user_prompt` to the next in the
+session (whatever order they arrive in; an event that arrives before the
+prompt it follows waits for it). Spans are rebuilt as for Claude Code, with
+`weft.source = codex-otel-logs` and `codex.*` attributes:
+
+| Event | Span |
+|---|---|
+| `codex.user_prompt` | the turn: `invoke_agent codex` (`gen_ai.agent.name`, `gen_ai.agent.version` = `app.version`, `codex.originator`), input = `prompt` (`log_user_prompt = true`), else `{"_prompt": "(prompt not exported: set log_user_prompt = true under [otel])"}` (Codex sends `[REDACTED]`) |
+| `codex.api_request`, `codex.websocket_request` | `chat <model>` (`codex.llm`), started `duration_ms` before the event; a 4xx/5xx `http.response.status_code` or an `error.message` is a failed attempt (`API error <status>: <message>`) |
+| `codex.sse_event`, `codex.websocket_event` with `event.kind = response.completed` | completes the session's oldest open request: `summary.usage` with gross `prompt_tokens` = `input_token_count` (cached included), `cache_read_input_tokens` = `cached_token_count`, `cache_creation_input_tokens`, `completion_tokens` = `output_token_count`, `reasoning_tokens`; other stream events are ignored |
+| `codex.tool_result` | `execute_tool <tool_name>` (`codex.tool.<tool>`): `gen_ai.tool.call.id` = `call_id`, input = `arguments`, output = `output` (Codex sends both always; `codex.exit_code` from a shell's output), failed when `success` is false (the output is the error), started `duration_ms` before the event; `mcp_server` marks an MCP tool. The request that asked for it is the session's last request recorded before it; its output lists the call (`tool_use` blocks) |
+| `codex.tool_decision` | `approved*`: folded into the tool span (`codex.decision`, `codex.decision_source`); `denied*`, `abort`, `timed_out`: the tool span, failed `Rejected by the user` (source `User`), `Rejected by the approval policy` (`Config`), `Rejected by the automatic reviewer` |
+| `codex.agent_response` | the turn's answer, when it carries the text |
+| `codex.tool_result` of `spawn_agent` | its output's `agent_id` is a sub-agent's own session: that session's events (stored before or after) are stored in the parent's session and shown as `invoke_agent codex-subagent` (`gen_ai.agent.id` = its session, display = its nickname) under the `spawn_agent` call, with its prompt as input and its `wait_agent` result as output; spans built for it as a session of its own are retired |
+| `codex.conversation_starts`, `codex.startup_phase`, `codex.turn_ttft`, others | ignored |
+
+`auth.*`, `user.*` and `terminal.type` are not stored. Codex sends neither
+the model's reply text nor a cost. The turn is stored once its last request
+completed without a tool call after it, or failed, or the user denied its
+last tool call; or when the next prompt starts (`interrupted: …`), as for
+Claude Code.
+
+### Gemini CLI log events
+
+Gemini CLI's export (`GEMINI_TELEMETRY_OTLP_PROTOCOL=http`: OTLP/HTTP JSON;
+captured from Gemini CLI 0.67.0) arrives at `/otel/v1/logs` with resource
+`service.name = gemini-cli` and `session.id`. Each record carries
+`event.name`, `event.timestamp`, `session.id` and mostly `prompt_id`; a turn
+is the run of events from one `gemini_cli.user_prompt` to the next (the
+`prompt_id` is not unique: a resumed non-interactive session reuses the
+session id). Spans are rebuilt as above, with
+`weft.source = gemini-cli-otel-logs` and `gemini_cli.*` attributes:
+
+| Event | Span |
+|---|---|
+| `gemini_cli.user_prompt` | the turn: `invoke_agent gemini-cli`, input = `prompt` (log prompts on, the default), else `{"_prompt": "(prompt not exported: set GEMINI_TELEMETRY_LOG_PROMPTS=true)"}` |
+| `gemini_cli.api_response` | `chat <model>` (`gemini_cli.llm`), started `duration_ms` before the event: `summary.usage` with `prompt_tokens` = `input_token_count` + `tool_token_count`, `cache_read_input_tokens` = `cached_content_token_count`, `completion_tokens` = `output_token_count` + `thoughts_token_count`, `reasoning_tokens` = `thoughts_token_count`; output = the text and function calls of `response_text`. `role` other than `main` / `subagent` (`utility_router`, `utility_loop_detector`, …) marks a side request: shown as `chat <model> (<role>)`, never ends a turn |
+| `gemini_cli.api_error` | `chat <model>`, failed (`API error <status>: <status name>: <message>`) |
+| `gemini_cli.api_request` | a request in flight: the turn stays open until it is answered (no span) |
+| `gemini_cli.tool_call` | `execute_tool <function_name>`: input = `function_args`, failed with `error` when `success` is false (`Rejected by the user` when `decision` is `reject`), from `start_time` (else the event less `duration_ms`) to `end_time`; `gen_ai.tool.call.id` = the id of the matching function call in the response that asked for it (the main agent's responses carry Gemini CLI's call ids; a sub-agent's do not) |
+| `gemini_cli.agent.start`, `gemini_cli.agent.finish`, events with `prompt_id = <agent id>#<n>` | a sub-agent: `invoke_agent <agent_name>` under the `invoke_agent` call whose run holds its start, input = that call's `prompt`, output = its `complete_task` result; failed when `terminate_reason` is not `GOAL` |
+| `gemini_cli.config`, `gemini_cli.model_routing`, `gen_ai.client.inference.operation.details`, others | ignored |
+
+`user.email`, `installation.id`, `request_text` and the `gen_ai.*` payload
+copies are not stored. Gemini CLI sends no tool output and no cost. Its
+trace spans (`llm_call`, `tool_call`, `agent_call`, `schedule_tool_calls`,
+carrying `gen_ai.agent.name = gemini-cli`) count as source
+`gemini-cli-otel-traces`, below the log events (see below).
 
 ### Claude Code traces (beta)
 
@@ -846,8 +903,12 @@ A failed span's error is `error.type`; an `exception` event's
 
 A Claude Code session can reach Weft from the plugin, the traces beta and
 the log events at once. Each session is shown from one of them: the
-highest-ranked source that has sent spans for it (`weft.source`:
-`weft-claude-code` > `claude-code-otel-traces` > `claude-code-otel-logs`).
+highest-ranked source of its harness that has sent spans for it
+(`weft.source`: `weft-claude-code` > `claude-code-otel-traces` >
+`claude-code-otel-logs`; for Codex `weft-codex` > `codex-otel-logs` >
+`codex-otel-traces`; for Gemini CLI `gemini-cli-otel-logs` >
+`gemini-cli-otel-traces`, the latter recognised by `gen_ai.agent.name =
+gemini-cli` on spans with no `weft.source`).
 A span of a lower source is dropped at ingest when its session already has
 spans of a higher one; when a higher source's first span arrives, the lower
 sources' spans of that session are soft-deleted and AgentShield detections

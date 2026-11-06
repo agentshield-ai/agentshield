@@ -336,6 +336,16 @@ plugin, then traces, then logs (`weft.source`; lower sources are dropped or
 soft-deleted at ingest). Metrics (`/otel/v1/metrics`) are accepted and
 discarded. API.md, *Claude Code log events*, has the mapping.
 
+Codex and Gemini CLI export log events the same way, but their events name
+no turn (and a sub-agent of Codex runs in a session of its own), so the
+event log groups by time as well: an event may open a group (a user
+prompt), and an event naming no group joins the one open at its time in its
+session, moving if an earlier opener arrives late; an event may link
+another session under its own (Codex's `spawn_agent`), whose events are
+then stored, and rebuilt, in the parent's session, with spans already built
+for it retired. Sources rank per harness: the weft-codex plugin over Codex's
+logs; Gemini CLI's logs over its trace spans.
+
 ## 6. Scoped evaluation
 
 Scores are feedback rows whose payload carries `scope` and the target ids

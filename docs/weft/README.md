@@ -239,6 +239,10 @@ without reasoning or tool results; `OTEL_LOG_USER_PROMPTS`,
 replies and tool arguments. Its metrics (`/otel/v1/metrics`) are accepted and
 discarded. The [setup guide](guides/setup.md#claude-code-without-a-plugin)
 has the details, and [API.md](API.md#claude-code-log-events) the mapping.
+Codex (`[otel]` `exporter = { otlp-http = … }` in `config.toml`) and Gemini
+CLI (`GEMINI_TELEMETRY_OTLP_PROTOCOL=http`) export log events too, which
+Weft maps onto sessions the same way ([setup](guides/setup.md#codex-built-in-telemetry),
+[mapping](API.md#codex-log-events)).
 
 Both SDKs also support guardrails (`span.apply_scorer` / `span.applyScorer`
 score a finished span and attach the result as feedback), loading published

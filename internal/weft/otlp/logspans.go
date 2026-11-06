@@ -108,3 +108,8 @@ func usageSummary(model string, prompt, completion, cacheRead, cacheWrite, reaso
 }
 
 func strPtr(s string) *string { return &s }
+
+func compactJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}

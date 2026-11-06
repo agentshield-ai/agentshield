@@ -18,7 +18,7 @@ export function serverOrigin(): string {
 }
 
 export type SnippetId = 'python' | 'typescript' | 'otel' | 'claude-code' | 'claude-code-otel' | 'codex' | 'openclaw' | 'pi' | 'agentshield'
-  | 'opencode-otel' | 'copilot-otel'
+  | 'opencode-otel' | 'copilot-otel' | 'codex-otel' | 'gemini-otel'
 
 export const SNIPPET_LABEL: Record<SnippetId, string> = {
   python: 'Python',
@@ -32,6 +32,8 @@ export const SNIPPET_LABEL: Record<SnippetId, string> = {
   agentshield: 'AgentShield engine',
   'opencode-otel': 'OpenCode (built-in telemetry)',
   'copilot-otel': 'Copilot CLI (built-in telemetry)',
+  'codex-otel': 'Codex (built-in telemetry)',
+  'gemini-otel': 'Gemini CLI (built-in telemetry)',
 }
 
 /** Copyable setup snippets for the current server and project (unit tested). */
@@ -141,6 +143,23 @@ export OTEL_EXPORTER_OTLP_HEADERS="project_id=${projectId}${auth ? ',Authorizati
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
 copilot`,
     },
+    'codex-otel': {
+      lang: 'toml',
+      note: "Nothing to install: add this to ~/.codex/config.toml and each Codex session arrives while it runs, with its model calls, tool calls (arguments and output) and sub-agents. Codex does not export its replies or reasoning; the Codex plugin does.",
+      code: `[otel]
+log_user_prompt = true   # your prompts
+exporter = { otlp-http = { endpoint = "${origin}/otel/v1/logs", protocol = "binary", headers = { "project_id" = "${projectId}"${auth ? ', "Authorization" = "Bearer <your API key>"' : ''} } } }`,
+    },
+    'gemini-otel': {
+      lang: 'bash',
+      note: 'Nothing to install: set these where Gemini CLI starts and each session arrives while it runs, with its model calls, replies, tool calls and sub-agents. The protocol must be http: Weft has no gRPC receiver.',
+      code: `export GEMINI_TELEMETRY_ENABLED=true
+export GEMINI_TELEMETRY_TARGET=local
+export GEMINI_TELEMETRY_OTLP_ENDPOINT="${origin}/otel"
+export GEMINI_TELEMETRY_OTLP_PROTOCOL=http
+export GEMINI_TELEMETRY_OTLP_HEADERS="project_id=${projectId}${auth ? ',Authorization=Bearer <your API key>' : ''}"
+gemini`,
+    },
     agentshield: {
       lang: 'yaml',
       note: "Add this to AgentShield's config.yaml so the engine sends every non-allow verdict to this project. Detections attach to the matching tool call when the plugins pass the same session and tool-call ids.",
@@ -156,7 +175,7 @@ copilot`,
 export function Snippets({ projectId, only, initial }: { projectId: string; only?: SnippetId[]; initial?: SnippetId }) {
   const info = useQuery({ queryKey: ['server-info'], queryFn: api.server, staleTime: 60_000 })
   const all = snippets(serverOrigin(), projectId, !!info.data?.auth_required)
-  const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'claude-code-otel', 'codex', 'openclaw', 'pi', 'opencode-otel', 'copilot-otel'] as SnippetId[])
+  const ids = only ?? (['python', 'typescript', 'otel', 'claude-code', 'claude-code-otel', 'codex', 'openclaw', 'pi', 'opencode-otel', 'copilot-otel', 'codex-otel', 'gemini-otel'] as SnippetId[])
   const [tab, setTab] = useState<SnippetId>(initial ?? ids[0])
   const s = all[tab]
   return (

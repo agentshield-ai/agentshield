@@ -51,7 +51,7 @@ const (
 	// CodexAgent is the agent name of a Codex turn (the weft-codex plugin's default).
 	CodexAgent = "codex"
 	// CodexSubagent is the agent name of a sub-agent Codex spawned.
-	CodexSubagent = "codex-subagent"
+	CodexSubagent          = "codex-subagent"
 	codexPromptNotExported = "(prompt not exported: set log_user_prompt = true under [otel])"
 )
 
@@ -488,7 +488,6 @@ func BuildCodexLogGroup(g store.LogGroup) []store.CompleteCall {
 		if sp := spawnOf[a.id]; sp != nil {
 			parent = ccID(codexLogsNS, sid, "tool", sp.id)
 			nickname = sp.nickname
-			// A sub-agent of a sub-agent: its spawn call is in the parent's run.
 		}
 		for _, t := range a.tools {
 			if n := aStr(firstAttrs(t), "agent_name"); n != "" && n != "/root" && nickname == "" {

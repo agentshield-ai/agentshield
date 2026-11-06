@@ -45,6 +45,10 @@ and project already filled in. Pick the one that matches your stack:
   send sessions straight to Weft too. See
   [OpenCode (built-in telemetry)](#opencode-built-in-telemetry) and
   [Copilot CLI (built-in telemetry)](#copilot-cli-built-in-telemetry) below.
+- **Codex and Gemini CLI without a plugin:** their built-in OpenTelemetry
+  log exports can send sessions straight to Weft. See
+  [Codex (built-in telemetry)](#codex-built-in-telemetry) and
+  [Gemini CLI (built-in telemetry)](#gemini-cli-built-in-telemetry) below.
 
 Sessions appear within a few seconds. If nothing shows up, check the project
 name: it must match exactly.
@@ -207,6 +211,108 @@ prompt and tools show no arguments. The token totals on the turn span
 repeat its model calls' totals, so Weft does not count them again.
 `github.copilot.cost` and `nano_aiu` are billing multipliers, not money,
 and stay in the raw span.
+
+## Codex (built-in telemetry)
+
+Codex CLI reports what it does as OpenTelemetry log events. Add an `[otel]`
+section to `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`):
+
+```toml
+[otel]
+log_user_prompt = true   # your prompts; Codex sends "[REDACTED]" without it
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:6345/otel/v1/logs", protocol = "binary", headers = { "project_id" = "my-team/codex", "Authorization" = "Bearer <your API key>" } } }
+```
+
+- The endpoint is the full logs address: Codex does not add `/v1/logs`.
+  `protocol` is `"binary"` (protobuf) or `"json"`. Weft has no gRPC
+  receiver, so `otlp-grpc` does not work.
+- The project comes from the `project_id` header, else `default/default`.
+  Leave out `Authorization` when your server has no API keys.
+- Leave `trace_exporter` unset. Codex's traces describe its internals (file
+  reads, config loading, rollout writes: about a thousand spans a turn) and
+  carry no session, so they add nothing to the session. A
+  `metrics_exporter` pointed at `/otel/v1/metrics` is accepted and
+  discarded.
+- `codex exec` exits on a failed model request without sending its
+  telemetry, so such a run never reaches Weft. The interactive `codex` sends
+  it.
+
+**What you get.** Each prompt becomes a turn of the `codex` agent, in the
+session named by Codex's session id (the id the weft-codex plugin uses, and
+`codex exec resume` keeps). The turn holds a model call for every request
+(model, and input, cached, output and reasoning tokens; Codex sends no cost,
+so Weft prices known models), including each failed attempt Codex retried;
+its tool calls with their call ids (AgentShield verdicts from the Codex hook
+attach to them), arguments and output, which Codex always sends; and
+approval decisions: a denied call is a step that failed with "Rejected by
+the user" (or by the approval policy). A sub-agent started by `spawn_agent`
+runs in a Codex session of its own; Weft shows it as `codex-subagent` under
+the `spawn_agent` call, in the parent's session.
+
+Codex's log events do not include the model's replies or reasoning, so a
+turn has no answer text, and model calls show the tools they asked for.
+
+**Plugin or built-in telemetry?** The Codex plugin (`plugins/weft-codex`)
+reads Codex's rollout file, so it records the replies, reasoning summaries
+and the messages each model call received. The built-in export needs
+nothing installed and shows a turn while it runs (until its last request
+asks for no tool, or the next prompt starts, which marks it interrupted).
+You can use both: Weft shows each Codex session from one source only, the
+plugin first.
+
+## Gemini CLI (built-in telemetry)
+
+Gemini CLI reports what it does as OpenTelemetry log events. Set these where
+Gemini CLI starts:
+
+```bash
+export GEMINI_TELEMETRY_ENABLED=true
+export GEMINI_TELEMETRY_TARGET=local
+export GEMINI_TELEMETRY_OTLP_ENDPOINT=http://127.0.0.1:6345/otel
+export GEMINI_TELEMETRY_OTLP_PROTOCOL=http        # the default is grpc, which Weft does not receive
+export GEMINI_TELEMETRY_OTLP_HEADERS="project_id=my-team/gemini,Authorization=Bearer <your API key>"
+export GEMINI_TELEMETRY_LOG_PROMPTS=true          # the default; false leaves out prompts, replies and tool arguments
+```
+
+or the same in `~/.gemini/settings.json`:
+
+```json
+{
+  "telemetry": {
+    "enabled": true,
+    "target": "local",
+    "otlpEndpoint": "http://127.0.0.1:6345/otel",
+    "otlpProtocol": "http",
+    "otlpHeaders": { "project_id": "my-team/gemini" }
+  }
+}
+```
+
+- With `http`, Gemini CLI adds `/v1/logs`, `/v1/traces` and `/v1/metrics`
+  to the endpoint and sends OTLP/HTTP JSON. Weft discards the metrics.
+- Gemini CLI also sends trace spans (`llm_call`, `tool_call`,
+  `agent_call`, one trace each). Weft builds the session from the log
+  events and drops these spans for a session the log events describe.
+- `GEMINI_TELEMETRY_OTLP_HEADERS` takes `key=value` pairs separated by
+  commas, or a JSON object. Leave out `Authorization` when your server has
+  no API keys.
+
+**What you get.** Each prompt becomes a turn of the `gemini-cli` agent in
+the session named by Gemini CLI's session id (a resumed session continues
+it). The turn holds its model calls (model, and input, cached, output and
+thinking tokens; Gemini CLI sends no cost, so Weft prices known models),
+side requests such as model routing or loop checks marked with their role,
+failed attempts Gemini CLI retried, the reply text, and its tool calls with
+their arguments, outcome and Gemini CLI's call id. A tool call you rejected
+is a step that failed with "Rejected by the user". A sub-agent
+(`generalist`, `codebase_investigator`, ...) is shown under the
+`invoke_agent` call that ran it, with the result it handed back.
+
+Gemini CLI sends no tool output (only its size). Its hooks give AgentShield
+no call id, and the AgentShield Gemini hook reports tools by AgentShield's
+names (`exec` for `run_shell_command`), so its verdicts are listed with the
+session but not yet attached to a step. There is no Weft plugin for Gemini
+CLI.
 
 ## Group agents into sessions and teams
 

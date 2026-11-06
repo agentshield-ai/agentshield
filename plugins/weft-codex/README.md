@@ -17,6 +17,18 @@ Each Codex session appears under **Sessions**, its agent under **Agents**
 This is separate from the AgentShield security connector in
 [`plugins/codex`](../codex); both can be installed.
 
+**Plugin or Codex's built-in telemetry?** Codex can also send its sessions
+to Weft itself, with no plugin: an `[otel]` exporter pointed at
+`<server>/otel/v1/logs` (see the
+[setup guide](../../docs/weft/guides/setup.md#codex-built-in-telemetry)).
+That export carries the prompts, model calls with tokens, tool calls with
+arguments, output and call ids, approval decisions and sub-agents, and shows
+a turn while it runs, but not the model's replies, reasoning summaries or
+the messages each model call received, which this plugin reads from the
+rollout. If both are on, Weft shows each Codex session from the plugin and
+hides the built-in export's copy (same session id), so nothing is counted
+twice.
+
 ## How it works
 
 Codex writes each session to a rollout file

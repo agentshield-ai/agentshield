@@ -81,7 +81,7 @@ func withSourceBatch(ctx context.Context) context.Context {
 }
 
 // spanSource is a call's weft.source attribute (nested or flat). Gemini
-// CLI's own trace spans (llm_call, tool_call, schedule_tool_calls; always
+// CLI's own trace spans (llm_call, tool_call, agent_call, ...; always
 // exported alongside its log events) carry none: they are recognised by
 // their agent name, so the session built from the log events replaces them.
 func spanSource(attributes map[string]any) string {
@@ -97,7 +97,9 @@ func spanSource(attributes map[string]any) string {
 
 const geminiCLIAgent = "gemini-cli"
 
-var geminiTraceOps = map[string]bool{"llm_call": true, "tool_call": true, "schedule_tool_calls": true}
+// geminiTraceOps are Gemini CLI's span operations (GeminiCliOperation).
+var geminiTraceOps = map[string]bool{"llm_call": true, "tool_call": true, "schedule_tool_calls": true, "agent_call": true,
+	"user_prompt": true, "system_prompt": true}
 
 // sourceCondition is the SQL condition matching calls of the given sources
 // (with their arguments).
@@ -106,7 +108,12 @@ func sourceCondition(sources []string) (string, []any) {
 	cond := `json_extract(attributes, '$.weft.source') IN (` + ph + `)`
 	for _, s := range sources {
 		if s == SourceGeminiTraces {
-			ops, opArgs := sourceList([]string{"llm_call", "tool_call", "schedule_tool_calls"})
+			names := make([]string, 0, len(geminiTraceOps))
+			for op := range geminiTraceOps {
+				names = append(names, op)
+			}
+			sort.Strings(names)
+			ops, opArgs := sourceList(names)
 			cond = `(` + cond + ` OR (json_extract(attributes, '$.weft.source') IS NULL
 				AND json_extract(attributes, '$.otel.attributes."gen_ai.agent.name"') = ?
 				AND json_extract(attributes, '$.otel.attributes."gen_ai.operation.name"') IN (` + ops + `)))`

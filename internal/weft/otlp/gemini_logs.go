@@ -145,7 +145,6 @@ type gmLLM struct {
 	role     string
 	text     string
 	calls    []*gmCall
-	hasText  bool // response_text was exported
 	tools    []*gmTool
 	failed   bool
 	errorMsg string
@@ -175,7 +174,9 @@ type gmAgent struct {
 
 // conversational reports a request of an agent's conversation (not a side
 // request such as model routing or a next-speaker check).
-func geminiConversational(role string) bool { return role == "" || role == "main" || role == "subagent" }
+func geminiConversational(role string) bool {
+	return role == "" || role == "main" || role == "subagent"
+}
 
 // BuildGeminiLogGroup builds one turn's spans from its events.
 func BuildGeminiLogGroup(g store.LogGroup) []store.CompleteCall {
@@ -269,7 +270,6 @@ func BuildGeminiLogGroup(g store.LogGroup) []store.CompleteCall {
 				l.failed = true
 				l.errorMsg = geminiErrorText(aStr(e.Attrs, "error", "error.message"))
 			} else if rt := aStr(e.Attrs, "response_text"); rt != "" {
-				l.hasText = true
 				l.text, l.calls = geminiResponse(rt)
 			}
 			ag.llms = append(ag.llms, l)
@@ -495,6 +495,25 @@ func BuildGeminiLogGroup(g store.LogGroup) []store.CompleteCall {
 		for _, l := range a.llms {
 			if l.text != "" {
 				output = assistantMessages(l.text)
+			}
+		}
+		// A sub-agent hands its result back through complete_task.
+		for _, t := range a.tools {
+			if t.name != "complete_task" || len(t.input) == 0 {
+				continue
+			}
+			var v any = t.input
+			if len(t.input) == 1 || (len(t.input) == 2 && t.input["wait_for_previous"] != nil) {
+				for k, x := range t.input {
+					if k != "wait_for_previous" {
+						v = x
+					}
+				}
+			}
+			if s, ok := v.(string); ok {
+				output = assistantMessages(s)
+			} else {
+				output = assistantMessages(compactJSON(v))
 			}
 		}
 		attrs := w.common(map[string]any{"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": name, "gen_ai.agent.id": a.id,
